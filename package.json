@@ -1,0 +1,30 @@
+{
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "vite build",
+		"preview": "vite preview"
+	},
+	"dependencies": {
+		"preact": "^10.26.9",
+		"preact-iso": "^2.9.2",
+		"preact-render-to-string": "^6.5.13"
+	},
+	"devDependencies": {
+		"@iconify/json": "^2.2.353",
+		"@iconify/tailwind4": "^1.0.6",
+		"@preact/preset-vite": "^2.10.1",
+		"@tailwindcss/language-server": "^0.14.23",
+		"@tailwindcss/vite": "^4.1.11",
+		"@types/bun": "^1.2.17",
+		"daisyui": "^5.0.43",
+		"eslint": "^9.29.0",
+		"eslint-config-preact": "^1.5.0",
+		"tailwindcss": "^4.1.11",
+		"vite": "^7.0.0"
+	},
+	"eslintConfig": {
+		"extends": "preact"
+	}
+}
