@@ -12,19 +12,17 @@
 		"preact-render-to-string": "^6.5.13"
 	},
 	"devDependencies": {
-		"@iconify/json": "^2.2.353",
+		"@biomejs/biome": "2.0.6",
+		"@iconify/json": "^2.2.355",
 		"@iconify/tailwind4": "^1.0.6",
-		"@preact/preset-vite": "^2.10.1",
-		"@tailwindcss/language-server": "^0.14.23",
+		"@preact/preset-vite": "^2.10.2",
+		"@tailwindcss/language-server": "^0.14.24",
 		"@tailwindcss/vite": "^4.1.11",
-		"@types/bun": "^1.2.17",
+		"@types/bun": "^1.2.18",
 		"daisyui": "^5.0.43",
-		"eslint": "^9.29.0",
-		"eslint-config-preact": "^1.5.0",
+		"husky": "^9.1.7",
 		"tailwindcss": "^4.1.11",
-		"vite": "^7.0.0"
-	},
-	"eslintConfig": {
-		"extends": "preact"
+		"ultracite": "5.0.32",
+		"vite": "^7.0.2"
 	}
 }
