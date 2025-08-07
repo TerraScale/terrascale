@@ -28,14 +28,6 @@ Bootstrap, build, and test the repository:
    - Navigate to http://localhost:5173/ and verify all pages load
    - Test all navigation links: Home (/), About (/about), Pricing (/pricing), Contact (/contact)
 
-2. **Contact Form Testing** (Required for any UI changes):
-   - Fill out the contact form with test data:
-     - Name: "Test User"
-     - Email: "test@example.com" 
-     - Message: "Test message for validation"
-   - Submit the form and verify the success message appears: "Message sent! We'll get back to you soon."
-   - Verify form fields clear after successful submission
-
 3. **Navigation Testing**:
    - Click through all main navigation links
    - Verify active states are correctly highlighted
@@ -81,12 +73,13 @@ The repository follows standard React + Vite conventions:
 
 ## Key Technologies
 
-- **React 19.1.1**: Modern React with hooks and functional components
-- **Vite 7.1.0**: Fast build tool and development server
-- **React Router DOM 7.7.1**: Client-side routing
-- **Tailwind CSS 3.4.17**: Utility-first CSS framework
+- **React**: Modern React with hooks and functional components
+- **Vite**: Fast build tool and development server
+- **React Router**: Client-side routing
 - **Lucide React**: Icon library for UI elements
 - **ESLint**: Code linting with React-specific rules
+- **Tailwind 4**: Utility-first CSS framework
+- **ShadCN**: Component library for building UI
 
 ## Common Tasks
 
@@ -95,12 +88,6 @@ The repository follows standard React + Vite conventions:
 2. Add route to `src/App.jsx` Routes component
 3. Update navigation in `src/components/Header.jsx` if needed
 4. Test navigation and routing functionality
-
-### Modifying Styles
-- This project uses Tailwind CSS exclusively
-- Custom colors and animations are defined in `tailwind.config.js`
-- Global styles are in `src/index.css`
-- Use the `cn()` utility from `src/lib/utils.js` for conditional classes
 
 ### Working with Components
 - All components are functional React components using hooks
@@ -134,40 +121,6 @@ The production build creates:
 - Images and assets are optimized during build process
 
 ## Frequently Referenced Code Patterns
-
-### Component Structure Example (from Contact.jsx):
-```jsx
-import { useState } from 'react'
-import { Mail, Phone, MapPin, Clock, CheckCircle } from 'lucide-react'
-
-const Contact = () => {
-  const [formData, setFormData] = useState({ name: '', email: '', message: '' })
-  const [status, setStatus] = useState(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    setIsSubmitting(true)
-    
-    try {
-      // Simulate form submission
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      setStatus({ type: 'success', message: 'Message sent! We\'ll get back to you soon.' })
-      setFormData({ name: '', email: '', message: '' })
-    } catch {
-      setStatus({ type: 'error', message: 'Something went wrong. Please try again later.' })
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  return (
-    // JSX content
-  )
-}
-
-export default Contact
-```
 
 ### Navigation Setup (from App.jsx):
 ```jsx
