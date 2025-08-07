@@ -171,3 +171,6 @@ Since this project has no automated tests, manual testing is critical:
 ## No CI/CD Pipeline
 
 This repository currently has no GitHub Actions or automated testing. All validation must be done manually using the commands and scenarios described above.
+
+# ShadCN
+Use the following command `npx shadcn@latest add <component> -y -o` to add new components to the project
