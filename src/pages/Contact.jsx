@@ -58,7 +58,7 @@ const Contact = () => {
       
       // Reset form
       setFormData({ name: '', email: '', message: '' })
-    } catch (error) {
+    } catch {
       setStatus({
         type: 'error',
         message: 'Something went wrong. Please try again later.'
