@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Mail, Phone, MapPin, Clock, Send, CheckCircle, AlertCircle } from 'lucide-react'
+import { Mail, Phone, MapPin, Clock, Send, CheckCircle, AlertCircle, MessageSquare } from 'lucide-react'
 
 const Contact = () => {
   const [formData, setFormData] = useState({
@@ -72,8 +72,8 @@ const Contact = () => {
     {
       icon: Mail,
       label: 'Email',
-      value: 'contact@terrascale.tech',
-      href: 'mailto:contact@terrascale.tech'
+      value: 'contact@terrascale.com',
+      href: 'mailto:contact@terrascale.com'
     },
     {
       icon: Phone,
@@ -82,15 +82,15 @@ const Contact = () => {
       href: 'tel:+15551234567'
     },
     {
-      icon: MapPin,
-      label: 'Location',
-      value: '123 Main St, San Francisco, CA',
-      href: 'https://maps.google.com/?q=123+Main+St,+San+Francisco,+CA'
+      icon: MessageSquare,
+      label: 'Discord',
+      value: 'Join our community',
+      href: 'https://discord.gg/terrascale'
     },
     {
       icon: Clock,
       label: 'Business Hours',
-      value: 'Mon-Fri: 9am - 6pm',
+      value: 'Mon-Fri: 9am - 6pm PST',
       href: null
     }
   ]
@@ -98,13 +98,13 @@ const Contact = () => {
   return (
     <>
       {/* Hero Section */}
-      <section className="section-padding bg-gradient-to-b from-gray-50 to-white">
-        <div className="max-w-7xl mx-auto container-padding">
+      <section className="py-20 bg-gradient-to-br from-background via-accent/20 to-background">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-4xl mx-auto">
-            <h1 className="text-4xl md:text-6xl font-bold text-gray-900 mb-6">
-              Contact <span className="gradient-text">Us</span>
+            <h1 className="text-4xl md:text-6xl font-bold text-foreground mb-6 animate-fade-in">
+              Contact <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Us</span>
             </h1>
-            <p className="text-xl md:text-2xl text-gray-600 mb-8">
+            <p className="text-xl md:text-2xl text-muted-foreground mb-8 animate-slide-up">
               We'd love to hear from you! Fill out the form or reach us through the info below.
             </p>
           </div>
@@ -112,17 +112,17 @@ const Contact = () => {
       </section>
 
       {/* Contact Form & Info Section */}
-      <section className="section-padding">
-        <div className="max-w-7xl mx-auto container-padding">
+      <section className="py-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
             {/* Contact Form */}
-            <div>
-              <h2 className="text-3xl font-bold text-gray-900 mb-6">
+            <div className="bg-card border border-border rounded-xl p-8">
+              <h2 className="text-3xl font-bold text-foreground mb-6">
                 Send us a message
               </h2>
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div>
-                  <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="name" className="block text-sm font-medium text-foreground mb-2">
                     Name *
                   </label>
                   <input
@@ -131,14 +131,14 @@ const Contact = () => {
                     name="name"
                     value={formData.name}
                     onChange={handleInputChange}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-colors duration-200"
+                    className="w-full px-4 py-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200"
                     placeholder="Your full name"
                     required
                   />
                 </div>
                 
                 <div>
-                  <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="email" className="block text-sm font-medium text-foreground mb-2">
                     Email *
                   </label>
                   <input
@@ -147,14 +147,14 @@ const Contact = () => {
                     name="email"
                     value={formData.email}
                     onChange={handleInputChange}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-colors duration-200"
+                    className="w-full px-4 py-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200"
                     placeholder="your.email@example.com"
                     required
                   />
                 </div>
                 
                 <div>
-                  <label htmlFor="message" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="message" className="block text-sm font-medium text-foreground mb-2">
                     Message *
                   </label>
                   <textarea
@@ -163,7 +163,7 @@ const Contact = () => {
                     rows={6}
                     value={formData.message}
                     onChange={handleInputChange}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-colors duration-200 resize-none"
+                    className="w-full px-4 py-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200 resize-none"
                     placeholder="Tell us about your project or question..."
                     required
                   />
@@ -173,8 +173,8 @@ const Contact = () => {
                 {status.message && (
                   <div className={`p-4 rounded-lg flex items-center space-x-2 ${
                     status.type === 'success' 
-                      ? 'bg-green-50 text-green-800 border border-green-200' 
-                      : 'bg-red-50 text-red-800 border border-red-200'
+                      ? 'bg-green-500/10 text-green-600 border border-green-500/20' 
+                      : 'bg-red-500/10 text-red-600 border border-red-500/20'
                   }`}>
                     {status.type === 'success' ? (
                       <CheckCircle className="h-5 w-5" />
@@ -188,7 +188,7 @@ const Contact = () => {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="btn-primary w-full inline-flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-3 rounded-lg font-semibold transition-all duration-200 w-full inline-flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isSubmitting ? (
                     <>
@@ -207,10 +207,10 @@ const Contact = () => {
 
             {/* Contact Information */}
             <div>
-              <h2 className="text-3xl font-bold text-gray-900 mb-6">
+              <h2 className="text-3xl font-bold text-foreground mb-6">
                 Get in touch
               </h2>
-              <p className="text-gray-600 mb-8">
+              <p className="text-muted-foreground mb-8">
                 Have questions about our platform? Need help with your account? 
                 Our team is here to help you succeed.
               </p>
@@ -218,38 +218,46 @@ const Contact = () => {
               <div className="space-y-6">
                 {contactInfo.map((info, index) => (
                   <div key={index} className="flex items-start space-x-4">
-                    <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <info.icon className="h-5 w-5 text-primary-600" />
+                    <div className="w-10 h-10 bg-gradient-to-r from-blue-600/10 to-purple-600/10 rounded-lg flex items-center justify-center flex-shrink-0 border border-border">
+                      <info.icon className="h-5 w-5 text-primary" />
                     </div>
                     <div>
-                      <h3 className="font-semibold text-gray-900 mb-1">{info.label}</h3>
+                      <h3 className="font-semibold text-foreground mb-1">{info.label}</h3>
                       {info.href ? (
                         <a
                           href={info.href}
-                          className="text-gray-600 hover:text-primary-600 transition-colors duration-200"
+                          className="text-muted-foreground hover:text-primary transition-colors duration-200"
                           target={info.href.startsWith('http') ? '_blank' : undefined}
                           rel={info.href.startsWith('http') ? 'noopener noreferrer' : undefined}
                         >
                           {info.value}
                         </a>
                       ) : (
-                        <span className="text-gray-600">{info.value}</span>
+                        <span className="text-muted-foreground">{info.value}</span>
                       )}
                     </div>
                   </div>
                 ))}
               </div>
 
-              {/* Map Placeholder */}
-              <div className="mt-8">
-                <h3 className="font-semibold text-gray-900 mb-4">Our Location</h3>
-                <div className="bg-gray-200 rounded-lg h-64 flex items-center justify-center">
-                  <div className="text-center text-gray-600">
-                    <MapPin className="h-12 w-12 mx-auto mb-2" />
-                    <p>Interactive Map</p>
-                    <p className="text-sm">San Francisco, CA</p>
-                  </div>
-                </div>
+              {/* Discord CTA */}
+              <div className="mt-8 bg-gradient-to-r from-blue-600/10 to-purple-600/10 rounded-xl p-6 border border-border">
+                <h3 className="font-semibold text-foreground mb-2 flex items-center">
+                  <MessageSquare className="h-5 w-5 mr-2 text-primary" />
+                  Join our Discord community
+                </h3>
+                <p className="text-muted-foreground text-sm mb-4">
+                  Connect with other developers, get help, and stay updated with the latest news.
+                </p>
+                <a
+                  href="https://discord.gg/terrascale"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-[#5865F2] hover:bg-[#4752C4] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200 inline-flex items-center"
+                >
+                  <MessageSquare className="h-4 w-4 mr-2" />
+                  Join Discord
+                </a>
               </div>
             </div>
           </div>

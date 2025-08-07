@@ -1,85 +1,78 @@
 import { Link } from 'react-router-dom'
-import { Twitter, Linkedin, Facebook, Mail, Phone, MapPin } from 'lucide-react'
+import { Twitter, Linkedin, Github, Mail, Phone, MapPin, MessageSquare } from 'lucide-react'
 
 const Footer = () => {
   const socialLinks = [
-    { name: 'Twitter', href: '#', icon: Twitter },
-    { name: 'LinkedIn', href: '#', icon: Linkedin },
-    { name: 'Facebook', href: '#', icon: Facebook },
+    { name: 'Discord', href: 'https://discord.gg/terrascale', icon: MessageSquare },
+    { name: 'Twitter', href: 'https://twitter.com/terrascale', icon: Twitter },
+    { name: 'LinkedIn', href: 'https://linkedin.com/company/terrascale', icon: Linkedin },
+    { name: 'GitHub', href: 'https://github.com/terrascale', icon: Github },
   ]
 
   const footerLinks = {
     Product: [
       { name: 'Features', href: '/#features' },
       { name: 'Pricing', href: '/pricing' },
-      { name: 'Security', href: '#' },
-      { name: 'Documentation', href: '#' },
+      { name: 'Documentation', href: 'https://docs.terrascale.com' },
+      { name: 'API Reference', href: 'https://docs.terrascale.com/api' },
     ],
     Company: [
       { name: 'About', href: '/about' },
       { name: 'Contact', href: '/contact' },
-      { name: 'Careers', href: '#' },
-      { name: 'Blog', href: '#' },
+      { name: 'Status', href: 'https://status.terrascale.com' },
+      { name: 'Blog', href: 'https://blog.terrascale.com' },
     ],
     Resources: [
-      { name: 'Help Center', href: '#' },
-      { name: 'API Reference', href: '#' },
-      { name: 'Community', href: '#' },
-      { name: 'Status', href: '#' },
-    ],
-    Legal: [
-      { name: 'Privacy Policy', href: '#' },
-      { name: 'Terms of Service', href: '#' },
-      { name: 'Cookie Policy', href: '#' },
-      { name: 'GDPR', href: '#' },
+      { name: 'Help Center', href: 'https://help.terrascale.com' },
+      { name: 'Community', href: 'https://discord.gg/terrascale' },
+      { name: 'Security', href: '/security' },
+      { name: 'Terms', href: '/terms' },
     ],
   }
 
   return (
-    <footer className="bg-gray-900 text-white">
-      <div className="max-w-7xl mx-auto container-padding">
+    <footer className="bg-card border-t border-border">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Main Footer Content */}
-        <div className="py-12 lg:py-16">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-8">
+        <div className="py-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8">
             {/* Brand Column */}
             <div className="lg:col-span-2">
               <Link to="/" className="flex items-center space-x-2 mb-4">
-                <div className="w-8 h-8 bg-gradient-to-r from-primary-600 to-primary-700 rounded-lg flex items-center justify-center">
+                <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
                   <span className="text-white font-bold text-sm">T</span>
                 </div>
-                <span className="text-xl font-bold">TerraScale</span>
+                <span className="text-xl font-bold text-foreground">TerraScale</span>
               </Link>
-              <p className="text-gray-400 mb-6 max-w-sm">
+              <p className="text-muted-foreground mb-4 max-w-sm text-sm">
                 Empowering businesses with secure, scalable, and innovative cloud solutions. 
                 Scale your tech, effortlessly.
               </p>
               
               {/* Contact Info */}
-              <div className="space-y-3 text-sm text-gray-400">
+              <div className="space-y-2 text-sm text-muted-foreground mb-4">
                 <div className="flex items-center space-x-2">
-                  <Mail className="h-4 w-4" />
-                  <span>contact@terrascale.tech</span>
+                  <Mail className="h-3 w-3" />
+                  <span>contact@terrascale.com</span>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <Phone className="h-4 w-4" />
+                  <Phone className="h-3 w-3" />
                   <span>+1 (555) 123-4567</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <MapPin className="h-4 w-4" />
-                  <span>123 Main St, San Francisco, CA</span>
                 </div>
               </div>
 
               {/* Social Links */}
-              <div className="flex space-x-4 mt-6">
+              <div className="flex space-x-3">
                 {socialLinks.map((social) => (
                   <a
                     key={social.name}
                     href={social.href}
-                    className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors duration-200"
+                    className="p-2 bg-accent hover:bg-accent/80 rounded-lg transition-colors duration-200"
                     aria-label={social.name}
+                    target="_blank"
+                    rel="noopener noreferrer"
                   >
-                    <social.icon className="h-5 w-5" />
+                    <social.icon className="h-4 w-4 text-muted-foreground" />
                   </a>
                 ))}
               </div>
@@ -88,16 +81,27 @@ const Footer = () => {
             {/* Links Columns */}
             {Object.entries(footerLinks).map(([category, links]) => (
               <div key={category}>
-                <h3 className="font-semibold text-white mb-4">{category}</h3>
-                <ul className="space-y-3">
+                <h3 className="font-semibold text-foreground mb-3 text-sm">{category}</h3>
+                <ul className="space-y-2">
                   {links.map((link) => (
                     <li key={link.name}>
-                      <Link
-                        to={link.href}
-                        className="text-gray-400 hover:text-white transition-colors duration-200 text-sm"
-                      >
-                        {link.name}
-                      </Link>
+                      {link.href.startsWith('http') ? (
+                        <a
+                          href={link.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-muted-foreground hover:text-foreground transition-colors duration-200 text-sm"
+                        >
+                          {link.name}
+                        </a>
+                      ) : (
+                        <Link
+                          to={link.href}
+                          className="text-muted-foreground hover:text-foreground transition-colors duration-200 text-sm"
+                        >
+                          {link.name}
+                        </Link>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -107,17 +111,17 @@ const Footer = () => {
         </div>
 
         {/* Bottom Bar */}
-        <div className="border-t border-gray-800 py-6">
-          <div className="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
-            <p className="text-gray-400 text-sm">
+        <div className="border-t border-border py-4">
+          <div className="flex flex-col md:flex-row justify-between items-center space-y-2 md:space-y-0">
+            <p className="text-muted-foreground text-sm">
               © {new Date().getFullYear()} TerraScale. All rights reserved.
             </p>
-            <div className="flex items-center space-x-6 text-sm text-gray-400">
-              <span>Trusted by 1,000+ users worldwide</span>
+            <div className="flex items-center space-x-4 text-sm text-muted-foreground">
               <div className="flex items-center space-x-1">
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                 <span>99.99% Uptime</span>
               </div>
+              <span>SOC 2 Compliant</span>
             </div>
           </div>
         </div>
