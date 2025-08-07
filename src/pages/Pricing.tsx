@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Star, ChevronDown, ChevronUp } from 'lucide-react'
+import { Check, Star, ChevronDown, Zap, Shield, TrendingUp, BookOpen, MessageSquare, ArrowRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 const Pricing = () => {
@@ -11,57 +11,65 @@ const Pricing = () => {
       name: 'Trial',
       price: { monthly: 0, annual: 0 },
       popular: false,
+      description: 'Perfect for getting started',
       features: [
-        'Databases: Unlimited (**)',
-        'Database Operations: 1 million operations (*)',
-        'Storage: 1 GB (*)',
-        'Egress Bandwidth: 1 GB (*)',
-        'Support: Low Priority'
+        'Databases: Unlimited',
+        'Database Operations: 1M operations',
+        'Storage: 1 GB',
+        'Egress Bandwidth: 1 GB',
+        'Support: Community Discord'
       ],
-      cta: 'Create account',
-      href: '/contact'
+      cta: 'Start Free Trial',
+      href: '/contact',
+      gradient: 'from-gray-600 to-gray-700'
     },
     {
       name: 'Hobby',
       price: { monthly: 4.99, annual: 49 },
       popular: false,
+      description: 'Great for personal projects',
       features: [
-        'Databases: Unlimited (**)',
-        'Database Operations: 10 million included',
+        'Databases: Unlimited',
+        'Database Operations: 10M included',
         'Storage: 10 GB',
         'Egress Bandwidth: 15 GB',
-        'Support: Customer-only Discord'
+        'Support: Priority Discord'
       ],
       cta: 'Get Hobby',
-      href: '/contact'
+      href: '/contact',
+      gradient: 'from-blue-600 to-blue-700'
     },
     {
       name: 'Pro',
       price: { monthly: 24.99, annual: 249 },
       popular: true,
+      description: 'Best for growing teams',
       features: [
-        'Databases: Unlimited (**)',
-        'Database Operations: 1 billion included',
+        'Databases: Unlimited',
+        'Database Operations: 1B included',
         'Storage: 50 GB',
         'Egress Bandwidth: 100 GB',
-        'Support: Customer-only Discord'
+        'Support: Email + Discord'
       ],
       cta: 'Get Pro',
-      href: '/contact'
+      href: '/contact',
+      gradient: 'from-blue-600 to-purple-600'
     },
     {
       name: 'Enterprise',
       price: { monthly: 99.99, annual: 999 },
       popular: false,
+      description: 'For mission-critical applications',
       features: [
-        'Databases: Unlimited (**)',
-        'Support: Premium',
+        'Databases: Unlimited',
+        'Support: Premium SLA',
         'Storage: $0.25 per GB',
-        'Egress Bandwidth: $0.05 per GB (***)',
-        'Database Operations: $1.00 per 1 billion operations'
+        'Egress: $0.05 per GB',
+        'Operations: $1 per 1B ops'
       ],
-      cta: 'Get Enterprise',
-      href: '/contact'
+      cta: 'Contact Sales',
+      href: '/contact',
+      gradient: 'from-purple-600 to-purple-700'
     }
   ]
 
@@ -74,7 +82,7 @@ const Pricing = () => {
           <ul className="list-disc list-inside space-y-2 ml-4">
             <li><strong>Read Operations:</strong> When you retrieve data from the database, it counts as one read operation.</li>
             <li><strong>Write Operations:</strong> When you save or modify data in the database, it counts as one write operation.</li>
-            <li><strong>Replication Operations:</strong> If your database is configured to replicate data across multiple regions, each time an object is written or updated, it incurs an operation for the initial write plus one operation for each region it replicates to. For example, if you have a database that replicates to 10 regions, a single write to the database will cost 10 operations (1 for the initial write + 9 for replication).</li>
+            <li><strong>Replication Operations:</strong> If your database is configured to replicate data across multiple regions, each time an object is written or updated, it incurs an operation for the initial write plus one operation for each region it replicates to.</li>
           </ul>
         </div>
       )
@@ -96,6 +104,12 @@ const Pricing = () => {
           </ul>
           <p>Please note that we generally don't offer partial refunds for downgrades. However, we're happy to review special cases, so feel free to contact our support team to discuss your specific situation.</p>
         </div>
+      )
+    },
+    {
+      question: 'Do you offer custom enterprise solutions?',
+      answer: (
+        <p>Yes! We offer custom enterprise solutions including dedicated instances, private cloud deployments, custom SLAs, and specialized support. Contact our sales team to discuss your specific requirements.</p>
       )
     }
   ]
@@ -119,39 +133,39 @@ const Pricing = () => {
   return (
     <>
       {/* Hero Section */}
-      <section className="section-padding bg-gradient-to-b from-gray-50 to-white">
-        <div className="max-w-7xl mx-auto container-padding">
+      <section className="py-20 bg-gradient-to-br from-background via-accent/10 to-background">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-4xl mx-auto">
-            <h1 className="text-4xl md:text-6xl font-bold text-gray-900 mb-6">
-              Pricing <span className="gradient-text">Plans</span>
+            <h1 className="text-4xl md:text-6xl font-bold text-foreground mb-6 animate-fade-in">
+              Simple <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Pricing</span>
             </h1>
-            <p className="text-xl md:text-2xl text-gray-600 mb-8">
-              Choose the plan that fits your needs. Scale up as you grow.
+            <p className="text-xl md:text-2xl text-muted-foreground mb-8 animate-slide-up">
+              Start free, scale as you grow. No hidden fees, no surprises.
             </p>
             
             {/* Billing Toggle */}
-            <div className="inline-flex items-center bg-gray-100 rounded-lg p-1">
+            <div className="inline-flex items-center bg-card border border-border rounded-xl p-1 animate-slide-up">
               <button
                 onClick={() => setBillingPeriod('monthly')}
-                className={`px-6 py-2 rounded-lg font-medium transition-all duration-200 ${
+                className={`px-6 py-3 rounded-lg font-medium transition-all duration-300 ${
                   billingPeriod === 'monthly'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
+                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg'
+                    : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 Monthly
               </button>
               <button
                 onClick={() => setBillingPeriod('annual')}
-                className={`px-6 py-2 rounded-lg font-medium transition-all duration-200 relative ${
+                className={`px-6 py-3 rounded-lg font-medium transition-all duration-300 relative ${
                   billingPeriod === 'annual'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
+                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg'
+                    : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 Annual
                 {getSavings() && (
-                  <span className="absolute -top-2 -right-2 bg-primary-600 text-white text-xs px-2 py-1 rounded-full">
+                  <span className="absolute -top-2 -right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full">
                     {getSavings()}
                   </span>
                 )}
@@ -162,54 +176,62 @@ const Pricing = () => {
       </section>
 
       {/* Pricing Plans */}
-      <section className="section-padding">
-        <div className="max-w-7xl mx-auto container-padding">
+      <section className="py-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
             {plans.map((plan, index) => (
               <div
                 key={plan.name}
-                className={`relative bg-white rounded-2xl shadow-lg hover:shadow-xl transition-shadow duration-300 ${
-                  plan.popular ? 'ring-2 ring-primary-500' : 'border border-gray-200'
+                className={`relative bg-card border rounded-2xl hover:shadow-2xl transition-all duration-500 group transform hover:-translate-y-2 ${
+                  plan.popular 
+                    ? 'border-primary shadow-lg scale-105 lg:scale-110' 
+                    : 'border-border hover:border-primary/50'
                 }`}
                 style={{ animationDelay: `${index * 0.1}s` }}
               >
                 {plan.popular && (
                   <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
-                    <div className="bg-primary-600 text-white px-4 py-2 rounded-full text-sm font-semibold flex items-center">
+                    <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-full text-sm font-semibold flex items-center shadow-lg">
                       <Star className="h-4 w-4 mr-1 fill-current" />
-                      POPULAR
+                      MOST POPULAR
                     </div>
                   </div>
                 )}
                 
                 <div className="p-8">
-                  <h3 className="text-2xl font-bold text-gray-900 mb-2">{plan.name}</h3>
-                  <div className="mb-6">
-                    <span className="text-4xl font-bold text-gray-900">
+                  <div className="text-center mb-6">
+                    <h3 className="text-2xl font-bold text-foreground mb-2">{plan.name}</h3>
+                    <p className="text-muted-foreground text-sm">{plan.description}</p>
+                  </div>
+                  
+                  <div className="text-center mb-6">
+                    <span className="text-4xl md:text-5xl font-bold text-foreground">
                       {formatPrice(plan.price[billingPeriod])}
                     </span>
                     {plan.price.monthly > 0 && (
-                      <span className="text-gray-600 ml-2">
+                      <span className="text-muted-foreground ml-2">
                         {billingPeriod === 'annual' ? '/year' : '/month'}
                       </span>
                     )}
                   </div>
                   
-                  <ul className="space-y-3 mb-8">
+                  <ul className="space-y-4 mb-8">
                     {plan.features.map((feature, featureIndex) => (
                       <li key={featureIndex} className="flex items-start space-x-3">
-                        <Check className="h-5 w-5 text-primary-600 flex-shrink-0 mt-0.5" />
-                        <span className="text-gray-600 text-sm">{feature}</span>
+                        <div className="w-5 h-5 rounded-full bg-gradient-to-r from-green-400 to-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <Check className="h-3 w-3 text-white" />
+                        </div>
+                        <span className="text-muted-foreground text-sm">{feature}</span>
                       </li>
                     ))}
                   </ul>
                   
                   <Link
                     to={plan.href}
-                    className={`w-full block text-center py-3 px-6 rounded-lg font-semibold transition-colors duration-200 ${
+                    className={`w-full block text-center py-4 px-6 rounded-xl font-semibold transition-all duration-300 transform hover:scale-105 ${
                       plan.popular
-                        ? 'btn-primary'
-                        : 'btn-outline'
+                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-lg'
+                        : 'bg-accent hover:bg-accent/80 text-accent-foreground border border-border'
                     }`}
                   >
                     {plan.cta}
@@ -219,28 +241,35 @@ const Pricing = () => {
             ))}
           </div>
           
-          {/* Plan Notes */}
-          <div className="mt-12 text-center">
-            <div className="inline-block bg-gray-50 rounded-lg p-6 text-left">
-              <h4 className="font-semibold text-gray-900 mb-3">Plan Notes:</h4>
-              <ul className="text-sm text-gray-600 space-y-1">
-                <li>* Usage limits reset monthly.</li>
-                <li>** Unlimited databases per account.</li>
-                <li>*** Egress overages billed at $0.05/GB.</li>
-              </ul>
+          {/* Additional Features */}
+          <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="text-center p-6 bg-card border border-border rounded-xl">
+              <Shield className="h-12 w-12 text-primary mx-auto mb-4" />
+              <h3 className="font-semibold text-foreground mb-2">Enterprise Security</h3>
+              <p className="text-muted-foreground text-sm">SOC 2 compliant with end-to-end encryption</p>
+            </div>
+            <div className="text-center p-6 bg-card border border-border rounded-xl">
+              <Zap className="h-12 w-12 text-primary mx-auto mb-4" />
+              <h3 className="font-semibold text-foreground mb-2">Lightning Fast</h3>
+              <p className="text-muted-foreground text-sm">Sub-10ms query latency worldwide</p>
+            </div>
+            <div className="text-center p-6 bg-card border border-border rounded-xl">
+              <TrendingUp className="h-12 w-12 text-primary mx-auto mb-4" />
+              <h3 className="font-semibold text-foreground mb-2">Auto-scaling</h3>
+              <p className="text-muted-foreground text-sm">Scales automatically with your traffic</p>
             </div>
           </div>
         </div>
       </section>
 
       {/* FAQ Section */}
-      <section className="section-padding bg-gray-50">
-        <div className="max-w-4xl mx-auto container-padding">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
+      <section className="py-20 bg-gradient-to-b from-background to-accent/5">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
               Frequently Asked Questions
             </h2>
-            <p className="text-xl text-gray-600">
+            <p className="text-xl text-muted-foreground">
               Get answers to common questions about our pricing and plans.
             </p>
           </div>
@@ -249,44 +278,75 @@ const Pricing = () => {
             {faqData.map((faq, index) => (
               <div
                 key={index}
-                className="bg-white rounded-lg shadow-sm border border-gray-200"
+                className="bg-card border border-border rounded-xl overflow-hidden transition-all duration-300 hover:shadow-lg"
               >
                 <button
                   onClick={() => toggleFaq(index)}
-                  className="w-full px-6 py-4 text-left flex justify-between items-center hover:bg-gray-50 transition-colors duration-200"
+                  className="w-full px-6 py-6 text-left flex justify-between items-center hover:bg-accent/50 transition-all duration-300"
                 >
-                  <h3 className="font-semibold text-gray-900 pr-4">{faq.question}</h3>
-                  {openFaq === index ? (
-                    <ChevronUp className="h-5 w-5 text-gray-500 flex-shrink-0" />
-                  ) : (
-                    <ChevronDown className="h-5 w-5 text-gray-500 flex-shrink-0" />
-                  )}
+                  <h3 className="font-semibold text-foreground pr-4">{faq.question}</h3>
+                  <div className={`transition-transform duration-300 ${openFaq === index ? 'rotate-180' : ''}`}>
+                    <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                  </div>
                 </button>
-                {openFaq === index && (
-                  <div className="px-6 pb-4 text-gray-600">
+                
+                <div className={`transition-all duration-300 ease-in-out overflow-hidden ${
+                  openFaq === index 
+                    ? 'max-h-[500px] opacity-100 pb-6' 
+                    : 'max-h-0 opacity-0'
+                }`}>
+                  <div className="px-6 text-muted-foreground">
                     {faq.answer}
                   </div>
-                )}
+                </div>
               </div>
             ))}
+          </div>
+          
+          {/* Help CTA */}
+          <div className="mt-12 text-center p-8 bg-gradient-to-r from-blue-600/10 to-purple-600/10 rounded-xl border border-border">
+            <h3 className="text-xl font-semibold text-foreground mb-2">Still have questions?</h3>
+            <p className="text-muted-foreground mb-6">Our team is here to help you find the perfect plan for your needs.</p>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <Link
+                to="/contact"
+                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center justify-center"
+              >
+                <MessageSquare className="h-4 w-4 mr-2" />
+                Contact Sales
+              </Link>
+              <a
+                href="https://docs.terrascale.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="border border-border hover:bg-accent text-foreground px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center justify-center"
+              >
+                <BookOpen className="h-4 w-4 mr-2" />
+                Read Documentation
+              </a>
+            </div>
           </div>
         </div>
       </section>
 
       {/* CTA Section */}
-      <section className="section-padding bg-gradient-to-r from-primary-600 to-primary-700">
-        <div className="max-w-4xl mx-auto container-padding text-center">
+      <section className="py-20 bg-gradient-to-r from-blue-600 to-purple-600 relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_40%,rgba(255,255,255,0.1),transparent_50%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_60%,rgba(255,255,255,0.05),transparent_50%)]" />
+        
+        <div className="relative z-10 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
-            Still have questions?
+            Ready to get started?
           </h2>
-          <p className="text-xl text-primary-100 mb-8">
-            Our team is here to help you find the perfect plan for your needs.
+          <p className="text-xl text-blue-100 mb-8">
+            Join thousands of developers building the future with TerraScale.
           </p>
           <Link
             to="/contact"
-            className="bg-white text-primary-600 hover:bg-gray-50 font-semibold py-3 px-8 rounded-lg transition-colors duration-200"
+            className="bg-white text-blue-600 hover:bg-gray-50 font-bold py-4 px-8 rounded-xl transition-all duration-300 transform hover:scale-105 inline-flex items-center shadow-lg"
           >
-            Contact Sales
+            Start Building Today
+            <ArrowRight className="ml-2 h-5 w-5" />
           </Link>
         </div>
       </section>

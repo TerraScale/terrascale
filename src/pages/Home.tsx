@@ -8,30 +8,35 @@ import {
   TrendingUp,
   Star,
   Users,
-  ChevronRight
+  ChevronRight,
+  Database,
+  Server,
+  Globe,
+  Code2,
+  BookOpen
 } from 'lucide-react'
 
 const Home = () => {
   const features = [
     {
       icon: Zap,
-      title: 'Easy Integration',
-      description: 'Seamlessly connect with your existing tools and workflows.',
+      title: 'Lightning Fast',
+      description: 'Blazing fast queries with global edge caching and optimized indexing.',
     },
     {
       icon: BarChart3,
       title: 'Real-Time Analytics',
-      description: 'Monitor your data and performance in real time.',
+      description: 'Monitor your data and performance with real-time insights and dashboards.',
     },
     {
       icon: Shield,
-      title: 'Secure & Reliable',
-      description: 'Enterprise-grade security and 99.99% uptime.',
+      title: 'Enterprise Security',
+      description: 'SOC 2 compliant with end-to-end encryption and advanced access controls.',
     },
     {
-      icon: TrendingUp,
-      title: 'Scalable',
-      description: 'Grow with confidence—our platform scales with you.',
+      icon: Globe,
+      title: 'Global Scale',
+      description: 'Deploy worldwide with automatic failover and geographic distribution.',
     },
   ]
 
@@ -39,76 +44,117 @@ const Home = () => {
     {
       name: 'Sam Carter',
       role: 'CTO, ExampleCorp',
-      content: 'TerraScale made our cloud migration effortless and secure. Highly recommended!',
+      content: 'TerraScale transformed our data infrastructure. The performance gains are incredible.',
       avatar: 'SC',
     },
     {
       name: 'Priya Patel',
       role: 'Founder, Startly',
-      content: 'The analytics dashboard is a game changer for our business insights.',
+      content: 'The developer experience is outstanding. We shipped faster than ever before.',
       avatar: 'PP',
     },
     {
       name: 'Liam Nguyen',
       role: 'Product Manager',
-      content: 'Excellent support and reliability. We trust TerraScale for all our projects.',
+      content: 'Reliable, secure, and scales effortlessly. TerraScale is our backbone.',
       avatar: 'LN',
     },
+  ]
+
+  const stats = [
+    { value: '99.99%', label: 'Uptime SLA' },
+    { value: '<10ms', label: 'Query Latency' },
+    { value: '1M+', label: 'Queries/Second' },
+    { value: '50+', label: 'Global Regions' },
   ]
 
   return (
     <>
       {/* Hero Section */}
-      <section className="section-padding bg-gradient-to-b from-gray-50 to-white">
-        <div className="max-w-7xl mx-auto container-padding">
-          <div className="text-center">
-            <h1 className="text-4xl md:text-6xl font-bold text-gray-900 mb-6 animate-fade-in">
-              Scale Your Tech,{' '}
-              <span className="gradient-text">Effortlessly</span>
+      <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
+        {/* Animated Background */}
+        <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-accent/20">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_40%,rgba(99,102,241,0.1),transparent_50%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_60%,rgba(147,51,234,0.1),transparent_50%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(59,130,246,0.05),transparent_50%)]" />
+        </div>
+        
+        {/* Floating Elements */}
+        <div className="absolute top-20 left-10 w-4 h-4 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0s' }} />
+        <div className="absolute top-40 right-20 w-3 h-3 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.5s' }} />
+        <div className="absolute bottom-40 left-20 w-5 h-5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '1s' }} />
+        <div className="absolute bottom-20 right-10 w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '1.5s' }} />
+        
+        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+          <div className="text-center max-w-4xl mx-auto">
+            {/* Badge */}
+            <div className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-blue-600/10 to-purple-600/10 border border-border rounded-full text-sm font-medium text-foreground mb-8 animate-fade-in">
+              <Database className="h-4 w-4 mr-2 text-primary" />
+              Database as a Service Platform
+            </div>
+            
+            {/* Main Heading */}
+            <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-foreground mb-8 animate-fade-in">
+              Scale Your{' '}
+              <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 bg-clip-text text-transparent animate-gradient bg-[length:200%_auto]">
+                Database
+              </span>
+              <br />
+              Effortlessly
             </h1>
-            <p className="text-xl md:text-2xl text-gray-600 mb-8 max-w-3xl mx-auto animate-slide-up">
-              Empowering businesses with secure, scalable, and innovative cloud solutions.
+            
+            {/* Subtitle */}
+            <p className="text-xl md:text-2xl text-muted-foreground mb-12 max-w-3xl mx-auto animate-slide-up">
+              The most advanced database platform for modern applications. Deploy, scale, and manage your data with enterprise-grade security and performance.
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center animate-slide-up">
+            
+            {/* CTA Buttons */}
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-16 animate-slide-up">
               <Link
                 to="/contact"
-                className="btn-primary inline-flex items-center"
+                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-8 py-4 rounded-xl text-lg font-semibold transition-all duration-300 transform hover:scale-105 inline-flex items-center shadow-lg hover:shadow-xl"
               >
-                Get Started
-                <ArrowRight className="ml-2 h-4 w-4" />
+                Start Building Free
+                <ArrowRight className="ml-2 h-5 w-5" />
               </Link>
-              <button className="btn-secondary inline-flex items-center">
-                <Play className="mr-2 h-4 w-4" />
-                Watch Demo
-              </button>
+              <Link
+                to="/pricing"
+                className="border border-border hover:bg-accent text-foreground px-8 py-4 rounded-xl text-lg font-semibold transition-all duration-300 inline-flex items-center"
+              >
+                <BookOpen className="mr-2 h-5 w-5" />
+                View Documentation
+              </Link>
+            </div>
+            
+            {/* Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-8 animate-fade-in">
+              {stats.map((stat, index) => (
+                <div key={index} className="text-center">
+                  <div className="text-2xl md:text-3xl font-bold text-foreground">{stat.value}</div>
+                  <div className="text-sm text-muted-foreground">{stat.label}</div>
+                </div>
+              ))}
             </div>
           </div>
-          
-          {/* Hero Visual */}
-          <div className="mt-16 relative">
-            <div className="bg-gradient-to-r from-primary-500 to-primary-700 rounded-2xl p-8 shadow-2xl">
-              <div className="bg-white rounded-lg p-6 h-64 flex items-center justify-center">
-                <div className="text-center">
-                  <div className="w-16 h-16 bg-gradient-to-r from-primary-600 to-primary-700 rounded-full mx-auto mb-4 flex items-center justify-center">
-                    <TrendingUp className="h-8 w-8 text-white" />
-                  </div>
-                  <p className="text-gray-600 font-medium">Dashboard Preview</p>
-                </div>
-              </div>
-            </div>
+        </div>
+        
+        {/* Scroll Indicator */}
+        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 animate-bounce">
+          <div className="w-6 h-10 border-2 border-border rounded-full flex justify-center">
+            <div className="w-1 h-3 bg-foreground rounded-full mt-2 animate-pulse" />
           </div>
         </div>
       </section>
 
-      {/* Key Features Section */}
-      <section id="features" className="section-padding">
-        <div className="max-w-7xl mx-auto container-padding">
+      {/* Features Grid */}
+      <section className="py-20 bg-gradient-to-b from-background to-accent/10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-              Key Features
+            <h2 className="text-3xl md:text-5xl font-bold text-foreground mb-6">
+              Why Choose <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">TerraScale</span>
             </h2>
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-              Everything you need to scale your business with confidence and security.
+            <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
+              Built for developers, trusted by enterprises. Experience the next generation of database infrastructure.
             </p>
           </div>
           
@@ -116,16 +162,16 @@ const Home = () => {
             {features.map((feature, index) => (
               <div
                 key={feature.title}
-                className="text-center p-6 rounded-xl hover:shadow-lg transition-shadow duration-300 group"
+                className="bg-card border border-border p-8 rounded-2xl hover:shadow-lg transition-all duration-300 group transform hover:-translate-y-2"
                 style={{ animationDelay: `${index * 0.1}s` }}
               >
-                <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center mx-auto mb-4 group-hover:bg-primary-200 transition-colors duration-300">
-                  <feature.icon className="h-6 w-6 text-primary-600" />
+                <div className="w-14 h-14 bg-gradient-to-r from-blue-600/10 to-purple-600/10 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
+                  <feature.icon className="h-7 w-7 text-primary" />
                 </div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                <h3 className="text-xl font-bold text-foreground mb-3">
                   {feature.title}
                 </h3>
-                <p className="text-gray-600">
+                <p className="text-muted-foreground leading-relaxed">
                   {feature.description}
                 </p>
               </div>
@@ -134,38 +180,100 @@ const Home = () => {
         </div>
       </section>
 
+      {/* Code Example Section */}
+      <section className="py-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+            <div>
+              <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-6">
+                Get started in <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">seconds</span>
+              </h2>
+              <p className="text-xl text-muted-foreground mb-8">
+                Simple APIs, powerful features. Deploy your database with a single command and start building immediately.
+              </p>
+              <div className="flex items-center space-x-4">
+                <Link
+                  to="/contact"
+                  className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center"
+                >
+                  Start Free Trial
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+                <Link
+                  to="/pricing"
+                  className="text-primary hover:text-primary/80 font-semibold inline-flex items-center"
+                >
+                  View Pricing
+                  <ChevronRight className="ml-1 h-4 w-4" />
+                </Link>
+              </div>
+            </div>
+            
+            <div className="bg-card border border-border rounded-2xl p-6 overflow-hidden">
+              <div className="flex items-center space-x-2 mb-4">
+                <div className="w-3 h-3 bg-red-500 rounded-full" />
+                <div className="w-3 h-3 bg-yellow-500 rounded-full" />
+                <div className="w-3 h-3 bg-green-500 rounded-full" />
+                <Code2 className="h-4 w-4 ml-auto text-muted-foreground" />
+              </div>
+              <pre className="text-sm text-foreground overflow-x-auto">
+                <code>{`import { TerraScale } from '@terrascale/sdk'
+
+const db = new TerraScale({
+  apiKey: process.env.TERRASCALE_API_KEY,
+  region: 'us-west-2'
+})
+
+// Create a new document
+await db.collection('users').create({
+  name: 'John Doe',
+  email: 'john@example.com'
+})
+
+// Query with real-time filters
+const users = await db.collection('users')
+  .where('status', '==', 'active')
+  .orderBy('created_at')
+  .limit(10)
+  .get()`}</code>
+              </pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Testimonials Section */}
-      <section className="section-padding bg-gray-50">
-        <div className="max-w-7xl mx-auto container-padding">
+      <section className="py-20 bg-gradient-to-r from-accent/5 to-accent/10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-              What Our Users Say
+            <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
+              Trusted by developers worldwide
             </h2>
             <div className="flex items-center justify-center space-x-2 text-yellow-500 mb-2">
               {[...Array(5)].map((_, i) => (
                 <Star key={i} className="h-5 w-5 fill-current" />
               ))}
             </div>
-            <p className="text-gray-600">Trusted by 1,000+ users worldwide</p>
+            <p className="text-muted-foreground">Loved by 10,000+ developers and growing</p>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {testimonials.map((testimonial, index) => (
               <div
                 key={testimonial.name}
-                className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-300"
+                className="bg-card border border-border p-8 rounded-2xl hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1"
                 style={{ animationDelay: `${index * 0.1}s` }}
               >
-                <div className="flex items-center space-x-4 mb-4">
-                  <div className="w-12 h-12 bg-gradient-to-r from-primary-600 to-primary-700 rounded-full flex items-center justify-center text-white font-semibold">
+                <div className="flex items-center space-x-4 mb-6">
+                  <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full flex items-center justify-center text-white font-bold">
                     {testimonial.avatar}
                   </div>
                   <div>
-                    <h4 className="font-semibold text-gray-900">{testimonial.name}</h4>
-                    <p className="text-gray-600 text-sm">{testimonial.role}</p>
+                    <h4 className="font-bold text-foreground">{testimonial.name}</h4>
+                    <p className="text-muted-foreground text-sm">{testimonial.role}</p>
                   </div>
                 </div>
-                <p className="text-gray-700 italic">"{testimonial.content}"</p>
+                <p className="text-foreground italic leading-relaxed">"{testimonial.content}"</p>
               </div>
             ))}
           </div>
@@ -173,27 +281,30 @@ const Home = () => {
       </section>
 
       {/* Bottom CTA Section */}
-      <section className="section-padding bg-gradient-to-r from-primary-600 to-primary-700">
-        <div className="max-w-7xl mx-auto container-padding text-center">
-          <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
-            Ready to scale your business?
+      <section className="py-20 bg-gradient-to-r from-blue-600 to-purple-600 relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_40%,rgba(255,255,255,0.1),transparent_50%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_60%,rgba(255,255,255,0.05),transparent_50%)]" />
+        
+        <div className="relative z-10 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <h2 className="text-3xl md:text-5xl font-bold text-white mb-6">
+            Ready to build the future?
           </h2>
-          <p className="text-xl text-primary-100 mb-8 max-w-2xl mx-auto">
-            Join thousands of businesses already using TerraScale to grow faster and more efficiently.
+          <p className="text-xl text-blue-100 mb-10 max-w-2xl mx-auto">
+            Join thousands of developers already using TerraScale to build scalable, reliable applications.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
             <Link
               to="/contact"
-              className="bg-white text-primary-600 hover:bg-gray-50 font-semibold py-3 px-8 rounded-lg transition-colors duration-200 inline-flex items-center"
+              className="bg-white text-blue-600 hover:bg-gray-50 font-bold py-4 px-8 rounded-xl transition-all duration-300 transform hover:scale-105 inline-flex items-center shadow-lg"
             >
-              Start Your Free Trial
-              <ChevronRight className="ml-2 h-4 w-4" />
+              Start Building Today
+              <ArrowRight className="ml-2 h-5 w-5" />
             </Link>
             <Link
               to="/pricing"
-              className="border-2 border-white text-white hover:bg-white hover:text-primary-600 font-semibold py-3 px-8 rounded-lg transition-all duration-200"
+              className="border-2 border-white text-white hover:bg-white hover:text-blue-600 font-bold py-4 px-8 rounded-xl transition-all duration-300"
             >
-              View Pricing
+              Explore Pricing
             </Link>
           </div>
         </div>
