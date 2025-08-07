@@ -74,21 +74,27 @@ const Home = () => {
       <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
         {/* Animated Background */}
         <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-accent/20">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_40%,rgba(99,102,241,0.1),transparent_50%)]" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_60%,rgba(147,51,234,0.1),transparent_50%)]" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(59,130,246,0.05),transparent_50%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_40%,rgba(67,121,242,0.1),transparent_50%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_60%,rgba(110,194,7,0.1),transparent_50%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(67,121,242,0.05),transparent_50%)]" />
         </div>
         
-        {/* Floating Elements */}
-        <div className="absolute top-20 left-10 w-4 h-4 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0s' }} />
-        <div className="absolute top-40 right-20 w-3 h-3 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.5s' }} />
-        <div className="absolute bottom-40 left-20 w-5 h-5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '1s' }} />
-        <div className="absolute bottom-20 right-10 w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '1.5s' }} />
+        {/* Floating Elements - Earth theme */}
+        <div className="absolute top-20 left-10 w-4 h-4 bg-[#4379F2] rounded-full animate-bounce animate-pulse-glow" style={{ animationDelay: '0s' }} />
+        <div className="absolute top-40 right-20 w-3 h-3 bg-[#6EC207] rounded-full animate-bounce" style={{ animationDelay: '0.5s' }} />
+        <div className="absolute bottom-40 left-20 w-5 h-5 bg-[#4379F2]/70 rounded-full animate-float" style={{ animationDelay: '1s' }} />
+        <div className="absolute bottom-20 right-10 w-2 h-2 bg-[#6EC207]/70 rounded-full animate-bounce" style={{ animationDelay: '1.5s' }} />
+        <div className="absolute top-1/2 left-1/4 w-3 h-3 bg-[#4379F2]/50 rounded-full animate-pulse" />
+        <div className="absolute top-1/3 right-1/3 w-4 h-4 bg-[#6EC207]/50 rounded-full animate-float" style={{ animationDelay: '2s' }} />
+        
+        {/* Additional floating decorations */}
+        <div className="absolute top-1/4 left-1/2 w-6 h-6 border-2 border-[#4379F2]/30 rounded-full animate-float" style={{ animationDelay: '3s' }} />
+        <div className="absolute bottom-1/3 right-1/4 w-8 h-8 border border-[#6EC207]/20 rounded-full animate-pulse" style={{ animationDelay: '4s' }} />
         
         <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
           <div className="text-center max-w-4xl mx-auto">
             {/* Badge */}
-            <div className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-blue-600/10 to-purple-600/10 border border-border rounded-full text-sm font-medium text-foreground mb-8 animate-fade-in">
+            <div className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-[#4379F2]/10 to-[#6EC207]/10 border border-border rounded-full text-sm font-medium text-foreground mb-8 animate-fade-in">
               <Database className="h-4 w-4 mr-2 text-primary" />
               Database as a Service Platform
             </div>
@@ -96,7 +102,7 @@ const Home = () => {
             {/* Main Heading */}
             <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-foreground mb-8 animate-fade-in">
               Scale Your{' '}
-              <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 bg-clip-text text-transparent animate-gradient bg-[length:200%_auto]">
+              <span className="bg-gradient-to-r from-[#4379F2] via-[#6EC207] to-[#4379F2] bg-clip-text text-transparent animate-gradient bg-[length:200%_auto]">
                 Database
               </span>
               <br />
@@ -112,13 +118,13 @@ const Home = () => {
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-16 animate-slide-up">
               <Link
                 to="/contact"
-                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-8 py-4 rounded-xl text-lg font-semibold transition-all duration-300 transform hover:scale-105 inline-flex items-center shadow-lg hover:shadow-xl"
+                className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] hover:from-[#3366E6] hover:to-[#5CAE06] text-white px-8 py-4 rounded-xl text-lg font-semibold transition-all duration-300 transform hover:scale-105 inline-flex items-center shadow-lg hover:shadow-xl"
               >
                 Start Building Free
                 <ArrowRight className="ml-2 h-5 w-5" />
               </Link>
               <Link
-                to="/pricing"
+                to="https://docs.terrascale.tech"
                 className="border border-border hover:bg-accent text-foreground px-8 py-4 rounded-xl text-lg font-semibold transition-all duration-300 inline-flex items-center"
               >
                 <BookOpen className="mr-2 h-5 w-5" />
@@ -151,7 +157,7 @@ const Home = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-5xl font-bold text-foreground mb-6">
-              Why Choose <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">TerraScale</span>
+              Why Choose <span className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] bg-clip-text text-transparent">TerraScale</span>
             </h2>
             <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
               Built for developers, trusted by enterprises. Experience the next generation of database infrastructure.
@@ -165,7 +171,7 @@ const Home = () => {
                 className="bg-card border border-border p-8 rounded-2xl hover:shadow-lg transition-all duration-300 group transform hover:-translate-y-2"
                 style={{ animationDelay: `${index * 0.1}s` }}
               >
-                <div className="w-14 h-14 bg-gradient-to-r from-blue-600/10 to-purple-600/10 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
+                <div className="w-14 h-14 bg-gradient-to-r from-[#4379F2]/10 to-[#6EC207]/10 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
                   <feature.icon className="h-7 w-7 text-primary" />
                 </div>
                 <h3 className="text-xl font-bold text-foreground mb-3">
@@ -186,7 +192,7 @@ const Home = () => {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
             <div>
               <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-6">
-                Get started in <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">seconds</span>
+                Get started in <span className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] bg-clip-text text-transparent">seconds</span>
               </h2>
               <p className="text-xl text-muted-foreground mb-8">
                 Simple APIs, powerful features. Deploy your database with a single command and start building immediately.
@@ -194,7 +200,7 @@ const Home = () => {
               <div className="flex items-center space-x-4">
                 <Link
                   to="/contact"
-                  className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center"
+                  className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] hover:from-[#3366E6] hover:to-[#5CAE06] text-white px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center"
                 >
                   Start Free Trial
                   <ArrowRight className="ml-2 h-4 w-4" />
@@ -281,7 +287,7 @@ const users = await db.collection('users')
       </section>
 
       {/* Bottom CTA Section */}
-      <section className="py-20 bg-gradient-to-r from-blue-600 to-purple-600 relative overflow-hidden">
+      <section className="py-20 bg-gradient-to-r from-[#4379F2] to-[#6EC207] relative overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_40%,rgba(255,255,255,0.1),transparent_50%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_60%,rgba(255,255,255,0.05),transparent_50%)]" />
         
@@ -289,20 +295,20 @@ const users = await db.collection('users')
           <h2 className="text-3xl md:text-5xl font-bold text-white mb-6">
             Ready to build the future?
           </h2>
-          <p className="text-xl text-blue-100 mb-10 max-w-2xl mx-auto">
+          <p className="text-xl text-white/80 mb-10 max-w-2xl mx-auto">
             Join thousands of developers already using TerraScale to build scalable, reliable applications.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
             <Link
               to="/contact"
-              className="bg-white text-blue-600 hover:bg-gray-50 font-bold py-4 px-8 rounded-xl transition-all duration-300 transform hover:scale-105 inline-flex items-center shadow-lg"
+              className="bg-white text-[#4379F2] hover:bg-gray-50 font-bold py-4 px-8 rounded-xl transition-all duration-300 transform hover:scale-105 inline-flex items-center shadow-lg"
             >
               Start Building Today
               <ArrowRight className="ml-2 h-5 w-5" />
             </Link>
             <Link
               to="/pricing"
-              className="border-2 border-white text-white hover:bg-white hover:text-blue-600 font-bold py-4 px-8 rounded-xl transition-all duration-300"
+              className="border-2 border-white text-white hover:bg-white hover:text-[#4379F2] font-bold py-4 px-8 rounded-xl transition-all duration-300"
             >
               Explore Pricing
             </Link>

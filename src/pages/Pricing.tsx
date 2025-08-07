@@ -1,10 +1,12 @@
 import { useState } from 'react'
-import { Check, Star, ChevronDown, Zap, Shield, TrendingUp, BookOpen, MessageSquare, ArrowRight } from 'lucide-react'
+import { Check, Star, ChevronDown, Zap, Shield, TrendingUp, BookOpen, MessageSquare, ArrowRight, ExternalLink } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import ContactModal from '../components/ContactModal'
 
 const Pricing = () => {
   const [billingPeriod, setBillingPeriod] = useState('monthly') // 'monthly' or 'annual'
   const [openFaq, setOpenFaq] = useState(null)
+  const [isContactModalOpen, setIsContactModalOpen] = useState(false)
 
   const plans = [
     {
@@ -37,7 +39,7 @@ const Pricing = () => {
       ],
       cta: 'Get Hobby',
       href: '/contact',
-      gradient: 'from-blue-600 to-blue-700'
+      gradient: 'from-[#4379F2] to-[#4379F2]'
     },
     {
       name: 'Pro',
@@ -53,23 +55,24 @@ const Pricing = () => {
       ],
       cta: 'Get Pro',
       href: '/contact',
-      gradient: 'from-blue-600 to-purple-600'
+      gradient: 'from-[#4379F2] to-[#6EC207]'
     },
     {
       name: 'Enterprise',
-      price: { monthly: 99.99, annual: 999 },
+      price: null, // No pricing shown
       popular: false,
       description: 'For mission-critical applications',
       features: [
-        'Databases: Unlimited',
-        'Support: Premium SLA',
-        'Storage: $0.25 per GB',
-        'Egress: $0.05 per GB',
-        'Operations: $1 per 1B ops'
+        'Everything in Pro',
+        'Dedicated support team',
+        'Custom SLA agreements',
+        'On-premise deployment options',
+        'Advanced security features',
+        'Custom integrations'
       ],
-      cta: 'Contact Sales',
-      href: '/contact',
-      gradient: 'from-purple-600 to-purple-700'
+      cta: 'Contact Us',
+      href: null, // Will open modal instead
+      gradient: 'from-[#6EC207] to-[#4379F2]'
     }
   ]
 
@@ -137,7 +140,7 @@ const Pricing = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-4xl mx-auto">
             <h1 className="text-4xl md:text-6xl font-bold text-foreground mb-6 animate-fade-in">
-              Simple <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Pricing</span>
+              Simple <span className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] bg-clip-text text-transparent">Pricing</span>
             </h1>
             <p className="text-xl md:text-2xl text-muted-foreground mb-8 animate-slide-up">
               Start free, scale as you grow. No hidden fees, no surprises.
@@ -149,7 +152,7 @@ const Pricing = () => {
                 onClick={() => setBillingPeriod('monthly')}
                 className={`px-6 py-3 rounded-lg font-medium transition-all duration-300 ${
                   billingPeriod === 'monthly'
-                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg'
+                    ? 'bg-gradient-to-r from-[#4379F2] to-[#6EC207] text-white shadow-lg'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -159,13 +162,13 @@ const Pricing = () => {
                 onClick={() => setBillingPeriod('annual')}
                 className={`px-6 py-3 rounded-lg font-medium transition-all duration-300 relative ${
                   billingPeriod === 'annual'
-                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg'
+                    ? 'bg-gradient-to-r from-[#4379F2] to-[#6EC207] text-white shadow-lg'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 Annual
                 {getSavings() && (
-                  <span className="absolute -top-2 -right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full">
+                  <span className="absolute -top-2 -right-2 bg-[#6EC207] text-white text-xs px-2 py-1 rounded-full">
                     {getSavings()}
                   </span>
                 )}
@@ -191,7 +194,7 @@ const Pricing = () => {
               >
                 {plan.popular && (
                   <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
-                    <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-full text-sm font-semibold flex items-center shadow-lg">
+                    <div className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] text-white px-4 py-2 rounded-full text-sm font-semibold flex items-center shadow-lg">
                       <Star className="h-4 w-4 mr-1 fill-current" />
                       MOST POPULAR
                     </div>
@@ -205,20 +208,29 @@ const Pricing = () => {
                   </div>
                   
                   <div className="text-center mb-6">
-                    <span className="text-4xl md:text-5xl font-bold text-foreground">
-                      {formatPrice(plan.price[billingPeriod])}
-                    </span>
-                    {plan.price.monthly > 0 && (
-                      <span className="text-muted-foreground ml-2">
-                        {billingPeriod === 'annual' ? '/year' : '/month'}
-                      </span>
+                    {plan.price ? (
+                      <>
+                        <span className="text-4xl md:text-5xl font-bold text-foreground">
+                          {formatPrice(plan.price[billingPeriod])}
+                        </span>
+                        {plan.price.monthly > 0 && (
+                          <span className="text-muted-foreground ml-2">
+                            {billingPeriod === 'annual' ? '/year' : '/month'}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-center">
+                        <span className="text-2xl font-bold text-foreground">Custom Pricing</span>
+                        <p className="text-sm text-muted-foreground mt-1">Contact us for details</p>
+                      </div>
                     )}
                   </div>
                   
                   <ul className="space-y-4 mb-8">
                     {plan.features.map((feature, featureIndex) => (
                       <li key={featureIndex} className="flex items-start space-x-3">
-                        <div className="w-5 h-5 rounded-full bg-gradient-to-r from-green-400 to-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <div className="w-5 h-5 rounded-full bg-gradient-to-r from-[#6EC207] to-[#6EC207] flex items-center justify-center flex-shrink-0 mt-0.5">
                           <Check className="h-3 w-3 text-white" />
                         </div>
                         <span className="text-muted-foreground text-sm">{feature}</span>
@@ -226,16 +238,25 @@ const Pricing = () => {
                     ))}
                   </ul>
                   
-                  <Link
-                    to={plan.href}
-                    className={`w-full block text-center py-4 px-6 rounded-xl font-semibold transition-all duration-300 transform hover:scale-105 ${
-                      plan.popular
-                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-lg'
-                        : 'bg-accent hover:bg-accent/80 text-accent-foreground border border-border'
-                    }`}
-                  >
-                    {plan.cta}
-                  </Link>
+                  {plan.href ? (
+                    <Link
+                      to={plan.href}
+                      className={`w-full block text-center py-4 px-6 rounded-xl font-semibold transition-all duration-300 transform hover:scale-105 ${
+                        plan.popular
+                          ? `bg-gradient-to-r ${plan.gradient} hover:from-[#3366E6] hover:to-[#5CAE06] text-white shadow-lg`
+                          : `bg-gradient-to-r ${plan.gradient} hover:opacity-90 text-white shadow-lg`
+                      }`}
+                    >
+                      {plan.cta}
+                    </Link>
+                  ) : (
+                    <button
+                      onClick={() => setIsContactModalOpen(true)}
+                      className={`w-full py-4 px-6 rounded-xl font-semibold transition-all duration-300 transform hover:scale-105 bg-gradient-to-r ${plan.gradient} hover:from-[#5CAE06] hover:to-[#3366E6] text-white shadow-lg`}
+                    >
+                      {plan.cta}
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -257,6 +278,29 @@ const Pricing = () => {
               <TrendingUp className="h-12 w-12 text-primary mx-auto mb-4" />
               <h3 className="font-semibold text-foreground mb-2">Auto-scaling</h3>
               <p className="text-muted-foreground text-sm">Scales automatically with your traffic</p>
+            </div>
+          </div>
+          
+          {/* Detailed Pricing Information */}
+          <div className="mt-16 text-center">
+            <div className="bg-gradient-to-r from-[#4379F2]/10 to-[#6EC207]/10 border border-border rounded-2xl p-8">
+              <h3 className="text-2xl font-bold text-foreground mb-4">
+                Need more detailed pricing information?
+              </h3>
+              <p className="text-muted-foreground mb-6">
+                Get comprehensive details about our pricing structure, including usage-based pricing, 
+                enterprise discounts, and detailed cost breakdowns.
+              </p>
+              <a
+                href="https://docs.terrascale.tech/pricing"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 bg-gradient-to-r from-[#4379F2] to-[#6EC207] hover:from-[#3366E6] hover:to-[#5CAE06] text-white px-6 py-3 rounded-lg font-semibold transition-all duration-300 transform hover:scale-105"
+              >
+                <BookOpen className="h-5 w-5" />
+                View Detailed Pricing
+                <ExternalLink className="h-4 w-4" />
+              </a>
             </div>
           </div>
         </div>
@@ -304,13 +348,13 @@ const Pricing = () => {
           </div>
           
           {/* Help CTA */}
-          <div className="mt-12 text-center p-8 bg-gradient-to-r from-blue-600/10 to-purple-600/10 rounded-xl border border-border">
+          <div className="mt-12 text-center p-8 bg-gradient-to-r from-[#4379F2]/10 to-[#6EC207]/10 rounded-xl border border-border">
             <h3 className="text-xl font-semibold text-foreground mb-2">Still have questions?</h3>
             <p className="text-muted-foreground mb-6">Our team is here to help you find the perfect plan for your needs.</p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link
                 to="/contact"
-                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center justify-center"
+                className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] hover:from-[#3366E6] hover:to-[#5CAE06] text-white px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center justify-center"
               >
                 <MessageSquare className="h-4 w-4 mr-2" />
                 Contact Sales
@@ -330,7 +374,7 @@ const Pricing = () => {
       </section>
 
       {/* CTA Section */}
-      <section className="py-20 bg-gradient-to-r from-blue-600 to-purple-600 relative overflow-hidden">
+      <section className="py-20 bg-gradient-to-r from-[#4379F2] to-[#6EC207] relative overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_40%,rgba(255,255,255,0.1),transparent_50%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_60%,rgba(255,255,255,0.05),transparent_50%)]" />
         
@@ -338,18 +382,24 @@ const Pricing = () => {
           <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
             Ready to get started?
           </h2>
-          <p className="text-xl text-blue-100 mb-8">
+          <p className="text-xl text-white/80 mb-8">
             Join thousands of developers building the future with TerraScale.
           </p>
           <Link
             to="/contact"
-            className="bg-white text-blue-600 hover:bg-gray-50 font-bold py-4 px-8 rounded-xl transition-all duration-300 transform hover:scale-105 inline-flex items-center shadow-lg"
+            className="bg-white text-[#4379F2] hover:bg-gray-50 font-bold py-4 px-8 rounded-xl transition-all duration-300 transform hover:scale-105 inline-flex items-center shadow-lg"
           >
             Start Building Today
             <ArrowRight className="ml-2 h-5 w-5" />
           </Link>
         </div>
       </section>
+      
+      {/* Contact Modal */}
+      <ContactModal 
+        isOpen={isContactModalOpen} 
+        onClose={() => setIsContactModalOpen(false)} 
+      />
     </>
   )
 }
