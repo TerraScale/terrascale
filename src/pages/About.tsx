@@ -1,4 +1,4 @@
-import { Users, Target, Shield, Award, BookOpen, MessageSquare } from 'lucide-react'
+import { Users, Target, Shield, Award, BookOpen, MessageSquare, Mail } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 const About = () => {
@@ -136,11 +136,18 @@ const About = () => {
                   Mario Gabriell Karaziaki Belchior
                 </h3>
                 <p className="text-primary font-semibold mb-4">CEO & Founder</p>
-                <p className="text-muted-foreground leading-relaxed">
-                  Building the future of scalable database technology with passion and vision. 
-                  Mario combines deep technical expertise with strategic leadership to 
+                <p className="text-muted-foreground leading-relaxed mb-4">
+                  Building the future of scalable database technology with passion and vision.
+                  Mario combines deep technical expertise with strategic leadership to
                   drive TerraScale's mission forward.
                 </p>
+                <a
+                  href="mailto:mariogk@terrascale.tech"
+                  className="inline-flex items-center text-sm text-muted-foreground hover:text-primary transition-colors duration-200"
+                >
+                  <Mail className="h-4 w-4 mr-2" />
+                  mariogk@terrascale.tech
+                </a>
               </div>
             </div>
           </div>
@@ -162,7 +169,7 @@ const About = () => {
                   Get in Touch
                 </Link>
                 <a
-                  href="https://docs.terrascale.com"
+                  href="https://docs.terrascale.tech"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="border border-border hover:bg-accent text-foreground px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center justify-center"
@@ -205,7 +212,7 @@ const About = () => {
               <div className="text-blue-100">Support</div>
             </div>
             <div className="p-6 bg-white/10 rounded-xl backdrop-blur-sm">
-              <div className="text-4xl md:text-5xl font-bold mb-2">50+</div>
+              <div className="text-4xl md:text-5xl font-bold mb-2">20+</div>
               <div className="text-blue-100">Global Regions</div>
             </div>
           </div>
