@@ -10,26 +10,11 @@ const Pricing = () => {
 
   const plans = [
     {
-      name: 'Trial',
-      price: { monthly: 0, annual: 0 },
-      popular: false,
-      description: 'Perfect for getting started',
-      features: [
-        'Databases: Unlimited',
-        'Database Operations: 1M operations',
-        'Storage: 1 GB',
-        'Egress Bandwidth: 1 GB',
-        'Support: Community Discord'
-      ],
-      cta: 'Start Free Trial',
-      href: '/contact',
-      gradient: 'from-gray-600 to-gray-700'
-    },
-    {
       name: 'Hobby',
       price: { monthly: 4.99, annual: 49 },
       popular: false,
       description: 'Great for personal projects',
+      trial: '30-day free trial',
       features: [
         'Databases: Unlimited',
         'Database Operations: 10M included',
@@ -37,7 +22,7 @@ const Pricing = () => {
         'Egress Bandwidth: 15 GB',
         'Support: Priority Discord'
       ],
-      cta: 'Get Hobby',
+      cta: 'Start Free Trial',
       href: '/contact',
       gradient: 'from-[#4379F2] to-[#4379F2]'
     },
@@ -46,6 +31,7 @@ const Pricing = () => {
       price: { monthly: 24.99, annual: 249 },
       popular: true,
       description: 'Best for growing teams',
+      trial: '30-day free trial',
       features: [
         'Databases: Unlimited',
         'Database Operations: 1B included',
@@ -53,7 +39,7 @@ const Pricing = () => {
         'Egress Bandwidth: 100 GB',
         'Support: Email + Discord'
       ],
-      cta: 'Get Pro',
+      cta: 'Start Free Trial',
       href: '/contact',
       gradient: 'from-[#4379F2] to-[#6EC207]'
     },
@@ -114,6 +100,12 @@ const Pricing = () => {
       answer: (
         <p>Yes! We offer custom enterprise solutions including dedicated instances, private cloud deployments, custom SLAs, and specialized support. Contact our sales team to discuss your specific requirements.</p>
       )
+    },
+    {
+      question: 'Why do you require a credit card for the free trial?',
+      answer: (
+        <p>We require a credit card to prevent spam and abuse of our platform. This helps us maintain high-quality service for all users. You won't be charged during the 30-day trial period, and you can cancel anytime before the trial ends.</p>
+      )
     }
   ]
 
@@ -143,7 +135,7 @@ const Pricing = () => {
               Simple <span className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] bg-clip-text text-transparent">Pricing</span>
             </h1>
             <p className="text-xl md:text-2xl text-muted-foreground mb-8 animate-slide-up">
-              Start free, scale as you grow. No hidden fees, no surprises.
+              30-day free trial on all plans. No hidden fees, no surprises.
             </p>
             
             {/* Billing Toggle */}
@@ -181,7 +173,7 @@ const Pricing = () => {
       {/* Pricing Plans */}
       <section className="py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {plans.map((plan, index) => (
               <div
                 key={plan.name}
@@ -205,6 +197,11 @@ const Pricing = () => {
                   <div className="text-center mb-6">
                     <h3 className="text-2xl font-bold text-foreground mb-2">{plan.name}</h3>
                     <p className="text-muted-foreground text-sm">{plan.description}</p>
+                    {plan.trial && (
+                      <span className="inline-block mt-2 text-xs font-medium text-[#6EC207] bg-[#6EC207]/10 px-3 py-1 rounded-full">
+                        {plan.trial}
+                      </span>
+                    )}
                   </div>
                   
                   <div className="text-center mb-6">
@@ -360,7 +357,7 @@ const Pricing = () => {
                 Contact Sales
               </Link>
               <a
-                href="https://docs.terrascale.com"
+                href="https://docs.terrascale.tech"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="border border-border hover:bg-accent text-foreground px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center justify-center"

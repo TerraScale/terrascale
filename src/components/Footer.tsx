@@ -13,17 +13,17 @@ const Footer = () => {
     Product: [
       { name: 'Features', href: '/#features' },
       { name: 'Pricing', href: '/pricing' },
-      { name: 'Documentation', href: 'https://docs.terrascale.com' },
-      { name: 'API Reference', href: 'https://docs.terrascale.com/api' },
+      { name: 'Documentation', href: 'https://docs.terrascale.tech' },
+      { name: 'API Reference', href: 'https://docs.terrascale.tech/api' },
     ],
     Company: [
       { name: 'About', href: '/about' },
       { name: 'Contact', href: '/contact' },
-      { name: 'Status', href: 'https://status.terrascale.com' },
-      { name: 'Blog', href: 'https://blog.terrascale.com' },
+      { name: 'Status', href: 'https://status.terrascale.tech' },
+      { name: 'Blog', href: 'https://blog.terrascale.tech' },
     ],
     Resources: [
-      { name: 'Help Center', href: 'https://help.terrascale.com' },
+      { name: 'Help Center', href: 'https://help.terrascale.tech' },
       { name: 'Community', href: 'https://discord.gg/terrascale' },
       { name: 'Security', href: '/security' },
       { name: 'Terms', href: '/terms' },
@@ -53,7 +53,7 @@ const Footer = () => {
               <div className="space-y-2 text-sm text-muted-foreground mb-4">
                 <div className="flex items-center space-x-2">
                   <Mail className="h-3 w-3" />
-                  <span>contact@terrascale.com</span>
+                  <span>support@terrascale.tech</span>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Phone className="h-3 w-3" />

@@ -65,7 +65,7 @@ const Home = () => {
     { value: '99.99%', label: 'Uptime SLA' },
     { value: '<10ms', label: 'Query Latency' },
     { value: '1M+', label: 'Queries/Second' },
-    { value: '50+', label: 'Global Regions' },
+    { value: '20+', label: 'Global Regions' },
   ]
 
   return (

@@ -72,8 +72,8 @@ const Contact = () => {
     {
       icon: Mail,
       label: 'Email',
-      value: 'contact@terrascale.com',
-      href: 'mailto:contact@terrascale.com'
+      value: 'support@terrascale.tech',
+      href: 'mailto:support@terrascale.tech'
     },
     {
       icon: Phone,
