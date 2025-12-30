@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Mail, Phone, MapPin, Clock, Send, CheckCircle, AlertCircle, MessageSquare } from 'lucide-react'
+import { Mail, Clock, Send, CheckCircle, AlertCircle, MessageSquare } from 'lucide-react'
 
 const Contact = () => {
   const [formData, setFormData] = useState({
@@ -74,12 +74,6 @@ const Contact = () => {
       label: 'Email',
       value: 'support@terrascale.tech',
       href: 'mailto:support@terrascale.tech'
-    },
-    {
-      icon: Phone,
-      label: 'Phone',
-      value: '+1 (555) 123-4567',
-      href: 'tel:+15551234567'
     },
     {
       icon: MessageSquare,

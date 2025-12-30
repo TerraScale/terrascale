@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Menu, X, Home, Users, DollarSign, MessageCircle, LogIn, BookOpen } from 'lucide-react'
+import { Menu, X, Home, Users, DollarSign, MessageCircle, LogIn, BookOpen, Activity } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 const Header = () => {
@@ -73,9 +73,21 @@ const Header = () => {
 
           {/* Desktop CTA */}
           <div className="hidden md:flex items-center space-x-3">
+            <a
+              href="https://status.terrascale.tech"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors duration-200 flex items-center space-x-2"
+            >
+              <div className="flex items-center space-x-1.5">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                <Activity className="h-4 w-4" />
+              </div>
+              <span>Status</span>
+            </a>
             <Link
               to="/contact"
-              className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors duration-200 flex items-center space-x-2"
+              className="px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors duration-200 flex items-center space-x-2"
             >
               <LogIn className="h-4 w-4" />
               <span>Login</span>
@@ -142,6 +154,19 @@ const Header = () => {
                 )
               ))}
               <div className="pt-4 space-y-2">
+                <a
+                  href="https://status.terrascale.tech"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-all duration-200"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  <div className="flex items-center space-x-1.5">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <Activity className="h-4 w-4" />
+                  </div>
+                  <span>Status</span>
+                </a>
                 <Link
                   to="/contact"
                   className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-all duration-200"
