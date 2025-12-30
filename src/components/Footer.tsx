@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Twitter, Linkedin, Github, Mail, Phone, MapPin, MessageSquare } from 'lucide-react'
+import { Twitter, Linkedin, Github, Mail, MessageSquare } from 'lucide-react'
 
 const Footer = () => {
   const socialLinks = [
@@ -56,8 +56,8 @@ const Footer = () => {
                   <span>support@terrascale.tech</span>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <Phone className="h-3 w-3" />
-                  <span>+1 (555) 123-4567</span>
+                  <MessageSquare className="h-3 w-3" />
+                  <a href="https://discord.gg/terrascale" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">Discord Community</a>
                 </div>
               </div>
 
