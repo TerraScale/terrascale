@@ -157,7 +157,7 @@ const Header = () => {
                   </Link>
                 )
               ))}
-              <div className="pt-4 space-y-2">
+              <div className="pt-4 mt-2 border-t border-border space-y-2">
                 <a
                   href="https://docs.terrascale.tech"
                   target="_blank"
