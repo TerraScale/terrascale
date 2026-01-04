@@ -25,8 +25,7 @@ const Pricing = () => {
         'Support: Priority Discord'
       ],
       cta: 'Start Free Trial',
-      href: '/contact',
-      gradient: 'from-[#4379F2] to-[#4379F2]'
+      href: '/contact'
     },
     {
       name: 'Pro',
@@ -42,12 +41,11 @@ const Pricing = () => {
         'Support: Email + Discord'
       ],
       cta: 'Start Free Trial',
-      href: '/contact',
-      gradient: 'from-[#4379F2] to-[#6EC207]'
+      href: '/contact'
     },
     {
       name: 'Enterprise',
-      price: null,
+      basePrice: 499,
       popular: false,
       description: 'For mission-critical applications',
       features: [
@@ -56,11 +54,12 @@ const Pricing = () => {
         'Custom SLA agreements',
         'On-premise deployment options',
         'Advanced security features',
-        'Custom integrations'
+        'Custom integrations',
+        'Usage-based pricing: $1/GB storage',
+        'Usage-based pricing: $1M operations'
       ],
       cta: 'Contact Us',
-      href: null,
-      gradient: 'from-[#6EC207] to-[#4379F2]'
+      href: null
     }
   ]
 
@@ -70,10 +69,19 @@ const Pricing = () => {
       answer: (
         <div className="space-y-3">
           <p>A database operation refers to any interaction with your database. This includes:</p>
-          <ul className="list-disc list-inside space-y-2 ml-4">
-            <li><strong>Read Operations:</strong> When you retrieve data from the database, it counts as one read operation.</li>
-            <li><strong>Write Operations:</strong> When you save or modify data in the database, it counts as one write operation.</li>
-            <li><strong>Replication Operations:</strong> If your database is configured to replicate data across multiple regions, each time an object is written or updated, it incurs an operation for the initial write plus one operation for each region it replicates to.</li>
+          <ul className="list-none space-y-2 ml-4">
+            <li className="flex items-start space-x-2">
+              <span className="text-[#10B981]">➜</span>
+              <span><strong>Read Operations:</strong> When you retrieve data from database, it counts as one read operation.</span>
+            </li>
+            <li className="flex items-start space-x-2">
+              <span className="text-[#10B981]">➜</span>
+              <span><strong>Write Operations:</strong> When you save or modify data in database, it counts as one write operation.</span>
+            </li>
+            <li className="flex items-start space-x-2">
+              <span className="text-[#10B981]">➜</span>
+              <span><strong>Replication Operations:</strong> If your database is configured to replicate data across multiple regions, each time an object is written or updated, it incurs an operation for the initial write plus one operation for each region it replicates to.</span>
+            </li>
           </ul>
         </div>
       )
@@ -89,9 +97,15 @@ const Pricing = () => {
       answer: (
         <div className="space-y-3">
           <p>You can change your subscription anytime you want.</p>
-          <ul className="list-disc list-inside space-y-2 ml-4">
-            <li><strong>Upgrading:</strong> When you upgrade, your new plan's features will be available immediately. We'll adjust the cost for your current billing cycle on a prorated basis.</li>
-            <li><strong>Downgrading:</strong> If you choose to downgrade, your current plan will stay active until the end of your billing cycle. Your new, lower-cost plan will then start at the beginning of the next cycle.</li>
+          <ul className="list-none space-y-2 ml-4">
+            <li className="flex items-start space-x-2">
+              <span className="text-[#10B981]">➜</span>
+              <span><strong>Upgrading:</strong> When you upgrade, your new plan's features will be available immediately. We'll adjust the cost for your current billing cycle on a prorated basis.</span>
+            </li>
+            <li className="flex items-start space-x-2">
+              <span className="text-[#10B981]">➜</span>
+              <span><strong>Downgrading:</strong> If you choose to downgrade, your current plan will stay active until the end of your billing cycle. Your new, lower-cost plan will then start at the beginning of the next cycle.</span>
+            </li>
           </ul>
           <p>Please note that we generally don't offer partial refunds for downgrades. However, we're happy to review special cases, so feel free to contact our support team to discuss your specific situation.</p>
         </div>
@@ -135,37 +149,36 @@ const Pricing = () => {
 
   return (
     <>
-      {/* Hero Section */}
-      <section className="py-24 bg-gradient-to-br from-background via-accent/10 to-background">
+      <section className="py-24 bg-[#050508]">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-4xl mx-auto">
             <ScrollReveal>
-              <h1 className="text-4xl md:text-6xl font-bold text-foreground mb-6 tracking-tight">
-                Simple <span className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] bg-clip-text text-transparent">Pricing</span>
+              <h1 className="text-4xl md:text-6xl font-bold text-[#F8FAFC] mb-6 tracking-tight">
+                <span className="terminal-prefix">///</span>
+                Simple Pricing
               </h1>
             </ScrollReveal>
             <ScrollReveal delay={0.1}>
-              <p className="text-xl md:text-2xl text-muted-foreground mb-8 leading-relaxed">
+              <p className="text-xl md:text-2xl text-[#94A3B8] mb-8 leading-relaxed">
                 30-day free trial on all plans. No hidden fees, no surprises.
               </p>
             </ScrollReveal>
 
-            {/* Billing Toggle */}
             <ScrollReveal delay={0.2}>
-              <div className="inline-flex items-center bg-card border border-border rounded-xl p-1">
+              <div className="inline-flex items-center ts-glass-frosted ts-rounded-lg p-1">
                 <motion.button
                   onClick={() => setBillingPeriod('monthly')}
-                  className={`px-6 py-3 rounded-lg font-medium transition-colors duration-300 relative ${
+                  className={`px-6 py-3 ts-rounded-sm font-medium transition-colors duration-200 relative ${
                     billingPeriod === 'monthly'
-                      ? 'text-white'
-                      : 'text-muted-foreground hover:text-foreground'
+                      ? 'text-[#050508]'
+                      : 'text-[#94A3B8] hover:text-[#F8FAFC]'
                   }`}
                   whileTap={{ scale: 0.98 }}
                 >
                   {billingPeriod === 'monthly' && (
                     <motion.div
                       layoutId="billingToggle"
-                      className="absolute inset-0 bg-gradient-to-r from-[#4379F2] to-[#6EC207] rounded-lg shadow-lg"
+                      className="absolute inset-0 bg-[#2563EB] ts-rounded-sm shadow-offset-blue"
                       transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
                     />
                   )}
@@ -173,17 +186,17 @@ const Pricing = () => {
                 </motion.button>
                 <motion.button
                   onClick={() => setBillingPeriod('annual')}
-                  className={`px-6 py-3 rounded-lg font-medium transition-colors duration-300 relative ${
+                  className={`px-6 py-3 ts-rounded-sm font-medium transition-colors duration-200 relative ${
                     billingPeriod === 'annual'
-                      ? 'text-white'
-                      : 'text-muted-foreground hover:text-foreground'
+                      ? 'text-[#050508]'
+                      : 'text-[#94A3B8] hover:text-[#F8FAFC]'
                   }`}
                   whileTap={{ scale: 0.98 }}
                 >
                   {billingPeriod === 'annual' && (
                     <motion.div
                       layoutId="billingToggle"
-                      className="absolute inset-0 bg-gradient-to-r from-[#4379F2] to-[#6EC207] rounded-lg shadow-lg"
+                      className="absolute inset-0 bg-[#2563EB] ts-rounded-sm shadow-offset-blue"
                       transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
                     />
                   )}
@@ -192,7 +205,7 @@ const Pricing = () => {
                     <motion.span
                       initial={{ scale: 0 }}
                       animate={{ scale: 1 }}
-                      className="absolute -top-2 -right-2 bg-[#6EC207] text-white text-xs px-2 py-1 rounded-full"
+                      className="absolute -top-2 -right-2 bg-[#10B981] text-[#050508] text-xs px-2 py-1 ts-rounded-sm font-bold"
                     >
                       {getSavings()}
                     </motion.span>
@@ -204,21 +217,19 @@ const Pricing = () => {
         </div>
       </section>
 
-      {/* Pricing Plans */}
-      <section className="py-24">
+      <section className="py-24 bg-[#0A0A0E]">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8">
-          <StaggerContainer className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <StaggerContainer className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {plans.map((plan) => (
               <StaggerItem key={plan.name}>
                 <motion.div
-                  className={`relative bg-card border rounded-2xl h-full ${
+                  className={`relative ts-glass ts-rounded-lg ${
                     plan.popular
-                      ? 'border-primary shadow-lg scale-105 lg:scale-110'
-                      : 'border-border'
+                      ? 'border-2 border-[#0891B2]'
+                      : ''
                   }`}
                   whileHover={{
                     y: -8,
-                    boxShadow: "0 24px 48px -12px rgba(67, 121, 242, 0.15)"
                   }}
                   transition={{ type: "spring", stiffness: 300 }}
                 >
@@ -229,7 +240,7 @@ const Pricing = () => {
                       animate={{ y: 0, opacity: 1 }}
                       transition={{ delay: 0.3 }}
                     >
-                      <div className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] text-white px-4 py-2 rounded-full text-sm font-semibold flex items-center shadow-lg">
+                      <div className="bg-[#0891B2] text-[#050508] px-4 py-2 ts-rounded-sm text-sm font-bold flex items-center ts-glow-accent">
                         <Star className="h-4 w-4 mr-1 fill-current" />
                         MOST POPULAR
                       </div>
@@ -238,10 +249,10 @@ const Pricing = () => {
 
                   <div className="p-8">
                     <div className="text-center mb-6">
-                      <h3 className="text-2xl font-bold text-foreground mb-2">{plan.name}</h3>
-                      <p className="text-muted-foreground text-sm">{plan.description}</p>
+                      <h3 className="text-2xl font-bold text-[#F8FAFC] mb-2">{plan.name}</h3>
+                      <p className="text-[#94A3B8] text-sm">{plan.description}</p>
                       {plan.trial && (
-                        <span className="inline-block mt-2 text-xs font-medium text-[#6EC207] bg-[#6EC207]/10 px-3 py-1 rounded-full">
+                        <span className="inline-block mt-2 text-xs font-bold text-[#10B981] bg-[#10B981]/10 px-3 py-1 ts-rounded-sm">
                           {plan.trial}
                         </span>
                       )}
@@ -255,19 +266,24 @@ const Pricing = () => {
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ duration: 0.3 }}
                         >
-                          <span className="text-4xl md:text-5xl font-bold text-foreground">
+                          <span className="text-4xl md:text-5xl font-bold ts-text-gradient">
                             {formatPrice(plan.price[billingPeriod])}
                           </span>
                           {plan.price.monthly > 0 && (
-                            <span className="text-muted-foreground ml-2">
+                            <span className="text-[#94A3B8] ml-2 text-sm">
                               {billingPeriod === 'annual' ? '/year' : '/month'}
                             </span>
                           )}
                         </motion.div>
+                      ) : plan.basePrice ? (
+                        <div className="text-center">
+                          <span className="text-2xl font-bold ts-text-gradient">$499/mo</span>
+                          <p className="text-sm text-[#94A3B8] mt-1">+ Usage: $1/GB, $1/M ops</p>
+                        </div>
                       ) : (
                         <div className="text-center">
-                          <span className="text-2xl font-bold text-foreground">Custom Pricing</span>
-                          <p className="text-sm text-muted-foreground mt-1">Contact us for details</p>
+                          <span className="text-2xl font-bold text-[#F8FAFC]">Custom Pricing</span>
+                          <p className="text-sm text-[#94A3B8] mt-1">Contact us for details</p>
                         </div>
                       )}
                     </div>
@@ -281,10 +297,10 @@ const Pricing = () => {
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ delay: featureIndex * 0.05 }}
                         >
-                          <div className="w-5 h-5 rounded-full bg-gradient-to-r from-[#6EC207] to-[#6EC207] flex items-center justify-center flex-shrink-0 mt-0.5">
-                            <Check className="h-3 w-3 text-white" />
+                          <div className="w-5 h-5 bg-[#10B981] ts-rounded-sm flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <Check className="h-3 w-3 text-[#050508]" />
                           </div>
-                          <span className="text-muted-foreground text-sm">{feature}</span>
+                          <span className="text-[#94A3B8] text-sm">{feature}</span>
                         </motion.li>
                       ))}
                     </ul>
@@ -293,7 +309,11 @@ const Pricing = () => {
                       <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
                         <Link
                           to={plan.href}
-                          className={`w-full block text-center py-4 px-6 rounded-xl font-semibold transition-all duration-300 bg-gradient-to-r ${plan.gradient} text-white shadow-lg hover:opacity-90`}
+                          className={`w-full block text-center py-4 px-6 ts-rounded-md font-bold transition-all duration-200 ${
+                            plan.popular
+                              ? 'bg-[#0891B2] hover:bg-[#0E7490] text-[#050508] ts-glow-accent'
+                              : 'ts-btn-primary'
+                          }`}
                         >
                           {plan.cta}
                         </Link>
@@ -301,7 +321,11 @@ const Pricing = () => {
                     ) : (
                       <motion.button
                         onClick={() => setIsContactModalOpen(true)}
-                        className={`w-full py-4 px-6 rounded-xl font-semibold transition-all duration-300 bg-gradient-to-r ${plan.gradient} text-white shadow-lg hover:opacity-90`}
+                        className={`w-full py-4 px-6 ts-rounded-md font-bold transition-all duration-200 ${
+                          plan.popular
+                            ? 'bg-[#0891B2] hover:bg-[#0E7490] text-[#050508] ts-glow-accent'
+                            : 'ts-btn-primary'
+                        }`}
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
                       >
@@ -314,38 +338,36 @@ const Pricing = () => {
             ))}
           </StaggerContainer>
 
-          {/* Additional Features */}
-          <StaggerContainer className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-8">
+          <StaggerContainer className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6">
             {additionalFeatures.map((feature) => (
               <StaggerItem key={feature.title}>
                 <motion.div
-                  className="text-center p-6 bg-card border border-border rounded-xl"
-                  whileHover={{ y: -4, boxShadow: "0 12px 24px -6px rgba(67, 121, 242, 0.1)" }}
+                  className="text-center p-6 ts-glass ts-rounded-lg hover:border-[#2563EB] transition-colors duration-200"
+                  whileHover={{ y: -4 }}
                 >
                   <motion.div
                     whileHover={{ scale: 1.1, rotate: 5 }}
                     transition={{ type: "spring", stiffness: 300 }}
                   >
-                    <feature.icon className="h-12 w-12 text-primary mx-auto mb-4" />
+                    <feature.icon className="h-12 w-12 text-[#2563EB] mx-auto mb-4" />
                   </motion.div>
-                  <h3 className="font-semibold text-foreground mb-2">{feature.title}</h3>
-                  <p className="text-muted-foreground text-sm">{feature.description}</p>
+                  <h3 className="font-bold text-[#F8FAFC] mb-2">{feature.title}</h3>
+                  <p className="text-[#94A3B8] text-sm">{feature.description}</p>
                 </motion.div>
               </StaggerItem>
             ))}
           </StaggerContainer>
 
-          {/* Detailed Pricing Information */}
           <ScrollReveal delay={0.2}>
             <motion.div
-              className="mt-16 text-center bg-gradient-to-r from-[#4379F2]/10 to-[#6EC207]/10 border border-border rounded-2xl p-8"
+              className="mt-16 text-center ts-glass-frosted ts-rounded-lg p-8 hover:border-[#2563EB] transition-colors duration-200"
               whileHover={{ scale: 1.01 }}
               transition={{ type: "spring", stiffness: 300 }}
             >
-              <h3 className="text-2xl font-bold text-foreground mb-4">
+              <h3 className="text-2xl font-bold text-[#F8FAFC] mb-4">
                 Need more detailed pricing information?
               </h3>
-              <p className="text-muted-foreground mb-6">
+              <p className="text-[#94A3B8] mb-6">
                 Get comprehensive details about our pricing structure, including usage-based pricing,
                 enterprise discounts, and detailed cost breakdowns.
               </p>
@@ -353,7 +375,7 @@ const Pricing = () => {
                 href="https://docs.terrascale.tech/pricing"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 bg-gradient-to-r from-[#4379F2] to-[#6EC207] hover:from-[#3366E6] hover:to-[#5CAE06] text-white px-6 py-3 rounded-lg font-semibold transition-all duration-300"
+                className="inline-flex items-center gap-2 ts-btn-primary px-6 py-3 ts-rounded-md font-bold"
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.98 }}
               >
@@ -366,15 +388,15 @@ const Pricing = () => {
         </div>
       </section>
 
-      {/* FAQ Section */}
-      <section className="py-24 bg-gradient-to-b from-background to-accent/5">
+      <section className="py-24 bg-[#050508]">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <ScrollReveal>
             <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4 tracking-tight">
+              <h2 className="text-3xl md:text-4xl font-bold text-[#F8FAFC] mb-4 tracking-tight">
+                <span className="terminal-prefix">///</span>
                 Frequently Asked Questions
               </h2>
-              <p className="text-xl text-muted-foreground">
+              <p className="text-xl text-[#94A3B8]">
                 Get answers to common questions about our pricing and plans.
               </p>
             </div>
@@ -384,19 +406,22 @@ const Pricing = () => {
             {faqData.map((faq, index) => (
               <ScrollReveal key={index} delay={index * 0.05}>
                 <motion.div
-                  className="bg-card border border-border rounded-xl overflow-hidden"
-                  whileHover={{ boxShadow: "0 8px 24px -6px rgba(67, 121, 242, 0.1)" }}
+                  className="ts-glass ts-rounded-lg overflow-hidden hover:border-[#2563EB] transition-colors duration-200"
+                  whileHover={{ y: -2 }}
                 >
                   <button
                     onClick={() => toggleFaq(index)}
-                    className="w-full px-6 py-6 text-left flex justify-between items-center hover:bg-accent/50 transition-all duration-300"
+                    className="w-full px-6 py-6 text-left flex justify-between items-center hover:bg-[#0A0A0E] transition-all duration-200"
                   >
-                    <h3 className="font-semibold text-foreground pr-4">{faq.question}</h3>
+                    <h3 className="font-bold text-[#F8FAFC] pr-4 flex items-center">
+                      <span className="terminal-prefix mr-2">///</span>
+                      {faq.question}
+                    </h3>
                     <motion.div
                       animate={{ rotate: openFaq === index ? 180 : 0 }}
                       transition={{ duration: 0.3 }}
                     >
-                      <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                      <ChevronDown className="h-5 w-5 text-[#94A3B8]" />
                     </motion.div>
                   </button>
 
@@ -409,7 +434,7 @@ const Pricing = () => {
                         transition={{ duration: 0.3, ease: "easeInOut" }}
                         className="overflow-hidden"
                       >
-                        <div className="px-6 pb-6 text-muted-foreground">
+                        <div className="px-6 pb-6 text-[#94A3B8] border-t border-[#1A1A24] pt-4">
                           {faq.answer}
                         </div>
                       </motion.div>
@@ -420,19 +445,18 @@ const Pricing = () => {
             ))}
           </div>
 
-          {/* Help CTA */}
           <ScrollReveal delay={0.3}>
             <motion.div
-              className="mt-12 text-center p-8 bg-gradient-to-r from-[#4379F2]/10 to-[#6EC207]/10 rounded-xl border border-border"
+              className="mt-12 text-center p-8 ts-glass-frosted ts-rounded-lg hover:border-[#2563EB] transition-colors duration-200"
               whileHover={{ scale: 1.01 }}
             >
-              <h3 className="text-xl font-semibold text-foreground mb-2">Still have questions?</h3>
-              <p className="text-muted-foreground mb-6">Our team is here to help you find the perfect plan for your needs.</p>
+              <h3 className="text-xl font-bold text-[#F8FAFC] mb-2">Still have questions?</h3>
+              <p className="text-[#94A3B8] mb-6">Our team is here to help you find the perfect plan for your needs.</p>
               <div className="flex flex-col sm:flex-row gap-4 justify-center">
                 <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.98 }}>
                   <Link
                     to="/contact"
-                    className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] hover:from-[#3366E6] hover:to-[#5CAE06] text-white px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center justify-center"
+                    className="ts-btn-primary px-6 py-3 ts-rounded-md font-bold inline-flex items-center justify-center"
                   >
                     <MessageSquare className="h-4 w-4 mr-2" />
                     Contact Sales
@@ -443,7 +467,7 @@ const Pricing = () => {
                     href="https://docs.terrascale.tech"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="border border-border hover:bg-accent text-foreground px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center justify-center"
+                    className="ts-btn-glass px-6 py-3 ts-rounded-md font-bold inline-flex items-center justify-center"
                   >
                     <BookOpen className="h-4 w-4 mr-2" />
                     Read Documentation
@@ -455,23 +479,20 @@ const Pricing = () => {
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="py-24 bg-gradient-to-r from-[#4379F2] to-[#6EC207] relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_40%,rgba(255,255,255,0.1),transparent_50%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_60%,rgba(255,255,255,0.05),transparent_50%)]" />
-
+      <section className="py-24 bg-[#050508] bg-grid-pattern relative overflow-hidden">
         <ScrollReveal>
           <div className="relative z-10 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-            <h2 className="text-3xl md:text-4xl font-bold text-white mb-4 tracking-tight">
+            <h2 className="text-3xl md:text-4xl font-bold text-[#F8FAFC] mb-4 tracking-tight">
+              <span className="terminal-prefix">///</span>
               Ready to get started?
             </h2>
-            <p className="text-xl text-white/80 mb-8">
+            <p className="text-xl text-[#94A3B8] mb-8">
               Join thousands of developers building the future with TerraScale.
             </p>
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.98 }}>
               <Link
                 to="/contact"
-                className="bg-white text-[#4379F2] hover:bg-gray-50 font-bold py-4 px-8 rounded-xl transition-all duration-300 inline-flex items-center shadow-lg"
+                className="ts-btn-primary font-bold py-4 px-8 ts-rounded-md inline-flex items-center shadow-offset-blue hover-lift"
               >
                 Start Building Today
                 <ArrowRight className="ml-2 h-5 w-5" />
@@ -481,7 +502,6 @@ const Pricing = () => {
         </ScrollReveal>
       </section>
 
-      {/* Contact Modal */}
       <ContactModal
         isOpen={isContactModalOpen}
         onClose={() => setIsContactModalOpen(false)}

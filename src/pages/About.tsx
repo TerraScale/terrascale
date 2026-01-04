@@ -36,17 +36,17 @@ const About = () => {
 
   return (
     <>
-      {/* Hero Section */}
-      <section className="py-24 bg-gradient-to-br from-background via-accent/10 to-background">
+      <section className="py-24 bg-[#050508]">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-4xl mx-auto">
             <ScrollReveal>
-              <h1 className="text-4xl md:text-6xl font-bold text-foreground mb-6 tracking-tight">
-                About <span className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] bg-clip-text text-transparent">TerraScale</span>
+              <h1 className="text-4xl md:text-6xl font-bold text-[#F8FAFC] mb-6 tracking-tight">
+                <span className="terminal-prefix">///</span>
+                About TerraScale
               </h1>
             </ScrollReveal>
             <ScrollReveal delay={0.1}>
-              <p className="text-xl md:text-2xl text-muted-foreground leading-relaxed">
+              <p className="text-xl md:text-2xl text-[#94A3B8] leading-relaxed">
                 Our mission is to empower businesses with scalable, secure, and innovative
                 database solutions. We believe in transparency, customer-centricity,
                 and continuous improvement.
@@ -56,27 +56,27 @@ const About = () => {
         </div>
       </section>
 
-      {/* Mission & Values Section */}
-      <section className="py-24">
+      <section className="py-24 bg-[#0A0A0E]">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center mb-24">
             <ScrollReveal direction="left">
               <div>
-                <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-6 tracking-tight">
+                <h2 className="text-3xl md:text-4xl font-bold text-[#F8FAFC] mb-6 tracking-tight">
+                  <span className="terminal-prefix">///</span>
                   Our Mission
                 </h2>
-                <p className="text-lg text-muted-foreground mb-6 leading-relaxed">
+                <p className="text-lg text-[#94A3B8] mb-6 leading-relaxed">
                   At TerraScale, we're on a mission to democratize enterprise-grade database
                   infrastructure. We believe that every business, regardless of size, should
                   have access to powerful, scalable, and secure database solutions.
                 </p>
-                <p className="text-lg text-muted-foreground mb-6 leading-relaxed">
-                  Founded on the principles of innovation and reliability, we've built a
+                <p className="text-lg text-[#94A3B8] mb-6 leading-relaxed">
+                  Founded on principles of innovation and reliability, we've built a
                   platform that grows with your business, ensuring you're never held back
                   by technical limitations or database performance issues.
                 </p>
-                <div className="bg-gradient-to-r from-[#4379F2]/10 to-[#6EC207]/10 border-l-4 border-primary p-6 rounded-r-xl">
-                  <p className="text-foreground font-medium italic">
+                <div className="ts-glass-primary ts-rounded-lg border-l-4 border-[#2563EB] p-6">
+                  <p className="text-[#F8FAFC] font-medium italic text-sm">
                     "Database technology should empower, not complicate. That's the driving force
                     behind everything we build at TerraScale."
                   </p>
@@ -90,17 +90,17 @@ const About = () => {
                 whileHover={{ scale: 1.02 }}
                 transition={{ type: "spring", stiffness: 200 }}
               >
-                <div className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] rounded-2xl p-8 shadow-2xl">
-                  <div className="bg-card rounded-lg p-6 h-64 flex items-center justify-center">
+                <div className="ts-glass-frosted ts-rounded-lg p-8 shadow-offset hover-lift">
+                  <div className="bg-[#050508] border border-[#1A1A24] ts-rounded-sm p-6 h-64 flex items-center justify-center">
                     <div className="text-center">
                       <motion.div
-                        className="w-16 h-16 bg-gradient-to-r from-[#4379F2] to-[#6EC207] rounded-full mx-auto mb-4 flex items-center justify-center"
+                        className="w-16 h-16 bg-[#2563EB] ts-rounded-sm mx-auto mb-4 flex items-center justify-center ts-hover-glow"
                         animate={{ scale: [1, 1.05, 1] }}
                         transition={{ duration: 3, repeat: Infinity }}
                       >
-                        <Target className="h-8 w-8 text-white" />
+                        <Target className="h-8 w-8 text-[#050508]" />
                       </motion.div>
-                      <p className="text-muted-foreground font-medium">Our Vision</p>
+                      <p className="text-[#94A3B8] font-medium">Our Vision</p>
                     </div>
                   </div>
                 </div>
@@ -108,39 +108,38 @@ const About = () => {
             </ScrollReveal>
           </div>
 
-          {/* Core Values */}
           <ScrollReveal>
             <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4 tracking-tight">
+              <h2 className="text-3xl md:text-4xl font-bold text-[#F8FAFC] mb-4 tracking-tight">
+                <span className="terminal-prefix">///</span>
                 Our Core Values
               </h2>
-              <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
+              <p className="text-xl text-[#94A3B8] max-w-2xl mx-auto">
                 The principles that guide every decision we make and every solution we build.
               </p>
             </div>
           </ScrollReveal>
 
-          <StaggerContainer className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+          <StaggerContainer className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {values.map((value) => (
               <StaggerItem key={value.title}>
                 <motion.div
-                  className="text-center p-6 bg-card border border-border rounded-xl h-full"
+                  className="text-center p-6 ts-glass ts-rounded-lg h-full hover:border-[#2563EB] transition-colors duration-200 hover-lift"
                   whileHover={{
                     y: -4,
-                    boxShadow: "0 16px 32px -8px rgba(67, 121, 242, 0.1)"
                   }}
                 >
                   <motion.div
-                    className="w-12 h-12 bg-gradient-to-r from-[#4379F2]/10 to-[#6EC207]/10 rounded-lg flex items-center justify-center mx-auto mb-4"
-                    whileHover={{ scale: 1.1, rotate: 5 }}
+                    className="w-12 h-12 bg-[#050508] border-2 border-[#1A1A24] ts-rounded-sm flex items-center justify-center mx-auto mb-4 hover:border-[#2563EB] transition-colors duration-200"
+                    whileHover={{ scale: 1.1, rotate: 2 }}
                     transition={{ type: "spring", stiffness: 300 }}
                   >
-                    <value.icon className="h-6 w-6 text-primary" />
+                    <value.icon className="h-6 w-6 text-[#2563EB]" />
                   </motion.div>
-                  <h3 className="text-xl font-semibold text-foreground mb-3">
+                  <h3 className="text-xl font-bold text-[#F8FAFC] mb-3">
                     {value.title}
                   </h3>
-                  <p className="text-muted-foreground">
+                  <p className="text-[#94A3B8] text-sm">
                     {value.description}
                   </p>
                 </motion.div>
@@ -150,16 +149,16 @@ const About = () => {
         </div>
       </section>
 
-      {/* Team Section */}
-      <section className="py-24 bg-gradient-to-b from-background to-accent/5">
+      <section className="py-24 bg-[#050508]">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8">
           <ScrollReveal>
             <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4 tracking-tight">
+              <h2 className="text-3xl md:text-4xl font-bold text-[#F8FAFC] mb-4 tracking-tight">
+                <span className="terminal-prefix">///</span>
                 Our Team
               </h2>
-              <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-                Meet the passionate individuals building the future of scalable database technology.
+              <p className="text-xl text-[#94A3B8] max-w-2xl mx-auto">
+                Meet the passionate individual building the future of scalable database technology.
               </p>
             </div>
           </ScrollReveal>
@@ -167,31 +166,30 @@ const About = () => {
           <ScrollReveal>
             <div className="flex justify-center">
               <motion.div
-                className="bg-card border border-border p-8 rounded-2xl max-w-md"
+                className="ts-glass ts-rounded-lg p-8 max-w-md hover:border-[#2563EB] transition-colors duration-200 hover-lift"
                 whileHover={{
                   y: -8,
-                  boxShadow: "0 24px 48px -12px rgba(67, 121, 242, 0.15)"
                 }}
               >
                 <div className="text-center">
                   <motion.div
-                    className="w-24 h-24 bg-gradient-to-r from-[#4379F2] to-[#6EC207] rounded-full mx-auto mb-6 flex items-center justify-center text-white text-2xl font-bold"
+                    className="w-24 h-24 bg-[#2563EB] ts-rounded-sm mx-auto mb-6 flex items-center justify-center text-[#050508] text-2xl font-bold ts-hover-glow"
                     whileHover={{ scale: 1.05 }}
                   >
                     MG
                   </motion.div>
-                  <h3 className="text-2xl font-bold text-foreground mb-2">
+                  <h3 className="text-2xl font-bold text-[#F8FAFC] mb-2">
                     Mario Gabriell Karaziaki Belchior
                   </h3>
-                  <p className="text-primary font-semibold mb-4">CEO & Founder</p>
-                  <p className="text-muted-foreground leading-relaxed mb-4">
+                  <p className="text-[#2563EB] font-bold mb-4 text-sm">CEO & Founder</p>
+                  <p className="text-[#94A3B8] leading-relaxed mb-4">
                     Building the future of scalable database technology with passion and vision.
                     Mario combines deep technical expertise with strategic leadership to
                     drive TerraScale's mission forward.
                   </p>
                   <a
                     href="mailto:mariogk@terrascale.tech"
-                    className="inline-flex items-center text-sm text-muted-foreground hover:text-primary transition-colors duration-200"
+                    className="inline-flex items-center text-sm text-[#94A3B8] hover:text-[#2563EB] transition-colors duration-200"
                   >
                     <Mail className="h-4 w-4 mr-2" />
                     mariogk@terrascale.tech
@@ -201,16 +199,15 @@ const About = () => {
             </div>
           </ScrollReveal>
 
-          {/* Join Team CTA */}
           <ScrollReveal delay={0.2}>
             <div className="mt-16 text-center">
               <motion.div
-                className="bg-gradient-to-r from-[#4379F2]/10 to-[#6EC207]/10 rounded-xl p-8 border border-border"
+                className="ts-glass-frosted ts-rounded-lg p-8 hover:border-[#2563EB] transition-colors duration-200"
                 whileHover={{ scale: 1.01 }}
                 transition={{ type: "spring", stiffness: 300 }}
               >
-                <h3 className="text-2xl font-bold text-foreground mb-4">Join Our Team</h3>
-                <p className="text-muted-foreground mb-6 max-w-2xl mx-auto">
+                <h3 className="text-2xl font-bold text-[#F8FAFC] mb-4">Join Our Team</h3>
+                <p className="text-[#94A3B8] mb-6 max-w-2xl mx-auto">
                   We're always looking for talented individuals who share our passion for building
                   innovative database solutions. Join us in shaping the future of data infrastructure.
                 </p>
@@ -218,7 +215,7 @@ const About = () => {
                   <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.98 }}>
                     <Link
                       to="/contact"
-                      className="bg-gradient-to-r from-[#4379F2] to-[#6EC207] hover:from-[#3366E6] hover:to-[#5CAE06] text-white px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center justify-center"
+                      className="ts-btn-primary px-6 py-3 ts-rounded-md font-bold inline-flex items-center justify-center shadow-offset-blue hover-lift"
                     >
                       <MessageSquare className="h-4 w-4 mr-2" />
                       Get in Touch
@@ -229,7 +226,7 @@ const About = () => {
                       href="https://docs.terrascale.tech"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="border border-border hover:bg-accent text-foreground px-6 py-3 rounded-lg font-semibold transition-all duration-300 inline-flex items-center justify-center"
+                      className="ts-btn-glass px-6 py-3 ts-rounded-md font-bold inline-flex items-center justify-center shadow-offset hover-lift"
                     >
                       <BookOpen className="h-4 w-4 mr-2" />
                       Learn More
@@ -242,33 +239,32 @@ const About = () => {
         </div>
       </section>
 
-      {/* Stats Section */}
-      <section className="py-24 bg-gradient-to-r from-[#4379F2] to-[#6EC207] relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_40%,rgba(255,255,255,0.1),transparent_50%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_60%,rgba(255,255,255,0.05),transparent_50%)]" />
-
+      <section className="py-24 bg-[#050508] bg-grid-pattern relative overflow-hidden">
         <ScrollReveal>
           <div className="relative z-10 max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8">
             <div className="text-center mb-12">
-              <h2 className="text-3xl md:text-4xl font-bold text-white mb-4 tracking-tight">
-                TerraScale by the Numbers
+              <h2 className="text-3xl md:text-4xl font-bold text-[#F8FAFC] mb-4 tracking-tight">
+                <span className="terminal-prefix">///</span>
+                TerraScale by Numbers
               </h2>
-              <p className="text-xl text-white/80">
+              <p className="text-xl text-[#94A3B8]">
                 Trusted by developers and businesses worldwide
               </p>
             </div>
 
-            <StaggerContainer className="grid grid-cols-1 md:grid-cols-4 gap-8 text-center text-white">
+            <StaggerContainer className="grid grid-cols-1 md:grid-cols-4 gap-6 text-center">
               {stats.map((stat) => (
                 <StaggerItem key={stat.label}>
                   <motion.div
-                    className="p-6 bg-white/10 rounded-xl backdrop-blur-sm"
-                    whileHover={{ scale: 1.02, backgroundColor: "rgba(255,255,255,0.15)" }}
+                    className="ts-stats-card"
+                    whileHover={{ y: -4 }}
                   >
-                    <div className="text-4xl md:text-5xl font-bold mb-2">
+                    <div className="text-4xl md:text-5xl font-bold ts-text-gradient mb-2">
                       {stat.noCounter ? stat.value : <AnimatedCounter value={stat.value} />}
                     </div>
-                    <div className="text-white/80">{stat.label}</div>
+                    <div className="text-[#94A3B8] text-sm terminal-line">
+                      {stat.label}
+                    </div>
                   </motion.div>
                 </StaggerItem>
               ))}
