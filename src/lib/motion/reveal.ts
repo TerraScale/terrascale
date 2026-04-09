@@ -30,9 +30,9 @@ export const reveal = (node: HTMLElement, options: RevealOptions = {}) => {
     const resolved = {
       direction: currentOptions.direction ?? 'up',
       delay: currentOptions.delay ?? 0,
-      duration: currentOptions.duration ?? 0.6,
+      duration: currentOptions.duration ?? 0.38,
       once: currentOptions.once ?? true,
-      margin: currentOptions.margin ?? '-80px 0px',
+      margin: currentOptions.margin ?? '0px 0px 120px 0px',
     }
 
     cleanupDirectionClasses(node)
