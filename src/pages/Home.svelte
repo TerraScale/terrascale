@@ -442,8 +442,8 @@
       label: 'C#',
       fileName: 'Program.cs',
       iconPath: '/language-icons/csharp.svg',
-      buttonClass: 'border-[#9B4F96]/30 bg-[#9B4F96]/10 text-[#D8B4FE] hover:border-[#9B4F96]/60 hover:bg-[#9B4F96]/15',
-      fileClass: 'text-[#D8B4FE]',
+      buttonClass: 'border-[#10B981]/30 bg-[#10B981]/10 text-[#6EE7B7] hover:border-[#10B981]/60 hover:bg-[#10B981]/15',
+      fileClass: 'text-[#6EE7B7]',
       lines: [
         {
           tokens: [
