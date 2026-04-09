@@ -110,7 +110,6 @@
     <div class="mx-auto max-w-4xl text-center">
       <ScrollReveal>
         <h1 class="mb-6 text-4xl font-bold tracking-tight text-[#F8FAFC] md:text-6xl">
-          <span class="terminal-prefix">///</span>
           Contact Us
         </h1>
       </ScrollReveal>
@@ -129,14 +128,12 @@
       <ScrollReveal direction="left">
         <div class="hover-lift p-8 ts-glass ts-rounded-lg">
           <h2 class="mb-6 text-3xl font-bold text-[#F8FAFC]">
-            <span class="terminal-prefix">///</span>
             Send us a message
           </h2>
 
           <form class="space-y-6" novalidate on:submit={handleSubmit}>
             <div>
               <label class="mb-2 block text-sm font-bold text-[#F8FAFC]" for="contact-name">
-                <span class="terminal-prefix">///</span>
                 Name *
               </label>
               <input
@@ -152,7 +149,6 @@
 
             <div>
               <label class="mb-2 block text-sm font-bold text-[#F8FAFC]" for="contact-email">
-                <span class="terminal-prefix">///</span>
                 Email *
               </label>
               <input
@@ -168,7 +164,6 @@
 
             <div>
               <label class="mb-2 block text-sm font-bold text-[#F8FAFC]" for="contact-message">
-                <span class="terminal-prefix">///</span>
                 Message *
               </label>
               <textarea
@@ -221,7 +216,6 @@
       <ScrollReveal direction="right">
         <div>
           <h2 class="mb-6 text-3xl font-bold text-[#F8FAFC]">
-            <span class="terminal-prefix">///</span>
             Get in touch
           </h2>
           <p class="mb-8 leading-relaxed text-[#94A3B8]">
