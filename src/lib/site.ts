@@ -91,6 +91,6 @@ export const footerHighlights: FooterHighlight[] = [
 ]
 
 export const supportChannels: SupportChannel[] = [
-  { label: 'support@terrascale.tech', href: 'mailto:support@terrascale.tech', icon: 'mail' },
+  { label: 'Contact Support', href: '/contact', icon: 'mail' },
   { label: 'Discord Community', href: 'https://discord.gg/terrascale', icon: 'brandDiscord' },
 ]

@@ -31,7 +31,15 @@
   <div class="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
     <div class="relative flex h-[4.8rem] items-center justify-between">
       <RouteLink href="/" class="flex shrink-0 items-center">
-        <img src="/logo-principal.svg" alt="TerraScale" class="h-12 w-auto" />
+        <img
+          src="/logo-principal.svg"
+          alt="TerraScale"
+          class="h-12 w-auto"
+          width="1429"
+          height="345"
+          decoding="async"
+          fetchpriority="high"
+        />
       </RouteLink>
 
       <nav class="absolute left-1/2 hidden -translate-x-1/2 items-center space-x-1 md:flex">

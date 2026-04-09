@@ -10,7 +10,15 @@
       <div class="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-5">
         <div class="lg:col-span-2">
           <RouteLink href="/" class="mb-4 flex items-center">
-            <img src="/logo-white.svg" alt="TerraScale" class="h-10 w-auto" />
+            <img
+              src="/logo-white.svg"
+              alt="TerraScale"
+              class="h-10 w-auto"
+              width="1429"
+              height="345"
+              loading="lazy"
+              decoding="async"
+            />
           </RouteLink>
 
           <p class="mb-4 max-w-sm text-sm text-[#94A3B8]">
@@ -22,15 +30,25 @@
             {#each supportChannels as channel (channel.label)}
               <div class="flex items-center space-x-2">
                 <Icon name={channel.icon} className="h-3 w-3 text-[#F8FAFC]" />
-                <a
-                  href={channel.href}
-                  target={channel.href.startsWith('http') ? '_blank' : undefined}
-                  rel={channel.href.startsWith('http') ? 'noopener noreferrer' : undefined}
-                  class="inline-flex items-center gap-2 transition-colors duration-200 hover:text-[#F8FAFC]"
-                >
-                  <Icon name="chevronRight" className="h-3 w-3 text-[#F8FAFC]" />
-                  {channel.label}
-                </a>
+                {#if channel.href.startsWith('http')}
+                  <a
+                    href={channel.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center gap-2 transition-colors duration-200 hover:text-[#F8FAFC]"
+                  >
+                    <Icon name="chevronRight" className="h-3 w-3 text-[#F8FAFC]" />
+                    {channel.label}
+                  </a>
+                {:else}
+                  <RouteLink
+                    href={channel.href}
+                    class="inline-flex items-center gap-2 transition-colors duration-200 hover:text-[#F8FAFC]"
+                  >
+                    <Icon name="chevronRight" className="h-3 w-3 text-[#F8FAFC]" />
+                    {channel.label}
+                  </RouteLink>
+                {/if}
               </div>
             {/each}
           </div>

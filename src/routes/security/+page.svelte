@@ -62,13 +62,13 @@
             <span>Contact The Team</span>
           </RouteLink>
 
-          <a
-            href="mailto:support@terrascale.tech"
+          <RouteLink
+            href="/contact"
             class="ts-btn-glass ts-rounded-md inline-flex items-center justify-center px-6 py-3 font-bold shadow-offset ts-pressable"
           >
             <Icon name="mail" className="mr-2 h-4 w-4" />
-            <span>Email Security Questions</span>
-          </a>
+            <span>Contact Security Team</span>
+          </RouteLink>
         </div>
       </div>
     </ScrollReveal>

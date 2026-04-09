@@ -32,9 +32,9 @@
   }> = [
     {
       icon: 'mail',
-      label: 'Email',
-      value: 'support@terrascale.tech',
-      href: 'mailto:support@terrascale.tech',
+      label: 'Support',
+      value: 'Use the contact form below',
+      href: '#contact-form',
     },
     {
       icon: 'brandDiscord',
@@ -126,7 +126,7 @@
   <div class="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
     <div class="grid grid-cols-1 gap-16 lg:grid-cols-2">
       <ScrollReveal direction="left">
-        <div class="hover-lift p-8 ts-glass ts-rounded-lg">
+        <div id="contact-form" class="hover-lift p-8 ts-glass ts-rounded-lg">
           <h2 class="mb-6 text-3xl font-bold text-[#F8FAFC]">
             Send us a message
           </h2>
@@ -155,7 +155,7 @@
                 id="contact-email"
                 class="ts-input w-full shadow-offset"
                 type="email"
-                placeholder="your.email@example.com"
+                placeholder="your work email"
                 value={formData.email}
                 required
                 on:input={(event) => updateField('email', (event.currentTarget as HTMLInputElement).value)}
