@@ -41,7 +41,6 @@
     <div class="mx-auto max-w-4xl text-center">
       <ScrollReveal>
         <h1 class="mb-6 text-4xl font-bold tracking-tight text-[#F8FAFC] md:text-6xl">
-          <span class="terminal-prefix">///</span>
           About TerraScale
         </h1>
       </ScrollReveal>
@@ -61,7 +60,6 @@
       <ScrollReveal direction="left">
         <div>
           <h2 class="mb-6 text-3xl font-bold tracking-tight text-[#F8FAFC] md:text-4xl">
-            <span class="terminal-prefix">///</span>
             Our Mission
           </h2>
           <p class="mb-6 text-lg leading-relaxed text-[#94A3B8]">
@@ -102,7 +100,6 @@
     <ScrollReveal>
       <div class="mb-16 text-center">
         <h2 class="mb-4 text-3xl font-bold tracking-tight text-[#F8FAFC] md:text-4xl">
-          <span class="terminal-prefix">///</span>
           Our Core Values
         </h2>
         <p class="mx-auto max-w-2xl text-xl text-[#94A3B8]">
@@ -132,7 +129,6 @@
     <ScrollReveal>
       <div class="mb-16 text-center">
         <h2 class="mb-4 text-3xl font-bold tracking-tight text-[#F8FAFC] md:text-4xl">
-          <span class="terminal-prefix">///</span>
           Our Team
         </h2>
         <p class="mx-auto max-w-2xl text-xl text-[#94A3B8]">
@@ -205,7 +201,6 @@
     <div class="relative z-10 mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
       <div class="mb-12 text-center">
         <h2 class="mb-4 text-3xl font-bold tracking-tight text-[#F8FAFC] md:text-4xl">
-          <span class="terminal-prefix">///</span>
           TerraScale by Numbers
         </h2>
         <p class="text-xl text-[#94A3B8]">Trusted by developers and businesses worldwide</p>

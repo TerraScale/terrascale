@@ -21,13 +21,14 @@
           <div class="mb-4 space-y-2 text-sm text-[#94A3B8]">
             {#each supportChannels as channel (channel.label)}
               <div class="flex items-center space-x-2">
-                <Icon name={channel.icon} className="h-3 w-3" />
+                <Icon name={channel.icon} className="h-3 w-3 text-[#F8FAFC]" />
                 <a
                   href={channel.href}
                   target={channel.href.startsWith('http') ? '_blank' : undefined}
                   rel={channel.href.startsWith('http') ? 'noopener noreferrer' : undefined}
-                  class="transition-colors duration-200 hover:text-[#F8FAFC]"
+                  class="inline-flex items-center gap-2 transition-colors duration-200 hover:text-[#F8FAFC]"
                 >
+                  <Icon name="chevronRight" className="h-3 w-3 text-[#F8FAFC]" />
                   {channel.label}
                 </a>
               </div>
@@ -41,9 +42,9 @@
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label={social.name}
-                class="hover-lift hover-lift-active ts-rounded-sm border border-[#1A1A24] bg-[#080810] p-2 transition-all duration-200 hover:border-[#2563EB]"
+                class="hover-lift hover-lift-active ts-rounded-sm border border-[#1A1A24] bg-[#080810] p-2 transition-all duration-200 hover:border-[#F8FAFC]"
               >
-                <Icon name={social.icon} className="h-4 w-4 text-[#94A3B8] transition-colors hover:text-[#2563EB]" />
+                <Icon name={social.icon} className="h-4 w-4 text-[#F8FAFC] transition-colors hover:text-[#CBD5E1]" />
               </a>
             {/each}
           </div>
@@ -52,7 +53,6 @@
         {#each Object.entries(footerLinks) as [category, links] (category)}
           <div>
             <h3 class="mb-3 text-sm font-semibold text-[#F8FAFC]">
-              <span class="terminal-prefix">///</span>
               {category}
             </h3>
             <ul class="space-y-2">
@@ -63,15 +63,17 @@
                       href={link.href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      class="text-sm text-[#94A3B8] transition-colors duration-200 hover:text-[#F8FAFC]"
+                      class="inline-flex items-center gap-2 text-sm text-[#94A3B8] transition-colors duration-200 hover:text-[#F8FAFC]"
                     >
+                      <Icon name="chevronRight" className="h-3 w-3 text-[#F8FAFC]" />
                       {link.name}
                     </a>
                   {:else}
                     <RouteLink
                       href={link.href}
-                      class="text-sm text-[#94A3B8] transition-colors duration-200 hover:text-[#F8FAFC]"
+                      class="inline-flex items-center gap-2 text-sm text-[#94A3B8] transition-colors duration-200 hover:text-[#F8FAFC]"
                     >
+                      <Icon name="chevronRight" className="h-3 w-3 text-[#F8FAFC]" />
                       {link.name}
                     </RouteLink>
                   {/if}

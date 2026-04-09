@@ -22,7 +22,7 @@ export const iconManifest = {
   externalLink: { collection: 'lucide', icon: 'external-link' },
   globe: { collection: 'lucide', icon: 'globe' },
   home: { collection: 'lucide', icon: 'home' },
-  layoutDashboard: { collection: 'lucide', icon: 'layout-dashboard' },
+  layoutDashboard: { collection: 'lucide', icon: 'layout-grid' },
   mail: { collection: 'lucide', icon: 'mail' },
   menu: { collection: 'lucide', icon: 'menu' },
   messageCircle: { collection: 'lucide', icon: 'message-circle' },
