@@ -151,13 +151,13 @@
               combines deep technical expertise with strategic leadership to drive TerraScale's
               mission forward.
             </p>
-            <a
-              href="mailto:mariogk@terrascale.tech"
+            <RouteLink
+              href="/contact"
               class="inline-flex items-center text-sm text-[#94A3B8] transition-colors duration-200 hover:text-[#2563EB]"
             >
               <Icon name="mail" className="mr-2 h-4 w-4" />
-              <span>mariogk@terrascale.tech</span>
-            </a>
+              <span>Contact TerraScale</span>
+            </RouteLink>
           </div>
         </div>
       </div>

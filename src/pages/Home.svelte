@@ -573,6 +573,10 @@
                 src="/logo-principal.svg"
                 alt="TerraScale"
                 class="h-20 w-auto sm:h-24 md:h-28 lg:h-32"
+                width="1429"
+                height="345"
+                decoding="async"
+                fetchpriority="high"
               />
             </div>
           </ScrollReveal>
