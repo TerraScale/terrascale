@@ -1,12 +1,12 @@
 <script lang="ts">
+  import { page } from '$app/stores'
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
-  import { currentLocation } from '@/lib/router'
   import { headerLinks, navigation } from '@/lib/site'
 
   let isMenuOpen = false
 
-  $: if ($currentLocation.pathname) {
+  $: if ($page.url.pathname) {
     isMenuOpen = false
   }
 

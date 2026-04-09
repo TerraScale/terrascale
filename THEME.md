@@ -48,7 +48,7 @@ The brand tone is "developer infrastructure": polished, sharp-edged, slightly fu
 
 ## Reality Check
 
-This repo still contains some stale metadata from an older React-based version in files like `README.md` and `components.json`. The implemented app is Svelte, uses a local SVG icon pipeline, and does not use React, Radix, ShadCN components, or runtime icon packages in the current UI.
+This repo previously contained stale metadata from an older React-based version. The implemented app uses SvelteKit with a local SVG icon pipeline and does not use React, Radix, ShadCN components, or runtime icon packages in the current UI.
 
 `THEME.md` should reflect the implementation, not the stale metadata.
 
@@ -566,4 +566,4 @@ Do not hardcode new one-off colors or effects if an existing token already fits.
 
 - If `src/index.css` changes, update this file.
 - If the visual language changes materially, update the page-pattern sections, not just the token tables.
-- If the stack changes again, correct `README.md` and `components.json` too so the repo stops contradicting itself.
+- If the stack changes again, correct the repo docs and deployment notes in the same change so the repo stays internally consistent.
