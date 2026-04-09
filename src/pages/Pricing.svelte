@@ -7,61 +7,115 @@
   import type { AppIconName } from '@/lib/icons'
 
   type BillingPeriod = 'monthly' | 'annual'
+  type Plan = {
+    name: string
+    icon: AppIconName
+    iconClass: string
+    ctaIcon: AppIconName
+    price?: { monthly: number; annual: number }
+    basePrice?: number
+    popular: boolean
+    description: string
+    trial?: string
+    features: string[]
+    cta: string
+    href: string | null
+    detailsHref?: string
+    detailsLabel?: string
+  }
+
+  type EnterprisePricingRow = {
+    item: string
+    pricing: string
+    details: string
+  }
 
   let billingPeriod: BillingPeriod = 'monthly'
   let openFaq: number | null = null
   let isContactModalOpen = false
 
-  const plans = [
+  const plans: Plan[] = [
     {
       name: 'Hobby',
+      icon: 'zap',
+      iconClass: 'text-[#10B981] bg-[#10B981]/10 border-[#10B981]/30',
+      ctaIcon: 'arrowRight',
       price: { monthly: 4.99, annual: 49 },
       popular: false,
       description: 'Great for personal projects',
       trial: '30-day free trial',
       features: [
-        'Databases: Unlimited',
+        'Databases: 3 included',
         'Database Operations: 10M included',
         'Storage: 10 GB',
-        'Egress Bandwidth: 15 GB',
+        'Egress Bandwidth: 15 GB included + usage',
         'Support: Priority Discord',
       ],
       cta: 'Start Free Trial',
       href: '/contact',
+      detailsHref: '#detailed-pricing',
+      detailsLabel: 'See pricing details',
     },
     {
       name: 'Pro',
+      icon: 'trendingUp',
+      iconClass: 'text-[#0891B2] bg-[#0891B2]/10 border-[#0891B2]/30',
+      ctaIcon: 'arrowRight',
       price: { monthly: 24.99, annual: 249 },
       popular: true,
       description: 'Best for growing teams',
       trial: '30-day free trial',
       features: [
-        'Databases: Unlimited',
+        'Databases: 15 included',
         'Database Operations: 1B included',
         'Storage: 50 GB',
-        'Egress Bandwidth: 100 GB',
+        'Egress Bandwidth: 100 GB included + usage',
         'Support: Email + Discord',
       ],
       cta: 'Start Free Trial',
       href: '/contact',
+      detailsHref: '#detailed-pricing',
+      detailsLabel: 'See pricing details',
     },
     {
       name: 'Enterprise',
+      icon: 'shieldCheck',
+      iconClass: 'text-[#8B5CF6] bg-[#8B5CF6]/10 border-[#8B5CF6]/30',
+      ctaIcon: 'messageSquare',
       basePrice: 499,
       popular: false,
       description: 'For mission-critical applications',
       features: [
+        'Databases: Unlimited',
         'Everything in Pro',
         'Dedicated support team',
         'Custom SLA agreements',
         'On-premise deployment options',
         'Advanced security features',
         'Custom integrations',
-        'Usage-based pricing: $1/GB storage',
-        'Usage-based pricing: $1M operations',
       ],
       cta: 'Contact Us',
       href: null,
+      detailsHref: '#detailed-pricing',
+      detailsLabel: 'See pricing details',
+    },
+  ]
+
+  const enterprisePricingRows: EnterprisePricingRow[] = [
+    {
+      item: 'Enterprise Level Support',
+      pricing: '499/month',
+      details: 'Base platform access for Enterprise deployments and advanced support.',
+    },
+    {
+      item: 'Storage Usage',
+      pricing: '1/GB',
+      details: 'Usage-based storage pricing on top of the base platform fee.',
+    },
+    {
+      item: 'Database Operations',
+      pricing: '1 / 1M ops',
+      details: 'Scales with workload volume for read, write, and replication activity.',
     },
   ]
 
@@ -147,12 +201,11 @@
     billingPeriod === 'monthly' ? `$${price}/mo` : `$${price}/yr`
 </script>
 
-<section class="bg-[#050508] py-24">
+<section class="bg-[#050508] pb-12 pt-24">
   <div class="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
     <div class="mx-auto max-w-4xl text-center">
       <ScrollReveal>
         <h1 class="mb-6 text-4xl font-bold tracking-tight text-[#F8FAFC] md:text-6xl">
-          <span class="terminal-prefix">///</span>
           Simple Pricing
         </h1>
       </ScrollReveal>
@@ -163,18 +216,18 @@
       </ScrollReveal>
 
       <ScrollReveal delay={0.2}>
-        <div class="inline-flex items-center p-1 ts-glass-frosted ts-rounded-lg">
+        <div class="inline-flex items-center p-1.5 ts-glass-frosted ts-rounded-lg">
           <div class="relative grid grid-cols-2">
             <div
-              class="pointer-events-none absolute inset-y-0 left-0 m-1 w-[calc(50%-0.25rem)] bg-[#2563EB] shadow-offset-blue ts-rounded-sm transition-transform duration-300 ease-out"
+              class="pointer-events-none absolute inset-y-0 left-0 m-1.5 w-[calc(50%-0.375rem)] bg-[#2563EB] shadow-offset-blue ts-rounded-sm transition-transform duration-300 ease-out"
               style:transform={billingPeriod === 'annual' ? 'translateX(100%)' : 'translateX(0)'}
             ></div>
 
             <button
               type="button"
-              class={`relative z-10 px-6 py-3 font-medium transition-colors duration-200 ts-rounded-sm ${
+              class={`relative z-10 px-8 py-4 text-lg font-bold transition-colors duration-200 ts-rounded-sm ${
                 billingPeriod === 'monthly'
-                  ? 'text-[#050508]'
+                  ? 'text-[#F8FAFC]'
                   : 'text-[#94A3B8] hover:text-[#F8FAFC]'
               }`}
               on:click={() => {
@@ -186,9 +239,9 @@
 
             <button
               type="button"
-              class={`relative z-10 px-6 py-3 font-medium transition-colors duration-200 ts-rounded-sm ${
+              class={`relative z-10 px-8 py-4 text-base font-bold transition-colors duration-200 ts-rounded-sm ${
                 billingPeriod === 'annual'
-                  ? 'text-[#050508]'
+                  ? 'text-[#F8FAFC]'
                   : 'text-[#94A3B8] hover:text-[#F8FAFC]'
               }`}
               on:click={() => {
@@ -198,7 +251,7 @@
               Annual
               {#if billingPeriod !== 'annual'}
                 <span
-                  class="absolute -right-2 -top-2 bg-[#10B981] px-2 py-1 text-xs font-bold text-[#050508] ts-rounded-sm"
+                  class="absolute -right-2 -top-2 bg-[#047857] px-2.5 py-1 text-xs font-bold text-[#F8FAFC] ts-rounded-sm"
                   transition:scale={{ duration: 150, start: 0.9 }}
                 >
                   Save 20%
@@ -212,29 +265,39 @@
   </div>
 </section>
 
-<section class="bg-[#0A0A0E] py-24">
+<section class="bg-[#050508] pb-8 pt-24">
   <div class="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
     <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
       {#each plans as plan, index (plan.name)}
         <ScrollReveal delay={index * 0.08}>
           <div
-            class={`relative ts-glass ts-rounded-lg ${plan.popular ? 'border-2 border-[#0891B2]' : ''}`}
+            class={`relative flex h-full ts-glass ts-rounded-lg ${plan.popular ? 'border-2 border-[#0891B2]' : ''}`}
           >
             {#if plan.popular}
               <div
-                class="absolute -top-4 left-1/2 -translate-x-1/2 bg-[#0891B2] px-4 py-2 text-sm font-bold text-[#050508] ts-glow-accent ts-rounded-sm"
+                class="absolute -top-4 left-1/2 -translate-x-1/2 bg-[#0F3D66] px-4 py-2 text-sm font-bold text-[#F8FAFC] ts-glow-accent ts-rounded-sm"
                 transition:fly={{ y: -10, duration: 180 }}
               >
                 <div class="flex items-center">
-                  <Icon name="star" className="mr-1 h-4 w-4 fill-current" />
+                  <Icon name="star" className="popular-badge-star mr-1 h-4 w-4" />
                   MOST POPULAR
                 </div>
               </div>
             {/if}
 
-            <div class="p-8">
+            <div class="flex h-full w-full flex-col p-8">
               <div class="mb-6 text-center">
-                <h3 class="mb-2 text-2xl font-bold text-[#F8FAFC]">{plan.name}</h3>
+                <div class="mb-4 grid grid-cols-[3.5rem_1fr_3.5rem] items-center gap-3">
+                  <div
+                    class={`flex h-14 w-14 items-center justify-center border ts-rounded-sm ${plan.iconClass}`}
+                  >
+                    <Icon name={plan.icon} className="h-7 w-7" />
+                  </div>
+                  <h3 class="text-[3.15rem] font-bold leading-none tracking-tight text-[#F8FAFC]">
+                    {plan.name}
+                  </h3>
+                  <div class="h-14 w-14" aria-hidden="true"></div>
+                </div>
                 <p class="text-sm text-[#94A3B8]">{plan.description}</p>
                 {#if 'trial' in plan}
                   <span class="mt-2 inline-block bg-[#10B981]/10 px-3 py-1 text-xs font-bold text-[#10B981] ts-rounded-sm">
@@ -252,16 +315,38 @@
                     <span class="ml-2 text-sm text-[#94A3B8]">
                       {billingPeriod === 'annual' ? '/year' : '/month'}
                     </span>
+                    {#if plan.detailsHref}
+                      <div class="mt-3">
+                        <a
+                          href={plan.detailsHref}
+                          class="inline-flex items-center gap-2 text-sm font-semibold text-[#2563EB] transition-colors duration-200 hover:text-[#60A5FA]"
+                        >
+                          <span>{plan.detailsLabel}</span>
+                          <Icon name="chevronRight" className="h-4 w-4" />
+                        </a>
+                      </div>
+                    {/if}
                   </div>
                 {:else}
                   <div class="text-center">
-                    <span class="text-2xl font-bold ts-text-gradient">$499/mo</span>
-                    <p class="mt-1 text-sm text-[#94A3B8]">+ Usage: $1/GB, $1/M ops</p>
+                    <span class="text-3xl font-bold ts-text-gradient">Custom</span>
+                    <p class="mt-1 text-sm text-[#94A3B8]">
+                      Tailored pricing for scale, compliance, and dedicated support.
+                    </p>
+                    {#if plan.detailsHref}
+                      <a
+                        href={plan.detailsHref}
+                        class="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-[#8B5CF6] transition-colors duration-200 hover:text-[#A78BFA]"
+                      >
+                        <span>{plan.detailsLabel}</span>
+                        <Icon name="chevronRight" className="h-4 w-4" />
+                      </a>
+                    {/if}
                   </div>
                 {/if}
               </div>
 
-              <ul class="mb-8 space-y-4">
+              <ul class="mb-8 flex-1 space-y-4">
                 {#each plan.features as feature, featureIndex (`${plan.name}-${feature}`)}
                   <li
                     class="flex items-start space-x-3"
@@ -278,18 +363,21 @@
               {#if plan.href}
                 <RouteLink
                   href={plan.href}
-                  class={`block w-full px-6 py-4 text-center font-bold transition-all duration-200 ts-rounded-md ts-pressable ${
+                  class={`mt-auto flex min-h-[4.25rem] w-full items-center justify-center px-6 py-4 text-center font-bold transition-all duration-200 ts-rounded-md ts-pressable ${
                     plan.popular
                       ? 'bg-[#0891B2] text-[#050508] ts-glow-accent hover:bg-[#0E7490]'
                       : 'ts-btn-primary'
                   }`}
                 >
-                  {plan.cta}
+                  <span class="inline-flex items-center justify-center gap-2">
+                    <span>{plan.cta}</span>
+                    <Icon name={plan.ctaIcon} className="h-4 w-4" />
+                  </span>
                 </RouteLink>
               {:else}
                 <button
                   type="button"
-                  class={`w-full px-6 py-4 font-bold transition-all duration-200 ts-rounded-md ts-pressable ${
+                  class={`mt-auto flex min-h-[4.25rem] w-full items-center justify-center px-6 py-4 font-bold transition-all duration-200 ts-rounded-md ts-pressable ${
                     plan.popular
                       ? 'bg-[#0891B2] text-[#050508] ts-glow-accent hover:bg-[#0E7490]'
                       : 'ts-btn-primary'
@@ -298,7 +386,10 @@
                     isContactModalOpen = true
                   }}
                 >
-                  {plan.cta}
+                  <span class="inline-flex items-center justify-center gap-2">
+                    <span>{plan.cta}</span>
+                    <Icon name={plan.ctaIcon} className="h-4 w-4" />
+                  </span>
                 </button>
               {/if}
             </div>
@@ -322,35 +413,109 @@
     </div>
 
     <ScrollReveal delay={0.2}>
-      <div class="mt-16 p-8 text-center transition-colors duration-200 hover:border-[#2563EB] ts-glass-frosted ts-rounded-lg">
-        <h3 class="mb-4 text-2xl font-bold text-[#F8FAFC]">
-          Need more detailed pricing information?
-        </h3>
-        <p class="mb-6 text-[#94A3B8]">
-          Get comprehensive details about our pricing structure, including usage-based pricing,
-          enterprise discounts, and detailed cost breakdowns.
-        </p>
-        <a
-          href="https://docs.terrascale.tech/pricing"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="ts-btn-primary ts-rounded-md inline-flex items-center gap-2 px-6 py-3 font-bold ts-pressable"
-        >
-          <Icon name="bookOpen" className="h-5 w-5" />
-          <span>View Detailed Pricing</span>
-          <Icon name="externalLink" className="h-4 w-4" />
-        </a>
+      <div
+        id="detailed-pricing"
+        class="mt-16 scroll-mt-24 overflow-hidden transition-colors duration-200 hover:border-[#8B5CF6] ts-glass-frosted ts-rounded-lg"
+      >
+        <div class="border-b border-[#1A1A24] px-6 py-6 md:px-8">
+          <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div class="mb-3 inline-flex items-center gap-2 bg-[#8B5CF6]/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-[#C4B5FD] ts-rounded-sm">
+                <Icon name="dollarSign" className="h-4 w-4" />
+                Detailed Pricing
+              </div>
+              <h3 class="text-2xl font-bold text-[#F8FAFC] md:text-3xl">
+                Clear pricing for custom deployments
+              </h3>
+              <p class="mt-2 max-w-3xl text-sm text-[#94A3B8] md:text-base">
+                Usage-based costs, support scopes, and deployment requirements are broken out below so enterprise teams can estimate spend before talking to sales.
+              </p>
+            </div>
+            <a
+              href="https://docs.terrascale.tech/pricing"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="ts-btn-glass ts-rounded-md inline-flex items-center justify-center gap-2 px-4 py-3 font-bold ts-pressable"
+            >
+              <Icon name="bookOpen" className="h-4 w-4" />
+              <span>Full Pricing Docs</span>
+              <Icon name="externalLink" className="h-4 w-4" />
+            </a>
+          </div>
+        </div>
+
+        <div class="grid gap-4 p-4 sm:p-6 md:hidden">
+          {#each enterprisePricingRows as row (row.item)}
+            <div class="border border-[#1A1A24] bg-[#0F0F16]/70 p-4 ts-rounded-lg">
+              <div class="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-[11px] font-bold uppercase tracking-[0.16em] text-[#64748B]">
+                    Item
+                  </div>
+                  <div class="mt-1 font-semibold text-[#F8FAFC]">{row.item}</div>
+                </div>
+                <span class="inline-flex shrink-0 items-center gap-2 bg-[#8B5CF6]/10 px-3 py-1.5 font-semibold text-[#C4B5FD] ts-rounded-sm">
+                  <Icon name="dollarSign" className="h-4 w-4" />
+                  {row.pricing}
+                </span>
+              </div>
+              <div class="text-[11px] font-bold uppercase tracking-[0.16em] text-[#64748B]">
+                Details
+              </div>
+              <p class="mt-1 text-sm leading-relaxed text-[#94A3B8]">{row.details}</p>
+            </div>
+          {/each}
+        </div>
+
+        <div class="hidden overflow-x-auto md:block">
+          <table class="min-w-full border-collapse">
+            <thead>
+              <tr class="border-b border-[#1A1A24] bg-[#0F0F16]/80">
+                <th class="px-6 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] text-[#64748B] md:px-8">
+                  Item
+                </th>
+                <th class="px-6 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] text-[#64748B] md:px-8">
+                  Pricing
+                </th>
+                <th class="px-6 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] text-[#64748B] md:px-8">
+                  Details
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each enterprisePricingRows as row, index (row.item)}
+                <tr
+                  class={`${index % 2 === 0 ? 'bg-[#0B0B12]' : 'bg-[#11111A]/80'} ${
+                    index < enterprisePricingRows.length - 1 ? 'border-b border-[#1A1A24]' : ''
+                  }`}
+                >
+                  <td class="px-6 py-5 align-top md:px-8">
+                    <div class="font-semibold text-[#F8FAFC]">{row.item}</div>
+                  </td>
+                  <td class="px-6 py-5 align-top md:px-8">
+                    <span class="inline-flex items-center gap-2 font-semibold text-[#8B5CF6]">
+                      <Icon name="dollarSign" className="h-4 w-4" />
+                      {row.pricing}
+                    </span>
+                  </td>
+                  <td class="px-6 py-5 align-top text-sm leading-relaxed text-[#94A3B8] md:px-8">
+                    {row.details}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       </div>
     </ScrollReveal>
   </div>
 </section>
 
-<section class="bg-[#050508] py-24">
+<section class="bg-[#050508] pb-24 pt-8">
   <div class="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
     <ScrollReveal>
       <div class="mb-16 text-center">
         <h2 class="mb-4 text-3xl font-bold tracking-tight text-[#F8FAFC] md:text-4xl">
-          <span class="terminal-prefix">///</span>
           Frequently Asked Questions
         </h2>
         <p class="text-xl text-[#94A3B8]">Get answers to common questions about our pricing and plans.</p>
@@ -368,7 +533,6 @@
               on:click={() => toggleFaq(index)}
             >
               <h3 class="flex items-center pr-4 font-bold text-[#F8FAFC]">
-                <span class="terminal-prefix mr-2">///</span>
                 {faq.question}
               </h3>
               <Icon
@@ -446,11 +610,10 @@
   </div>
 </section>
 
-<section class="relative overflow-hidden bg-[#050508] bg-grid-pattern py-24">
+<section class="relative overflow-hidden bg-[#050508] pb-24 pt-6">
   <ScrollReveal>
     <div class="relative z-10 mx-auto max-w-4xl px-4 text-center sm:px-6 lg:px-8">
       <h2 class="mb-4 text-3xl font-bold tracking-tight text-[#F8FAFC] md:text-4xl">
-        <span class="terminal-prefix">///</span>
         Ready to get started?
       </h2>
       <p class="mb-8 text-xl text-[#94A3B8]">
@@ -470,3 +633,9 @@
 <ContactModal open={isContactModalOpen} on:close={() => {
   isContactModalOpen = false
 }} />
+
+<style>
+  .popular-badge-star :global(path) {
+    fill: currentColor;
+  }
+</style>

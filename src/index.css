@@ -88,6 +88,9 @@
   --ts-space-16: 4rem;
   --ts-space-20: 5rem;
 
+  /* Layout */
+  --ts-header-height: 4rem;
+
   /* Border Radius (4-16px range - hybrid neo-brutalist) */
   --ts-radius-none: 0px;
   --ts-radius-sm: 4px;
@@ -457,13 +460,6 @@ pre {
 }
 
 /* ===== TERMINAL/CODE STYLING (Quantico only) ===== */
-.terminal-prefix {
-  font-family: var(--ts-font-display);
-  color: var(--ts-color-primary);
-  font-size: 0.9em;
-  margin-right: 0.5rem;
-}
-
 .terminal-line::before {
   content: "// ";
   font-family: var(--ts-font-display);
@@ -505,6 +501,78 @@ pre {
   border-radius: var(--ts-radius-sm);
   padding: 2px 8px;
   color: var(--ts-color-primary-light);
+}
+
+.ts-code-line {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 -0.25rem;
+  padding: 0.1rem 0.25rem;
+  border-left: 2px solid transparent;
+  border-radius: var(--ts-radius-sm);
+}
+
+.ts-code-line-number {
+  color: #475569;
+  text-align: right;
+  user-select: none;
+}
+
+.ts-code-line-content {
+  color: #f8fafc;
+  white-space: pre;
+}
+
+.ts-code-line-highlight-primary {
+  background: rgba(37, 99, 235, 0.08);
+  border-left-color: rgba(59, 130, 246, 0.8);
+}
+
+.ts-code-line-highlight-secondary {
+  background: rgba(16, 185, 129, 0.08);
+  border-left-color: rgba(52, 211, 153, 0.75);
+}
+
+.ts-code-token-keyword {
+  color: #60a5fa;
+}
+
+.ts-code-token-type {
+  color: #22d3ee;
+}
+
+.ts-code-token-variable {
+  color: #f8fafc;
+}
+
+.ts-code-token-property {
+  color: #93c5fd;
+}
+
+.ts-code-token-function {
+  color: #34d399;
+}
+
+.ts-code-token-string {
+  color: #fbbf24;
+}
+
+.ts-code-token-number {
+  color: #c4b5fd;
+}
+
+.ts-code-token-comment {
+  color: #64748b;
+}
+
+.ts-code-token-muted {
+  color: #94a3b8;
+}
+
+.ts-code-token-accent {
+  color: #67e8f9;
 }
 
 /* ===== STATS CARD (Glass + Glow) ===== */
@@ -767,26 +835,26 @@ pre {
 .ts-reveal {
   opacity: 0;
   transition:
-    opacity var(--ts-reveal-duration, 0.6s) ease,
-    transform var(--ts-reveal-duration, 0.6s) ease;
+    opacity var(--ts-reveal-duration, 0.38s) ease-out,
+    transform var(--ts-reveal-duration, 0.38s) ease-out;
   transition-delay: var(--ts-reveal-delay, 0s);
   will-change: opacity, transform;
 }
 
 .ts-reveal-up {
-  transform: translate3d(0, 40px, 0);
+  transform: translate3d(0, 24px, 0);
 }
 
 .ts-reveal-down {
-  transform: translate3d(0, -40px, 0);
+  transform: translate3d(0, -24px, 0);
 }
 
 .ts-reveal-left {
-  transform: translate3d(40px, 0, 0);
+  transform: translate3d(24px, 0, 0);
 }
 
 .ts-reveal-right {
-  transform: translate3d(-40px, 0, 0);
+  transform: translate3d(-24px, 0, 0);
 }
 
 .ts-reveal-none {
