@@ -35,7 +35,7 @@ export const navigation: RouteEntry[] = [
   { name: 'Home', href: '/' as RoutePath, icon: 'home' },
   { name: 'Pricing', href: '/pricing' as RoutePath, icon: 'dollarSign' },
   { name: 'Contact', href: '/contact' as RoutePath, icon: 'messageCircle' },
-  { name: 'About', href: '/about' as RoutePath, icon: 'users' },
+  // { name: 'About', href: '/about' as RoutePath, icon: 'users' },
 ]
 
 export const headerLinks: HeaderLinkEntry[] = [

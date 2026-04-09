@@ -4,7 +4,7 @@
   import { footerHighlights, footerLinks, socialLinks, supportChannels } from '@/lib/site'
 </script>
 
-<footer class="border-t border-[#1A1A24] bg-[#050508] bg-grid-pattern">
+<footer class="border-t border-[#1A1A24] bg-[#0A0A0E]">
   <div class="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
     <div class="py-8">
       <div class="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-5">

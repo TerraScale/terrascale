@@ -534,97 +534,101 @@
     codeSnippets.find((snippet) => snippet.id === activeCodeSnippetId) ?? codeSnippets[0]
 </script>
 
-<section class="relative flex min-h-[calc(100svh-var(--ts-header-height))] items-center justify-center overflow-hidden bg-[#050508]">
+<div class="relative overflow-hidden bg-[#050508]">
   <div
-    class="absolute inset-0 opacity-80"
+    class="pointer-events-none absolute inset-0 opacity-80"
     style="background:
       radial-gradient(ellipse at top, rgba(59, 130, 246, 0.18) 0%, rgba(5, 5, 8, 0) 52%),
-      radial-gradient(circle at 20% 30%, rgba(37, 99, 235, 0.14) 0%, rgba(5, 5, 8, 0) 34%),
-      radial-gradient(circle at 80% 28%, rgba(16, 185, 129, 0.1) 0%, rgba(5, 5, 8, 0) 28%);"
+      radial-gradient(circle at 20% 20%, rgba(37, 99, 235, 0.14) 0%, rgba(5, 5, 8, 0) 34%),
+      radial-gradient(circle at 80% 18%, rgba(16, 185, 129, 0.1) 0%, rgba(5, 5, 8, 0) 28%),
+      radial-gradient(circle at 50% 65%, rgba(8, 145, 178, 0.08) 0%, rgba(5, 5, 8, 0) 34%);"
   ></div>
+  <div class="pointer-events-none absolute inset-0 bg-grid-pattern opacity-55"></div>
+  <div class="pointer-events-none scanlines absolute inset-0 opacity-20"></div>
 
-  <div class="absolute inset-0 bg-grid-pattern opacity-55"></div>
-
-  <div class="animate-float-slow absolute left-[15%] top-1/4 h-96 w-96 border border-[#2563EB]/20 ts-rounded-md opacity-30">
+  <div class="pointer-events-none animate-float-slow absolute left-[15%] top-[12%] h-96 w-96 border border-[#2563EB]/20 ts-rounded-md opacity-30">
     <div class="absolute inset-0 bg-gradient-to-br from-[#60A5FA]/10 to-transparent"></div>
   </div>
-
-  <div class="animate-float-reverse absolute bottom-1/4 right-[15%] h-80 w-80 border border-[#10B981]/20 ts-rounded-md opacity-30">
+  <div class="pointer-events-none animate-float-reverse absolute right-[15%] top-[32%] h-80 w-80 border border-[#10B981]/20 ts-rounded-md opacity-30">
     <div class="absolute inset-0 bg-gradient-to-br from-[#34D399]/8 to-transparent"></div>
   </div>
+  <div class="pointer-events-none animate-float-slow absolute bottom-[18%] left-[8%] h-72 w-72 rounded-full border border-[#2563EB]/12 bg-[#2563EB]/6 blur-2xl"></div>
+  <div class="pointer-events-none animate-float-reverse absolute bottom-[8%] right-[10%] h-64 w-64 rounded-full border border-[#0891B2]/12 bg-[#0891B2]/6 blur-2xl"></div>
 
-  <div class="relative z-10 mx-auto max-w-[1440px] px-4 py-16 sm:px-6 md:py-[4.5rem] lg:px-8 lg:py-20">
-    <div class="mx-auto max-w-4xl text-center">
-      <ScrollReveal delay={0.2}>
-        <div class="-translate-y-4 mb-4 flex justify-center md:-translate-y-6">
-          <img
-            src="/logo-principal.svg"
-            alt="TerraScale"
-            class="h-20 w-auto sm:h-24 md:h-28 lg:h-32"
-          />
-        </div>
-      </ScrollReveal>
-
-      <ScrollReveal delay={0.3}>
-        <p class="mx-auto mb-12 max-w-3xl text-xl leading-relaxed text-[#94A3B8] md:text-2xl">
-          The most advanced database platform for modern applications. Deploy, scale, and manage
-          your data with enterprise-grade security and performance.
-        </p>
-      </ScrollReveal>
-
-      <ScrollReveal delay={0.4}>
-        <div class="mb-16 flex flex-col items-center justify-center gap-4 sm:flex-row">
-          <RouteLink
-            href="/contact"
-            class="ts-btn-primary ts-rounded-md inline-flex items-center px-8 py-4 text-[0.8125rem] font-bold shadow-offset-blue ts-pressable"
-          >
-            <span>Start Building Free</span>
-            <Icon name="arrowRight" className="ml-2 h-5 w-5" />
-          </RouteLink>
-
-          <a
-            href="https://docs.terrascale.tech"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="ts-btn-glass ts-rounded-md inline-flex items-center px-8 py-4 text-[0.8125rem] font-bold shadow-offset ts-pressable"
-          >
-            <Icon name="bookOpen" className="mr-2 h-5 w-5" />
-            <span>View Documentation</span>
-          </a>
-        </div>
-      </ScrollReveal>
-
-      <ScrollReveal delay={0.5}>
-        <div class="mb-8 inline-flex items-center px-4 py-2 text-sm font-medium text-[#F8FAFC] hover-lift ts-glass ts-rounded-sm">
-          <span class="mr-3 h-2 w-2 animate-pulse ts-glow-secondary ts-rounded-sm bg-[#10B981]"></span>
-          <Icon name="database" className="mr-2 h-4 w-4 text-[#2563EB]" />
-          <span>Database as a Service Platform</span>
-        </div>
-      </ScrollReveal>
-
-      <ScrollReveal delay={0.6}>
-        <div class="grid grid-cols-2 gap-6 md:grid-cols-4">
-          {#each stats as stat (stat.label)}
-            <div class="ts-stats-card text-center">
-              <div class="text-2xl font-bold ts-text-gradient md:text-3xl">
-                <AnimatedCounter value={stat.value} />
-              </div>
-              <div class="terminal-line mt-2 text-sm text-[#94A3B8]">{stat.label}</div>
+  <div class="relative z-10">
+    <section class="relative flex min-h-[calc(100svh-var(--ts-header-height))] items-center justify-center overflow-hidden">
+      <div class="mx-auto max-w-[1440px] px-4 py-16 sm:px-6 md:py-[4.5rem] lg:px-8 lg:py-20">
+        <div class="mx-auto max-w-4xl text-center">
+          <ScrollReveal delay={0.2}>
+            <div class="-translate-y-4 mb-4 flex justify-center md:-translate-y-6">
+              <img
+                src="/logo-principal.svg"
+                alt="TerraScale"
+                class="h-20 w-auto sm:h-24 md:h-28 lg:h-32"
+              />
             </div>
-          {/each}
+          </ScrollReveal>
+
+          <ScrollReveal delay={0.3}>
+            <p class="mx-auto mb-12 max-w-3xl text-xl leading-relaxed text-[#94A3B8] md:text-2xl">
+              The most advanced database platform for modern applications. Deploy, scale, and manage
+              your data with enterprise-grade security and performance.
+            </p>
+          </ScrollReveal>
+
+          <ScrollReveal delay={0.4}>
+            <div class="mb-16 flex flex-col items-center justify-center gap-4 sm:flex-row">
+              <RouteLink
+                href="/contact"
+                class="ts-btn-primary ts-rounded-md inline-flex items-center px-8 py-4 text-[0.8125rem] font-bold shadow-offset-blue ts-pressable"
+              >
+                <span>Start Building Free</span>
+                <Icon name="arrowRight" className="ml-2 h-5 w-5" />
+              </RouteLink>
+
+              <a
+                href="https://docs.terrascale.tech"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="ts-btn-glass ts-rounded-md inline-flex items-center px-8 py-4 text-[0.8125rem] font-bold shadow-offset ts-pressable"
+              >
+                <Icon name="bookOpen" className="mr-2 h-5 w-5" />
+                <span>View Documentation</span>
+              </a>
+            </div>
+          </ScrollReveal>
+
+          <ScrollReveal delay={0.5}>
+            <div class="mb-8 inline-flex items-center px-4 py-2 text-sm font-medium text-[#F8FAFC] hover-lift ts-glass ts-rounded-sm">
+              <span class="mr-3 h-2 w-2 animate-pulse ts-glow-secondary ts-rounded-sm bg-[#10B981]"></span>
+              <Icon name="database" className="mr-2 h-4 w-4 text-[#2563EB]" />
+              <span>Database as a Service Platform</span>
+            </div>
+          </ScrollReveal>
+
+          <ScrollReveal delay={0.6}>
+            <div class="grid grid-cols-2 gap-6 md:grid-cols-4">
+              {#each stats as stat (stat.label)}
+                <div class="ts-stats-card text-center">
+                  <div class="text-2xl font-bold ts-text-gradient md:text-3xl">
+                    <AnimatedCounter value={stat.value} />
+                  </div>
+                  <div class="terminal-line mt-2 text-sm text-[#94A3B8]">{stat.label}</div>
+                </div>
+              {/each}
+            </div>
+          </ScrollReveal>
         </div>
-      </ScrollReveal>
-    </div>
-  </div>
+      </div>
 
-  <div class="animate-bob absolute bottom-8 left-1/2 -translate-x-1/2">
-    <div class="flex h-10 w-6 justify-center border-2 border-[#1A1A24] ts-rounded-sm">
-      <div class="mt-2 h-3 w-1 animate-pulse ts-rounded-sm bg-[#94A3B8]/50"></div>
-    </div>
-  </div>
-</section>
+      <div class="animate-bob absolute bottom-8 left-1/2 -translate-x-1/2">
+        <div class="flex h-10 w-6 justify-center border-2 border-[#1A1A24] ts-rounded-sm">
+          <div class="mt-2 h-3 w-1 animate-pulse ts-rounded-sm bg-[#94A3B8]/50"></div>
+        </div>
+      </div>
+    </section>
 
-<section id="features" class="bg-[#0A0A0E] py-24">
+<section id="features" class="py-24">
   <div class="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
     <ScrollReveal>
       <div class="mb-16 text-center">
@@ -654,7 +658,7 @@
   </div>
 </section>
 
-<section class="bg-[#050508] py-24">
+<section class="py-24">
   <div class="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
     <div class="grid grid-cols-1 items-center gap-16 lg:grid-cols-2">
       <ScrollReveal direction="left">
@@ -749,7 +753,7 @@
 </section>
 
 {#if false}
-  <section class="bg-[#0A0A0E] py-24">
+  <section class="py-24">
     <div class="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
       <ScrollReveal>
         <div class="mb-16 text-center">
@@ -782,7 +786,7 @@
   </section>
 {/if}
 
-<section class="relative overflow-hidden bg-[#050508] bg-grid-pattern py-24">
+<section class="relative overflow-hidden py-24">
   <ScrollReveal>
     <div class="relative z-10 mx-auto max-w-4xl px-4 text-center sm:px-6 lg:px-8">
       <h2 class="mb-6 text-3xl font-bold tracking-tight text-[#F8FAFC] md:text-5xl">
@@ -811,3 +815,5 @@
     </div>
   </ScrollReveal>
 </section>
+  </div>
+</div>
