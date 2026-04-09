@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { currentLocation, isInternalHref, navigate } from '@/lib/router'
+  import { page } from '$app/stores'
 
   let className = ''
 
@@ -11,40 +11,22 @@
   export let match: 'exact' | 'prefix' = 'exact'
   export let afterClick: (() => void) | undefined = undefined
 
-  const isModifiedEvent = (event: MouseEvent) =>
-    event.metaKey ||
-    event.ctrlKey ||
-    event.shiftKey ||
-    event.altKey ||
-    event.button !== 0
+  const isInternalHref = (value: string) => value.startsWith('/') || value.startsWith('#')
 
   $: internal = isInternalHref(href)
-  $: targetPath = href.startsWith('#') ? $currentLocation.pathname : href.split('#')[0] || '/'
+  $: targetPath = href.startsWith('#') ? $page.url.pathname : href.split('#')[0] || '/'
   $: normalizedTargetPath =
     targetPath.length > 1 && targetPath.endsWith('/') ? targetPath.slice(0, -1) : targetPath
   $: isActive =
     internal &&
     (match === 'prefix'
       ? normalizedTargetPath === '/'
-        ? $currentLocation.pathname === '/'
-        : $currentLocation.pathname.startsWith(normalizedTargetPath)
-      : $currentLocation.pathname === normalizedTargetPath)
+        ? $page.url.pathname === '/'
+        : $page.url.pathname.startsWith(normalizedTargetPath)
+      : $page.url.pathname === normalizedTargetPath)
 
-  function handleClick(event: MouseEvent) {
+  function handleClick() {
     afterClick?.()
-
-    if (!internal || isModifiedEvent(event) || event.defaultPrevented) {
-      return
-    }
-
-    const anchor = event.currentTarget as HTMLAnchorElement
-
-    if (anchor.target && anchor.target !== '_self') {
-      return
-    }
-
-    event.preventDefault()
-    navigate(href)
   }
 </script>
 

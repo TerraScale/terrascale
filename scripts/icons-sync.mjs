@@ -5,7 +5,7 @@ import { iconManifest } from './icons-manifest.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, '..')
-const publicIconsRoot = path.join(projectRoot, 'public', 'icons')
+const publicIconsRoot = path.join(projectRoot, 'static', 'icons')
 const registryPath = path.join(projectRoot, 'src', 'lib', 'icons.ts')
 
 const normalizeSvg = (svg) =>

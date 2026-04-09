@@ -109,13 +109,19 @@ const users = await db.collection('users')
       </ScrollReveal>
 
       <ScrollReveal delay={0.3}>
+        <h1 class="mx-auto mb-6 max-w-4xl text-4xl font-bold tracking-tight text-[#F8FAFC] md:text-6xl">
+          Database Infrastructure That Scales Effortlessly
+        </h1>
+      </ScrollReveal>
+
+      <ScrollReveal delay={0.35}>
         <p class="mx-auto mb-12 max-w-3xl text-xl leading-relaxed text-[#94A3B8] md:text-2xl">
           The most advanced database platform for modern applications. Deploy, scale, and manage
           your data with enterprise-grade security and performance.
         </p>
       </ScrollReveal>
 
-      <ScrollReveal delay={0.4}>
+      <ScrollReveal delay={0.45}>
         <div class="mb-16 flex flex-col items-center justify-center gap-4 sm:flex-row">
           <RouteLink
             href="/contact"
@@ -137,7 +143,7 @@ const users = await db.collection('users')
         </div>
       </ScrollReveal>
 
-      <ScrollReveal delay={0.5}>
+      <ScrollReveal delay={0.55}>
         <div class="grid grid-cols-2 gap-6 md:grid-cols-4">
           {#each stats as stat (stat.label)}
             <div class="ts-stats-card text-center">

@@ -2,7 +2,13 @@
 
 ## Stack
 
-- Use Svelte 5 with TypeScript for UI work in this repository.
+- Use SvelteKit with Svelte 5 and TypeScript for UI work in this repository.
+
+## Deployment
+
+- Deployments use the simpler Cloudflare Pages static upload flow.
+- Prefer solutions that work cleanly as a static site build output.
+- Do not assume SSR, server adapters, or Cloudflare Workers are part of the deployment setup unless the repo instructions are changed.
 
 ## Icons
 
