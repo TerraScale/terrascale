@@ -1,6 +1,7 @@
 import type { AppIconName } from '@/lib/icons'
 
 export type RoutePath = '/' | '/about' | '/contact' | '/pricing'
+export type HeaderLinkVariant = 'default' | 'status' | 'primary'
 
 type IconEntry = {
   icon: AppIconName
@@ -14,6 +15,10 @@ type RouteEntry = IconEntry & {
 type ExternalLinkEntry = IconEntry & {
   name: string
   href: string
+}
+
+type HeaderLinkEntry = ExternalLinkEntry & {
+  variant: HeaderLinkVariant
 }
 
 type FooterHighlight = IconEntry & {
@@ -30,13 +35,18 @@ export const navigation: RouteEntry[] = [
   { name: 'Home', href: '/' as RoutePath, icon: 'home' },
   { name: 'Pricing', href: '/pricing' as RoutePath, icon: 'dollarSign' },
   { name: 'Contact', href: '/contact' as RoutePath, icon: 'messageCircle' },
-  { name: 'About', href: '/about' as RoutePath, icon: 'users' },
+  // { name: 'About', href: '/about' as RoutePath, icon: 'users' },
 ]
 
-export const headerLinks: ExternalLinkEntry[] = [
-  { name: 'Docs', href: 'https://docs.terrascale.tech', icon: 'bookOpen' },
-  { name: 'Status', href: 'https://status.terrascale.tech', icon: 'activity' },
-  { name: 'Dashboard', href: 'https://dash.terrascale.tech', icon: 'layoutDashboard' },
+export const headerLinks: HeaderLinkEntry[] = [
+  { name: 'Docs', href: 'https://docs.terrascale.tech', icon: 'bookOpen', variant: 'default' },
+  { name: 'Status', href: 'https://status.terrascale.tech', icon: 'activity', variant: 'status' },
+  {
+    name: 'Dashboard',
+    href: 'https://dash.terrascale.tech',
+    icon: 'layoutDashboard',
+    variant: 'primary',
+  },
 ]
 
 export const socialLinks: ExternalLinkEntry[] = [

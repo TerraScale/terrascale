@@ -11,8 +11,13 @@ const registryPath = path.join(projectRoot, 'src', 'lib', 'icons.ts')
 const normalizeSvg = (svg) =>
   svg
     .replace(/\r\n/g, '\n')
-    .replace(/\s(width|height)="[^"]*"/g, '')
-    .replace(/<svg\b/, '<svg focusable="false"')
+    .replace(/<svg\b([^>]*)>/, (_match, attributes) => {
+      const normalizedAttributes = attributes
+        .replace(/\swidth="[^"]*"/, '')
+        .replace(/\sheight="[^"]*"/, '')
+
+      return `<svg focusable="false"${normalizedAttributes}>`
+    })
     .trim()
     .concat('\n')
 
