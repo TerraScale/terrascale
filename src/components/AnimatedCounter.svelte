@@ -8,7 +8,7 @@
   export { className as class }
 
   export let value: string
-  export let duration = 1.5
+  export let duration = 0.95
 
   let element: HTMLSpanElement
   let reduceMotion = false
@@ -45,7 +45,7 @@
 
         observer.disconnect()
       },
-      { rootMargin: '-50px 0px' },
+      { rootMargin: '0px 0px 120px 0px' },
     )
 
     observer.observe(element)
