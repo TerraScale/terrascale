@@ -1,25 +1,43 @@
+import svelteConfig from './svelte.config.js'
 import js from '@eslint/js'
 import globals from 'globals'
-import reactHooks from 'eslint-plugin-react-hooks'
-import reactRefresh from 'eslint-plugin-react-refresh'
+import svelte from 'eslint-plugin-svelte'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['dist'] },
   {
-    files: ['**/*.{ts,tsx}'],
-    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    ignores: [
+      'dist',
+      'tmp',
+      'src/**/*.tsx',
+      'src/**/*.jsx',
+      'src/components/motion/**/*',
+      'src/components/ui/**/*',
+      'src/lib/utils.ts',
+    ],
+  },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  ...svelte.configs.recommended,
+  {
     languageOptions: {
-      ecmaVersion: 2020,
       globals: globals.browser,
     },
-    plugins: {
-      'react-hooks': reactHooks,
-      'react-refresh': reactRefresh,
+  },
+  {
+    files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        extraFileExtensions: ['.svelte'],
+        parser: tseslint.parser,
+        svelteConfig,
+      },
     },
+  },
+  {
     rules: {
-      ...reactHooks.configs.recommended.rules,
-      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      'no-undef': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
