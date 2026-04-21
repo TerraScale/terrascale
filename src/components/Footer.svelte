@@ -2,124 +2,274 @@
   import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
-  import { footerHighlights, footerLinks, socialLinks, supportChannels } from '@/lib/site'
+  import { footerColumns, socialLinks } from '@/lib/site'
+
+  const year = new Date().getFullYear()
+
+  const isExternal = (href: string) => href.startsWith('http') || href.startsWith('mailto:')
 </script>
 
-<footer class="border-t border-[#1A1A24] bg-[#0A0A0E]">
-  <div class="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
-    <div class="py-8">
-      <div class="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-5">
-        <div class="lg:col-span-2">
-          <RouteLink href="/" class="mb-4 flex items-center">
-            <img
-              src="/logo-white.svg"
-              alt="TerraScale"
-              class="h-10 w-auto"
-              width="1429"
-              height="345"
-              loading="lazy"
-              decoding="async"
-            />
-          </RouteLink>
-
-          <p class="mb-4 max-w-sm text-sm text-[#94A3B8]">
-            Empowering businesses with secure, scalable, and innovative cloud solutions. Scale your
-            tech, effortlessly.
-          </p>
-
-          <div class="mb-4 space-y-2 text-sm text-[#94A3B8]">
-            {#each supportChannels as channel (channel.label)}
-              <div class="flex items-center space-x-2">
-                <Icon name={channel.icon} className="h-3 w-3 text-[#F8FAFC]" />
-                {#if channel.href.startsWith('http')}
-                  <ExternalLink
-                    href={channel.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="inline-flex items-center gap-2 transition-colors duration-200 hover:text-[#F8FAFC]"
-                  >
-                    <Icon name="chevronRight" className="h-3 w-3 text-[#F8FAFC]" />
-                    {channel.label}
-                  </ExternalLink>
-                {:else}
-                  <RouteLink
-                    href={channel.href}
-                    class="inline-flex items-center gap-2 transition-colors duration-200 hover:text-[#F8FAFC]"
-                  >
-                    <Icon name="chevronRight" className="h-3 w-3 text-[#F8FAFC]" />
-                    {channel.label}
-                  </RouteLink>
-                {/if}
-              </div>
-            {/each}
-          </div>
-
-          <div class="flex space-x-3">
-            {#each socialLinks as social (social.name)}
-              <ExternalLink
-                href={social.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={social.name}
-                class="hover-lift hover-lift-active ts-rounded-sm border border-[#1A1A24] bg-[#080810] p-2 transition-all duration-200 hover:border-[#F8FAFC]"
-              >
-                <Icon name={social.icon} className="h-4 w-4 text-[#F8FAFC] transition-colors hover:text-[#CBD5E1]" />
-              </ExternalLink>
-            {/each}
-          </div>
-        </div>
-
-        {#each Object.entries(footerLinks) as [category, links] (category)}
-          <div>
-            <h3 class="mb-3 text-sm font-semibold text-[#F8FAFC]">
-              {category}
-            </h3>
-            <ul class="space-y-2">
-              {#each links as link (link.name)}
-                <li>
-                  {#if link.href.startsWith('http')}
-                    <ExternalLink
-                      href={link.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="inline-flex items-center gap-2 text-sm text-[#94A3B8] transition-colors duration-200 hover:text-[#F8FAFC]"
-                    >
-                      <Icon name="chevronRight" className="h-3 w-3 text-[#F8FAFC]" />
-                      {link.name}
-                    </ExternalLink>
-                  {:else}
-                    <RouteLink
-                      href={link.href}
-                      class="inline-flex items-center gap-2 text-sm text-[#94A3B8] transition-colors duration-200 hover:text-[#F8FAFC]"
-                    >
-                      <Icon name="chevronRight" className="h-3 w-3 text-[#F8FAFC]" />
-                      {link.name}
-                    </RouteLink>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/each}
-      </div>
-    </div>
-
-    <div class="border-t border-[#1A1A24] py-4">
-      <div class="flex flex-col items-center justify-between space-y-2 md:flex-row md:space-y-0">
-        <p class="text-sm text-[#475569]">© {new Date().getFullYear()} TerraScale. All rights reserved.</p>
-
-        <div class="flex flex-wrap items-center justify-center gap-4 text-sm text-[#475569]">
-          {#each footerHighlights as highlight (highlight.label)}
-            <div class={highlight.className}>
-              {#if highlight.label === '99.99% Uptime'}
-                <div class="h-2 w-2 animate-pulse ts-rounded-sm bg-[#10B981]"></div>
-              {/if}
-              <Icon name={highlight.icon} className="h-3 w-3" />
-              <span>{highlight.label}</span>
-            </div>
+<footer class="ts-footer">
+  <div class="ts-footer__inner">
+    <div class="ts-footer__grid">
+      <div class="ts-footer__brand">
+        <RouteLink href="/" class="ts-footer__logo" aria-label="TerraScale home">
+          <img
+            src="/logo-white.svg"
+            alt="TerraScale"
+            width="1429"
+            height="345"
+            decoding="async"
+            loading="lazy"
+          />
+        </RouteLink>
+        <p class="ts-footer__tagline">
+          Empowering teams with secure, scalable database infrastructure. Scale your tech, effortlessly.
+        </p>
+        <div class="ts-footer__socials">
+          {#each socialLinks as social (social.name)}
+            <ExternalLink
+              href={social.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={social.name}
+              class="ts-footer__social"
+              style={`color: ${social.color}; background: ${social.bg}; border-color: ${social.border};`}
+            >
+              <Icon name={social.icon} className="ts-footer__social-icon" />
+            </ExternalLink>
           {/each}
         </div>
+      </div>
+
+      {#each footerColumns as column (column.title)}
+        <div class="ts-footer__column">
+          <div class="ts-footer__heading">{column.title}</div>
+          <ul class="ts-footer__list">
+            {#each column.links as link (link.name)}
+              <li>
+                {#if isExternal(link.href)}
+                  <ExternalLink
+                    href={link.href}
+                    target={link.href.startsWith('mailto:') ? undefined : '_blank'}
+                    rel={link.href.startsWith('mailto:') ? undefined : 'noopener noreferrer'}
+                    class="ts-footer__link"
+                  >
+                    <Icon name="chevronRight" className="ts-footer__chevron" />
+                    {link.name}
+                  </ExternalLink>
+                {:else}
+                  <RouteLink href={link.href} class="ts-footer__link">
+                    <Icon name="chevronRight" className="ts-footer__chevron" />
+                    {link.name}
+                  </RouteLink>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/each}
+    </div>
+
+    <div class="ts-footer__meta">
+      <div class="ts-footer__copy">© {year} TerraScale. All rights reserved.</div>
+      <div class="ts-footer__stats">
+        <span class="ts-footer__stat">
+          <span class="pulse-dot ts-footer__stat-dot"></span>
+          99.99% Uptime
+        </span>
+        <span class="ts-footer__stat">
+          <Icon name="shield" className="ts-footer__stat-icon" />
+          SOC 2 Type II
+        </span>
       </div>
     </div>
   </div>
 </footer>
+
+<style>
+  .ts-footer {
+    background: var(--ts-bg-surface);
+    border-top: 1px solid var(--ts-divider);
+    padding: 36px 0 20px;
+  }
+
+  .ts-footer__inner {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 0 40px;
+  }
+
+  .ts-footer__grid {
+    display: grid;
+    grid-template-columns: 1.6fr repeat(4, 1fr);
+    gap: 32px;
+    margin-bottom: 28px;
+  }
+
+  :global(.ts-footer__logo) {
+    display: inline-flex;
+    margin-bottom: 12px;
+  }
+
+  :global(.ts-footer__logo img) {
+    height: 26px;
+    width: auto;
+    display: block;
+  }
+
+  .ts-footer__tagline {
+    font-size: 13px;
+    color: var(--ts-text-muted);
+    line-height: 1.5;
+    max-width: 320px;
+    margin: 0 0 14px;
+  }
+
+  .ts-footer__socials {
+    display: flex;
+    gap: 8px;
+  }
+
+  :global(.ts-footer__social) {
+    width: 32px;
+    height: 32px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+    transition:
+      transform 180ms ease,
+      box-shadow 180ms ease,
+      background 180ms ease;
+  }
+
+  :global(.ts-footer__social:hover) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(var(--ts-primary-rgb), 0.25);
+  }
+
+  :global(.ts-footer__social-icon) {
+    width: 14px;
+    height: 14px;
+    display: block;
+  }
+
+  .ts-footer__heading {
+    font-family: var(--ts-font-accent);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--ts-text);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-bottom: 10px;
+  }
+
+  .ts-footer__list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .ts-footer__list li {
+    margin-bottom: 6px;
+  }
+
+  :global(.ts-footer__link) {
+    font-size: 12.5px;
+    color: var(--ts-text-muted);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 150ms ease;
+    font-family: var(--ts-font-accent);
+  }
+
+  :global(.ts-footer__link:hover) {
+    color: var(--ts-text);
+  }
+
+  :global(.ts-footer__chevron) {
+    width: 10px;
+    height: 10px;
+    color: var(--ts-text-muted);
+    transition: transform 150ms ease;
+  }
+
+  :global(.ts-footer__link:hover .ts-footer__chevron) {
+    transform: translateX(2px);
+    color: var(--ts-primary-light);
+  }
+
+  .ts-footer__meta {
+    border-top: 1px solid var(--ts-divider);
+    padding-top: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .ts-footer__copy {
+    font-size: 12px;
+    color: var(--ts-text-muted);
+  }
+
+  .ts-footer__stats {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+  }
+
+  .ts-footer__stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--ts-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 600;
+    font-family: var(--ts-font-accent);
+  }
+
+  .ts-footer__stat-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--ts-secondary);
+    box-shadow: 0 0 6px var(--ts-secondary);
+    display: inline-block;
+  }
+
+  :global(.ts-footer__stat-icon) {
+    width: 11px;
+    height: 11px;
+  }
+
+  @media (max-width: 960px) {
+    .ts-footer__inner {
+      padding: 0 20px;
+    }
+    .ts-footer__grid {
+      grid-template-columns: 1fr 1fr;
+    }
+    .ts-footer__brand {
+      grid-column: 1 / -1;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .ts-footer__grid {
+      grid-template-columns: 1fr;
+    }
+    .ts-footer__meta {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+</style>

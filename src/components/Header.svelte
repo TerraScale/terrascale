@@ -1,154 +1,325 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { page } from '$app/stores'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
-  import { headerLinks, navigation, type HeaderLinkVariant } from '@/lib/site'
+  import { navigation } from '@/lib/site'
 
+  let scrolled = false
   let isMenuOpen = false
 
   $: if ($page.url.pathname) {
     isMenuOpen = false
   }
 
-  const navBaseClass =
-    'px-3.5 py-2.5 ts-rounded-sm text-base font-medium transition-all duration-200 flex items-center space-x-2 relative'
-  const navActiveClass = 'text-[#2563EB] bg-[#2563EB]/10 border border-[#2563EB]/30'
-  const navInactiveClass = 'text-[#94A3B8] hover:text-[#F8FAFC] hover:bg-[#0C0C10]'
-  const headerLinkBaseClass =
-    'flex items-center space-x-2 px-3.5 py-2.5 text-base font-medium transition-colors duration-200 hover-lift'
-  const headerLinkMobileBaseClass =
-    'flex items-center space-x-2 px-3.5 py-2.5 ts-rounded-sm text-base font-medium transition-all duration-200'
-  const headerLinkNeutralClass = 'text-[#94A3B8] hover:text-[#F8FAFC]'
-  const headerLinkMobileNeutralClass = 'text-[#94A3B8] hover:bg-[#0C0C10] hover:text-[#F8FAFC]'
-  const statusIndicatorGroupClass = 'flex items-center space-x-1.5'
-  const statusIndicatorDotClass = 'h-2.5 w-2.5 animate-pulse bg-[#10B981] ts-glow-secondary ts-rounded-sm'
-
-  const isPrimaryLink = (variant: HeaderLinkVariant) => variant === 'primary'
-  const isStatusLink = (variant: HeaderLinkVariant) => variant === 'status'
+  onMount(() => {
+    const onScroll = () => {
+      scrolled = window.scrollY > 24
+    }
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  })
 </script>
 
-<header class="sticky top-0 z-50 border-b border-[#1A1A24] bg-[#050508]/80 bg-grid-pattern backdrop-blur-xl">
-  <div class="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
-    <div class="relative flex h-[4.8rem] items-center justify-between">
-      <RouteLink href="/" class="flex shrink-0 items-center">
-        <img
-          src="/logo-principal.svg"
-          alt="TerraScale"
-          class="h-12 w-auto"
-          width="1429"
-          height="345"
-          decoding="async"
-          fetchpriority="high"
-        />
-      </RouteLink>
+<header class="ts-header" class:scrolled>
+  <div class="ts-header__inner">
+    <RouteLink href="/" class="ts-header__brand" aria-label="TerraScale home">
+      <img
+        src="/logo-principal.svg"
+        alt="TerraScale"
+        width="1429"
+        height="345"
+        decoding="async"
+        fetchpriority="high"
+      />
+    </RouteLink>
 
-      <nav class="absolute left-1/2 hidden -translate-x-1/2 items-center space-x-1 md:flex">
+    <nav class="ts-nav" aria-label="Primary">
+      {#each navigation as item (item.href)}
+        <RouteLink
+          href={item.href}
+          match={item.href === '/' ? 'exact' : 'prefix'}
+          class="ts-nav__link"
+          activeClass="is-active"
+          inactiveClass=""
+        >
+          {item.name}
+        </RouteLink>
+      {/each}
+    </nav>
+
+    <div class="ts-header__actions">
+      <ExternalLink
+        href="https://status.terrascale.tech"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="ts-status-link"
+      >
+        <span class="pulse-dot ts-status-link__dot"></span>
+        Status
+      </ExternalLink>
+
+      <RouteLink href="/contact" class="ts-cta cta-shine">
+        Get Started
+        <Icon name="arrowRight" className="ts-cta__icon" />
+      </RouteLink>
+    </div>
+
+    <button
+      type="button"
+      class="ts-header__menu"
+      aria-expanded={isMenuOpen}
+      aria-controls="mobile-navigation"
+      aria-label="Toggle navigation menu"
+      on:click={() => {
+        isMenuOpen = !isMenuOpen
+      }}
+    >
+      <Icon name={isMenuOpen ? 'x' : 'menu'} className="ts-header__menu-icon" />
+    </button>
+  </div>
+
+  {#if isMenuOpen}
+    <div id="mobile-navigation" class="ts-header__mobile">
+      <nav class="ts-mobile-nav" aria-label="Mobile primary">
         {#each navigation as item (item.href)}
           <RouteLink
             href={item.href}
             match={item.href === '/' ? 'exact' : 'prefix'}
-            class={`${navBaseClass} hover-lift`}
-            activeClass={navActiveClass}
-            inactiveClass={navInactiveClass}
+            class="ts-nav__link ts-nav__link--mobile"
+            activeClass="is-active"
+            inactiveClass=""
+            afterClick={() => {
+              isMenuOpen = false
+            }}
           >
-            <Icon name={item.icon} className="h-4 w-4" />
-            <span>{item.name}</span>
+            {item.name}
           </RouteLink>
         {/each}
+        <ExternalLink
+          href="https://status.terrascale.tech"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="ts-status-link ts-status-link--mobile"
+        >
+          <span class="pulse-dot ts-status-link__dot"></span>
+          Status
+        </ExternalLink>
+        <RouteLink
+          href="/contact"
+          class="ts-cta cta-shine ts-cta--mobile"
+          afterClick={() => {
+            isMenuOpen = false
+          }}
+        >
+          Get Started
+          <Icon name="arrowRight" className="ts-cta__icon" />
+        </RouteLink>
       </nav>
-
-      <div class="hidden items-center space-x-3 md:flex">
-        {#each headerLinks as item (item.name)}
-          <ExternalLink
-            href={item.href}
-            target="_blank"
-            rel="noopener noreferrer"
-            class={`${headerLinkBaseClass} ${
-              isPrimaryLink(item.variant)
-                ? 'px-2.5 py-1.5 ts-btn-primary shadow-offset-blue'
-                : headerLinkNeutralClass
-            }`}
-          >
-            {#if isStatusLink(item.variant)}
-              <div class={statusIndicatorGroupClass}>
-                <div class={statusIndicatorDotClass}></div>
-                <Icon name={item.icon} className="h-4 w-4" />
-              </div>
-            {:else}
-              <Icon name={item.icon} className="h-[1.1rem] w-[1.1rem]" />
-            {/if}
-            <span>{item.name}</span>
-          </ExternalLink>
-        {/each}
-      </div>
-
-      <button
-        type="button"
-        class="ts-focus-glow ts-rounded-sm border border-[#1A1A24] p-2.5 text-[#94A3B8] transition-colors duration-200 hover:bg-[#0C0C10] hover:text-[#F8FAFC] md:hidden"
-        aria-expanded={isMenuOpen}
-        aria-controls="mobile-navigation"
-        aria-label="Toggle navigation menu"
-        on:click={() => {
-          isMenuOpen = !isMenuOpen
-        }}
-      >
-        {#if isMenuOpen}
-          <Icon name="x" className="h-6 w-6" />
-        {:else}
-          <Icon name="menu" className="h-6 w-6" />
-        {/if}
-      </button>
     </div>
-
-    {#if isMenuOpen}
-      <div id="mobile-navigation" class="border-t border-[#1A1A24] py-4 md:hidden">
-        <nav class="flex flex-col space-y-2">
-          {#each navigation as item (item.href)}
-            <RouteLink
-              href={item.href}
-              match={item.href === '/' ? 'exact' : 'prefix'}
-              class="flex items-center space-x-3 px-3.5 py-2.5 ts-rounded-sm text-base font-medium transition-all duration-200"
-              activeClass={navActiveClass}
-              inactiveClass={navInactiveClass}
-              afterClick={() => {
-                isMenuOpen = false
-              }}
-            >
-              <Icon name={item.icon} className="h-[1.1rem] w-[1.1rem]" />
-              <span>{item.name}</span>
-            </RouteLink>
-          {/each}
-
-          <div class="mt-2 space-y-2 border-t border-[#1A1A24] pt-4">
-            {#each headerLinks as item (item.name)}
-              <ExternalLink
-                href={item.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                class={`${headerLinkMobileBaseClass} ${
-                  isPrimaryLink(item.variant)
-                    ? 'justify-center ts-btn-primary shadow-offset-blue'
-                    : headerLinkMobileNeutralClass
-                }`}
-                on:click={() => {
-                  isMenuOpen = false
-                }}
-              >
-                {#if isStatusLink(item.variant)}
-                  <div class={statusIndicatorGroupClass}>
-                    <div class={statusIndicatorDotClass}></div>
-                    <Icon name={item.icon} className="h-[1.1rem] w-[1.1rem]" />
-                  </div>
-                {:else}
-                  <Icon name={item.icon} className="h-[1.1rem] w-[1.1rem]" />
-                {/if}
-                <span>{item.name}</span>
-              </ExternalLink>
-            {/each}
-          </div>
-        </nav>
-      </div>
-    {/if}
-  </div>
+  {/if}
 </header>
+
+<style>
+  .ts-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    border-bottom: 1px solid var(--ts-divider);
+    background: rgba(var(--ts-bg-base-raw), 0.75);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    transition: background 250ms ease;
+  }
+
+  .ts-header.scrolled {
+    background: rgba(var(--ts-bg-base-raw), 0.94);
+  }
+
+  .ts-header__inner {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 0 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 72px;
+    gap: 16px;
+  }
+
+  :global(.ts-header__brand) {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    text-decoration: none;
+  }
+
+  :global(.ts-header__brand img) {
+    height: 38px;
+    width: auto;
+    display: block;
+  }
+
+  .ts-nav {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  :global(.ts-nav__link) {
+    padding: 7px 14px;
+    border-radius: 4px;
+    font-family: var(--ts-font-accent);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ts-text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    text-decoration: none;
+    transition:
+      color 150ms ease,
+      background 150ms ease,
+      border-color 150ms ease;
+  }
+
+  :global(.ts-nav__link:hover) {
+    color: var(--ts-text);
+  }
+
+  :global(.ts-nav__link.is-active) {
+    color: var(--ts-primary-light);
+    background: rgba(var(--ts-primary-rgb), 0.1);
+    border-color: rgba(var(--ts-primary-rgb), 0.25);
+  }
+
+  .ts-header__actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  :global(.ts-status-link) {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--ts-text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    font-family: var(--ts-font-accent);
+    text-decoration: none;
+    transition: color 150ms ease;
+  }
+
+  :global(.ts-status-link:hover) {
+    color: var(--ts-secondary);
+  }
+
+  .ts-status-link__dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 4px;
+    background: var(--ts-secondary);
+    box-shadow: 0 0 7px var(--ts-secondary);
+    display: inline-block;
+  }
+
+  :global(.ts-cta) {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--ts-gradient-primary);
+    color: #fff;
+    font-family: var(--ts-font-accent);
+    font-weight: 700;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    padding: 9px 20px;
+    border-radius: 5px;
+    text-decoration: none;
+    box-shadow: 0 4px 14px rgba(var(--ts-primary-rgb), 0.35);
+    transition:
+      transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      box-shadow 180ms ease;
+  }
+
+  :global(.ts-cta:hover) {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 22px rgba(var(--ts-primary-rgb), 0.5);
+  }
+
+  :global(.ts-cta__icon) {
+    width: 13px;
+    height: 13px;
+    display: inline-block;
+  }
+
+  .ts-header__menu {
+    display: none;
+    background: transparent;
+    border: 1px solid var(--ts-divider);
+    color: var(--ts-text-muted);
+    border-radius: 6px;
+    padding: 8px;
+    cursor: pointer;
+    transition:
+      color 150ms,
+      border-color 150ms,
+      background 150ms;
+  }
+
+  .ts-header__menu:hover {
+    color: var(--ts-text);
+    border-color: rgba(var(--ts-primary-rgb), 0.35);
+    background: rgba(var(--ts-primary-rgb), 0.08);
+  }
+
+  :global(.ts-header__menu-icon) {
+    width: 20px;
+    height: 20px;
+    display: block;
+  }
+
+  .ts-header__mobile {
+    border-top: 1px solid var(--ts-divider);
+    padding: 16px 40px 20px;
+    background: rgba(var(--ts-bg-base-raw), 0.96);
+  }
+
+  .ts-mobile-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  :global(.ts-nav__link--mobile) {
+    padding: 10px 14px;
+  }
+
+  :global(.ts-status-link--mobile) {
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+
+  :global(.ts-cta--mobile) {
+    justify-content: center;
+    margin-top: 6px;
+  }
+
+  @media (max-width: 960px) {
+    .ts-header__inner {
+      padding: 0 20px;
+    }
+    .ts-nav {
+      display: none;
+    }
+    .ts-header__actions {
+      display: none;
+    }
+    .ts-header__menu {
+      display: inline-flex;
+    }
+  }
+</style>
