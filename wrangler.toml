@@ -1,0 +1,17 @@
+"$schema" = "./node_modules/wrangler/config-schema.json"
+
+name = "terrascale-landing-page"
+pages_build_output_dir = "./build"
+compatibility_date = "2026-04-21"
+
+# Add shared Pages bindings and variables below when needed.
+# [vars]
+# PUBLIC_API_BASE = "https://api.example.com"
+
+# Preview-only overrides.
+# [env.preview.vars]
+# PUBLIC_API_BASE = "https://preview-api.example.com"
+
+# Production-only overrides.
+# [env.production.vars]
+# PUBLIC_API_BASE = "https://api.example.com"

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { footerHighlights, footerLinks, socialLinks, supportChannels } from '@/lib/site'
@@ -31,7 +32,7 @@
               <div class="flex items-center space-x-2">
                 <Icon name={channel.icon} className="h-3 w-3 text-[#F8FAFC]" />
                 {#if channel.href.startsWith('http')}
-                  <a
+                  <ExternalLink
                     href={channel.href}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -39,7 +40,7 @@
                   >
                     <Icon name="chevronRight" className="h-3 w-3 text-[#F8FAFC]" />
                     {channel.label}
-                  </a>
+                  </ExternalLink>
                 {:else}
                   <RouteLink
                     href={channel.href}
@@ -55,7 +56,7 @@
 
           <div class="flex space-x-3">
             {#each socialLinks as social (social.name)}
-              <a
+              <ExternalLink
                 href={social.href}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -63,7 +64,7 @@
                 class="hover-lift hover-lift-active ts-rounded-sm border border-[#1A1A24] bg-[#080810] p-2 transition-all duration-200 hover:border-[#F8FAFC]"
               >
                 <Icon name={social.icon} className="h-4 w-4 text-[#F8FAFC] transition-colors hover:text-[#CBD5E1]" />
-              </a>
+              </ExternalLink>
             {/each}
           </div>
         </div>
@@ -77,7 +78,7 @@
               {#each links as link (link.name)}
                 <li>
                   {#if link.href.startsWith('http')}
-                    <a
+                    <ExternalLink
                       href={link.href}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -85,7 +86,7 @@
                     >
                       <Icon name="chevronRight" className="h-3 w-3 text-[#F8FAFC]" />
                       {link.name}
-                    </a>
+                    </ExternalLink>
                   {:else}
                     <RouteLink
                       href={link.href}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/stores'
+  import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { headerLinks, navigation, type HeaderLinkVariant } from '@/lib/site'
@@ -59,7 +60,7 @@
 
       <div class="hidden items-center space-x-3 md:flex">
         {#each headerLinks as item (item.name)}
-          <a
+          <ExternalLink
             href={item.href}
             target="_blank"
             rel="noopener noreferrer"
@@ -78,7 +79,7 @@
               <Icon name={item.icon} className="h-[1.1rem] w-[1.1rem]" />
             {/if}
             <span>{item.name}</span>
-          </a>
+          </ExternalLink>
         {/each}
       </div>
 
@@ -121,7 +122,7 @@
 
           <div class="mt-2 space-y-2 border-t border-[#1A1A24] pt-4">
             {#each headerLinks as item (item.name)}
-              <a
+              <ExternalLink
                 href={item.href}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -143,7 +144,7 @@
                   <Icon name={item.icon} className="h-[1.1rem] w-[1.1rem]" />
                 {/if}
                 <span>{item.name}</span>
-              </a>
+              </ExternalLink>
             {/each}
           </div>
         </nav>
