@@ -15,29 +15,38 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      - name: Install git
+      - name: Install build tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git
+          apt-get install -y --no-install-recommends git ca-certificates
 
-      - name: Check out repository
-        uses: https://data.forgejo.org/actions/checkout@v4
+      - name: Clone repository
+        run: |
+          branch="${FORGEJO_REF_NAME:-main}"
+          git clone --depth 1 --branch "${branch}" "https://oauth2:${FORGEJO_TOKEN}@${FORGEJO_SERVER_URL#https://}/${FORGEJO_REPOSITORY}.git" repo
+          cd repo
+          git checkout "${FORGEJO_SHA}"
 
       - name: Install dependencies
+        working-directory: repo
         run: npm ci
 
       - name: Validate project
+        working-directory: repo
         run: |
           npm run lint
           npm run check
 
       - name: Ensure Pages project exists
+        working-directory: repo
         run: npm run cf:project:create
 
       - name: Deploy production
         if: ${{ forgejo.ref_name == 'main' }}
+        working-directory: repo
         run: npm run cf:deploy
 
       - name: Deploy preview
         if: ${{ forgejo.ref_name != 'main' }}
+        working-directory: repo
         run: npm run cf:deploy:preview
