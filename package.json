@@ -6,6 +6,12 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build && node ./scripts/inline-prerendered-css.mjs",
+    "cf:login": "wrangler login",
+    "cf:whoami": "wrangler whoami",
+    "cf:project:create": "node ./scripts/cloudflare-pages-project-create.mjs",
+    "cf:pages:dev": "npm run build && wrangler pages dev",
+    "cf:deploy": "npm run build && node ./scripts/cloudflare-pages-deploy.mjs --production",
+    "cf:deploy:preview": "npm run build && node ./scripts/cloudflare-pages-deploy.mjs --preview",
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.node.json",
     "icons:sync": "node ./scripts/icons-sync.mjs",
@@ -30,6 +36,7 @@
     "tailwindcss": "^4.2.2",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.58.1",
-    "vite": "^8.0.8"
+    "vite": "^8.0.8",
+    "wrangler": "^4.84.1"
   }
 }

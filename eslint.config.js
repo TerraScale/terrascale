@@ -7,7 +7,10 @@ import tseslint from 'typescript-eslint'
 export default tseslint.config(
   {
     ignores: [
+      '.svelte-kit',
+      'build',
       'dist',
+      '.wrangler',
       'tmp',
       'src/**/*.tsx',
       'src/**/*.jsx',
@@ -39,6 +42,18 @@ export default tseslint.config(
     rules: {
       'no-undef': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+  {
+    files: ['src/components/ExternalLink.svelte', 'src/components/RouteLink.svelte'],
+    rules: {
+      'svelte/no-navigation-without-resolve': 'off',
+    },
+  },
+  {
+    files: ['src/pages/Home.svelte'],
+    rules: {
+      'svelte/no-at-html-tags': 'off',
     },
   },
 )

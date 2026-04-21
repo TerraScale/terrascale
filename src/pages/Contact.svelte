@@ -1,6 +1,8 @@
 <script lang="ts">
   import { fade, scale } from 'svelte/transition'
+  import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
+  import RouteLink from '@/components/RouteLink.svelte'
   import ScrollReveal from '@/components/ScrollReveal.svelte'
   import type { AppIconName } from '@/lib/icons'
 
@@ -233,14 +235,23 @@
                   <div>
                     <h3 class="mb-1 font-bold text-[#F8FAFC]">{info.label}</h3>
                     {#if info.href}
-                      <a
-                        href={info.href}
-                        class="text-sm text-[#94A3B8] transition-colors duration-200 hover:text-[#2563EB]"
-                        target={info.href.startsWith('http') ? '_blank' : undefined}
-                        rel={info.href.startsWith('http') ? 'noopener noreferrer' : undefined}
-                      >
-                        {info.value}
-                      </a>
+                      {#if info.href.startsWith('http')}
+                        <ExternalLink
+                          href={info.href}
+                          class="text-sm text-[#94A3B8] transition-colors duration-200 hover:text-[#2563EB]"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {info.value}
+                        </ExternalLink>
+                      {:else}
+                        <RouteLink
+                          href={info.href}
+                          class="text-sm text-[#94A3B8] transition-colors duration-200 hover:text-[#2563EB]"
+                        >
+                          {info.value}
+                        </RouteLink>
+                      {/if}
                     {:else}
                       <span class="text-sm text-[#94A3B8]">{info.value}</span>
                     {/if}

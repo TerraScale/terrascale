@@ -317,13 +317,13 @@
                     </span>
                     {#if plan.detailsHref}
                       <div class="mt-3">
-                        <a
+                        <RouteLink
                           href={plan.detailsHref}
                           class="inline-flex items-center gap-2 text-sm font-semibold text-[#2563EB] transition-colors duration-200 hover:text-[#60A5FA]"
                         >
                           <span>{plan.detailsLabel}</span>
                           <Icon name="chevronRight" className="h-4 w-4" />
-                        </a>
+                        </RouteLink>
                       </div>
                     {/if}
                   </div>
@@ -334,13 +334,13 @@
                       Tailored pricing for scale, compliance, and dedicated support.
                     </p>
                     {#if plan.detailsHref}
-                      <a
+                      <RouteLink
                         href={plan.detailsHref}
                         class="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-[#8B5CF6] transition-colors duration-200 hover:text-[#A78BFA]"
                       >
                         <span>{plan.detailsLabel}</span>
                         <Icon name="chevronRight" className="h-4 w-4" />
-                      </a>
+                      </RouteLink>
                     {/if}
                   </div>
                 {/if}

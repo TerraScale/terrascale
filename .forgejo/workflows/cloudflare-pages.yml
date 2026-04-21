@@ -1,0 +1,38 @@
+name: Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: docker
+    container:
+      image: node:24-bookworm
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check out repository
+        uses: https://data.forgejo.org/actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate project
+        run: |
+          npm run lint
+          npm run check
+
+      - name: Ensure Pages project exists
+        run: npm run cf:project:create
+
+      - name: Deploy production
+        if: ${{ forgejo.ref_name == 'main' }}
+        run: npm run cf:deploy
+
+      - name: Deploy preview
+        if: ${{ forgejo.ref_name != 'main' }}
+        run: npm run cf:deploy:preview

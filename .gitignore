@@ -12,6 +12,7 @@ dist
 dist-ssr
 .svelte-kit
 build
+.wrangler
 *.local
 
 # Editor directories and files
