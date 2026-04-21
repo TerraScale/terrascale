@@ -53,7 +53,7 @@ export const socialLinks: ExternalLinkEntry[] = [
   { name: 'Discord', href: 'https://discord.gg/terrascale', icon: 'brandDiscord' },
   { name: 'Twitter', href: 'https://twitter.com/terrascale', icon: 'brandX' },
   { name: 'LinkedIn', href: 'https://linkedin.com/company/terrascale', icon: 'brandLinkedin' },
-  { name: 'GitHub', href: 'https://github.com/terrascale', icon: 'brandGithub' },
+  { name: 'Forgejo', href: 'https://git.mariogk.com/Terrascale', icon: 'brandGithub' },
 ]
 
 export const footerLinks = {
