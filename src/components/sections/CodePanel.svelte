@@ -105,7 +105,6 @@
   .code {
     padding: 120px 0;
     position: relative;
-    background: var(--ts-bg-surface);
   }
 
   .code__inner {
