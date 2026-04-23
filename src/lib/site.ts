@@ -2,16 +2,23 @@ import type { AppIconName } from '@/lib/icons'
 
 export type RoutePath = '/' | '/contact' | '/pricing'
 
-export type NavEntry =
-  | { name: string; href: RoutePath; icon: AppIconName; external?: false }
-  | { name: string; href: string; icon: AppIconName; external: true }
+export type NavEntry = {
+  name: string
+  href: RoutePath
+  icon: AppIconName
+}
 
 export const navigation: NavEntry[] = [
   { name: 'Home', href: '/', icon: 'home' },
   { name: 'Pricing', href: '/pricing', icon: 'dollarSign' },
   { name: 'Contact', href: '/contact', icon: 'mail' },
-  { name: 'Docs', href: 'https://docs.terrascale.tech', icon: 'bookOpen', external: true },
 ]
+
+export const docsLink = {
+  name: 'Docs',
+  href: 'https://docs.terrascale.tech',
+  icon: 'bookOpen' as AppIconName,
+}
 
 export type FooterColumn = {
   title: string
