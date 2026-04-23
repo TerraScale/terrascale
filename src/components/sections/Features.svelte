@@ -37,8 +37,6 @@
 </script>
 
 <section class="features" id="features">
-  <div class="features__grid-bg" aria-hidden="true"></div>
-
   <div class="features__inner">
     <SectionHeader
       eyebrow="Platform"
@@ -75,17 +73,6 @@
   .features {
     padding: 120px 0;
     position: relative;
-  }
-
-  .features__grid-bg {
-    position: absolute;
-    inset: 0;
-    opacity: 0.45;
-    background-image:
-      linear-gradient(var(--ts-grid-color) 1px, transparent 1px),
-      linear-gradient(90deg, var(--ts-grid-color) 1px, transparent 1px);
-    background-size: 60px 60px;
-    pointer-events: none;
   }
 
   .features__inner {

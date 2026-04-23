@@ -159,6 +159,20 @@ body {
   overflow-x: hidden;
 }
 
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: var(--ts-atmo-mult, 1);
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -10%, var(--ts-hero-glow-top) 0%, transparent 65%),
+    radial-gradient(ellipse 55% 45% at 15% 25%, var(--ts-hero-glow-mid) 0%, transparent 55%),
+    radial-gradient(ellipse 55% 45% at 85% 55%, var(--ts-hero-glow-mid) 0%, transparent 55%),
+    radial-gradient(ellipse 45% 40% at 50% 90%, var(--ts-hero-glow-accent) 0%, transparent 55%);
+}
+
 a {
   color: inherit;
   text-decoration: none;
