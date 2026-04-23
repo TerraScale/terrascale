@@ -27,7 +27,7 @@
   <div class="ts-header__inner">
     <RouteLink href="/" class="ts-header__brand" aria-label="TerraScale home">
       <img
-        src="/logo-principal.svg"
+        src="/logo-white.svg"
         alt="TerraScale"
         width="1429"
         height="345"
@@ -38,15 +38,28 @@
 
     <nav class="ts-nav" aria-label="Primary">
       {#each navigation as item (item.href)}
-        <RouteLink
-          href={item.href}
-          match={item.href === '/' ? 'exact' : 'prefix'}
-          class="ts-nav__link"
-          activeClass="is-active"
-          inactiveClass=""
-        >
-          {item.name}
-        </RouteLink>
+        {#if item.external}
+          <ExternalLink
+            href={item.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="ts-nav__link"
+          >
+            <Icon name={item.icon} className="ts-nav__icon" />
+            {item.name}
+          </ExternalLink>
+        {:else}
+          <RouteLink
+            href={item.href}
+            match={item.href === '/' ? 'exact' : 'prefix'}
+            class="ts-nav__link"
+            activeClass="is-active"
+            inactiveClass=""
+          >
+            <Icon name={item.icon} className="ts-nav__icon" />
+            {item.name}
+          </RouteLink>
+        {/if}
       {/each}
     </nav>
 
@@ -85,18 +98,31 @@
     <div id="mobile-navigation" class="ts-header__mobile">
       <nav class="ts-mobile-nav" aria-label="Mobile primary">
         {#each navigation as item (item.href)}
-          <RouteLink
-            href={item.href}
-            match={item.href === '/' ? 'exact' : 'prefix'}
-            class="ts-nav__link ts-nav__link--mobile"
-            activeClass="is-active"
-            inactiveClass=""
-            afterClick={() => {
-              isMenuOpen = false
-            }}
-          >
-            {item.name}
-          </RouteLink>
+          {#if item.external}
+            <ExternalLink
+              href={item.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="ts-nav__link ts-nav__link--mobile"
+            >
+              <Icon name={item.icon} className="ts-nav__icon" />
+              {item.name}
+            </ExternalLink>
+          {:else}
+            <RouteLink
+              href={item.href}
+              match={item.href === '/' ? 'exact' : 'prefix'}
+              class="ts-nav__link ts-nav__link--mobile"
+              activeClass="is-active"
+              inactiveClass=""
+              afterClick={() => {
+                isMenuOpen = false
+              }}
+            >
+              <Icon name={item.icon} className="ts-nav__icon" />
+              {item.name}
+            </RouteLink>
+          {/if}
         {/each}
         <ExternalLink
           href="https://status.terrascale.tech"
@@ -169,6 +195,9 @@
   }
 
   :global(.ts-nav__link) {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
     padding: 7px 14px;
     border-radius: 4px;
     font-family: var(--ts-font-accent);
@@ -182,6 +211,13 @@
       color 150ms ease,
       background 150ms ease,
       border-color 150ms ease;
+  }
+
+  :global(.ts-nav__icon) {
+    width: 14px;
+    height: 14px;
+    display: inline-block;
+    flex-shrink: 0;
   }
 
   :global(.ts-nav__link:hover) {
@@ -203,25 +239,38 @@
   :global(.ts-status-link) {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    color: var(--ts-text-muted);
-    font-size: 12px;
-    font-weight: 500;
+    gap: 9px;
+    color: var(--ts-text);
+    font-size: 13px;
+    font-weight: 700;
     font-family: var(--ts-font-accent);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
     text-decoration: none;
-    transition: color 150ms ease;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(var(--ts-secondary-rgb), 0.32);
+    background: rgba(var(--ts-secondary-rgb), 0.08);
+    transition:
+      color 150ms ease,
+      background 150ms ease,
+      border-color 150ms ease,
+      box-shadow 200ms ease;
   }
 
   :global(.ts-status-link:hover) {
     color: var(--ts-secondary);
+    background: rgba(var(--ts-secondary-rgb), 0.14);
+    border-color: rgba(var(--ts-secondary-rgb), 0.55);
+    box-shadow: 0 0 0 3px rgba(var(--ts-secondary-rgb), 0.12);
   }
 
   .ts-status-link__dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 4px;
+    width: 9px;
+    height: 9px;
+    border-radius: 5px;
     background: var(--ts-secondary);
-    box-shadow: 0 0 7px var(--ts-secondary);
+    box-shadow: 0 0 10px var(--ts-secondary);
     display: inline-block;
   }
 
