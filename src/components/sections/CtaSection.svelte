@@ -4,9 +4,6 @@
 </script>
 
 <section class="cta">
-  <div class="cta__glow" aria-hidden="true"></div>
-  <div class="cta__grid" aria-hidden="true"></div>
-
   <div class="cta__inner">
     <div class="cta__badge">
       <span class="pulse-dot cta__badge-dot"></span>
@@ -39,34 +36,6 @@
     position: relative;
     padding: 120px 0;
     overflow: hidden;
-  }
-
-  .cta__glow {
-    position: absolute;
-    inset: 0;
-    background:
-      radial-gradient(
-        ellipse 70% 60% at 50% 50%,
-        rgba(var(--ts-primary-rgb), 0.18) 0%,
-        transparent 65%
-      ),
-      radial-gradient(
-        ellipse 45% 45% at 20% 80%,
-        rgba(var(--ts-secondary-rgb), 0.08) 0%,
-        transparent 60%
-      );
-    pointer-events: none;
-  }
-
-  .cta__grid {
-    position: absolute;
-    inset: 0;
-    opacity: 0.5;
-    background-image:
-      linear-gradient(var(--ts-grid-color) 1px, transparent 1px),
-      linear-gradient(90deg, var(--ts-grid-color) 1px, transparent 1px);
-    background-size: 30px 30px;
-    pointer-events: none;
   }
 
   .cta__inner {

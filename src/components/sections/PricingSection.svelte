@@ -88,8 +88,6 @@
 </script>
 
 <section class="pricing-section" id="pricing">
-  <div class="pricing-section__glow" aria-hidden="true"></div>
-
   <div class="pricing-section__inner">
     <SectionHeader
       eyebrow="Pricing"
@@ -201,17 +199,6 @@
   .pricing-section {
     padding: 120px 0;
     position: relative;
-  }
-
-  .pricing-section__glow {
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(
-      ellipse 60% 50% at 50% 30%,
-      rgba(var(--ts-primary-rgb), 0.08) 0%,
-      transparent 65%
-    );
-    pointer-events: none;
   }
 
   .pricing-section__inner {

@@ -4,7 +4,6 @@
 </script>
 
 <section class="pricing-cta">
-  <div class="pricing-cta__glow" aria-hidden="true"></div>
   <div class="pricing-cta__inner">
     <h2 class="pricing-cta__title">Ready to get started?</h2>
     <p class="pricing-cta__text">
@@ -22,17 +21,6 @@
     position: relative;
     padding: 80px 0 100px;
     overflow: hidden;
-  }
-
-  .pricing-cta__glow {
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(
-      ellipse 60% 50% at 50% 50%,
-      rgba(var(--ts-primary-rgb), 0.12) 0%,
-      transparent 65%
-    );
-    pointer-events: none;
   }
 
   .pricing-cta__inner {

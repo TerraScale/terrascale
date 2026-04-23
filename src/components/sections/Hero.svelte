@@ -12,13 +12,6 @@
 </script>
 
 <section class="hero">
-  <div
-    class="hero-atmo-overlay hero-atmo-glow"
-    aria-hidden="true"
-  ></div>
-  <div class="hero-grid-overlay" aria-hidden="true"></div>
-  <div class="hero-scan-overlay" aria-hidden="true"></div>
-
   <div class="hero__inner">
     <div class="hero__badge">
       <span class="pulse-dot hero__badge-dot"></span>
@@ -67,14 +60,6 @@
     min-height: calc(100vh - 72px);
     display: flex;
     align-items: center;
-  }
-
-  .hero-atmo-glow {
-    background:
-      radial-gradient(ellipse 80% 60% at 50% 0%, var(--ts-hero-glow-top) 0%, transparent 65%),
-      radial-gradient(ellipse 55% 45% at 15% 35%, var(--ts-hero-glow-mid) 0%, transparent 55%),
-      radial-gradient(ellipse 55% 45% at 85% 60%, var(--ts-hero-glow-mid) 0%, transparent 55%),
-      radial-gradient(ellipse 45% 40% at 50% 85%, var(--ts-hero-glow-accent) 0%, transparent 55%);
   }
 
   .hero__inner {
