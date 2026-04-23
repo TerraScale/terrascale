@@ -163,9 +163,9 @@
     max-width: 1440px;
     margin: 0 auto;
     padding: 0 40px;
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: space-between;
     height: 72px;
     gap: 16px;
   }
@@ -186,6 +186,7 @@
   .ts-nav {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 2px;
   }
 
@@ -230,6 +231,7 @@
   .ts-header__actions {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 16px;
   }
 
@@ -347,6 +349,7 @@
   @media (max-width: 960px) {
     .ts-header__inner {
       padding: 0 20px;
+      grid-template-columns: 1fr auto;
     }
     .ts-nav {
       display: none;

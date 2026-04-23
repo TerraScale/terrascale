@@ -58,9 +58,6 @@
 </script>
 
 <section class="contact-hero">
-  <div class="contact-hero__glow" aria-hidden="true"></div>
-  <div class="contact-hero__grid" aria-hidden="true"></div>
-
   <div class="contact-hero__inner">
     <div class="contact-hero__eyebrow">
       <Icon name="messageSquare" className="contact-hero__eyebrow-icon" />
@@ -205,28 +202,6 @@
     position: relative;
     padding: 120px 0 60px;
     overflow: hidden;
-  }
-
-  .contact-hero__glow {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: radial-gradient(
-      ellipse 70% 50% at 50% 0%,
-      var(--ts-hero-glow-top) 0%,
-      transparent 65%
-    );
-  }
-
-  .contact-hero__grid {
-    position: absolute;
-    inset: 0;
-    opacity: 0.5;
-    pointer-events: none;
-    background-image:
-      linear-gradient(var(--ts-grid-color) 1px, transparent 1px),
-      linear-gradient(90deg, var(--ts-grid-color) 1px, transparent 1px);
-    background-size: 32px 32px;
   }
 
   .contact-hero__inner {
