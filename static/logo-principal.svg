@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg id="Camada_2" data-name="Camada 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1429.43 345.24">
   <defs>
-    
+    <style>
+      .cls-1 {
+        fill: #2158e8;
+      }
+      .cls-2 {
+        fill: #ffffff;
+      }
+    </style>
   </defs>
   <g id="Camada_1-2" data-name="Camada 1">
     <g>
