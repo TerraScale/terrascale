@@ -103,7 +103,7 @@
 
 <style>
   .code {
-    padding: 120px 0;
+    padding: 80px 0;
     position: relative;
   }
 
@@ -346,7 +346,7 @@
 
   @media (max-width: 960px) {
     .code {
-      padding: 80px 0;
+      padding: 60px 0;
     }
     .code__inner {
       padding: 0 20px;

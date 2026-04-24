@@ -17,8 +17,12 @@
       a: 'Anytime. Upgrades take effect immediately with prorated billing; downgrades apply at the start of your next billing cycle. No lock-in, no cancellation fees.',
     },
     {
+      q: 'Can I export my data and leave anytime?',
+      a: `Yes — your data is yours. Full exports are available anytime through the dashboard or API, and we never charge a cent to get it out. The only constraint is a per-request rate limit so a runaway export job can't destabilize the cluster for other tenants; there's no cap on total volume and no exit fee. If TerraScale isn't working for you, you leave with everything you put in.`,
+    },
+    {
       q: 'Do you offer custom enterprise solutions?',
-      a: 'Yes. For teams with specific compliance requirements, on-premise deployments, custom SLAs, or dedicated infrastructure, our Enterprise plan is fully tailored. Contact sales to scope a deployment that fits your needs.',
+      a: 'Yes. For teams with specific compliance requirements, custom SLAs, or dedicated infrastructure, our Enterprise plan is fully tailored. Contact sales to scope a deployment that fits your needs.',
     },
     {
       q: 'Why do you require a credit card for the free trial?',
@@ -161,8 +165,8 @@
     flex-shrink: 0;
     color: var(--ts-text-muted);
     transition:
-      transform 200ms ease,
-      color 200ms ease;
+      transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      color 220ms ease;
   }
 
   .faq__chev.is-open {
@@ -178,7 +182,7 @@
   .faq__panel {
     max-height: 0;
     overflow: hidden;
-    transition: max-height 300ms ease;
+    transition: max-height 220ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .faq__panel.is-open {

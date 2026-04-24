@@ -68,7 +68,6 @@
 <style>
   .detailed {
     padding: 60px 0;
-    background: var(--ts-bg-surface);
   }
 
   .detailed__inner {

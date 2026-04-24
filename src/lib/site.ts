@@ -40,9 +40,7 @@ export const footerColumns: FooterColumn[] = [
     title: 'Company',
     links: [
       { name: 'Blog', href: 'https://blog.terrascale.tech' },
-      { name: 'Careers', href: 'https://careers.terrascale.tech' },
       { name: 'Contact', href: '/contact' },
-      { name: 'Press Kit', href: 'https://docs.terrascale.tech/press' },
     ],
   },
   {
@@ -111,7 +109,7 @@ export const socialLinks: SocialLink[] = [
   },
   {
     name: 'Email',
-    href: 'mailto:hello@terrascale.tech',
+    href: 'mailto:support@terrascale.tech',
     icon: 'mail',
     color: '#10B981',
     bg: 'rgba(16,185,129,0.12)',

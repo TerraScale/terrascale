@@ -7,7 +7,7 @@
 </script>
 
 <Hero />
-<Features />
 <CodePanel />
+<Features />
 <PricingSection />
 <CtaSection />

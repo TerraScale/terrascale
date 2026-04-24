@@ -11,27 +11,27 @@
   }> = [
     {
       icon: 'zap',
-      title: 'Lightning Performance',
-      text: 'Sub-20ms query latency with intelligent caching, query optimization, and globally distributed edge replicas that stay close to your users.',
-      bullets: ['In-memory caching', 'Query optimization', 'Edge replicas'],
+      title: 'Fast Reads',
+      text: 'Tuned query paths and caching that keeps hot data close to your app.',
+      bullets: ['Query planner', 'Smart caching', 'Read replicas'],
     },
     {
       icon: 'shield',
-      title: 'Enterprise Security',
-      text: 'SOC 2 Type II, ISO 27001, and HIPAA compliant. End-to-end encryption, private networking, and fine-grained role-based access control by default.',
-      bullets: ['SOC 2 Type II', 'E2E encryption', 'RBAC'],
+      title: 'Secure by Default',
+      text: 'Encrypted connections, private networking, and role-based access out of the box.',
+      bullets: ['TLS in transit', 'Private networking', 'RBAC'],
     },
     {
       icon: 'globe',
-      title: 'Global Scale',
-      text: 'Deploy in 20+ regions with automatic failover, multi-region replication, and a geographic DNS router that serves queries from the nearest node.',
-      bullets: ['20+ regions', 'Auto failover', 'Geo routing'],
+      title: 'Multi-Region',
+      text: 'Deploy across regions with automatic failover and routing to the nearest node.',
+      bullets: ['Cross-region replicas', 'Auto failover', 'Geo routing'],
     },
     {
       icon: 'trendingUp',
-      title: 'Auto-scaling',
-      text: 'Horizontal and vertical scaling on demand. Zero-downtime resizing, predictive autoscale, and usage-based billing that follows your traffic.',
-      bullets: ['Horizontal scale', 'Zero-downtime', 'Usage-based'],
+      title: 'Elastic Capacity',
+      text: 'Scale up or down as traffic shifts. Usage-based billing — pay for what you use.',
+      bullets: ['Online resize', 'No downtime', 'Usage-based'],
     },
   ]
 </script>
@@ -41,14 +41,12 @@
     <SectionHeader
       eyebrow="Platform"
       title="Built for scale, designed for developers"
-      subtitle="Every feature engineered for production. No footguns, no surprises, no 3 AM pages."
+      subtitle="The essentials of a managed database, without the rough edges."
     />
 
     <div class="features__grid">
       {#each features as feature (feature.title)}
         <article class="feature-card ts-glass">
-          <div class="feature-card__glow" aria-hidden="true"></div>
-
           <div class="feature-card__icon">
             <Icon name={feature.icon} className="feature-card__icon-svg" />
           </div>
@@ -71,7 +69,7 @@
 
 <style>
   .features {
-    padding: 120px 0;
+    padding: 80px 0;
     position: relative;
   }
 
@@ -85,15 +83,15 @@
   .features__grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: 20px;
-    margin-top: 64px;
+    gap: 18px;
+    margin-top: 48px;
   }
 
   .feature-card {
     position: relative;
     overflow: hidden;
-    border-radius: 10px;
-    padding: 36px;
+    border-radius: 12px;
+    padding: 28px;
     transition:
       transform 250ms ease,
       box-shadow 250ms ease,
@@ -104,35 +102,20 @@
   .feature-card:hover {
     transform: translateY(-2px);
     box-shadow:
-      0 14px 40px rgba(var(--ts-primary-rgb), 0.2),
+      0 10px 28px rgba(var(--ts-primary-rgb), 0.18),
       inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 
-  .feature-card__glow {
-    position: absolute;
-    top: -60px;
-    right: -60px;
-    width: 180px;
-    height: 180px;
-    background: radial-gradient(circle, rgba(var(--ts-primary-rgb), 0.08) 0%, transparent 70%);
-    transition: background 250ms ease;
-    pointer-events: none;
-  }
-
-  .feature-card:hover .feature-card__glow {
-    background: radial-gradient(circle, rgba(var(--ts-primary-rgb), 0.25) 0%, transparent 70%);
-  }
-
   .feature-card__icon {
-    width: 48px;
-    height: 48px;
-    border-radius: 6px;
+    width: 42px;
+    height: 42px;
+    border-radius: 8px;
     background: rgba(var(--ts-primary-rgb), 0.14);
     border: 1px solid rgba(var(--ts-primary-rgb), 0.3);
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 24px;
+    margin-bottom: 18px;
     transition:
       background 260ms ease,
       border-color 260ms ease,
@@ -144,48 +127,48 @@
     background: rgba(var(--ts-primary-rgb), 0.22);
     border-color: rgba(var(--ts-primary-rgb), 0.55);
     box-shadow:
-      0 0 0 4px rgba(var(--ts-primary-rgb), 0.12),
-      0 8px 22px rgba(var(--ts-primary-rgb), 0.28);
+      0 0 0 3px rgba(var(--ts-primary-rgb), 0.12),
+      0 6px 16px rgba(var(--ts-primary-rgb), 0.25);
   }
 
   :global(.feature-card__icon-svg) {
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
     color: var(--ts-primary-light);
   }
 
   .feature-card__title {
-    font-size: 21px;
+    font-size: 19px;
     font-weight: 700;
     color: var(--ts-text);
-    margin: 0 0 12px;
+    margin: 0 0 10px;
     letter-spacing: -0.01em;
   }
 
   .feature-card__text {
-    font-size: 15px;
+    font-size: 14.5px;
     color: var(--ts-text-muted);
-    line-height: 1.7;
-    margin: 0 0 20px;
+    line-height: 1.6;
+    margin: 0 0 18px;
   }
 
   .feature-card__bullets {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px;
   }
 
   .feature-card__bullet {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
+    gap: 5px;
+    padding: 3px 8px;
     border-radius: 4px;
     background: rgba(var(--ts-primary-rgb), 0.08);
     border: 1px solid rgba(var(--ts-primary-rgb), 0.18);
     color: var(--ts-primary-light);
     font-family: var(--ts-font-mono);
-    font-size: 11px;
+    font-size: 10.5px;
     font-weight: 600;
   }
 
@@ -196,19 +179,20 @@
     background: var(--ts-primary);
   }
 
-  @media (max-width: 860px) {
+  @media (max-width: 640px) {
     .features {
-      padding: 80px 0;
+      padding: 60px 0;
     }
     .features__grid {
       grid-template-columns: 1fr;
-      gap: 16px;
+      gap: 14px;
+      margin-top: 36px;
     }
     .features__inner {
       padding: 0 20px;
     }
     .feature-card {
-      padding: 28px;
+      padding: 22px;
     }
   }
 </style>
