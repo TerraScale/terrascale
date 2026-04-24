@@ -1,32 +1,44 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
+
+  const perks = [
+    'Full feature access',
+    'Cancel anytime',
+    'No lock-in',
+  ]
 </script>
 
 <section class="cta">
   <div class="cta__inner">
-    <div class="cta__badge">
-      <span class="pulse-dot cta__badge-dot"></span>
-      Free 30-day trial
-    </div>
+    <div class="cta__card ts-glass">
+      <h2 class="cta__headline">
+        Try TerraScale <span class="ts-text-gradient">free for 30 days.</span>
+      </h2>
+      <p class="cta__text">
+        Set up in minutes. Every Hobby and Pro feature, unlocked — nothing billed
+        until you decide to keep it.
+      </p>
 
-    <h2 class="cta__headline">
-      Ship your next product<br />
-      <span class="ts-text-gradient">on infrastructure that scales.</span>
-    </h2>
-    <p class="cta__text">
-      Join thousands of developers deploying to TerraScale. Set up in minutes, scale to millions.
-    </p>
+      <div class="cta__actions">
+        <RouteLink href="/contact" class="ts-btn ts-btn-primary cta-shine cta__primary">
+          Start 30-Day Free Trial
+          <Icon name="arrowRight" className="cta__icon" />
+        </RouteLink>
+        <RouteLink href="/contact" class="ts-btn ts-btn-glass cta__secondary">
+          <Icon name="messageSquare" className="cta__icon" />
+          Talk to Sales
+        </RouteLink>
+      </div>
 
-    <div class="cta__actions">
-      <RouteLink href="/contact" class="ts-btn ts-btn-primary cta-shine cta__primary">
-        Start Building Now
-        <Icon name="arrowRight" className="cta__icon" />
-      </RouteLink>
-      <RouteLink href="/contact" class="ts-btn ts-btn-glass cta__secondary">
-        <Icon name="messageSquare" className="cta__icon" />
-        Talk to Sales
-      </RouteLink>
+      <ul class="cta__perks" aria-label="Trial details">
+        {#each perks as p (p)}
+          <li>
+            <Icon name="checkCircle" className="cta__perk-icon" />
+            {p}
+          </li>
+        {/each}
+      </ul>
     </div>
   </div>
 </section>
@@ -34,91 +46,116 @@
 <style>
   .cta {
     position: relative;
-    padding: 120px 0;
+    padding: 84px 0 112px;
     overflow: hidden;
   }
 
   .cta__inner {
     position: relative;
-    max-width: 900px;
+    max-width: 960px;
     margin: 0 auto;
     padding: 0 40px;
+  }
+
+  .cta__card {
+    position: relative;
+    border-radius: 16px;
+    padding: 48px 40px 40px;
     text-align: center;
-  }
-
-  .cta__badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 14px;
-    border-radius: 4px;
-    margin-bottom: 24px;
-    background: var(--ts-glass-bg);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid var(--ts-glass-border);
-    color: var(--ts-text);
-    font-family: var(--ts-font-accent);
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-  }
-
-  .cta__badge-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--ts-secondary);
-    box-shadow: 0 0 8px var(--ts-secondary);
-    display: inline-block;
+    overflow: hidden;
+    background:
+      radial-gradient(
+        ellipse 60% 100% at 50% 0%,
+        rgba(var(--ts-primary-rgb), 0.18),
+        transparent 70%
+      ),
+      var(--ts-glass-bg);
+    border: 1px solid rgba(var(--ts-primary-rgb), 0.28);
+    box-shadow:
+      0 18px 48px rgba(var(--ts-primary-rgb), 0.16),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
   }
 
   .cta__headline {
-    font-size: clamp(2rem, 3vw + 0.5rem, 3.5rem);
+    font-size: clamp(2rem, 3vw + 0.5rem, 3.2rem);
     font-weight: 700;
     color: var(--ts-text);
-    line-height: 1.1;
+    line-height: 1.12;
     letter-spacing: -0.025em;
-    margin: 0 0 22px;
+    margin: 0 0 16px;
   }
 
   .cta__text {
     font-family: var(--ts-font-accent);
-    font-size: 19px;
+    font-size: 16px;
     color: var(--ts-text-muted);
-    line-height: 1.65;
-    max-width: 640px;
-    margin: 0 auto 40px;
+    line-height: 1.6;
+    max-width: 560px;
+    margin: 0 auto 28px;
   }
 
   .cta__actions {
     display: flex;
     justify-content: center;
-    gap: 14px;
+    gap: 12px;
     flex-wrap: wrap;
+    margin-bottom: 24px;
   }
 
   :global(.cta__primary) {
-    padding: 16px 36px;
-    box-shadow: 0 6px 22px rgba(var(--ts-primary-rgb), 0.45);
+    padding: 15px 30px;
+    box-shadow: 0 8px 24px rgba(var(--ts-primary-rgb), 0.48);
   }
 
   :global(.cta__secondary) {
-    padding: 16px 36px;
+    padding: 15px 28px;
   }
 
   :global(.cta__icon) {
-    width: 15px;
-    height: 15px;
+    width: 14px;
+    height: 14px;
   }
 
-  @media (max-width: 720px) {
+  .cta__perks {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    gap: 22px;
+    flex-wrap: wrap;
+    font-family: var(--ts-font-accent);
+    font-size: 12px;
+    color: var(--ts-text-muted);
+  }
+
+  .cta__perks li {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  :global(.cta__perk-icon) {
+    width: 14px;
+    height: 14px;
+    color: var(--ts-secondary);
+  }
+
+  @media (max-width: 640px) {
     .cta {
-      padding: 80px 0;
+      padding: 48px 0 72px;
     }
     .cta__inner {
-      padding: 0 20px;
+      padding: 0 16px;
+    }
+    .cta__card {
+      padding: 36px 24px 28px;
+    }
+    .cta__perks {
+      gap: 12px;
+      font-size: 11px;
     }
   }
 </style>

@@ -16,8 +16,8 @@
     {
       icon: 'mail',
       label: 'Email',
-      value: 'hello@terrascale.tech',
-      href: 'mailto:hello@terrascale.tech',
+      value: 'support@terrascale.tech',
+      href: 'mailto:support@terrascale.tech',
       kind: 'mailto',
     },
     {
@@ -32,13 +32,6 @@
       label: 'GitHub',
       value: 'Open issues & PRs',
       href: 'https://git.mariogk.com/Terrascale',
-      kind: 'external',
-    },
-    {
-      icon: 'messageSquare',
-      label: 'Support',
-      value: '24/7 priority for Pro',
-      href: 'https://discord.gg/terrascale',
       kind: 'external',
     },
   ]

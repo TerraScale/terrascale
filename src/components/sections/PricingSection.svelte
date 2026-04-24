@@ -2,6 +2,7 @@
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import SectionHeader from '@/components/sections/SectionHeader.svelte'
+  import AnimatedPrice from '@/components/AnimatedPrice.svelte'
   import type { AppIconName } from '@/lib/icons'
 
   type Plan = {
@@ -70,7 +71,6 @@
         'Unlimited databases',
         'Custom SLAs',
         'Dedicated support',
-        'On-prem deployment',
         'Advanced security',
         'Custom integrations',
       ],
@@ -79,9 +79,6 @@
       popular: false,
     },
   ]
-
-  const formatPrice = (plan: Plan) =>
-    plan.price ? `$${plan.price[billing]}` : 'Custom'
 
   const formatSuffix = (plan: Plan) =>
     plan.price ? (billing === 'annual' ? '/year' : '/month') : ''
@@ -161,9 +158,13 @@
           <p class="pricing-card__desc">{plan.description}</p>
 
           <div class="pricing-card__price-row">
-            <div class="pricing-card__price">{formatPrice(plan)}</div>
-            {#if formatSuffix(plan)}
+            {#if plan.price}
+              <div class="pricing-card__price">
+                <AnimatedPrice value={plan.price[billing]} />
+              </div>
               <div class="pricing-card__suffix">{formatSuffix(plan)}</div>
+            {:else}
+              <div class="pricing-card__price">Custom</div>
             {/if}
           </div>
           {#if !plan.price && plan.basePrice}
@@ -197,7 +198,7 @@
 
 <style>
   .pricing-section {
-    padding: 120px 0;
+    padding: 88px 0;
     position: relative;
   }
 
@@ -516,7 +517,7 @@
 
   @media (max-width: 960px) {
     .pricing-section {
-      padding: 80px 0;
+      padding: 64px 0;
     }
     .pricing-section__inner {
       padding: 0 20px;
