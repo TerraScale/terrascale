@@ -5,10 +5,10 @@
 </script>
 
 <svelte:head>
-  <title>TerraScale | Database Infrastructure That Scales Effortlessly</title>
+  <title>TerraScale | Developer Infrastructure For Data Workflows</title>
   <meta
     name="description"
-    content="TerraScale is a developer-first database platform for teams that need secure global scale without infrastructure drag."
+    content="TerraScale is developer-first infrastructure for typed database, auth, queue, and payment workflows across the current launch-region model."
   />
 </svelte:head>
 

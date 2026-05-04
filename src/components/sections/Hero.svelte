@@ -9,9 +9,9 @@
   } from '@/lib/world-map.generated'
 
   const highlights = [
-    { icon: 'zap', label: 'Blazing Fast' },
-    { icon: 'globe', label: 'Multi-Region' },
-    { icon: 'check', label: 'Easy to Use' },
+    { icon: 'zap', label: 'Typed API' },
+    { icon: 'globe', label: 'SFO · FRA · GRU' },
+    { icon: 'check', label: 'SDK-backed' },
   ] as const
 
   const vbW = WORLD_MAP_VIEWBOX.width
@@ -94,7 +94,8 @@
     </h1>
 
     <p class="hero__subtitle">
-      Blazing-fast, multi-region data infrastructure — built to be simple to run.
+      Typed database, auth, queue, and payment infrastructure for teams building on the
+      TerraScale API.
     </p>
 
     <div class="hero__ctas">

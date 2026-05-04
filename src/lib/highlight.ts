@@ -1,16 +1,13 @@
 // Minimal syntax highlighter — token regex per language.
 // Returns an array of spans { text, className? } to be rendered safely.
 
-export type Lang = 'typescript' | 'python' | 'go' | 'rust' | 'csharp'
+export type Lang = 'typescript' | 'csharp'
 
 export type Token = { text: string; className?: string }
 
 const KEYWORDS: Record<Lang, RegExp> = {
   typescript:
     /\b(import|from|const|let|var|async|await|function|return|if|else|new|class|extends|export|default|interface|type|as|in|of)\b/g,
-  python: /\b(import|from|def|class|return|if|else|elif|for|in|while|async|await|with|as|lambda|True|False|None|print|len)\b/g,
-  go: /\b(package|import|func|return|if|else|for|range|var|const|type|struct|interface|go|chan|select|case|default|map)\b/g,
-  rust: /\b(use|fn|let|mut|pub|struct|enum|impl|trait|async|await|return|if|else|for|in|while|match|Result|Ok|Err)\b/g,
   csharp:
     /\b(using|namespace|class|struct|interface|enum|public|private|protected|internal|static|readonly|const|var|new|return|if|else|for|foreach|in|while|switch|case|default|break|continue|async|await|null|true|false|this|base|void)\b/g,
 }
@@ -68,119 +65,54 @@ export function tokenize(code: string, lang: Lang): Token[] {
 }
 
 export const CODE_SAMPLES: Record<Lang, string> = {
-  typescript: `import { TerraScale } from '@terrascale/sdk';
+  typescript: `import { createTerraScaleClient } from '@terrascale/sdk';
 
-const db = new TerraScale({
-  apiKey: process.env.TS_API_KEY,
-  region: 'us-east-1',
+const ts = createTerraScaleClient({
+  baseUrl: 'https://api.terrascale.tech',
+  apiKey: process.env.TERRASCALE_API_KEY,
 });
 
-// Create and query a table in one flow
-const users = db.table<User>('users');
+const database = await ts.databases.create({
+  name: 'prod',
+  region: 'fra',
+});
 
-const active = await users
-  .where('status', '==', 'active')
-  .where('plan', 'in', ['pro', 'enterprise'])
-  .orderBy('createdAt', 'desc')
-  .limit(50)
-  .cache({ ttl: 60 })
-  .get();
+await ts.schema.apply(database.id, 'customers', {
+  fields: [
+    { name: 'email', type: 'String', required: true },
+    { name: 'plan', type: 'String' },
+  ],
+  confirmed: true,
+});
 
-console.log(\`found \${active.length} users\`);`,
-  python: `from terrascale import TerraScale
+const rows = await ts.repository<Customer>(database.id, 'customers')
+  .query({ filter: { plan: 'pro' }, limit: 50 });`,
+  csharp: `using Microsoft.Extensions.Options;
+using TerraScale.Client;
+using TerraScale.Client.Databases;
 
-db = TerraScale(
-    api_key=os.environ['TS_API_KEY'],
-    region='us-east-1',
-)
-
-# Create and query a table in one flow
-users = db.table('users')
-
-active = (users
-    .where('status', '==', 'active')
-    .where('plan', 'in', ['pro', 'enterprise'])
-    .order_by('created_at', desc=True)
-    .limit(50)
-    .cache(ttl=60)
-    .get())
-
-print(f"found {len(active)} users")`,
-  go: `package main
-
-import (
-    "context"
-    "fmt"
-    "github.com/terrascale/sdk-go"
-)
-
-func main() {
-    db := terrascale.New(terrascale.Config{
-        APIKey: os.Getenv("TS_API_KEY"),
-        Region: "us-east-1",
-    })
-
-    users := db.Table[User]("users")
-
-    active, err := users.
-        Where("status", "==", "active").
-        Where("plan", terrascale.In, []string{"pro", "enterprise"}).
-        OrderBy("createdAt", terrascale.Desc).
-        Limit(50).
-        Cache(60 * time.Second).
-        Get(context.Background())
-
-    fmt.Printf("found %d users\\n", len(active))
-}`,
-  rust: `use terrascale::{Client, Config, Order};
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let db = Client::new(Config {
-        api_key: env::var("TS_API_KEY")?,
-        region: "us-east-1".into(),
-    });
-
-    let users = db.table::<User>("users");
-
-    let active = users
-        .filter(field("status").eq("active"))
-        .filter(field("plan").in_(&["pro", "enterprise"]))
-        .order_by("created_at", Order::Desc)
-        .limit(50)
-        .cache(Duration::from_secs(60))
-        .fetch()
-        .await?;
-
-    println!("found {} users", active.len());
-    Ok(())
-}`,
-  csharp: `using TerraScale;
-using TerraScale.Query;
-
-var db = new TerraScaleClient(new Config
+using var http = new HttpClient
 {
-    ApiKey = Environment.GetEnvironmentVariable("TS_API_KEY")!,
-    Region = "us-east-1",
-});
+    BaseAddress = new Uri("https://api.terrascale.tech")
+};
+http.DefaultRequestHeaders.Add(
+    "X-TerraScale-Api-Key",
+    Environment.GetEnvironmentVariable("TERRASCALE_API_KEY"));
 
-var users = db.Table<User>("users");
+var client = new TerraScaleClient(
+    http,
+    Options.Create(new TerraScaleClientOptions
+    {
+        DefaultRegion = TerraScaleRegions.Frankfurt
+    }));
 
-var active = await users
-    .Where(u => u.Status == "active")
-    .Where(u => new[] { "pro", "enterprise" }.Contains(u.Plan))
-    .OrderByDescending(u => u.CreatedAt)
-    .Limit(50)
-    .Cache(TimeSpan.FromSeconds(60))
-    .FetchAsync();
+var database = await client.Databases.CreateAsync(
+    new CreateDatabaseRequest("prod"));
 
-Console.WriteLine($"found {active.Count} users");`,
+var plans = await client.Payments.ListPlansAsync();`,
 }
 
 export const LANG_META: Array<{ id: Lang; label: string; ext: string; icon: string }> = [
   { id: 'csharp', label: 'C#', ext: 'cs', icon: '/language-icons/csharp.svg' },
   { id: 'typescript', label: 'TypeScript', ext: 'ts', icon: '/language-icons/typescript.svg' },
-  { id: 'python', label: 'Python', ext: 'py', icon: '/language-icons/python.svg' },
-  { id: 'go', label: 'Go', ext: 'go', icon: '/language-icons/go.svg' },
-  { id: 'rust', label: 'Rust', ext: 'rs', icon: '/language-icons/rust.svg' },
 ]

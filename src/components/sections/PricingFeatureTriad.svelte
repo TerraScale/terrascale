@@ -3,9 +3,9 @@
   import type { AppIconName } from '@/lib/icons'
 
   const items: Array<{ icon: AppIconName; title: string; text: string }> = [
-    { icon: 'shieldCheck', title: 'Enterprise Security', text: 'SOC 2 compliant with end-to-end encryption' },
-    { icon: 'zap', title: 'Lightning Fast', text: 'Sub-20ms query latency worldwide' },
-    { icon: 'trendingUp', title: 'Auto-scaling', text: 'Scales automatically with your traffic' },
+    { icon: 'shieldCheck', title: 'Launch Region Controls', text: 'Create databases in sfo, fra, or gru' },
+    { icon: 'zap', title: 'Observable By Default', text: 'OpenTelemetry traces and logs across core workflows' },
+    { icon: 'trendingUp', title: 'Usage Guardrails', text: 'Metered plans with platform-level billing controls' },
   ]
 </script>
 

@@ -25,14 +25,6 @@ export const REGIONS: readonly Region[] = [
     "y": 21.650635094610966
   },
   {
-    "id": "washington",
-    "city": "Washington, D.C.",
-    "lat": 38.9,
-    "lng": -77.04,
-    "x": 32,
-    "y": 21.650635094610966
-  },
-  {
     "id": "sao-paulo",
     "city": "São Paulo",
     "lat": -23.55,
@@ -47,29 +39,5 @@ export const REGIONS: readonly Region[] = [
     "lng": 8.68,
     "x": 62.5,
     "y": 15.588457268119894
-  },
-  {
-    "id": "cape-town",
-    "city": "Cape Town",
-    "lat": -33.92,
-    "lng": 18.42,
-    "x": 66.5,
-    "y": 48.49742261192856
-  },
-  {
-    "id": "singapore",
-    "city": "Singapore",
-    "lat": 1.35,
-    "lng": 103.82,
-    "x": 96,
-    "y": 35.50704155516198
-  },
-  {
-    "id": "tokyo",
-    "city": "Tokyo",
-    "lat": 35.68,
-    "lng": 139.69,
-    "x": 108.5,
-    "y": 22.516660498395403
   }
 ] as const
