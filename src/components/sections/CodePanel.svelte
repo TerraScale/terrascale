@@ -11,10 +11,10 @@
   $: ext = LANG_META.find((l) => l.id === lang)?.ext ?? 'txt'
 
   const bullets = [
-    'Type-safe from query → result',
-    'Built-in caching & query batching',
-    'Real-time subscriptions built in',
-    'Zero-dependency clients',
+    'Generated OpenAPI contract catalog',
+    'Typed C# and TypeScript clients',
+    'Dashboard uses the public SDK boundary',
+    'Launch-region inputs for sfo, fra, gru',
   ]
 
   async function handleCopy() {
@@ -44,8 +44,8 @@
           <span class="ts-text-gradient">in the language you love</span>
         </h2>
         <p class="code__text">
-          Type-safe SDKs for C#, TypeScript, Python, Go, Rust, and Java. A consistent query builder
-          across runtimes — no ORM lock-in, no N+1 surprises.
+          First-class C# and TypeScript SDKs target the same public HTTP routes used by the
+          dashboard, with generated OpenAPI models underneath.
         </p>
         <ul class="code__bullets">
           {#each bullets as bullet (bullet)}

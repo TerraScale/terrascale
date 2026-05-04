@@ -76,11 +76,11 @@
       <div class="ts-footer__stats">
         <span class="ts-footer__stat">
           <span class="pulse-dot ts-footer__stat-dot"></span>
-          99.99% Uptime
+          sfo · fra · gru
         </span>
         <span class="ts-footer__stat">
           <Icon name="shield" className="ts-footer__stat-icon" />
-          SOC 2 Type II
+          OpenTelemetry-ready
         </span>
       </div>
     </div>

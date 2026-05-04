@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-  <title>TerraScale | Database Infrastructure That Scales Effortlessly</title>
+  <title>TerraScale | Developer Infrastructure For Data Workflows</title>
 </svelte:head>
 
 <Home />

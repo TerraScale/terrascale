@@ -11,12 +11,8 @@ const root = path.resolve(here, '..')
 
 const regions = [
   { id: 'san-francisco', city: 'San Francisco',    lat:  37.77, lng: -122.42 },
-  { id: 'washington',    city: 'Washington, D.C.', lat:  38.90, lng:  -77.04 },
   { id: 'sao-paulo',     city: 'São Paulo',        lat: -23.55, lng:  -46.63 },
   { id: 'frankfurt',     city: 'Frankfurt',        lat:  50.11, lng:    8.68 },
-  { id: 'cape-town',     city: 'Cape Town',        lat: -33.92, lng:   18.42 },
-  { id: 'singapore',     city: 'Singapore',        lat:   1.35, lng:  103.82 },
-  { id: 'tokyo',         city: 'Tokyo',            lat:  35.68, lng:  139.69 },
 ]
 
 const SENTINEL = '#FF00AA'

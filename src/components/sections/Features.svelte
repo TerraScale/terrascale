@@ -11,27 +11,27 @@
   }> = [
     {
       icon: 'zap',
-      title: 'Fast Reads',
-      text: 'Tuned query paths and caching that keeps hot data close to your app.',
-      bullets: ['Query planner', 'Smart caching', 'Read replicas'],
+      title: 'Typed Data API',
+      text: 'Create databases, collections, schemas, entities, and SQL queries through one public API.',
+      bullets: ['Schema plans', 'SQL explain', 'SDK queries'],
     },
     {
       icon: 'shield',
-      title: 'Secure by Default',
-      text: 'Encrypted connections, private networking, and role-based access out of the box.',
-      bullets: ['TLS in transit', 'Private networking', 'RBAC'],
+      title: 'Auth And Access',
+      text: 'Account, session, passkey, MFA, organization, invitation, and scoped API-key flows share the same platform surface.',
+      bullets: ['Passkeys', 'MFA', 'Scoped keys'],
     },
     {
       icon: 'globe',
-      title: 'Multi-Region',
-      text: 'Deploy across regions with automatic failover and routing to the nearest node.',
-      bullets: ['Cross-region replicas', 'Auto failover', 'Geo routing'],
+      title: 'Launch Regions',
+      text: 'Use the product launch regions San Francisco, Frankfurt, and Guarulhos through dashboard and SDK flows.',
+      bullets: ['sfo', 'fra', 'gru'],
     },
     {
       icon: 'trendingUp',
-      title: 'Elastic Capacity',
-      text: 'Scale up or down as traffic shifts. Usage-based billing — pay for what you use.',
-      bullets: ['Online resize', 'No downtime', 'Usage-based'],
+      title: 'Queue And Payments',
+      text: 'Queue workflows run on JetStream, and payment provider flows sit behind TerraScale Payments.',
+      bullets: ['NATS JetStream', 'Polar', 'Stripe'],
     },
   ]
 </script>
@@ -41,7 +41,7 @@
     <SectionHeader
       eyebrow="Platform"
       title="Built for scale, designed for developers"
-      subtitle="The essentials of a managed database, without the rough edges."
+      subtitle="The implemented surface spans data, auth, queues, payments, SDKs, and dashboard workflows."
     />
 
     <div class="features__grid">
