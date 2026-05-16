@@ -661,7 +661,7 @@ A breathing dot that signals "live / online / streaming":
 Typically `6–9 px`, backgrounded with `--ts-secondary` and a matching
 `box-shadow: 0 0 8px var(--ts-secondary)` for bloom.
 
-Used in: header status link, hero removed badge (legacy), CTA perk block,
+Used in: header status link, CTA perk block,
 footer meta stat.
 
 ### 11.8 Glass surface
@@ -958,7 +958,7 @@ The site uses a handful of max-width breakpoints, not a formal grid system:
 
 | Breakpoint | Common switches |
 |---|---|
-| `max-width: 1100px` | Feature grid switches 4 → 2 cols (deprecated; now 2 from the start) |
+| `max-width: 1100px` | Feature grid uses 2 cols |
 | `max-width: 960px` | Header collapses to hamburger, Pricing grid → 1 col, Code panel stacks, Footer grid → 2 cols |
 | `max-width: 860px` | Triad grid → 1 col, Features old breakpoint |
 | `max-width: 760px` | Detailed pricing table header hides, rows stack |

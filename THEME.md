@@ -182,8 +182,6 @@ Preferred utilities:
 - `ts-rounded-xl`
 - `ts-rounded-2xl`
 
-Legacy helpers like `br-sharp-4` still exist, but new work should use the `ts-rounded-*` utilities.
-
 ## Shadows, Glow, And Depth
 
 ### Brutalist offset shadows
@@ -225,12 +223,6 @@ Glow is never the base visual treatment. It is an accent layer used for emphasis
 - `ts-glow-secondary`
 - `ts-glow-accent`
 - `ts-glow-tertiary`
-
-Legacy aliases still exist:
-
-- `glow-blue`
-- `glow-green`
-- `glow-cyan`
 
 ## Glassmorphism
 
