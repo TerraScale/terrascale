@@ -144,7 +144,7 @@ function FeatureCard({ feature, index }) {
 
 // ── Code Panel ────────────────────────────────────────────────────────────────
 const CODE_SAMPLES = {
-  typescript: `import { TerraScale } from '@terrascale/sdk';
+  typescript: `import { TerraScale } from '@terrascale/client';
 
 const db = new TerraScale({
   apiKey: process.env.TS_API_KEY,
