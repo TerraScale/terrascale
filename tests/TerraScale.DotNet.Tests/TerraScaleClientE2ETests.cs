@@ -19,6 +19,44 @@ public sealed class TerraScaleClientE2ETests
     }
 
     [Test]
+    [RequiresTerraScaleApi]
+    public async Task Databases_CreateGetAndDelete_RoundTripsAgainstRealApi()
+    {
+        var client = TerraScaleApiE2E.CreateClient();
+        var databaseName = $"sdk-e2e-db-{Guid.NewGuid():N}"[..32];
+        TerraScaleDatabaseDetails? created = null;
+
+        try
+        {
+            created = await client.Databases.CreateAsync(databaseName);
+            await Assert.That(created.DatabaseId.Length).IsEqualTo(26);
+            await Assert.That(created.Name).IsEqualTo(databaseName);
+
+            var loaded = await client.Databases.GetAsync(created.DatabaseId);
+            await Assert.That(loaded.DatabaseId).IsEqualTo(created.DatabaseId);
+            await Assert.That(loaded.Name).IsEqualTo(databaseName);
+
+            var deleted = await client.Databases.DeleteAsync(created.DatabaseId);
+            await Assert.That(deleted.DatabaseId).IsEqualTo(created.DatabaseId);
+            await Assert.That(deleted.Name).IsEqualTo(databaseName);
+            await Assert.That(deleted.Deleted).IsTrue();
+            await Assert.That(deleted.HardDelete).IsFalse();
+            created = null;
+
+            var missing = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.Databases.GetAsync(deleted.DatabaseId));
+            await Assert.That(missing!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+        finally
+        {
+            if (created is not null)
+            {
+                await DeleteDatabaseIfPresentAsync(client, created.DatabaseId);
+            }
+        }
+    }
+
+    [Test]
     [RequiresTerraScaleBearerToken]
     public async Task Databases_ListAsync_UsesCallerProvidedBearerTokenProvider()
     {
@@ -344,6 +382,19 @@ public sealed class TerraScaleClientE2ETests
         try
         {
             await client.Documents.DeleteAsync(repository, documentId);
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
+        }
+    }
+
+    private static async Task DeleteDatabaseIfPresentAsync(
+        TerraScaleClient client,
+        string databaseId)
+    {
+        try
+        {
+            await client.Databases.DeleteAsync(databaseId);
         }
         catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {

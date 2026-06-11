@@ -29,3 +29,12 @@ public sealed record TerraScaleDatabaseDetails(
     IReadOnlyList<string> Rehabs,
     string? ChangeToken,
     IReadOnlyDictionary<string, string> Settings);
+
+/// <summary>
+/// Result of deleting a TerraScale database.
+/// </summary>
+public sealed record TerraScaleDeletedDatabase(
+    string DatabaseId,
+    string Name,
+    bool HardDelete,
+    bool Deleted);

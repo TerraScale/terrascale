@@ -56,6 +56,16 @@ var client = new TerraScaleClient(
 
 ## Database And Environment Selection
 
+Create, inspect, and clean up logical databases through the public database API:
+
+```csharp
+var database = await client.Databases.CreateAsync("orders-production", cancellationToken: cancellationToken);
+var loadedDatabase = await client.Databases.GetAsync(database.DatabaseId, cancellationToken);
+
+// Later, after repositories/data are no longer needed:
+await client.Databases.DeleteAsync(loadedDatabase.DatabaseId, cancellationToken: cancellationToken);
+```
+
 Select a logical database and environment when creating repositories:
 
 ```csharp

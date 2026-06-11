@@ -38,4 +38,38 @@ public sealed class TerraScaleDatabasesClient
             "/api/v1/databases",
             new TerraScaleCreateDatabaseRequest(name, replicationFactor, settings),
             cancellationToken);
+
+    /// <summary>
+    /// Gets database details by TerraScale database id.
+    /// </summary>
+    public Task<TerraScaleDatabaseDetails> GetAsync(
+        string databaseId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
+        return client.SendAsync<TerraScaleDatabaseDetails>(
+            HttpMethod.Get,
+            $"/api/v1/databases/{Escape(databaseId)}",
+            body: null,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Deletes a TerraScale database by id.
+    /// </summary>
+    public Task<TerraScaleDeletedDatabase> DeleteAsync(
+        string databaseId,
+        bool hardDelete = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
+        return client.SendAsync<TerraScaleDeletedDatabase>(
+            HttpMethod.Delete,
+            $"/api/v1/databases/{Escape(databaseId)}?hardDelete={hardDelete.ToString().ToLowerInvariant()}",
+            body: null,
+            cancellationToken);
+    }
+
+    private static string Escape(string value) =>
+        Uri.EscapeDataString(value.Trim());
 }
