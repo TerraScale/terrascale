@@ -67,6 +67,34 @@ public sealed class TerraScaleEntitySourceE2ETests
     }
 
     [Test]
+    [RequiresTerraScaleBearerToken]
+    public async Task RegisteredSource_UsesBearerTokenProviderThroughDependencyInjection()
+    {
+        var providerCalls = 0;
+        var services = new ServiceCollection();
+        services.AddDbContext<OrdersContext>(options => options.UseTerraScaleSource());
+        services.AddTerraScaleEntityFrameworkCore<OrdersContext>(options =>
+        {
+            options.BaseAddress = TerraScaleApiE2E.BaseAddress!;
+            options.BearerTokenProvider = cancellationToken =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Interlocked.Increment(ref providerCalls);
+                return ValueTask.FromResult(TerraScaleApiE2E.BearerToken);
+            };
+            options.RepositoryNameResolver = _ => TerraScaleApiE2E.Repository;
+        });
+        await using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var source = scope.ServiceProvider.GetRequiredService<TerraScaleEntitySource<OrdersContext>>();
+        var orders = await source.Set<Order>().ListAsync(take: 1);
+
+        await Assert.That(orders).IsNotNull();
+        await Assert.That(providerCalls > 0).IsTrue();
+    }
+
+    [Test]
     [RequiresTerraScaleApi]
     public async Task EntitySet_FindMissingDocument_ReturnsNullFromRealRepository()
     {

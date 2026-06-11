@@ -72,6 +72,15 @@ public sealed class TerraScaleClient
     public TerraScaleChangesClient Changes { get; }
 
     /// <summary>
+    /// Creates a typed repository facade for document CRUD, list, and query operations.
+    /// </summary>
+    public TerraScaleTypedRepository<TEntity> Repository<TEntity>(string repository)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(repository);
+        return new TerraScaleTypedRepository<TEntity>(this, repository.Trim());
+    }
+
+    /// <summary>
     /// Creates a client context that targets a default database for repository creation.
     /// </summary>
     public TerraScaleClient ForDatabase(string databaseId)
@@ -185,7 +194,7 @@ public sealed class TerraScaleClient
         {
             request = new HttpRequestMessage(HttpMethod.Get, requestUri);
             ApplyRequestVersion(request);
-            ApplyAuthentication(request);
+            await ApplyAuthenticationAsync(request, cancellationToken).ConfigureAwait(false);
             ApplyRequestHeaders(
                 request,
                 CreateRequestId(),
@@ -289,7 +298,13 @@ public sealed class TerraScaleClient
 
         while (true)
         {
-            using var request = CreateRequest(method, requestUri, body, requestId, idempotencyKey);
+            using var request = await CreateRequestAsync(
+                method,
+                requestUri,
+                body,
+                requestId,
+                idempotencyKey,
+                cancellationToken).ConfigureAwait(false);
 
             try
             {
@@ -319,24 +334,33 @@ public sealed class TerraScaleClient
         }
     }
 
-    private HttpRequestMessage CreateRequest(
+    private async ValueTask<HttpRequestMessage> CreateRequestAsync(
         HttpMethod method,
         string requestUri,
         object? body,
         string? requestId,
-        string? idempotencyKey)
+        string? idempotencyKey,
+        CancellationToken cancellationToken)
     {
         var request = new HttpRequestMessage(method, requestUri);
-        ApplyRequestVersion(request);
-        ApplyAuthentication(request);
-        ApplyRequestHeaders(request, requestId, idempotencyKey);
-
-        if (body is not null)
+        try
         {
-            request.Content = JsonContent.Create(body, options: jsonOptions);
-        }
+            ApplyRequestVersion(request);
+            await ApplyAuthenticationAsync(request, cancellationToken).ConfigureAwait(false);
+            ApplyRequestHeaders(request, requestId, idempotencyKey);
 
-        return request;
+            if (body is not null)
+            {
+                request.Content = JsonContent.Create(body, options: jsonOptions);
+            }
+
+            return request;
+        }
+        catch
+        {
+            request.Dispose();
+            throw;
+        }
     }
 
     private sealed class GuardedServerSentEventEnumerable<TEvent>(
@@ -401,16 +425,29 @@ public sealed class TerraScaleClient
         return string.IsNullOrWhiteSpace(requestId) ? null : requestId.Trim();
     }
 
-    private void ApplyAuthentication(HttpRequestMessage request)
+    private async ValueTask ApplyAuthenticationAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(options.ApiKey))
         {
-            request.Headers.TryAddWithoutValidation("X-TerraScale-Auth-Key", options.ApiKey);
-            request.Headers.TryAddWithoutValidation("X-TerraScale-Project-Id", options.ProjectId);
+            request.Headers.TryAddWithoutValidation("X-TerraScale-Auth-Key", options.ApiKey.Trim());
+            request.Headers.TryAddWithoutValidation("X-TerraScale-Project-Id", options.ProjectId?.Trim());
             return;
         }
 
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.BearerToken);
+        var bearerToken = options.BearerToken;
+        if (string.IsNullOrWhiteSpace(bearerToken) && options.BearerTokenProvider is { } provider)
+        {
+            bearerToken = await provider(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (string.IsNullOrWhiteSpace(bearerToken))
+        {
+            throw new InvalidOperationException("The configured bearer token provider returned an empty bearer token.");
+        }
+
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken.Trim());
     }
 
     private static void ApplyRequestHeaders(

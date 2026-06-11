@@ -17,9 +17,9 @@ var client = new TerraScaleClient(
     new TerraScaleClientOptions
     {
         BaseAddress = configuration.BaseAddress,
-        ApiKey = configuration.ApiKey,
         BearerToken = configuration.BearerToken,
-        ProjectId = configuration.ProjectId,
+        ApiKey = configuration.BearerToken is null ? configuration.ApiKey : null,
+        ProjectId = configuration.BearerToken is null ? configuration.ProjectId : null,
         DatabaseId = configuration.DatabaseId,
         EnvironmentId = configuration.EnvironmentId,
         MaxRetryAttempts = 2,

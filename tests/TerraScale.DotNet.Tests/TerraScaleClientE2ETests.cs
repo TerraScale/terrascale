@@ -18,6 +18,36 @@ public sealed class TerraScaleClientE2ETests
     }
 
     [Test]
+    [RequiresTerraScaleBearerToken]
+    public async Task Databases_ListAsync_UsesCallerProvidedBearerTokenProvider()
+    {
+        var providerCalls = 0;
+        var client = TerraScaleApiE2E.CreateBearerProviderClient(cancellationToken =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref providerCalls);
+            return ValueTask.FromResult(TerraScaleApiE2E.BearerToken);
+        });
+
+        var databases = await client.Databases.ListAsync(take: 10);
+
+        await Assert.That(databases).IsNotNull();
+        await Assert.That(providerCalls > 0).IsTrue();
+    }
+
+    [Test]
+    [RequiresTerraScaleBaseAddress]
+    public async Task Databases_ListAsync_WithInvalidBearerTokenProvider_ThrowsTypedApiException()
+    {
+        var client = TerraScaleApiE2E.CreateInvalidBearerProviderClient();
+
+        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Databases.ListAsync(take: 1));
+
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
     [RequiresTerraScaleApi]
     public async Task Documents_CreateGetQueryAndDelete_RoundTripsAgainstRealRepository()
     {
@@ -123,6 +153,56 @@ public sealed class TerraScaleClientE2ETests
             {
                 await DeleteIfPresentAsync(client, repository, documentId);
             }
+        }
+    }
+
+    [Test]
+    [RequiresTerraScaleApi]
+    public async Task TypedRepository_CreateGetQueryPatchListAndDelete_RoundTripsAgainstRealRepository()
+    {
+        var client = TerraScaleApiE2E.CreateClient();
+        var repository = TerraScaleApiE2E.Repository;
+        var orders = client.Repository<E2EDocument>(repository);
+        var marker = $"sdk-e2e-typed-{Guid.NewGuid():N}";
+
+        var created = await orders.CreateAsync(new E2EDocument(marker, Quantity: 7));
+
+        try
+        {
+            await Assert.That(created.Data.Status).IsEqualTo(marker);
+            await Assert.That(created.Data.Quantity).IsEqualTo(7);
+
+            var loaded = await orders.GetAsync(created.Id);
+            await Assert.That(loaded.Id).IsEqualTo(created.Id);
+            await Assert.That(loaded.Data.Status).IsEqualTo(marker);
+
+            var patched = await orders.PatchAsync(
+                created.Id,
+                new
+                {
+                    status = $"{marker}-patched",
+                    quantity = 8
+                });
+            await Assert.That(patched.Data.Status).IsEqualTo($"{marker}-patched");
+            await Assert.That(patched.Data.Quantity).IsEqualTo(8);
+
+            var queried = await orders.QueryAsync(
+                TerraScaleQuery.From(repository).Take(100));
+            await Assert.That(queried.Items.Any(item =>
+                    string.Equals(item.Id, created.Id, StringComparison.Ordinal) &&
+                    string.Equals(item.Data.Status, $"{marker}-patched", StringComparison.Ordinal)))
+                .IsTrue();
+
+            var listed = await orders.ListAsync(take: 100);
+            await Assert.That(listed.Items.Any(item => string.Equals(item.Id, created.Id, StringComparison.Ordinal)))
+                .IsTrue();
+
+            var deleted = await orders.DeleteAsync(created.Id);
+            await Assert.That(deleted.Deleted).IsTrue();
+        }
+        finally
+        {
+            await DeleteIfPresentAsync(client, repository, created.Id);
         }
     }
 

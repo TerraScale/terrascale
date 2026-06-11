@@ -21,6 +21,12 @@ public sealed record TerraScaleClientOptions
     public string? BearerToken { get; set; }
 
     /// <summary>
+    /// Caller-provided factory for the current OAuth or machine-to-machine bearer token.
+    /// The SDK invokes this before each HTTP request and retry, but never acquires credentials itself.
+    /// </summary>
+    public Func<CancellationToken, ValueTask<string>>? BearerTokenProvider { get; set; }
+
+    /// <summary>
     /// TerraScale project id used with project API-key authentication.
     /// </summary>
     public string? ProjectId { get; set; }
@@ -62,12 +68,26 @@ public sealed record TerraScaleClientOptions
             throw new ArgumentException("TerraScale base address must be absolute.", nameof(BaseAddress));
         }
 
-        if (string.IsNullOrWhiteSpace(ApiKey) && string.IsNullOrWhiteSpace(BearerToken))
+        var hasApiKey = !string.IsNullOrWhiteSpace(ApiKey);
+        var hasStaticBearerToken = !string.IsNullOrWhiteSpace(BearerToken);
+        var hasBearerTokenProvider = BearerTokenProvider is not null;
+
+        if (!hasApiKey && !hasStaticBearerToken && !hasBearerTokenProvider)
         {
-            throw new ArgumentException("Configure either an API key or a bearer token.");
+            throw new ArgumentException("Configure an API key, bearer token, or bearer token provider.");
         }
 
-        if (!string.IsNullOrWhiteSpace(ApiKey) && string.IsNullOrWhiteSpace(ProjectId))
+        if (hasApiKey && (hasStaticBearerToken || hasBearerTokenProvider))
+        {
+            throw new ArgumentException("Configure either project API-key authentication or bearer-token authentication, not both.");
+        }
+
+        if (hasStaticBearerToken && hasBearerTokenProvider)
+        {
+            throw new ArgumentException("Configure either BearerToken or BearerTokenProvider, not both.", nameof(BearerTokenProvider));
+        }
+
+        if (hasApiKey && string.IsNullOrWhiteSpace(ProjectId))
         {
             throw new ArgumentException("ProjectId is required when ApiKey is configured.", nameof(ProjectId));
         }

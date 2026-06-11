@@ -25,6 +25,11 @@ public sealed class TerraScaleEntityFrameworkCoreOptions
     public string? BearerToken { get; set; }
 
     /// <summary>
+    /// Caller-provided factory for the current OAuth or machine-to-machine bearer token.
+    /// </summary>
+    public Func<CancellationToken, ValueTask<string>>? BearerTokenProvider { get; set; }
+
+    /// <summary>
     /// TerraScale project id used with project API-key authentication.
     /// </summary>
     public string? ProjectId { get; set; }
@@ -45,6 +50,7 @@ public sealed class TerraScaleEntityFrameworkCoreOptions
             BaseAddress = BaseAddress,
             ApiKey = ApiKey,
             BearerToken = BearerToken,
+            BearerTokenProvider = BearerTokenProvider,
             ProjectId = ProjectId,
             JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerOptions),
             RepositoryNameResolver = RepositoryNameResolver
@@ -56,6 +62,7 @@ public sealed class TerraScaleEntityFrameworkCoreOptions
             BaseAddress = BaseAddress,
             ApiKey = ApiKey,
             BearerToken = BearerToken,
+            BearerTokenProvider = BearerTokenProvider,
             ProjectId = ProjectId
         };
 }

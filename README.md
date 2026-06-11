@@ -41,6 +41,19 @@ var client = new TerraScaleClient(
     });
 ```
 
+For expiring OAuth or machine-to-machine tokens, provide a token provider. The SDK invokes it before each HTTP request and retry, while token acquisition and refresh stay in your application boundary:
+
+```csharp
+var client = new TerraScaleClient(
+    new HttpClient(),
+    new TerraScaleClientOptions
+    {
+        BaseAddress = new Uri("https://api.terrascale.tech"),
+        BearerTokenProvider = async cancellationToken =>
+            await tokenCache.GetAccessTokenAsync(cancellationToken)
+    });
+```
+
 ## Database And Environment Selection
 
 Select a logical database and environment when creating repositories:
@@ -90,6 +103,14 @@ var page = await client.Tql.QueryAsync(
     paidOrders,
     cancellationToken);
 
+var typedOrders = client.Repository<OrderDocument>(repository.RepositoryId);
+var typedOrder = await typedOrders.CreateAsync(
+    new OrderDocument("A1003", "new"),
+    cancellationToken);
+var typedPage = await typedOrders.QueryAsync(
+    TerraScaleQuery.From("orders").WhereEqual("status", "new").Take(25),
+    cancellationToken);
+
 var batch = await client.Documents.BatchAsync(
     repository.RepositoryId,
     [
@@ -107,6 +128,10 @@ await foreach (var change in client.Changes.SubscribeRepositoryAsync(
 {
     Console.WriteLine($"{change.Type}: {change.Id}");
 }
+```
+
+```csharp
+public sealed record OrderDocument(string OrderNumber, string Status);
 ```
 
 ## Retries, Idempotency, Request IDs, And Tracing

@@ -30,6 +30,7 @@ public static class TerraScaleEntityFrameworkCoreServiceCollectionExtensions
             client.BaseAddress = clientOptions.BaseAddress;
             client.ApiKey = clientOptions.ApiKey;
             client.BearerToken = clientOptions.BearerToken;
+            client.BearerTokenProvider = clientOptions.BearerTokenProvider;
             client.ProjectId = clientOptions.ProjectId;
         });
         services.AddScoped<TerraScaleEntitySource<TContext>>();
