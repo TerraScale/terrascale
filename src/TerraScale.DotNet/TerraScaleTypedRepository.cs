@@ -73,6 +73,23 @@ public sealed class TerraScaleTypedRepository<TEntity>
     }
 
     /// <summary>
+    /// Runs typed create, upsert, patch, and delete document operations as one batch.
+    /// </summary>
+    public async Task<TerraScaleTypedDocumentBatch<TEntity>> BatchAsync(
+        IReadOnlyList<TerraScaleTypedDocumentBatchOperation> operations,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(operations);
+        var batch = await client.Documents.BatchAsync(
+                Repository,
+                operations.Select(static operation => operation.ToDocumentOperation()).ToArray(),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return Materialize(batch);
+    }
+
+    /// <summary>
     /// Lists typed documents in this repository.
     /// </summary>
     public async Task<TerraScaleTypedDocumentPage<TEntity>> ListAsync(
@@ -128,6 +145,20 @@ public sealed class TerraScaleTypedRepository<TEntity>
             page.Total,
             page.Items.Select(Materialize).ToArray());
 
+    private static TerraScaleTypedDocumentBatch<TEntity> Materialize(TerraScaleDocumentBatch batch) =>
+        new(
+            batch.RepositoryId,
+            batch.Repository,
+            batch.Results.Select(Materialize).ToArray());
+
+    private static TerraScaleTypedDocumentBatchResult<TEntity> Materialize(TerraScaleDocumentBatchResult result) =>
+        new(
+            result.Index,
+            result.Operation,
+            result.Id,
+            result.Document is null ? null : Materialize(result.Document),
+            result.Deleted);
+
     private static TerraScaleTypedDocument<TEntity> Materialize(TerraScaleDocument document) =>
         new(
             document.Repository,
@@ -171,3 +202,70 @@ public sealed record TerraScaleTypedDocumentPage<TEntity>(
     int Take,
     long Total,
     IReadOnlyList<TerraScaleTypedDocument<TEntity>> Items);
+
+/// <summary>
+/// A typed create, upsert, patch, or delete operation in a document batch.
+/// </summary>
+public sealed record TerraScaleTypedDocumentBatchOperation(
+    string Operation,
+    string? DocumentId,
+    object? Data)
+{
+    /// <summary>
+    /// Creates a new typed document with a server-generated ULID.
+    /// </summary>
+    public static TerraScaleTypedDocumentBatchOperation Create<TEntity>(TEntity entity) =>
+        new("create", DocumentId: null, entity);
+
+    /// <summary>
+    /// Upserts a typed document at a caller-provided ULID.
+    /// </summary>
+    public static TerraScaleTypedDocumentBatchOperation Upsert<TEntity>(
+        string documentId,
+        TEntity entity)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
+        return new TerraScaleTypedDocumentBatchOperation("upsert", documentId.Trim(), entity);
+    }
+
+    /// <summary>
+    /// Applies a partial top-level JSON object patch to an existing typed document.
+    /// </summary>
+    public static TerraScaleTypedDocumentBatchOperation Patch<TPatch>(
+        string documentId,
+        TPatch patch)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
+        return new TerraScaleTypedDocumentBatchOperation("patch", documentId.Trim(), patch);
+    }
+
+    /// <summary>
+    /// Deletes an existing typed document.
+    /// </summary>
+    public static TerraScaleTypedDocumentBatchOperation Delete(string documentId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
+        return new TerraScaleTypedDocumentBatchOperation("delete", documentId.Trim(), Data: null);
+    }
+
+    internal TerraScaleDocumentBatchOperation ToDocumentOperation() =>
+        new(Operation, DocumentId, Data);
+}
+
+/// <summary>
+/// Result of a typed TerraScale document batch operation.
+/// </summary>
+public sealed record TerraScaleTypedDocumentBatch<TEntity>(
+    string RepositoryId,
+    string Repository,
+    IReadOnlyList<TerraScaleTypedDocumentBatchResult<TEntity>> Results);
+
+/// <summary>
+/// Result item for a single typed batch operation.
+/// </summary>
+public sealed record TerraScaleTypedDocumentBatchResult<TEntity>(
+    int Index,
+    string Operation,
+    string Id,
+    TerraScaleTypedDocument<TEntity>? Document,
+    TerraScaleDeletedDocument? Deleted);

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json.Serialization;
 using TerraScale.DotNet;
@@ -89,6 +90,90 @@ public sealed class TerraScaleClientE2ETests
 
     [Test]
     [RequiresTerraScaleApi]
+    public async Task TransportMetadata_EmitsOpenTelemetryAndPreservesRequestIdsAgainstRealApi()
+    {
+        var activities = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => string.Equals(
+                source.Name,
+                TerraScaleTelemetry.ActivitySourceName,
+                StringComparison.Ordinal),
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                lock (activities)
+                {
+                    activities.Add(activity);
+                }
+            }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var requestIdPrefix = $"sdk-e2e-request-{Guid.NewGuid():N}-";
+        var idempotencyPrefix = $"sdk-e2e-idempotency-{Guid.NewGuid():N}-";
+        var requestIdCalls = 0;
+        var idempotencyKeyCalls = 0;
+        var client = new TerraScaleClient(
+            new HttpClient(),
+            new TerraScaleClientOptions
+            {
+                BaseAddress = TerraScaleApiE2E.BaseAddress ?? throw new InvalidOperationException(TerraScaleApiE2E.SkipReason),
+                ApiKey = TerraScaleApiE2E.ApiKey,
+                ProjectId = TerraScaleApiE2E.ProjectId,
+                RequestIdFactory = () => $"{requestIdPrefix}{Interlocked.Increment(ref requestIdCalls)}",
+                IdempotencyKeyFactory = () => $"{idempotencyPrefix}{Interlocked.Increment(ref idempotencyKeyCalls)}"
+            });
+        var repository = TerraScaleApiE2E.Repository;
+        var marker = $"sdk-e2e-transport-{Guid.NewGuid():N}";
+        TerraScaleDocument? created = null;
+
+        try
+        {
+            await client.Databases.ListAsync(take: 1);
+            created = await client.Documents.CreateAsync(repository, new E2EDocument(marker, Quantity: 1));
+
+            var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.Documents.GetAsync(repository, $"sdk-e2e-missing/{Guid.NewGuid():N}"));
+
+            await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            await Assert.That(exception.RequestId).IsNotNull();
+            await Assert.That(exception.RequestId!.StartsWith(requestIdPrefix, StringComparison.Ordinal)).IsTrue();
+        }
+        finally
+        {
+            if (created is not null)
+            {
+                await DeleteIfPresentAsync(client, repository, created.Id);
+            }
+        }
+
+        Activity[] capturedActivities;
+        lock (activities)
+        {
+            capturedActivities = [.. activities];
+        }
+
+        await Assert.That(requestIdCalls >= 3).IsTrue();
+        await Assert.That(idempotencyKeyCalls >= 1).IsTrue();
+        await Assert.That(capturedActivities.Length >= 3).IsTrue();
+        await Assert.That(capturedActivities.Any(activity =>
+            string.Equals(activity.Source.Name, TerraScaleTelemetry.ActivitySourceName, StringComparison.Ordinal) &&
+            string.Equals(activity.OperationName, "TerraScale GET", StringComparison.Ordinal) &&
+            string.Equals(ReadTag(activity, "url.path"), "/api/v1/databases?start=0&take=1", StringComparison.Ordinal) &&
+            string.Equals(ReadTag(activity, "http.response.status_code"), "200", StringComparison.Ordinal) &&
+            ReadTag(activity, "terrascale.request_id")?.StartsWith(requestIdPrefix, StringComparison.Ordinal) == true))
+            .IsTrue();
+        await Assert.That(capturedActivities.Any(activity =>
+            string.Equals(activity.OperationName, "TerraScale GET", StringComparison.Ordinal) &&
+            string.Equals(ReadTag(activity, "http.response.status_code"), "404", StringComparison.Ordinal) &&
+            ReadTag(activity, "terrascale.request_id")?.StartsWith(requestIdPrefix, StringComparison.Ordinal) == true))
+            .IsTrue();
+    }
+
+    [Test]
+    [RequiresTerraScaleApi]
     public async Task Documents_PatchAndBatch_RoundTripsAgainstRealRepository()
     {
         var client = TerraScaleApiE2E.CreateClient();
@@ -158,14 +243,16 @@ public sealed class TerraScaleClientE2ETests
 
     [Test]
     [RequiresTerraScaleApi]
-    public async Task TypedRepository_CreateGetQueryPatchListAndDelete_RoundTripsAgainstRealRepository()
+    public async Task TypedRepository_CreateGetQueryPatchBatchListAndDelete_RoundTripsAgainstRealRepository()
     {
         var client = TerraScaleApiE2E.CreateClient();
         var repository = TerraScaleApiE2E.Repository;
         var orders = client.Repository<E2EDocument>(repository);
         var marker = $"sdk-e2e-typed-{Guid.NewGuid():N}";
+        var documentIds = new HashSet<string>(StringComparer.Ordinal);
 
         var created = await orders.CreateAsync(new E2EDocument(marker, Quantity: 7));
+        documentIds.Add(created.Id);
 
         try
         {
@@ -197,12 +284,55 @@ public sealed class TerraScaleClientE2ETests
             await Assert.That(listed.Items.Any(item => string.Equals(item.Id, created.Id, StringComparison.Ordinal)))
                 .IsTrue();
 
+            var deleteCandidate = await orders.CreateAsync(new E2EDocument($"{marker}-delete", Quantity: 1));
+            documentIds.Add(deleteCandidate.Id);
+            var patchCandidate = await orders.CreateAsync(new E2EDocument($"{marker}-patch", Quantity: 2));
+            documentIds.Add(patchCandidate.Id);
+
+            var batch = await orders.BatchAsync(
+            [
+                TerraScaleTypedDocumentBatchOperation.Create(new E2EDocument($"{marker}-batch-created", Quantity: 9)),
+                TerraScaleTypedDocumentBatchOperation.Upsert(created.Id, new E2EDocument($"{marker}-batch-upserted", Quantity: 10)),
+                TerraScaleTypedDocumentBatchOperation.Patch(
+                    patchCandidate.Id,
+                    new
+                    {
+                        quantity = 11
+                    }),
+                TerraScaleTypedDocumentBatchOperation.Delete(deleteCandidate.Id)
+            ]);
+
+            await Assert.That(batch.Repository).IsEqualTo(repository);
+            await Assert.That(batch.Results.Count).IsEqualTo(4);
+
+            var batchCreated = batch.Results.Single(result => result.Index == 0);
+            await Assert.That(batchCreated.Document?.Data.Status).IsEqualTo($"{marker}-batch-created");
+            await Assert.That(batchCreated.Document?.Data.Quantity).IsEqualTo(9);
+            documentIds.Add(batchCreated.Id);
+
+            var batchUpserted = batch.Results.Single(result => result.Index == 1);
+            await Assert.That(batchUpserted.Id).IsEqualTo(created.Id);
+            await Assert.That(batchUpserted.Document?.Data.Status).IsEqualTo($"{marker}-batch-upserted");
+
+            var batchPatched = batch.Results.Single(result => result.Index == 2);
+            await Assert.That(batchPatched.Id).IsEqualTo(patchCandidate.Id);
+            await Assert.That(batchPatched.Document?.Data.Quantity).IsEqualTo(11);
+
+            var batchDeleted = batch.Results.Single(result => result.Index == 3);
+            await Assert.That(batchDeleted.Id).IsEqualTo(deleteCandidate.Id);
+            await Assert.That(batchDeleted.Deleted?.Deleted).IsTrue();
+            documentIds.Remove(deleteCandidate.Id);
+
             var deleted = await orders.DeleteAsync(created.Id);
             await Assert.That(deleted.Deleted).IsTrue();
+            documentIds.Remove(created.Id);
         }
         finally
         {
-            await DeleteIfPresentAsync(client, repository, created.Id);
+            foreach (var documentId in documentIds)
+            {
+                await DeleteIfPresentAsync(client, repository, documentId);
+            }
         }
     }
 
@@ -218,6 +348,19 @@ public sealed class TerraScaleClientE2ETests
         catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {
         }
+    }
+
+    private static string? ReadTag(Activity activity, string key)
+    {
+        foreach (var tag in activity.TagObjects)
+        {
+            if (string.Equals(tag.Key, key, StringComparison.Ordinal))
+            {
+                return tag.Value?.ToString();
+            }
+        }
+
+        return null;
     }
 
     private sealed record E2EDocument(

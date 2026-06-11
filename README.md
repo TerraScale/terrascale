@@ -110,6 +110,12 @@ var typedOrder = await typedOrders.CreateAsync(
 var typedPage = await typedOrders.QueryAsync(
     TerraScaleQuery.From("orders").WhereEqual("status", "new").Take(25),
     cancellationToken);
+var typedBatch = await typedOrders.BatchAsync(
+    [
+        TerraScaleTypedDocumentBatchOperation.Create(new OrderDocument("A1004", "new")),
+        TerraScaleTypedDocumentBatchOperation.Patch(typedOrder.Id, new { status = "processing" })
+    ],
+    cancellationToken);
 
 var batch = await client.Documents.BatchAsync(
     repository.RepositoryId,
