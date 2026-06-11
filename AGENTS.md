@@ -77,8 +77,8 @@
 
 ## Testing and Verification
 
-- Unit-test serialization, URL construction, option validation, error mapping, pagination, cancellation, and retry behavior.
+- Do not create mocked, stubbed, faked, or local-handler tests. Tests must be integration or end-to-end tests that exercise real TerraScale API behavior.
 - Maintain TUnit end-to-end coverage for every feature and function in this repository. Each feature/function must have at least one success-path E2E test and at least one failure-path E2E test; public E2E flows may cover internal helpers only when the exercised behavior is the same as the direct helper behavior.
-- Integration tests must target the real `TerraScale.API` database/repository endpoints when credentials and endpoint configuration are available.
-- Do not add fake server behavior that contradicts the real API. Local HTTP test doubles are acceptable only for transport edge cases and must mirror the public endpoint contracts.
+- Integration and E2E tests must target the real `TerraScale.API` database/repository endpoints when credentials and endpoint configuration are available.
+- If real API credentials or endpoints are unavailable in the default developer environment, keep the E2E tests environment-gated rather than replacing the API with a mock, stub, fake server, generated proxy, local handler, or in-memory stand-in.
 - Build with all CPU cores, for example `dotnet build -m`.
