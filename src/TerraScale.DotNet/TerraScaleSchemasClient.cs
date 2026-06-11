@@ -51,14 +51,13 @@ public sealed class TerraScaleSchemasClient
         string repositoryId,
         int? maxErrorMessages = null,
         long? maxDocumentsToValidate = null,
-        long? startEtag = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryId);
         return client.SendAsync<TerraScaleSchemaValidationOperation>(
             HttpMethod.Post,
             $"/api/v1/repositories/{Escape(repositoryId)}/schema/validate",
-            new TerraScaleValidateRepositorySchemaRequest(maxErrorMessages, maxDocumentsToValidate, startEtag),
+            new TerraScaleValidateRepositorySchemaRequest(maxErrorMessages, maxDocumentsToValidate),
             cancellationToken);
     }
 
@@ -75,8 +74,7 @@ internal sealed record TerraScaleConfigureRepositorySchemaRequest(
 
 internal sealed record TerraScaleValidateRepositorySchemaRequest(
     int? MaxErrorMessages,
-    long? MaxDocumentsToValidate,
-    long? StartEtag);
+    long? MaxDocumentsToValidate);
 
 /// <summary>
 /// Repository schema configuration returned by TerraScale.
@@ -99,6 +97,4 @@ public sealed record TerraScaleSchemaValidationOperation(
     string DatabaseId,
     string? EnvironmentId,
     string Collection,
-    long OperationId,
-    string? OperationNodeTag,
-    string? ResponsibleNode);
+    string OperationId);

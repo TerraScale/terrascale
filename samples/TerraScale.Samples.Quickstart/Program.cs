@@ -105,7 +105,7 @@ try
         ]);
 
     Console.WriteLine($"Created document {created.Id}");
-    Console.WriteLine($"Fetched change vector: {fetched.ChangeVector ?? "none"}");
+    Console.WriteLine($"Fetched change token: {fetched.ChangeToken ?? "none"}");
     Console.WriteLine($"Patched status: {patched.Data.GetProperty("status").GetString()}");
     Console.WriteLine($"Query returned {page.Items.Count} document(s)");
     Console.WriteLine($"Batch returned {batch.Results.Count} result(s)");

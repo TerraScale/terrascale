@@ -3,7 +3,7 @@ namespace TerraScale.DotNet;
 /// <summary>
 /// Summary of a TerraScale database.
 /// </summary>
-public sealed record TerraScaleDatabaseSummary(string Name);
+public sealed record TerraScaleDatabaseSummary(string DatabaseId, string Name);
 
 /// <summary>
 /// Request body for creating a TerraScale database.
@@ -17,6 +17,7 @@ public sealed record TerraScaleCreateDatabaseRequest(
 /// Detailed TerraScale database state.
 /// </summary>
 public sealed record TerraScaleDatabaseDetails(
+    string DatabaseId,
     string Name,
     bool Disabled,
     bool Encrypted,
@@ -26,5 +27,5 @@ public sealed record TerraScaleDatabaseDetails(
     IReadOnlyList<string> Members,
     IReadOnlyList<string> Promotables,
     IReadOnlyList<string> Rehabs,
-    long Etag,
+    string? ChangeToken,
     IReadOnlyDictionary<string, string> Settings);

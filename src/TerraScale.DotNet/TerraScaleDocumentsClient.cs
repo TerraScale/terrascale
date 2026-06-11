@@ -188,7 +188,7 @@ public sealed record TerraScaleDocument(
     string Id,
     JsonElement Data,
     DateTimeOffset? LastModified,
-    string? ChangeVector);
+    string? ChangeToken);
 
 /// <summary>
 /// Page of TerraScale repository documents.

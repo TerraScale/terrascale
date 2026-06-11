@@ -79,5 +79,5 @@ public sealed record TerraScaleRepositoryChange(
     string Collection,
     string Id,
     string Type,
-    string? ChangeVector,
+    string? ChangeToken,
     DateTimeOffset ObservedAt);
