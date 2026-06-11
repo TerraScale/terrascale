@@ -57,6 +57,75 @@ public sealed class TerraScaleClientE2ETests
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
+    [Test]
+    [RequiresTerraScaleApi]
+    public async Task Documents_PatchAndBatch_RoundTripsAgainstRealRepository()
+    {
+        var client = TerraScaleApiE2E.CreateClient();
+        var repository = TerraScaleApiE2E.Repository;
+        var marker = $"sdk-e2e-batch-{Guid.NewGuid():N}";
+        var documentIds = new List<string>();
+
+        var created = await client.Documents.CreateAsync(
+            repository,
+            new E2EDocument(marker, Quantity: 1));
+        documentIds.Add(created.Id);
+
+        var deleteCandidate = await client.Documents.CreateAsync(
+            repository,
+            new E2EDocument($"{marker}-delete", Quantity: 1));
+        documentIds.Add(deleteCandidate.Id);
+
+        try
+        {
+            var patched = await client.Documents.PatchAsync(
+                repository,
+                created.Id,
+                new
+                {
+                    status = $"{marker}-patched",
+                    quantity = 2
+                });
+            await Assert.That(patched.Id).IsEqualTo(created.Id);
+            await Assert.That(patched.Data.GetProperty("status").GetString()).IsEqualTo($"{marker}-patched");
+            await Assert.That(patched.Data.GetProperty("quantity").GetInt32()).IsEqualTo(2);
+
+            var batch = await client.Documents.BatchAsync(
+                repository,
+                [
+                    TerraScaleDocumentBatchOperation.Create(new E2EDocument($"{marker}-created", Quantity: 3)),
+                    TerraScaleDocumentBatchOperation.Upsert(created.Id, new E2EDocument($"{marker}-upserted", Quantity: 4)),
+                    TerraScaleDocumentBatchOperation.Patch(created.Id, new { quantity = 5 }),
+                    TerraScaleDocumentBatchOperation.Delete(deleteCandidate.Id)
+                ]);
+
+            await Assert.That(batch.Results.Count).IsEqualTo(4);
+            var batchCreated = batch.Results.Single(result => result.Index == 0);
+            await Assert.That(batchCreated.Id.Length).IsEqualTo(26);
+            documentIds.Add(batchCreated.Id);
+
+            var batchUpserted = batch.Results.Single(result => result.Index == 1);
+            await Assert.That(batchUpserted.Id).IsEqualTo(created.Id);
+
+            var batchPatched = batch.Results.Single(result => result.Index == 2);
+            await Assert.That(batchPatched.Document?.Data.GetProperty("quantity").GetInt32()).IsEqualTo(5);
+
+            var batchDeleted = batch.Results.Single(result => result.Index == 3);
+            await Assert.That(batchDeleted.Deleted?.Deleted).IsTrue();
+
+            var missingDeleted = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.Documents.GetAsync(repository, deleteCandidate.Id));
+            await Assert.That(missingDeleted!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+        finally
+        {
+            foreach (var documentId in documentIds.Distinct(StringComparer.Ordinal))
+            {
+                await DeleteIfPresentAsync(client, repository, documentId);
+            }
+        }
+    }
+
     private static async Task DeleteIfPresentAsync(
         TerraScaleClient client,
         string repository,

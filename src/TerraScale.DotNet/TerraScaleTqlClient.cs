@@ -27,6 +27,23 @@ public sealed class TerraScaleTqlClient
             new TerraScaleTqlQuery(query, skip, take),
             cancellationToken);
 
+    /// <summary>
+    /// Runs a query built with <see cref="TerraScaleQuery"/> against a repository.
+    /// </summary>
+    public Task<TerraScaleDocumentPage> QueryAsync(
+        string repository,
+        TerraScaleQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return QueryAsync(
+            repository,
+            query.ToTql(),
+            query.SkipCount,
+            query.TakeCount,
+            cancellationToken);
+    }
+
     private static string Escape(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);

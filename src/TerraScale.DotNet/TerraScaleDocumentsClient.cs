@@ -55,6 +55,36 @@ public sealed class TerraScaleDocumentsClient
             cancellationToken);
 
     /// <summary>
+    /// Applies a partial top-level JSON object patch to a document.
+    /// </summary>
+    public Task<TerraScaleDocument> PatchAsync<TPatch>(
+        string repository,
+        string documentId,
+        TPatch patch,
+        CancellationToken cancellationToken = default) =>
+        client.SendAsync<TerraScaleDocument>(
+            HttpMethod.Patch,
+            $"/api/v1/repositories/{Escape(repository)}/documents/{EscapeDocumentId(documentId)}",
+            new TerraScaleDocumentMutation<TPatch>(patch),
+            cancellationToken);
+
+    /// <summary>
+    /// Runs create, upsert, patch, and delete document operations as one batch.
+    /// </summary>
+    public Task<TerraScaleDocumentBatch> BatchAsync(
+        string repository,
+        IReadOnlyList<TerraScaleDocumentBatchOperation> operations,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(operations);
+        return client.SendAsync<TerraScaleDocumentBatch>(
+            HttpMethod.Post,
+            $"/api/v1/repositories/{Escape(repository)}/documents/batch",
+            new TerraScaleDocumentBatchMutation(operations),
+            cancellationToken);
+    }
+
+    /// <summary>
     /// Lists documents in a repository.
     /// </summary>
     public Task<TerraScaleDocumentPage> ListAsync(
@@ -101,6 +131,55 @@ public sealed class TerraScaleDocumentsClient
 
 internal sealed record TerraScaleDocumentMutation<TDocument>(TDocument Data);
 
+internal sealed record TerraScaleDocumentBatchMutation(
+    IReadOnlyList<TerraScaleDocumentBatchOperation> Operations);
+
+/// <summary>
+/// A create, upsert, patch, or delete operation in a document batch.
+/// </summary>
+public sealed record TerraScaleDocumentBatchOperation(
+    string Operation,
+    string? DocumentId,
+    object? Data)
+{
+    /// <summary>
+    /// Creates a new document with a server-generated ULID.
+    /// </summary>
+    public static TerraScaleDocumentBatchOperation Create<TDocument>(TDocument document) =>
+        new("create", DocumentId: null, document);
+
+    /// <summary>
+    /// Upserts a document at a caller-provided ULID.
+    /// </summary>
+    public static TerraScaleDocumentBatchOperation Upsert<TDocument>(
+        string documentId,
+        TDocument document)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
+        return new TerraScaleDocumentBatchOperation("upsert", documentId.Trim(), document);
+    }
+
+    /// <summary>
+    /// Applies a partial top-level JSON object patch to an existing document.
+    /// </summary>
+    public static TerraScaleDocumentBatchOperation Patch<TPatch>(
+        string documentId,
+        TPatch patch)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
+        return new TerraScaleDocumentBatchOperation("patch", documentId.Trim(), patch);
+    }
+
+    /// <summary>
+    /// Deletes an existing document.
+    /// </summary>
+    public static TerraScaleDocumentBatchOperation Delete(string documentId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
+        return new TerraScaleDocumentBatchOperation("delete", documentId.Trim(), Data: null);
+    }
+}
+
 /// <summary>
 /// Document returned by TerraScale repository endpoints.
 /// </summary>
@@ -128,3 +207,21 @@ public sealed record TerraScaleDeletedDocument(
     string Repository,
     string Id,
     bool Deleted);
+
+/// <summary>
+/// Result of a TerraScale document batch operation.
+/// </summary>
+public sealed record TerraScaleDocumentBatch(
+    string RepositoryId,
+    string Repository,
+    IReadOnlyList<TerraScaleDocumentBatchResult> Results);
+
+/// <summary>
+/// Result item for a single batch operation.
+/// </summary>
+public sealed record TerraScaleDocumentBatchResult(
+    int Index,
+    string Operation,
+    string Id,
+    TerraScaleDocument? Document,
+    TerraScaleDeletedDocument? Deleted);
