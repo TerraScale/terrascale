@@ -34,6 +34,7 @@ public sealed class TerraScaleClient
 
         this.httpClient.BaseAddress ??= options.BaseAddress;
         Databases = new TerraScaleDatabasesClient(this);
+        Collections = new TerraScaleCollectionsClient(this);
         Repositories = new TerraScaleRepositoriesClient(this);
         Documents = new TerraScaleDocumentsClient(this);
         Tql = new TerraScaleTqlClient(this);
@@ -45,6 +46,11 @@ public sealed class TerraScaleClient
     /// Database management operations.
     /// </summary>
     public TerraScaleDatabasesClient Databases { get; }
+
+    /// <summary>
+    /// Database collection operations.
+    /// </summary>
+    public TerraScaleCollectionsClient Collections { get; }
 
     /// <summary>
     /// Repository management operations.

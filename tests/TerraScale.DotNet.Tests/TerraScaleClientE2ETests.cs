@@ -57,6 +57,57 @@ public sealed class TerraScaleClientE2ETests
     }
 
     [Test]
+    [RequiresTerraScaleApi]
+    public async Task Collections_ListAsync_ReturnsRealDatabaseCollections()
+    {
+        var client = TerraScaleApiE2E.CreateClient();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var databaseName = $"sdk-e2e-col-{suffix}";
+        var repositoryName = $"sdk-e2e-col-repo-{suffix}";
+        var collectionName = $"sdke2ecol{suffix}";
+        TerraScaleDatabaseDetails? database = null;
+        TerraScaleRepository? repository = null;
+        TerraScaleDocument? document = null;
+
+        try
+        {
+            database = await client.Databases.CreateAsync(databaseName);
+            var databaseClient = client.ForDatabase(database.DatabaseId);
+            repository = await databaseClient.Repositories.CreateAsync(
+                repositoryName,
+                collection: collectionName,
+                schemaValidationEnabled: false);
+            document = await databaseClient.Documents.CreateAsync(
+                repository.RepositoryId,
+                new E2EDocument($"sdk-e2e-col-{suffix}", Quantity: 1));
+
+            var collections = await client.Collections.ListAsync(database.DatabaseId);
+
+            await Assert.That(collections.Any(collection =>
+                    string.Equals(collection.Name, collectionName, StringComparison.Ordinal) &&
+                    collection.Documents >= 1))
+                .IsTrue();
+        }
+        finally
+        {
+            if (document is not null && repository is not null)
+            {
+                await DeleteIfPresentAsync(client, repository.RepositoryId, document.Id);
+            }
+
+            if (repository is not null)
+            {
+                await DeleteRepositoryIfPresentAsync(client, repository.RepositoryId);
+            }
+
+            if (database is not null)
+            {
+                await DeleteDatabaseIfPresentAsync(client, database.DatabaseId);
+            }
+        }
+    }
+
+    [Test]
     [RequiresTerraScaleBearerToken]
     public async Task Databases_ListAsync_UsesCallerProvidedBearerTokenProvider()
     {
@@ -395,6 +446,19 @@ public sealed class TerraScaleClientE2ETests
         try
         {
             await client.Databases.DeleteAsync(databaseId);
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
+        }
+    }
+
+    private static async Task DeleteRepositoryIfPresentAsync(
+        TerraScaleClient client,
+        string repositoryId)
+    {
+        try
+        {
+            await client.Repositories.DeleteAsync(repositoryId, deleteDocuments: true);
         }
         catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {

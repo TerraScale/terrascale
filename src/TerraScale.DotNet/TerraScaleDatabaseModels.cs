@@ -6,6 +6,11 @@ namespace TerraScale.DotNet;
 public sealed record TerraScaleDatabaseSummary(string DatabaseId, string Name);
 
 /// <summary>
+/// Summary of a collection in a TerraScale database.
+/// </summary>
+public sealed record TerraScaleCollectionSummary(string Name, long Documents);
+
+/// <summary>
 /// Request body for creating a TerraScale database.
 /// </summary>
 public sealed record TerraScaleCreateDatabaseRequest(
