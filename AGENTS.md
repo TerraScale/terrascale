@@ -14,28 +14,34 @@
 - All `.slnx` file names must start with the `TerraScale.` prefix.
 - Do not add, rename, or keep C# project folders, `.csproj` files, or `.slnx` files that violate this naming rule.
 - All C# projects must target `net11.0`.
-- All C# projects must use C# `15.0`.
+- All C# projects must use the latest preview version of the C# language supported by the pinned .NET SDK.
 
 ## API Boundary
 
-- The SDK must interact only with public repository and database HTTP endpoints implemented by `/workspaces/TerraScale/Internals/src/Database/TerraScale.API`.
+- The SDK must interact only with public repository and database HTTP endpoints implemented by `/workspaces/TerraScale/Internals/src/API/TerraScale.API`.
 - Allowed endpoint families are the `TerraScale.API` database/repository surface under `/api/v1`, including:
-  - `/management/databases`
-  - `/management/databases/{databaseId}/repositories`
-  - `/repositories/{repositoryId}`
-  - `/databases/{databaseId}/collections`
-  - `/databases/{databaseId}/collections/{collectionId}/entities`
-  - `/databases/{databaseId}/collections/{collectionId}/queries`
-  - `/databases/{databaseId}/collections/{collectionId}/schema`
-  - `/databases/{databaseId}/autofix`
-  - `/databases/{databaseId}/auto-indexing`
-  - `/databases/{databaseId}/environments`
-  - `/databases/{databaseId}/placement`
-  - `/databases/{databaseId}/sql`
+  - `/databases`
+  - `/databases/{database}`
+  - `/databases/{database}/collections`
+  - `/databases/{database}/statistics`
+  - `/repositories`
+  - `/repositories/{repository}`
+  - `/repositories/{repository}/documents`
+  - `/repositories/{repository}/documents/{documentId}`
+  - `/repositories/{repository}/schema`
+  - `/repositories/{repository}/schema/validate`
+  - `/repositories/{repository}/tql`
 - Do not call auth, account, user, organization, invitation, API-key-management, notification, search, audit, admin, health, internal RPC, MagicOnion, or service-to-service endpoints from this SDK.
 - Authentication is caller-provided. Accept API keys or bearer tokens through SDK options or per-request context, attach them to allowed API calls, and never create, rotate, fetch, or manage credentials.
 - Do not reference `TerraScale.API`, `TerraScale.InternalRpc`, `TerraScale.Authentication`, `TerraBase`, or other server/internal projects as project references. Treat TerraScale as an external HTTP API.
 - Do not open TerraBase sessions, connect directly to storage, or bypass `TerraScale.API`.
+
+## Entity Framework Core Integration
+
+- TerraScale Entity Framework Core support must live in a separate `src/TerraScale.EntityFrameworkCore` project/package. Do not add EF Core package references to the base `src/TerraScale.DotNet` SDK project unless the user explicitly changes this boundary.
+- The EF Core project must use `TerraScale.DotNet` as its HTTP transport and must only call the allowed public `/api/v1` database/repository endpoints. It must not reference TerraScale server projects, TerraBase client packages, or private service contracts.
+- Treat the EF Core project as the TerraScale EF provider/source package: expose discoverable `DbContext`/DI integration, use EF Core model metadata for repository names and keys, keep all TerraScale I/O async and cancellation-aware, and test entity mapping plus document create/read/update/delete/query behavior.
+- Keep EF Core integration tests in a separate `tests/TerraScale.EntityFrameworkCore.Tests` project so provider/source behavior is verified independently from the base SDK tests.
 
 ## SDK Design
 
@@ -72,6 +78,7 @@
 ## Testing and Verification
 
 - Unit-test serialization, URL construction, option validation, error mapping, pagination, cancellation, and retry behavior.
+- Maintain TUnit end-to-end coverage for every feature and function in this repository. Each feature/function must have at least one success-path E2E test and at least one failure-path E2E test; public E2E flows may cover internal helpers only when the exercised behavior is the same as the direct helper behavior.
 - Integration tests must target the real `TerraScale.API` database/repository endpoints when credentials and endpoint configuration are available.
 - Do not add fake server behavior that contradicts the real API. Local HTTP test doubles are acceptable only for transport edge cases and must mirror the public endpoint contracts.
 - Build with all CPU cores, for example `dotnet build -m`.

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>TerraScale.EntityFrameworkCore</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Entity Framework Core source integration for TerraScale repositories.</Description>
+    <PackageProjectUrl>https://git.mariogk.com/Terrascale/TerraScale.DotNet</PackageProjectUrl>
+    <RepositoryUrl>https://git.mariogk.com/Terrascale/TerraScale.DotNet</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>terrascale;database;documents;entity-framework-core;efcore</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TerraScale.DotNet\TerraScale.DotNet.csproj" />
+  </ItemGroup>
+</Project>
