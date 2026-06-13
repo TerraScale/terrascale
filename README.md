@@ -12,6 +12,12 @@ Use the project reference in this checkout, or install the package once it is pu
 dotnet add package TerraScale.DotNet
 ```
 
+The repo also contains the EF Core source integration package:
+
+```bash
+dotnet add package TerraScale.EntityFrameworkCore
+```
+
 ## Configure
 
 Use an API key with a project id:
@@ -170,6 +176,42 @@ var client = new TerraScaleClient(
 ```
 
 Every request sends `X-Request-Id` by default and preserves API response request ids on `TerraScaleApiException.RequestId`. The SDK emits activities from `TerraScaleTelemetry.ActivitySourceName`; register that source in OpenTelemetry tracing.
+
+## Entity Framework Core Source Integration
+
+`TerraScale.EntityFrameworkCore` provides a TerraScale-backed entity source for
+EF Core models. It does not replace a relational EF provider or run migrations;
+it maps entity types to TerraScale repositories and uses the public
+`TerraScale.DotNet` client for document operations.
+
+```csharp
+services.AddDbContext<OrdersContext>(options => options.UseTerraScaleSource());
+services.AddTerraScaleEntityFrameworkCore<OrdersContext>(options =>
+{
+    options.BaseAddress = new Uri("https://api.terrascale.tech");
+    options.ProjectId = projectId;
+    options.ApiKey = apiKey;
+    options.RepositoryNameResolver = _ => "orders";
+});
+```
+
+Map an entity to a repository in `OnModelCreating`:
+
+```csharp
+modelBuilder.Entity<Order>(builder =>
+{
+    builder.HasKey(order => order.Id);
+    builder.ToTerraScaleRepository("orders");
+});
+```
+
+Use the TerraScale entity source or set helpers for repository-backed document
+operations:
+
+```csharp
+var source = serviceProvider.GetRequiredService<TerraScaleEntitySource<OrdersContext>>();
+var orders = await source.Set<Order>().ListAsync(take: 25);
+```
 
 ## Quickstart Sample
 
