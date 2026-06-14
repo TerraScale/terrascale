@@ -338,7 +338,7 @@ jobs:
           for package in "${NUGET_PACK_OUTPUT}"/*.nupkg; do
               dotnet nuget push --skip-duplicate \
                 "${package}" \
-                --source "${FORGEJO_SERVER_URL:-https://git.mariogk.com}/api/packages/${FORGEJO_REPOSITORY_OWNER:-TerraScale}/nuget/index.json" \
+                --source "https://git.mariogk.com/api/packages/${FORGEJO_REPOSITORY_OWNER:-TerraScale}/nuget/index.json" \
                 --api-key "${token}"
             done 2>&1 | tee "${log_file}"
           status="${PIPESTATUS[0]}"
@@ -386,8 +386,8 @@ jobs:
               "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.DotNet/actions/variables/LAST_DOTNET_PACKAGE_FAILURE" >/dev/null || true
           }
 
-          server="${FORGEJO_SERVER_URL:-https://git.mariogk.com}"
-          api="${FORGEJO_API_URL:-${server}/api/v1}"
+          server="https://git.mariogk.com"
+          api="${server}/api/v1"
           repo="${FORGEJO_REPOSITORY:-TerraScale/TerraScale.DotNet}"
           actor="${FORGEJO_ACTOR:-${REGISTRY_USER:-forgejo-actions}}"
           host="${server#https://}"
