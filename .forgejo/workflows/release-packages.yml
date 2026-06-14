@@ -358,7 +358,7 @@ jobs:
           fi
 
       - name: Create Forgejo tag and release
-        if: ${{ forgejo.event_name == 'push' && steps.release.outputs.publish_packages == 'true' }}
+        if: ${{ steps.release.outputs.publish_packages == 'true' }}
         env:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
@@ -367,6 +367,12 @@ jobs:
           FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
+
+          if [ "${FORGEJO_EVENT_NAME}" != "push" ]; then
+            echo "Skipping Forgejo release creation for ${FORGEJO_EVENT_NAME}."
+            exit 0
+          fi
+
           token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-${FORGEJO_TOKEN:-}}}"
           : "${token:?Forgejo API token is required}"
 
