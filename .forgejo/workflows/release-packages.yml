@@ -334,15 +334,19 @@ jobs:
           }
 
           log_file="$(mktemp)"
-          if for package in "${NUGET_PACK_OUTPUT}"/*.nupkg; do
+          set +e
+          for package in "${NUGET_PACK_OUTPUT}"/*.nupkg; do
               dotnet nuget push --skip-duplicate \
                 "${package}" \
                 --source "${FORGEJO_SERVER_URL:-https://git.mariogk.com}/api/packages/${FORGEJO_REPOSITORY_OWNER:-TerraScale}/nuget/index.json" \
                 --api-key "${token}"
-            done 2>&1 | tee "${log_file}"; then
+            done 2>&1 | tee "${log_file}"
+          status="${PIPESTATUS[0]}"
+          set -e
+          if [ "${status}" -eq 0 ]; then
+            set_diagnostic "stage=push-packages status=success version=${{ steps.release.outputs.version }}"
             rm -f "${log_file}"
           else
-            status="${PIPESTATUS[0]}"
             set_diagnostic "$(printf '%s\n' \
               "stage=push-packages" \
               "status=failure" \
@@ -392,14 +396,17 @@ jobs:
           chmod 600 "${HOME}/.netrc"
 
           log_file="$(mktemp)"
-          if {
-              git tag -a "${RELEASE_TAG}" -m "TerraScale.DotNet ${RELEASE_TAG}" "${FORGEJO_SHA:?}"
-              git remote set-url origin "${server}/${repo}.git"
-              git push origin "refs/tags/${RELEASE_TAG}"
-            } 2>&1 | tee "${log_file}"; then
+          set +e
+          {
+            git tag -a "${RELEASE_TAG}" -m "TerraScale.DotNet ${RELEASE_TAG}" "${FORGEJO_SHA:?}"
+            git remote set-url origin "${server}/${repo}.git"
+            git push origin "refs/tags/${RELEASE_TAG}"
+          } 2>&1 | tee "${log_file}"
+          status="${PIPESTATUS[0]}"
+          set -e
+          if [ "${status}" -eq 0 ]; then
             rm -f "${log_file}"
           else
-            status="${PIPESTATUS[0]}"
             set_diagnostic "$(printf '%s\n' \
               "stage=push-release-tag" \
               "status=failure" \
@@ -419,7 +426,8 @@ jobs:
           } > "${body}"
 
           log_file="$(mktemp)"
-          if jq -n \
+          set +e
+          jq -n \
               --arg tag_name "${RELEASE_TAG}" \
               --arg target_commitish "${FORGEJO_SHA}" \
               --arg name "TerraScale.DotNet ${RELEASE_TAG}" \
@@ -430,11 +438,13 @@ jobs:
                   --header "Authorization: token ${token}" \
                   --header "Content-Type: application/json" \
                   --data-binary @- \
-                  "${api}/repos/${repo}/releases" 2>&1 | tee "${log_file}"; then
+                  "${api}/repos/${repo}/releases" 2>&1 | tee "${log_file}"
+          status="${PIPESTATUS[1]}"
+          set -e
+          if [ "${status}" -eq 0 ]; then
             set_diagnostic "stage=release status=success version=${RELEASE_VERSION} tag=${RELEASE_TAG}"
             rm -f "${log_file}"
           else
-            status="${PIPESTATUS[1]}"
             set_diagnostic "$(printf '%s\n' \
               "stage=create-release" \
               "status=failure" \
