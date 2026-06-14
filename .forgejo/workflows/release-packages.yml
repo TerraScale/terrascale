@@ -95,9 +95,10 @@ jobs:
               ;;
           esac
 
-          echo "version=${version}" >> "${FORGEJO_OUTPUT}"
-          echo "tag=${tag}" >> "${FORGEJO_OUTPUT}"
-          echo "publish_packages=${publish_packages}" >> "${FORGEJO_OUTPUT}"
+          output_file="${FORGEJO_OUTPUT:-${GITHUB_OUTPUT:?}}"
+          echo "version=${version}" >> "${output_file}"
+          echo "tag=${tag}" >> "${output_file}"
+          echo "publish_packages=${publish_packages}" >> "${output_file}"
 
       - name: Restore
         env:
