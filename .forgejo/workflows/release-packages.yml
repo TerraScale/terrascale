@@ -1,0 +1,207 @@
+name: Release Packages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      publish_packages:
+        description: "Push NuGet packages to the Forgejo package registry"
+        required: true
+        default: "true"
+
+concurrency:
+  group: terrascale-dotnet-release-${{ forgejo.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+  DOTNET_NOLOGO: "1"
+  NUGET_PACK_OUTPUT: ./artifacts/nuget
+
+jobs:
+  release:
+    runs-on: terrascale
+    container:
+      image: terrascale
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify runner tools
+        run: |
+          set -euo pipefail
+          for tool in dotnet git jq curl; do
+            command -v "$tool"
+          done
+          dotnet --info
+
+      - name: Resolve release version
+        id: release
+        env:
+          DISPATCH_PUBLISH_PACKAGES: ${{ forgejo.event.inputs.publish_packages }}
+        run: |
+          set -euo pipefail
+
+          publish_packages="false"
+          case "${FORGEJO_EVENT_NAME}" in
+            push)
+              latest_tag="$(
+                git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
+                  | sed -nE 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)$/\1 \2 \3/p' \
+                  | sort -n -k1,1 -k2,2 -k3,3 \
+                  | tail -n 1
+              )"
+              if [ -z "${latest_tag}" ]; then
+                version="0.1.0"
+              else
+                read -r major minor patch <<< "${latest_tag}"
+                version="${major}.${minor}.$((patch + 1))"
+              fi
+              tag="v${version}"
+              publish_packages="true"
+              ;;
+            workflow_dispatch)
+              version="0.0.${FORGEJO_RUN_NUMBER:?FORGEJO_RUN_NUMBER is required}"
+              tag="manual-${FORGEJO_RUN_NUMBER}"
+              publish_packages="${DISPATCH_PUBLISH_PACKAGES:-true}"
+              ;;
+            *)
+              version="0.0.0-pr.${FORGEJO_RUN_NUMBER:-0}"
+              tag="pr-${FORGEJO_RUN_NUMBER:-0}"
+              ;;
+          esac
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "::error::Release tag ${tag} already exists."
+            exit 1
+          fi
+
+          case "${publish_packages}" in
+            true|false)
+              ;;
+            *)
+              echo "::error::publish_packages must be true or false."
+              exit 1
+              ;;
+          esac
+
+          echo "version=${version}" >> "${FORGEJO_OUTPUT}"
+          echo "tag=${tag}" >> "${FORGEJO_OUTPUT}"
+          echo "publish_packages=${publish_packages}" >> "${FORGEJO_OUTPUT}"
+
+      - name: Restore
+        run: dotnet restore TerraScale.DotNet.slnx
+
+      - name: Build
+        run: dotnet build TerraScale.DotNet.slnx --configuration Release --no-restore -m
+
+      - name: Test
+        run: dotnet test TerraScale.DotNet.slnx --configuration Release --no-build
+
+      - name: Pack NuGet packages
+        run: |
+          set -euo pipefail
+          mkdir -p "${NUGET_PACK_OUTPUT}"
+          dotnet pack src/TerraScale.DotNet/TerraScale.DotNet.csproj \
+            --configuration Release \
+            --no-build \
+            --output "${NUGET_PACK_OUTPUT}" \
+            /p:PackageVersion="${{ steps.release.outputs.version }}" \
+            /p:Version="${{ steps.release.outputs.version }}"
+          dotnet pack src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj \
+            --configuration Release \
+            --no-build \
+            --output "${NUGET_PACK_OUTPUT}" \
+            /p:PackageVersion="${{ steps.release.outputs.version }}" \
+            /p:Version="${{ steps.release.outputs.version }}"
+
+      - name: Verify package set
+        run: |
+          set -euo pipefail
+          find "${NUGET_PACK_OUTPUT}" -name '*.nupkg' -print | sort
+          package_count="$(find "${NUGET_PACK_OUTPUT}" -name '*.nupkg' | wc -l)"
+          if [ "${package_count}" -ne 2 ]; then
+            echo "::error::Expected 2 NuGet packages, found ${package_count}."
+            exit 1
+          fi
+
+      - name: Push NuGet packages
+        if: ${{ steps.release.outputs.publish_packages == 'true' }}
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          token="${FORGEJO_TOKEN:-${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}}"
+          : "${token:?Forgejo package token is required}"
+          for package in "${NUGET_PACK_OUTPUT}"/*.nupkg; do
+            dotnet nuget push --skip-duplicate \
+              "${package}" \
+              --source "${FORGEJO_SERVER_URL:-https://git.mariogk.com}/api/packages/${FORGEJO_REPOSITORY_OWNER:-TerraScale}/nuget/index.json" \
+              --api-key "${token}"
+          done
+
+      - name: Create Forgejo tag and release
+        if: ${{ forgejo.event_name == 'push' && steps.release.outputs.publish_packages == 'true' }}
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          token="${FORGEJO_TOKEN:-${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}}"
+          : "${token:?Forgejo API token is required}"
+          server="${FORGEJO_SERVER_URL:-https://git.mariogk.com}"
+          api="${FORGEJO_API_URL:-${server}/api/v1}"
+          repo="${FORGEJO_REPOSITORY:-TerraScale/TerraScale.DotNet}"
+          actor="${FORGEJO_ACTOR:-${REGISTRY_USER:-forgejo-actions}}"
+          host="${server#https://}"
+
+          git config user.name "TerraScale Release Automation"
+          git config user.email "release@terrascale.tech"
+          git tag -a "${RELEASE_TAG}" -m "TerraScale.DotNet ${RELEASE_TAG}" "${FORGEJO_SHA:?}"
+          git remote set-url origin "https://${actor}:${token}@${host}/${repo}.git"
+          git push origin "refs/tags/${RELEASE_TAG}"
+
+          body="$(mktemp)"
+          {
+            printf 'TerraScale.DotNet %s\n\n' "${RELEASE_TAG}"
+            printf 'Packages:\n'
+            printf -- '- TerraScale.DotNet %s\n' "${RELEASE_VERSION}"
+            printf -- '- TerraScale.EntityFrameworkCore %s\n' "${RELEASE_VERSION}"
+          } > "${body}"
+
+          jq -n \
+            --arg tag_name "${RELEASE_TAG}" \
+            --arg target_commitish "${FORGEJO_SHA}" \
+            --arg name "TerraScale.DotNet ${RELEASE_TAG}" \
+            --rawfile body "${body}" \
+            '{tag_name:$tag_name,target_commitish:$target_commitish,name:$name,body:$body,draft:false,prerelease:false}' \
+            | curl --fail --silent --show-error \
+                --request POST \
+                --header "Authorization: token ${token}" \
+                --header "Content-Type: application/json" \
+                --data-binary @- \
+                "${api}/repos/${repo}/releases"
+
+      - name: Summary
+        run: |
+          summary="${FORGEJO_STEP_SUMMARY:-/dev/null}"
+          {
+            echo "## TerraScale.DotNet packages"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Version | \`${{ steps.release.outputs.version }}\` |"
+            echo "| Release tag | \`${{ steps.release.outputs.tag }}\` |"
+            echo "| Published packages | \`${{ steps.release.outputs.publish_packages }}\` |"
+          } >> "$summary"
