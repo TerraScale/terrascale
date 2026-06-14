@@ -37,7 +37,7 @@ jobs:
       - name: Verify runner tools
         run: |
           set -euo pipefail
-          for tool in dotnet git jq curl; do
+          for tool in base64 dotnet git jq curl; do
             command -v "$tool"
           done
           dotnet --info
@@ -100,30 +100,166 @@ jobs:
           echo "publish_packages=${publish_packages}" >> "${FORGEJO_OUTPUT}"
 
       - name: Restore
-        run: dotnet restore TerraScale.DotNet.slnx
-
-      - name: Build
-        run: dotnet build TerraScale.DotNet.slnx --configuration Release --no-restore -m
-
-      - name: Test
-        run: dotnet test TerraScale.DotNet.slnx --configuration Release --no-build
-
-      - name: Pack NuGet packages
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
+
+          set_diagnostic() {
+            token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}"
+            if [ -z "${token}" ]; then
+              return 0
+            fi
+
+            encoded="$(printf '%s' "$1" | base64 -w0)"
+            curl --silent --show-error \
+              --request PUT \
+              --header "Authorization: token ${token}" \
+              --header "Content-Type: application/json" \
+              --data-binary "{\"value\":\"base64:${encoded}\"}" \
+              "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.DotNet/actions/variables/LAST_DOTNET_PACKAGE_FAILURE" >/dev/null || true
+          }
+
+          log_file="$(mktemp)"
+          if dotnet restore TerraScale.DotNet.slnx 2>&1 | tee "${log_file}"; then
+            rm -f "${log_file}"
+          else
+            status="${PIPESTATUS[0]}"
+            set_diagnostic "$(printf '%s\n' \
+              "stage=restore" \
+              "status=failure" \
+              "exit_status=${status}" \
+              "tail:" \
+              "$(tail -n 200 "${log_file}")")"
+            rm -f "${log_file}"
+            exit "${status}"
+          fi
+
+      - name: Build
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          set_diagnostic() {
+            token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}"
+            if [ -z "${token}" ]; then
+              return 0
+            fi
+
+            encoded="$(printf '%s' "$1" | base64 -w0)"
+            curl --silent --show-error \
+              --request PUT \
+              --header "Authorization: token ${token}" \
+              --header "Content-Type: application/json" \
+              --data-binary "{\"value\":\"base64:${encoded}\"}" \
+              "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.DotNet/actions/variables/LAST_DOTNET_PACKAGE_FAILURE" >/dev/null || true
+          }
+
+          log_file="$(mktemp)"
+          if dotnet build TerraScale.DotNet.slnx --configuration Release --no-restore -m 2>&1 | tee "${log_file}"; then
+            rm -f "${log_file}"
+          else
+            status="${PIPESTATUS[0]}"
+            set_diagnostic "$(printf '%s\n' \
+              "stage=build" \
+              "status=failure" \
+              "exit_status=${status}" \
+              "tail:" \
+              "$(tail -n 200 "${log_file}")")"
+            rm -f "${log_file}"
+            exit "${status}"
+          fi
+
+      - name: Test
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          set_diagnostic() {
+            token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}"
+            if [ -z "${token}" ]; then
+              return 0
+            fi
+
+            encoded="$(printf '%s' "$1" | base64 -w0)"
+            curl --silent --show-error \
+              --request PUT \
+              --header "Authorization: token ${token}" \
+              --header "Content-Type: application/json" \
+              --data-binary "{\"value\":\"base64:${encoded}\"}" \
+              "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.DotNet/actions/variables/LAST_DOTNET_PACKAGE_FAILURE" >/dev/null || true
+          }
+
+          log_file="$(mktemp)"
+          if dotnet test TerraScale.DotNet.slnx --configuration Release --no-build 2>&1 | tee "${log_file}"; then
+            rm -f "${log_file}"
+          else
+            status="${PIPESTATUS[0]}"
+            set_diagnostic "$(printf '%s\n' \
+              "stage=test" \
+              "status=failure" \
+              "exit_status=${status}" \
+              "tail:" \
+              "$(tail -n 200 "${log_file}")")"
+            rm -f "${log_file}"
+            exit "${status}"
+          fi
+
+      - name: Pack NuGet packages
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          set_diagnostic() {
+            token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}"
+            if [ -z "${token}" ]; then
+              return 0
+            fi
+
+            encoded="$(printf '%s' "$1" | base64 -w0)"
+            curl --silent --show-error \
+              --request PUT \
+              --header "Authorization: token ${token}" \
+              --header "Content-Type: application/json" \
+              --data-binary "{\"value\":\"base64:${encoded}\"}" \
+              "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.DotNet/actions/variables/LAST_DOTNET_PACKAGE_FAILURE" >/dev/null || true
+          }
+
           mkdir -p "${NUGET_PACK_OUTPUT}"
-          dotnet pack src/TerraScale.DotNet/TerraScale.DotNet.csproj \
-            --configuration Release \
-            --no-build \
-            --output "${NUGET_PACK_OUTPUT}" \
-            /p:PackageVersion="${{ steps.release.outputs.version }}" \
-            /p:Version="${{ steps.release.outputs.version }}"
-          dotnet pack src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj \
-            --configuration Release \
-            --no-build \
-            --output "${NUGET_PACK_OUTPUT}" \
-            /p:PackageVersion="${{ steps.release.outputs.version }}" \
-            /p:Version="${{ steps.release.outputs.version }}"
+          log_file="$(mktemp)"
+          if {
+              dotnet pack src/TerraScale.DotNet/TerraScale.DotNet.csproj \
+                --configuration Release \
+                --no-build \
+                --output "${NUGET_PACK_OUTPUT}" \
+                /p:PackageVersion="${{ steps.release.outputs.version }}" \
+                /p:Version="${{ steps.release.outputs.version }}"
+              dotnet pack src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj \
+                --configuration Release \
+                --no-build \
+                --output "${NUGET_PACK_OUTPUT}" \
+                /p:PackageVersion="${{ steps.release.outputs.version }}" \
+                /p:Version="${{ steps.release.outputs.version }}"
+            } 2>&1 | tee "${log_file}"; then
+            rm -f "${log_file}"
+          else
+            status="${PIPESTATUS[0]}"
+            set_diagnostic "$(printf '%s\n' \
+              "stage=pack" \
+              "status=failure" \
+              "exit_status=${status}" \
+              "tail:" \
+              "$(tail -n 200 "${log_file}")")"
+            rm -f "${log_file}"
+            exit "${status}"
+          fi
 
       - name: Verify package set
         run: |
@@ -144,12 +280,36 @@ jobs:
           set -euo pipefail
           token="${FORGEJO_TOKEN:-${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}}"
           : "${token:?Forgejo package token is required}"
-          for package in "${NUGET_PACK_OUTPUT}"/*.nupkg; do
-            dotnet nuget push --skip-duplicate \
-              "${package}" \
-              --source "${FORGEJO_SERVER_URL:-https://git.mariogk.com}/api/packages/${FORGEJO_REPOSITORY_OWNER:-TerraScale}/nuget/index.json" \
-              --api-key "${token}"
-          done
+
+          set_diagnostic() {
+            encoded="$(printf '%s' "$1" | base64 -w0)"
+            curl --silent --show-error \
+              --request PUT \
+              --header "Authorization: token ${token}" \
+              --header "Content-Type: application/json" \
+              --data-binary "{\"value\":\"base64:${encoded}\"}" \
+              "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.DotNet/actions/variables/LAST_DOTNET_PACKAGE_FAILURE" >/dev/null || true
+          }
+
+          log_file="$(mktemp)"
+          if for package in "${NUGET_PACK_OUTPUT}"/*.nupkg; do
+              dotnet nuget push --skip-duplicate \
+                "${package}" \
+                --source "${FORGEJO_SERVER_URL:-https://git.mariogk.com}/api/packages/${FORGEJO_REPOSITORY_OWNER:-TerraScale}/nuget/index.json" \
+                --api-key "${token}"
+            done 2>&1 | tee "${log_file}"; then
+            rm -f "${log_file}"
+          else
+            status="${PIPESTATUS[0]}"
+            set_diagnostic "$(printf '%s\n' \
+              "stage=push-packages" \
+              "status=failure" \
+              "exit_status=${status}" \
+              "tail:" \
+              "$(tail -n 200 "${log_file}")")"
+            rm -f "${log_file}"
+            exit "${status}"
+          fi
 
       - name: Create Forgejo tag and release
         if: ${{ forgejo.event_name == 'push' && steps.release.outputs.publish_packages == 'true' }}
@@ -163,6 +323,17 @@ jobs:
           set -euo pipefail
           token="${FORGEJO_TOKEN:-${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}}"
           : "${token:?Forgejo API token is required}"
+
+          set_diagnostic() {
+            encoded="$(printf '%s' "$1" | base64 -w0)"
+            curl --silent --show-error \
+              --request PUT \
+              --header "Authorization: token ${token}" \
+              --header "Content-Type: application/json" \
+              --data-binary "{\"value\":\"base64:${encoded}\"}" \
+              "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.DotNet/actions/variables/LAST_DOTNET_PACKAGE_FAILURE" >/dev/null || true
+          }
+
           server="${FORGEJO_SERVER_URL:-https://git.mariogk.com}"
           api="${FORGEJO_API_URL:-${server}/api/v1}"
           repo="${FORGEJO_REPOSITORY:-TerraScale/TerraScale.DotNet}"
@@ -171,9 +342,31 @@ jobs:
 
           git config user.name "TerraScale Release Automation"
           git config user.email "release@terrascale.tech"
-          git tag -a "${RELEASE_TAG}" -m "TerraScale.DotNet ${RELEASE_TAG}" "${FORGEJO_SHA:?}"
-          git remote set-url origin "https://${actor}:${token}@${host}/${repo}.git"
-          git push origin "refs/tags/${RELEASE_TAG}"
+          {
+            printf 'machine %s\n' "${host}"
+            printf 'login %s\n' "${actor}"
+            printf 'password %s\n' "${token}"
+          } > "${HOME}/.netrc"
+          chmod 600 "${HOME}/.netrc"
+
+          log_file="$(mktemp)"
+          if {
+              git tag -a "${RELEASE_TAG}" -m "TerraScale.DotNet ${RELEASE_TAG}" "${FORGEJO_SHA:?}"
+              git remote set-url origin "${server}/${repo}.git"
+              git push origin "refs/tags/${RELEASE_TAG}"
+            } 2>&1 | tee "${log_file}"; then
+            rm -f "${log_file}"
+          else
+            status="${PIPESTATUS[0]}"
+            set_diagnostic "$(printf '%s\n' \
+              "stage=push-release-tag" \
+              "status=failure" \
+              "exit_status=${status}" \
+              "tail:" \
+              "$(tail -n 200 "${log_file}")")"
+            rm -f "${log_file}"
+            exit "${status}"
+          fi
 
           body="$(mktemp)"
           {
@@ -183,18 +376,32 @@ jobs:
             printf -- '- TerraScale.EntityFrameworkCore %s\n' "${RELEASE_VERSION}"
           } > "${body}"
 
-          jq -n \
-            --arg tag_name "${RELEASE_TAG}" \
-            --arg target_commitish "${FORGEJO_SHA}" \
-            --arg name "TerraScale.DotNet ${RELEASE_TAG}" \
-            --rawfile body "${body}" \
-            '{tag_name:$tag_name,target_commitish:$target_commitish,name:$name,body:$body,draft:false,prerelease:false}' \
-            | curl --fail --silent --show-error \
-                --request POST \
-                --header "Authorization: token ${token}" \
-                --header "Content-Type: application/json" \
-                --data-binary @- \
-                "${api}/repos/${repo}/releases"
+          log_file="$(mktemp)"
+          if jq -n \
+              --arg tag_name "${RELEASE_TAG}" \
+              --arg target_commitish "${FORGEJO_SHA}" \
+              --arg name "TerraScale.DotNet ${RELEASE_TAG}" \
+              --rawfile body "${body}" \
+              '{tag_name:$tag_name,target_commitish:$target_commitish,name:$name,body:$body,draft:false,prerelease:false}' \
+              | curl --fail --silent --show-error \
+                  --request POST \
+                  --header "Authorization: token ${token}" \
+                  --header "Content-Type: application/json" \
+                  --data-binary @- \
+                  "${api}/repos/${repo}/releases" 2>&1 | tee "${log_file}"; then
+            set_diagnostic "stage=release status=success version=${RELEASE_VERSION} tag=${RELEASE_TAG}"
+            rm -f "${log_file}"
+          else
+            status="${PIPESTATUS[1]}"
+            set_diagnostic "$(printf '%s\n' \
+              "stage=create-release" \
+              "status=failure" \
+              "exit_status=${status}" \
+              "tail:" \
+              "$(tail -n 200 "${log_file}")")"
+            rm -f "${log_file}"
+            exit "${status}"
+          fi
 
       - name: Summary
         run: |
