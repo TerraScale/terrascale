@@ -320,7 +320,7 @@ jobs:
           FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
-          token="${FORGEJO_TOKEN:-${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}}"
+          token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-${FORGEJO_TOKEN:-}}}"
           : "${token:?Forgejo package token is required}"
 
           set_diagnostic() {
@@ -367,7 +367,7 @@ jobs:
           FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
-          token="${FORGEJO_TOKEN:-${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}}"
+          token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-${FORGEJO_TOKEN:-}}}"
           : "${token:?Forgejo API token is required}"
 
           set_diagnostic() {
