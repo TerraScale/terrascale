@@ -53,19 +53,20 @@ jobs:
           case "${FORGEJO_EVENT_NAME}" in
             push)
               latest_tag="$(
-                git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
-                  | sed -nE 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)$/\1 \2 \3/p' \
-                  | sort -n -k1,1 -k2,2 -k3,3 \
+                git tag --list 'v[0-9]*.[0-9]*.[0-9]*-preview.[0-9]*' \
+                  | sed -nE 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-preview\.([0-9]+)$/\1 \2 \3 \4/p' \
+                  | sort -n -k1,1 -k2,2 -k3,3 -k4,4 \
                   | tail -n 1
               )"
               if [ -z "${latest_tag}" ]; then
-                version="0.1.0"
+                version="0.1.0-preview.1"
               else
                 set -- ${latest_tag}
                 major="$1"
                 minor="$2"
                 patch="$3"
-                version="${major}.${minor}.$((patch + 1))"
+                preview="$4"
+                version="${major}.${minor}.${patch}-preview.$((preview + 1))"
               fi
               tag="v${version}"
               publish_packages="true"
