@@ -46,8 +46,25 @@ jobs:
         id: release
         env:
           DISPATCH_PUBLISH_PACKAGES: ${{ forgejo.event.inputs.publish_packages }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
+
+          set_diagnostic() {
+            token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}"
+            if [ -z "${token}" ]; then
+              return 0
+            fi
+
+            encoded="$(printf '%s' "$1" | base64 -w0)"
+            curl --silent --show-error \
+              --request PUT \
+              --header "Authorization: token ${token}" \
+              --header "Content-Type: application/json" \
+              --data-binary "{\"value\":\"base64:${encoded}\"}" \
+              "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.DotNet/actions/variables/LAST_DOTNET_PACKAGE_FAILURE" >/dev/null || true
+          }
 
           publish_packages="false"
           case "${FORGEJO_EVENT_NAME}" in
@@ -100,6 +117,7 @@ jobs:
           echo "version=${version}" >> "${output_file}"
           echo "tag=${tag}" >> "${output_file}"
           echo "publish_packages=${publish_packages}" >> "${output_file}"
+          set_diagnostic "stage=resolve status=success version=${version} tag=${tag} publish_packages=${publish_packages}"
 
       - name: Restore
         env:
