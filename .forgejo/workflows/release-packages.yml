@@ -268,6 +268,7 @@ jobs:
                 /p:PackageVersion="${{ steps.release.outputs.version }}" \
                 /p:Version="${{ steps.release.outputs.version }}"
             } 2>&1 | tee "${log_file}"; then
+            set_diagnostic "stage=pack status=success version=${{ steps.release.outputs.version }}"
             rm -f "${log_file}"
           else
             status="${PIPESTATUS[0]}"
@@ -282,14 +283,35 @@ jobs:
           fi
 
       - name: Verify package set
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
+
+          set_diagnostic() {
+            token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}"
+            if [ -z "${token}" ]; then
+              return 0
+            fi
+
+            encoded="$(printf '%s' "$1" | base64 -w0)"
+            curl --silent --show-error \
+              --request PUT \
+              --header "Authorization: token ${token}" \
+              --header "Content-Type: application/json" \
+              --data-binary "{\"value\":\"base64:${encoded}\"}" \
+              "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.DotNet/actions/variables/LAST_DOTNET_PACKAGE_FAILURE" >/dev/null || true
+          }
+
           find "${NUGET_PACK_OUTPUT}" -name '*.nupkg' -print | sort
           package_count="$(find "${NUGET_PACK_OUTPUT}" -name '*.nupkg' | wc -l)"
           if [ "${package_count}" -ne 2 ]; then
+            set_diagnostic "stage=verify-package-set status=failure package_count=${package_count}"
             echo "::error::Expected 2 NuGet packages, found ${package_count}."
             exit 1
           fi
+          set_diagnostic "stage=verify-package-set status=success package_count=${package_count}"
 
       - name: Push NuGet packages
         if: ${{ steps.release.outputs.publish_packages == 'true' }}
