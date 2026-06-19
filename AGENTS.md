@@ -50,7 +50,7 @@
 - Make all network APIs asynchronous and suffix them with `Async`.
 - Every async method must accept a `CancellationToken`, with `CancellationToken cancellationToken = default` only on public convenience overloads.
 - Return strongly typed request and response models. Prefer immutable records for DTOs and options.
-- Use `System.Text.Json` with source-generated metadata when practical. Do not use Newtonsoft.Json unless the API contract requires behavior that `System.Text.Json` cannot provide.
+- Use `System.Text.Json` with source-generated metadata when practical. Do not use Newtonsoft.Json.
 - Model API errors explicitly with a typed SDK exception or result type that preserves status code, error code, message, request ID, response body when safe, and retryability.
 - Preserve response headers that matter to clients, including request IDs, route-affinity headers, pagination cursors, rate-limit headers, and retry-after values.
 - Keep APIs composable. Expose raw response metadata when useful without forcing callers into low-level HTTP code.
