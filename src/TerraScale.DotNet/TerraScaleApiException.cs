@@ -1,4 +1,6 @@
 using System.Net;
+using System.Buffers;
+using System.Text;
 using System.Text.Json;
 
 namespace TerraScale.DotNet;
@@ -8,6 +10,8 @@ namespace TerraScale.DotNet;
 /// </summary>
 public sealed class TerraScaleApiException : HttpRequestException
 {
+    private const int MaxCapturedResponseBodyChars = 64 * 1024;
+
     internal TerraScaleApiException(
         HttpStatusCode statusCode,
         string message,
@@ -47,9 +51,7 @@ public sealed class TerraScaleApiException : HttpRequestException
         HttpResponseMessage response,
         CancellationToken cancellationToken)
     {
-        var body = response.Content is null
-            ? null
-            : await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var body = await ReadResponseBodyAsync(response.Content, cancellationToken).ConfigureAwait(false);
 
         var (code, message) = ReadError(body);
         return new TerraScaleApiException(
@@ -95,4 +97,52 @@ public sealed class TerraScaleApiException : HttpRequestException
 
     private static string? ReadHeader(HttpResponseMessage response, string name) =>
         response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
+
+    private static async Task<string?> ReadResponseBodyAsync(
+        HttpContent? content,
+        CancellationToken cancellationToken)
+    {
+        if (content is null)
+        {
+            return null;
+        }
+
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var reader = new StreamReader(
+            stream,
+            Encoding.UTF8,
+            detectEncodingFromByteOrderMarks: true,
+            bufferSize: 8192,
+            leaveOpen: false);
+        var capacity = content.Headers.ContentLength is > 0 and <= MaxCapturedResponseBodyChars
+            ? (int)content.Headers.ContentLength.Value
+            : MaxCapturedResponseBodyChars;
+        var builder = new StringBuilder(capacity);
+        var buffer = ArrayPool<char>.Shared.Rent(4096);
+        try
+        {
+            while (builder.Length < MaxCapturedResponseBodyChars)
+            {
+                var remaining = Math.Min(buffer.Length, MaxCapturedResponseBodyChars - builder.Length);
+                var read = await reader.ReadAsync(buffer.AsMemory(0, remaining), cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    return builder.Length == 0 ? null : builder.ToString();
+                }
+
+                builder.Append(buffer, 0, read);
+            }
+
+            builder
+                .AppendLine()
+                .Append("... response body truncated after ")
+                .Append(MaxCapturedResponseBodyChars)
+                .Append(" characters.");
+            return builder.ToString();
+        }
+        finally
+        {
+            ArrayPool<char>.Shared.Return(buffer, clearArray: true);
+        }
+    }
 }

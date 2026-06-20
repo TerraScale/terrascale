@@ -91,12 +91,15 @@ public sealed class TerraScaleDocumentsClient
         string repository,
         int skip = 0,
         int take = 100,
-        CancellationToken cancellationToken = default) =>
-        client.SendAsync<TerraScaleDocumentPage>(
+        CancellationToken cancellationToken = default)
+    {
+        TerraScalePagination.Validate(skip, take);
+        return client.SendAsync<TerraScaleDocumentPage>(
             HttpMethod.Get,
             $"/api/v1/repositories/{Escape(repository)}/documents?skip={skip}&take={take}",
             body: null,
             cancellationToken);
+    }
 
     /// <summary>
     /// Deletes a document by id.

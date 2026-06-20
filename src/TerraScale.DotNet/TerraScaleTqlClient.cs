@@ -20,12 +20,16 @@ public sealed class TerraScaleTqlClient
         string query,
         int? skip = null,
         int? take = null,
-        CancellationToken cancellationToken = default) =>
-        client.SendAsync<TerraScaleDocumentPage>(
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(query);
+        TerraScalePagination.ValidateOptional(skip, take);
+        return client.SendAsync<TerraScaleDocumentPage>(
             HttpMethod.Post,
             $"/api/v1/repositories/{Escape(repository)}/tql",
             new TerraScaleTqlQuery(query, skip, take),
             cancellationToken);
+    }
 
     /// <summary>
     /// Runs a query built with <see cref="TerraScaleQuery"/> against a repository.

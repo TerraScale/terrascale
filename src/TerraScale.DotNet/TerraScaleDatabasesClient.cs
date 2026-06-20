@@ -18,12 +18,15 @@ public sealed class TerraScaleDatabasesClient
     public Task<IReadOnlyList<TerraScaleDatabaseSummary>> ListAsync(
         int skip = 0,
         int take = 100,
-        CancellationToken cancellationToken = default) =>
-        client.SendAsync<IReadOnlyList<TerraScaleDatabaseSummary>>(
+        CancellationToken cancellationToken = default)
+    {
+        TerraScalePagination.Validate(skip, take);
+        return client.SendAsync<IReadOnlyList<TerraScaleDatabaseSummary>>(
             HttpMethod.Get,
             $"/api/v1/databases?start={skip}&take={take}",
             body: null,
             cancellationToken);
+    }
 
     /// <summary>
     /// Creates a TerraScale database.
