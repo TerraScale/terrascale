@@ -47,12 +47,11 @@ jobs:
         env:
           DISPATCH_PUBLISH_PACKAGES: ${{ forgejo.event.inputs.publish_packages }}
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
 
           set_diagnostic() {
-            token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}"
+            token="${REGISTRY_TOKEN:-}"
             if [ -z "${token}" ]; then
               return 0
             fi
@@ -122,12 +121,11 @@ jobs:
       - name: Restore
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
 
           set_diagnostic() {
-            token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}"
+            token="${REGISTRY_TOKEN:-}"
             if [ -z "${token}" ]; then
               return 0
             fi
@@ -159,12 +157,11 @@ jobs:
       - name: Build
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
 
           set_diagnostic() {
-            token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}"
+            token="${REGISTRY_TOKEN:-}"
             if [ -z "${token}" ]; then
               return 0
             fi
@@ -196,12 +193,11 @@ jobs:
       - name: Test
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
 
           set_diagnostic() {
-            token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}"
+            token="${REGISTRY_TOKEN:-}"
             if [ -z "${token}" ]; then
               return 0
             fi
@@ -233,12 +229,11 @@ jobs:
       - name: Pack NuGet packages
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
 
           set_diagnostic() {
-            token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}"
+            token="${REGISTRY_TOKEN:-}"
             if [ -z "${token}" ]; then
               return 0
             fi
@@ -285,12 +280,11 @@ jobs:
       - name: Verify package set
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
 
           set_diagnostic() {
-            token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-}}"
+            token="${REGISTRY_TOKEN:-}"
             if [ -z "${token}" ]; then
               return 0
             fi
@@ -317,10 +311,9 @@ jobs:
         if: ${{ steps.release.outputs.publish_packages == 'true' }}
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
-          token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-${FORGEJO_TOKEN:-}}}"
+          token="${REGISTRY_TOKEN:-${FORGEJO_TOKEN:-}}"
           : "${token:?Forgejo package token is required}"
 
           set_diagnostic() {
@@ -364,7 +357,6 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -373,7 +365,7 @@ jobs:
             exit 0
           fi
 
-          token="${REGISTRY_TOKEN:-${FORGEJO_REGISTRY_TOKEN:-${FORGEJO_TOKEN:-}}}"
+          token="${REGISTRY_TOKEN:-${FORGEJO_TOKEN:-}}"
           : "${token:?Forgejo API token is required}"
 
           set_diagnostic() {
