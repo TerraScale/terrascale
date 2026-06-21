@@ -23,7 +23,7 @@ env:
 
 jobs:
   release:
-    runs-on: terrascale
+    runs-on: terrascale-builder
     container:
       image: terrascale-builder
     permissions:
