@@ -25,7 +25,7 @@ jobs:
   release:
     runs-on: terrascale
     container:
-      image: terrascale
+      image: terrascale-builder
     permissions:
       contents: write
       packages: write
