@@ -16,6 +16,12 @@
 - All C# projects must target `net11.0`.
 - All C# projects must use the latest preview version of the C# language supported by the pinned .NET SDK.
 
+## Root Cause Fixes
+
+- Do not use reflection as a workaround for broken contracts, inaccessible members, serialization gaps, endpoint/test seams, dependency-injection issues, or API mismatches.
+- Fix the real SDK/API contract, DTO shape, serializer/converter, endpoint boundary, client option, service registration, or test fixture instead of bypassing it with reflection.
+- Reflection may be used only for deliberate framework-level discovery or metadata generation where it is part of the actual design. Runtime client paths must use precomputed strongly typed metadata instead of repeated reflective access.
+
 ## API Boundary
 
 - The SDK must interact only with public repository and database HTTP endpoints implemented by `/workspaces/TerraScale/Internals/src/API/TerraScale.API`.
