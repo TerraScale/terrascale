@@ -228,3 +228,35 @@ dotnet run --project samples/TerraScale.Samples.Quickstart/TerraScale.Samples.Qu
 ```
 
 Use `TERRASCALE_BEARER_TOKEN` instead of `TERRASCALE_API_KEY` and `TERRASCALE_PROJECT_ID` for caller-provided OAuth or machine-to-machine bearer tokens.
+
+## Running Tests
+
+The test projects are E2E-first and intentionally environment-gated. Without
+TerraScale API configuration they verify local configuration handling and skip
+networked success-path coverage instead of substituting a fake API.
+
+```bash
+dotnet test TerraScale.DotNet.slnx --configuration Release --no-progress
+```
+
+Set only the live API base URL to run the authentication-failure E2E path
+against the real public API:
+
+```bash
+TERRASCALE_E2E_BASE_URL=https://api.terrascale.tech \
+  dotnet test TerraScale.DotNet.slnx --configuration Release --no-progress
+```
+
+Set the full API-key configuration to run the database, repository, document,
+query, batch, telemetry, and EF Core success-path E2E tests:
+
+```bash
+export TERRASCALE_E2E_BASE_URL=https://api.terrascale.tech
+export TERRASCALE_E2E_API_KEY=tsauth_...
+export TERRASCALE_E2E_PROJECT_ID=01J00000000000000000000000
+export TERRASCALE_E2E_REPOSITORY=01J00000000000000000000001
+dotnet test TerraScale.DotNet.slnx --configuration Release --no-progress
+```
+
+For bearer-token coverage, set `TERRASCALE_E2E_BEARER_TOKEN` with
+`TERRASCALE_E2E_BASE_URL` and `TERRASCALE_E2E_REPOSITORY`.
