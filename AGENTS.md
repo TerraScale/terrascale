@@ -13,7 +13,7 @@
 - All `.csproj` file names must start with the `TerraScale.` prefix.
 - All `.slnx` file names must start with the `TerraScale.` prefix.
 - Do not add, rename, or keep C# project folders, `.csproj` files, or `.slnx` files that violate this naming rule.
-- All C# projects must target `net11.0`.
+- All C# projects must target `net10.0`.
 - All C# projects must use the latest preview version of the C# language supported by the pinned .NET SDK.
 
 ## Root Cause Fixes
