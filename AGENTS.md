@@ -88,3 +88,11 @@
 - Integration and E2E tests must target the real `TerraScale.API` database/repository endpoints when credentials and endpoint configuration are available.
 - If real API credentials or endpoints are unavailable in the default developer environment, keep the E2E tests environment-gated rather than replacing the API with a mock, stub, fake server, generated proxy, local handler, or in-memory stand-in.
 - Build with all CPU cores, for example `dotnet build -m`.
+
+### TUnit best practices
+
+- Always `await Assert.That(...)` (un-awaited assertions pass silently). `Assert.Throws<T>`/`Assert.ThrowsAsync<T>` are valid TUnit — do not convert to fluent `.Throws<T>()`.
+- TUnit news the test class per test; never share state via instance fields. Use `[ClassDataSource<>]` (`SharedType.PerTestSession`) for expensive shared resources.
+- Fixtures must implement `IAsyncInitializer` + `IAsyncDisposable` and be released via `[ClassDataSource]` / `await using`. No `.GetAwaiter().GetResult()`/`.Result`/`.Wait()` in tests.
+- Never dispose caller-owned `HttpClient` instances passed into the SDK; the test owns and disposes only what it creates.
+- Gate real-API E2E tests with a `SkipAttribute` (`ShouldSkip`) keyed off env config so they run when the API is reachable and skip cleanly otherwise.
