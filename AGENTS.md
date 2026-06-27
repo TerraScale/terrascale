@@ -15,6 +15,16 @@
 - Do not add, rename, or keep C# project folders, `.csproj` files, or `.slnx` files that violate this naming rule.
 - All C# projects must target `net10.0`.
 - All C# projects must use the latest preview version of the C# language supported by the pinned .NET SDK.
+- Runtime logging uses ZLogger as the provider behind `ILogger<T>` when logging is needed:
+
+```csharp
+builder.Logging.ClearProviders();
+builder.Logging.AddZLoggerConsole();
+
+logger.ZLogInformation($"Processed request {requestId} for {serviceName}");
+```
+
+Hot-path logs may use `LoggerMessageAttribute` source generation with ZLogger as the provider. `ZLogger.Analyzers` is not published on NuGet; rely on compiler analyzers and warnings-as-errors.
 
 ## Root Cause Fixes
 
