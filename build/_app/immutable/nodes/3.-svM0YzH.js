@@ -1,1 +1,0 @@
-import{I as e,U as t,h as n}from"../chunks/l1zXGMTh.js";import"../chunks/CFKVnMbq.js";import"../chunks/DM-4B6sx.js";import{t as r}from"../chunks/DOevtu6B.js";function i(i){n(`15h4f4n`,n=>{e(()=>{t.title=`404 | TerraScale`})}),r(i,{})}export{i as component};
