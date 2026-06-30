@@ -450,7 +450,7 @@ svg {
 }
 
 .ts-btn-glass {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.09);
   border-color: var(--ts-glass-border);
   color: var(--ts-text);
   backdrop-filter: blur(8px);
@@ -459,7 +459,7 @@ svg {
 
 .ts-btn-glass:hover {
   border-color: rgba(var(--ts-primary-rgb), 0.45);
-  background: rgba(var(--ts-primary-rgb), 0.06);
+  background: rgba(var(--ts-primary-rgb), 0.14);
 }
 
 .ts-btn-compact {
