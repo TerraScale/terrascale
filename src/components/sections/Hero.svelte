@@ -8,10 +8,16 @@
     type Region,
   } from '@/lib/world-map.generated'
 
+  // 2×3 checklist. Keep the 3 original items; the added three (Uptime,
+  // Latency, Regions) mirror the stats strip in the design reference
+  // (docs/design_handoff_terrascale_landing/design-reference/ts-sections-1.jsx).
   const highlights = [
     { icon: 'zap', label: 'Typed API' },
-    { icon: 'globe', label: 'SFO · FRA · GRU' },
     { icon: 'check', label: 'SDK-backed' },
+    { icon: 'activity', label: '99.99% Uptime' },
+    { icon: 'clock', label: '20ms Latency' },
+    { icon: 'globe', label: 'SFO · FRA · GRU' },
+    { icon: 'mapPin', label: '20+ Regions' },
   ] as const
 
   const vbW = WORLD_MAP_VIEWBOX.width
@@ -286,7 +292,7 @@
     font-size: clamp(2.4rem, 4.2vw + 1rem, 5rem);
     font-weight: 700;
     line-height: 1.02;
-    margin: 0 0 18px;
+    margin: 0 0 10px;
     color: var(--ts-text);
     letter-spacing: -0.035em;
   }
@@ -308,6 +314,19 @@
     flex-wrap: wrap;
   }
 
+  /* Lift the glass CTA out of the dramatic hero so it reads as a real control.
+     Scoped here (not on the shared .ts-btn-glass token) so Pricing/404/CTA
+     surfaces keep their calibrated transparency. */
+  .hero :global(.ts-btn-glass) {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(148, 163, 184, 0.34);
+  }
+
+  .hero :global(.ts-btn-glass:hover) {
+    background: rgba(var(--ts-primary-rgb), 0.16);
+    border-color: rgba(var(--ts-primary-rgb), 0.5);
+  }
+
   :global(.hero__cta-icon) {
     width: 14px;
     height: 14px;
@@ -315,17 +334,19 @@
 
   .hero__highlights {
     list-style: none;
-    margin: 48px 0 0;
+    margin: 48px auto 0;
     padding: 0;
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(2, max-content);
     justify-content: center;
-    gap: 14px;
-    flex-wrap: wrap;
+    column-gap: 14px;
+    row-gap: 12px;
   }
 
   .hero__highlight {
-    display: inline-flex;
+    display: flex;
     align-items: center;
+    justify-content: center;
     gap: 10px;
     padding: 9px 16px;
     border-radius: 100px;
@@ -368,7 +389,8 @@
       width: 100%;
     }
     .hero__highlights {
-      gap: 10px;
+      grid-template-columns: max-content;
+      row-gap: 10px;
       margin-top: 40px;
     }
     .hero__highlight {
