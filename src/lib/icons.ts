@@ -27,6 +27,7 @@ export const ICONS = {
   home: '/icons/lucide/home.svg',
   layoutDashboard: '/icons/lucide/layout-grid.svg',
   mail: '/icons/lucide/mail.svg',
+  mapPin: '/icons/lucide/map-pin.svg',
   menu: '/icons/lucide/menu.svg',
   messageCircle: '/icons/lucide/message-circle.svg',
   messageSquare: '/icons/lucide/message-square.svg',

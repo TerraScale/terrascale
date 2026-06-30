@@ -24,6 +24,7 @@ export const iconManifest = {
   home: { collection: 'lucide', icon: 'home' },
   layoutDashboard: { collection: 'lucide', icon: 'layout-grid' },
   mail: { collection: 'lucide', icon: 'mail' },
+  mapPin: { collection: 'lucide', icon: 'map-pin' },
   menu: { collection: 'lucide', icon: 'menu' },
   messageCircle: { collection: 'lucide', icon: 'message-circle' },
   messageSquare: { collection: 'lucide', icon: 'message-square' },
