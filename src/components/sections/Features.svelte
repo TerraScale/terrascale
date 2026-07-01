@@ -40,9 +40,13 @@
   <div class="features__inner">
     <SectionHeader
       eyebrow="Platform"
-      title="Built for scale, designed for developers"
       subtitle="The implemented surface spans data, auth, queues, payments, SDKs, and dashboard workflows."
-    />
+    >
+      <svelte:fragment slot="title">
+        Built for scale,<br />
+        <span class="ts-text-gradient">designed for developers</span>
+      </svelte:fragment>
+    </SectionHeader>
 
     <div class="features__grid">
       {#each features as feature (feature.title)}
