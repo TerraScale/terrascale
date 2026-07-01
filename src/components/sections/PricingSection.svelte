@@ -88,9 +88,13 @@
   <div class="pricing-section__inner">
     <SectionHeader
       eyebrow="Pricing"
-      title="Simple pricing that scales with you"
       subtitle="Start free, scale on demand. No hidden fees, no surprises."
-    />
+    >
+      <svelte:fragment slot="title">
+        Simple pricing<br />
+        <span class="ts-text-gradient">That scales with YOU</span>
+      </svelte:fragment>
+    </SectionHeader>
 
     <div class="pricing-toggle-wrap">
       <div class="pricing-toggle" role="tablist" aria-label="Billing cycle">
