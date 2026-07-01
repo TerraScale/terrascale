@@ -8,16 +8,12 @@
     type Region,
   } from '@/lib/world-map.generated'
 
-  // 2×3 checklist. Keep the 3 original items; the added three (Uptime,
-  // Latency, Regions) mirror the stats strip in the design reference
-  // (docs/design_handoff_terrascale_landing/design-reference/ts-sections-1.jsx).
+  // Trust badges shown under the CTAs. Scoped to the three the hero
+  // surfaces (TER-22): AI readiness plus the two SLA stats.
   const highlights = [
-    { icon: 'zap', label: 'Typed API' },
-    { icon: 'check', label: 'SDK-backed' },
+    { icon: 'globe', label: 'AI Ready' },
     { icon: 'activity', label: '99.99% Uptime' },
     { icon: 'clock', label: '20ms Latency' },
-    { icon: 'globe', label: 'AI Ready' },
-    { icon: 'mapPin', label: '20+ Regions' },
   ] as const
 
   const vbW = WORLD_MAP_VIEWBOX.width
@@ -314,16 +310,18 @@
     flex-wrap: wrap;
   }
 
-  /* Lift the glass CTA out of the dramatic hero so it reads as a real control.
-     Scoped here (not on the shared .ts-btn-glass token) so Pricing/404/CTA
-     surfaces keep their calibrated transparency. */
+  /* Make the "View Docs" CTA opaque so it reads as a solid control against
+     the dramatic hero (TER-22). Scoped here (not on the shared .ts-btn-glass
+     token) so Pricing/404/CTA surfaces keep their calibrated transparency. */
   .hero :global(.ts-btn-glass) {
-    background: rgba(255, 255, 255, 0.12);
+    background: var(--ts-bg-card);
     border-color: rgba(148, 163, 184, 0.34);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .hero :global(.ts-btn-glass:hover) {
-    background: rgba(var(--ts-primary-rgb), 0.16);
+    background: var(--ts-divider);
     border-color: rgba(var(--ts-primary-rgb), 0.5);
   }
 
@@ -337,7 +335,7 @@
     margin: 48px auto 0;
     padding: 0;
     display: grid;
-    grid-template-columns: repeat(2, max-content);
+    grid-template-columns: repeat(3, max-content);
     justify-content: center;
     column-gap: 14px;
     row-gap: 12px;
