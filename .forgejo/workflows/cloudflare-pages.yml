@@ -8,9 +8,9 @@ on:
 
 jobs:
   deploy:
-    runs-on: docker
+    runs-on: terrascale-builder
     container:
-      image: dotnet-latest
+      image: terrascale-builder
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
