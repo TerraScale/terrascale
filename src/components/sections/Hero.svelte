@@ -16,7 +16,7 @@
     { icon: 'check', label: 'SDK-backed' },
     { icon: 'activity', label: '99.99% Uptime' },
     { icon: 'clock', label: '20ms Latency' },
-    { icon: 'globe', label: 'SFO · FRA · GRU' },
+    { icon: 'globe', label: 'AI Ready' },
     { icon: 'mapPin', label: '20+ Regions' },
   ] as const
 
