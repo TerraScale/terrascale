@@ -111,5 +111,4 @@ CI needs `CLOUDFLARE_API_TOKEN` (`Account / Cloudflare Pages / Edit`) and `CLOUD
 - Use the `reveal` action (CSS classes `ts-reveal`, `ts-reveal-up`, `is-visible`) for scroll-in animation instead of rolling new IntersectionObservers.
 - Keep scoped component styles scoped; promote shared patterns to `src/index.css` utilities when they recur.
 - Do not create markdown or README files unless explicitly requested.
-- Do not commit unless the user asks for a commit.
 - Never add an AI agent (Claude, Copilot, GPT, etc.) as a co-author on commits or pull requests. No `Co-Authored-By:` trailers for AI tools, no agent-generated signatures in commit messages, no "Generated with <tool>" footers.
