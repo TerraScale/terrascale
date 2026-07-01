@@ -1,6 +1,6 @@
 <script lang="ts">
   export let eyebrow: string
-  export let title: string
+  export let title = ''
   export let subtitle = ''
 </script>
 
@@ -9,7 +9,9 @@
     <span class="section-header__eyebrow-dot" aria-hidden="true"></span>
     {eyebrow}
   </div>
-  <h2 class="section-header__title">{title}</h2>
+  <h2 class="section-header__title">
+    <slot name="title">{title}</slot>
+  </h2>
   {#if subtitle}
     <p class="section-header__subtitle">{subtitle}</p>
   {/if}
