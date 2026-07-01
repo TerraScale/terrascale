@@ -47,11 +47,13 @@
     <div class="features__grid">
       {#each features as feature (feature.title)}
         <article class="feature-card ts-glass">
-          <div class="feature-card__icon">
-            <Icon name={feature.icon} className="feature-card__icon-svg" />
+          <div class="feature-card__head">
+            <div class="feature-card__icon">
+              <Icon name={feature.icon} className="feature-card__icon-svg" />
+            </div>
+            <h3 class="feature-card__title">{feature.title}</h3>
           </div>
 
-          <h3 class="feature-card__title">{feature.title}</h3>
           <p class="feature-card__text">{feature.text}</p>
           <div class="feature-card__bullets">
             {#each feature.bullets as bullet (bullet)}
@@ -106,7 +108,15 @@
       inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 
+  .feature-card__head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+
   .feature-card__icon {
+    flex-shrink: 0;
     width: 42px;
     height: 42px;
     border-radius: 8px;
@@ -115,7 +125,6 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 18px;
     transition:
       background 260ms ease,
       border-color 260ms ease,
@@ -141,7 +150,7 @@
     font-size: 19px;
     font-weight: 700;
     color: var(--ts-text);
-    margin: 0 0 10px;
+    margin: 0;
     letter-spacing: -0.01em;
   }
 
