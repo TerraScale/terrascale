@@ -40,6 +40,7 @@ public sealed class TerraScaleClient
         Tql = new TerraScaleTqlClient(this);
         Schemas = new TerraScaleSchemasClient(this);
         Changes = new TerraScaleChangesClient(this);
+        Billing = new TerraScaleBillingClient(this);
     }
 
     /// <summary>
@@ -76,6 +77,11 @@ public sealed class TerraScaleClient
     /// Real-time repository change subscriptions.
     /// </summary>
     public TerraScaleChangesClient Changes { get; }
+
+    /// <summary>
+    /// Organization billing, invoices, Stripe checkout, and Stripe portal operations.
+    /// </summary>
+    public TerraScaleBillingClient Billing { get; }
 
     /// <summary>
     /// Creates a typed repository facade for document CRUD, list, and query operations.

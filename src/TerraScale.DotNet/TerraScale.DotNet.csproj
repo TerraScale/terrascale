@@ -2,11 +2,11 @@
   <PropertyGroup>
     <PackageId>TerraScale.DotNet</PackageId>
     <Version>0.1.0</Version>
-    <Description>Official .NET SDK for TerraScale database and repository APIs.</Description>
+    <Description>Official .NET SDK for TerraScale database, repository, and billing APIs.</Description>
     <PackageProjectUrl>https://git.mariogk.com/TerraScale/TerraScale.DotNet</PackageProjectUrl>
     <RepositoryUrl>https://git.mariogk.com/TerraScale/TerraScale.DotNet</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageTags>terrascale;database;documents;sdk</PackageTags>
+    <PackageTags>terrascale;database;documents;billing;stripe;sdk</PackageTags>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
