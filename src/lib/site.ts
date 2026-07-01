@@ -39,7 +39,7 @@ export const footerColumns: FooterColumn[] = [
   {
     title: 'Company',
     links: [
-      { name: 'Blog', href: 'https://blog.terrascale.tech' },
+      { name: 'Blog', href: 'https://docs.terrascale.tech/en/blog/' },
       { name: 'Contact', href: '/contact' },
     ],
   },
