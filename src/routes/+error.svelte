@@ -1,9 +1,7 @@
 <script lang="ts">
-  import NotFound from '@/pages/NotFound.svelte'
+  import NotFoundPage from './404/+page.svelte'
 </script>
 
-<svelte:head>
-  <title>404 | TerraScale</title>
-</svelte:head>
-
-<NotFound />
+<!-- Re-export the /404 route so unmatched routes and SPA navigation
+     errors render the canonical "Not Found" page from a single source. -->
+<NotFoundPage />
