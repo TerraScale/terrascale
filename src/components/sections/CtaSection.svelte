@@ -16,8 +16,9 @@
         Try TerraScale <span class="ts-text-gradient">free for 30 days.</span>
       </h2>
       <p class="cta__text">
-        Set up in minutes. Every Hobby and Pro feature, unlocked — nothing billed
-        until you decide to keep it.
+        Set it up in minutes and get full access to all features of the Hobby and
+        Pro plans. You won't be charged anything until you decide to keep the
+        service.
       </p>
 
       <div class="cta__actions">
