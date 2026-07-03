@@ -73,16 +73,6 @@
 
     <div class="ts-footer__meta">
       <div class="ts-footer__copy">© {year} TerraScale. All rights reserved.</div>
-      <div class="ts-footer__stats">
-        <span class="ts-footer__stat">
-          <span class="pulse-dot ts-footer__stat-dot"></span>
-          sfo · fra · gru
-        </span>
-        <span class="ts-footer__stat">
-          <Icon name="shield" className="ts-footer__stat-icon" />
-          OpenTelemetry-ready
-        </span>
-      </div>
     </div>
   </div>
 </footer>
@@ -217,38 +207,6 @@
   .ts-footer__copy {
     font-size: 12px;
     color: var(--ts-text-muted);
-  }
-
-  .ts-footer__stats {
-    display: flex;
-    gap: 20px;
-    align-items: center;
-  }
-
-  .ts-footer__stat {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: var(--ts-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    font-weight: 600;
-    font-family: var(--ts-font-accent);
-  }
-
-  .ts-footer__stat-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--ts-secondary);
-    box-shadow: 0 0 6px var(--ts-secondary);
-    display: inline-block;
-  }
-
-  :global(.ts-footer__stat-icon) {
-    width: 11px;
-    height: 11px;
   }
 
   @media (max-width: 960px) {
