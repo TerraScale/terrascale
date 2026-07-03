@@ -4,7 +4,7 @@
   import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
-  import { docsLink, navigation } from '@/lib/site'
+  import { docsLink, getStartedLink, navigation } from '@/lib/site'
 
   let scrolled = false
   let isMenuOpen = false
@@ -72,10 +72,10 @@
         Status
       </ExternalLink>
 
-      <RouteLink href="/contact" class="ts-cta cta-shine">
-        Get Started
-        <Icon name="arrowRight" className="ts-cta__icon" />
-      </RouteLink>
+      <ExternalLink href={getStartedLink.href} class="ts-cta cta-shine">
+        {getStartedLink.name}
+        <Icon name={getStartedLink.icon} className="ts-cta__icon" />
+      </ExternalLink>
     </div>
 
     <button
@@ -128,16 +128,10 @@
           <span class="pulse-dot ts-status-link__dot"></span>
           Status
         </ExternalLink>
-        <RouteLink
-          href="/contact"
-          class="ts-cta cta-shine ts-cta--mobile"
-          afterClick={() => {
-            isMenuOpen = false
-          }}
-        >
-          Get Started
-          <Icon name="arrowRight" className="ts-cta__icon" />
-        </RouteLink>
+        <ExternalLink href={getStartedLink.href} class="ts-cta cta-shine ts-cta--mobile">
+          {getStartedLink.name}
+          <Icon name={getStartedLink.icon} className="ts-cta__icon" />
+        </ExternalLink>
       </nav>
     </div>
   {/if}
