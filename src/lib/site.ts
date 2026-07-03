@@ -20,6 +20,12 @@ export const docsLink = {
   icon: 'bookOpen' as AppIconName,
 }
 
+export const getStartedLink = {
+  name: 'Get Started',
+  href: 'https://dash.terrascale.tech/login',
+  icon: 'arrowRight' as AppIconName,
+}
+
 export type FooterColumn = {
   title: string
   links: { name: string; href: string }[]
