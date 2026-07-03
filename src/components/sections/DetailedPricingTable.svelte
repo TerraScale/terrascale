@@ -26,24 +26,15 @@
 
 <section id="detailed-pricing" class="detailed">
   <div class="detailed__inner">
-    <div class="detailed__eyebrow">Detailed Pricing</div>
+    <div class="detailed__intro">
+      <div class="detailed__eyebrow">Detailed Pricing</div>
 
-    <h2 class="detailed__title">Clear pricing for custom deployments</h2>
-    <p class="detailed__text">
-      Usage-based costs, support scopes, and deployment requirements are broken out below so
-      enterprise teams can estimate spend before talking to sales.
-    </p>
-
-    <ExternalLink
-      href="https://docs.terrascale.tech/pricing"
-      target="_blank"
-      rel="noopener noreferrer"
-      class="detailed__docs"
-    >
-      <Icon name="bookOpen" className="detailed__docs-icon" />
-      Full Pricing Docs
-      <Icon name="externalLink" className="detailed__docs-icon" />
-    </ExternalLink>
+      <h2 class="detailed__title">Clear pricing for custom deployments</h2>
+      <p class="detailed__text">
+        Usage-based costs, support scopes, and deployment requirements are broken out below so
+        enterprise teams can estimate spend before talking to sales.
+      </p>
+    </div>
 
     <div class="detailed__table ts-glass">
       <div class="detailed__head">
@@ -62,6 +53,19 @@
         </div>
       {/each}
     </div>
+
+    <div class="detailed__docs-wrap">
+      <ExternalLink
+        href="https://docs.terrascale.tech/pricing"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="detailed__docs"
+      >
+        <Icon name="bookOpen" className="detailed__docs-icon" />
+        Full Pricing Docs
+        <Icon name="externalLink" className="detailed__docs-icon" />
+      </ExternalLink>
+    </div>
   </div>
 </section>
 
@@ -74,6 +78,11 @@
     max-width: 1120px;
     margin: 0 auto;
     padding: 0 40px;
+  }
+
+  .detailed__intro {
+    text-align: center;
+    margin-bottom: 32px;
   }
 
   .detailed__eyebrow {
@@ -107,7 +116,7 @@
     color: var(--ts-text-muted);
     line-height: 1.65;
     max-width: 720px;
-    margin: 0 0 24px;
+    margin: 0 auto;
   }
 
   :global(.detailed__docs) {
@@ -125,10 +134,15 @@
     text-transform: uppercase;
     letter-spacing: 0.08em;
     text-decoration: none;
-    margin-bottom: 36px;
     transition:
       border-color 150ms,
       background 150ms;
+  }
+
+  .detailed__docs-wrap {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 24px;
   }
 
   :global(.detailed__docs:hover) {
