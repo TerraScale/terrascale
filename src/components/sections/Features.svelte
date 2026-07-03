@@ -30,8 +30,8 @@
     {
       icon: 'trendingUp',
       title: 'Queue And Payments',
-      text: 'Queue workflows run on JetStream, and payment provider flows sit behind TerraScale Payments.',
-      bullets: ['NATS JetStream', 'Polar', 'Stripe'],
+      text: 'Queue workflows run on JetStream, and Stripe billing flows are processed through TerraScale Payments.',
+      bullets: ['NATS JetStream', 'Stripe', 'Webhooks'],
     },
   ]
 </script>

@@ -87,9 +87,7 @@ await ts.schema.apply(database.id, 'customers', {
 
 const rows = await ts.repository<Customer>(database.id, 'customers')
   .query({ filter: { plan: 'pro' }, limit: 50 });`,
-  csharp: `using Microsoft.Extensions.Options;
-using TerraScale.Client;
-using TerraScale.Client.Databases;
+  csharp: `using TerraScale.DotNet;
 
 using var http = new HttpClient
 {
@@ -101,15 +99,17 @@ http.DefaultRequestHeaders.Add(
 
 var client = new TerraScaleClient(
     http,
-    Options.Create(new TerraScaleClientOptions
+    new TerraScaleClientOptions
     {
-        DefaultRegion = TerraScaleRegions.Frankfurt
-    }));
+        ApiKey = Environment.GetEnvironmentVariable("TERRASCALE_API_KEY"),
+        ProjectId = Environment.GetEnvironmentVariable("TERRASCALE_PROJECT_ID")
+    });
 
-var database = await client.Databases.CreateAsync(
-    new CreateDatabaseRequest("prod"));
+var database = await client.Databases.CreateAsync("prod");
 
-var plans = await client.Payments.ListPlansAsync();`,
+var checkout = await client.Billing.CreateCheckoutSessionAsync(
+    "01J2K7RTEQC3F4NG9HZ8Y62P6A",
+    new TerraScaleCreateCheckoutSessionRequest(PriceId: "price_123"));`,
 }
 
 export const LANG_META: Array<{ id: Lang; label: string; ext: string; icon: string }> = [
