@@ -40,7 +40,7 @@
 <section class="faq">
   <div class="faq__inner">
     <div class="faq__head">
-      <h2 class="faq__title">Frequently Asked Questions</h2>
+      <h2 class="faq__title">Frequently Asked <span class="ts-text-gradient">Questions</span></h2>
       <p class="faq__subtitle">Get answers to common questions about our pricing and plans.</p>
     </div>
 
