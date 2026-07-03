@@ -29,7 +29,7 @@
     <div class="detailed__intro">
       <div class="detailed__eyebrow">Detailed Pricing</div>
 
-      <h2 class="detailed__title">Clear pricing for <span class="ts-text-gradient">custom deployments</span></h2>
+      <h2 class="detailed__title">Clear pricing for custom <span class="ts-text-gradient">deployments</span></h2>
       <p class="detailed__text">
         Usage-based costs, support scopes, and deployment requirements are broken out below so
         enterprise teams can estimate spend before talking to sales.
