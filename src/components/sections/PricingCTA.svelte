@@ -5,7 +5,7 @@
 
 <section class="pricing-cta">
   <div class="pricing-cta__inner">
-    <h2 class="pricing-cta__title">Ready to get started?</h2>
+    <h2 class="pricing-cta__title">Ready to <span class="ts-text-gradient">get started?</span></h2>
     <p class="pricing-cta__text">
       Join thousands of developers building the future with TerraScale.
     </p>
