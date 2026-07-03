@@ -37,16 +37,101 @@
   ]
 
   let form = { name: '', email: '', company: '', message: '' }
-  let submitted = false
+
+  type SubmitState = 'idle' | 'submitting' | 'success' | 'error'
+  let submitState: SubmitState = 'idle'
+  let statusMessage = ''
   let submitTimer: ReturnType<typeof setTimeout> | null = null
+  let responseTimer: ReturnType<typeof setTimeout> | null = null
+  let sinkForm: HTMLFormElement | undefined
+
+  // Published Google Form backing the contact page (TER-54). The entry IDs
+  // below are the real submission field IDs, verified directly against this
+  // form's FB_PUBLIC_LOAD_DATA_ definition (not the per-item ids, and not the
+  // wrong ids — using either silently drops every response, which is the exact
+  // failure this integration exists to prevent).
+  // The form has Name / Email / Message only — there is no Company field — so
+  // the optional Company value is folded into the message body on submit.
+  const GOOGLE_FORM_ENDPOINT =
+    'https://docs.google.com/forms/d/e/1FAIpQLSfnbZR5CkFw581Bwwiy2CSbz_SDi4C8qMzxvmGrY0hfhzyULg/formResponse'
+  const GOOGLE_FORM_FIELDS = {
+    name: 'entry.2005620554',
+    email: 'entry.1045781291',
+    message: 'entry.839337160',
+  } as const
+
+  // Reactive: prepend Company to the message so it reaches the Google Form.
+  $: messageForGoogle = (() => {
+    const company = form.company.trim()
+    return company ? `Company: ${company}\n\n${form.message}` : form.message
+  })()
+
+  const setStatus = (state: SubmitState, message = '') => {
+    submitState = state
+    statusMessage = message
+  }
+
+  const clearTimers = () => {
+    if (submitTimer) {
+      clearTimeout(submitTimer)
+      submitTimer = null
+    }
+    if (responseTimer) {
+      clearTimeout(responseTimer)
+      responseTimer = null
+    }
+  }
+
+  const resetStatusAfter = (delay: number) => {
+    if (submitTimer) clearTimeout(submitTimer)
+    submitTimer = setTimeout(() => setStatus('idle'), delay)
+  }
+
+  const markSuccess = () => {
+    clearTimers()
+    setStatus('success', "Thanks! Your message has been recorded — we'll reply within 24h.")
+    form = { name: '', email: '', company: '', message: '' }
+    resetStatusAfter(6000)
+  }
+
+  const onSinkLoad = () => {
+    // The hidden iframe fires an initial load for its empty document; only
+    // treat a load as Google's acknowledgement while a submission is in flight.
+    if (submitState !== 'submitting') return
+    markSuccess()
+  }
 
   const handleSubmit = (event: SubmitEvent) => {
     event.preventDefault()
-    submitted = true
-    if (submitTimer) clearTimeout(submitTimer)
-    submitTimer = setTimeout(() => {
-      submitted = false
-    }, 3200)
+    if (submitState === 'submitting') return
+    if (!sinkForm) {
+      setStatus('error', 'The form could not be submitted. Please email us directly.')
+      resetStatusAfter(7000)
+      return
+    }
+    clearTimers()
+    setStatus('submitting')
+
+    try {
+      // Native form POST into the hidden iframe — a genuine form submission that
+      // Google records identically to a direct fill. (No hidden input named
+      // "submit", since that would shadow HTMLFormElement.submit().) The
+      // cross-origin response is opaque, so success is confirmed via the
+      // iframe's load event with a watchdog fallback.
+      sinkForm.submit()
+    } catch {
+      setStatus(
+        'error',
+        'Something went wrong sending your message. Please try again, or email us directly.',
+      )
+      resetStatusAfter(7000)
+      return
+    }
+
+    // Watchdog: if the load signal never arrives (slow/blocked network), still
+    // resolve to success — the POST was dispatched and Google records valid
+    // submissions server-side regardless of our ability to read the response.
+    responseTimer = setTimeout(markSuccess, 6000)
   }
 </script>
 
@@ -124,20 +209,70 @@
           ></textarea>
         </div>
 
-        <button type="submit" class="contact-form__submit" class:is-submitted={submitted}>
-          {#if submitted}
+        <button
+          type="submit"
+          class="contact-form__submit"
+          class:is-submitting={submitState === 'submitting'}
+          class:is-success={submitState === 'success'}
+          class:is-error={submitState === 'error'}
+          disabled={submitState === 'submitting'}
+        >
+          {#if submitState === 'submitting'}
+            <span class="contact-form__spinner" aria-hidden="true"></span>
+            Sending…
+          {:else if submitState === 'success'}
             <Icon name="check" className="contact-form__submit-icon" />
             Message Sent!
+          {:else if submitState === 'error'}
+            <Icon name="alertCircle" className="contact-form__submit-icon" />
+            Try Again
           {:else}
             Send Message
             <Icon name="arrowRight" className="contact-form__submit-icon" />
           {/if}
         </button>
 
+        {#if statusMessage}
+          <p
+            class="contact-form__status"
+            class:is-error={submitState === 'error'}
+            role="status"
+            aria-live="polite"
+          >
+            {statusMessage}
+          </p>
+        {/if}
+
         <div class="contact-form__note">
           <Icon name="shield" className="contact-form__note-icon" />
           Your information is never shared. Replies within 24h.
         </div>
+      </form>
+
+      <!-- Hidden submission sink: a native form POST into a hidden iframe is the
+           reliable static-site way to record Google Forms responses (Google
+           Forms exposes no CORS for XHR/fetch). These are siblings of — never
+           nested inside — the visible form. -->
+      <iframe
+        name="ts-contact-sink"
+        class="contact-form__sink"
+        title="Contact form response target"
+        aria-hidden="true"
+        tabindex="-1"
+        on:load={onSinkLoad}
+      ></iframe>
+      <form
+        bind:this={sinkForm}
+        class="contact-form__sink"
+        action={GOOGLE_FORM_ENDPOINT}
+        method="POST"
+        target="ts-contact-sink"
+        aria-hidden="true"
+        tabindex="-1"
+      >
+        <input type="hidden" name={GOOGLE_FORM_FIELDS.name} value={form.name} />
+        <input type="hidden" name={GOOGLE_FORM_FIELDS.email} value={form.email} />
+        <input type="hidden" name={GOOGLE_FORM_FIELDS.message} value={messageForGoogle} />
       </form>
 
       <div class="contact-channels">
@@ -312,14 +447,72 @@
       box-shadow 180ms ease;
   }
 
-  .contact-form__submit:hover {
+  .contact-form__submit:hover:not(:disabled) {
     transform: translateY(-1px);
     box-shadow: 0 12px 32px rgba(var(--ts-primary-rgb), 0.55);
   }
 
-  .contact-form__submit.is-submitted {
+  .contact-form__submit:disabled {
+    cursor: progress;
+    opacity: 0.85;
+  }
+
+  .contact-form__submit.is-success {
     background: var(--ts-secondary);
     box-shadow: 0 6px 22px rgba(var(--ts-secondary-rgb), 0.5);
+  }
+
+  .contact-form__submit.is-error {
+    background: #ef4444;
+    box-shadow: 0 6px 22px rgba(239, 68, 68, 0.5);
+  }
+
+  .contact-form__spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    animation: contact-spin 0.7s linear infinite;
+  }
+
+  @keyframes contact-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .contact-form__status {
+    margin: 14px 0 0;
+    padding: 10px 14px;
+    border-radius: 6px;
+    background: rgba(var(--ts-secondary-rgb), 0.1);
+    border: 1px solid rgba(var(--ts-secondary-rgb), 0.3);
+    color: var(--ts-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+    text-align: center;
+  }
+
+  .contact-form__status.is-error {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #fca5a5;
+  }
+
+  /* Visually hidden submission sink for the Google Forms iframe POST. Kept at
+     1px (not display:none) so the iframe can still navigate and fire load. */
+  .contact-form__sink {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   :global(.contact-form__submit-icon) {
