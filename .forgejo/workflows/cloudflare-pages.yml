@@ -4,6 +4,19 @@ on:
   push:
     branches:
       - '**'
+    paths:
+      - ".forgejo/workflows/cloudflare-pages.yml"
+      - "eslint.config.js"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/**"
+      - "src/**"
+      - "static/**"
+      - "svelte.config.js"
+      - "tsconfig.json"
+      - "tsconfig.node.json"
+      - "vite.config.ts"
+      - "wrangler.toml"
   workflow_dispatch:
 
 jobs:
