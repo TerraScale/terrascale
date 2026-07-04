@@ -65,7 +65,7 @@ export function tokenize(code: string, lang: Lang): Token[] {
 }
 
 export const CODE_SAMPLES: Record<Lang, string> = {
-  typescript: `import { createTerraScaleClient } from '@terrascale/client';
+  typescript: `import { createTerraScaleClient } from '@terrascale/sdk';
 
 const ts = createTerraScaleClient({
   baseUrl: 'https://api.terrascale.tech',
