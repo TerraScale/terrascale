@@ -101,7 +101,9 @@ public sealed record TerraScaleBillingInvoice(
     long AmountCents,
     string Currency,
     string Status,
-    DateTimeOffset IssuedAt);
+    DateTimeOffset IssuedAt,
+    string? HostedInvoiceUrl = null,
+    string? InvoicePdf = null);
 
 /// <summary>
 /// Page of persisted Stripe invoice projections.
