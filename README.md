@@ -32,3 +32,8 @@ npm run test:integration
 
 When those URLs are not set, integration tests skip instead of substituting
 mocked HTTP.
+
+## Releases
+
+Tagged releases publish `@terrascale/sdk` to the public npm registry through
+Forgejo CI. See `docs/release.md` for the required checks and tag flow.

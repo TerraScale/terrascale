@@ -1056,11 +1056,15 @@ export class MachineClientsClient {
 export class AccessClient {
   constructor(private readonly http: TerraScaleHttp) {}
 
-  listTeamMembers(projectId?: Ulid): Promise<TerraScaleResult<Models.Page<Models.TeamMember>>> {
+  listTeamMembers(
+    projectId?: Ulid,
+    query?: Models.PageRequest,
+  ): Promise<TerraScaleResult<Models.Page<Models.TeamMember>>> {
     return this.http.request({
       method: "GET",
       path: `${projectRoot(this.http, projectId)}/access/team-members`,
       routeName: "access.teamMembers.list",
+      query,
     });
   }
 
@@ -1106,6 +1110,18 @@ export class UsageClient {
       method: "GET",
       path: `${projectRoot(this.http, projectId)}/usage`,
       routeName: "usage.project.get",
+    });
+  }
+
+  getProjectUsageWorkload(
+    range: Models.UsageWorkloadRange,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.UsageWorkload>> {
+    return this.http.request({
+      method: "GET",
+      path: `${projectRoot(this.http, projectId)}/usage/workload`,
+      routeName: "usage.project.workload",
+      query: { range },
     });
   }
 }
@@ -1480,20 +1496,39 @@ export class AdminClient {
   listPricingPlans(): Promise<TerraScaleResult<readonly Models.PricingPlan[]>> {
     return this.http.request({
       method: "GET",
-      path: `${apiRoot}/admin/pricing/plans`,
+      path: `${apiRoot}/admin/plans`,
       routeName: "admin.pricing.list",
+    });
+  }
+
+  createPricingPlan(
+    request: Models.AdminPricingPlanRequest,
+  ): Promise<TerraScaleResult<Models.PricingPlan>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/admin/plans`,
+      routeName: "admin.pricing.create",
+      body: request,
     });
   }
 
   updatePricingPlan(
     planId: Ulid,
-    request: Partial<Models.PricingPlan>,
+    request: Models.AdminPricingPlanRequest,
   ): Promise<TerraScaleResult<Models.PricingPlan>> {
     return this.http.request({
       method: "PATCH",
-      path: `${apiRoot}/admin/pricing/plans/${ulidPathSegment(planId)}`,
+      path: `${apiRoot}/admin/plans/${ulidPathSegment(planId)}`,
       routeName: "admin.pricing.update",
       body: request,
+    });
+  }
+
+  deletePricingPlan(planId: Ulid): Promise<TerraScaleResult<boolean>> {
+    return this.http.request({
+      method: "DELETE",
+      path: `${apiRoot}/admin/plans/${ulidPathSegment(planId)}`,
+      routeName: "admin.pricing.delete",
     });
   }
 

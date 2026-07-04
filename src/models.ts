@@ -521,6 +521,11 @@ export type UsageSummary = {
   readonly periodStart: Timestamp;
   readonly periodEnd: Timestamp;
   readonly metrics: readonly UsageMetric[];
+  readonly kpis: readonly UsageKpi[];
+  readonly resourceDistribution: readonly UsageSlice[];
+  readonly operationBreakdown: readonly UsageSlice[];
+  readonly databaseStorage: readonly UsageDatabaseStorage[];
+  readonly storage: UsageStorage;
 };
 
 export type UsageMetric = {
@@ -529,11 +534,56 @@ export type UsageMetric = {
   readonly unit: string;
 };
 
+export type UsageKpi = {
+  readonly name: string;
+  readonly value: number;
+  readonly formattedValue: string;
+  readonly detail: string;
+  readonly status: string;
+};
+
+export type UsageSlice = {
+  readonly name: string;
+  readonly quantity: number;
+};
+
+export type UsageDatabaseStorage = {
+  readonly databaseId: DatabaseId;
+  readonly name: string;
+  readonly documents: number;
+  readonly storageBytes: number;
+};
+
+export type UsageStorage = {
+  readonly usedBytes: number;
+  readonly limitBytes: number;
+  readonly percentUsed: number;
+  readonly status: string;
+};
+
+export type UsageWorkloadRange = "24h" | "7d" | "30d";
+
+export type UsageWorkload = {
+  readonly projectId: ProjectId;
+  readonly range: UsageWorkloadRange;
+  readonly periodStart: Timestamp;
+  readonly periodEnd: Timestamp;
+  readonly bucketSize: string;
+  readonly points: readonly UsageWorkloadPoint[];
+};
+
+export type UsageWorkloadPoint = {
+  readonly start: Timestamp;
+  readonly end: Timestamp;
+  readonly label: string;
+  readonly value: number;
+};
+
 export type BillingAccount = {
   readonly billingAccountId: Ulid;
   readonly organizationId: OrganizationId;
   readonly planId: Ulid;
-  readonly status: "active" | "past_due" | "trialing";
+  readonly status: "active" | "canceled" | "past_due" | "trialing";
 };
 
 export type CurrentOrganizationFeatureEntitlement = {
@@ -549,6 +599,8 @@ export type CurrentOrganizationLimits = {
   readonly maxTeamMembers?: number;
   readonly maxRequestsPerMonth?: number;
   readonly maxStorageGb?: number;
+  readonly maxRepositories?: number;
+  readonly maxApiKeys?: number;
 };
 
 export type CurrentOrganizationBilling = {
@@ -556,16 +608,16 @@ export type CurrentOrganizationBilling = {
   readonly status: string;
   readonly isActive: boolean;
   readonly isTrialing: boolean;
-  readonly provider?: string;
-  readonly customerId?: string;
-  readonly subscriptionId?: string;
-  readonly planId?: string;
-  readonly planName?: string;
-  readonly planType?: string;
+  readonly provider?: string | null;
+  readonly customerId?: string | null;
+  readonly subscriptionId?: string | null;
+  readonly planId?: string | null;
+  readonly planName?: string | null;
+  readonly planType?: string | null;
   readonly amount: number;
-  readonly currency?: string;
-  readonly currentPeriodStart?: Timestamp;
-  readonly currentPeriodEnd?: Timestamp;
+  readonly currency?: string | null;
+  readonly currentPeriodStart?: Timestamp | null;
+  readonly currentPeriodEnd?: Timestamp | null;
   readonly features: readonly CurrentOrganizationFeatureEntitlement[];
   readonly limits?: CurrentOrganizationLimits;
   readonly billingRoles: readonly string[];
@@ -619,6 +671,8 @@ export type Invoice = {
   readonly currency: string;
   readonly status: "draft" | "open" | "paid" | "void";
   readonly issuedAt: Timestamp;
+  readonly hostedInvoiceUrl?: string | null;
+  readonly invoicePdf?: string | null;
 };
 
 export type PricingPlan = {
@@ -626,7 +680,32 @@ export type PricingPlan = {
   readonly name: string;
   readonly currency: string;
   readonly monthlyBaseCents: number;
+  readonly annualBaseCents: number;
   readonly includedUsage: readonly UsageMetric[];
+  readonly key?: string;
+  readonly monthlyStripePriceId?: string | null;
+  readonly annualStripePriceId?: string | null;
+  readonly visible?: boolean;
+};
+
+export type AdminPricingPlanRequest = {
+  readonly key?: string;
+  readonly name?: string;
+  readonly currency?: string;
+  readonly monthlyBaseCents?: number;
+  readonly annualBaseCents?: number;
+  readonly monthlyStripePriceId?: string;
+  readonly annualStripePriceId?: string;
+  readonly visible?: boolean;
+  readonly defaultCheckout?: boolean;
+  readonly displayOrder?: number;
+  readonly maxDatabases?: number;
+  readonly maxStorageGb?: number;
+  readonly maxRequestsPerMonth?: number;
+  readonly maxTeamMembers?: number;
+  readonly maxRepositories?: number;
+  readonly maxApiKeys?: number;
+  readonly includedUsage?: readonly UsageMetric[];
 };
 
 export type AuditEvent = {

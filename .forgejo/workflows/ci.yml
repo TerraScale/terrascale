@@ -1,0 +1,39 @@
+name: SDK CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  sdk:
+    runs-on: terrascale-builder
+    container:
+      image: terrascale-builder
+    permissions:
+      contents: read
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Verify runner tools
+        run: |
+          set -euo pipefail
+          command -v node
+          command -v npm
+          node --version
+          npm --version
+
+      - name: Restore dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Integration smoke
+        run: npm run test:integration

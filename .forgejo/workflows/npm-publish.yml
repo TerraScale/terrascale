@@ -1,0 +1,51 @@
+name: Publish SDK to npm
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: terrascale-builder
+    container:
+      image: terrascale-builder
+    permissions:
+      contents: read
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Verify runner tools
+        run: |
+          set -euo pipefail
+          command -v node
+          command -v npm
+          node --version
+          npm --version
+
+      - name: Restore dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Integration smoke
+        run: npm run test:integration
+
+      - name: Publish to public npm registry
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is required to publish @terrascale/sdk." >&2
+            exit 1
+          fi
+
+          printf '//registry.npmjs.org/:_authToken=%s\nregistry=https://registry.npmjs.org/\n' "${NPM_TOKEN}" > "${HOME}/.npmrc"
+          npm publish --access public --registry=https://registry.npmjs.org/
