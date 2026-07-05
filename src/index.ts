@@ -11,6 +11,7 @@ export type {
   ApiKeysClient,
   AuditClient,
   AuthClient,
+  BackupsClient,
   BillingClient,
   DatabasesClient,
   DocumentsClient,

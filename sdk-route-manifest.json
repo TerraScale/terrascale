@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 86,
+  "routeCount": 94,
   "routes": [
     {
       "base": "auth",
@@ -468,6 +468,81 @@
       "method": "DELETE",
       "pathTemplate": "/api/v1/repositories/{repositoryId}",
       "responseType": "DeletedRepositoryResponse"
+    },
+    {
+      "base": "api",
+      "client": "backups",
+      "operation": "configurePolicy",
+      "routeName": "backups.policy.configure",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups/policy",
+      "requestType": "ConfigureBackupPolicyRequest",
+      "responseType": "BackupPolicyResponse"
+    },
+    {
+      "base": "api",
+      "client": "backups",
+      "operation": "triggerBackup",
+      "routeName": "backups.trigger",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups",
+      "requestType": "TriggerBackupRequest",
+      "responseType": "BackupJobResponse"
+    },
+    {
+      "base": "api",
+      "client": "backups",
+      "operation": "listBackups",
+      "routeName": "backups.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups",
+      "responseType": "readonly BackupJobResponse[]"
+    },
+    {
+      "base": "api",
+      "client": "backups",
+      "operation": "getBackup",
+      "routeName": "backups.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups/{backupId}",
+      "responseType": "BackupJobResponse"
+    },
+    {
+      "base": "api",
+      "client": "backups",
+      "operation": "listRestorePoints",
+      "routeName": "backups.restorePoints.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restore-points",
+      "responseType": "readonly RestorePointResponse[]"
+    },
+    {
+      "base": "api",
+      "client": "backups",
+      "operation": "startRestore",
+      "routeName": "backups.restores.start",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restores",
+      "requestType": "StartRestoreRequest",
+      "responseType": "RestoreJobResponse"
+    },
+    {
+      "base": "api",
+      "client": "backups",
+      "operation": "getRestore",
+      "routeName": "backups.restores.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restores/{restoreId}",
+      "responseType": "RestoreJobResponse"
+    },
+    {
+      "base": "api",
+      "client": "backups",
+      "operation": "listRestores",
+      "routeName": "backups.restores.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restores",
+      "responseType": "readonly RestoreJobResponse[]"
     },
     {
       "base": "api",

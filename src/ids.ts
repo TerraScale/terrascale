@@ -12,11 +12,14 @@ export type DocumentId = Ulid;
 export type UserId = Ulid;
 export type InvitationId = Ulid;
 export type ApiKeyId = Ulid;
+export type BackupId = Ulid;
+export type BackupPolicyId = Ulid;
 /** @deprecated Use `M2MClientId`; the live API calls these M2M application client IDs. */
 export type MachineClientId = Ulid;
 export type M2MClientId = Ulid;
 export type NotificationId = Ulid;
 export type AuditEventId = Ulid;
+export type RestoreId = Ulid;
 
 const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 

@@ -11,6 +11,7 @@ export function createTerraScaleClient(config: TerraScaleRuntimeConfig): TerraSc
     organizations: internal.organizations,
     databases: internal.databases,
     repositories: internal.repositories,
+    backups: internal.backups,
     documents: internal.documents,
     query: internal.query,
     schema: internal.schema,

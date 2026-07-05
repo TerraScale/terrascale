@@ -33,6 +33,14 @@ The public client follows the backed `TerraScale.API` REST surface:
 - Project auth M2M applications:
   `/api/v1/projects/{projectId}/auth/m2m-applications`, including
   create/list/rotate/revoke and OAuth token creation.
+- Backups and restores:
+  `/api/v1/projects/{projectId}/databases/{databaseId}/backups/policy`,
+  `/api/v1/projects/{projectId}/databases/{databaseId}/backups`,
+  `/api/v1/projects/{projectId}/databases/{databaseId}/backups/{backupId}`,
+  `/api/v1/projects/{projectId}/databases/{databaseId}/restore-points`, and
+  `/api/v1/projects/{projectId}/databases/{databaseId}/restores`; responses
+  use logical ULID fields such as `backupId`, `restoreId`, and
+  `restoredDatabaseId`.
 - Notifications: `/api/v1/dashboard/notifications` returns a bare
   `Notification[]`; `/api/v1/dashboard/notifications/{notificationId}:mark-read`
   returns a `Notification`; and
@@ -42,9 +50,9 @@ The public client follows the backed `TerraScale.API` REST surface:
 
 Unbacked public SDK methods are intentionally omitted until matching API
 endpoints exist. This currently excludes repository update, database
-update/region switching/environment switching, backups/restores, saved queries,
-query history, project settings, security webhooks, SSO/SCIM settings,
-organization update, invitation accept, and public project switching.
+update/region switching/environment switching, saved queries, query history,
+project settings, security webhooks, SSO/SCIM settings, organization update,
+invitation accept, and public project switching.
 
 ## Development
 

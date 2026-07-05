@@ -16,6 +16,10 @@ const documentId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAZ");
 const keyId = toUlid("01BRZ3NDEKTSV4RRFFQ69G5FAV");
 const clientId = toUlid("01CRZ3NDEKTSV4RRFFQ69G5FAV");
 const notificationId = toUlid("01DRZ3NDEKTSV4RRFFQ69G5FAV");
+const backupPolicyId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAW");
+const backupId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAV");
+const restoreId = toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV");
+const restoredDatabaseId = toUlid("01QRZ3NDEKTSV4RRFFQ69G5FAV");
 
 type CapturedRequest = {
   readonly method: string;
@@ -222,6 +226,188 @@ describe("TerraScaleClient route contracts", () => {
       "DELETE",
       `/api/v1/projects/${projectId}/databases/${databaseId}/environments/${environmentId}`,
     );
+  });
+
+  test("uses backed database backup and restore routes with public DTO shapes", async () => {
+    const backupPolicy = {
+      backupPolicyId,
+      projectId,
+      databaseId,
+      databaseName: "primary",
+      fullBackupCron: "0 2 * * *",
+      incrementalBackupCron: "0 */6 * * *",
+      retentionDays: 30,
+      disabled: false,
+      destinationType: "oci-object-storage",
+      status: "Configured",
+      createdAt: "2026-07-05T00:00:00Z",
+      updatedAt: "2026-07-05T00:00:00Z",
+    };
+    const backupJob = {
+      backupId,
+      projectId,
+      databaseId,
+      databaseName: "primary",
+      policy: "manual",
+      retention: "30d",
+      status: "Completed",
+      destinationType: "oci-object-storage",
+      hasRestorePoint: true,
+      requestedBy: "owner@terrascale.tech",
+      requestedAt: "2026-07-05T00:00:00Z",
+      updatedAt: "2026-07-05T00:01:00Z",
+      completedAt: "2026-07-05T00:02:00Z",
+      errorMessage: null,
+    };
+    const restorePoint = {
+      name: "restore-point-20260705",
+      backupId,
+      createdAt: "2026-07-05T00:02:00Z",
+      isSnapshotRestore: true,
+      isEncrypted: true,
+      isIncremental: false,
+      filesToRestore: 1,
+    };
+    const restoreJob = {
+      restoreId,
+      projectId,
+      databaseId,
+      backupId,
+      restoredDatabaseId,
+      restoredDatabaseName: "primary-restored",
+      status: "Running",
+      requestedBy: "owner@terrascale.tech",
+      requestedAt: "2026-07-05T00:03:00Z",
+      updatedAt: "2026-07-05T00:04:00Z",
+      completedAt: null,
+      errorMessage: null,
+    };
+    const { client, requests } = createCapturingClientWithResponses([
+      backupPolicy,
+      backupJob,
+      [backupJob],
+      backupJob,
+      [restorePoint],
+      restoreJob,
+      restoreJob,
+      [restoreJob],
+    ]);
+
+    const policyResult = await client.backups.configurePolicy(databaseId, {
+      fullBackupCron: "0 2 * * *",
+      incrementalBackupCron: "0 */6 * * *",
+      retentionDays: 30,
+      disabled: false,
+    });
+    assert.equal(policyResult.ok, true);
+    if (policyResult.ok) {
+      assert.deepEqual(policyResult.value, backupPolicy);
+      assert.equal("terraBaseTaskId" in policyResult.value, false);
+      assert.equal("physicalDatabaseName" in policyResult.value, false);
+    }
+    assertRequest(
+      requests[0],
+      "PUT",
+      `/api/v1/projects/${projectId}/databases/${databaseId}/backups/policy`,
+    );
+    assert.deepEqual(requests[0]?.body, {
+      fullBackupCron: "0 2 * * *",
+      incrementalBackupCron: "0 */6 * * *",
+      retentionDays: 30,
+      disabled: false,
+    });
+
+    const triggerResult = await client.backups.triggerBackup(databaseId, {
+      idempotencyKey: "manual-backup-1",
+    });
+    assert.equal(triggerResult.ok, true);
+    if (triggerResult.ok) {
+      assert.deepEqual(triggerResult.value, backupJob);
+      assert.equal("terraBaseTaskId" in triggerResult.value, false);
+      assert.equal("physicalDatabaseName" in triggerResult.value, false);
+    }
+    assertRequest(
+      requests[1],
+      "POST",
+      `/api/v1/projects/${projectId}/databases/${databaseId}/backups`,
+    );
+    assert.deepEqual(requests[1]?.body, { idempotencyKey: "manual-backup-1" });
+
+    const listBackupsResult = await client.backups.listBackups(databaseId, { skip: 5, take: 10 });
+    assert.equal(listBackupsResult.ok, true);
+    if (listBackupsResult.ok) {
+      assert.deepEqual(listBackupsResult.value, [backupJob]);
+      assert.equal("items" in listBackupsResult.value, false);
+    }
+    assertRequest(
+      requests[2],
+      "GET",
+      `/api/v1/projects/${projectId}/databases/${databaseId}/backups`,
+    );
+    assert.equal(requests[2]?.url.searchParams.get("skip"), "5");
+    assert.equal(requests[2]?.url.searchParams.get("take"), "10");
+
+    await client.backups.getBackup(databaseId, backupId);
+    assertRequest(
+      requests[3],
+      "GET",
+      `/api/v1/projects/${projectId}/databases/${databaseId}/backups/${backupId}`,
+    );
+
+    const restorePointsResult = await client.backups.listRestorePoints(databaseId);
+    assert.equal(restorePointsResult.ok, true);
+    if (restorePointsResult.ok) {
+      assert.deepEqual(restorePointsResult.value, [restorePoint]);
+      const [capturedRestorePoint] = restorePointsResult.value;
+      assert.ok(capturedRestorePoint);
+      assert.equal("terraBaseDatabaseName" in capturedRestorePoint, false);
+    }
+    assertRequest(
+      requests[4],
+      "GET",
+      `/api/v1/projects/${projectId}/databases/${databaseId}/restore-points`,
+    );
+
+    const startRestoreResult = await client.backups.startRestore(databaseId, {
+      backupId,
+      idempotencyKey: "restore-1",
+    });
+    assert.equal(startRestoreResult.ok, true);
+    if (startRestoreResult.ok) {
+      assert.equal(startRestoreResult.value.restoredDatabaseId, restoredDatabaseId);
+      assert.equal("terraBaseTaskId" in startRestoreResult.value, false);
+      assert.equal("physicalRestoredDatabaseName" in startRestoreResult.value, false);
+    }
+    assertRequest(
+      requests[5],
+      "POST",
+      `/api/v1/projects/${projectId}/databases/${databaseId}/restores`,
+    );
+    assert.deepEqual(requests[5]?.body, { backupId, idempotencyKey: "restore-1" });
+
+    await client.backups.getRestore(databaseId, restoreId);
+    assertRequest(
+      requests[6],
+      "GET",
+      `/api/v1/projects/${projectId}/databases/${databaseId}/restores/${restoreId}`,
+    );
+
+    const listRestoresResult = await client.backups.listRestores(databaseId, {
+      skip: 2,
+      take: 3,
+    });
+    assert.equal(listRestoresResult.ok, true);
+    if (listRestoresResult.ok) {
+      assert.deepEqual(listRestoresResult.value, [restoreJob]);
+      assert.equal("items" in listRestoresResult.value, false);
+    }
+    assertRequest(
+      requests[7],
+      "GET",
+      `/api/v1/projects/${projectId}/databases/${databaseId}/restores`,
+    );
+    assert.equal(requests[7]?.url.searchParams.get("skip"), "2");
+    assert.equal(requests[7]?.url.searchParams.get("take"), "3");
   });
 
   test("uses project auth API key wrappers and rotate/delete routes", async () => {

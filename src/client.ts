@@ -53,6 +53,7 @@ export class TerraScaleClient {
   readonly organizations: OrganizationsClient;
   readonly databases: DatabasesClient;
   readonly repositories: RepositoriesClient;
+  readonly backups: BackupsClient;
   readonly documents: DocumentsClient;
   readonly query: QueryClient;
   readonly schema: SchemaClient;
@@ -76,6 +77,7 @@ export class TerraScaleClient {
     this.organizations = new OrganizationsClient(this.http);
     this.databases = new DatabasesClient(this.http);
     this.repositories = new RepositoriesClient(this.http);
+    this.backups = new BackupsClient(this.http);
     this.documents = new DocumentsClient(this.http);
     this.query = new QueryClient(this.http);
     this.schema = new SchemaClient(this.http);
@@ -637,6 +639,110 @@ export class RepositoriesClient {
       path: repositoryRoot(this.http, scope),
       routeName: "repositories.delete",
       query,
+    });
+  }
+}
+
+export class BackupsClient {
+  constructor(private readonly http: TerraScaleHttp) {}
+
+  configurePolicy(
+    databaseId: Ulid,
+    request: Models.ConfigureBackupPolicyRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.BackupPolicyResponse>> {
+    return this.http.request({
+      method: "PUT",
+      path: `${databaseRoot(this.http, { projectId, databaseId })}/backups/policy`,
+      routeName: "backups.policy.configure",
+      body: request,
+    });
+  }
+
+  triggerBackup(
+    databaseId: Ulid,
+    request?: Models.TriggerBackupRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.BackupJobResponse>> {
+    return this.http.request({
+      method: "POST",
+      path: `${databaseRoot(this.http, { projectId, databaseId })}/backups`,
+      routeName: "backups.trigger",
+      body: request,
+    });
+  }
+
+  listBackups(
+    databaseId: Ulid,
+    query?: Models.BackupListQuery,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<readonly Models.BackupJobResponse[]>> {
+    return this.http.request({
+      method: "GET",
+      path: `${databaseRoot(this.http, { projectId, databaseId })}/backups`,
+      routeName: "backups.list",
+      query: query ?? { skip: 0, take: 100 },
+    });
+  }
+
+  getBackup(
+    databaseId: Ulid,
+    backupId: Ulid,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.BackupJobResponse>> {
+    return this.http.request({
+      method: "GET",
+      path: `${databaseRoot(this.http, { projectId, databaseId })}/backups/${ulidPathSegment(backupId)}`,
+      routeName: "backups.get",
+    });
+  }
+
+  listRestorePoints(
+    databaseId: Ulid,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<readonly Models.RestorePointResponse[]>> {
+    return this.http.request({
+      method: "GET",
+      path: `${databaseRoot(this.http, { projectId, databaseId })}/restore-points`,
+      routeName: "backups.restorePoints.list",
+    });
+  }
+
+  startRestore(
+    databaseId: Ulid,
+    request: Models.StartRestoreRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.RestoreJobResponse>> {
+    return this.http.request({
+      method: "POST",
+      path: `${databaseRoot(this.http, { projectId, databaseId })}/restores`,
+      routeName: "backups.restores.start",
+      body: request,
+    });
+  }
+
+  getRestore(
+    databaseId: Ulid,
+    restoreId: Ulid,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.RestoreJobResponse>> {
+    return this.http.request({
+      method: "GET",
+      path: `${databaseRoot(this.http, { projectId, databaseId })}/restores/${ulidPathSegment(restoreId)}`,
+      routeName: "backups.restores.get",
+    });
+  }
+
+  listRestores(
+    databaseId: Ulid,
+    query?: Models.RestoreListQuery,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<readonly Models.RestoreJobResponse[]>> {
+    return this.http.request({
+      method: "GET",
+      path: `${databaseRoot(this.http, { projectId, databaseId })}/restores`,
+      routeName: "backups.restores.list",
+      query: query ?? { skip: 0, take: 100 },
     });
   }
 }

@@ -1,6 +1,8 @@
 import type {
   ApiKeyId,
   AuditEventId,
+  BackupId,
+  BackupPolicyId,
   DatabaseId,
   DocumentId,
   EnvironmentId,
@@ -10,6 +12,7 @@ import type {
   OrganizationId,
   ProjectId,
   RepositoryId,
+  RestoreId,
   Ulid,
   UserId,
 } from "./ids.js";
@@ -344,6 +347,83 @@ export type DeletedProjectDatabaseEnvironmentResponse = {
   readonly physicalDatabaseDeleted: boolean;
   readonly repositoriesDeleted: number;
 };
+
+export type ConfigureBackupPolicyRequest = {
+  readonly fullBackupCron: string;
+  readonly incrementalBackupCron?: string | null;
+  readonly retentionDays?: number;
+  readonly disabled?: boolean;
+};
+
+export type BackupPolicyResponse = {
+  readonly backupPolicyId: BackupPolicyId;
+  readonly projectId: ProjectId;
+  readonly databaseId: DatabaseId;
+  readonly databaseName: string;
+  readonly fullBackupCron: string;
+  readonly incrementalBackupCron?: string | null;
+  readonly retentionDays: number;
+  readonly disabled: boolean;
+  readonly destinationType: string;
+  readonly status: string;
+  readonly createdAt: Timestamp;
+  readonly updatedAt: Timestamp;
+};
+
+export type TriggerBackupRequest = {
+  readonly idempotencyKey?: string | null;
+};
+
+export type BackupJobResponse = {
+  readonly backupId: BackupId;
+  readonly projectId: ProjectId;
+  readonly databaseId: DatabaseId;
+  readonly databaseName: string;
+  readonly policy: string;
+  readonly retention: string;
+  readonly status: string;
+  readonly destinationType: string;
+  readonly hasRestorePoint: boolean;
+  readonly requestedBy: string;
+  readonly requestedAt: Timestamp;
+  readonly updatedAt: Timestamp;
+  readonly completedAt?: Timestamp | null;
+  readonly errorMessage?: string | null;
+};
+
+export type BackupListQuery = PageRequest;
+
+export type RestorePointResponse = {
+  readonly name: string;
+  readonly backupId?: BackupId | null;
+  readonly createdAt: Timestamp;
+  readonly isSnapshotRestore: boolean;
+  readonly isEncrypted: boolean;
+  readonly isIncremental: boolean;
+  readonly filesToRestore: number;
+};
+
+export type StartRestoreRequest = {
+  readonly backupId: BackupId;
+  readonly idempotencyKey?: string | null;
+};
+
+export type RestoreJobResponse = {
+  readonly restoreId: RestoreId;
+  readonly projectId: ProjectId;
+  readonly databaseId: DatabaseId;
+  readonly backupId: BackupId;
+  readonly restoredDatabaseId: DatabaseId;
+  readonly restoredDatabaseName: string;
+  readonly status: string;
+  readonly requestedBy: string;
+  readonly requestedAt: Timestamp;
+  readonly updatedAt: Timestamp;
+  readonly completedAt?: Timestamp | null;
+  readonly errorMessage?: string | null;
+};
+
+export type RestoreListQuery = PageRequest;
 
 export type RepositoryScoped = {
   readonly repositoryId: RepositoryId;

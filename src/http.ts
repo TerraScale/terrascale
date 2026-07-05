@@ -18,6 +18,7 @@ export type TerraScaleRouteName =
   | `apiKeys.${string}`
   | `audit.${string}`
   | `auth.${string}`
+  | `backups.${string}`
   | `billing.${string}`
   | `dashboard.${string}`
   | `databases.${string}`

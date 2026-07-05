@@ -10,6 +10,7 @@ import { toUlid, type Ulid } from "./ids.js";
 const sampleIds = {
   apiKeyId: toUlid("01BRZ3NDEKTSV4RRFFQ69G5FAV"),
   auditEventId: toUlid("01FRZ3NDEKTSV4RRFFQ69G5FAV"),
+  backupId: toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAV"),
   clientId: toUlid("01CRZ3NDEKTSV4RRFFQ69G5FAV"),
   databaseId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
   documentId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
@@ -20,6 +21,7 @@ const sampleIds = {
   planId: toUlid("01HRZ3NDEKTSV4RRFFQ69G5FAV"),
   projectId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
   repositoryId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAY"),
+  restoreId: toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV"),
   sessionId: toUlid("01JRZ3NDEKTSV4RRFFQ69G5FAV"),
   userId: toUlid("01KRZ3NDEKTSV4RRFFQ69G5FAV"),
 } as const;
@@ -627,6 +629,67 @@ const captureOperations: readonly CaptureOperation[] = [
     operation: "delete",
     invoke: (client) =>
       client.repositories.delete({ repositoryId: sampleIds.repositoryId }, { deleteDocuments: true }),
+  },
+  {
+    client: "backups",
+    operation: "configurePolicy",
+    defaultProject: true,
+    invoke: (client) =>
+      client.backups.configurePolicy(sampleIds.databaseId, {
+        fullBackupCron: "0 2 * * *",
+        incrementalBackupCron: "0 */6 * * *",
+        retentionDays: 30,
+        disabled: false,
+      }),
+  },
+  {
+    client: "backups",
+    operation: "triggerBackup",
+    defaultProject: true,
+    invoke: (client) =>
+      client.backups.triggerBackup(sampleIds.databaseId, {
+        idempotencyKey: "manual-backup-1",
+      }),
+  },
+  {
+    client: "backups",
+    operation: "listBackups",
+    defaultProject: true,
+    invoke: (client) => client.backups.listBackups(sampleIds.databaseId, { skip: 0, take: 25 }),
+  },
+  {
+    client: "backups",
+    operation: "getBackup",
+    defaultProject: true,
+    invoke: (client) => client.backups.getBackup(sampleIds.databaseId, sampleIds.backupId),
+  },
+  {
+    client: "backups",
+    operation: "listRestorePoints",
+    defaultProject: true,
+    invoke: (client) => client.backups.listRestorePoints(sampleIds.databaseId),
+  },
+  {
+    client: "backups",
+    operation: "startRestore",
+    defaultProject: true,
+    invoke: (client) =>
+      client.backups.startRestore(sampleIds.databaseId, {
+        backupId: sampleIds.backupId,
+        idempotencyKey: "restore-1",
+      }),
+  },
+  {
+    client: "backups",
+    operation: "getRestore",
+    defaultProject: true,
+    invoke: (client) => client.backups.getRestore(sampleIds.databaseId, sampleIds.restoreId),
+  },
+  {
+    client: "backups",
+    operation: "listRestores",
+    defaultProject: true,
+    invoke: (client) => client.backups.listRestores(sampleIds.databaseId, { skip: 0, take: 25 }),
   },
   {
     client: "documents",
