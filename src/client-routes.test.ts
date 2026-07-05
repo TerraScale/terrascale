@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { describe, test } from "node:test";
 
+import { capturePublicClientRoutes } from "./client-route-capture.js";
 import { createTerraScaleClient } from "./factory.js";
 import type { TerraScaleClient } from "./factory.js";
 import { toUlid, type Ulid } from "./ids.js";
@@ -22,7 +24,29 @@ type CapturedRequest = {
   readonly body: unknown;
 };
 
+type ManifestRoute = {
+  readonly base: string;
+  readonly client: string;
+  readonly method: string;
+  readonly operation: string;
+  readonly pathTemplate: string;
+  readonly routeName: string;
+};
+
 describe("TerraScaleClient route contracts", () => {
+  test("keeps the generated SDK route manifest aligned with captured public routes", async () => {
+    const manifestUrl = new URL("../sdk-route-manifest.json", import.meta.url);
+    const manifest = JSON.parse(await readFile(manifestUrl, "utf8")) as {
+      readonly routes: readonly ManifestRoute[];
+    };
+    const capturedRoutes = await capturePublicClientRoutes();
+
+    assert.deepEqual(
+      manifest.routes.map(routeManifestCore),
+      capturedRoutes.map(routeManifestCore),
+    );
+  });
+
   test("public factory hides admin and dashboard clients at runtime", () => {
     const { client } = createCapturingClient({});
     const runtimeClient = client as TerraScaleClient & {
@@ -432,4 +456,15 @@ function assertRequest(
   assert.ok(request, "expected a captured request");
   assert.equal(request.method, method);
   assert.equal(request.url.pathname, pathname);
+}
+
+function routeManifestCore(route: ManifestRoute): ManifestRoute {
+  return {
+    base: route.base,
+    client: route.client,
+    method: route.method,
+    operation: route.operation,
+    pathTemplate: route.pathTemplate,
+    routeName: route.routeName,
+  };
 }

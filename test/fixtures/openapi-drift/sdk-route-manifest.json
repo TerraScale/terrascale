@@ -1,0 +1,25 @@
+{
+  "manifestVersion": 1,
+  "routeCount": 2,
+  "routes": [
+    {
+      "base": "api",
+      "client": "widgets",
+      "operation": "create",
+      "routeName": "widgets.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/widgets",
+      "requestType": "CreateWidgetRequest",
+      "responseType": "Widget"
+    },
+    {
+      "base": "api",
+      "client": "widgets",
+      "operation": "get",
+      "routeName": "widgets.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/widgets/{widgetId}",
+      "responseType": "Widget"
+    }
+  ]
+}

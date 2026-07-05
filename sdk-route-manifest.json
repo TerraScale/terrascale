@@ -1,0 +1,817 @@
+{
+  "manifestVersion": 1,
+  "source": {
+    "client": "src/client.ts",
+    "capture": "src/client-route-capture.ts"
+  },
+  "routeCount": 86,
+  "routes": [
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "getSession",
+      "routeName": "auth.session.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/auth/me",
+      "responseType": "AuthMeResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "getCurrentBilling",
+      "routeName": "auth.billing.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/auth/me/billing",
+      "responseType": "CurrentOrganizationBilling"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "evaluateBillingGuard",
+      "routeName": "auth.billing.guard",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/me/billing/guard",
+      "requestType": "BillingGuardRequest",
+      "responseType": "BillingGuardResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "register:global",
+      "routeName": "auth.register",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/signup",
+      "requestType": "RegisterRequest",
+      "responseType": "SignupResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "register:project",
+      "routeName": "auth.register",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/signup",
+      "requestType": "RegisterRequest",
+      "responseType": "SignupResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "verifyEmail:global",
+      "routeName": "auth.verifyEmail",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/verify-email",
+      "requestType": "VerifyEmailRequest",
+      "responseType": "SignupResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "verifyEmail:project",
+      "routeName": "auth.verifyEmail",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/verify-email",
+      "requestType": "VerifyEmailRequest",
+      "responseType": "SignupResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "resendVerification:global",
+      "routeName": "auth.resendVerification",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/resend-verification",
+      "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "resendVerification:project",
+      "routeName": "auth.resendVerification",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/resend-verification",
+      "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "signIn:global",
+      "routeName": "auth.signIn",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/login",
+      "requestType": "SignInRequest",
+      "responseType": "PasswordLoginResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "signIn:project",
+      "routeName": "auth.signIn",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/login",
+      "requestType": "SignInRequest",
+      "responseType": "PasswordLoginResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "forgotPassword:global",
+      "routeName": "auth.forgotPassword",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/forgot-password",
+      "requestType": "PasswordResetRequest",
+      "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "forgotPassword:project",
+      "routeName": "auth.forgotPassword",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/forgot-password",
+      "requestType": "PasswordResetRequest",
+      "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "resetPassword:global",
+      "routeName": "auth.resetPassword",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/reset-password",
+      "requestType": "CompletePasswordResetRequest",
+      "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "resetPassword:project",
+      "routeName": "auth.resetPassword",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/reset-password",
+      "requestType": "CompletePasswordResetRequest",
+      "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "requestMagicLink:global",
+      "routeName": "auth.magicLink.request",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/passwordless/magic-link",
+      "requestType": "MagicLinkRequest",
+      "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "requestMagicLink:project",
+      "routeName": "auth.magicLink.request",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/passwordless/magic-link",
+      "requestType": "MagicLinkRequest",
+      "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "completeMagicLink:global",
+      "routeName": "auth.magicLink.complete",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/passwordless/magic-link/complete",
+      "requestType": "CompleteMagicLinkRequest",
+      "responseType": "AuthTokenResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "completeMagicLink:project",
+      "routeName": "auth.magicLink.complete",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/passwordless/magic-link/complete",
+      "requestType": "CompleteMagicLinkRequest",
+      "responseType": "AuthTokenResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "refresh:global",
+      "routeName": "auth.token.refresh",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/refresh",
+      "responseType": "AuthTokenResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "refresh:project",
+      "routeName": "auth.token.refresh",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/refresh",
+      "responseType": "AuthTokenResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "signOut:global",
+      "routeName": "auth.signOut",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/logout",
+      "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "signOut:project",
+      "routeName": "auth.signOut",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/logout",
+      "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "listSessions",
+      "routeName": "auth.sessions.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/account/sessions",
+      "responseType": "ListAccountSessionsResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "revokeSession",
+      "routeName": "auth.sessions.revoke",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/account/sessions/{sessionId}",
+      "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "revokeOtherSessions",
+      "routeName": "auth.sessions.revokeOther",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/account/sessions",
+      "responseType": "void"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "list",
+      "routeName": "organizations.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations",
+      "responseType": "Page<Organization>"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "create",
+      "routeName": "organizations.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations",
+      "requestType": "CreateOrganizationRequest",
+      "responseType": "Organization"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "get",
+      "routeName": "organizations.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}",
+      "responseType": "Organization"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "listProjects",
+      "routeName": "organizations.projects.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/projects",
+      "responseType": "Page<Project>"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "listUsers",
+      "routeName": "organizations.users.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/users",
+      "responseType": "Page<OrganizationUser>"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "createProject",
+      "routeName": "organizations.projects.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/projects",
+      "requestType": "CreateProjectRequest",
+      "responseType": "Project"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "getProject",
+      "routeName": "organizations.projects.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}",
+      "responseType": "Project"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "updateProject",
+      "routeName": "organizations.projects.update",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/projects/{projectId}",
+      "requestType": "UpdateProjectRequest",
+      "responseType": "Project"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "listInvitations",
+      "routeName": "organizations.invitations.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations",
+      "responseType": "Page<Invitation>"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "createInvitation",
+      "routeName": "organizations.invitations.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations",
+      "requestType": "CreateInvitationRequest",
+      "responseType": "Invitation"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "revokeInvitation",
+      "routeName": "organizations.invitations.revoke",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:revoke",
+      "responseType": "Invitation"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "list",
+      "routeName": "databases.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases",
+      "responseType": "readonly ProjectDatabase[]"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "create",
+      "routeName": "databases.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases",
+      "requestType": "CreateDatabaseRequest",
+      "responseType": "ProjectDatabase"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "get",
+      "routeName": "databases.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}",
+      "responseType": "ProjectDatabase"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "delete",
+      "routeName": "databases.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}",
+      "responseType": "DeletedProjectDatabaseResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "listEnvironments",
+      "routeName": "databases.environments.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments",
+      "responseType": "readonly DatabaseEnvironment[]"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "createEnvironment",
+      "routeName": "databases.environments.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments",
+      "requestType": "CreateDatabaseEnvironmentRequest",
+      "responseType": "DatabaseEnvironment"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "getEnvironment",
+      "routeName": "databases.environments.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments/{environmentId}",
+      "responseType": "DatabaseEnvironment"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "deleteEnvironment",
+      "routeName": "databases.environments.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments/{environmentId}",
+      "responseType": "DeletedProjectDatabaseEnvironmentResponse"
+    },
+    {
+      "base": "api",
+      "client": "repositories",
+      "operation": "list",
+      "routeName": "repositories.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/repositories",
+      "responseType": "readonly RepositoryDefinition[]"
+    },
+    {
+      "base": "api",
+      "client": "repositories",
+      "operation": "create",
+      "routeName": "repositories.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/repositories",
+      "requestType": "CreateRepositoryRequest",
+      "responseType": "RepositoryDefinition"
+    },
+    {
+      "base": "api",
+      "client": "repositories",
+      "operation": "get",
+      "routeName": "repositories.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}",
+      "responseType": "RepositoryDefinition"
+    },
+    {
+      "base": "api",
+      "client": "repositories",
+      "operation": "delete",
+      "routeName": "repositories.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}",
+      "responseType": "DeletedRepositoryResponse"
+    },
+    {
+      "base": "api",
+      "client": "documents",
+      "operation": "list",
+      "routeName": "documents.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents",
+      "responseType": "DocumentPageResponse<TDocument>"
+    },
+    {
+      "base": "api",
+      "client": "documents",
+      "operation": "create",
+      "routeName": "documents.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents",
+      "responseType": "DocumentResponse<TDocument>"
+    },
+    {
+      "base": "api",
+      "client": "documents",
+      "operation": "get",
+      "routeName": "documents.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/{documentId}",
+      "responseType": "DocumentResponse<TDocument>"
+    },
+    {
+      "base": "api",
+      "client": "documents",
+      "operation": "put",
+      "routeName": "documents.put",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/{documentId}",
+      "responseType": "DocumentResponse<TDocument>"
+    },
+    {
+      "base": "api",
+      "client": "documents",
+      "operation": "patch",
+      "routeName": "documents.patch",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/{documentId}",
+      "responseType": "DocumentResponse<TDocument>"
+    },
+    {
+      "base": "api",
+      "client": "documents",
+      "operation": "batch",
+      "routeName": "documents.batch",
+      "method": "POST",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/batch",
+      "requestType": "DocumentBatchRequest<TDocument>",
+      "responseType": "DocumentBatchResponse<TDocument>"
+    },
+    {
+      "base": "api",
+      "client": "documents",
+      "operation": "delete",
+      "routeName": "documents.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/{documentId}",
+      "responseType": "DeletedDocumentResponse"
+    },
+    {
+      "base": "api",
+      "client": "query",
+      "operation": "execute",
+      "routeName": "query.execute",
+      "method": "POST",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/tql",
+      "requestType": "QueryRequest",
+      "responseType": "DocumentPageResponse<TDocument>"
+    },
+    {
+      "base": "api",
+      "client": "schema",
+      "operation": "get",
+      "routeName": "schema.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/schema",
+      "responseType": "RepositorySchema"
+    },
+    {
+      "base": "api",
+      "client": "schema",
+      "operation": "validate",
+      "routeName": "schema.validate",
+      "method": "POST",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/schema/validate",
+      "requestType": "ValidateRepositorySchemaRequest",
+      "responseType": "RepositorySchemaValidationResponse"
+    },
+    {
+      "base": "api",
+      "client": "schema",
+      "operation": "configure",
+      "routeName": "schema.configure",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/schema",
+      "requestType": "ConfigureRepositorySchemaRequest",
+      "responseType": "RepositorySchema"
+    },
+    {
+      "base": "api",
+      "client": "apiKeys",
+      "operation": "list",
+      "routeName": "apiKeys.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/api-keys",
+      "responseType": "ListApiKeysResponse"
+    },
+    {
+      "base": "api",
+      "client": "apiKeys",
+      "operation": "create",
+      "routeName": "apiKeys.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/api-keys",
+      "requestType": "CreateApiKeyRequest",
+      "responseType": "CreatedApiKey"
+    },
+    {
+      "base": "api",
+      "client": "apiKeys",
+      "operation": "rotate",
+      "routeName": "apiKeys.rotate",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/api-keys/{apiKeyId}/rotate",
+      "responseType": "RotatedApiKey"
+    },
+    {
+      "base": "api",
+      "client": "apiKeys",
+      "operation": "revoke",
+      "routeName": "apiKeys.revoke",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/api-keys/{apiKeyId}",
+      "responseType": "RevokedApiKey"
+    },
+    {
+      "base": "api",
+      "client": "m2m",
+      "operation": "list",
+      "routeName": "m2m.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m-applications",
+      "responseType": "ListM2MApplicationsResponse"
+    },
+    {
+      "base": "api",
+      "client": "m2m",
+      "operation": "create",
+      "routeName": "m2m.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m-applications",
+      "requestType": "CreateM2MApplicationRequest",
+      "responseType": "CreatedM2MApplication"
+    },
+    {
+      "base": "api",
+      "client": "m2m",
+      "operation": "rotate",
+      "routeName": "m2m.rotate",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m-applications/{clientId}/rotate",
+      "responseType": "RotatedMachineClientSecret"
+    },
+    {
+      "base": "api",
+      "client": "m2m",
+      "operation": "revoke",
+      "routeName": "m2m.revoke",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m-applications/{clientId}",
+      "responseType": "RevokedM2MApplication"
+    },
+    {
+      "base": "api",
+      "client": "m2m",
+      "operation": "createToken",
+      "routeName": "m2m.token.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m/token",
+      "requestType": "M2MTokenRequest",
+      "responseType": "M2MTokenResponse"
+    },
+    {
+      "base": "api",
+      "client": "access",
+      "operation": "listTeamMembers",
+      "routeName": "access.teamMembers.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/access/team-members",
+      "responseType": "Page<TeamMember>"
+    },
+    {
+      "base": "api",
+      "client": "access",
+      "operation": "addTeamMember",
+      "routeName": "access.teamMembers.add",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/access/team-members",
+      "requestType": "AddTeamMemberRequest",
+      "responseType": "TeamMember"
+    },
+    {
+      "base": "api",
+      "client": "access",
+      "operation": "updateTeamMember",
+      "routeName": "access.teamMembers.update",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/projects/{projectId}/access/team-members/{userId}",
+      "requestType": "UpdateTeamMemberRequest",
+      "responseType": "TeamMember"
+    },
+    {
+      "base": "api",
+      "client": "access",
+      "operation": "removeTeamMember",
+      "routeName": "access.teamMembers.remove",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}/access/team-members/{userId}",
+      "responseType": "void"
+    },
+    {
+      "base": "api",
+      "client": "usage",
+      "operation": "getProjectUsage",
+      "routeName": "usage.project.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/usage",
+      "responseType": "UsageSummary"
+    },
+    {
+      "base": "api",
+      "client": "usage",
+      "operation": "getProjectUsageWorkload",
+      "routeName": "usage.project.workload",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/usage/workload",
+      "responseType": "UsageWorkload"
+    },
+    {
+      "base": "api",
+      "client": "billing",
+      "operation": "getAccount",
+      "routeName": "billing.account.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/billing",
+      "responseType": "BillingAccount"
+    },
+    {
+      "base": "api",
+      "client": "billing",
+      "operation": "listInvoices",
+      "routeName": "billing.invoices.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/billing/invoices",
+      "responseType": "Page<Invoice>"
+    },
+    {
+      "base": "api",
+      "client": "billing",
+      "operation": "createCheckoutSession",
+      "routeName": "billing.checkoutSessions.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/billing/checkout-sessions",
+      "requestType": "CreateCheckoutSessionRequest",
+      "responseType": "CheckoutSession"
+    },
+    {
+      "base": "api",
+      "client": "billing",
+      "operation": "createPortalSession",
+      "routeName": "billing.portalSessions.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/billing/portal-sessions",
+      "responseType": "{ readonly url: string }"
+    },
+    {
+      "base": "api",
+      "client": "pricing",
+      "operation": "listPlans",
+      "routeName": "pricing.plans.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/pricing/plans",
+      "responseType": "readonly PricingPlan[]"
+    },
+    {
+      "base": "api",
+      "client": "audit",
+      "operation": "list",
+      "routeName": "audit.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/audit",
+      "responseType": "Page<AuditEvent>"
+    },
+    {
+      "base": "api",
+      "client": "audit",
+      "operation": "get",
+      "routeName": "audit.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/audit/{auditEventId}",
+      "responseType": "AuditEvent"
+    },
+    {
+      "base": "api",
+      "client": "notifications",
+      "operation": "list",
+      "routeName": "notifications.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/dashboard/notifications",
+      "responseType": "readonly Notification[]"
+    },
+    {
+      "base": "api",
+      "client": "notifications",
+      "operation": "markRead",
+      "routeName": "notifications.markRead",
+      "method": "POST",
+      "pathTemplate": "/api/v1/dashboard/notifications/{notificationId}:mark-read",
+      "responseType": "Notification"
+    },
+    {
+      "base": "api",
+      "client": "notifications",
+      "operation": "markAllRead",
+      "routeName": "notifications.markAllRead",
+      "method": "POST",
+      "pathTemplate": "/api/v1/dashboard/notifications:mark-all-read",
+      "responseType": "MarkAllDashboardNotificationsReadResponse"
+    },
+    {
+      "base": "api",
+      "client": "security",
+      "operation": "updateSettings",
+      "routeName": "security.settings.update",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/projects/{projectId}/security/settings",
+      "requestType": "UpdateSecuritySettingsRequest",
+      "responseType": "SecuritySettings"
+    }
+  ]
+}

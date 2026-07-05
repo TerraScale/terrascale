@@ -1,0 +1,189 @@
+#!/usr/bin/env node
+
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import ts from "typescript";
+
+const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+const repositoryRoot = path.resolve(scriptDirectory, "..");
+const manifestPath = path.join(repositoryRoot, "sdk-route-manifest.json");
+const clientSourcePath = path.join(repositoryRoot, "src", "client.ts");
+const captureModuleUrl = pathToFileURL(
+  path.join(repositoryRoot, "dist", "client-route-capture.js"),
+).href;
+const checkOnly = process.argv.includes("--check");
+
+const { capturePublicClientRoutes } = await import(captureModuleUrl);
+let capturedRoutes;
+
+try {
+  capturedRoutes = await capturePublicClientRoutes();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+
+const routeMetadata = await readRouteMetadata();
+
+const manifest = {
+  manifestVersion: 1,
+  source: {
+    client: "src/client.ts",
+    capture: "src/client-route-capture.ts",
+  },
+  routeCount: capturedRoutes.length,
+  routes: capturedRoutes.map((route) => routeWithMetadata(route, routeMetadata.get(route.routeName))),
+};
+
+const manifestJson = `${JSON.stringify(manifest, null, 2)}\n`;
+
+if (checkOnly) {
+  const existingManifestJson = await readFile(manifestPath, "utf8");
+
+  if (existingManifestJson !== manifestJson) {
+    console.error("sdk-route-manifest.json is out of date. Run npm run generate:route-manifest.");
+    process.exit(1);
+  }
+
+  console.log(`sdk-route-manifest.json is current (${manifest.routeCount} routes).`);
+} else {
+  await writeFile(manifestPath, manifestJson);
+  console.log(`Wrote sdk-route-manifest.json with ${manifest.routeCount} routes.`);
+}
+
+function routeWithMetadata(route, metadata) {
+  return compactObject({
+    base: route.base,
+    client: route.client,
+    operation: route.operation,
+    routeName: route.routeName,
+    method: route.method,
+    pathTemplate: route.pathTemplate,
+    requestType: metadata?.requestType,
+    responseType: metadata?.responseType,
+  });
+}
+
+function compactObject(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined),
+  );
+}
+
+async function readRouteMetadata() {
+  const clientSource = await readFile(clientSourcePath, "utf8");
+  const sourceFile = ts.createSourceFile(
+    clientSourcePath,
+    clientSource,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const metadataByRouteName = new Map();
+
+  visit(sourceFile, (node) => {
+    if (!ts.isClassDeclaration(node) || node.name === undefined) {
+      return;
+    }
+
+    const clientName = node.name.text;
+    if (!clientName.endsWith("Client")) {
+      return;
+    }
+
+    for (const member of node.members) {
+      if (!ts.isMethodDeclaration(member) || member.body === undefined) {
+        continue;
+      }
+
+      const routeNames = routeNamesFromMethod(member);
+      if (routeNames.length === 0) {
+        continue;
+      }
+
+      const metadata = compactObject({
+        requestType: requestTypeFromMethod(member, sourceFile),
+        responseType: responseTypeFromMethod(member, sourceFile),
+      });
+
+      for (const routeName of routeNames) {
+        if (!metadataByRouteName.has(routeName)) {
+          metadataByRouteName.set(routeName, metadata);
+        }
+      }
+    }
+  });
+
+  return metadataByRouteName;
+}
+
+function routeNamesFromMethod(method) {
+  const routeNames = [];
+
+  visit(method.body, (node) => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "routeName"
+    ) {
+      routeNames.push(...stringLiteralsFromExpression(node.initializer));
+    }
+  });
+
+  return routeNames;
+}
+
+function stringLiteralsFromExpression(expression) {
+  if (ts.isStringLiteral(expression)) {
+    return [expression.text];
+  }
+
+  if (ts.isConditionalExpression(expression)) {
+    return [
+      ...stringLiteralsFromExpression(expression.whenTrue),
+      ...stringLiteralsFromExpression(expression.whenFalse),
+    ];
+  }
+
+  return [];
+}
+
+function requestTypeFromMethod(method, sourceFile) {
+  for (const parameter of method.parameters) {
+    if (!ts.isIdentifier(parameter.name) || parameter.name.text !== "request") {
+      continue;
+    }
+
+    if (parameter.type === undefined) {
+      continue;
+    }
+
+    return normalizeTypeText(parameter.type.getText(sourceFile));
+  }
+
+  return undefined;
+}
+
+function responseTypeFromMethod(method, sourceFile) {
+  if (method.type === undefined) {
+    return undefined;
+  }
+
+  const returnType = normalizeTypeText(method.type.getText(sourceFile));
+  const resultType = returnType.match(/^Promise<TerraScaleResult<(.+)>>$/u);
+  return resultType?.[1] ?? returnType;
+}
+
+function normalizeTypeText(typeText) {
+  return typeText
+    .replaceAll("Models.", "")
+    .replaceAll("\n", " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function visit(node, visitor) {
+  visitor(node);
+  ts.forEachChild(node, (child) => visit(child, visitor));
+}

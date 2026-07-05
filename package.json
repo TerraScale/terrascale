@@ -30,9 +30,13 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "check:openapi-drift": "node scripts/check-openapi-drift.mjs",
+    "check:route-manifest": "node scripts/generate-client-route-manifest.mjs --check",
+    "generate:route-manifest": "npm run build && node scripts/generate-client-route-manifest.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/*.test.js dist/integration/*.test.js",
-    "test:integration": "node --test dist/integration/*.test.js"
+    "test:integration": "node --test dist/integration/*.test.js",
+    "test:unit": "node --test dist/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",

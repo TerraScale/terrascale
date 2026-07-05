@@ -18,6 +18,28 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Checkout OpenAPI snapshot
+        uses: https://code.forgejo.org/actions/checkout@v6
+        with:
+          repository: TerraScale/Documentation
+          path: Documentation
+          fetch-depth: 0
+
+      - name: Resolve OpenAPI snapshot checkout
+        run: |
+          set -euo pipefail
+          documentation_sha="$(git -C Documentation rev-parse HEAD)"
+          documentation_ref="$(git -C Documentation symbolic-ref --quiet --short HEAD || true)"
+          if [ -z "${documentation_ref}" ]; then
+            documentation_ref="$(git -C Documentation for-each-ref --contains HEAD --format='%(refname:short)' refs/heads refs/remotes | head -n 1 || true)"
+          fi
+          if [ -z "${documentation_ref}" ]; then
+            documentation_ref="detached"
+          fi
+          echo "Documentation checkout: ref=${documentation_ref} sha=${documentation_sha}"
+          stat -c 'Documentation snapshot mtime: %y' Documentation/public/openapi/server.openapi.json
+          git -C Documentation log -1 --format='Documentation snapshot last commit: %H %cI %s' -- public/openapi/server.openapi.json
+
       - name: Verify runner tools
         run: |
           set -euo pipefail
@@ -34,6 +56,15 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Verify route manifest
+        run: npm run check:route-manifest
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: OpenAPI drift
+        run: npm run check:openapi-drift -- Documentation/public/openapi/server.openapi.json
 
       - name: Integration smoke
         run: npm run test:integration

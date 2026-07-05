@@ -55,6 +55,16 @@ npm run build
 npm test
 ```
 
+The SDK route manifest is generated from the route-capture tests:
+
+```bash
+npm run generate:route-manifest
+npm run check:openapi-drift -- ../Documentation/public/openapi/server.openapi.json
+```
+
+The drift checker accepts any OpenAPI JSON file path or live spec URL, including
+an AppHost-served `/openapi/v1.json`.
+
 Integration tests are expected to run against a real TerraScale AppHost stack
 and its emitted API/Auth URLs:
 
