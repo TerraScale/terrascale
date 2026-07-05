@@ -340,7 +340,7 @@
     margin-top: 6px;
   }
 
-  @media (max-width: 960px) {
+  @media (max-width: 1240px) {
     .ts-header__inner {
       padding: 0 20px;
       grid-template-columns: 1fr auto;

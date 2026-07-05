@@ -17,15 +17,15 @@ npm install
 npm run dev
 ```
 
-The app is routed with SvelteKit file-based routes and prerenders the public pages:
+The app is routed with SvelteKit file-based routes and prerenders these public pages:
 
-- `/`
-- `/about`
-- `/pricing`
-- `/contact`
-- `/security`
-- `/terms`
-- `/404`
+- `/` -> `src/pages/Home.svelte`
+- `/about` -> `src/pages/About.svelte`
+- `/pricing` -> `src/pages/Pricing.svelte`
+- `/contact` -> `src/pages/Contact.svelte`
+- `/security` -> `src/pages/Security.svelte`
+- `/terms` -> `src/pages/Terms.svelte`
+- `/404` -> `src/pages/NotFound.svelte`
 
 ## Scripts
 

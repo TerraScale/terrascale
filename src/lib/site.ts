@@ -1,6 +1,6 @@
 import type { AppIconName } from '@/lib/icons'
 
-export type RoutePath = '/' | '/contact' | '/pricing'
+export type RoutePath = '/' | '/about' | '/contact' | '/pricing' | '/security' | '/terms'
 
 export type NavEntry = {
   name: string
@@ -10,7 +10,10 @@ export type NavEntry = {
 
 export const navigation: NavEntry[] = [
   { name: 'Home', href: '/', icon: 'home' },
+  { name: 'About', href: '/about', icon: 'users' },
   { name: 'Pricing', href: '/pricing', icon: 'dollarSign' },
+  { name: 'Security', href: '/security', icon: 'shieldCheck' },
+  { name: 'Terms', href: '/terms', icon: 'bookOpen' },
   { name: 'Contact', href: '/contact', icon: 'mail' },
 ]
 
@@ -45,6 +48,7 @@ export const footerColumns: FooterColumn[] = [
   {
     title: 'Company',
     links: [
+      { name: 'About', href: '/about' },
       { name: 'Blog', href: 'https://docs.terrascale.tech/en/blog/' },
       { name: 'Contact', href: '/contact' },
     ],
@@ -63,8 +67,8 @@ export const footerColumns: FooterColumn[] = [
     title: 'Legal',
     links: [
       { name: 'Privacy', href: 'https://docs.terrascale.tech/privacy' },
-      { name: 'Terms', href: 'https://docs.terrascale.tech/terms' },
-      { name: 'Security', href: 'https://docs.terrascale.tech/security' },
+      { name: 'Terms', href: '/terms' },
+      { name: 'Security', href: '/security' },
       { name: 'SLA', href: 'https://docs.terrascale.tech/sla' },
       { name: 'Compliance', href: 'https://docs.terrascale.tech/compliance' },
     ],
