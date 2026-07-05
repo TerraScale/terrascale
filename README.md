@@ -1,8 +1,8 @@
 # TerraScale.DotNet
 
-Official C# SDK for TerraScale database and repository APIs.
+Official C# SDK for TerraScale public API families.
 
-The SDK only calls TerraScale public `/api/v1` database and repository endpoints. It does not manage users, organizations, API keys, auth providers, Dashboard internals, or TerraBase storage directly.
+The SDK calls verified TerraScale public `/api/v1` endpoints. It covers database, repository, document, schema, TQL, changes, billing, project, project database, environment, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, and restore operations. It does not call TerraBase storage directly and does not cover admin, user-management, organization-management, auth-provider, invitation, audit, or Dashboard-internal test endpoints.
 
 ## Install
 
@@ -60,6 +60,26 @@ var client = new TerraScaleClient(
     });
 ```
 
+You can also explicitly create an M2M token from the anonymous project M2M token endpoint when your application owns the client credentials. This bootstrap client does not need an API key or bearer token:
+
+```csharp
+var tokenBootstrapClient = new TerraScaleClient(
+    new HttpClient(),
+    new TerraScaleClientOptions
+    {
+        BaseAddress = new Uri("https://api.terrascale.tech")
+    });
+
+var token = await tokenBootstrapClient.M2MApplications.CreateTokenAsync(
+    projectId,
+    clientId,
+    clientSecret,
+    scope: "documents:read documents:write",
+    cancellationToken);
+```
+
+The same token exchange is also available as OAuth form-encoded and HTTP Basic client-credential requests through `CreateTokenFormAsync` and `CreateTokenWithBasicCredentialsAsync`.
+
 ## Database And Environment Selection
 
 Create, inspect, and clean up logical databases through the public database API:
@@ -71,6 +91,49 @@ var collections = await client.Collections.ListAsync(loadedDatabase.DatabaseId, 
 
 // Later, after repositories/data are no longer needed:
 await client.Databases.DeleteAsync(loadedDatabase.DatabaseId, cancellationToken: cancellationToken);
+```
+
+Use project-scoped projects, databases, and environments when working through the live project metadata API:
+
+```csharp
+var createdProject = await client.Projects.CreateAsync(
+    organizationId,
+    "orders",
+    defaultPermissionKeys: ["auth:login"],
+    cancellationToken);
+var updatedProject = await client.Projects.UpdateAsync(
+    createdProject.ProjectId,
+    "orders-production",
+    cancellationToken);
+var project = await client.Projects.GetAsync(projectId, cancellationToken);
+
+var database = await client.ProjectDatabases.CreateAsync(
+    project.ProjectId,
+    "orders-production",
+    regions: ["gru"],
+    cancellationToken);
+
+var environment = await client.Environments.CreateAsync(
+    project.ProjectId,
+    database.DatabaseId,
+    "Preview",
+    kind: "Preview",
+    cancellationToken);
+
+var usage = await client.ProjectUsage.GetAsync(project.ProjectId, cancellationToken);
+var workload = await client.ProjectUsage.GetWorkloadAsync(
+    project.ProjectId,
+    range: "7d",
+    cancellationToken);
+var environments = await client.Environments.ListAsync(
+    project.ProjectId,
+    database.DatabaseId,
+    cancellationToken: cancellationToken);
+var loadedEnvironment = await client.Environments.GetAsync(
+    project.ProjectId,
+    database.DatabaseId,
+    environment.EnvironmentId,
+    cancellationToken);
 ```
 
 Select a logical database and environment when creating repositories:
@@ -156,6 +219,52 @@ await foreach (var change in client.Changes.SubscribeRepositoryAsync(
 ```csharp
 public sealed record OrderDocument(string OrderNumber, string Status);
 ```
+
+## API Keys, M2M Applications, Notifications, And Backups
+
+```csharp
+var apiKey = await client.ApiKeys.CreateAsync(
+    projectId,
+    new TerraScaleCreateApiKeyRequest
+    {
+        Name = "Orders worker",
+        Scopes = ["documents:read", "documents:write"],
+        DatabaseId = databaseId,
+        EnvironmentId = environmentId
+    },
+    cancellationToken);
+
+var m2m = await client.M2MApplications.CreateAsync(
+    projectId,
+    new TerraScaleCreateM2MApplicationRequest
+    {
+        Name = "Orders sync",
+        Scopes = ["documents:read"]
+    },
+    cancellationToken);
+
+var notifications = await client.Notifications.ListAsync(
+    unreadOnly: true,
+    cancellationToken: cancellationToken);
+await client.Notifications.MarkAllReadAsync(cancellationToken);
+
+var policy = await client.Backups.ConfigurePolicyAsync(
+    projectId,
+    databaseId,
+    new TerraScaleConfigureBackupPolicyRequest(
+        FullBackupCron: "0 3 * * *",
+        RetentionDays: 14),
+    cancellationToken);
+
+var backup = await client.Backups.TriggerAsync(projectId, databaseId, cancellationToken: cancellationToken);
+var restore = await client.Backups.StartRestoreAsync(
+    projectId,
+    databaseId,
+    backup.BackupId,
+    cancellationToken: cancellationToken);
+```
+
+API key and M2M create/rotate responses include secrets only in that response. Store them in your application secret boundary; the SDK does not persist them.
 
 ## Retries, Idempotency, Request IDs, And Tracing
 
@@ -257,6 +366,8 @@ export TERRASCALE_E2E_PROJECT_ID=01J00000000000000000000000
 export TERRASCALE_E2E_REPOSITORY=01J00000000000000000000001
 dotnet test TerraScale.DotNet.slnx --configuration Release --no-progress
 ```
+
+Route and DTO contract tests for the newer project, auth management, notification, and backups families run locally without fake HTTP servers. Full live-stack coverage for those API families belongs in the TerraScale.API integration test suite and is intentionally not duplicated here yet.
 
 For bearer-token coverage, set `TERRASCALE_E2E_BEARER_TOKEN` with
 `TERRASCALE_E2E_BASE_URL` and `TERRASCALE_E2E_REPOSITORY`.

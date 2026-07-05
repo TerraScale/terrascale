@@ -41,6 +41,14 @@ public sealed class TerraScaleClient
         Schemas = new TerraScaleSchemasClient(this);
         Changes = new TerraScaleChangesClient(this);
         Billing = new TerraScaleBillingClient(this);
+        Projects = new TerraScaleProjectsClient(this);
+        ProjectDatabases = new TerraScaleProjectDatabasesClient(this);
+        Environments = new TerraScaleEnvironmentsClient(this);
+        ProjectUsage = new TerraScaleProjectUsageClient(this);
+        ApiKeys = new TerraScaleApiKeysClient(this);
+        M2MApplications = new TerraScaleM2MApplicationsClient(this);
+        Notifications = new TerraScaleNotificationsClient(this);
+        Backups = new TerraScaleBackupsClient(this);
     }
 
     /// <summary>
@@ -82,6 +90,46 @@ public sealed class TerraScaleClient
     /// Organization billing, invoices, Stripe checkout, and Stripe portal operations.
     /// </summary>
     public TerraScaleBillingClient Billing { get; }
+
+    /// <summary>
+    /// Project list and lookup operations.
+    /// </summary>
+    public TerraScaleProjectsClient Projects { get; }
+
+    /// <summary>
+    /// Project-scoped logical database operations.
+    /// </summary>
+    public TerraScaleProjectDatabasesClient ProjectDatabases { get; }
+
+    /// <summary>
+    /// Project database environment operations.
+    /// </summary>
+    public TerraScaleEnvironmentsClient Environments { get; }
+
+    /// <summary>
+    /// Project usage operations.
+    /// </summary>
+    public TerraScaleProjectUsageClient ProjectUsage { get; }
+
+    /// <summary>
+    /// Project auth API key management operations.
+    /// </summary>
+    public TerraScaleApiKeysClient ApiKeys { get; }
+
+    /// <summary>
+    /// Project machine-to-machine application operations.
+    /// </summary>
+    public TerraScaleM2MApplicationsClient M2MApplications { get; }
+
+    /// <summary>
+    /// Dashboard notification operations for the signed-in user.
+    /// </summary>
+    public TerraScaleNotificationsClient Notifications { get; }
+
+    /// <summary>
+    /// Project database backup, restore point, and restore operations.
+    /// </summary>
+    public TerraScaleBackupsClient Backups { get; }
 
     /// <summary>
     /// Creates a typed repository facade for document CRUD, list, and query operations.
@@ -137,7 +185,90 @@ public sealed class TerraScaleClient
         using var response = await SendWithRetriesAsync(
             method,
             requestUri,
-            body,
+            CreateJsonContentFactory(body),
+            RequestAuthenticationMode.Authenticated,
+            configureRequest: null,
+            activity,
+            cancellationToken).ConfigureAwait(false);
+
+        SetResponseTags(activity, response);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
+            throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<TResponse>(
+            jsonOptions,
+            cancellationToken).ConfigureAwait(false);
+
+        return payload ?? throw new TerraScaleApiException(
+            response.StatusCode,
+            "TerraScale returned an empty response body.",
+            errorCode: null,
+            requestId: ReadRequestId(response),
+            responseBody: null,
+            retryAfter: response.Headers.RetryAfter?.Delta);
+    }
+
+    internal async Task<TResponse> SendAnonymousJsonAsync<TResponse>(
+        HttpMethod method,
+        string requestUri,
+        object? body,
+        CancellationToken cancellationToken)
+    {
+        using var activity = StartActivity(method, requestUri);
+        using var response = await SendWithRetriesAsync(
+            method,
+            requestUri,
+            CreateJsonContentFactory(body),
+            RequestAuthenticationMode.Anonymous,
+            configureRequest: null,
+            activity,
+            cancellationToken).ConfigureAwait(false);
+
+        SetResponseTags(activity, response);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
+            throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<TResponse>(
+            jsonOptions,
+            cancellationToken).ConfigureAwait(false);
+
+        return payload ?? throw new TerraScaleApiException(
+            response.StatusCode,
+            "TerraScale returned an empty response body.",
+            errorCode: null,
+            requestId: ReadRequestId(response),
+            responseBody: null,
+            retryAfter: response.Headers.RetryAfter?.Delta);
+    }
+
+    internal async Task<TResponse> SendAnonymousFormAsync<TResponse>(
+        HttpMethod method,
+        string requestUri,
+        IReadOnlyList<KeyValuePair<string, string>> formValues,
+        AuthenticationHeaderValue? authorization,
+        CancellationToken cancellationToken)
+    {
+        using var activity = StartActivity(method, requestUri);
+        using var response = await SendWithRetriesAsync(
+            method,
+            requestUri,
+            () => new FormUrlEncodedContent(formValues),
+            RequestAuthenticationMode.Anonymous,
+            request =>
+            {
+                if (authorization is not null)
+                {
+                    request.Headers.Authorization = authorization;
+                }
+            },
             activity,
             cancellationToken).ConfigureAwait(false);
 
@@ -171,7 +302,9 @@ public sealed class TerraScaleClient
         using var response = await SendWithRetriesAsync(
             method,
             requestUri,
-            body: null,
+            CreateJsonContentFactory(body: null),
+            RequestAuthenticationMode.Authenticated,
+            configureRequest: null,
             activity,
             cancellationToken).ConfigureAwait(false);
 
@@ -300,7 +433,9 @@ public sealed class TerraScaleClient
     private async Task<HttpResponseMessage> SendWithRetriesAsync(
         HttpMethod method,
         string requestUri,
-        object? body,
+        Func<HttpContent?> contentFactory,
+        RequestAuthenticationMode authenticationMode,
+        Action<HttpRequestMessage>? configureRequest,
         Activity? activity,
         CancellationToken cancellationToken)
     {
@@ -313,7 +448,9 @@ public sealed class TerraScaleClient
             using var request = await CreateRequestAsync(
                 method,
                 requestUri,
-                body,
+                contentFactory,
+                authenticationMode,
+                configureRequest,
                 requestId,
                 idempotencyKey,
                 cancellationToken).ConfigureAwait(false);
@@ -349,7 +486,9 @@ public sealed class TerraScaleClient
     private async ValueTask<HttpRequestMessage> CreateRequestAsync(
         HttpMethod method,
         string requestUri,
-        object? body,
+        Func<HttpContent?> contentFactory,
+        RequestAuthenticationMode authenticationMode,
+        Action<HttpRequestMessage>? configureRequest,
         string? requestId,
         string? idempotencyKey,
         CancellationToken cancellationToken)
@@ -358,14 +497,20 @@ public sealed class TerraScaleClient
         try
         {
             ApplyRequestVersion(request);
-            await ApplyAuthenticationAsync(request, cancellationToken).ConfigureAwait(false);
-            ApplyRequestHeaders(request, requestId, idempotencyKey);
-
-            if (body is not null)
+            if (authenticationMode == RequestAuthenticationMode.Authenticated)
             {
-                request.Content = JsonContent.Create(body, options: jsonOptions);
+                await ApplyAuthenticationAsync(request, cancellationToken).ConfigureAwait(false);
             }
 
+            ApplyRequestHeaders(request, requestId, idempotencyKey);
+
+            var content = contentFactory();
+            if (content is not null)
+            {
+                request.Content = content;
+            }
+
+            configureRequest?.Invoke(request);
             return request;
         }
         catch
@@ -374,6 +519,11 @@ public sealed class TerraScaleClient
             throw;
         }
     }
+
+    private Func<HttpContent?> CreateJsonContentFactory(object? body) =>
+        body is null
+            ? static () => null
+            : () => JsonContent.Create(body, options: jsonOptions);
 
     private sealed class GuardedServerSentEventEnumerable<TEvent>(
         IAsyncEnumerable<TEvent> inner) : IAsyncEnumerable<TEvent>
@@ -456,7 +606,7 @@ public sealed class TerraScaleClient
 
         if (string.IsNullOrWhiteSpace(bearerToken))
         {
-            throw new InvalidOperationException("The configured bearer token provider returned an empty bearer token.");
+            throw new InvalidOperationException("Configure an API key, bearer token, or bearer token provider for authenticated TerraScale API calls.");
         }
 
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken.Trim());
@@ -622,5 +772,11 @@ public sealed class TerraScaleClient
         catch (NotSupportedException)
         {
         }
+    }
+
+    private enum RequestAuthenticationMode
+    {
+        Authenticated,
+        Anonymous
     }
 }

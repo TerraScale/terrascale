@@ -27,4 +27,12 @@ internal static class TerraScalePagination
             throw new ArgumentOutOfRangeException(nameof(take), "Take must be greater than zero.");
         }
     }
+
+    public static void ValidateLimit(int limit)
+    {
+        if (limit <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit), "Limit must be greater than zero.");
+        }
+    }
 }

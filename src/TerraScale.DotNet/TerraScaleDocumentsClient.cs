@@ -187,6 +187,7 @@ public sealed record TerraScaleDocumentBatchOperation(
 /// Document returned by TerraScale repository endpoints.
 /// </summary>
 public sealed record TerraScaleDocument(
+    string RepositoryId,
     string Repository,
     string Id,
     JsonElement Data,
@@ -197,6 +198,7 @@ public sealed record TerraScaleDocument(
 /// Page of TerraScale repository documents.
 /// </summary>
 public sealed record TerraScaleDocumentPage(
+    string RepositoryId,
     string Repository,
     int Skip,
     int Take,
@@ -207,6 +209,7 @@ public sealed record TerraScaleDocumentPage(
 /// Result of deleting a document.
 /// </summary>
 public sealed record TerraScaleDeletedDocument(
+    string RepositoryId,
     string Repository,
     string Id,
     bool Deleted);

@@ -139,6 +139,7 @@ public sealed class TerraScaleTypedRepository<TEntity>
 
     private static TerraScaleTypedDocumentPage<TEntity> Materialize(TerraScaleDocumentPage page) =>
         new(
+            page.RepositoryId,
             page.Repository,
             page.Skip,
             page.Take,
@@ -161,6 +162,7 @@ public sealed class TerraScaleTypedRepository<TEntity>
 
     private static TerraScaleTypedDocument<TEntity> Materialize(TerraScaleDocument document) =>
         new(
+            document.RepositoryId,
             document.Repository,
             document.Id,
             ReadEntity(document),
@@ -187,6 +189,7 @@ public sealed class TerraScaleTypedRepository<TEntity>
 /// Typed document returned by TerraScale repository endpoints.
 /// </summary>
 public sealed record TerraScaleTypedDocument<TEntity>(
+    string RepositoryId,
     string Repository,
     string Id,
     TEntity Data,
@@ -197,6 +200,7 @@ public sealed record TerraScaleTypedDocument<TEntity>(
 /// Page of typed TerraScale repository documents.
 /// </summary>
 public sealed record TerraScaleTypedDocumentPage<TEntity>(
+    string RepositoryId,
     string Repository,
     int Skip,
     int Take,

@@ -11,7 +11,7 @@ public sealed record TerraScaleClientOptions
     public Uri BaseAddress { get; set; } = new("http://localhost:5294", UriKind.Absolute);
 
     /// <summary>
-    /// Caller-provided TerraScale project API key. The SDK never creates or rotates credentials.
+    /// Caller-provided TerraScale project API key used to authenticate SDK requests.
     /// </summary>
     public string? ApiKey { get; set; }
 
@@ -22,7 +22,7 @@ public sealed record TerraScaleClientOptions
 
     /// <summary>
     /// Caller-provided factory for the current OAuth or machine-to-machine bearer token.
-    /// The SDK invokes this before each HTTP request and retry, but never acquires credentials itself.
+    /// The SDK invokes this before each HTTP request and retry. Automatic token acquisition and refresh stay in the caller boundary.
     /// </summary>
     public Func<CancellationToken, ValueTask<string>>? BearerTokenProvider { get; set; }
 
@@ -71,11 +71,6 @@ public sealed record TerraScaleClientOptions
         var hasApiKey = !string.IsNullOrWhiteSpace(ApiKey);
         var hasStaticBearerToken = !string.IsNullOrWhiteSpace(BearerToken);
         var hasBearerTokenProvider = BearerTokenProvider is not null;
-
-        if (!hasApiKey && !hasStaticBearerToken && !hasBearerTokenProvider)
-        {
-            throw new ArgumentException("Configure an API key, bearer token, or bearer token provider.");
-        }
 
         if (hasApiKey && (hasStaticBearerToken || hasBearerTokenProvider))
         {
