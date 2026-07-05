@@ -1,22 +1,17 @@
 import type {
   ApiKeyId,
   AuditEventId,
-  BackupId,
   DatabaseId,
   DocumentId,
   EnvironmentId,
   InvitationId,
-  MachineClientId,
+  M2MClientId,
   NotificationId,
   OrganizationId,
   ProjectId,
-  QueryHistoryId,
   RepositoryId,
-  RestoreId,
-  SavedQueryId,
   Ulid,
   UserId,
-  WebhookId,
 } from "./ids.js";
 import type { TerraScaleRegion, TerraScaleRegionCode } from "./regions.js";
 
@@ -47,10 +42,6 @@ export type DatabaseScoped = ProjectScoped & {
 
 export type EnvironmentScoped = DatabaseScoped & {
   readonly environmentId: EnvironmentId;
-};
-
-export type RepositoryScoped = EnvironmentScoped & {
-  readonly repositoryId: RepositoryId;
 };
 
 export type AuthSession = {
@@ -232,8 +223,6 @@ export type CreateOrganizationRequest = {
   readonly slug?: string;
 };
 
-export type UpdateOrganizationRequest = Partial<CreateOrganizationRequest>;
-
 export type Project = {
   readonly projectId: ProjectId;
   readonly organizationId: OrganizationId;
@@ -249,11 +238,6 @@ export type CreateProjectRequest = {
 };
 
 export type UpdateProjectRequest = Partial<CreateProjectRequest>;
-
-export type ProjectSwitchResponse = {
-  readonly projectId: ProjectId;
-  readonly selectedEnvironmentIds: Readonly<Record<string, EnvironmentId>>;
-};
 
 export type DashboardContextUser = {
   readonly userId: UserId;
@@ -308,25 +292,27 @@ export type CreateInvitationRequest = {
 };
 
 export type DatabaseStatus = "available" | "creating" | "deleting" | "failed" | "updating";
-export type EnvironmentKind = "development" | "preview" | "production";
+export type EnvironmentKind = "Custom" | "Dev" | "Preview" | "Prod";
+export type EnvironmentStatus = "Active" | "Deleted" | "Expired" | "Merged" | "Merging";
 
 export type ProjectDatabase = {
   readonly databaseId: DatabaseId;
   readonly projectId: ProjectId;
   readonly name: string;
-  readonly status: DatabaseStatus;
   readonly regions: readonly TerraScaleRegionCode[];
-  readonly environments: readonly DatabaseEnvironment[];
   readonly createdAt: Timestamp;
+  readonly version: number;
 };
 
 export type DatabaseEnvironment = {
   readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
   readonly databaseId: DatabaseId;
   readonly name: string;
   readonly kind: EnvironmentKind;
-  readonly status: DatabaseStatus;
-  readonly selected: boolean;
+  readonly status: EnvironmentStatus;
+  readonly createdAt: Timestamp;
+  readonly version: number;
 };
 
 export type CreateDatabaseRequest = {
@@ -334,167 +320,286 @@ export type CreateDatabaseRequest = {
   readonly regions?: readonly TerraScaleRegionCode[];
 };
 
-export type UpdateDatabaseRequest = {
-  readonly name?: string;
-  readonly regions?: readonly TerraScaleRegionCode[];
+export type DeletedProjectDatabaseResponse = {
+  readonly databaseId: DatabaseId;
+  readonly projectId: ProjectId;
+  readonly name: string;
+  readonly deleted: boolean;
+  readonly environmentsDeleted: number;
+  readonly physicalDatabasesDeleted: number;
+  readonly repositoriesDeleted: number;
 };
 
-export type Backup = {
-  readonly backupId: BackupId;
+export type CreateDatabaseEnvironmentRequest = {
+  readonly name: string;
+  readonly kind?: EnvironmentKind;
+};
+
+export type DeletedProjectDatabaseEnvironmentResponse = {
+  readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly databaseId: DatabaseId;
-  readonly environmentId?: EnvironmentId;
-  readonly status: "completed" | "failed" | "queued" | "running";
-  readonly createdAt: Timestamp;
-  readonly completedAt?: Timestamp;
+  readonly name: string;
+  readonly deleted: boolean;
+  readonly physicalDatabaseDeleted: boolean;
+  readonly repositoriesDeleted: number;
 };
 
-export type CreateBackupRequest = {
+export type RepositoryScoped = {
+  readonly repositoryId: RepositoryId;
+  /** @deprecated Repository routes are no longer project-scoped. */
+  readonly projectId?: ProjectId;
+  /** @deprecated Repository routes are no longer database-scoped. */
+  readonly databaseId?: DatabaseId;
+  /** @deprecated Repository routes are no longer environment-scoped. */
   readonly environmentId?: EnvironmentId;
-  readonly description?: string;
-};
-
-export type Restore = {
-  readonly restoreId: RestoreId;
-  readonly backupId: BackupId;
-  readonly databaseId: DatabaseId;
-  readonly environmentId?: EnvironmentId;
-  readonly status: "completed" | "failed" | "queued" | "running";
-  readonly createdAt: Timestamp;
-  readonly completedAt?: Timestamp;
-};
-
-export type CreateRestoreRequest = {
-  readonly environmentId?: EnvironmentId;
-  readonly targetEnvironmentId?: EnvironmentId;
 };
 
 export type RepositoryDefinition = {
   readonly repositoryId: RepositoryId;
-  readonly databaseId: DatabaseId;
-  readonly environmentId: EnvironmentId;
   readonly name: string;
+  readonly databaseId: DatabaseId;
+  readonly environmentId?: EnvironmentId | null;
   readonly collection: string;
-  readonly physicalCollection?: never;
-  readonly schemaId?: Ulid;
+  readonly schemaValidationEnabled: boolean;
   readonly createdAt: Timestamp;
+  readonly updatedAt: Timestamp;
 };
 
 export type CreateRepositoryRequest = {
   readonly name: string;
-  readonly collection: string;
-  readonly schemaId?: Ulid;
+  readonly databaseId?: DatabaseId;
+  readonly environmentId?: EnvironmentId;
+  readonly collection?: string;
+  readonly schemaValidationEnabled?: boolean;
+  readonly schema?: string;
 };
 
-export type UpdateRepositoryRequest = Partial<CreateRepositoryRequest>;
-
-export type DocumentEnvelope<TDocument extends JsonObject = JsonObject> = {
-  readonly documentId: DocumentId;
+export type DeletedRepositoryResponse = {
   readonly repositoryId: RepositoryId;
-  readonly etag?: string;
-  readonly createdAt?: Timestamp;
-  readonly updatedAt?: Timestamp;
-  readonly document: TDocument;
+  readonly name: string;
+  readonly deleted: boolean;
+  readonly documentsDeleted: number;
 };
 
-export type DocumentListQuery = PageRequest & {
-  readonly search?: string;
+export type DocumentResponse<TDocument extends JsonValue = JsonObject> = {
+  readonly repositoryId: RepositoryId;
+  readonly repository: string;
+  readonly id: DocumentId;
+  readonly data: TDocument;
+  readonly lastModified?: Timestamp | null;
+  readonly changeToken?: string | null;
 };
 
-export type PatchOperation = {
-  readonly op: "add" | "copy" | "move" | "remove" | "replace" | "test";
-  readonly path: string;
-  readonly from?: string;
-  readonly value?: JsonValue;
+export type DocumentPageResponse<TDocument extends JsonValue = JsonObject> = {
+  readonly repositoryId: RepositoryId;
+  readonly repository: string;
+  readonly skip: number;
+  readonly take: number;
+  readonly total: number;
+  readonly items: readonly DocumentResponse<TDocument>[];
+};
+
+export type DocumentListQuery = PageRequest;
+
+export type UpsertDocumentRequest<TDocument extends JsonValue = JsonObject> = {
+  readonly data: TDocument;
+};
+
+export type PatchDocumentRequest<TDocument extends JsonValue = JsonObject> = {
+  readonly data: TDocument;
+};
+
+export type DocumentBatchOperationRequest<TDocument extends JsonValue = JsonObject> = {
+  readonly operation: "create" | "delete" | "patch" | "upsert" | string;
+  readonly documentId?: DocumentId;
+  readonly data?: TDocument;
+};
+
+export type DocumentBatchRequest<TDocument extends JsonValue = JsonObject> = {
+  readonly operations: readonly DocumentBatchOperationRequest<TDocument>[];
+};
+
+export type DocumentBatchOperationResponse<TDocument extends JsonValue = JsonObject> = {
+  readonly index: number;
+  readonly operation: string;
+  readonly id: DocumentId;
+  readonly document?: DocumentResponse<TDocument> | null;
+  readonly deleted?: DeletedDocumentResponse | null;
+};
+
+export type DeletedDocumentResponse = {
+  readonly repositoryId: RepositoryId;
+  readonly repository: string;
+  readonly id: DocumentId;
+  readonly deleted: boolean;
+};
+
+export type DocumentBatchResponse<TDocument extends JsonValue = JsonObject> = {
+  readonly repositoryId: RepositoryId;
+  readonly repository: string;
+  readonly results: readonly DocumentBatchOperationResponse<TDocument>[];
 };
 
 export type QueryRequest = {
   readonly query: string;
-  readonly parameters?: JsonObject;
+  readonly skip?: number;
   readonly take?: number;
 };
 
-export type QueryResult = {
-  readonly rows: readonly JsonObject[];
-  readonly elapsedMilliseconds?: number;
-  readonly continuationToken?: string;
+export type RepositorySchema = {
+  readonly repositoryId: RepositoryId;
+  readonly repository: string;
+  readonly databaseId: DatabaseId;
+  readonly environmentId?: EnvironmentId | null;
+  readonly collection: string;
+  readonly enabled: boolean;
+  readonly schema: string;
 };
 
-export type QueryPlan = {
-  readonly query: string;
-  readonly operations: readonly string[];
-  readonly warnings?: readonly string[];
+export type ConfigureRepositorySchemaRequest = {
+  readonly enabled?: boolean;
+  readonly schema?: string | null;
 };
 
-export type SchemaDocument = {
-  readonly schemaId: Ulid;
-  readonly name: string;
-  readonly version: number;
-  readonly document: JsonObject;
-  readonly createdAt: Timestamp;
+export type ValidateRepositorySchemaRequest = {
+  readonly maxErrorMessages?: number;
+  readonly maxDocumentsToValidate?: number;
 };
 
-export type ApplySchemaRequest = {
-  readonly name: string;
-  readonly document: JsonObject;
-};
-
-export type SavedQuery = {
-  readonly savedQueryId: SavedQueryId;
-  readonly name: string;
-  readonly query: string;
-  readonly parameters?: JsonObject;
-  readonly createdAt: Timestamp;
-};
-
-export type SaveQueryRequest = {
-  readonly name: string;
-  readonly query: string;
-  readonly parameters?: JsonObject;
-};
-
-export type QueryHistoryEntry = {
-  readonly queryHistoryId: QueryHistoryId;
-  readonly query: string;
-  readonly status: "failed" | "succeeded";
-  readonly startedAt: Timestamp;
-  readonly elapsedMilliseconds?: number;
+export type RepositorySchemaValidationResponse = {
+  readonly repositoryId: RepositoryId;
+  readonly repository: string;
+  readonly databaseId: DatabaseId;
+  readonly environmentId?: EnvironmentId | null;
+  readonly collection: string;
+  readonly operationId: Ulid;
 };
 
 export type ApiKey = {
-  readonly apiKeyId: ApiKeyId;
+  readonly keyId: ApiKeyId;
+  readonly projectId: ProjectId;
   readonly name: string;
+  readonly prefix: string;
+  readonly lastFour: string;
   readonly scopes: readonly string[];
-  readonly expiresAt?: Timestamp;
+  readonly databaseId?: DatabaseId | null;
+  readonly environmentId?: EnvironmentId | null;
+  readonly createdByUserId?: UserId | null;
+  readonly createdByEmail: string;
   readonly createdAt: Timestamp;
+  readonly expiresAt?: Timestamp | null;
+  readonly lastUsedAt?: Timestamp | null;
+  readonly revokedAt?: Timestamp | null;
+  readonly isActive: boolean;
 };
 
 export type CreateApiKeyRequest = {
   readonly name: string;
   readonly scopes: readonly string[];
-  readonly expiresAt?: Timestamp;
+  readonly databaseId?: DatabaseId;
+  readonly environmentId?: EnvironmentId;
+  readonly expiresAt?: Timestamp | null;
 };
 
-export type CreatedApiKey = ApiKey & {
-  readonly token: string;
+export type ListApiKeysRequest = {
+  readonly cursor?: string;
+  readonly limit?: number;
+};
+
+export type ListApiKeysResponse = {
+  readonly apiKeys: readonly ApiKey[];
+  readonly nextCursor?: string;
+};
+
+export type CreatedApiKey = {
+  readonly apiKey: ApiKey;
+  readonly secret: string;
+};
+
+export type RotatedApiKey = {
+  readonly apiKey: ApiKey;
+  readonly secret: string;
+  readonly rotated: boolean;
+};
+
+export type RevokedApiKey = {
+  readonly keyId: ApiKeyId;
+  readonly revoked: boolean;
 };
 
 export type MachineClient = {
-  readonly machineClientId: MachineClientId;
+  readonly clientId: M2MClientId;
+  readonly projectId: ProjectId;
   readonly name: string;
+  readonly prefix: string;
+  readonly lastFour: string;
   readonly scopes: readonly string[];
-  readonly enabled: boolean;
+  readonly databaseId?: DatabaseId | null;
+  readonly environmentId?: EnvironmentId | null;
+  readonly createdByUserId?: UserId | null;
+  readonly createdByEmail: string;
   readonly createdAt: Timestamp;
+  readonly expiresAt?: Timestamp | null;
+  readonly lastUsedAt?: Timestamp | null;
+  readonly revokedAt?: Timestamp | null;
+  readonly isActive: boolean;
 };
+
+export type M2MApplication = MachineClient;
 
 export type CreateMachineClientRequest = {
   readonly name: string;
   readonly scopes: readonly string[];
+  readonly databaseId?: DatabaseId;
+  readonly environmentId?: EnvironmentId;
+  readonly expiresAt?: Timestamp | null;
+};
+
+export type CreateM2MApplicationRequest = CreateMachineClientRequest;
+
+export type ListM2MApplicationsRequest = {
+  readonly cursor?: string;
+  readonly limit?: number;
+};
+
+export type ListM2MApplicationsResponse = {
+  readonly applications: readonly M2MApplication[];
+  readonly nextCursor?: string;
+};
+
+export type CreatedM2MApplication = {
+  readonly application: M2MApplication;
+  readonly clientSecret: string;
 };
 
 export type RotatedMachineClientSecret = {
-  readonly machineClientId: MachineClientId;
-  readonly secret: string;
+  readonly application: M2MApplication;
+  readonly clientSecret: string;
+  readonly rotated: boolean;
+};
+
+export type RevokedM2MApplication = {
+  readonly clientId: M2MClientId;
+  readonly revoked: boolean;
+};
+
+export type M2MTokenRequest = {
+  readonly grantType?: "client_credentials" | string;
+  readonly clientId: string;
+  readonly clientSecret: string;
+  readonly scope?: string;
+};
+
+export type M2MTokenResponse = {
+  readonly access_token: string;
+  readonly token_type: string;
+  readonly expires_in: number;
+  readonly scope: string;
+  readonly project_id: ProjectId;
+  readonly client_id: M2MClientId;
+  readonly database_id?: DatabaseId | null;
+  readonly environment_id?: EnvironmentId | null;
 };
 
 export type AccessRole = "admin" | "billing" | "member" | "owner" | "viewer";
@@ -721,7 +826,6 @@ export type AuditEvent = {
 
 export type Notification = {
   readonly notificationId: NotificationId;
-  readonly userId: UserId;
   readonly title: string;
   readonly body?: string;
   readonly severity: "critical" | "info" | "warning";
@@ -729,53 +833,25 @@ export type Notification = {
   readonly createdAt: Timestamp;
 };
 
-export type ProjectSettings = {
-  readonly projectId: ProjectId;
-  readonly displayName?: string;
-  readonly defaultRegions: readonly TerraScaleRegionCode[];
+export type MarkAllDashboardNotificationsReadResponse = {
+  readonly markedRead: number;
 };
 
 export type SecuritySettings = {
   readonly projectId: ProjectId;
-  readonly mfaRequired: boolean;
-  readonly sessionTimeoutMinutes: number;
+  readonly mfaPolicy: string;
+  readonly ipAllowlist: string;
+  readonly allowedEmailDomains: string;
+  readonly dataResidency: string;
+  readonly encryption: string;
+  readonly updatedAt: Timestamp;
 };
 
-export type Webhook = {
-  readonly webhookId: WebhookId;
-  readonly projectId: ProjectId;
-  readonly name: string;
-  readonly url: string;
-  readonly events: readonly string[];
-  readonly enabled: boolean;
-};
-
-export type CreateWebhookRequest = {
-  readonly name: string;
-  readonly url: string;
-  readonly events: readonly string[];
-};
-
-export type UpdateWebhookRequest = Partial<CreateWebhookRequest> & {
-  readonly enabled?: boolean;
-};
-
-export type SsoSettings = {
-  readonly projectId: ProjectId;
-  readonly enabled: boolean;
-  readonly domains: readonly string[];
-  readonly metadataUrl?: string;
-};
-
-export type ScimSettings = {
-  readonly projectId: ProjectId;
-  readonly enabled: boolean;
-  readonly baseUrl?: string;
-};
-
-export type CreatedScimToken = {
-  readonly tokenId: Ulid;
-  readonly token: string;
+export type UpdateSecuritySettingsRequest = {
+  readonly mfaPolicy?: string;
+  readonly ipAllowlist?: string;
+  readonly allowedEmailDomains?: string;
+  readonly dataResidency?: string;
 };
 
 export type AdminUser = {

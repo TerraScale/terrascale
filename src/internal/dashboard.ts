@@ -13,17 +13,15 @@ export type {
   BillingClient,
   DatabasesClient,
   DocumentsClient,
+  M2MApplicationsClient,
   MachineClientsClient,
   NotificationsClient,
   OrganizationsClient,
   PricingClient,
   QueryClient,
-  QueryHistoryClient,
   RepositoriesClient,
-  SavedQueriesClient,
   SchemaClient,
   SecurityClient,
-  SettingsClient,
   UsageClient,
 } from "../client.js";
 export type {

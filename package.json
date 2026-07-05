@@ -31,7 +31,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:integration": "node --test dist/integration/**/*.test.js"
+    "test": "node --test dist/*.test.js dist/integration/*.test.js",
+    "test:integration": "node --test dist/integration/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",

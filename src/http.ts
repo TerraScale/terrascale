@@ -22,14 +22,13 @@ export type TerraScaleRouteName =
   | `dashboard.${string}`
   | `databases.${string}`
   | `documents.${string}`
-  | `history.${string}`
   | `machineClients.${string}`
+  | `m2m.${string}`
   | `notifications.${string}`
   | `organizations.${string}`
   | `pricing.${string}`
   | `query.${string}`
   | `repositories.${string}`
-  | `savedQueries.${string}`
   | `schema.${string}`
   | `security.${string}`
   | `settings.${string}`

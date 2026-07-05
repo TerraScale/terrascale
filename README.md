@@ -13,12 +13,46 @@ internal entrypoints so the public package surface stays clear.
 - `@terrascale/sdk/internal/dashboard` is reserved for Dashboard/admin
   consumption and is not part of the advertised customer API.
 
+## Public API Surface
+
+The public client follows the backed `TerraScale.API` REST surface:
+
+- Project databases: list/create/get/delete under
+  `/api/v1/projects/{projectId}/databases`, with environment list/get/create/delete
+  under `/api/v1/projects/{projectId}/databases/{databaseId}/environments`.
+- Repositories: list/create/get/delete under `/api/v1/repositories`.
+- Documents: list/create/get/put/patch/delete/batch under
+  `/api/v1/repositories/{repositoryId}/documents`; document write bodies are
+  wrapped as `{ data }`, and document responses use `id`, `data`,
+  `lastModified`, and `changeToken`.
+- TQL and schema: `/api/v1/repositories/{repositoryId}/tql`,
+  `/api/v1/repositories/{repositoryId}/schema`, and
+  `/api/v1/repositories/{repositoryId}/schema/validate`.
+- Project auth API keys: `/api/v1/projects/{projectId}/auth/api-keys`,
+  including create/list/rotate/revoke wrappers.
+- Project auth M2M applications:
+  `/api/v1/projects/{projectId}/auth/m2m-applications`, including
+  create/list/rotate/revoke and OAuth token creation.
+- Notifications: `/api/v1/dashboard/notifications` returns a bare
+  `Notification[]`; `/api/v1/dashboard/notifications/{notificationId}:mark-read`
+  returns a `Notification`; and
+  `/api/v1/dashboard/notifications:mark-all-read` returns `{ markedRead }`.
+- Security settings: the backed settings upsert route,
+  `PUT /api/v1/projects/{projectId}/security/settings`.
+
+Unbacked public SDK methods are intentionally omitted until matching API
+endpoints exist. This currently excludes repository update, database
+update/region switching/environment switching, backups/restores, saved queries,
+query history, project settings, security webhooks, SSO/SCIM settings,
+organization update, invitation accept, and public project switching.
+
 ## Development
 
 ```bash
 npm install
 npm run typecheck
 npm run build
+npm test
 ```
 
 Integration tests are expected to run against a real TerraScale AppHost stack
