@@ -17,7 +17,6 @@ export function createTerraScaleClient(config: TerraScaleRuntimeConfig): TerraSc
     schema: internal.schema,
     apiKeys: internal.apiKeys,
     m2m: internal.m2m,
-    machineClients: internal.machineClients,
     access: internal.access,
     usage: internal.usage,
     billing: internal.billing,

@@ -59,8 +59,6 @@ export class TerraScaleClient {
   readonly schema: SchemaClient;
   readonly apiKeys: ApiKeysClient;
   readonly m2m: M2MApplicationsClient;
-  /** @deprecated Use `m2m`; the live API exposes project auth M2M applications. */
-  readonly machineClients: M2MApplicationsClient;
   readonly access: AccessClient;
   readonly usage: UsageClient;
   readonly billing: BillingClient;
@@ -83,7 +81,6 @@ export class TerraScaleClient {
     this.schema = new SchemaClient(this.http);
     this.apiKeys = new ApiKeysClient(this.http);
     this.m2m = new M2MApplicationsClient(this.http);
-    this.machineClients = this.m2m;
     this.access = new AccessClient(this.http);
     this.usage = new UsageClient(this.http);
     this.billing = new BillingClient(this.http);
