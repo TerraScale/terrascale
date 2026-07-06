@@ -17,7 +17,8 @@
     "icons:sync": "node ./scripts/icons-sync.mjs",
     "world-map:sync": "node ./scripts/world-map-sync.mjs",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
