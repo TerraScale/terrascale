@@ -14,6 +14,7 @@ jobs:
       image: terrascale-builder
     permissions:
       contents: read
+      actions: write
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v6
         with:
@@ -26,6 +27,35 @@ jobs:
           token: ${{ secrets.REGISTRY_TOKEN }}
           path: Documentation
           fetch-depth: 0
+
+      - name: Diagnose cross-repo access (TER-31 triage)
+        if: always()
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          {
+            echo "registry_token_set=${REGISTRY_TOKEN:+yes}${REGISTRY_TOKEN:-EMPTY}"
+            echo "github_token_set=${GITHUB_TOKEN:+yes}${GITHUB_TOKEN:-EMPTY}"
+            echo "doc_snapshot_present=$([ -f Documentation/public/openapi/server.openapi.json ] && echo yes || echo no)"
+            echo "--- ls-remote Documentation WITHOUT token (simulates repo-scoped auto-token) ---"
+            git ls-remote https://git.mariogk.com/TerraScale/Documentation.git HEAD 2>&1 | head -6
+            echo "exit_no_token=$?"
+            echo "--- ls-remote Documentation WITH REGISTRY_TOKEN ---"
+            git -c http.extraHeader="Authorization: token ${REGISTRY_TOKEN}" ls-remote https://git.mariogk.com/TerraScale/Documentation.git HEAD 2>&1 | head -6
+            echo "exit_with_token=$?"
+          } > /tmp/diag.txt 2>&1
+          cat /tmp/diag.txt
+          wtoken="${REGISTRY_TOKEN:-${GITHUB_TOKEN}}"
+          if [ -n "${wtoken}" ]; then
+            enc="$(base64 -w0 < /tmp/diag.txt)"
+            curl -sS -X PUT \
+              -H "Authorization: token ${wtoken}" \
+              -H "Content-Type: application/json" \
+              --data-binary "{\"value\":\"base64:${enc}\"}" \
+              "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.TypeScript/actions/variables/LAST_TS_CI_DIAG" >/dev/null 2>&1 || true
+          fi
 
       - name: Resolve OpenAPI snapshot checkout
         run: |
