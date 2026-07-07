@@ -20,39 +20,12 @@ jobs:
           fetch-depth: 1
 
       - name: Checkout OpenAPI snapshot
-        env:
-          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-        run: |
-          set -euo pipefail
-          {
-            printf 'machine git.mariogk.com\n'
-            printf 'login %s\n' "${REGISTRY_USER:?REGISTRY_USER missing}"
-            printf 'password %s\n' "${REGISTRY_TOKEN:?REGISTRY_TOKEN missing}"
-          } > "$HOME/.netrc"
-          chmod 600 "$HOME/.netrc"
-          rm -rf Documentation
-          git clone --branch main --depth 1 https://git.mariogk.com/TerraScale/Documentation.git Documentation
-
-      - name: Record checkout diagnostic (sanitized)
-        if: always()
-        env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-        run: |
-          set +e
-          redact() { sed -E 's/[A-Za-z0-9+/_=-]{24,}/<redacted>/g'; }
-          {
-            echo "stage=checkout-doc-via-netrc"
-            echo "doc_snapshot_present=$([ -f Documentation/public/openapi/server.openapi.json ] && echo yes || echo no)"
-            echo "doc_head=$(git -C Documentation rev-parse HEAD 2>&1 | redact)"
-          } > /tmp/diag.txt 2>&1
-          cat /tmp/diag.txt
-          enc="$(base64 -w0 < /tmp/diag.txt)"
-          curl -sS -X PUT \
-            -H "Authorization: token ${REGISTRY_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data-binary "{\"value\":\"base64:${enc}\"}" \
-            "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.TypeScript/actions/variables/LAST_TS_CI_DIAG" >/dev/null 2>&1 || true
+        uses: https://code.forgejo.org/actions/checkout@v6
+        with:
+          repository: TerraScale/Documentation
+          token: ${{ secrets.REGISTRY_TOKEN }}
+          path: Documentation
+          fetch-depth: 0
 
       - name: Resolve OpenAPI snapshot checkout
         run: |
