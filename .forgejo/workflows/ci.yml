@@ -13,60 +13,46 @@ jobs:
     container:
       image: terrascale-builder
     permissions:
-      contents: write
-      actions: write
+      contents: read
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v6
         with:
           fetch-depth: 1
 
       - name: Checkout OpenAPI snapshot
-        uses: https://code.forgejo.org/actions/checkout@v6
-        with:
-          repository: TerraScale/Documentation
-          token: ${{ secrets.REGISTRY_TOKEN }}
-          path: Documentation
-          fetch-depth: 0
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          {
+            printf 'machine git.mariogk.com\n'
+            printf 'login %s\n' "${REGISTRY_USER:?REGISTRY_USER missing}"
+            printf 'password %s\n' "${REGISTRY_TOKEN:?REGISTRY_TOKEN missing}"
+          } > "$HOME/.netrc"
+          chmod 600 "$HOME/.netrc"
+          rm -rf Documentation
+          git clone --branch main --depth 1 https://git.mariogk.com/TerraScale/Documentation.git Documentation
 
-      - name: Diagnose cross-repo access (TER-31 triage)
+      - name: Record checkout diagnostic (sanitized)
         if: always()
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set +e
+          redact() { sed -E 's/[A-Za-z0-9+/_=-]{24,}/<redacted>/g'; }
           {
-            echo "registry_token_set=${REGISTRY_TOKEN:+yes}${REGISTRY_TOKEN:-EMPTY}"
-            echo "github_token_set=${GITHUB_TOKEN:+yes}${GITHUB_TOKEN:-EMPTY}"
+            echo "stage=checkout-doc-via-netrc"
             echo "doc_snapshot_present=$([ -f Documentation/public/openapi/server.openapi.json ] && echo yes || echo no)"
-            echo "--- ls-remote Documentation WITHOUT token (simulates repo-scoped auto-token) ---"
-            git ls-remote https://git.mariogk.com/TerraScale/Documentation.git HEAD 2>&1 | head -6
-            echo "exit_no_token=$?"
-            echo "--- ls-remote Documentation WITH REGISTRY_TOKEN ---"
-            git -c http.extraHeader="Authorization: token ${REGISTRY_TOKEN}" ls-remote https://git.mariogk.com/TerraScale/Documentation.git HEAD 2>&1 | head -6
-            echo "exit_with_token=$?"
+            echo "doc_head=$(git -C Documentation rev-parse HEAD 2>&1 | redact)"
           } > /tmp/diag.txt 2>&1
           cat /tmp/diag.txt
-          wtoken="${REGISTRY_TOKEN:-${GITHUB_TOKEN}}"
-          if [ -n "${wtoken}" ]; then
-            enc="$(base64 -w0 < /tmp/diag.txt)"
-            curl -sS -X PUT \
-              -H "Authorization: token ${wtoken}" \
-              -H "Content-Type: application/json" \
-              --data-binary "{\"value\":\"base64:${enc}\"}" \
-              "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.TypeScript/actions/variables/LAST_TS_CI_DIAG" >/dev/null 2>&1 || true
-          fi
-          # Reliable fallback: push the diag file to a ci-diagnostics branch via the auto token.
-          mkdir -p .ci-diag
-          sha="$(git rev-parse --short HEAD 2>/dev/null || echo head)"
-          cp /tmp/diag.txt ".ci-diag/sdk-${sha}.txt"
-          git config --global "url.https://x-access-token:${GITHUB_TOKEN}@git.mariogk.com/.insteadOf" "https://git.mariogk.com/" 2>/dev/null || true
-          git config user.email "ci@terrascale" 2>/dev/null || true
-          git config user.name "ci" 2>/dev/null || true
-          git checkout -B ci-diagnostics 2>/dev/null || git switch -C ci-diagnostics 2>/dev/null || true
-          git add ".ci-diag/sdk-${sha}.txt" 2>/dev/null || true
-          git commit -m "ci-diag: cross-repo access triage ${sha}" 2>/dev/null || true
-          git push --force -u origin ci-diagnostics 2>&1 | tail -3 || true
+          enc="$(base64 -w0 < /tmp/diag.txt)"
+          curl -sS -X PUT \
+            -H "Authorization: token ${REGISTRY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data-binary "{\"value\":\"base64:${enc}\"}" \
+            "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.TypeScript/actions/variables/LAST_TS_CI_DIAG" >/dev/null 2>&1 || true
 
       - name: Resolve OpenAPI snapshot checkout
         run: |
