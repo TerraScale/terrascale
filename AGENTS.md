@@ -15,9 +15,8 @@
 
 ## Testing
 
-- Tests must exercise real TerraScale HTTP boundaries. Do not add mocked HTTP
-  clients, fake servers, jsdom-only tests, or in-memory substitutes as product
-  proof.
-- Integration tests should run against the AppHost-emitted API/Auth URLs once
-  the SDK extraction is wired into the Internals AppHost test harness.
+- TypeScript SDK tests follow the workspace no-mocks rule (root `AGENTS.md`).
+- Integration tests run against AppHost-emitted `TERRASCALE_API_BASE_URL` and
+  `TERRASCALE_AUTH_API_BASE_URL` (`src/integration/apphost-smoke.test.ts`) and
+  skip when those env vars are unset.
 
