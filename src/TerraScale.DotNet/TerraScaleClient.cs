@@ -42,6 +42,7 @@ public sealed class TerraScaleClient
         Changes = new TerraScaleChangesClient(this);
         Billing = new TerraScaleBillingClient(this);
         Projects = new TerraScaleProjectsClient(this);
+        Regions = new TerraScaleRegionsClient(this);
         ProjectDatabases = new TerraScaleProjectDatabasesClient(this);
         Environments = new TerraScaleEnvironmentsClient(this);
         ProjectUsage = new TerraScaleProjectUsageClient(this);
@@ -95,6 +96,11 @@ public sealed class TerraScaleClient
     /// Project list and lookup operations.
     /// </summary>
     public TerraScaleProjectsClient Projects { get; }
+
+    /// <summary>
+    /// TerraScale region catalog operations.
+    /// </summary>
+    public TerraScaleRegionsClient Regions { get; }
 
     /// <summary>
     /// Project-scoped logical database operations.

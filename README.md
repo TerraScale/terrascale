@@ -2,7 +2,7 @@
 
 Official C# SDK for TerraScale public API families.
 
-The SDK calls verified TerraScale public `/api/v1` endpoints. It covers database, repository, document, schema, TQL, changes, billing, project, project database, environment, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, and restore operations. It does not call TerraBase storage directly and does not cover admin, user-management, organization-management, auth-provider, invitation, audit, or Dashboard-internal test endpoints.
+The SDK calls verified TerraScale public `/api/v1` endpoints. It covers region catalog, database, repository, document, schema, TQL, changes, billing, project, project database, environment, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, and restore operations. It does not call TerraBase storage directly and does not cover admin, user-management, organization-management, auth-provider, invitation, audit, or Dashboard-internal test endpoints.
 
 ## Install
 
@@ -96,6 +96,8 @@ await client.Databases.DeleteAsync(loadedDatabase.DatabaseId, cancellationToken:
 Use project-scoped projects, databases, and environments when working through the live project metadata API:
 
 ```csharp
+var regions = await client.Regions.ListAsync(cancellationToken);
+
 var createdProject = await client.Projects.CreateAsync(
     organizationId,
     "orders",
@@ -110,7 +112,12 @@ var project = await client.Projects.GetAsync(projectId, cancellationToken);
 var database = await client.ProjectDatabases.CreateAsync(
     project.ProjectId,
     "orders-production",
-    regions: ["gru"],
+    regions:
+    [
+        TerraScaleRegions.Gru,
+        TerraScaleRegions.Sfo,
+        TerraScaleRegions.Fra
+    ],
     cancellationToken);
 
 var environment = await client.Environments.CreateAsync(

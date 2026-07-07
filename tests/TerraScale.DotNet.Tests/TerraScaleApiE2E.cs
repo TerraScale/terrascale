@@ -66,6 +66,14 @@ internal static class TerraScaleApiE2E
                 ProjectId = ProjectId
             });
 
+    public static TerraScaleClient CreateAnonymousClient() =>
+        new(
+            new HttpClient(),
+            new TerraScaleClientOptions
+            {
+                BaseAddress = BaseAddress ?? throw new InvalidOperationException(MissingBaseAddressConfigurationReason)
+            });
+
     public static TerraScaleClient CreateBearerProviderClient(
         Func<CancellationToken, ValueTask<string>> bearerTokenProvider) =>
         new(

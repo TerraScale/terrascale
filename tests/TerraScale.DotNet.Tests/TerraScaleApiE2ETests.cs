@@ -6,6 +6,41 @@ namespace TerraScale.DotNet.Tests;
 public sealed class TerraScaleApiE2ETests
 {
     [Test]
+    [RequiresTerraScaleBaseAddress]
+    public async Task Regions_ListAsync_ReturnsCanonicalCatalogAgainstRealApi()
+    {
+        var client = TerraScaleApiE2E.CreateAnonymousClient();
+        string[] expectedRegions = [TerraScaleRegions.Gru, TerraScaleRegions.Sfo, TerraScaleRegions.Fra];
+
+        var regions = await client.Regions.ListAsync();
+
+        await Assert.That(regions.Count).IsEqualTo(3);
+        await Assert.That(regions.Select(region => region.Code).SequenceEqual(expectedRegions)).IsTrue();
+        await Assert.That(regions.Any(region => region.Code is "ashburn" or "ord")).IsFalse();
+
+        var gru = regions.Single(region => region.Code == TerraScaleRegions.Gru);
+        await Assert.That(gru.Name).IsEqualTo("Sao Paulo");
+        await Assert.That(gru.Country).IsEqualTo("BR");
+        await Assert.That(gru.Latitude).IsEqualTo(-23.5475);
+        await Assert.That(gru.Longitude).IsEqualTo(-46.6361);
+        await Assert.That(gru.Available).IsTrue();
+
+        var sfo = regions.Single(region => region.Code == TerraScaleRegions.Sfo);
+        await Assert.That(sfo.Name).IsEqualTo("San Francisco");
+        await Assert.That(sfo.Country).IsEqualTo("US");
+        await Assert.That(sfo.Latitude).IsEqualTo(37.7749);
+        await Assert.That(sfo.Longitude).IsEqualTo(-122.4194);
+        await Assert.That(sfo.Available).IsTrue();
+
+        var fra = regions.Single(region => region.Code == TerraScaleRegions.Fra);
+        await Assert.That(fra.Name).IsEqualTo("Frankfurt");
+        await Assert.That(fra.Country).IsEqualTo("DE");
+        await Assert.That(fra.Latitude).IsEqualTo(50.1109);
+        await Assert.That(fra.Longitude).IsEqualTo(8.6821);
+        await Assert.That(fra.Available).IsTrue();
+    }
+
+    [Test]
     [RequiresTerraScaleApi]
     public async Task Projects_ListAndUpdate_RoundTripAgainstRealApi()
     {
@@ -29,18 +64,21 @@ public sealed class TerraScaleApiE2ETests
         var currentProject = await GetCurrentProjectAsync(client);
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var databaseName = $"sdk-e2e-db-{suffix}";
+        string[] regions = [TerraScaleRegions.Gru, TerraScaleRegions.Sfo, TerraScaleRegions.Fra];
         TerraScaleProjectDatabase? created = null;
 
         try
         {
-            created = await client.ProjectDatabases.CreateAsync(currentProject.ProjectId, databaseName);
+            created = await client.ProjectDatabases.CreateAsync(currentProject.ProjectId, databaseName, regions);
             await Assert.That(created.ProjectId).IsEqualTo(currentProject.ProjectId);
             await Assert.That(created.Name).IsEqualTo(databaseName);
+            await Assert.That(created.Regions.SequenceEqual(regions)).IsTrue();
 
             var loaded = await client.ProjectDatabases.GetAsync(currentProject.ProjectId, created.DatabaseId);
             await Assert.That(loaded.DatabaseId).IsEqualTo(created.DatabaseId);
             await Assert.That(loaded.ProjectId).IsEqualTo(created.ProjectId);
             await Assert.That(loaded.Name).IsEqualTo(databaseName);
+            await Assert.That(loaded.Regions.SequenceEqual(regions)).IsTrue();
 
             var listed = await client.ProjectDatabases.ListAsync(currentProject.ProjectId, take: 100);
             await Assert.That(listed.Any(database => database.DatabaseId == created.DatabaseId)).IsTrue();

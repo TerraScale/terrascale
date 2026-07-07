@@ -5,6 +5,9 @@ namespace TerraScale.DotNet;
 
 internal static class TerraScaleApiRoutes
 {
+    public static string RegionsList() =>
+        "/api/v1/regions";
+
     public static string ProjectsList(string organizationId, int skip, int take) =>
         WithQuery($"/api/v1/organizations/{Escape(organizationId)}/projects", ("skip", Number(skip)), ("take", Number(take)));
 

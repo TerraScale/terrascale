@@ -19,6 +19,38 @@ public sealed record TerraScaleCreateDatabaseRequest(
     IReadOnlyDictionary<string, string>? Settings = null);
 
 /// <summary>
+/// Canonical TerraScale region codes accepted by project database placement APIs.
+/// </summary>
+public static class TerraScaleRegions
+{
+    /// <summary>
+    /// Sao Paulo, Brazil.
+    /// </summary>
+    public const string Gru = "gru";
+
+    /// <summary>
+    /// San Francisco, United States.
+    /// </summary>
+    public const string Sfo = "sfo";
+
+    /// <summary>
+    /// Frankfurt, Germany.
+    /// </summary>
+    public const string Fra = "fra";
+}
+
+/// <summary>
+/// TerraScale deployment region advertised by the public region catalog.
+/// </summary>
+public sealed record TerraScaleRegion(
+    string Code,
+    string Name,
+    string Country,
+    double Latitude,
+    double Longitude,
+    bool Available);
+
+/// <summary>
 /// Detailed TerraScale database state.
 /// </summary>
 public sealed record TerraScaleDatabaseDetails(
