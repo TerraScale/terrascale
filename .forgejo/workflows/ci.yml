@@ -13,7 +13,7 @@ jobs:
     container:
       image: terrascale-builder
     permissions:
-      contents: read
+      contents: write
       actions: write
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v6
@@ -56,6 +56,17 @@ jobs:
               --data-binary "{\"value\":\"base64:${enc}\"}" \
               "https://git.mariogk.com/api/v1/repos/TerraScale/TerraScale.TypeScript/actions/variables/LAST_TS_CI_DIAG" >/dev/null 2>&1 || true
           fi
+          # Reliable fallback: push the diag file to a ci-diagnostics branch via the auto token.
+          mkdir -p .ci-diag
+          sha="$(git rev-parse --short HEAD 2>/dev/null || echo head)"
+          cp /tmp/diag.txt ".ci-diag/sdk-${sha}.txt"
+          git config --global "url.https://x-access-token:${GITHUB_TOKEN}@git.mariogk.com/.insteadOf" "https://git.mariogk.com/" 2>/dev/null || true
+          git config user.email "ci@terrascale" 2>/dev/null || true
+          git config user.name "ci" 2>/dev/null || true
+          git checkout -B ci-diagnostics 2>/dev/null || git switch -C ci-diagnostics 2>/dev/null || true
+          git add ".ci-diag/sdk-${sha}.txt" 2>/dev/null || true
+          git commit -m "ci-diag: cross-repo access triage ${sha}" 2>/dev/null || true
+          git push --force -u origin ci-diagnostics 2>&1 | tail -3 || true
 
       - name: Resolve OpenAPI snapshot checkout
         run: |
