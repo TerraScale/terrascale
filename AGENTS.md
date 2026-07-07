@@ -9,28 +9,11 @@
 
 ## Workspace Rules
 
-- All C# project folders must start with the `TerraScale.` prefix.
-- All `.csproj` file names must start with the `TerraScale.` prefix.
-- All `.slnx` file names must start with the `TerraScale.` prefix.
-- Do not add, rename, or keep C# project folders, `.csproj` files, or `.slnx` files that violate this naming rule.
-- All C# projects must target `net10.0`.
-- All C# projects must use the latest preview version of the C# language supported by the pinned .NET SDK.
-- Runtime logging uses ZLogger as the provider behind `ILogger<T>` when logging is needed:
-
-```csharp
-builder.Logging.ClearProviders();
-builder.Logging.AddZLoggerConsole();
-
-logger.ZLogInformation($"Processed request {requestId} for {serviceName}");
-```
-
-Hot-path logs may use `LoggerMessageAttribute` source generation with ZLogger as the provider. `ZLogger.Analyzers` is not published on NuGet; rely on compiler analyzers and warnings-as-errors.
+- C# project naming (`TerraScale.` prefix), versioning (`net10.0`, latest C# preview), serialization (`System.Text.Json` only; no `Newtonsoft.Json`), logging (ZLogger + `LoggerMessage` source gens), and testing (no mocks/stubs/fakes — integration/e2e only) follow the workspace root `AGENTS.md`.
 
 ## Root Cause Fixes
 
-- Do not use reflection as a workaround for broken contracts, inaccessible members, serialization gaps, endpoint/test seams, dependency-injection issues, or API mismatches.
-- Fix the real SDK/API contract, DTO shape, serializer/converter, endpoint boundary, client option, service registration, or test fixture instead of bypassing it with reflection.
-- Reflection may be used only for deliberate framework-level discovery or metadata generation where it is part of the actual design. Runtime client paths must use precomputed strongly typed metadata instead of repeated reflective access.
+- Applies the workspace root-cause rule; for this repo, "contract" means the SDK/API contract, DTO shape, and client options.
 
 ## API Boundary
 
@@ -57,7 +40,7 @@ Hot-path logs may use `LoggerMessageAttribute` source generation with ZLogger as
 - Make all network APIs asynchronous and suffix them with `Async`.
 - Every async method must accept a `CancellationToken`, with `CancellationToken cancellationToken = default` only on public convenience overloads.
 - Return strongly typed request and response models. Prefer immutable records for DTOs and options.
-- Use `System.Text.Json` with source-generated metadata when practical. Do not use Newtonsoft.Json.
+- Prefer source-generated `System.Text.Json` metadata.
 - Model API errors explicitly with a typed SDK exception or result type that preserves status code, error code, message, request ID, response body when safe, and retryability.
 - Preserve response headers that matter to clients, including request IDs, route-affinity headers, pagination cursors, rate-limit headers, and retry-after values.
 - Keep APIs composable. Expose raw response metadata when useful without forcing callers into low-level HTTP code.
@@ -84,16 +67,13 @@ Hot-path logs may use `LoggerMessageAttribute` source generation with ZLogger as
 
 ## Testing and Verification
 
-- Do not create mocked, stubbed, faked, or local-handler tests. Tests must be integration or end-to-end tests that exercise real TerraScale API behavior.
 - Maintain TUnit end-to-end coverage for every feature and function in this repository. Each feature/function must have at least one success-path E2E test and at least one failure-path E2E test; public E2E flows may cover internal helpers only when the exercised behavior is the same as the direct helper behavior.
 - Integration and E2E tests must target the real `TerraScale.API` database/repository endpoints when credentials and endpoint configuration are available.
-- If real API credentials or endpoints are unavailable in the default developer environment, keep the E2E tests environment-gated rather than replacing the API with a mock, stub, fake server, generated proxy, local handler, or in-memory stand-in.
+- If real API credentials or endpoints are unavailable in the default developer environment, keep the E2E tests environment-gated rather than replacing the API with a stand-in.
 - Build with all CPU cores, for example `dotnet build -m`.
 
 ### TUnit best practices
 
 - Always `await Assert.That(...)` (un-awaited assertions pass silently). `Assert.Throws<T>`/`Assert.ThrowsAsync<T>` are valid TUnit — do not convert to fluent `.Throws<T>()`.
-- TUnit news the test class per test; never share state via instance fields. Use `[ClassDataSource<>]` (`SharedType.PerTestSession`) for expensive shared resources.
-- Fixtures must implement `IAsyncInitializer` + `IAsyncDisposable` and be released via `[ClassDataSource]` / `await using`. No `.GetAwaiter().GetResult()`/`.Result`/`.Wait()` in tests.
-- Never dispose caller-owned `HttpClient` instances passed into the SDK; the test owns and disposes only what it creates.
+- Dispose owned `HttpClient` and other `IDisposable`s; SDK clients must not dispose caller-owned `HttpClient` instances passed in.
 - Gate real-API E2E tests with a `SkipAttribute` (`ShouldSkip`) keyed off env config so they run when the API is reachable and skip cleanly otherwise.
