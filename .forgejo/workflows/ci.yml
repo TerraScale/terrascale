@@ -23,6 +23,7 @@ jobs:
         uses: https://code.forgejo.org/actions/checkout@v6
         with:
           repository: TerraScale/Documentation
+          token: ${{ secrets.REGISTRY_TOKEN }}
           path: Documentation
           fetch-depth: 0
 
