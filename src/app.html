@@ -16,6 +16,34 @@
       href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
+    <script>
+      // Resolve the visitor's locale before first paint so <html lang> matches
+      // and the i18n store hydrates straight into the right language (minimises
+      // the English flash for returning non-English visitors). Mirrors the
+      // resolution order in src/lib/i18n/index.ts: stored choice, then browser
+      // language, then English. Runs synchronously in <head>, before the body.
+      (function () {
+        try {
+          var stored = localStorage.getItem('ts-locale');
+          var lang = stored;
+          if (!lang || ['en', 'es', 'pt-br'].indexOf(lang) === -1) {
+            var list = navigator.languages || [navigator.language || ''];
+            lang = 'en';
+            for (var i = 0; i < list.length; i++) {
+              var n = (list[i] || '').toLowerCase();
+              if (n.indexOf('pt') === 0) { lang = 'pt-br'; break; }
+              if (n.indexOf('es') === 0) { lang = 'es'; break; }
+              if (n.indexOf('en') === 0) { lang = 'en'; break; }
+            }
+          }
+          var bcp47 = { en: 'en', es: 'es', 'pt-br': 'pt-BR' }[lang] || 'en';
+          document.documentElement.lang = bcp47;
+          window.__TS_LOCALE__ = lang;
+        } catch (e) {
+          /* blocked storage / no navigator — English prerender stands */
+        }
+      })();
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

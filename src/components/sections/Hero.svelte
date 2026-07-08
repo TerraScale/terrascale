@@ -7,14 +7,16 @@
     WORLD_MAP_VIEWBOX,
     type Region,
   } from '@/lib/world-map.generated'
+  import { dict } from '@/lib/i18n'
 
   // Trust badges shown under the CTAs. Scoped to the three the hero
-  // surfaces (TER-22): AI readiness plus the two SLA stats.
-  const highlights = [
-    { icon: 'globe', label: 'AI Ready' },
-    { icon: 'activity', label: '99.99% Uptime' },
-    { icon: 'clock', label: '20ms Latency' },
-  ] as const
+  // surfaces (TER-22): AI readiness plus the two SLA stats. Icons are fixed;
+  // labels come from the active dictionary so the badges localize.
+  const highlightIcons = ['globe', 'activity', 'clock'] as const
+  $: highlights = $dict.hero.highlights.map((label, i) => ({
+    icon: highlightIcons[i] ?? 'globe',
+    label,
+  }))
 
   const vbW = WORLD_MAP_VIEWBOX.width
   const vbH = WORLD_MAP_VIEWBOX.height
@@ -81,7 +83,7 @@
       <span class="hero__brand-glow" aria-hidden="true"></span>
       <img
         src="/logo-principal.svg"
-        alt="TerraScale"
+        alt={$dict.hero.brandAlt}
         class="hero__brand-mark"
         width="1429"
         height="345"
@@ -91,18 +93,17 @@
     </div>
 
     <h1 class="hero__headline">
-      Scale your data,<br />
-      <span class="ts-text-gradient">effortlessly.</span>
+      {$dict.hero.headlineLead}<br />
+      <span class="ts-text-gradient">{$dict.hero.headlineAccent}</span>
     </h1>
 
     <p class="hero__subtitle">
-      Typed database, auth, queue, and payment infrastructure for teams building on the
-      TerraScale API.
+      {$dict.hero.subtitle}
     </p>
 
     <div class="hero__ctas">
       <RouteLink href="/contact" class="ts-btn ts-btn-primary cta-shine">
-        Start Free
+        {$dict.hero.ctaPrimary}
         <Icon name="arrowRight" className="hero__cta-icon" />
       </RouteLink>
       <ExternalLink
@@ -111,11 +112,11 @@
         rel="noopener noreferrer"
         class="ts-btn ts-btn-glass"
       >
-        View Docs
+        {$dict.hero.ctaSecondary}
       </ExternalLink>
     </div>
 
-    <ul class="hero__highlights" aria-label="Key capabilities">
+    <ul class="hero__highlights" aria-label={$dict.hero.highlightsAria}>
       {#each highlights as h (h.label)}
         <li class="hero__highlight">
           <Icon name={h.icon} className="hero__highlight-icon" />

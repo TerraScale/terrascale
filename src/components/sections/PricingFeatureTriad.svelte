@@ -1,12 +1,13 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
   import type { AppIconName } from '@/lib/icons'
+  import { dict } from '@/lib/i18n'
 
-  const items: Array<{ icon: AppIconName; title: string; text: string }> = [
-    { icon: 'shieldCheck', title: 'Launch Region Controls', text: 'Create databases in sfo, fra, or gru' },
-    { icon: 'zap', title: 'Observable By Default', text: 'OpenTelemetry traces and logs across core workflows' },
-    { icon: 'trendingUp', title: 'Usage Guardrails', text: 'Metered plans with platform-level billing controls' },
-  ]
+  const itemIcons: AppIconName[] = ['shieldCheck', 'zap', 'trendingUp']
+  $: items = $dict.pricing.triad.map((item, i) => ({
+    icon: itemIcons[i] ?? 'shieldCheck',
+    ...item,
+  }))
 </script>
 
 <section class="triad">

@@ -1,38 +1,33 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
+  import { dict } from '@/lib/i18n'
 
-  const perks = [
-    'Full feature access',
-    'Cancel anytime',
-    'No lock-in',
-  ]
+  $: perks = $dict.cta.perks
 </script>
 
 <section class="cta">
   <div class="cta__inner">
     <div class="cta__card ts-glass">
       <h2 class="cta__headline">
-        Try TerraScale <span class="ts-text-gradient">free for 30 days.</span>
+        {$dict.cta.headlineLead} <span class="ts-text-gradient">{$dict.cta.headlineAccent}</span>
       </h2>
       <p class="cta__text">
-        Set it up in minutes and get full access to all features of the Hobby and
-        Pro plans. You won't be charged anything until you decide to keep the
-        service.
+        {$dict.cta.text}
       </p>
 
       <div class="cta__actions">
         <RouteLink href="/contact" class="ts-btn ts-btn-primary cta-shine cta__primary">
-          Start 30-Day Free Trial
+          {$dict.cta.ctaPrimary}
           <Icon name="arrowRight" className="cta__icon" />
         </RouteLink>
         <RouteLink href="/contact" class="ts-btn ts-btn-glass cta__secondary">
           <Icon name="messageSquare" className="cta__icon" />
-          Talk to Sales
+          {$dict.cta.ctaSecondary}
         </RouteLink>
       </div>
 
-      <ul class="cta__perks" aria-label="Trial details">
+      <ul class="cta__perks" aria-label={$dict.cta.perksAria}>
         {#each perks as p (p)}
           <li>
             <Icon name="checkCircle" className="cta__perk-icon" />

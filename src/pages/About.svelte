@@ -2,6 +2,7 @@
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import type { AppIconName } from '@/lib/icons'
+  import { dict } from '@/lib/i18n'
 
   type Pillar = {
     icon: AppIconName
@@ -9,25 +10,12 @@
     text: string
   }
 
-  const pillars: Pillar[] = [
-    {
-      icon: 'database',
-      title: 'TerraBase foundation',
-      text: 'TerraScale is built on TerraBase so teams can run durable document, query, and operational data workflows behind one public platform surface.',
-    },
-    {
-      icon: 'shield',
-      title: 'Auth included',
-      text: 'Database access, users, sessions, invitations, and machine credentials are planned as one product boundary instead of separate glue code.',
-    },
-    {
-      icon: 'dollarSign',
-      title: 'Usage-aware billing',
-      text: 'Plans stay predictable while metered usage lets teams grow by workload, not by negotiating region-by-region pricing.',
-    },
-  ]
-
-  const regions = ['San Francisco', 'Frankfurt', 'Guarulhos']
+  const pillarIcons: AppIconName[] = ['database', 'shield', 'dollarSign']
+  $: pillars = $dict.about.pillars.map((pillar, i) => ({
+    icon: pillarIcons[i] ?? 'database',
+    ...pillar,
+  }))
+  $: regions = $dict.about.regions
 </script>
 
 <section class="about-hero">
@@ -35,24 +23,22 @@
   <div class="about-hero__inner">
     <div class="about-hero__eyebrow">
       <Icon name="globe" className="about-hero__eyebrow-icon" />
-      About TerraScale
+      {$dict.about.eyebrow}
     </div>
     <h1 class="about-hero__title">
-      Globally distributed<br />
-      <span class="ts-text-gradient">database infrastructure.</span>
+      {$dict.about.titleLead}<br />
+      <span class="ts-text-gradient">{$dict.about.titleAccent}</span>
     </h1>
     <p class="about-hero__subtitle">
-      TerraScale exists to make globally distributed DBaaS feel like one coherent product:
-      database, auth, and payments built together on TerraBase with usage-based billing and flat
-      pricing across regions.
+      {$dict.about.subtitle}
     </p>
     <div class="about-hero__actions">
       <RouteLink href="/pricing" class="ts-btn ts-btn-primary cta-shine">
-        View Pricing
+        {$dict.about.ctaPricing}
         <Icon name="arrowRight" className="about-hero__action-icon" />
       </RouteLink>
       <RouteLink href="/contact" class="ts-btn ts-btn-glass">
-        Talk to Us
+        {$dict.about.ctaContact}
         <Icon name="messageSquare" className="about-hero__action-icon" />
       </RouteLink>
     </div>
@@ -62,13 +48,10 @@
 <section class="about-section">
   <div class="about-section__inner">
     <div class="about-section__intro">
-      <div class="about-section__eyebrow">Mission</div>
-      <h2 class="about-section__title">One platform surface for teams that ship across regions.</h2>
+      <div class="about-section__eyebrow">{$dict.about.missionEyebrow}</div>
+      <h2 class="about-section__title">{$dict.about.missionTitle}</h2>
       <p class="about-section__text">
-        Teams should not have to stitch together a database, identity layer, billing system, and
-        regional deployment plan before they can serve customers. TerraScale brings those concerns
-        into a single developer-facing platform so product teams can start small, pick the regions
-        that matter, and scale without changing their application model.
+        {$dict.about.missionText}
       </p>
     </div>
 
@@ -89,15 +72,13 @@
 <section class="about-band">
   <div class="about-band__inner ts-glass">
     <div>
-      <div class="about-section__eyebrow">Pricing principle</div>
-      <h2 class="about-band__title">Flat regional pricing, metered by real use.</h2>
+      <div class="about-section__eyebrow">{$dict.about.pricingPrincipleEyebrow}</div>
+      <h2 class="about-band__title">{$dict.about.bandTitle}</h2>
       <p class="about-band__text">
-        Region choice should be an architecture decision, not a surprise line item. TerraScale's
-        public pricing is designed around the same plan prices across launch regions, with storage,
-        operations, and transfer growing with workload.
+        {$dict.about.bandText}
       </p>
     </div>
-    <div class="about-regions" aria-label="Launch regions">
+    <div class="about-regions" aria-label={$dict.about.eyebrow}>
       {#each regions as region (region)}
         <span class="about-region">
           <span class="about-region__dot"></span>

@@ -1,16 +1,17 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
+  import { dict } from '@/lib/i18n'
 </script>
 
 <section class="pricing-cta">
   <div class="pricing-cta__inner">
-    <h2 class="pricing-cta__title">Ready to <span class="ts-text-gradient">get started?</span></h2>
+    <h2 class="pricing-cta__title">{$dict.pricing.finalCta.titleLead} <span class="ts-text-gradient">{$dict.pricing.finalCta.titleAccent}</span></h2>
     <p class="pricing-cta__text">
-      Join thousands of developers building the future with TerraScale.
+      {$dict.pricing.finalCta.text}
     </p>
     <RouteLink href="/contact" class="ts-btn ts-btn-primary cta-shine">
-      Start Building Today
+      {$dict.pricing.finalCta.cta}
       <Icon name="arrowRight" className="pricing-cta__icon" />
     </RouteLink>
   </div>

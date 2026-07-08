@@ -4,6 +4,7 @@
   import SectionHeader from '@/components/sections/SectionHeader.svelte'
   import AnimatedPrice from '@/components/AnimatedPrice.svelte'
   import type { AppIconName } from '@/lib/icons'
+  import { dict } from '@/lib/i18n'
 
   type Plan = {
     name: string
@@ -21,23 +22,15 @@
 
   let billing: 'monthly' | 'annual' = 'monthly'
 
-  const plans: Plan[] = [
+  // Plan names, prices, and accents are locale-independent; copy (description,
+  // features, CTA) is pulled from the active dictionary by index.
+  const planMeta: Array<Omit<Plan, 'description' | 'features' | 'cta' | 'href'>> = [
     {
       name: 'Hobby',
       icon: 'zap',
       accent: 'var(--ts-secondary)',
       accentRgb: 'var(--ts-secondary-rgb)',
       price: { monthly: 4.99, annual: 49 },
-      description: 'Great for personal projects and prototypes',
-      features: [
-        '3 databases',
-        '1M operations',
-        '10 GB storage',
-        '15 GB egress',
-        'Priority Discord',
-      ],
-      cta: 'Try for 30 days',
-      href: '/contact',
       popular: false,
     },
     {
@@ -46,17 +39,6 @@
       accent: 'var(--ts-primary)',
       accentRgb: 'var(--ts-primary-rgb)',
       price: { monthly: 24.99, annual: 249 },
-      description: 'Best for growing teams and production',
-      features: [
-        '15 databases',
-        '10M operations',
-        '50 GB storage',
-        '100 GB egress',
-        'Email + Discord',
-        'Priority support',
-      ],
-      cta: 'Try for 30 days',
-      href: '/contact',
       popular: true,
     },
     {
@@ -66,38 +48,38 @@
       accentRgb: 'var(--ts-tertiary-rgb)',
       price: null,
       basePrice: 499,
-      description: 'For mission-critical applications',
-      features: [
-        'Unlimited databases',
-        'Custom SLAs',
-        'Dedicated support',
-        'Advanced security',
-        'Custom integrations',
-      ],
-      cta: 'Contact Sales',
-      href: '/contact',
       popular: false,
     },
   ]
 
-  const formatSuffix = (plan: Plan) =>
-    plan.price ? (billing === 'annual' ? '/year' : '/month') : ''
+  $: plans = planMeta.map((meta, i) => {
+    const copy = $dict.pricing.plans[i]
+    return {
+      ...meta,
+      description: copy.description,
+      features: copy.features,
+      cta: copy.cta,
+      href: '/contact',
+    }
+  })
+
+  $: suffix = billing === 'annual' ? $dict.pricing.suffixAnnual : $dict.pricing.suffixMonthly
 </script>
 
 <section class="pricing-section" id="pricing">
   <div class="pricing-section__inner">
     <SectionHeader
-      eyebrow="Pricing"
-      subtitle="Start free, scale on demand. No hidden fees, no surprises."
+      eyebrow={$dict.pricing.eyebrow}
+      subtitle={$dict.pricing.subtitle}
     >
       <svelte:fragment slot="title">
-        Simple pricing<br />
-        <span class="ts-text-gradient">That scales with YOU</span>
+        {$dict.pricing.titleLead}<br />
+        <span class="ts-text-gradient">{$dict.pricing.titleAccent}</span>
       </svelte:fragment>
     </SectionHeader>
 
     <div class="pricing-toggle-wrap">
-      <div class="pricing-toggle" role="tablist" aria-label="Billing cycle">
+      <div class="pricing-toggle" role="tablist" aria-label={$dict.pricing.toggleLabel}>
         <div
           class="pricing-toggle__thumb"
           class:is-annual={billing === 'annual'}
@@ -111,7 +93,7 @@
           aria-selected={billing === 'monthly'}
           on:click={() => (billing = 'monthly')}
         >
-          Monthly
+          {$dict.pricing.monthly}
         </button>
         <button
           type="button"
@@ -121,7 +103,7 @@
           aria-selected={billing === 'annual'}
           on:click={() => (billing = 'annual')}
         >
-          Annual
+          {$dict.pricing.annual}
         </button>
         <span class="pricing-toggle__save" class:is-active={billing === 'annual'}>
           <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -134,7 +116,7 @@
               stroke-linejoin="round"
             />
           </svg>
-          Save 20%
+          {$dict.pricing.save}
         </span>
       </div>
     </div>
@@ -149,7 +131,7 @@
           {#if plan.popular}
             <div class="pricing-card__badge">
               <Icon name="star" className="pricing-card__badge-icon" />
-              Most Popular
+              {$dict.pricing.badge}
             </div>
           {/if}
 
@@ -166,14 +148,14 @@
               <div class="pricing-card__price">
                 <AnimatedPrice value={plan.price[billing]} />
               </div>
-              <div class="pricing-card__suffix">{formatSuffix(plan)}</div>
+              <div class="pricing-card__suffix">{suffix}</div>
             {:else}
-              <div class="pricing-card__price">Custom</div>
+              <div class="pricing-card__price">{$dict.pricing.custom}</div>
             {/if}
           </div>
           {#if !plan.price && plan.basePrice}
             <div class="pricing-card__note">
-              starts at ${plan.basePrice}/mo + usage
+              {$dict.pricing.baseNoteLead} ${plan.basePrice}{$dict.pricing.baseNoteTrail}
             </div>
           {/if}
 

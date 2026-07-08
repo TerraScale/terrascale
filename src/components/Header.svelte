@@ -3,8 +3,10 @@
   import { page } from '$app/stores'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
+  import LanguageSelector from '@/components/LanguageSelector.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { docsLink, getStartedLink, navigation } from '@/lib/site'
+  import { dict } from '@/lib/i18n'
 
   let scrolled = false
   let isMenuOpen = false
@@ -25,7 +27,7 @@
 
 <header class="ts-header" class:scrolled>
   <div class="ts-header__inner">
-    <RouteLink href="/" class="ts-header__brand" aria-label="TerraScale home">
+    <RouteLink href="/" class="ts-header__brand" aria-label={$dict.chrome.brandHome}>
       <img
         src="/logo-principal.svg"
         alt="TerraScale"
@@ -46,12 +48,14 @@
           inactiveClass=""
         >
           <Icon name={item.icon} className="ts-nav__icon" />
-          {item.name}
+          {$dict.chrome.nav[item.key]}
         </RouteLink>
       {/each}
     </nav>
 
     <div class="ts-header__actions">
+      <LanguageSelector />
+
       <ExternalLink
         href={docsLink.href}
         target="_blank"
@@ -59,7 +63,7 @@
         class="ts-header__docs"
       >
         <Icon name={docsLink.icon} className="ts-nav__icon" />
-        {docsLink.name}
+        {$dict.chrome.docs}
       </ExternalLink>
 
       <ExternalLink
@@ -69,11 +73,11 @@
         class="ts-status-link"
       >
         <span class="pulse-dot ts-status-link__dot"></span>
-        Status
+        {$dict.chrome.status}
       </ExternalLink>
 
       <ExternalLink href={getStartedLink.href} class="ts-cta cta-shine">
-        {getStartedLink.name}
+        {$dict.chrome.getStarted}
         <Icon name={getStartedLink.icon} className="ts-cta__icon" />
       </ExternalLink>
     </div>
@@ -83,7 +87,7 @@
       class="ts-header__menu"
       aria-expanded={isMenuOpen}
       aria-controls="mobile-navigation"
-      aria-label="Toggle navigation menu"
+      aria-label={$dict.chrome.toggleNav}
       on:click={() => {
         isMenuOpen = !isMenuOpen
       }}
@@ -107,7 +111,7 @@
             }}
           >
             <Icon name={item.icon} className="ts-nav__icon" />
-            {item.name}
+            {$dict.chrome.nav[item.key]}
           </RouteLink>
         {/each}
         <ExternalLink
@@ -117,7 +121,7 @@
           class="ts-nav__link ts-nav__link--mobile"
         >
           <Icon name={docsLink.icon} className="ts-nav__icon" />
-          {docsLink.name}
+          {$dict.chrome.docs}
         </ExternalLink>
         <ExternalLink
           href="https://status.terrascale.tech"
@@ -126,12 +130,15 @@
           class="ts-status-link ts-status-link--mobile"
         >
           <span class="pulse-dot ts-status-link__dot"></span>
-          Status
+          {$dict.chrome.status}
         </ExternalLink>
         <ExternalLink href={getStartedLink.href} class="ts-cta cta-shine ts-cta--mobile">
-          {getStartedLink.name}
+          {$dict.chrome.getStarted}
           <Icon name={getStartedLink.icon} className="ts-cta__icon" />
         </ExternalLink>
+        <div class="ts-header__mobile-lang">
+          <LanguageSelector variant="inline" />
+        </div>
       </nav>
     </div>
   {/if}
@@ -338,6 +345,10 @@
   :global(.ts-cta--mobile) {
     justify-content: center;
     margin-top: 6px;
+  }
+
+  .ts-header__mobile-lang {
+    margin-top: 8px;
   }
 
   @media (max-width: 1240px) {

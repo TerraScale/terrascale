@@ -2,33 +2,9 @@
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import ExternalLink from '@/components/ExternalLink.svelte'
+  import { dict } from '@/lib/i18n'
 
-  const faqs = [
-    {
-      q: 'What is a Database Operation?',
-      a: 'A Database Operation is any single read, write, update, or delete action against your database. Each query you execute — whether fetching a row, inserting a record, running an aggregate, or replicating to another region — counts as one or more operations depending on complexity.',
-    },
-    {
-      q: 'What if I need more operations or storage?',
-      a: `All plans support overage billing at usage rates ($1 per additional GB of storage, $1 per million additional operations). You'll never be cut off mid-request — we'll notify you well before you approach limits so you can upgrade or adjust.`,
-    },
-    {
-      q: 'When can I change my subscription?',
-      a: 'Anytime. Upgrades take effect immediately with prorated billing; downgrades apply at the start of your next billing cycle. No lock-in, no cancellation fees.',
-    },
-    {
-      q: 'Can I export my data and leave anytime?',
-      a: `Yes — your data is yours. Full exports are available anytime through the dashboard or API, and we never charge a cent to get it out. The only constraint is a per-request rate limit so a runaway export job can't destabilize the cluster for other tenants; there's no cap on total volume and no exit fee. If TerraScale isn't working for you, you leave with everything you put in.`,
-    },
-    {
-      q: 'Do you offer custom enterprise solutions?',
-      a: 'Yes. For teams with specific compliance requirements, custom SLAs, or dedicated infrastructure, our Enterprise plan is fully tailored. Contact sales to scope a deployment that fits your needs.',
-    },
-    {
-      q: 'Why do you require a credit card for the free trial?',
-      a: `We require a valid card to prevent abuse and ensure serious usage of our infrastructure. You won't be charged during the 30-day trial, and you can cancel anytime. This also makes the transition to a paid plan seamless if you choose to continue.`,
-    },
-  ]
+  $: faqs = $dict.pricing.faq.items
 
   let open = 0
 
@@ -40,8 +16,8 @@
 <section class="faq">
   <div class="faq__inner">
     <div class="faq__head">
-      <h2 class="faq__title">Frequently Asked <span class="ts-text-gradient">Questions</span></h2>
-      <p class="faq__subtitle">Get answers to common questions about our pricing and plans.</p>
+      <h2 class="faq__title">{$dict.pricing.faq.titleLead} <span class="ts-text-gradient">{$dict.pricing.faq.titleAccent}</span></h2>
+      <p class="faq__subtitle">{$dict.pricing.faq.subtitle}</p>
     </div>
 
     <div class="faq__list">
@@ -71,14 +47,14 @@
     </div>
 
     <div class="faq__footer">
-      <h3 class="faq__footer-title">Still have questions?</h3>
+      <h3 class="faq__footer-title">{$dict.pricing.faq.footerTitle}</h3>
       <p class="faq__footer-text">
-        Our team is here to help you find the perfect plan for your needs.
+        {$dict.pricing.faq.footerText}
       </p>
       <div class="faq__footer-actions">
         <RouteLink href="/contact" class="ts-btn ts-btn-primary ts-btn-compact cta-shine">
           <Icon name="messageSquare" className="faq__footer-icon" />
-          Contact Sales
+          {$dict.pricing.faq.contactSales}
         </RouteLink>
         <ExternalLink
           href="https://docs.terrascale.tech"
@@ -87,7 +63,7 @@
           class="ts-btn ts-btn-glass ts-btn-compact"
         >
           <Icon name="bookOpen" className="faq__footer-icon" />
-          Read Documentation
+          {$dict.pricing.faq.readDocs}
         </ExternalLink>
       </div>
     </div>

@@ -1,12 +1,30 @@
 <script lang="ts">
   import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
+  import LanguageSelector from '@/components/LanguageSelector.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { footerColumns, socialLinks } from '@/lib/site'
+  import { dict } from '@/lib/i18n'
 
   const year = new Date().getFullYear()
 
   const isExternal = (href: string) => href.startsWith('http') || href.startsWith('mailto:')
+
+  // Resolve display labels from the active dictionary. Reactive ($:) so the
+  // whole footer re-labels when the locale changes. The cast is safe because
+  // site.ts link keys are kept in lockstep with the dictionary keys.
+  $: columns = footerColumns.map((column) => ({
+    column,
+    title: $dict.footer.columns[column.key].title,
+    links: column.links.map((link) => ({
+      link,
+      name: ($dict.footer.columns[column.key].links as Record<string, string>)[link.key] ?? link.key,
+    })),
+  }))
+  $: socials = socialLinks.map((social) => ({
+    social,
+    name: ($dict.footer.social as Record<string, string>)[social.key] ?? social.key,
+  }))
 </script>
 
 <footer class="ts-footer">
@@ -24,15 +42,15 @@
           />
         </RouteLink>
         <p class="ts-footer__tagline">
-          Empowering teams with secure, scalable database infrastructure. Scale your tech, effortlessly.
+          {$dict.footer.tagline}
         </p>
         <div class="ts-footer__socials">
-          {#each socialLinks as social (social.name)}
+          {#each socials as { social, name } (social.key)}
             <ExternalLink
               href={social.href}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={social.name}
+              aria-label={name}
               class="ts-footer__social"
               style={`color: ${social.color}; background: ${social.bg}; border-color: ${social.border};`}
             >
@@ -42,11 +60,11 @@
         </div>
       </div>
 
-      {#each footerColumns as column (column.title)}
+      {#each columns as { column, title, links } (column.key)}
         <div class="ts-footer__column">
-          <div class="ts-footer__heading">{column.title}</div>
+          <div class="ts-footer__heading">{title}</div>
           <ul class="ts-footer__list">
-            {#each column.links as link (link.name)}
+            {#each links as { link, name } (link.key)}
               <li>
                 {#if isExternal(link.href)}
                   <ExternalLink
@@ -56,12 +74,12 @@
                     class="ts-footer__link"
                   >
                     <Icon name="chevronRight" className="ts-footer__chevron" />
-                    {link.name}
+                    {name}
                   </ExternalLink>
                 {:else}
                   <RouteLink href={link.href} class="ts-footer__link">
                     <Icon name="chevronRight" className="ts-footer__chevron" />
-                    {link.name}
+                    {name}
                   </RouteLink>
                 {/if}
               </li>
@@ -72,7 +90,8 @@
     </div>
 
     <div class="ts-footer__meta">
-      <div class="ts-footer__copy">© {year} TerraScale. All rights reserved.</div>
+      <div class="ts-footer__copy">© {year} TerraScale. {$dict.footer.rightsReserved}</div>
+      <LanguageSelector variant="inline" />
     </div>
   </div>
 </footer>

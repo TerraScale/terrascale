@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
   import { tokenize, CODE_SAMPLES, LANG_META, type Lang } from '@/lib/highlight'
+  import { dict } from '@/lib/i18n'
 
   let lang: Lang = 'csharp'
   let copied = false
@@ -9,13 +10,7 @@
   $: code = CODE_SAMPLES[lang]
   $: tokens = tokenize(code, lang)
   $: ext = LANG_META.find((l) => l.id === lang)?.ext ?? 'txt'
-
-  const bullets = [
-    'Generated OpenAPI contract catalog',
-    'Typed C# and TypeScript clients',
-    'Dashboard uses the public SDK boundary',
-    'Launch-region inputs for sfo, fra, gru',
-  ]
+  $: bullets = $dict.code.bullets
 
   async function handleCopy() {
     try {
@@ -37,15 +32,14 @@
       <div class="code__copy">
         <div class="code__eyebrow">
           <Icon name="code2" className="code__eyebrow-icon" />
-          Developer SDK
+          {$dict.code.eyebrow}
         </div>
         <h2 class="code__headline">
-          Query your data<br />
-          <span class="ts-text-gradient">in the language you love</span>
+          {$dict.code.headlineLead}<br />
+          <span class="ts-text-gradient">{$dict.code.headlineAccent}</span>
         </h2>
         <p class="code__text">
-          First-class C# and TypeScript SDKs target the same public HTTP routes used by the
-          dashboard, with generated OpenAPI models underneath.
+          {$dict.code.text}
         </p>
         <ul class="code__bullets">
           {#each bullets as bullet (bullet)}
@@ -72,14 +66,14 @@
             class="code__copy-btn"
             class:is-copied={copied}
             on:click={handleCopy}
-            aria-label="Copy code"
+            aria-label={$dict.code.copyAria}
           >
             <Icon name={copied ? 'check' : 'code2'} className="code__copy-icon" />
-            {copied ? 'Copied' : 'Copy'}
+            {copied ? $dict.code.copied : $dict.code.copy}
           </button>
         </div>
 
-        <div class="code__tabs" role="tablist" aria-label="Language examples">
+        <div class="code__tabs" role="tablist" aria-label={$dict.code.tablistLabel}>
           {#each LANG_META as l (l.id)}
             <button
               type="button"
