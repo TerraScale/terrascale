@@ -67,52 +67,25 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - name: Checkout
         uses: https://data.forgejo.org/actions/checkout@v6
         with:
           github-server-url: https://git.mariogk.com
 
-      - name: Install TerraScale Deploy CLI
-        if: ${{ env.REGISTRY_TOKEN != '' }}
-        run: |
-          set -euo pipefail
-          nuget_config_dir="$(mktemp -d)"
-          trap 'rm -rf "${nuget_config_dir}"' EXIT
-          dotnet new nugetconfig --output "${nuget_config_dir}" --force >/dev/null
-          dotnet nuget add source "https://git.mariogk.com/api/packages/TerraScale/nuget/index.json" \
-            --name terrascale-forgejo \
-            --username forgejo-actions \
-            --password "${REGISTRY_TOKEN}" \
-            --store-password-in-clear-text \
-            --configfile "${nuget_config_dir}/nuget.config" >/dev/null
-          rm -rf .tools
-          dotnet tool install TerraScale.Deploy.Cli \
-            --tool-path .tools \
-            --configfile "${nuget_config_dir}/nuget.config"
-          ./.tools/terrascale-deploy version
-
-      - name: Deploy Cloudflare Pages through TerraScale Deploy
-        if: ${{ env.REGISTRY_TOKEN != '' }}
-        run: ./.tools/terrascale-deploy pages deploy --repository-root .
-
       - name: Install dependencies
-        if: ${{ env.REGISTRY_TOKEN == '' }}
         run: vp install
 
       - name: Validate project
-        if: ${{ env.REGISTRY_TOKEN == '' }}
         run: vp run check
 
       - name: Ensure Pages project exists
-        if: ${{ env.REGISTRY_TOKEN == '' }}
         run: vp run cf:project:create
 
       - name: Deploy production
-        if: ${{ env.REGISTRY_TOKEN == '' && forgejo.ref_name == 'main' }}
+        if: ${{ forgejo.ref_name == 'main' }}
         run: vp run cf:deploy
 
       - name: Deploy preview
-        if: ${{ env.REGISTRY_TOKEN == '' && forgejo.ref_name != 'main' }}
+        if: ${{ forgejo.ref_name != 'main' }}
         run: vp run cf:deploy:preview
