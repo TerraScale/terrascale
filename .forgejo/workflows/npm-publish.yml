@@ -53,7 +53,6 @@ jobs:
           set -euo pipefail
           command -v node
           command -v npm
-          command -v jq
           command -v curl
           node --version
           npm --version
@@ -109,7 +108,7 @@ jobs:
 
           latest_release_version=""
           if [[ "${latest_status}" == "200" ]]; then
-            latest_tag="$(jq -r '.tag_name // ""' "${latest_release}")"
+            latest_tag="$(node -e 'const fs = require("fs"); const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(release.tag_name ?? ""));' "${latest_release}")"
             latest_release_version="${latest_tag#v}"
             if [[ ! "${latest_release_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               echo "::error::Latest release tag must be a semantic version or v-prefixed semantic version. Found '${latest_tag}'."
@@ -122,7 +121,7 @@ jobs:
           fi
           rm -f "${latest_release}"
 
-          package_version="$(jq -r '.version // ""' package.json)"
+          package_version="$(node -e 'const fs = require("fs"); const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")); process.stdout.write(String(pkg.version ?? ""));')"
           if [[ ! "${package_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::package.json version must be a semantic version. Found '${package_version}'."
             exit 1
@@ -209,16 +208,30 @@ jobs:
           - https://registry.npmjs.org/package/@terrascale/sdk
           EOF
 
-          release_payload="$(jq -n \
-            --arg tag_name "${RELEASE_TAG}" \
-            --arg target_commitish "${target}" \
-            --arg name "@terrascale/sdk ${RELEASE_TAG}" \
-            --rawfile body "${body}" \
-            '{tag_name:$tag_name,target_commitish:$target_commitish,name:$name,body:$body,draft:true,prerelease:false}')"
-          update_payload="$(jq -n \
-            --arg name "@terrascale/sdk ${RELEASE_TAG}" \
-            --rawfile body "${body}" \
-            '{name:$name,body:$body,draft:true,prerelease:false}')"
+          release_payload="$(
+            RELEASE_TARGET="${target}" BODY_FILE="${body}" node <<'NODE'
+          const fs = require("fs");
+          process.stdout.write(JSON.stringify({
+            tag_name: process.env.RELEASE_TAG,
+            target_commitish: process.env.RELEASE_TARGET,
+            name: `@terrascale/sdk ${process.env.RELEASE_TAG}`,
+            body: fs.readFileSync(process.env.BODY_FILE, "utf8"),
+            draft: true,
+            prerelease: false,
+          }));
+          NODE
+          )"
+          update_payload="$(
+            BODY_FILE="${body}" node <<'NODE'
+          const fs = require("fs");
+          process.stdout.write(JSON.stringify({
+            name: `@terrascale/sdk ${process.env.RELEASE_TAG}`,
+            body: fs.readFileSync(process.env.BODY_FILE, "utf8"),
+            draft: true,
+            prerelease: false,
+          }));
+          NODE
+          )"
 
           tag_release="$(mktemp)"
           tag_status="$(
@@ -229,8 +242,8 @@ jobs:
               "${api}/repos/${repo}/releases/tags/${RELEASE_TAG}"
           )"
           if [[ "${tag_status}" == "200" ]]; then
-            release_id="$(jq -r '.id' "${tag_release}")"
-            release_is_draft="$(jq -r '.draft' "${tag_release}")"
+            release_id="$(node -e 'const fs = require("fs"); const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(release.id ?? ""));' "${tag_release}")"
+            release_is_draft="$(node -e 'const fs = require("fs"); const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(release.draft ?? ""));' "${tag_release}")"
             if [[ "${release_is_draft}" == "true" ]]; then
               curl --fail --silent --show-error \
                 --request PATCH \
@@ -312,12 +325,19 @@ jobs:
             echo "::error::Could not query Forgejo release ${RELEASE_TAG}. HTTP ${tag_status}."
             exit 1
           fi
-          release_id="$(jq -r '.id' "${tag_release}")"
+          release_id="$(node -e 'const fs = require("fs"); const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(release.id ?? ""));' "${tag_release}")"
 
-          publish_payload="$(jq -n \
-            --arg name "@terrascale/sdk ${RELEASE_TAG}" \
-            --rawfile body "${body}" \
-            '{name:$name,body:$body,draft:false,prerelease:false}')"
+          publish_payload="$(
+            BODY_FILE="${body}" node <<'NODE'
+          const fs = require("fs");
+          process.stdout.write(JSON.stringify({
+            name: `@terrascale/sdk ${process.env.RELEASE_TAG}`,
+            body: fs.readFileSync(process.env.BODY_FILE, "utf8"),
+            draft: false,
+            prerelease: false,
+          }));
+          NODE
+          )"
           curl --fail --silent --show-error \
             --request PATCH \
             --header "Authorization: token ${token}" \
