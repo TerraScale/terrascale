@@ -40,6 +40,11 @@ test('SEND MESSAGE posts to Google Forms with the correct entry IDs', async ({ p
   // The success state is driven by the iframe's load event after our 200.
   await expect(page.getByText('Message Sent!')).toBeVisible({ timeout: 10_000 })
 
+  // TER-81: a confirmation badge must appear in the bottom-right of the contact box.
+  const badge = page.locator('.contact-form__badge')
+  await expect(badge).toBeVisible()
+  await expect(badge).toHaveText(/message sent successfully/i)
+
   expect(capturedPost, 'expected a POST to the Google Forms formResponse endpoint').not.toBeNull()
   const post = capturedPost ?? ''
   const body = decodeFormBody(post)
