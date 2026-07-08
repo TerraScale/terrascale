@@ -23,7 +23,6 @@ jobs:
         with:
           github-server-url: https://git.mariogk.com
           ref: ${{ forgejo.sha }}
-          token: ${{ secrets.REGISTRY_TOKEN }}
           fetch-depth: 1
 
       - name: Checkout OpenAPI snapshot
