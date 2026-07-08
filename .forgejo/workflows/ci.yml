@@ -19,19 +19,17 @@ jobs:
     permissions:
       contents: read
     env:
-      REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - name: Install TerraScale Deploy CLI
         run: |
-          : "${REGISTRY_USER:?REGISTRY_USER is required to install TerraScale.Deploy.Cli.}"
           : "${REGISTRY_TOKEN:?REGISTRY_TOKEN is required to install TerraScale.Deploy.Cli.}"
           nuget_config_dir="$(mktemp -d)"
           trap 'rm -rf "${nuget_config_dir}"' EXIT
           dotnet new nugetconfig --output "${nuget_config_dir}" --force >/dev/null
           dotnet nuget add source "https://git.mariogk.com/api/packages/TerraScale/nuget/index.json" \
             --name terrascale-forgejo \
-            --username "${REGISTRY_USER}" \
+            --username forgejo-actions \
             --password "${REGISTRY_TOKEN}" \
             --store-password-in-clear-text \
             --configfile "${nuget_config_dir}/nuget.config" >/dev/null
