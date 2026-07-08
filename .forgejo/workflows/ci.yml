@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: terrascale-typescript-ci-${{ forgejo.ref }}
+  cancel-in-progress: true
+
 jobs:
   sdk:
     runs-on: terrascale-builder

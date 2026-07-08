@@ -2,8 +2,12 @@ name: Publish SDK to npm
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+
+concurrency:
+  group: terrascale-typescript-npm-publish-${{ forgejo.ref }}
+  cancel-in-progress: true
 
 jobs:
   publish:
@@ -15,13 +19,38 @@ jobs:
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
+      - name: Checkout OpenAPI snapshot
+        uses: https://data.forgejo.org/actions/checkout@v6
+        with:
+          repository: TerraScale/Documentation
+          token: ${{ secrets.REGISTRY_TOKEN }}
+          path: Documentation
+          fetch-depth: 0
+
+      - name: Resolve OpenAPI snapshot checkout
+        run: |
+          set -euo pipefail
+          documentation_sha="$(git -C Documentation rev-parse HEAD)"
+          documentation_ref="$(git -C Documentation symbolic-ref --quiet --short HEAD || true)"
+          if [ -z "${documentation_ref}" ]; then
+            documentation_ref="$(git -C Documentation for-each-ref --contains HEAD --format='%(refname:short)' refs/heads refs/remotes | head -n 1 || true)"
+          fi
+          if [ -z "${documentation_ref}" ]; then
+            documentation_ref="detached"
+          fi
+          echo "Documentation checkout: ref=${documentation_ref} sha=${documentation_sha}"
+          stat -c 'Documentation snapshot mtime: %y' Documentation/public/openapi/server.openapi.json
+          git -C Documentation log -1 --format='Documentation snapshot last commit: %H %cI %s' -- public/openapi/server.openapi.json
 
       - name: Verify runner tools
         run: |
           set -euo pipefail
           command -v node
           command -v npm
+          command -v jq
+          command -v curl
           node --version
           npm --version
 
@@ -34,14 +63,193 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify route manifest
+        run: npm run check:route-manifest
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: OpenAPI drift
+        run: npm run check:openapi-drift -- Documentation/public/openapi/server.openapi.json
+
       - name: Integration smoke
-        run: npm run test:integration
+        env:
+          TERRASCALE_API_BASE_URL: ${{ vars.TERRASCALE_API_BASE_URL }}
+          TERRASCALE_AUTH_API_BASE_URL: ${{ vars.TERRASCALE_AUTH_API_BASE_URL }}
+        run: |
+          set -euo pipefail
+          : "${TERRASCALE_API_BASE_URL:?TERRASCALE_API_BASE_URL variable is required for publish integration smoke.}"
+          : "${TERRASCALE_AUTH_API_BASE_URL:?TERRASCALE_AUTH_API_BASE_URL variable is required for publish integration smoke.}"
+          npm run test:integration
+
+      - name: Resolve release version
+        id: version
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${REGISTRY_TOKEN:?REGISTRY_TOKEN secret is required to resolve the SDK release version.}"
+          token="${REGISTRY_TOKEN}"
+
+          api="https://git.mariogk.com/api/v1"
+          repo="${FORGEJO_REPOSITORY:-TerraScale/TerraScale.TypeScript}"
+          latest_release="$(mktemp)"
+          latest_status="$(
+            curl --silent --show-error \
+              --output "${latest_release}" \
+              --write-out "%{http_code}" \
+              --header "Authorization: token ${token}" \
+              "${api}/repos/${repo}/releases/latest"
+          )"
+
+          latest_release_version=""
+          if [[ "${latest_status}" == "200" ]]; then
+            latest_tag="$(jq -r '.tag_name // ""' "${latest_release}")"
+            latest_release_version="${latest_tag#v}"
+            if [[ ! "${latest_release_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Latest release tag must be a semantic version or v-prefixed semantic version. Found '${latest_tag}'."
+              exit 1
+            fi
+          elif [[ "${latest_status}" != "404" ]]; then
+            cat "${latest_release}" >&2
+            echo "::error::Could not query latest Forgejo release. HTTP ${latest_status}."
+            exit 1
+          fi
+          rm -f "${latest_release}"
+
+            latest_npm_version="$(
+              npm view @terrascale/sdk version --registry=https://registry.npmjs.org/ 2>/dev/null \
+                | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+                || true
+            )"
+
+            version_greater() {
+              [[ "$1" != "$2" ]] && [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" == "$1" ]]
+            }
+
+            release_floor="${latest_release_version:-0.0.0}"
+            publish_npm="true"
+            if [[ -n "${latest_npm_version}" ]] && version_greater "${latest_npm_version}" "${release_floor}"; then
+              version="${latest_npm_version}"
+              publish_npm="false"
+              echo "::warning::npm already has @terrascale/sdk ${version} without a published Forgejo release; finalizing the matching Forgejo release instead of bumping past it."
+            else
+              latest_version="$(
+                printf '%s\n' \
+                  "${release_floor}" \
+                  "${latest_npm_version:-0.0.0}" \
+                  | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+                  | sort -V \
+                  | tail -n 1
+              )"
+
+              [[ "${latest_version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]
+              major="${BASH_REMATCH[1]}"
+              minor="${BASH_REMATCH[2]}"
+              patch="${BASH_REMATCH[3]}"
+              version="${major}.${minor}.$((patch + 1))"
+            fi
+            tag="v${version}"
+
+            out="${FORGEJO_OUTPUT:?}"
+            {
+              echo "version=${version}"
+              echo "tag=${tag}"
+              echo "api=${api}"
+              echo "repo=${repo}"
+              echo "publish_npm=${publish_npm}"
+            } >> "${out}"
+            echo "Resolved SDK release ${tag}."
+
+      - name: Set package release version
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: npm version "${RELEASE_VERSION}" --no-git-tag-version --force
+
+      - name: Create Forgejo draft release
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${REGISTRY_TOKEN:?REGISTRY_TOKEN secret is required to create the SDK release.}"
+          token="${REGISTRY_TOKEN}"
+
+          api="https://git.mariogk.com/api/v1"
+          repo="${FORGEJO_REPOSITORY:-TerraScale/TerraScale.TypeScript}"
+          target="${FORGEJO_SHA:-$(git rev-parse HEAD)}"
+
+          body="$(mktemp)"
+          cat >"${body}" <<EOF
+          @terrascale/sdk ${RELEASE_TAG}
+
+          npm package:
+          - @terrascale/sdk ${RELEASE_VERSION}
+
+          Registry:
+          - https://registry.npmjs.org/package/@terrascale/sdk
+          EOF
+
+          release_payload="$(jq -n \
+            --arg tag_name "${RELEASE_TAG}" \
+            --arg target_commitish "${target}" \
+            --arg name "@terrascale/sdk ${RELEASE_TAG}" \
+            --rawfile body "${body}" \
+            '{tag_name:$tag_name,target_commitish:$target_commitish,name:$name,body:$body,draft:true,prerelease:false}')"
+          update_payload="$(jq -n \
+            --arg name "@terrascale/sdk ${RELEASE_TAG}" \
+            --rawfile body "${body}" \
+            '{name:$name,body:$body,draft:true,prerelease:false}')"
+
+          tag_release="$(mktemp)"
+          tag_status="$(
+            curl --silent --show-error \
+              --output "${tag_release}" \
+              --write-out "%{http_code}" \
+              --header "Authorization: token ${token}" \
+              "${api}/repos/${repo}/releases/tags/${RELEASE_TAG}"
+          )"
+          if [[ "${tag_status}" == "200" ]]; then
+            release_id="$(jq -r '.id' "${tag_release}")"
+            release_is_draft="$(jq -r '.draft' "${tag_release}")"
+            if [[ "${release_is_draft}" == "true" ]]; then
+              curl --fail --silent --show-error \
+                --request PATCH \
+                --header "Authorization: token ${token}" \
+                --header "Content-Type: application/json" \
+                --data-binary "${update_payload}" \
+                "${api}/repos/${repo}/releases/${release_id}" >/dev/null
+            else
+              echo "Forgejo release ${RELEASE_TAG} already exists and is published."
+            fi
+          elif [[ "${tag_status}" == "404" ]]; then
+            curl --fail --silent --show-error \
+              --request POST \
+              --header "Authorization: token ${token}" \
+              --header "Content-Type: application/json" \
+              --data-binary "${release_payload}" \
+              "${api}/repos/${repo}/releases" >/dev/null
+          else
+            cat "${tag_release}" >&2
+            echo "::error::Could not query Forgejo release ${RELEASE_TAG}. HTTP ${tag_status}."
+            exit 1
+          fi
+          rm -f "${tag_release}" "${body}"
 
       - name: Publish to public npm registry
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PUBLISH_NPM: ${{ steps.version.outputs.publish_npm }}
         run: |
           set -euo pipefail
+          if [ "${PUBLISH_NPM}" != "true" ]; then
+            echo "npm already contains this SDK version; skipping npm publish and finalizing the Forgejo release."
+            exit 0
+          fi
+
           if [ -z "${NPM_TOKEN:-}" ]; then
             echo "NPM_TOKEN secret is required to publish @terrascale/sdk." >&2
             exit 1
@@ -49,3 +257,57 @@ jobs:
 
           printf '//registry.npmjs.org/:_authToken=%s\nregistry=https://registry.npmjs.org/\n' "${NPM_TOKEN}" > "${HOME}/.npmrc"
           npm publish --access public --registry=https://registry.npmjs.org/
+
+      - name: Publish Forgejo release
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${REGISTRY_TOKEN:?REGISTRY_TOKEN secret is required to publish the SDK release.}"
+          token="${REGISTRY_TOKEN}"
+
+          api="https://git.mariogk.com/api/v1"
+          repo="${FORGEJO_REPOSITORY:-TerraScale/TerraScale.TypeScript}"
+
+          body="$(mktemp)"
+          cat >"${body}" <<EOF
+          @terrascale/sdk ${RELEASE_TAG}
+
+          npm package:
+          - @terrascale/sdk ${RELEASE_VERSION}
+
+          Registry:
+          - https://registry.npmjs.org/package/@terrascale/sdk
+          EOF
+
+          tag_release="$(mktemp)"
+          tag_status="$(
+            curl --silent --show-error \
+              --output "${tag_release}" \
+              --write-out "%{http_code}" \
+              --header "Authorization: token ${token}" \
+              "${api}/repos/${repo}/releases/tags/${RELEASE_TAG}"
+          )"
+          if [[ "${tag_status}" != "200" ]]; then
+            cat "${tag_release}" >&2
+            echo "::error::Could not query Forgejo release ${RELEASE_TAG}. HTTP ${tag_status}."
+            exit 1
+          fi
+          release_id="$(jq -r '.id' "${tag_release}")"
+
+          publish_payload="$(jq -n \
+            --arg name "@terrascale/sdk ${RELEASE_TAG}" \
+            --rawfile body "${body}" \
+            '{name:$name,body:$body,draft:false,prerelease:false}')"
+          curl --fail --silent --show-error \
+            --request PATCH \
+            --header "Authorization: token ${token}" \
+            --header "Content-Type: application/json" \
+            --data-binary "${publish_payload}" \
+            "${api}/repos/${repo}/releases/${release_id}" >/dev/null
+
+          rm -f "${tag_release}" "${body}"
+          echo "Published Forgejo release ${RELEASE_TAG} for @terrascale/sdk ${RELEASE_VERSION}."

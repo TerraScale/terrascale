@@ -87,5 +87,6 @@ mocked HTTP.
 
 ## Releases
 
-Tagged releases publish `@terrascale/sdk` to the public npm registry through
-Forgejo CI. See `docs/release.md` for the required checks and tag flow.
+Main pushes publish `@terrascale/sdk` to the public npm registry through
+Forgejo CI after the release gates pass. See `docs/release.md` for the required
+checks and release/versioning flow.

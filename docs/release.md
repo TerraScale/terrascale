@@ -15,16 +15,26 @@ npm run test:integration
 ```
 
 `test:integration` must use real `TERRASCALE_API_BASE_URL` and
-`TERRASCALE_AUTH_API_BASE_URL` values when validating a release candidate. If
-those variables are absent, the smoke test skips instead of using mocked HTTP.
+`TERRASCALE_AUTH_API_BASE_URL` values when validating a release candidate. The
+publish workflow fails closed when those variables are absent instead of using
+mocked HTTP.
 
 ## Publish
 
-1. Confirm `package.json` has the intended semver version.
-2. Create and push a matching tag, for example `v0.1.0`.
-3. The `Publish SDK to npm` Forgejo workflow runs the preflight checks and then
-   executes `npm publish --access public --registry=https://registry.npmjs.org/`
-   with `NPM_TOKEN`.
+Normal releases are push-driven from `main`. The `Publish SDK to npm` Forgejo
+workflow runs the preflight checks, resolves the next patch version from the
+latest Forgejo Release, creates a draft Forgejo Release, updates the job-local
+package version to that release version, publishes to npm, and publishes the
+matching Forgejo Release.
+
+Forgejo Releases are the intended version history. The workflow also compares
+the latest npm registry version before choosing the next patch version so an
+interrupted run that published to npm but failed before release finalization
+publishes the matching Forgejo Release instead of bumping past that package
+version.
+
+The workflow executes `npm publish --access public --registry=https://registry.npmjs.org/`
+with `NPM_TOKEN`.
 
 The workflow intentionally writes npm credentials only to the job-local
 `~/.npmrc`.
