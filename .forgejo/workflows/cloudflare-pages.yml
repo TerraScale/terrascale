@@ -74,32 +74,45 @@ jobs:
         with:
           github-server-url: https://git.mariogk.com
 
-      - name: Deploy Cloudflare Pages
+      - name: Install TerraScale Deploy CLI
+        if: ${{ env.REGISTRY_TOKEN != '' }}
         run: |
           set -euo pipefail
-          if [ -n "${REGISTRY_TOKEN:-}" ]; then
-            nuget_config_dir="$(mktemp -d)"
-            trap 'rm -rf "${nuget_config_dir}"' EXIT
-            dotnet new nugetconfig --output "${nuget_config_dir}" --force >/dev/null
-            dotnet nuget add source "https://git.mariogk.com/api/packages/TerraScale/nuget/index.json" \
-              --name terrascale-forgejo \
-              --username forgejo-actions \
-              --password "${REGISTRY_TOKEN}" \
-              --store-password-in-clear-text \
-              --configfile "${nuget_config_dir}/nuget.config" >/dev/null
-            rm -rf .tools
-            dotnet tool install TerraScale.Deploy.Cli \
-              --tool-path .tools \
-              --configfile "${nuget_config_dir}/nuget.config"
-            ./.tools/terrascale-deploy pages deploy --repository-root .
-          else
-            echo "::warning::REGISTRY_TOKEN is unavailable; falling back to repo-local Cloudflare Pages commands."
-            vp install
-            vp run check
-            vp run cf:project:create
-            if [ "${FORGEJO_REF_NAME:-}" = "main" ]; then
-              vp run cf:deploy
-            else
-              vp run cf:deploy:preview
-            fi
-          fi
+          nuget_config_dir="$(mktemp -d)"
+          trap 'rm -rf "${nuget_config_dir}"' EXIT
+          dotnet new nugetconfig --output "${nuget_config_dir}" --force >/dev/null
+          dotnet nuget add source "https://git.mariogk.com/api/packages/TerraScale/nuget/index.json" \
+            --name terrascale-forgejo \
+            --username forgejo-actions \
+            --password "${REGISTRY_TOKEN}" \
+            --store-password-in-clear-text \
+            --configfile "${nuget_config_dir}/nuget.config" >/dev/null
+          rm -rf .tools
+          dotnet tool install TerraScale.Deploy.Cli \
+            --tool-path .tools \
+            --configfile "${nuget_config_dir}/nuget.config"
+          ./.tools/terrascale-deploy version
+
+      - name: Deploy Cloudflare Pages through TerraScale Deploy
+        if: ${{ env.REGISTRY_TOKEN != '' }}
+        run: ./.tools/terrascale-deploy pages deploy --repository-root .
+
+      - name: Install dependencies
+        if: ${{ env.REGISTRY_TOKEN == '' }}
+        run: vp install
+
+      - name: Validate project
+        if: ${{ env.REGISTRY_TOKEN == '' }}
+        run: vp run check
+
+      - name: Ensure Pages project exists
+        if: ${{ env.REGISTRY_TOKEN == '' }}
+        run: vp run cf:project:create
+
+      - name: Deploy production
+        if: ${{ env.REGISTRY_TOKEN == '' && forgejo.ref_name == 'main' }}
+        run: vp run cf:deploy
+
+      - name: Deploy preview
+        if: ${{ env.REGISTRY_TOKEN == '' && forgejo.ref_name != 'main' }}
+        run: vp run cf:deploy:preview
