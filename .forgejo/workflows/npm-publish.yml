@@ -193,7 +193,14 @@ jobs:
       - name: Set package release version
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        run: npm version "${RELEASE_VERSION}" --no-git-tag-version --force
+        run: |
+          set -euo pipefail
+          current_version="$(node -e 'const fs = require("fs"); const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")); process.stdout.write(String(pkg.version ?? ""));')"
+          if [ "${current_version}" = "${RELEASE_VERSION}" ]; then
+            echo "package.json already declares ${RELEASE_VERSION}."
+            exit 0
+          fi
+          npm version "${RELEASE_VERSION}" --no-git-tag-version --force
 
       - name: Mark publish stage draft-release
         env:
