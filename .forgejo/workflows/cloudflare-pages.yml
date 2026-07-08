@@ -89,5 +89,5 @@ jobs:
             --configfile "${nuget_config_dir}/nuget.config"
           ./.tools/terrascale-deploy version
 
-      - name: Run workflow
-        run: ./.tools/terrascale-deploy deploy --checkout --repository-root LandingPage
+      - name: Publish Pages application
+        run: ./.tools/terrascale-deploy publish-application --checkout --repository-root LandingPage
