@@ -18,63 +18,28 @@ jobs:
       image: terrascale-builder
     permissions:
       contents: read
+    env:
+      REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
-        with:
-          github-server-url: https://git.mariogk.com
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
-
-      - name: Checkout OpenAPI snapshot
-        uses: https://data.forgejo.org/actions/checkout@v6
-        with:
-          github-server-url: https://git.mariogk.com
-          repository: TerraScale/Documentation
-          ref: main
-          token: ${{ secrets.REGISTRY_TOKEN }}
-          path: Documentation
-          fetch-depth: 0
-
-      - name: Resolve OpenAPI snapshot checkout
+      - name: Install TerraScale Deploy CLI
         run: |
-          set -euo pipefail
-          documentation_sha="$(git -C Documentation rev-parse HEAD)"
-          documentation_ref="$(git -C Documentation symbolic-ref --quiet --short HEAD || true)"
-          if [ -z "${documentation_ref}" ]; then
-            documentation_ref="$(git -C Documentation for-each-ref --contains HEAD --format='%(refname:short)' refs/heads refs/remotes | head -n 1 || true)"
-          fi
-          if [ -z "${documentation_ref}" ]; then
-            documentation_ref="detached"
-          fi
-          echo "Documentation checkout: ref=${documentation_ref} sha=${documentation_sha}"
-          stat -c 'Documentation snapshot mtime: %y' Documentation/public/openapi/server.openapi.json
-          git -C Documentation log -1 --format='Documentation snapshot last commit: %H %cI %s' -- public/openapi/server.openapi.json
+          : "${REGISTRY_USER:?REGISTRY_USER is required to install TerraScale.Deploy.Cli.}"
+          : "${REGISTRY_TOKEN:?REGISTRY_TOKEN is required to install TerraScale.Deploy.Cli.}"
+          nuget_config_dir="$(mktemp -d)"
+          trap 'rm -rf "${nuget_config_dir}"' EXIT
+          dotnet new nugetconfig --output "${nuget_config_dir}" --force >/dev/null
+          dotnet nuget add source "https://git.mariogk.com/api/packages/TerraScale/nuget/index.json" \
+            --name terrascale-forgejo \
+            --username "${REGISTRY_USER}" \
+            --password "${REGISTRY_TOKEN}" \
+            --store-password-in-clear-text \
+            --configfile "${nuget_config_dir}/nuget.config" >/dev/null
+          rm -rf .tools
+          dotnet tool install TerraScale.Deploy.Cli \
+            --tool-path .tools \
+            --configfile "${nuget_config_dir}/nuget.config"
+          ./.tools/terrascale-deploy version
 
-      - name: Verify runner tools
-        run: |
-          set -euo pipefail
-          command -v node
-          command -v npm
-          node --version
-          npm --version
-
-      - name: Restore dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Build
-        run: npm run build
-
-      - name: Verify route manifest
-        run: npm run check:route-manifest
-
-      - name: Unit tests
-        run: npm run test:unit
-
-      - name: OpenAPI drift
-        run: npm run check:openapi-drift -- Documentation/public/openapi/server.openapi.json
-
-      - name: Integration smoke
-        run: npm run test:integration
+      - name: Run SDK CI
+        run: ./.tools/terrascale-deploy sdk ci --checkout --repository-root TerraScale.TypeScript
