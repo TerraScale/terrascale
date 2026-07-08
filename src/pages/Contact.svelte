@@ -247,6 +247,18 @@
           <Icon name="shield" className="contact-form__note-icon" />
           Your information is never shared. Replies within 24h.
         </div>
+
+        {#if submitState === 'success'}
+          <!-- TER-81: confirmation badge pinned to the bottom-right corner of the
+               contact box. Visual-only confirmation; the status message above is the
+               authoritative live region for assistive tech, so this stays aria-hidden. -->
+          <div class="contact-form__badge" aria-hidden="true">
+            <span class="contact-form__badge-icon">
+              <Icon name="check" className="contact-form__badge-check" />
+            </span>
+            Message sent successfully
+          </div>
+        {/if}
       </form>
 
       <!-- Hidden submission sink: a native form POST into a hidden iframe is the
@@ -397,6 +409,7 @@
   }
 
   .contact-form {
+    position: relative;
     padding: 36px;
     border-radius: 12px;
   }
@@ -498,6 +511,58 @@
     background: rgba(239, 68, 68, 0.1);
     border-color: rgba(239, 68, 68, 0.35);
     color: #fca5a5;
+  }
+
+  /* TER-81: success confirmation badge pinned to the bottom-right corner of the
+     contact box. Mirrors the submit button's success treatment (solid secondary
+     green, white glyph) so it reads as one design system. */
+  .contact-form__badge {
+    position: absolute;
+    right: 20px;
+    bottom: 20px;
+    z-index: 6;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 16px 9px 11px;
+    border-radius: 999px;
+    background: var(--ts-secondary);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 10px 30px rgba(var(--ts-secondary-rgb), 0.45);
+    color: #fff;
+    font-family: var(--ts-font-accent);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    animation: contact-badge-in 300ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  }
+
+  .contact-form__badge-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.22);
+    flex-shrink: 0;
+  }
+
+  :global(.contact-form__badge-check) {
+    width: 11px;
+    height: 11px;
+  }
+
+  @keyframes contact-badge-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.94);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
   }
 
   /* Visually hidden submission sink for the Google Forms iframe POST. Kept at
@@ -679,6 +744,10 @@
     }
     .contact-form__row {
       grid-template-columns: 1fr;
+    }
+    .contact-form__badge {
+      right: 16px;
+      bottom: 16px;
     }
   }
 </style>
