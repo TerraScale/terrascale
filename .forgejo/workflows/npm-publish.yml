@@ -53,7 +53,6 @@ jobs:
           set -euo pipefail
           command -v node
           command -v npm
-          command -v curl
           node --version
           npm --version
 
@@ -98,13 +97,7 @@ jobs:
           api="https://git.mariogk.com/api/v1"
           repo="${FORGEJO_REPOSITORY:-TerraScale/TerraScale.TypeScript}"
           latest_release="$(mktemp)"
-          latest_status="$(
-            curl --silent --show-error \
-              --output "${latest_release}" \
-              --write-out "%{http_code}" \
-              --header "Authorization: token ${token}" \
-              "${api}/repos/${repo}/releases/latest"
-          )"
+          latest_status="$(node scripts/forgejo-api.mjs GET "${api}/repos/${repo}/releases/latest" "${latest_release}")"
 
           latest_release_version=""
           if [[ "${latest_status}" == "200" ]]; then
@@ -208,8 +201,8 @@ jobs:
           - https://registry.npmjs.org/package/@terrascale/sdk
           EOF
 
-          release_payload="$(
-            RELEASE_TARGET="${target}" BODY_FILE="${body}" node <<'NODE'
+          release_payload="$(mktemp)"
+          RELEASE_TARGET="${target}" BODY_FILE="${body}" node >"${release_payload}" <<'NODE'
           const fs = require("fs");
           process.stdout.write(JSON.stringify({
             tag_name: process.env.RELEASE_TAG,
@@ -220,9 +213,8 @@ jobs:
             prerelease: false,
           }));
           NODE
-          )"
-          update_payload="$(
-            BODY_FILE="${body}" node <<'NODE'
+          update_payload="$(mktemp)"
+          BODY_FILE="${body}" node >"${update_payload}" <<'NODE'
           const fs = require("fs");
           process.stdout.write(JSON.stringify({
             name: `@terrascale/sdk ${process.env.RELEASE_TAG}`,
@@ -231,42 +223,39 @@ jobs:
             prerelease: false,
           }));
           NODE
-          )"
 
           tag_release="$(mktemp)"
-          tag_status="$(
-            curl --silent --show-error \
-              --output "${tag_release}" \
-              --write-out "%{http_code}" \
-              --header "Authorization: token ${token}" \
-              "${api}/repos/${repo}/releases/tags/${RELEASE_TAG}"
-          )"
+          tag_status="$(node scripts/forgejo-api.mjs GET "${api}/repos/${repo}/releases/tags/${RELEASE_TAG}" "${tag_release}")"
           if [[ "${tag_status}" == "200" ]]; then
             release_id="$(node -e 'const fs = require("fs"); const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(release.id ?? ""));' "${tag_release}")"
             release_is_draft="$(node -e 'const fs = require("fs"); const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(release.draft ?? ""));' "${tag_release}")"
             if [[ "${release_is_draft}" == "true" ]]; then
-              curl --fail --silent --show-error \
-                --request PATCH \
-                --header "Authorization: token ${token}" \
-                --header "Content-Type: application/json" \
-                --data-binary "${update_payload}" \
-                "${api}/repos/${repo}/releases/${release_id}" >/dev/null
+              update_response="$(mktemp)"
+              update_status="$(node scripts/forgejo-api.mjs PATCH "${api}/repos/${repo}/releases/${release_id}" "${update_response}" "${update_payload}")"
+              if [[ ! "${update_status}" =~ ^2 ]]; then
+                cat "${update_response}" >&2
+                echo "::error::Could not update Forgejo release ${RELEASE_TAG}. HTTP ${update_status}."
+                exit 1
+              fi
+              rm -f "${update_response}"
             else
               echo "Forgejo release ${RELEASE_TAG} already exists and is published."
             fi
           elif [[ "${tag_status}" == "404" ]]; then
-            curl --fail --silent --show-error \
-              --request POST \
-              --header "Authorization: token ${token}" \
-              --header "Content-Type: application/json" \
-              --data-binary "${release_payload}" \
-              "${api}/repos/${repo}/releases" >/dev/null
+            create_response="$(mktemp)"
+            create_status="$(node scripts/forgejo-api.mjs POST "${api}/repos/${repo}/releases" "${create_response}" "${release_payload}")"
+            if [[ ! "${create_status}" =~ ^2 ]]; then
+              cat "${create_response}" >&2
+              echo "::error::Could not create Forgejo release ${RELEASE_TAG}. HTTP ${create_status}."
+              exit 1
+            fi
+            rm -f "${create_response}"
           else
             cat "${tag_release}" >&2
             echo "::error::Could not query Forgejo release ${RELEASE_TAG}. HTTP ${tag_status}."
             exit 1
           fi
-          rm -f "${tag_release}" "${body}"
+          rm -f "${tag_release}" "${body}" "${release_payload}" "${update_payload}"
 
       - name: Publish to public npm registry
         env:
@@ -313,13 +302,7 @@ jobs:
           EOF
 
           tag_release="$(mktemp)"
-          tag_status="$(
-            curl --silent --show-error \
-              --output "${tag_release}" \
-              --write-out "%{http_code}" \
-              --header "Authorization: token ${token}" \
-              "${api}/repos/${repo}/releases/tags/${RELEASE_TAG}"
-          )"
+          tag_status="$(node scripts/forgejo-api.mjs GET "${api}/repos/${repo}/releases/tags/${RELEASE_TAG}" "${tag_release}")"
           if [[ "${tag_status}" != "200" ]]; then
             cat "${tag_release}" >&2
             echo "::error::Could not query Forgejo release ${RELEASE_TAG}. HTTP ${tag_status}."
@@ -327,8 +310,8 @@ jobs:
           fi
           release_id="$(node -e 'const fs = require("fs"); const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(release.id ?? ""));' "${tag_release}")"
 
-          publish_payload="$(
-            BODY_FILE="${body}" node <<'NODE'
+          publish_payload="$(mktemp)"
+          BODY_FILE="${body}" node >"${publish_payload}" <<'NODE'
           const fs = require("fs");
           process.stdout.write(JSON.stringify({
             name: `@terrascale/sdk ${process.env.RELEASE_TAG}`,
@@ -337,13 +320,13 @@ jobs:
             prerelease: false,
           }));
           NODE
-          )"
-          curl --fail --silent --show-error \
-            --request PATCH \
-            --header "Authorization: token ${token}" \
-            --header "Content-Type: application/json" \
-            --data-binary "${publish_payload}" \
-            "${api}/repos/${repo}/releases/${release_id}" >/dev/null
+          publish_response="$(mktemp)"
+          publish_status="$(node scripts/forgejo-api.mjs PATCH "${api}/repos/${repo}/releases/${release_id}" "${publish_response}" "${publish_payload}")"
+          if [[ ! "${publish_status}" =~ ^2 ]]; then
+            cat "${publish_response}" >&2
+            echo "::error::Could not publish Forgejo release ${RELEASE_TAG}. HTTP ${publish_status}."
+            exit 1
+          fi
 
-          rm -f "${tag_release}" "${body}"
+          rm -f "${tag_release}" "${body}" "${publish_payload}" "${publish_response}"
           echo "Published Forgejo release ${RELEASE_TAG} for @terrascale/sdk ${RELEASE_VERSION}."
