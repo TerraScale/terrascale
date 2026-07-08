@@ -48,6 +48,11 @@ jobs:
           stat -c 'Documentation snapshot mtime: %y' Documentation/public/openapi/server.openapi.json
           git -C Documentation log -1 --format='Documentation snapshot last commit: %H %cI %s' -- public/openapi/server.openapi.json
 
+      - name: Mark publish stage
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: node scripts/forgejo-variable.mjs LAST_SDK_PUBLISH_STAGE "stage=verify-runner-tools run=${FORGEJO_RUN_NUMBER} sha=${FORGEJO_SHA}"
+
       - name: Verify runner tools
         run: |
           set -euo pipefail
@@ -74,6 +79,11 @@ jobs:
       - name: OpenAPI drift
         run: npm run check:openapi-drift -- Documentation/public/openapi/server.openapi.json
 
+      - name: Mark publish stage integration
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: node scripts/forgejo-variable.mjs LAST_SDK_PUBLISH_STAGE "stage=integration-smoke run=${FORGEJO_RUN_NUMBER} sha=${FORGEJO_SHA}"
+
       - name: Integration smoke
         env:
           TERRASCALE_API_BASE_URL: ${{ vars.TERRASCALE_API_BASE_URL }}
@@ -83,6 +93,11 @@ jobs:
           : "${TERRASCALE_API_BASE_URL:?TERRASCALE_API_BASE_URL variable is required for publish integration smoke.}"
           : "${TERRASCALE_AUTH_API_BASE_URL:?TERRASCALE_AUTH_API_BASE_URL variable is required for publish integration smoke.}"
           npm run test:integration
+
+      - name: Mark publish stage version
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: node scripts/forgejo-variable.mjs LAST_SDK_PUBLISH_STAGE "stage=resolve-release-version run=${FORGEJO_RUN_NUMBER} sha=${FORGEJO_SHA}"
 
       - name: Resolve release version
         id: version
@@ -170,10 +185,20 @@ jobs:
           } >> "${out}"
           echo "Resolved SDK release ${tag}."
 
+      - name: Mark publish stage package-version
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: node scripts/forgejo-variable.mjs LAST_SDK_PUBLISH_STAGE "stage=set-package-version run=${FORGEJO_RUN_NUMBER} sha=${FORGEJO_SHA}"
+
       - name: Set package release version
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: npm version "${RELEASE_VERSION}" --no-git-tag-version --force
+
+      - name: Mark publish stage draft-release
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: node scripts/forgejo-variable.mjs LAST_SDK_PUBLISH_STAGE "stage=create-draft-release run=${FORGEJO_RUN_NUMBER} sha=${FORGEJO_SHA}"
 
       - name: Create Forgejo draft release
         env:
@@ -257,6 +282,11 @@ jobs:
           fi
           rm -f "${tag_release}" "${body}" "${release_payload}" "${update_payload}"
 
+      - name: Mark publish stage npm
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: node scripts/forgejo-variable.mjs LAST_SDK_PUBLISH_STAGE "stage=publish-npm run=${FORGEJO_RUN_NUMBER} sha=${FORGEJO_SHA}"
+
       - name: Publish to public npm registry
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -275,6 +305,11 @@ jobs:
 
           printf '//registry.npmjs.org/:_authToken=%s\nregistry=https://registry.npmjs.org/\n' "${NPM_TOKEN}" > "${HOME}/.npmrc"
           npm publish --access public --registry=https://registry.npmjs.org/
+
+      - name: Mark publish stage forgejo-release
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: node scripts/forgejo-variable.mjs LAST_SDK_PUBLISH_STAGE "stage=publish-forgejo-release run=${FORGEJO_RUN_NUMBER} sha=${FORGEJO_SHA}"
 
       - name: Publish Forgejo release
         env:
