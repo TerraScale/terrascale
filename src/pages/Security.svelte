@@ -103,15 +103,19 @@
 
 <section class="security-cta">
   <div class="security-cta__inner ts-glass">
-    <h2 class="security-cta__title">Need a security review?</h2>
-    <p class="security-cta__text">
-      Contact TerraScale with your architecture, region, and access-control requirements. We can
-      walk through the current product surface and the controls that apply to your workload.
-    </p>
-    <RouteLink href="/contact" class="ts-btn ts-btn-primary cta-shine">
-      Contact Security
-      <Icon name="arrowRight" className="security-cta__icon" />
-    </RouteLink>
+    <div class="security-cta__content">
+      <h2 class="security-cta__title">Need a security review?</h2>
+      <p class="security-cta__text">
+        Contact TerraScale with your architecture, region, and access-control requirements. We can
+        walk through the current product surface and the controls that apply to your workload.
+      </p>
+    </div>
+    <div class="security-cta__action">
+      <RouteLink href="/contact" class="ts-btn ts-btn-primary cta-shine">
+        Contact Security
+        <Icon name="arrowRight" className="security-cta__icon" />
+      </RouteLink>
+    </div>
   </div>
 </section>
 
@@ -315,10 +319,18 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 28px;
-    align-items: center;
+    align-items: start;
     background:
       radial-gradient(ellipse 70% 120% at 0% 0%, rgba(var(--ts-primary-rgb), 0.14), transparent 65%),
       var(--ts-glass-bg);
+  }
+
+  .security-cta__content {
+    min-width: 0;
+  }
+
+  .security-cta__action {
+    align-self: end;
   }
 
   .security-cta__title {
