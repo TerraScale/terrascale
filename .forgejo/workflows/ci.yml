@@ -15,12 +15,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v6
+      - uses: https://data.forgejo.org/actions/checkout@v6
         with:
           fetch-depth: 1
 
       - name: Checkout OpenAPI snapshot
-        uses: https://code.forgejo.org/actions/checkout@v6
+        uses: https://data.forgejo.org/actions/checkout@v6
         with:
           repository: TerraScale/Documentation
           token: ${{ secrets.REGISTRY_TOKEN }}
