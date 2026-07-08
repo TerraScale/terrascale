@@ -69,23 +69,37 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
     steps:
-      - name: Install TerraScale Deploy CLI
-        run: |
-          : "${REGISTRY_TOKEN:?REGISTRY_TOKEN is required to install TerraScale.Deploy.Cli.}"
-          nuget_config_dir="$(mktemp -d)"
-          trap 'rm -rf "${nuget_config_dir}"' EXIT
-          dotnet new nugetconfig --output "${nuget_config_dir}" --force >/dev/null
-          dotnet nuget add source "https://git.mariogk.com/api/packages/TerraScale/nuget/index.json" \
-            --name terrascale-forgejo \
-            --username forgejo-actions \
-            --password "${REGISTRY_TOKEN}" \
-            --store-password-in-clear-text \
-            --configfile "${nuget_config_dir}/nuget.config" >/dev/null
-          rm -rf .tools
-          dotnet tool install TerraScale.Deploy.Cli \
-            --tool-path .tools \
-            --configfile "${nuget_config_dir}/nuget.config"
-          ./.tools/terrascale-deploy version
+      - name: Checkout
+        uses: https://data.forgejo.org/actions/checkout@v6
+        with:
+          github-server-url: https://git.mariogk.com
 
       - name: Deploy Cloudflare Pages
-        run: ./.tools/terrascale-deploy pages deploy --checkout --repository-root LandingPage
+        run: |
+          set -euo pipefail
+          if [ -n "${REGISTRY_TOKEN:-}" ]; then
+            nuget_config_dir="$(mktemp -d)"
+            trap 'rm -rf "${nuget_config_dir}"' EXIT
+            dotnet new nugetconfig --output "${nuget_config_dir}" --force >/dev/null
+            dotnet nuget add source "https://git.mariogk.com/api/packages/TerraScale/nuget/index.json" \
+              --name terrascale-forgejo \
+              --username forgejo-actions \
+              --password "${REGISTRY_TOKEN}" \
+              --store-password-in-clear-text \
+              --configfile "${nuget_config_dir}/nuget.config" >/dev/null
+            rm -rf .tools
+            dotnet tool install TerraScale.Deploy.Cli \
+              --tool-path .tools \
+              --configfile "${nuget_config_dir}/nuget.config"
+            ./.tools/terrascale-deploy pages deploy --repository-root .
+          else
+            echo "::warning::REGISTRY_TOKEN is unavailable; falling back to repo-local Cloudflare Pages commands."
+            vp install
+            vp run check
+            vp run cf:project:create
+            if [ "${FORGEJO_REF_NAME:-}" = "main" ]; then
+              vp run cf:deploy
+            else
+              vp run cf:deploy:preview
+            fi
+          fi
