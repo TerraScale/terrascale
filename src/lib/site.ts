@@ -2,81 +2,90 @@ import type { AppIconName } from '@/lib/icons'
 
 export type RoutePath = '/' | '/about' | '/contact' | '/pricing' | '/security' | '/terms'
 
+// Display labels are intentionally NOT stored here — they live in the i18n
+// dictionaries (src/lib/i18n/messages/*.ts) and are resolved by key. This file
+// remains the single source of truth for the locale-independent parts that are
+// easy to get wrong: route hrefs, icon names, link ordering, and external URLs.
+
+export type NavKey = 'home' | 'about' | 'pricing' | 'security' | 'terms' | 'contact'
+
 export type NavEntry = {
-  name: string
+  key: NavKey
   href: RoutePath
   icon: AppIconName
 }
 
 export const navigation: NavEntry[] = [
-  { name: 'Home', href: '/', icon: 'home' },
-  { name: 'About', href: '/about', icon: 'users' },
-  { name: 'Pricing', href: '/pricing', icon: 'dollarSign' },
-  { name: 'Security', href: '/security', icon: 'shieldCheck' },
-  { name: 'Terms', href: '/terms', icon: 'bookOpen' },
-  { name: 'Contact', href: '/contact', icon: 'mail' },
+  { key: 'home', href: '/', icon: 'home' },
+  { key: 'about', href: '/about', icon: 'users' },
+  { key: 'pricing', href: '/pricing', icon: 'dollarSign' },
+  { key: 'security', href: '/security', icon: 'shieldCheck' },
+  { key: 'terms', href: '/terms', icon: 'bookOpen' },
+  { key: 'contact', href: '/contact', icon: 'mail' },
 ]
 
 export const docsLink = {
-  name: 'Docs',
   href: 'https://docs.terrascale.tech',
   icon: 'bookOpen' as AppIconName,
 }
 
 export const getStartedLink = {
-  name: 'Get Started',
   href: 'https://dash.terrascale.tech/login',
   icon: 'arrowRight' as AppIconName,
 }
 
+export type FooterColumnKey = 'product' | 'company' | 'resources' | 'legal'
+
 export type FooterColumn = {
-  title: string
-  links: { name: string; href: string }[]
+  key: FooterColumnKey
+  links: { key: string; href: string }[]
 }
 
 export const footerColumns: FooterColumn[] = [
   {
-    title: 'Product',
+    key: 'product',
     links: [
-      { name: 'Features', href: '/#features' },
-      { name: 'Pricing', href: '/pricing' },
-      { name: 'Changelog', href: 'https://docs.terrascale.tech/changelog' },
-      { name: 'Roadmap', href: 'https://docs.terrascale.tech/roadmap' },
-      { name: 'Documentation', href: 'https://docs.terrascale.tech' },
+      { key: 'features', href: '/#features' },
+      { key: 'pricing', href: '/pricing' },
+      { key: 'changelog', href: 'https://docs.terrascale.tech/changelog' },
+      { key: 'roadmap', href: 'https://docs.terrascale.tech/roadmap' },
+      { key: 'documentation', href: 'https://docs.terrascale.tech' },
     ],
   },
   {
-    title: 'Company',
+    key: 'company',
     links: [
-      { name: 'About', href: '/about' },
-      { name: 'Blog', href: 'https://docs.terrascale.tech/en/blog/' },
-      { name: 'Contact', href: '/contact' },
+      { key: 'about', href: '/about' },
+      { key: 'blog', href: 'https://docs.terrascale.tech/en/blog/' },
+      { key: 'contact', href: '/contact' },
     ],
   },
   {
-    title: 'Resources',
+    key: 'resources',
     links: [
-      { name: 'Docs', href: 'https://docs.terrascale.tech' },
-      { name: 'API Reference', href: 'https://docs.terrascale.tech/en/reference/api/' },
-      { name: 'Status', href: 'https://status.terrascale.tech' },
-      { name: 'Community', href: 'https://discord.gg/terrascale' },
-      { name: 'Support', href: '/contact' },
+      { key: 'docs', href: 'https://docs.terrascale.tech' },
+      { key: 'apiReference', href: 'https://docs.terrascale.tech/en/reference/api/' },
+      { key: 'status', href: 'https://status.terrascale.tech' },
+      { key: 'community', href: 'https://discord.gg/terrascale' },
+      { key: 'support', href: '/contact' },
     ],
   },
   {
-    title: 'Legal',
+    key: 'legal',
     links: [
-      { name: 'Privacy', href: 'https://docs.terrascale.tech/privacy' },
-      { name: 'Terms', href: '/terms' },
-      { name: 'Security', href: '/security' },
-      { name: 'SLA', href: 'https://docs.terrascale.tech/sla' },
-      { name: 'Compliance', href: 'https://docs.terrascale.tech/compliance' },
+      { key: 'privacy', href: 'https://docs.terrascale.tech/privacy' },
+      { key: 'terms', href: '/terms' },
+      { key: 'security', href: '/security' },
+      { key: 'sla', href: 'https://docs.terrascale.tech/sla' },
+      { key: 'compliance', href: 'https://docs.terrascale.tech/compliance' },
     ],
   },
 ]
 
+export type SocialKey = 'github' | 'discord' | 'x' | 'linkedin' | 'email'
+
 export type SocialLink = {
-  name: string
+  key: SocialKey
   href: string
   icon: AppIconName
   color: string
@@ -86,7 +95,7 @@ export type SocialLink = {
 
 export const socialLinks: SocialLink[] = [
   {
-    name: 'GitHub',
+    key: 'github',
     href: 'https://git.mariogk.com/Terrascale',
     icon: 'brandGithub',
     color: '#F1F5F9',
@@ -94,7 +103,7 @@ export const socialLinks: SocialLink[] = [
     border: 'rgba(241,245,249,0.18)',
   },
   {
-    name: 'Discord',
+    key: 'discord',
     href: 'https://discord.gg/terrascale',
     icon: 'brandDiscord',
     color: '#5865F2',
@@ -102,7 +111,7 @@ export const socialLinks: SocialLink[] = [
     border: 'rgba(88,101,242,0.35)',
   },
   {
-    name: 'X',
+    key: 'x',
     href: 'https://twitter.com/terrascale',
     icon: 'brandX',
     color: '#FFFFFF',
@@ -110,7 +119,7 @@ export const socialLinks: SocialLink[] = [
     border: 'rgba(255,255,255,0.18)',
   },
   {
-    name: 'LinkedIn',
+    key: 'linkedin',
     href: 'https://linkedin.com/company/terrascale',
     icon: 'brandLinkedin',
     color: '#0A66C2',
@@ -118,7 +127,7 @@ export const socialLinks: SocialLink[] = [
     border: 'rgba(10,102,194,0.38)',
   },
   {
-    name: 'Email',
+    key: 'email',
     href: 'mailto:support@terrascale.tech',
     icon: 'mail',
     color: '#10B981',

@@ -2,49 +2,25 @@
   import Icon from '@/components/Icon.svelte'
   import SectionHeader from '@/components/sections/SectionHeader.svelte'
   import type { AppIconName } from '@/lib/icons'
+  import { dict } from '@/lib/i18n'
 
-  const features: Array<{
-    icon: AppIconName
-    title: string
-    text: string
-    bullets: string[]
-  }> = [
-    {
-      icon: 'zap',
-      title: 'Typed Data API',
-      text: 'Create databases, collections, schemas, entities, and SQL queries through one public API.',
-      bullets: ['Schema plans', 'SQL explain', 'SDK queries'],
-    },
-    {
-      icon: 'shield',
-      title: 'Auth And Access',
-      text: 'Account, session, passkey, MFA, organization, invitation, and scoped API-key flows share the same platform surface.',
-      bullets: ['Passkeys', 'MFA', 'Scoped keys'],
-    },
-    {
-      icon: 'globe',
-      title: 'Launch Regions',
-      text: 'Use the product launch regions San Francisco, Frankfurt, and Guarulhos through dashboard and SDK flows.',
-      bullets: ['sfo', 'fra', 'gru'],
-    },
-    {
-      icon: 'trendingUp',
-      title: 'Queue And Payments',
-      text: 'Queue workflows run on JetStream, and Stripe billing flows are processed through TerraScale Payments.',
-      bullets: ['NATS JetStream', 'Stripe', 'Webhooks'],
-    },
-  ]
+  // Icons are fixed per card; copy comes from the active dictionary.
+  const featureIcons: AppIconName[] = ['zap', 'shield', 'globe', 'trendingUp']
+  $: features = $dict.features.items.map((item, i) => ({
+    icon: featureIcons[i] ?? 'zap',
+    ...item,
+  }))
 </script>
 
 <section class="features" id="features">
   <div class="features__inner">
     <SectionHeader
-      eyebrow="Platform"
-      subtitle="The implemented surface spans data, auth, queues, payments, SDKs, and dashboard workflows."
+      eyebrow={$dict.features.eyebrow}
+      subtitle={$dict.features.subtitle}
     >
       <svelte:fragment slot="title">
-        Built for scale,<br />
-        <span class="ts-text-gradient">designed for developers</span>
+        {$dict.features.titleLead}<br />
+        <span class="ts-text-gradient">{$dict.features.titleAccent}</span>
       </svelte:fragment>
     </SectionHeader>
 

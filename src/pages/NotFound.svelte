@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
+  import { dict } from '@/lib/i18n'
 </script>
 
 <section class="notfound">
@@ -10,31 +11,31 @@
   <div class="notfound__inner">
     <div class="notfound__eyebrow">
       <Icon name="alertCircle" className="notfound__eyebrow-icon" />
-      Page Not Found
+      {$dict.notFound.eyebrow}
     </div>
 
     <div class="notfound__code ts-text-gradient">404</div>
-    <h1 class="notfound__title">We can't find that page.</h1>
+    <h1 class="notfound__title">{$dict.notFound.title}</h1>
     <p class="notfound__text">
-      The page you're looking for has moved, or never existed. Let's get you back on track.
+      {$dict.notFound.text}
     </p>
 
     <div class="notfound__actions">
       <RouteLink href="/" class="ts-btn ts-btn-primary cta-shine">
         <Icon name="home" className="notfound__icon" />
-        Back to Home
+        {$dict.notFound.backHome}
       </RouteLink>
       <RouteLink href="/contact" class="ts-btn ts-btn-glass">
         <Icon name="messageSquare" className="notfound__icon" />
-        Contact Support
+        {$dict.notFound.contactSupport}
       </RouteLink>
     </div>
 
     <div class="notfound__links">
-      <span class="notfound__links-label">Popular pages:</span>
-      <RouteLink href="/" class="notfound__link">Home</RouteLink>
-      <RouteLink href="/pricing" class="notfound__link">Pricing</RouteLink>
-      <RouteLink href="/contact" class="notfound__link">Contact</RouteLink>
+      <span class="notfound__links-label">{$dict.notFound.linksLabel}</span>
+      <RouteLink href="/" class="notfound__link">{$dict.notFound.links.home}</RouteLink>
+      <RouteLink href="/pricing" class="notfound__link">{$dict.notFound.links.pricing}</RouteLink>
+      <RouteLink href="/contact" class="notfound__link">{$dict.notFound.links.contact}</RouteLink>
     </div>
   </div>
 </section>

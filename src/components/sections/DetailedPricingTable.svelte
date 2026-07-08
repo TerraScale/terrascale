@@ -1,46 +1,32 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
   import ExternalLink from '@/components/ExternalLink.svelte'
+  import { dict } from '@/lib/i18n'
 
-  const rows = [
-    {
-      item: 'Enterprise Level Support',
-      price: '$499',
-      unit: '/month',
-      details: 'Base platform access for Enterprise deployments and advanced support.',
-    },
-    {
-      item: 'Storage Usage',
-      price: '$1',
-      unit: '/GB',
-      details: 'Usage-based storage pricing on top of the base platform fee.',
-    },
-    {
-      item: 'Database Operations',
-      price: '$1',
-      unit: '/ 1M ops',
-      details: 'Scales with workload volume for read, write, and replication activity.',
-    },
-  ]
+  // Amounts are locale-independent; item/unit/details come from the dictionary.
+  const rowPrices = ['$499', '$1', '$1']
+  $: rows = $dict.pricing.detailed.rows.map((row, i) => ({
+    ...row,
+    price: rowPrices[i] ?? '',
+  }))
 </script>
 
 <section id="detailed-pricing" class="detailed">
   <div class="detailed__inner">
     <div class="detailed__intro">
-      <div class="detailed__eyebrow">Detailed Pricing</div>
+      <div class="detailed__eyebrow">{$dict.pricing.detailed.eyebrow}</div>
 
-      <h2 class="detailed__title">Clear pricing for custom <span class="ts-text-gradient">deployments</span></h2>
+      <h2 class="detailed__title">{$dict.pricing.detailed.titleLead} <span class="ts-text-gradient">{$dict.pricing.detailed.titleAccent}</span></h2>
       <p class="detailed__text">
-        Usage-based costs, support scopes, and deployment requirements are broken out below so
-        enterprise teams can estimate spend before talking to sales.
+        {$dict.pricing.detailed.text}
       </p>
     </div>
 
     <div class="detailed__table ts-glass">
       <div class="detailed__head">
-        <div>Item</div>
-        <div>Pricing</div>
-        <div>Details</div>
+        <div>{$dict.pricing.detailed.headItem}</div>
+        <div>{$dict.pricing.detailed.headPricing}</div>
+        <div>{$dict.pricing.detailed.headDetails}</div>
       </div>
       {#each rows as row, i (row.item)}
         <div class="detailed__row" class:is-last={i === rows.length - 1}>
@@ -62,7 +48,7 @@
         class="detailed__docs"
       >
         <Icon name="bookOpen" className="detailed__docs-icon" />
-        Full Pricing Docs
+        {$dict.pricing.detailed.docsLink}
         <Icon name="externalLink" className="detailed__docs-icon" />
       </ExternalLink>
     </div>

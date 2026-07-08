@@ -2,6 +2,7 @@
   import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
   import type { AppIconName } from '@/lib/icons'
+  import { dict } from '@/lib/i18n'
 
   type ChannelHrefKind = 'external' | 'mailto' | 'internal'
   type Channel = {
@@ -12,29 +13,17 @@
     kind: ChannelHrefKind
   }
 
-  const channels: Channel[] = [
-    {
-      icon: 'mail',
-      label: 'Email',
-      value: 'support@terrascale.tech',
-      href: 'mailto:support@terrascale.tech',
-      kind: 'mailto',
-    },
-    {
-      icon: 'brandDiscord',
-      label: 'Discord',
-      value: 'Join our community',
-      href: 'https://discord.gg/terrascale',
-      kind: 'external',
-    },
-    {
-      icon: 'brandGithub',
-      label: 'GitHub',
-      value: 'Open issues & PRs',
-      href: 'https://git.mariogk.com/Terrascale',
-      kind: 'external',
-    },
+  // Channel labels are short brand words (Email / Discord / GitHub); the
+  // descriptive `value` under each is localised and pulled from the dictionary.
+  const channelMeta: Array<{ icon: AppIconName; label: string; href: string; kind: ChannelHrefKind }> = [
+    { icon: 'mail', label: 'Email', href: 'mailto:support@terrascale.tech', kind: 'mailto' },
+    { icon: 'brandDiscord', label: 'Discord', href: 'https://discord.gg/terrascale', kind: 'external' },
+    { icon: 'brandGithub', label: 'GitHub', href: 'https://git.mariogk.com/Terrascale', kind: 'external' },
   ]
+  $: channels = channelMeta.map((meta, i) => ({
+    ...meta,
+    value: $dict.contact.channels[i].value,
+  }))
 
   let form = { name: '', email: '', company: '', message: '' }
 
@@ -89,7 +78,7 @@
 
   const markSuccess = () => {
     clearTimers()
-    setStatus('success', "Thanks! Your message has been recorded — we'll reply within 24h.")
+    setStatus('success', $dict.contact.success)
     form = { name: '', email: '', company: '', message: '' }
     resetStatusAfter(6000)
   }
@@ -105,7 +94,7 @@
     event.preventDefault()
     if (submitState === 'submitting') return
     if (!sinkForm) {
-      setStatus('error', 'The form could not be submitted. Please email us directly.')
+      setStatus('error', $dict.contact.errorNoForm)
       resetStatusAfter(7000)
       return
     }
@@ -120,10 +109,7 @@
       // iframe's load event with a watchdog fallback.
       sinkForm.submit()
     } catch {
-      setStatus(
-        'error',
-        'Something went wrong sending your message. Please try again, or email us directly.',
-      )
+      setStatus('error', $dict.contact.errorSend)
       resetStatusAfter(7000)
       return
     }
@@ -139,15 +125,14 @@
   <div class="contact-hero__inner">
     <div class="contact-hero__eyebrow">
       <Icon name="messageSquare" className="contact-hero__eyebrow-icon" />
-      Get in Touch
+      {$dict.contact.eyebrow}
     </div>
     <h1 class="contact-hero__title">
-      Let's build<br />
-      <span class="ts-text-gradient">something together.</span>
+      {$dict.contact.titleLead}<br />
+      <span class="ts-text-gradient">{$dict.contact.titleAccent}</span>
     </h1>
     <p class="contact-hero__subtitle">
-      Have questions? Need a custom plan? Want to integrate with TerraScale? We'd love to hear from
-      you.
+      {$dict.contact.subtitle}
     </p>
   </div>
 </section>
@@ -156,29 +141,29 @@
   <div class="contact-body__inner">
     <div class="contact-body__grid">
       <form class="contact-form ts-glass" on:submit={handleSubmit}>
-        <h2 class="contact-form__title">Send us a message</h2>
+        <h2 class="contact-form__title">{$dict.contact.formTitle}</h2>
 
         <div class="contact-form__row">
           <div>
-            <label class="ts-input-label" for="contact-name">Name</label>
+            <label class="ts-input-label" for="contact-name">{$dict.contact.labels.name}</label>
             <input
               id="contact-name"
               class="ts-input"
               type="text"
               autocomplete="name"
-              placeholder="Mario Belchior"
+              placeholder={$dict.contact.placeholders.name}
               bind:value={form.name}
               required
             />
           </div>
           <div>
-            <label class="ts-input-label" for="contact-email">Email</label>
+            <label class="ts-input-label" for="contact-email">{$dict.contact.labels.email}</label>
             <input
               id="contact-email"
               class="ts-input"
               type="email"
               autocomplete="email"
-              placeholder="mario@acme.com"
+              placeholder={$dict.contact.placeholders.email}
               bind:value={form.email}
               required
             />
@@ -186,24 +171,24 @@
         </div>
 
         <div class="contact-form__field">
-          <label class="ts-input-label" for="contact-company">Company</label>
+          <label class="ts-input-label" for="contact-company">{$dict.contact.labels.company}</label>
           <input
             id="contact-company"
             class="ts-input"
             type="text"
             autocomplete="organization"
-            placeholder="Acme Inc."
+            placeholder={$dict.contact.placeholders.company}
             bind:value={form.company}
           />
         </div>
 
         <div class="contact-form__field">
-          <label class="ts-input-label" for="contact-message">Message</label>
+          <label class="ts-input-label" for="contact-message">{$dict.contact.labels.message}</label>
           <textarea
             id="contact-message"
             class="ts-input ts-input--textarea"
             rows="5"
-            placeholder="Tell us about your project, team size, and what you're hoping to achieve..."
+            placeholder={$dict.contact.placeholders.message}
             bind:value={form.message}
             required
           ></textarea>
@@ -219,15 +204,15 @@
         >
           {#if submitState === 'submitting'}
             <span class="contact-form__spinner" aria-hidden="true"></span>
-            Sending…
+            {$dict.contact.submit.submitting}
           {:else if submitState === 'success'}
             <Icon name="check" className="contact-form__submit-icon" />
-            Message Sent!
+            {$dict.contact.submit.success}
           {:else if submitState === 'error'}
             <Icon name="alertCircle" className="contact-form__submit-icon" />
-            Try Again
+            {$dict.contact.submit.error}
           {:else}
-            Send Message
+            {$dict.contact.submit.idle}
             <Icon name="arrowRight" className="contact-form__submit-icon" />
           {/if}
         </button>
@@ -245,7 +230,7 @@
 
         <div class="contact-form__note">
           <Icon name="shield" className="contact-form__note-icon" />
-          Your information is never shared. Replies within 24h.
+          {$dict.contact.note}
         </div>
 
         {#if submitState === 'success'}
@@ -256,7 +241,7 @@
             <span class="contact-form__badge-icon">
               <Icon name="check" className="contact-form__badge-check" />
             </span>
-            Message sent successfully
+            {$dict.contact.submit.badge}
           </div>
         {/if}
       </form>
@@ -288,7 +273,7 @@
       </form>
 
       <div class="contact-channels">
-        <h2 class="contact-channels__title">Other ways to reach us</h2>
+        <h2 class="contact-channels__title">{$dict.contact.channelsTitle}</h2>
         <div class="contact-channels__list">
           {#each channels as c (c.label)}
             {#if c.kind === 'external'}
@@ -325,11 +310,10 @@
         <div class="contact-sla">
           <div class="contact-sla__heading">
             <span class="pulse-dot contact-sla__dot"></span>
-            Support SLA
+            {$dict.contact.slaHeading}
           </div>
           <div class="contact-sla__body">
-            Pro customers get <strong>priority routing</strong> with 1-hour first response during
-            business hours.
+            {$dict.contact.slaBodyLead} <strong>{$dict.contact.slaBodyStrong}</strong> {$dict.contact.slaBodyTrail}
           </div>
         </div>
       </div>
