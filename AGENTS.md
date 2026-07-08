@@ -55,6 +55,8 @@ Three-font stack, all referenced in `src/app.html`:
 - **Roboto** — eyebrows, Google Fonts CDN
 - **Roboto Mono** — code/stats, Google Fonts CDN (fallback: JetBrains Mono)
 
+Note: the sibling Documentation site intentionally uses a different (Quantico-only, no external CDN) font policy — this divergence is by design, so do not "fix" this site to match it.
+
 ### Tokens & Utilities
 
 Design tokens live on `:root` in `src/index.css`. Reach for the shared utility classes before writing new bespoke CSS. Scoped `<style>` blocks are fine for section-specific layout but should still compose on top of the tokens.
