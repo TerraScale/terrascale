@@ -40,4 +40,4 @@ jobs:
           ./.tools/terrascale-deploy version
 
       - name: Run SDK CI
-        run: ./.tools/terrascale-deploy sdk ci --checkout --repository-root TerraScale.TypeScript
+        run: ./.tools/terrascale-deploy tests --checkout --repository-root TerraScale.TypeScript

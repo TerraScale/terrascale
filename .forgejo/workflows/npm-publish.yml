@@ -41,9 +41,4 @@ jobs:
           ./.tools/terrascale-deploy version
 
       - name: Publish SDK
-        run: |
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "::warning::NPM_TOKEN is not configured; skipping SDK npm publish."
-            exit 0
-          fi
-          ./.tools/terrascale-deploy sdk publish --checkout --repository-root TerraScale.TypeScript
+        run: ./.tools/terrascale-deploy publish-application --checkout --repository-root TerraScale.TypeScript
