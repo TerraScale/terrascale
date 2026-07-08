@@ -71,6 +71,8 @@ jobs:
       - name: Checkout
         uses: https://data.forgejo.org/actions/checkout@v6
 
+        with:
+          github-server-url: https://git.mariogk.com
       - name: Install dependencies
         run: vp install
 
