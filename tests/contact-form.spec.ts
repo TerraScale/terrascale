@@ -13,6 +13,12 @@ import { expect, test } from 'playwright/test'
 // The entry IDs asserted below are the live form's real field IDs, verified
 // against its FB_PUBLIC_LOAD_DATA_ definition (Name / Email / Message; the form
 // has no Company field, so Company is folded into the message body on submit).
+//
+// TER-85: the second test is a read-only guard against the silent-drop failure
+// modes — a deleted, closed, or entry-ID-regenerated form would record nothing
+// while the page still reports success (Google's cross-origin response is opaque,
+// so the contact page genuinely cannot tell). It reads the published form
+// definition and asserts the hard-coded entry IDs still match the live fields.
 
 const FORM_RESPONSE_URL =
   'https://docs.google.com/forms/d/e/1FAIpQLSfnbZR5CkFw581Bwwiy2CSbz_SDi4C8qMzxvmGrY0hfhzyULg/formResponse'
@@ -61,15 +67,55 @@ test('SEND MESSAGE posts to Google Forms with the correct entry IDs', async ({ p
   expect(body).toContain('Company: Analytical Engine Ltd')
 })
 
-test('the Google Form backing the contact page is reachable and accepts the mapping', async ({
+test('the backing Google Form is live and its entry IDs still match the code (TER-85)', async ({
   request,
 }) => {
-  // Guards against the integration silently breaking if the published Google Form
-  // is deleted, closed, or has its field IDs regenerated. A plain GET of the form's
-  // view page is read-only and never submits a response.
+  // Read-only guard against the silent-drop failure modes behind TER-85: a
+  // deleted, closed, or entry-ID-regenerated form would record nothing while the
+  // contact page still reports success (Google's cross-origin response is opaque,
+  // so the page cannot tell). A GET of the form's view page never submits — it
+  // only reads the published form definition.
   const response = await request.get(FORM_RESPONSE_URL.replace('/formResponse', '/viewform'), {
     failOnStatusCode: false,
   })
   expect(response.status(), 'backing Google Form must remain published').toBe(200)
   expect(response.headers()['content-type'] ?? '').toContain('text/html')
+
+  const body = await response.text()
+  // The published form definition is embedded as FB_PUBLIC_LOAD_DATA_ = [...];
+  const match = body.match(/FB_PUBLIC_LOAD_DATA_\s*=\s*(\[[\s\S]*?\]);/)
+  expect(match, 'FB_PUBLIC_LOAD_DATA_ definition must be present on the form page').not.toBeNull()
+
+  const data = JSON.parse(match![1]) as unknown[]
+  const formMeta = data[1] as unknown[]
+  const items = (formMeta[1] ?? []) as unknown[][]
+
+  // Reconstruct { entryId -> { title, required } } from each item's field def:
+  // each item is [itemId, "Title", null, type, [[entryId, null, required]], ...].
+  const fields = new Map<string, { title: string; required: boolean }>()
+  for (const item of items) {
+    const fieldDef = (item[4] as unknown[] | undefined)?.[0] as unknown[] | undefined
+    if (!fieldDef) continue
+    fields.set(String(fieldDef[0]), {
+      title: String(item[1]),
+      required: Boolean(fieldDef[2]),
+    })
+  }
+
+  // The entry IDs hard-coded in Contact.svelte must still exist on the live form
+  // and stay required. A regenerated/closed/deleted form breaks this mapping and
+  // silently drops every submission.
+  const expected: Record<string, string> = {
+    '2005620554': 'Name',
+    '1045781291': 'Email',
+    '839337160': 'Message',
+  }
+  for (const [entryId, expectedTitle] of Object.entries(expected)) {
+    const field = fields.get(entryId)
+    expect(field, `entry.${entryId} must still exist on the live form`).toBeDefined()
+    expect(field?.title, `entry.${entryId} must be the "${expectedTitle}" field`).toBe(
+      expectedTitle,
+    )
+    expect(field?.required, `entry.${entryId} (${expectedTitle}) must stay required`).toBe(true)
+  }
 })
