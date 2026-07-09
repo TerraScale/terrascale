@@ -54,8 +54,6 @@
     </nav>
 
     <div class="ts-header__actions">
-      <LanguageSelector />
-
       <ExternalLink
         href={docsLink.href}
         target="_blank"
@@ -80,6 +78,8 @@
         {$dict.chrome.getStarted}
         <Icon name={getStartedLink.icon} className="ts-cta__icon" />
       </ExternalLink>
+
+      <LanguageSelector />
     </div>
 
     <button
@@ -164,11 +164,9 @@
     max-width: 1440px;
     margin: 0 auto;
     padding: 0 40px;
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    display: flex;
     align-items: center;
     height: 72px;
-    gap: 16px;
   }
 
   :global(.ts-header__brand) {
@@ -189,6 +187,7 @@
     align-items: center;
     justify-content: center;
     gap: 2px;
+    margin: 0 auto;
   }
 
   :global(.ts-nav__link),
@@ -196,7 +195,7 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 14px;
+    padding: 8px 10px;
     border-radius: 4px;
     font-family: var(--ts-font-accent);
     font-size: 15px;
@@ -233,7 +232,7 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 16px;
+    gap: 14px;
   }
 
   :global(.ts-status-link) {
@@ -354,7 +353,6 @@
   @media (max-width: 1240px) {
     .ts-header__inner {
       padding: 0 20px;
-      grid-template-columns: 1fr auto;
     }
     .ts-nav {
       display: none;
