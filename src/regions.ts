@@ -1,12 +1,12 @@
-export type TerraScaleRegionCode = "fra" | "gru" | "sfo";
+export type TerraScaleRegionCode = string;
 
 export type TerraScaleRegion = {
   readonly code: TerraScaleRegionCode;
   readonly displayName: string;
   readonly latitude: number;
   readonly longitude: number;
-  readonly ociRegionCode: "eu-frankfurt-1" | "sa-saopaulo-1" | "us-sanjose-1";
-  readonly clusterNodeTag: "A" | "B" | "C";
+  readonly ociRegionCode: string;
+  readonly clusterNodeTag?: string;
   readonly available: boolean;
 };
 
@@ -40,11 +40,6 @@ export const terraScaleRegions = [
   },
 ] as const satisfies readonly TerraScaleRegion[];
 
-export const legacyRegionAliases: Readonly<Partial<Record<string, TerraScaleRegionCode>>> = {
-  ashburn: "sfo",
-  ord: "fra",
-};
-
 const regionsByCode = new Map<TerraScaleRegionCode, TerraScaleRegion>(
   terraScaleRegions.map((region) => [region.code, region]),
 );
@@ -56,8 +51,9 @@ export function canonicalRegionCode(code: string | undefined): TerraScaleRegionC
   }
 
   const normalized = code.trim().toLowerCase();
-  const canonical = legacyRegionAliases[normalized] ?? normalized;
-  return regionCodeValues.has(canonical) ? (canonical as TerraScaleRegionCode) : undefined;
+  return /^[a-z0-9][a-z0-9-]{1,31}$/.test(normalized)
+    ? normalized
+    : undefined;
 }
 
 export function findRegion(code: string | undefined): TerraScaleRegion | undefined {

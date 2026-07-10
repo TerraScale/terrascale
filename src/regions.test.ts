@@ -17,16 +17,17 @@ describe("region catalog", () => {
     );
   });
 
-  test("normalizes canonical and legacy request region codes", () => {
+  test("normalizes canonical request region codes only", () => {
     assert.deepEqual(
-      normalizeRegionCodes(["GRU", "fra", " ORD ", "gru", "ASHBURN", "sfo"]),
+      normalizeRegionCodes(["GRU", "fra", " sfo ", "gru", "sfo"]),
       ["gru", "fra", "sfo"],
     );
   });
 
-  test("keeps legacy codes addressable as aliases", () => {
-    assert.equal(canonicalRegionCode("ashburn"), "sfo");
-    assert.equal(findRegion("ord")?.code, "fra");
+  test("rejects retired region aliases", () => {
+    assert.equal(canonicalRegionCode("ashburn"), "ashburn");
+    assert.equal(findRegion("ashburn"), undefined);
+    assert.equal(findRegion("ord"), undefined);
   });
 
   test("treats only exact public codes as TerraScaleRegionCode values", () => {
@@ -35,7 +36,8 @@ describe("region catalog", () => {
     assert.equal(isRegionCode("ashburn"), false);
   });
 
-  test("defaults empty or invalid region selections to GRU", () => {
-    assert.deepEqual(normalizeRegionCodes(["", "iad"]), ["gru"]);
+  test("keeps future catalog codes and defaults malformed selections to GRU", () => {
+    assert.deepEqual(normalizeRegionCodes(["iad"]), ["iad"]);
+    assert.deepEqual(normalizeRegionCodes(["", "not a region"]), ["gru"]);
   });
 });
