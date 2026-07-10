@@ -427,12 +427,6 @@ export type RestoreListQuery = PageRequest;
 
 export type RepositoryScoped = {
   readonly repositoryId: RepositoryId;
-  /** @deprecated Repository routes are no longer project-scoped. */
-  readonly projectId?: ProjectId;
-  /** @deprecated Repository routes are no longer database-scoped. */
-  readonly databaseId?: DatabaseId;
-  /** @deprecated Repository routes are no longer environment-scoped. */
-  readonly environmentId?: EnvironmentId;
 };
 
 export type RepositoryDefinition = {
@@ -608,7 +602,7 @@ export type RevokedApiKey = {
   readonly revoked: boolean;
 };
 
-export type MachineClient = {
+export type M2MApplication = {
   readonly clientId: M2MClientId;
   readonly projectId: ProjectId;
   readonly name: string;
@@ -626,17 +620,13 @@ export type MachineClient = {
   readonly isActive: boolean;
 };
 
-export type M2MApplication = MachineClient;
-
-export type CreateMachineClientRequest = {
+export type CreateM2MApplicationRequest = {
   readonly name: string;
   readonly scopes: readonly string[];
   readonly databaseId?: DatabaseId;
   readonly environmentId?: EnvironmentId;
   readonly expiresAt?: Timestamp | null;
 };
-
-export type CreateM2MApplicationRequest = CreateMachineClientRequest;
 
 export type ListM2MApplicationsRequest = {
   readonly cursor?: string;
@@ -653,7 +643,7 @@ export type CreatedM2MApplication = {
   readonly clientSecret: string;
 };
 
-export type RotatedMachineClientSecret = {
+export type RotatedM2MApplicationSecret = {
   readonly application: M2MApplication;
   readonly clientSecret: string;
   readonly rotated: boolean;

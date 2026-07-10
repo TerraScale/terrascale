@@ -88,7 +88,7 @@ describe("TerraScaleClient route contracts", () => {
       schema: '{"type":"object"}',
     });
 
-    await client.repositories.get({ repositoryId, databaseId, environmentId, projectId });
+    await client.repositories.get({ repositoryId });
     assertRequest(requests[2], "GET", `/api/v1/repositories/${repositoryId}`);
 
     await client.repositories.delete({ repositoryId }, { deleteDocuments: true });

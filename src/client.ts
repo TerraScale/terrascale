@@ -958,7 +958,7 @@ export class M2MApplicationsClient {
   rotate(
     clientId: Ulid,
     projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.RotatedMachineClientSecret>> {
+  ): Promise<TerraScaleResult<Models.RotatedM2MApplicationSecret>> {
     return this.http.request({
       method: "POST",
       path: `${projectAuthRoot(projectRootId(this.http, projectId))}/m2m-applications/${ulidPathSegment(clientId)}/rotate`,
@@ -991,8 +991,6 @@ export class M2MApplicationsClient {
     });
   }
 }
-
-export type MachineClientsClient = M2MApplicationsClient;
 
 export class AccessClient {
   constructor(private readonly http: TerraScaleHttp) {}

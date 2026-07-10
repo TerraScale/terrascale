@@ -14,7 +14,6 @@ export type {
   DatabasesClient,
   DocumentsClient,
   M2MApplicationsClient,
-  MachineClientsClient,
   NotificationsClient,
   OrganizationsClient,
   PricingClient,

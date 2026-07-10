@@ -710,7 +710,7 @@
       "routeName": "m2m.rotate",
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m-applications/{clientId}/rotate",
-      "responseType": "RotatedMachineClientSecret"
+      "responseType": "RotatedM2MApplicationSecret"
     },
     {
       "base": "api",
