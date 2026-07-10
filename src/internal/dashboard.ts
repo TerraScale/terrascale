@@ -18,6 +18,8 @@ export type {
   OrganizationsClient,
   PricingClient,
   QueryClient,
+  QueuesClient,
+  RegionsClient,
   RepositoriesClient,
   SchemaClient,
   SecurityClient,

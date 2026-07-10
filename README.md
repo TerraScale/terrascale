@@ -20,6 +20,11 @@ The public client follows the backed `TerraScale.API` REST surface:
 - Project databases: list/create/get/delete under
   `/api/v1/projects/{projectId}/databases`, with environment list/get/create/delete
   under `/api/v1/projects/{projectId}/databases/{databaseId}/environments`.
+- Project queues and topics: create/list/get/delete, publish/peek/purge, and
+  at-least-once receive/complete/abandon/dead-letter/renew-lock under
+  `/api/v1/projects/{projectId}/queues`. Received messages carry an opaque,
+  time-limited regional receipt; pass `{ receipt, region }` back to the
+  acknowledgement methods so the SDK preserves regional affinity.
 - Repositories: list/create/get/delete under `/api/v1/repositories`.
 - Documents: list/create/get/put/patch/delete/batch under
   `/api/v1/repositories/{repositoryId}/documents`; document write bodies are

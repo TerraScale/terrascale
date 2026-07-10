@@ -20,6 +20,7 @@ const sampleIds = {
   organizationId: toUlid("01ERZ3NDEKTSV4RRFFQ69G5FAV"),
   planId: toUlid("01HRZ3NDEKTSV4RRFFQ69G5FAV"),
   projectId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+  queueId: toUlid("01PRZ3NDEKTSV4RRFFQ69G5FAV"),
   repositoryId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAY"),
   restoreId: toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV"),
   sessionId: toUlid("01JRZ3NDEKTSV4RRFFQ69G5FAV"),
@@ -29,6 +30,7 @@ const sampleIds = {
 const pathTemplateSegments = new Map<string, string>(
   Object.entries(sampleIds).map(([name, value]) => [value, `{${name}}`]),
 );
+pathTemplateSegments.set("sfo", "{regionCode}");
 
 export type CapturedSdkRoute = {
   readonly base: TerraScaleBase;
@@ -550,6 +552,16 @@ const captureOperations: readonly CaptureOperation[] = [
       client.organizations.revokeInvitation(sampleIds.organizationId, sampleIds.invitationId),
   },
   {
+    client: "regions",
+    operation: "list",
+    invoke: (client) => client.regions.list(),
+  },
+  {
+    client: "regions",
+    operation: "get",
+    invoke: (client) => client.regions.get("sfo"),
+  },
+  {
     client: "databases",
     operation: "list",
     defaultProject: true,
@@ -559,7 +571,7 @@ const captureOperations: readonly CaptureOperation[] = [
     client: "databases",
     operation: "create",
     defaultProject: true,
-    invoke: (client) => client.databases.create({ name: "primary", regions: ["gru"] }),
+    invoke: (client) => client.databases.create({ name: "primary" }),
   },
   {
     client: "databases",
@@ -572,6 +584,83 @@ const captureOperations: readonly CaptureOperation[] = [
     operation: "delete",
     defaultProject: true,
     invoke: (client) => client.databases.delete(sampleIds.databaseId),
+  },
+  {
+    client: "queues",
+    operation: "list",
+    defaultProject: true,
+    invoke: (client) => client.queues.list(),
+  },
+  {
+    client: "queues",
+    operation: "create",
+    defaultProject: true,
+    invoke: (client) => client.queues.create({ name: "jobs" }),
+  },
+  {
+    client: "queues",
+    operation: "get",
+    defaultProject: true,
+    invoke: (client) => client.queues.get(sampleIds.queueId),
+  },
+  {
+    client: "queues",
+    operation: "delete",
+    defaultProject: true,
+    invoke: (client) => client.queues.delete(sampleIds.queueId),
+  },
+  {
+    client: "queues",
+    operation: "purge",
+    defaultProject: true,
+    invoke: (client) => client.queues.purge(sampleIds.queueId),
+  },
+  {
+    client: "queues",
+    operation: "publish",
+    defaultProject: true,
+    invoke: (client) => client.queues.publish(sampleIds.queueId, { data: { task: "index" } }),
+  },
+  {
+    client: "queues",
+    operation: "peek",
+    defaultProject: true,
+    invoke: (client) => client.queues.peek(sampleIds.queueId),
+  },
+  {
+    client: "queues",
+    operation: "receive",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.receive(sampleIds.queueId, { consumerName: "worker", maxMessages: 1 }),
+  },
+  {
+    client: "queues",
+    operation: "complete",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.complete(sampleIds.queueId, { receipt: "opaque", region: "sfo" }),
+  },
+  {
+    client: "queues",
+    operation: "abandon",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.abandon(sampleIds.queueId, { receipt: "opaque", region: "sfo" }, 1),
+  },
+  {
+    client: "queues",
+    operation: "deadLetter",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.deadLetter(sampleIds.queueId, { receipt: "opaque", region: "sfo" }),
+  },
+  {
+    client: "queues",
+    operation: "renewLock",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.renewLock(sampleIds.queueId, { receipt: "opaque", region: "sfo" }),
   },
   {
     client: "databases",

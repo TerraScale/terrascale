@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 94,
+  "routeCount": 108,
   "routes": [
     {
       "base": "auth",
@@ -360,6 +360,24 @@
     },
     {
       "base": "api",
+      "client": "regions",
+      "operation": "list",
+      "routeName": "regions.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/regions",
+      "responseType": "RegionsResponse"
+    },
+    {
+      "base": "api",
+      "client": "regions",
+      "operation": "get",
+      "routeName": "regions.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/regions/{regionCode}",
+      "responseType": "RegionDetails"
+    },
+    {
+      "base": "api",
       "client": "databases",
       "operation": "list",
       "routeName": "databases.list",
@@ -394,6 +412,117 @@
       "method": "DELETE",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}",
       "responseType": "DeletedProjectDatabaseResponse"
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "list",
+      "routeName": "queues.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues",
+      "responseType": "readonly ProjectQueue[]"
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "create",
+      "routeName": "queues.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues",
+      "requestType": "CreateProjectQueueRequest",
+      "responseType": "ProjectQueue"
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "get",
+      "routeName": "queues.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}",
+      "responseType": "ProjectQueue"
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "delete",
+      "routeName": "queues.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}",
+      "responseType": "boolean"
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "purge",
+      "routeName": "queues.purge",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:purge",
+      "responseType": "{ readonly queueName: string; readonly purgedMessages: number }"
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "publish",
+      "routeName": "queues.publish",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:publish",
+      "requestType": "PublishProjectQueueMessageRequest",
+      "responseType": "ProjectQueuePublishResult"
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "peek",
+      "routeName": "queues.peek",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:peek",
+      "responseType": "readonly ProjectQueuePeekMessage[]"
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "receive",
+      "routeName": "queues.receive",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:receive",
+      "requestType": "ReceiveProjectQueueMessagesRequest",
+      "responseType": "readonly ProjectQueueReceivedMessage[]"
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "complete",
+      "routeName": "queues.complete",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:complete",
+      "responseType": "ProjectQueueReceiptActionResult"
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "abandon",
+      "routeName": "queues.abandon",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:abandon",
+      "responseType": "ProjectQueueReceiptActionResult"
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "deadLetter",
+      "routeName": "queues.deadLetter",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:dead-letter",
+      "responseType": "ProjectQueueReceiptActionResult"
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "renewLock",
+      "routeName": "queues.renewLock",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:renew-lock",
+      "responseType": "ProjectQueueRenewLockResult"
     },
     {
       "base": "api",

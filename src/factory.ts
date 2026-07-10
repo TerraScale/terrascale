@@ -9,6 +9,8 @@ export function createTerraScaleClient(config: TerraScaleRuntimeConfig): TerraSc
   return {
     auth: internal.auth,
     organizations: internal.organizations,
+    regions: internal.regions,
+    queues: internal.queues,
     databases: internal.databases,
     repositories: internal.repositories,
     backups: internal.backups,

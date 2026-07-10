@@ -28,6 +28,8 @@ export type TerraScaleRouteName =
   | `organizations.${string}`
   | `pricing.${string}`
   | `query.${string}`
+  | `queues.${string}`
+  | `regions.${string}`
   | `repositories.${string}`
   | `schema.${string}`
   | `security.${string}`

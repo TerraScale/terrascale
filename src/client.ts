@@ -51,7 +51,9 @@ export class TerraScaleClient {
 
   readonly auth: AuthClient;
   readonly organizations: OrganizationsClient;
+  readonly regions: RegionsClient;
   readonly databases: DatabasesClient;
+  readonly queues: QueuesClient;
   readonly repositories: RepositoriesClient;
   readonly backups: BackupsClient;
   readonly documents: DocumentsClient;
@@ -73,7 +75,9 @@ export class TerraScaleClient {
     this.http = new TerraScaleHttp(config);
     this.auth = new AuthClient(this.http);
     this.organizations = new OrganizationsClient(this.http);
+    this.regions = new RegionsClient(this.http);
     this.databases = new DatabasesClient(this.http);
+    this.queues = new QueuesClient(this.http);
     this.repositories = new RepositoriesClient(this.http);
     this.backups = new BackupsClient(this.http);
     this.documents = new DocumentsClient(this.http);
@@ -104,6 +108,26 @@ export class TerraScaleClient {
 
   dashboardDatabaseId(name: DashboardLogicalDatabaseKey | string): Ulid | undefined {
     return this.http.config.dashboardDatabaseIds[name];
+  }
+}
+
+export class RegionsClient {
+  constructor(private readonly http: TerraScaleHttp) {}
+
+  list(): Promise<TerraScaleResult<Models.RegionsResponse>> {
+    return this.http.request({
+      method: "GET",
+      path: `${apiRoot}/regions`,
+      routeName: "regions.list",
+    });
+  }
+
+  get(regionCode: string): Promise<TerraScaleResult<Models.RegionDetails>> {
+    return this.http.request({
+      method: "GET",
+      path: `${apiRoot}/regions/${encodeURIComponent(regionCode.trim().toLowerCase())}`,
+      routeName: "regions.get",
+    });
   }
 }
 
@@ -438,7 +462,10 @@ export class OrganizationsClient {
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/projects`,
       routeName: "organizations.projects.create",
-      body: request,
+      body: {
+        ...request,
+        regions: normalizeRegionCodes(request.regions),
+      },
     });
   }
 
@@ -458,7 +485,10 @@ export class OrganizationsClient {
       method: "PATCH",
       path: projectRoot(this.http, projectId),
       routeName: "organizations.projects.update",
-      body: request,
+      body: {
+        ...request,
+        regions: request.regions === undefined ? undefined : normalizeRegionCodes(request.regions),
+      },
     });
   }
 
@@ -498,6 +528,154 @@ export class OrganizationsClient {
   }
 }
 
+export class QueuesClient {
+  constructor(private readonly http: TerraScaleHttp) {}
+
+  list(projectId?: Ulid): Promise<TerraScaleResult<readonly Models.ProjectQueue[]>> {
+    return this.http.request({
+      method: "GET",
+      path: `${projectRoot(this.http, projectId)}/queues`,
+      routeName: "queues.list",
+    });
+  }
+
+  create(
+    request: Models.CreateProjectQueueRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectQueue>> {
+    return this.http.request({
+      method: "POST",
+      path: `${projectRoot(this.http, projectId)}/queues`,
+      routeName: "queues.create",
+      body: request,
+    });
+  }
+
+  get(queueId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.ProjectQueue>> {
+    return this.http.request({
+      method: "GET",
+      path: queueRoot(this.http, queueId, projectId),
+      routeName: "queues.get",
+    });
+  }
+
+  delete(queueId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<boolean>> {
+    return this.http.request({
+      method: "DELETE",
+      path: queueRoot(this.http, queueId, projectId),
+      routeName: "queues.delete",
+    });
+  }
+
+  purge(
+    queueId: Ulid,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<{ readonly queueName: string; readonly purgedMessages: number }>> {
+    return this.http.request({
+      method: "POST",
+      path: `${queueRoot(this.http, queueId, projectId)}:purge`,
+      routeName: "queues.purge",
+    });
+  }
+
+  publish(
+    queueId: Ulid,
+    request: Models.PublishProjectQueueMessageRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectQueuePublishResult>> {
+    return this.http.request({
+      method: "POST",
+      path: `${queueRoot(this.http, queueId, projectId)}:publish`,
+      routeName: "queues.publish",
+      body: request,
+    });
+  }
+
+  peek(
+    queueId: Ulid,
+    maxMessages = 10,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<readonly Models.ProjectQueuePeekMessage[]>> {
+    return this.http.request({
+      method: "GET",
+      path: `${queueRoot(this.http, queueId, projectId)}:peek`,
+      routeName: "queues.peek",
+      query: { maxMessages },
+    });
+  }
+
+  receive(
+    queueId: Ulid,
+    request: Models.ReceiveProjectQueueMessagesRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<readonly Models.ProjectQueueReceivedMessage[]>> {
+    return this.http.request({
+      method: "POST",
+      path: `${queueRoot(this.http, queueId, projectId)}:receive`,
+      routeName: "queues.receive",
+      body: request,
+    });
+  }
+
+  complete(
+    queueId: Ulid,
+    receipt: Models.ProjectQueueReceipt,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectQueueReceiptActionResult>> {
+    return this.http.request({
+      method: "POST",
+      path: `${queueRoot(this.http, queueId, projectId)}:complete`,
+      routeName: "queues.complete",
+      body: { receipt: receipt.receipt },
+      headers: preferredRegionHeaders(receipt.region),
+    });
+  }
+
+  abandon(
+    queueId: Ulid,
+    receipt: Models.ProjectQueueReceipt,
+    delaySeconds?: number,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectQueueReceiptActionResult>> {
+    return this.http.request({
+      method: "POST",
+      path: `${queueRoot(this.http, queueId, projectId)}:abandon`,
+      routeName: "queues.abandon",
+      body: { receipt: receipt.receipt, delaySeconds },
+      headers: preferredRegionHeaders(receipt.region),
+    });
+  }
+
+  deadLetter(
+    queueId: Ulid,
+    receipt: Models.ProjectQueueReceipt,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectQueueReceiptActionResult>> {
+    return this.http.request({
+      method: "POST",
+      path: `${queueRoot(this.http, queueId, projectId)}:dead-letter`,
+      routeName: "queues.deadLetter",
+      body: { receipt: receipt.receipt },
+      headers: preferredRegionHeaders(receipt.region),
+    });
+  }
+
+  renewLock(
+    queueId: Ulid,
+    receipt: Models.ProjectQueueReceipt,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectQueueRenewLockResult>> {
+    return this.http.request({
+      method: "POST",
+      path: `${queueRoot(this.http, queueId, projectId)}:renew-lock`,
+      routeName: "queues.renewLock",
+      body: { receipt: receipt.receipt },
+      headers: preferredRegionHeaders(receipt.region),
+    });
+  }
+
+}
+
 export class DatabasesClient {
   constructor(private readonly http: TerraScaleHttp) {}
 
@@ -521,10 +699,7 @@ export class DatabasesClient {
       method: "POST",
       path: `${projectRoot(this.http, projectId)}/databases`,
       routeName: "databases.create",
-      body: {
-        ...request,
-        regions: normalizeRegionCodes(request.regions),
-      },
+      body: request,
     });
   }
 
@@ -1398,6 +1573,14 @@ function authRoute(
 
 function databaseRoot(http: TerraScaleHttp, scope: Models.DatabaseScoped): string {
   return `${projectRoot(http, scope.projectId)}/databases/${ulidPathSegment(scope.databaseId)}`;
+}
+
+function queueRoot(http: TerraScaleHttp, queueId: Ulid, projectId?: Ulid): string {
+  return `${projectRoot(http, projectId)}/queues/${ulidPathSegment(queueId)}`;
+}
+
+function preferredRegionHeaders(region: string): HeadersInit {
+  return { "x-terrascale-preferred-region": region.trim().toLowerCase() };
 }
 
 function environmentRoot(http: TerraScaleHttp, scope: Models.EnvironmentScoped): string {

@@ -11,6 +11,7 @@ import type {
   NotificationId,
   OrganizationId,
   ProjectId,
+  QueueId,
   RepositoryId,
   RestoreId,
   Ulid,
@@ -27,6 +28,24 @@ export type SortDirection = "asc" | "desc";
 export type PageRequest = {
   readonly skip?: number;
   readonly take?: number;
+};
+
+export type RegionSummary = {
+  readonly code: TerraScaleRegionCode;
+  readonly name: string;
+  readonly country: string;
+  readonly latitude: number;
+  readonly longitude: number;
+  readonly available: boolean;
+};
+
+export type RegionDetails = RegionSummary & {
+  readonly ociRegionCode: string;
+  readonly clusterNodeTag: string;
+};
+
+export type RegionsResponse = {
+  readonly regions: readonly RegionSummary[];
 };
 
 export type Page<TItem> = {
@@ -230,17 +249,32 @@ export type Project = {
   readonly projectId: ProjectId;
   readonly organizationId: OrganizationId;
   readonly name: string;
+  readonly regions: readonly TerraScaleRegionCode[];
+  readonly placementStatus: ProjectPlacementStatus;
+  readonly placementGeneration: number;
   readonly slug?: string;
   readonly createdAt: Timestamp;
 };
 
+export type ProjectPlacementStatus =
+  | "Provisioning"
+  | "PartiallyReady"
+  | "Ready"
+  | "Updating"
+  | "Degraded"
+  | "Deleting"
+  | "Failed";
+
 export type CreateProjectRequest = {
   readonly name: string;
   readonly defaultPermissionKeys?: readonly string[];
+  readonly regions?: readonly TerraScaleRegionCode[];
   readonly slug?: string;
 };
 
-export type UpdateProjectRequest = Partial<CreateProjectRequest>;
+export type UpdateProjectRequest = Partial<CreateProjectRequest> & {
+  readonly placementGeneration?: number;
+};
 
 export type DashboardContextUser = {
   readonly userId: UserId;
@@ -257,6 +291,9 @@ export type DashboardContextProject = {
   readonly projectId: ProjectId;
   readonly organizationId: OrganizationId;
   readonly name: string;
+  readonly regions: readonly TerraScaleRegionCode[];
+  readonly placementStatus: ProjectPlacementStatus;
+  readonly placementGeneration: number;
   readonly isCurrent: boolean;
 };
 
@@ -320,7 +357,6 @@ export type DatabaseEnvironment = {
 
 export type CreateDatabaseRequest = {
   readonly name: string;
-  readonly regions?: readonly TerraScaleRegionCode[];
 };
 
 export type DeletedProjectDatabaseResponse = {
@@ -331,6 +367,98 @@ export type DeletedProjectDatabaseResponse = {
   readonly environmentsDeleted: number;
   readonly physicalDatabasesDeleted: number;
   readonly repositoriesDeleted: number;
+};
+
+export type ProjectQueue = {
+  readonly queueId: QueueId;
+  readonly projectId: ProjectId;
+  readonly name: string;
+  readonly kind: "Queue" | "Topic";
+  readonly messages: number;
+  readonly storageBytes: number;
+  readonly consumerCount: number;
+  readonly replicas: number;
+  readonly fifo: boolean;
+  readonly partitionCount: number;
+  readonly retentionSeconds?: number;
+  readonly createdAt: Timestamp;
+};
+
+export type CreateProjectQueueRequest = {
+  readonly name: string;
+  readonly kind?: "queue" | "topic";
+  readonly description?: string;
+  readonly retentionSeconds?: number;
+  readonly maxMessageSizeBytes?: number;
+  readonly fifo?: boolean;
+  readonly partitionCount?: number;
+  readonly duplicateDetectionSeconds?: number;
+};
+
+export type PublishProjectQueueMessageRequest = {
+  readonly data: JsonValue;
+  readonly idempotencyKey?: string;
+  readonly partitionKey?: string;
+  readonly delaySeconds?: number;
+  readonly timeToLiveSeconds?: number;
+};
+
+export type ProjectQueuePublishResult = {
+  readonly messageId: string;
+  readonly sequence: number;
+  readonly publishedAt: Timestamp;
+  readonly duplicate: boolean;
+};
+
+export type ProjectQueuePeekMessage = {
+  readonly messageId: string;
+  readonly data: JsonValue;
+  readonly contentType: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly sequence: number;
+  readonly createdAt?: Timestamp;
+};
+
+export type ProjectQueueDeliveryGuarantee = "at-least-once";
+
+export type ReceiveProjectQueueMessagesRequest = {
+  readonly consumerName: string;
+  readonly maxMessages?: number;
+  readonly waitSeconds?: number;
+  readonly lockSeconds?: number;
+};
+
+export type ProjectQueueReceipt = {
+  readonly receipt: string;
+  readonly region: TerraScaleRegionCode;
+};
+
+export type ProjectQueueReceivedMessage = ProjectQueueReceipt & {
+  readonly messageId: string;
+  readonly data: JsonValue;
+  readonly contentType: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly streamSequence: number;
+  readonly consumerSequence: number;
+  readonly deliveryAttempt: number;
+  readonly receivedAt: Timestamp;
+  readonly lockedUntil: Timestamp;
+  readonly deliveryGuarantee: ProjectQueueDeliveryGuarantee;
+};
+
+export type ProjectQueueReceiptActionResult = {
+  readonly messageId: string;
+  readonly operation: "abandon" | "complete" | "dead-letter";
+  readonly accepted: boolean;
+  readonly safeToRetry: boolean;
+  readonly region: TerraScaleRegionCode;
+  readonly deliveryGuarantee: ProjectQueueDeliveryGuarantee;
+};
+
+export type ProjectQueueRenewLockResult = ProjectQueueReceipt & {
+  readonly messageId: string;
+  readonly lockedUntil: Timestamp;
+  readonly deliveryGuarantee: ProjectQueueDeliveryGuarantee;
 };
 
 export type CreateDatabaseEnvironmentRequest = {
@@ -769,6 +897,7 @@ export type CurrentOrganizationFeatureEntitlement = {
 };
 
 export type CurrentOrganizationLimits = {
+  readonly maxRegions?: number;
   readonly maxProjects?: number;
   readonly maxDatabases?: number;
   readonly maxTeamMembers?: number;
@@ -861,6 +990,9 @@ export type PricingPlan = {
   readonly monthlyStripePriceId?: string | null;
   readonly annualStripePriceId?: string | null;
   readonly visible?: boolean;
+  readonly maxRegions: number;
+  readonly operationOverageCentsPerMillion: number;
+  readonly storageOverageCentsPerGbRegion: number;
 };
 
 export type AdminPricingPlanRequest = {
@@ -875,11 +1007,14 @@ export type AdminPricingPlanRequest = {
   readonly defaultCheckout?: boolean;
   readonly displayOrder?: number;
   readonly maxDatabases?: number;
+  readonly maxRegions?: number;
   readonly maxStorageGb?: number;
   readonly maxRequestsPerMonth?: number;
   readonly maxTeamMembers?: number;
   readonly maxRepositories?: number;
   readonly maxApiKeys?: number;
+  readonly operationOverageCentsPerMillion?: number;
+  readonly storageOverageCentsPerGbRegion?: number;
   readonly includedUsage?: readonly UsageMetric[];
 };
 

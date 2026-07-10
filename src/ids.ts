@@ -16,6 +16,7 @@ export type BackupId = Ulid;
 export type BackupPolicyId = Ulid;
 export type M2MClientId = Ulid;
 export type NotificationId = Ulid;
+export type QueueId = Ulid;
 export type AuditEventId = Ulid;
 export type RestoreId = Ulid;
 
