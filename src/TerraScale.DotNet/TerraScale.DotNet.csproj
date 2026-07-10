@@ -6,7 +6,7 @@
     <PackageProjectUrl>https://git.mariogk.com/TerraScale/TerraScale.DotNet</PackageProjectUrl>
     <RepositoryUrl>https://git.mariogk.com/TerraScale/TerraScale.DotNet</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageTags>terrascale;database;documents;projects;auth;notifications;backups;billing;stripe;sdk</PackageTags>
+    <PackageTags>terrascale;database;documents;projects;queues;messaging;auth;notifications;backups;billing;stripe;sdk</PackageTags>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 

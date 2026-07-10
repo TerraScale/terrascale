@@ -2,7 +2,7 @@
 
 Official C# SDK for TerraScale public API families.
 
-The SDK calls verified TerraScale public `/api/v1` endpoints. It covers region catalog, database, repository, document, schema, TQL, changes, billing, project, project database, environment, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, and restore operations. It does not call TerraBase storage directly and does not cover admin, user-management, organization-management, auth-provider, invitation, audit, or Dashboard-internal test endpoints.
+The SDK calls verified TerraScale public `/api/v1` endpoints. It covers region catalog, database, repository, document, schema, TQL, changes, billing, project, project database, environment, queue, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, and restore operations. It does not call TerraBase storage directly and does not cover admin, user-management, organization-management, auth-provider, invitation, audit, or Dashboard-internal test endpoints.
 
 ## Install
 
@@ -102,6 +102,12 @@ var createdProject = await client.Projects.CreateAsync(
     organizationId,
     "orders",
     defaultPermissionKeys: ["auth:login"],
+    regions:
+    [
+        TerraScaleRegions.Gru,
+        TerraScaleRegions.Sfo,
+        TerraScaleRegions.Fra
+    ],
     cancellationToken);
 var updatedProject = await client.Projects.UpdateAsync(
     createdProject.ProjectId,
@@ -112,12 +118,6 @@ var project = await client.Projects.GetAsync(projectId, cancellationToken);
 var database = await client.ProjectDatabases.CreateAsync(
     project.ProjectId,
     "orders-production",
-    regions:
-    [
-        TerraScaleRegions.Gru,
-        TerraScaleRegions.Sfo,
-        TerraScaleRegions.Fra
-    ],
     cancellationToken);
 
 var environment = await client.Environments.CreateAsync(
@@ -164,6 +164,57 @@ var repository = await environmentClient.Repositories.CreateAsync(
     """,
     cancellationToken: cancellationToken);
 ```
+
+## Queues And Topics
+
+Create a project queue and publish JSON messages through the public project API:
+
+```csharp
+var queue = await client.Queues.CreateAsync(
+    projectId,
+    new TerraScaleCreateProjectQueueRequest(
+        "order-processing",
+        RetentionSeconds: 86_400,
+        PartitionCount: 8,
+        DuplicateDetectionSeconds: 120),
+    cancellationToken);
+
+var published = await client.Queues.PublishAsync(
+    projectId,
+    queue.QueueId,
+    new TerraScalePublishProjectQueueMessageRequest<object>(
+        new { orderId = "A1001", action = "capture-payment" },
+        IdempotencyKey: "order-A1001-capture",
+        PartitionKey: "A1001",
+        TimeToLiveSeconds: 300),
+    cancellationToken);
+
+var pending = await client.Queues.PeekAsync(
+    projectId,
+    queue.QueueId,
+    maxMessages: 10,
+    cancellationToken);
+
+var delivery = (await client.Queues.ReceiveAsync(
+    projectId,
+    queue.QueueId,
+    new TerraScaleReceiveProjectQueueMessagesRequest(
+        "payment-workers",
+        MaxMessages: 1,
+        WaitSeconds: 10,
+        LockSeconds: 60),
+    cancellationToken)).Single();
+
+// Persist DeliveryReceipt with the work item when processing crosses process boundaries.
+// It is opaque, time-limited, region-affine, and safe to retry for acknowledgements.
+await client.Queues.CompleteAsync(
+    projectId,
+    queue.QueueId,
+    delivery.DeliveryReceipt,
+    cancellationToken);
+```
+
+Use `TerraScaleQueueKinds.Topic` when creating a publish/subscribe topic. Queue delivery is explicitly at-least-once; handlers should be idempotent. `RenewLockAsync`, `AbandonAsync`, and `DeadLetterAsync` accept the same regional receipt. Queue deletion and purge are available through `DeleteAsync` and `PurgeAsync`.
 
 ## Documents, Query, Batch, Schema, And Changes
 

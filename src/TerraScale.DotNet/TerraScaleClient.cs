@@ -44,6 +44,7 @@ public sealed class TerraScaleClient
         Projects = new TerraScaleProjectsClient(this);
         Regions = new TerraScaleRegionsClient(this);
         ProjectDatabases = new TerraScaleProjectDatabasesClient(this);
+        Queues = new TerraScaleQueuesClient(this);
         Environments = new TerraScaleEnvironmentsClient(this);
         ProjectUsage = new TerraScaleProjectUsageClient(this);
         ApiKeys = new TerraScaleApiKeysClient(this);
@@ -106,6 +107,11 @@ public sealed class TerraScaleClient
     /// Project-scoped logical database operations.
     /// </summary>
     public TerraScaleProjectDatabasesClient ProjectDatabases { get; }
+
+    /// <summary>
+    /// Project-scoped queue and topic operations.
+    /// </summary>
+    public TerraScaleQueuesClient Queues { get; }
 
     /// <summary>
     /// Project database environment operations.
@@ -185,6 +191,19 @@ public sealed class TerraScaleClient
         HttpMethod method,
         string requestUri,
         object? body,
+        CancellationToken cancellationToken) =>
+        await SendAsync<TResponse>(
+            method,
+            requestUri,
+            body,
+            preferredRegion: null,
+            cancellationToken).ConfigureAwait(false);
+
+    internal async Task<TResponse> SendAsync<TResponse>(
+        HttpMethod method,
+        string requestUri,
+        object? body,
+        string? preferredRegion,
         CancellationToken cancellationToken)
     {
         using var activity = StartActivity(method, requestUri);
@@ -193,7 +212,7 @@ public sealed class TerraScaleClient
             requestUri,
             CreateJsonContentFactory(body),
             RequestAuthenticationMode.Authenticated,
-            configureRequest: null,
+            configureRequest: request => ApplyPreferredRegion(request, preferredRegion),
             activity,
             cancellationToken).ConfigureAwait(false);
 
@@ -216,6 +235,16 @@ public sealed class TerraScaleClient
             requestId: ReadRequestId(response),
             responseBody: null,
             retryAfter: response.Headers.RetryAfter?.Delta);
+    }
+
+    private static void ApplyPreferredRegion(HttpRequestMessage request, string? preferredRegion)
+    {
+        if (!string.IsNullOrWhiteSpace(preferredRegion))
+        {
+            request.Headers.TryAddWithoutValidation(
+                "X-TerraScale-Preferred-Region",
+                preferredRegion.Trim().ToLowerInvariant());
+        }
     }
 
     internal async Task<TResponse> SendAnonymousJsonAsync<TResponse>(

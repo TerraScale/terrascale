@@ -64,21 +64,20 @@ public sealed class TerraScaleApiE2ETests
         var currentProject = await GetCurrentProjectAsync(client);
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var databaseName = $"sdk-e2e-db-{suffix}";
-        string[] regions = [TerraScaleRegions.Gru, TerraScaleRegions.Sfo, TerraScaleRegions.Fra];
         TerraScaleProjectDatabase? created = null;
 
         try
         {
-            created = await client.ProjectDatabases.CreateAsync(currentProject.ProjectId, databaseName, regions);
+            created = await client.ProjectDatabases.CreateAsync(currentProject.ProjectId, databaseName);
             await Assert.That(created.ProjectId).IsEqualTo(currentProject.ProjectId);
             await Assert.That(created.Name).IsEqualTo(databaseName);
-            await Assert.That(created.Regions.SequenceEqual(regions)).IsTrue();
+            await Assert.That(created.Regions.SequenceEqual(currentProject.Regions)).IsTrue();
 
             var loaded = await client.ProjectDatabases.GetAsync(currentProject.ProjectId, created.DatabaseId);
             await Assert.That(loaded.DatabaseId).IsEqualTo(created.DatabaseId);
             await Assert.That(loaded.ProjectId).IsEqualTo(created.ProjectId);
             await Assert.That(loaded.Name).IsEqualTo(databaseName);
-            await Assert.That(loaded.Regions.SequenceEqual(regions)).IsTrue();
+            await Assert.That(loaded.Regions.SequenceEqual(currentProject.Regions)).IsTrue();
 
             var listed = await client.ProjectDatabases.ListAsync(currentProject.ProjectId, take: 100);
             await Assert.That(listed.Any(database => database.DatabaseId == created.DatabaseId)).IsTrue();
@@ -98,6 +97,140 @@ public sealed class TerraScaleApiE2ETests
             if (created is not null)
             {
                 await DeleteProjectDatabaseIfPresentAsync(client, currentProject.ProjectId, created.DatabaseId);
+            }
+        }
+    }
+
+    [Test]
+    [RequiresTerraScaleApi]
+    public async Task ProjectQueues_CreatePublishReceiveAcknowledgePurgeAndDelete_RoundTripAgainstRealApi()
+    {
+        var client = TerraScaleApiE2E.CreateClient();
+        var currentProject = await GetCurrentProjectAsync(client);
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var queueName = $"sdk-e2e-queue-{suffix}";
+        var marker = $"sdk-e2e-message-{suffix}";
+        TerraScaleProjectQueue? created = null;
+
+        try
+        {
+            created = await client.Queues.CreateAsync(
+                currentProject.ProjectId,
+                new TerraScaleCreateProjectQueueRequest(
+                    queueName,
+                    Description: "TerraScale .NET SDK queue integration test",
+                    RetentionSeconds: 3600,
+                    MaxMessageSizeBytes: 64 * 1024,
+                    PartitionCount: 1,
+                    DuplicateDetectionSeconds: 120));
+
+            await Assert.That(created.QueueId.Length).IsEqualTo(26);
+            await Assert.That(created.ProjectId).IsEqualTo(currentProject.ProjectId);
+            await Assert.That(created.Name).IsEqualTo(queueName);
+            await Assert.That(created.Kind).IsEqualTo("Queue");
+            await Assert.That(created.Replicas).IsEqualTo(3);
+            await Assert.That(created.PartitionCount).IsEqualTo(1);
+            await Assert.That(created.RetentionSeconds).IsEqualTo(3600);
+
+            var listed = await client.Queues.ListAsync(currentProject.ProjectId);
+            await Assert.That(listed.Any(queue => queue.QueueId == created.QueueId)).IsTrue();
+
+            var loaded = await client.Queues.GetAsync(currentProject.ProjectId, created.QueueId);
+            await Assert.That(loaded.QueueId).IsEqualTo(created.QueueId);
+            await Assert.That(loaded.Name).IsEqualTo(queueName);
+
+            var publishRequest = new TerraScalePublishProjectQueueMessageRequest<object>(
+                new { task = marker, attempt = 1 },
+                IdempotencyKey: $"sdk-e2e-{suffix}",
+                PartitionKey: "orders",
+                TimeToLiveSeconds: 300);
+            var published = await client.Queues.PublishAsync(
+                currentProject.ProjectId,
+                created.QueueId,
+                publishRequest);
+            await Assert.That(published.MessageId).IsNotEmpty();
+            await Assert.That(published.Sequence > 0).IsTrue();
+            await Assert.That(published.Duplicate).IsFalse();
+
+            var duplicate = await client.Queues.PublishAsync(
+                currentProject.ProjectId,
+                created.QueueId,
+                publishRequest);
+            await Assert.That(duplicate.MessageId).IsNotEmpty();
+            await Assert.That(duplicate.Sequence).IsEqualTo(published.Sequence);
+            await Assert.That(duplicate.Duplicate).IsTrue();
+
+            var peeked = await client.Queues.PeekAsync(currentProject.ProjectId, created.QueueId, maxMessages: 10);
+            var message = peeked.Single(candidate => candidate.MessageId == published.MessageId);
+            await Assert.That(message.ContentType).IsEqualTo("application/json");
+            await Assert.That(message.Data.GetProperty("task").GetString()).IsEqualTo(marker);
+            await Assert.That(message.Data.GetProperty("attempt").GetInt32()).IsEqualTo(1);
+
+            var received = (await client.Queues.ReceiveAsync(
+                currentProject.ProjectId,
+                created.QueueId,
+                new TerraScaleReceiveProjectQueueMessagesRequest(
+                    $"sdk-worker-{suffix}",
+                    MaxMessages: 1,
+                    WaitSeconds: 2,
+                    LockSeconds: 10))).Single();
+            await Assert.That(received.MessageId).IsEqualTo(published.MessageId);
+            await Assert.That(received.DeliveryGuarantee)
+                .IsEqualTo(TerraScaleQueueDeliveryGuarantees.AtLeastOnce);
+
+            var renewed = await client.Queues.RenewLockAsync(
+                currentProject.ProjectId,
+                created.QueueId,
+                received.DeliveryReceipt);
+            var abandoned = await client.Queues.AbandonAsync(
+                currentProject.ProjectId,
+                created.QueueId,
+                renewed.DeliveryReceipt,
+                delaySeconds: 0.1);
+            await Assert.That(abandoned.Operation).IsEqualTo("abandon");
+            await Assert.That(abandoned.SafeToRetry).IsTrue();
+
+            var redelivered = (await client.Queues.ReceiveAsync(
+                currentProject.ProjectId,
+                created.QueueId,
+                new TerraScaleReceiveProjectQueueMessagesRequest(
+                    $"sdk-worker-{suffix}",
+                    MaxMessages: 1,
+                    WaitSeconds: 3,
+                    LockSeconds: 10))).Single();
+            await Assert.That(redelivered.MessageId).IsEqualTo(published.MessageId);
+            await Assert.That(redelivered.DeliveryAttempt >= 2).IsTrue();
+            var completed = await client.Queues.CompleteAsync(
+                currentProject.ProjectId,
+                created.QueueId,
+                redelivered.DeliveryReceipt);
+            await Assert.That(completed.Accepted).IsTrue();
+            await Assert.That(completed.Operation).IsEqualTo("complete");
+
+            await client.Queues.PublishAsync(
+                currentProject.ProjectId,
+                created.QueueId,
+                new TerraScalePublishProjectQueueMessageRequest<object>(
+                    new { task = $"purge-{suffix}" },
+                    IdempotencyKey: $"sdk-e2e-purge-{suffix}"));
+
+            var purged = await client.Queues.PurgeAsync(currentProject.ProjectId, created.QueueId);
+            await Assert.That(purged.PurgedMessages >= 1).IsTrue();
+
+            var deleted = await client.Queues.DeleteAsync(currentProject.ProjectId, created.QueueId);
+            await Assert.That(deleted).IsTrue();
+            var deletedQueueId = created.QueueId;
+            created = null;
+
+            var missing = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.Queues.GetAsync(currentProject.ProjectId, deletedQueueId));
+            await Assert.That(missing!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+        finally
+        {
+            if (created is not null)
+            {
+                await DeleteProjectQueueIfPresentAsync(client, currentProject.ProjectId, created.QueueId);
             }
         }
     }
@@ -421,6 +554,20 @@ public sealed class TerraScaleApiE2ETests
         try
         {
             await client.Environments.DeleteAsync(projectId, databaseId, environmentId);
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
+        }
+    }
+
+    private static async Task DeleteProjectQueueIfPresentAsync(
+        TerraScaleClient client,
+        string projectId,
+        string queueId)
+    {
+        try
+        {
+            await client.Queues.DeleteAsync(projectId, queueId);
         }
         catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {

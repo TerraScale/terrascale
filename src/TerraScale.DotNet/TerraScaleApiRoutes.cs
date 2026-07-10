@@ -32,6 +32,42 @@ internal static class TerraScaleApiRoutes
     public static string ProjectDatabaseDelete(string projectId, string databaseId) =>
         ProjectDatabaseGet(projectId, databaseId);
 
+    public static string ProjectQueuesList(string projectId) =>
+        $"/api/v1/projects/{Escape(projectId)}/queues";
+
+    public static string ProjectQueuesCreate(string projectId) =>
+        ProjectQueuesList(projectId);
+
+    public static string ProjectQueueGet(string projectId, string queueId) =>
+        $"{ProjectQueuesList(projectId)}/{Escape(queueId)}";
+
+    public static string ProjectQueueDelete(string projectId, string queueId) =>
+        ProjectQueueGet(projectId, queueId);
+
+    public static string ProjectQueuePurge(string projectId, string queueId) =>
+        $"{ProjectQueueGet(projectId, queueId)}:purge";
+
+    public static string ProjectQueuePublish(string projectId, string queueId) =>
+        $"{ProjectQueueGet(projectId, queueId)}:publish";
+
+    public static string ProjectQueuePeek(string projectId, string queueId, int maxMessages) =>
+        WithQuery($"{ProjectQueueGet(projectId, queueId)}:peek", ("maxMessages", Number(maxMessages)));
+
+    public static string ProjectQueueReceive(string projectId, string queueId) =>
+        $"{ProjectQueueGet(projectId, queueId)}:receive";
+
+    public static string ProjectQueueComplete(string projectId, string queueId) =>
+        $"{ProjectQueueGet(projectId, queueId)}:complete";
+
+    public static string ProjectQueueAbandon(string projectId, string queueId) =>
+        $"{ProjectQueueGet(projectId, queueId)}:abandon";
+
+    public static string ProjectQueueDeadLetter(string projectId, string queueId) =>
+        $"{ProjectQueueGet(projectId, queueId)}:dead-letter";
+
+    public static string ProjectQueueRenewLock(string projectId, string queueId) =>
+        $"{ProjectQueueGet(projectId, queueId)}:renew-lock";
+
     public static string EnvironmentsCreate(string projectId, string databaseId) =>
         $"/api/v1/projects/{Escape(projectId)}/databases/{Escape(databaseId)}/environments";
 

@@ -55,12 +55,13 @@ public sealed class TerraScaleProjectsClient
         string organizationId,
         string name,
         IReadOnlyList<string>? defaultPermissionKeys = null,
+        IReadOnlyList<string>? regions = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         return CreateAsync(
             organizationId,
-            new TerraScaleCreateProjectRequest(name.Trim(), defaultPermissionKeys),
+            new TerraScaleCreateProjectRequest(name.Trim(), defaultPermissionKeys, regions),
             cancellationToken);
     }
 
@@ -89,7 +90,10 @@ public sealed class TerraScaleProjectsClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentException.ThrowIfNullOrWhiteSpace(request.Name);
+        if (request.Name is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(request.Name);
+        }
         return client.SendAsync<TerraScaleProject>(
             HttpMethod.Patch,
             TerraScaleApiRoutes.ProjectUpdate(projectId),
@@ -108,7 +112,7 @@ public sealed class TerraScaleProjectsClient
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         return UpdateAsync(
             projectId,
-            new TerraScaleUpdateProjectRequest(name.Trim()),
+            new TerraScaleUpdateProjectRequest(name.Trim(), null, null),
             cancellationToken);
     }
 }
@@ -118,12 +122,16 @@ public sealed class TerraScaleProjectsClient
 /// </summary>
 public sealed record TerraScaleCreateProjectRequest(
     string Name,
-    IReadOnlyList<string>? DefaultPermissionKeys = null);
+    IReadOnlyList<string>? DefaultPermissionKeys = null,
+    IReadOnlyList<string>? Regions = null);
 
 /// <summary>
 /// Request body for updating a project.
 /// </summary>
-public sealed record TerraScaleUpdateProjectRequest(string Name);
+public sealed record TerraScaleUpdateProjectRequest(
+    string? Name,
+    IReadOnlyList<string>? Regions,
+    long? PlacementGeneration);
 
 /// <summary>
 /// Project metadata returned by TerraScale project endpoints.
@@ -136,6 +144,9 @@ public sealed record TerraScaleProject(
     string? CreatedByUserId,
     DateTimeOffset? OwnershipAssignedAt,
     IReadOnlyList<string> DefaultPermissionKeys,
+    IReadOnlyList<string> Regions,
+    string PlacementStatus,
+    long PlacementGeneration,
     string Pk,
     string Sk,
     string EntityType,

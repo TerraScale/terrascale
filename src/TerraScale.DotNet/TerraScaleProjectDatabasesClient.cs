@@ -18,7 +18,6 @@ public sealed class TerraScaleProjectDatabasesClient
     public Task<TerraScaleProjectDatabase> CreateAsync(
         string projectId,
         string name,
-        IReadOnlyList<string>? regions = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
@@ -26,7 +25,7 @@ public sealed class TerraScaleProjectDatabasesClient
         return client.SendAsync<TerraScaleProjectDatabase>(
             HttpMethod.Post,
             TerraScaleApiRoutes.ProjectDatabasesCreate(projectId),
-            new TerraScaleCreateProjectDatabaseRequest(name.Trim(), regions),
+            new TerraScaleCreateProjectDatabaseRequest(name.Trim()),
             cancellationToken);
     }
 
@@ -87,8 +86,7 @@ public sealed class TerraScaleProjectDatabasesClient
 /// Request body for creating a project-scoped logical database.
 /// </summary>
 public sealed record TerraScaleCreateProjectDatabaseRequest(
-    string Name,
-    IReadOnlyList<string>? Regions = null);
+    string Name);
 
 /// <summary>
 /// Project-scoped logical database metadata.
