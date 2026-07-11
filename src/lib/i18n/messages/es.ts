@@ -232,7 +232,7 @@ export const es: Messages = {
       items: [
         {
           q: '¿Qué es una Operación de Base de Datos?',
-          a: 'Una Operación de Base de Datos es cualquier acción individual de lectura, escritura, actualización o eliminación sobre tu base de datos. Cada consulta que ejecutas — ya sea obtener un registro, insertar un dato, ejecutar una agregación o replicar a otra región — cuenta como una o más operaciones según su complejidad.',
+          a: 'Una unidad de Operación de Base de Datos es cada bloque iniciado de 4 KiB (4.096 bytes) de un objeto lógico leído o escrito con éxito. Listados, consultas y lotes cuentan cada elemento por separado. Las escrituras se cobran una vez por región seleccionada; las lecturas solo en la región que sirve el resultado. Las solicitudes fallidas, denegadas, inválidas, limitadas o no encontradas no se facturan.',
         },
         {
           q: '¿Y si necesito más operaciones o almacenamiento?',
