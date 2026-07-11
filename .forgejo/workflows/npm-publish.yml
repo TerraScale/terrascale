@@ -38,7 +38,7 @@ jobs:
             --store-password-in-clear-text \
             --configfile "${nuget_config_dir}/nuget.config" >/dev/null
           rm -rf .tools
-          dotnet tool install TerraScale.Deploy.Cli --version 1.0.71 \
+          dotnet tool install TerraScale.Deploy.Cli --version 1.0.72 \
             --tool-path .tools \
             --configfile "${nuget_config_dir}/nuget.config"
           ./.tools/terrascale-deploy version
