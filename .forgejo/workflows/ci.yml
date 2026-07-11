@@ -8,12 +8,13 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: terrascale-typescript-ci-${{ forgejo.ref }}
+  group: ${{ forgejo.workflow }}-${{ forgejo.ref }}
   cancel-in-progress: true
 
 jobs:
   sdk:
     runs-on: terrascale-builder
+    timeout-minutes: 20
     container:
       image: terrascale-builder
     permissions:
@@ -23,13 +24,15 @@ jobs:
     steps:
       - name: Install TerraScale Deploy CLI
         run: |
+          set -euo pipefail
           : "${REGISTRY_TOKEN:?REGISTRY_TOKEN is required to install TerraScale.Deploy.Cli.}"
           nuget_config_dir="$(mktemp -d)"
           trap 'rm -rf "${nuget_config_dir}"' EXIT
+          nuget_user="${REGISTRY_USER:-forgejo-actions}"
           dotnet new nugetconfig --output "${nuget_config_dir}" --force >/dev/null
           dotnet nuget add source "https://git.mariogk.com/api/packages/TerraScale/nuget/index.json" \
             --name terrascale-forgejo \
-            --username forgejo-actions \
+            --username "${nuget_user}" \
             --password "${REGISTRY_TOKEN}" \
             --store-password-in-clear-text \
             --configfile "${nuget_config_dir}/nuget.config" >/dev/null
