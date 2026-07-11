@@ -2,6 +2,10 @@
 
 Operational guide for AI agents working in this repo. Read before making changes.
 
+## Public URL
+
+The production public site is **https://terrascale.tech**.
+
 ## Stack
 
 - SvelteKit + Svelte 5 + TypeScript

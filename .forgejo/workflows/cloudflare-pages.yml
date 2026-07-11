@@ -56,12 +56,13 @@ on:
       - "!**/*.swp"
 
 concurrency:
-  group: landingpage-cloudflare-pages-${{ forgejo.ref }}
+  group: ${{ forgejo.workflow }}-${{ forgejo.ref }}
   cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: terrascale-builder
+    timeout-minutes: 20
     container:
       image: terrascale-builder
     env:

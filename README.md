@@ -23,7 +23,6 @@ The app is routed with SvelteKit file-based routes and prerenders these public p
 - `/about` -> `src/pages/About.svelte`
 - `/pricing` -> `src/pages/Pricing.svelte`
 - `/contact` -> `src/pages/Contact.svelte`
-- `/security` -> `src/pages/Security.svelte`
 - `/terms` -> `src/pages/Terms.svelte`
 - `/404` -> `src/pages/NotFound.svelte`
 

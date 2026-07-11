@@ -27,7 +27,6 @@ export const en = {
       home: 'Home',
       about: 'About',
       pricing: 'Pricing',
-      security: 'Security',
       terms: 'Terms',
       contact: 'Contact',
     },
@@ -82,7 +81,6 @@ export const en = {
         links: {
           privacy: 'Privacy',
           terms: 'Terms',
-          security: 'Security',
           sla: 'SLA',
           compliance: 'Compliance',
         },
