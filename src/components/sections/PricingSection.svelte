@@ -24,13 +24,14 @@
 
   // Plan names, prices, and accents are locale-independent; copy (description,
   // features, CTA) is pulled from the active dictionary by index.
+  // Prices and names match BillingPlanSeedData (USD cents / 100).
   const planMeta: Array<Omit<Plan, 'description' | 'features' | 'cta' | 'href'>> = [
     {
-      name: 'Hobby',
+      name: 'Developer',
       icon: 'zap',
       accent: 'var(--ts-secondary)',
       accentRgb: 'var(--ts-secondary-rgb)',
-      price: { monthly: 4.99, annual: 49 },
+      price: { monthly: 0, annual: 0 },
       popular: false,
     },
     {
@@ -38,16 +39,15 @@
       icon: 'trendingUp',
       accent: 'var(--ts-primary)',
       accentRgb: 'var(--ts-primary-rgb)',
-      price: { monthly: 24.99, annual: 249 },
+      price: { monthly: 20, annual: 200 },
       popular: true,
     },
     {
-      name: 'Enterprise',
+      name: 'Business',
       icon: 'shieldCheck',
       accent: 'var(--ts-tertiary)',
       accentRgb: 'var(--ts-tertiary-rgb)',
-      price: null,
-      basePrice: 499,
+      price: { monthly: 99, annual: 990 },
       popular: false,
     },
   ]

@@ -428,7 +428,7 @@ function Footer({ setPage }) {
               textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 600,
             }}>
               <span className="pulse-dot" style={{ width: 6, height: 6, borderRadius: 3, background: 'var(--ts-secondary)', boxShadow: '0 0 6px var(--ts-secondary)' }} />
-              99.99% Uptime
+              Global Regions
             </div>
             <div style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -436,7 +436,7 @@ function Footer({ setPage }) {
               textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 600,
             }}>
               <Icon name="shield" size={11} />
-              SOC 2 Type II
+              Access controls
             </div>
           </div>
         </div>

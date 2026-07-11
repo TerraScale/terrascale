@@ -65,51 +65,49 @@ export function tokenize(code: string, lang: Lang): Token[] {
 }
 
 export const CODE_SAMPLES: Record<Lang, string> = {
-  typescript: `import { createTerraScaleClient } from '@terrascale/sdk';
+  typescript: `import { createTerraScaleClient, toUlid } from '@terrascale/sdk';
 
-const ts = createTerraScaleClient({
-  baseUrl: 'https://api.terrascale.tech',
-  apiKey: process.env.TERRASCALE_API_KEY,
+const client = createTerraScaleClient({
+  apiBaseUrl: 'https://api.terrascale.tech',
+  authBaseUrl: 'https://auth.terrascale.tech',
+  dashboardClientId: 'landing-example',
+  projectId: toUlid(process.env.TERRASCALE_PROJECT_ID!),
+  accessToken: async () => process.env.TERRASCALE_TOKEN!,
 });
 
-const database = await ts.databases.create({
-  name: 'prod',
-  region: 'fra',
-});
+const repositoryId = toUlid(process.env.TERRASCALE_REPOSITORY_ID!);
 
-await ts.schema.apply(database.id, 'customers', {
-  fields: [
-    { name: 'email', type: 'String', required: true },
-    { name: 'plan', type: 'String' },
-  ],
-  confirmed: true,
-});
+await client.documents.create(
+  { repositoryId },
+  { email: 'team@example.com', plan: 'pro' },
+);
 
-const rows = await ts.repository<Customer>(database.id, 'customers')
-  .query({ filter: { plan: 'pro' }, limit: 50 });`,
+const page = await client.query.execute(
+  { repositoryId },
+  { query: "from customers where plan = 'pro'", take: 25 },
+);`,
   csharp: `using TerraScale.DotNet;
 
-using var http = new HttpClient
-{
-    BaseAddress = new Uri("https://api.terrascale.tech")
-};
-http.DefaultRequestHeaders.Add(
-    "X-TerraScale-Api-Key",
-    Environment.GetEnvironmentVariable("TERRASCALE_API_KEY"));
-
 var client = new TerraScaleClient(
-    http,
+    new HttpClient(),
     new TerraScaleClientOptions
     {
-        ApiKey = Environment.GetEnvironmentVariable("TERRASCALE_API_KEY"),
-        ProjectId = Environment.GetEnvironmentVariable("TERRASCALE_PROJECT_ID")
+        BaseAddress = new Uri("https://api.terrascale.tech"),
+        ProjectId = Environment.GetEnvironmentVariable("TERRASCALE_PROJECT_ID"),
+        ApiKey = Environment.GetEnvironmentVariable("TERRASCALE_API_KEY")
     });
 
-var database = await client.Databases.CreateAsync("prod");
+var repository = await client.Repositories.CreateAsync(
+    name: "customers",
+    collection: "customers");
 
-var checkout = await client.Billing.CreateCheckoutSessionAsync(
-    "01J2K7RTEQC3F4NG9HZ8Y62P6A",
-    new TerraScaleCreateCheckoutSessionRequest(PriceId: "price_123"));`,
+await client.Documents.CreateAsync(
+    repository.RepositoryId,
+    new { email = "team@example.com", plan = "pro" });
+
+var page = await client.Tql.QueryAsync(
+    repository.RepositoryId,
+    TerraScaleQuery.From("customers").WhereEqual("plan", "pro").Take(25));`,
 }
 
 export const LANG_META: Array<{ id: Lang; label: string; ext: string; icon: string }> = [

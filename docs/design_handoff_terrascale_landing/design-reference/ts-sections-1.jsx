@@ -230,7 +230,7 @@ function HeroSection() {
           borderTop: '1px solid var(--ts-glass-border)', paddingTop: 40,
         }}>
           {[
-            { v: '99.99%', l: 'Uptime' },
+            { v: 'Launch regions', l: 'Uptime' },
             { v: '20ms', l: 'Latency' },
             { v: '1M+', l: 'Queries/sec' },
             { v: '20+', l: 'Regions' },

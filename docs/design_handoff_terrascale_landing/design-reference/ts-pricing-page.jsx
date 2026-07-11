@@ -17,7 +17,7 @@ function PricingPage() {
 // 3-up feature row (Security / Fast / Auto-scaling)
 function PricingFeatureTriad() {
   const items = [
-    { icon: 'shieldCheck', title: 'Enterprise Security', text: 'SOC 2 compliant with end-to-end encryption' },
+    { icon: 'shieldCheck', title: 'Enterprise Security', text: 'Access-controlled with end-to-end encryption' },
     { icon: 'zap',         title: 'Lightning Fast',      text: 'Sub-20ms query latency worldwide' },
     { icon: 'trendingUp',  title: 'Auto-scaling',        text: 'Scales automatically with your traffic' },
   ];
