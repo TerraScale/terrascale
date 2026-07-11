@@ -17,7 +17,6 @@ export const es: Messages = {
       home: 'Inicio',
       about: 'Acerca de',
       pricing: 'Precios',
-      security: 'Seguridad',
       terms: 'Términos',
       contact: 'Contacto',
     },
@@ -70,7 +69,6 @@ export const es: Messages = {
         links: {
           privacy: 'Privacidad',
           terms: 'Términos',
-          security: 'Seguridad',
           sla: 'SLA',
           compliance: 'Cumplimiento',
         },

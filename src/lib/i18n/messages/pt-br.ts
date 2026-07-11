@@ -17,7 +17,6 @@ export const ptBr: Messages = {
       home: 'Início',
       about: 'Sobre',
       pricing: 'Preços',
-      security: 'Segurança',
       terms: 'Termos',
       contact: 'Contato',
     },
@@ -70,7 +69,6 @@ export const ptBr: Messages = {
         links: {
           privacy: 'Privacidade',
           terms: 'Termos',
-          security: 'Segurança',
           sla: 'SLA',
           compliance: 'Conformidade',
         },

@@ -1,13 +1,13 @@
 import type { AppIconName } from '@/lib/icons'
 
-export type RoutePath = '/' | '/about' | '/contact' | '/pricing' | '/security' | '/terms'
+export type RoutePath = '/' | '/about' | '/contact' | '/pricing' | '/terms'
 
 // Display labels are intentionally NOT stored here — they live in the i18n
 // dictionaries (src/lib/i18n/messages/*.ts) and are resolved by key. This file
 // remains the single source of truth for the locale-independent parts that are
 // easy to get wrong: route hrefs, icon names, link ordering, and external URLs.
 
-export type NavKey = 'home' | 'about' | 'pricing' | 'security' | 'terms' | 'contact'
+export type NavKey = 'home' | 'about' | 'pricing' | 'contact'
 
 export type NavEntry = {
   key: NavKey
@@ -19,8 +19,6 @@ export const navigation: NavEntry[] = [
   { key: 'home', href: '/', icon: 'home' },
   { key: 'about', href: '/about', icon: 'users' },
   { key: 'pricing', href: '/pricing', icon: 'dollarSign' },
-  { key: 'security', href: '/security', icon: 'shieldCheck' },
-  { key: 'terms', href: '/terms', icon: 'bookOpen' },
   { key: 'contact', href: '/contact', icon: 'mail' },
 ]
 
@@ -75,7 +73,6 @@ export const footerColumns: FooterColumn[] = [
     links: [
       { key: 'privacy', href: 'https://docs.terrascale.tech/privacy' },
       { key: 'terms', href: '/terms' },
-      { key: 'security', href: '/security' },
       { key: 'sla', href: 'https://docs.terrascale.tech/sla' },
       { key: 'compliance', href: 'https://docs.terrascale.tech/compliance' },
     ],
