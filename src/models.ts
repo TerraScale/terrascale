@@ -829,6 +829,12 @@ export type UsageSummary = {
   readonly operationBreakdown: readonly UsageSlice[];
   readonly databaseStorage: readonly UsageDatabaseStorage[];
   readonly storage: UsageStorage;
+  readonly operationUnits: number;
+  readonly includedOperationUnits: number;
+  readonly overageOperationUnits: number;
+  readonly updatedAt: Timestamp;
+  readonly regionalTotals: Readonly<Record<string, number>>;
+  readonly categoryTotals: Readonly<Record<string, number>>;
 };
 
 export type UsageMetric = {

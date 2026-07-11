@@ -51,6 +51,8 @@ export type TerraScaleRequestOptions<TBody = unknown> = {
   readonly body?: TBody | undefined;
   readonly headers?: HeadersInit | undefined;
   readonly signal?: AbortSignal | undefined;
+  /** Overrides automatic generation. Set to false to explicitly opt out. */
+  readonly idempotencyKey?: string | false | undefined;
 };
 
 export type TerraScaleRequestMetric = {
@@ -186,8 +188,23 @@ export class TerraScaleHttp {
       headers.set(key, value);
     }
 
+    if (isMutation(options.method) && options.idempotencyKey !== false) {
+      const key = options.idempotencyKey ?? this.config.idempotencyKeyFactory?.();
+      if (key !== undefined) {
+        const normalized = key.trim();
+        if (normalized.length === 0 || normalized.length > 128) {
+          throw new TypeError("Idempotency keys must be nonblank and contain at most 128 characters.");
+        }
+        headers.set("idempotency-key", normalized);
+      }
+    }
+
     return headers;
   }
+}
+
+function isMutation(method: TerraScaleHttpMethod): boolean {
+  return method === "POST" || method === "PATCH";
 }
 
 function recordRequestMetric(

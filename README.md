@@ -2,6 +2,10 @@
 
 This repository contains the `@terrascale/sdk` package.
 
+## Idempotent mutations
+
+Public clients opt in with `idempotencyKeyFactory` on the client or `idempotencyKey` on an individual request. Set the request value to `false` to opt out of global generation. Keys must be nonblank and no longer than 128 characters. Replayable API results expire after 24 hours; replays include `Idempotency-Replayed: true`, while reuse with different input returns `409 idempotency_key_reused`.
+
 The package is the customer-facing TypeScript client for TerraScale public REST
 APIs. Dashboard-only and owner/admin helper APIs are kept behind explicit
 internal entrypoints so the public package surface stays clear.

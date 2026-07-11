@@ -26,6 +26,8 @@ export type TerraScaleRuntimeConfig = {
   readonly accessToken?: AccessTokenProvider;
   readonly defaultHeaders?: HeadersInit;
   readonly fetch?: FetchLike;
+  /** Generates a stable key once per mutating request. Disabled by default for public callers. */
+  readonly idempotencyKeyFactory?: (() => string) | undefined;
 };
 
 export type ResolvedTerraScaleRuntimeConfig = {
@@ -38,6 +40,7 @@ export type ResolvedTerraScaleRuntimeConfig = {
   readonly accessToken?: AccessTokenProvider;
   readonly defaultHeaders?: HeadersInit;
   readonly fetch: FetchLike;
+  readonly idempotencyKeyFactory?: (() => string) | undefined;
 };
 
 export function resolveRuntimeConfig(
