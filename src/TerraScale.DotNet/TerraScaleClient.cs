@@ -608,7 +608,18 @@ public sealed class TerraScaleClient
         }
 
         var idempotencyKey = options.IdempotencyKeyFactory();
-        return string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey.Trim();
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            throw new InvalidOperationException("IdempotencyKeyFactory must return a nonblank key.");
+        }
+
+        var normalized = idempotencyKey.Trim();
+        if (normalized.Length > 128)
+        {
+            throw new InvalidOperationException("IdempotencyKeyFactory must return at most 128 characters.");
+        }
+
+        return normalized;
     }
 
     private string? CreateRequestId()

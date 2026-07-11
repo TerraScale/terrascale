@@ -56,7 +56,13 @@ public sealed record TerraScaleProjectUsage(
     IReadOnlyList<TerraScaleProjectUsageSlice> ResourceDistribution,
     IReadOnlyList<TerraScaleProjectUsageSlice> OperationBreakdown,
     IReadOnlyList<TerraScaleProjectUsageDatabaseStorage> DatabaseStorage,
-    TerraScaleProjectStorageUsage Storage);
+    TerraScaleProjectStorageUsage Storage,
+    long OperationUnits,
+    long IncludedOperationUnits,
+    long OverageOperationUnits,
+    DateTimeOffset UpdatedAt,
+    IReadOnlyDictionary<string, long> RegionalTotals,
+    IReadOnlyDictionary<string, long> CategoryTotals);
 
 /// <summary>
 /// Named project usage metric.

@@ -2,6 +2,10 @@
 
 Official C# SDK for TerraScale public API families.
 
+## Idempotent mutations
+
+Public clients opt in by configuring `TerraScaleClientOptions.IdempotencyKeyFactory`. The SDK creates one key per logical mutation, reuses it across retries, and never retries an unsafe mutation without a key. Keys must be nonblank and no longer than 128 characters. Replayable API results expire after 24 hours; replays include `Idempotency-Replayed: true`, while reuse with different input returns `409 idempotency_key_reused`.
+
 The SDK calls verified TerraScale public `/api/v1` endpoints. It covers region catalog, database, repository, document, schema, TQL, changes, billing, project, project database, environment, queue, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, and restore operations. It does not call TerraBase storage directly and does not cover admin, user-management, organization-management, auth-provider, invitation, audit, or Dashboard-internal test endpoints.
 
 ## Install
