@@ -90,7 +90,7 @@ export type SocialLink = {
 export const socialLinks: SocialLink[] = [
   {
     key: 'github',
-    href: 'https://git.mariogk.com/Terrascale',
+    href: 'https://git.mariogk.com/TerraScale',
     icon: 'brandGithub',
     color: '#F1F5F9',
     bg: 'rgba(241,245,249,0.08)',
