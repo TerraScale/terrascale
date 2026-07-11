@@ -59,7 +59,7 @@ Three-font stack, all referenced in `src/app.html`:
 - **Roboto** — eyebrows, Google Fonts CDN
 - **Roboto Mono** — code/stats, Google Fonts CDN (fallback: JetBrains Mono)
 
-Note: the sibling Documentation site intentionally uses a different (Quantico-only, no external CDN) font policy — this divergence is by design, so do not "fix" this site to match it.
+Note: the sibling TerraScale.Documentation site intentionally uses a different (Quantico-only, no external CDN) font policy — this divergence is by design, so do not "fix" this site to match it.
 
 ### Tokens & Utilities
 
