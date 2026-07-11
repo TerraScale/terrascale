@@ -245,7 +245,7 @@ export const en = {
       items: [
         {
           q: 'What is a Database Operation?',
-          a: 'A Database Operation is any single read, write, update, or delete action against your database. Each query you execute — whether fetching a row, inserting a record, running an aggregate, or replicating to another region — counts as one or more operations depending on complexity.',
+          a: 'One Database Operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once per selected region; reads count only in the serving region. Failed, denied, invalid, throttled, and not-found requests are not billed.',
         },
         {
           q: 'What if I need more operations or storage?',

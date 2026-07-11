@@ -232,7 +232,7 @@ export const ptBr: Messages = {
       items: [
         {
           q: 'O que é uma Operação de Banco de Dados?',
-          a: 'Uma Operação de Banco de Dados é qualquer ação isolada de leitura, gravação, atualização ou exclusão no seu banco de dados. Cada consulta executada — buscar um registro, inserir um dado, executar uma agregação ou replicar para outra região — conta como uma ou mais operações, dependendo da complexidade.',
+          a: 'Uma unidade de Operação de Banco de Dados é cada bloco iniciado de 4 KiB (4.096 bytes) de um objeto lógico lido ou gravado com sucesso. Listagens, consultas e lotes contam cada item de forma independente. Gravações contam uma vez por região selecionada; leituras contam apenas na região que atendeu o resultado. Solicitações com falha, negadas, inválidas, limitadas ou não encontradas não são cobradas.',
         },
         {
           q: 'E se eu precisar de mais operações ou armazenamento?',
