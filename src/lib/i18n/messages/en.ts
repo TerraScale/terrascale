@@ -79,10 +79,8 @@ export const en = {
       legal: {
         title: 'Legal',
         links: {
-          privacy: 'Privacy',
           terms: 'Terms',
-          sla: 'SLA',
-          compliance: 'Compliance',
+          support: 'Contact',
         },
       },
     },
@@ -157,12 +155,12 @@ export const en = {
 
   cta: {
     headlineLead: 'Try TerraScale',
-    headlineAccent: 'free for 30 days.',
-    text: 'Set it up in minutes on the free Developer plan and grow into Starter, Pro, Scale, or Business when you need more capacity. You won’t be charged until you choose a paid plan.',
-    ctaPrimary: 'Start 30-Day Free Trial',
+    headlineAccent: 'on the free Developer plan.',
+    text: 'Set it up in minutes on the free Developer plan and grow into Starter, Pro, Scale, or Business when you need more capacity. You will not be charged until you choose a paid plan.',
+    ctaPrimary: 'Start free',
     ctaSecondary: 'Talk to Sales',
-    perksAria: 'Trial details',
-    perks: ['Full feature access', 'Cancel anytime', 'No lock-in'],
+    perksAria: 'Plan details',
+    perks: ['Free Developer tier', 'Upgrade anytime', 'No lock-in'],
   },
 
   pricing: {
@@ -183,24 +181,27 @@ export const en = {
     plans: [
       {
         description: 'Free tier for prototypes and early evaluation',
-        features: ['3 databases', '100K requests/month', '10 GB storage', '3 team members', 'Auth APIs'],
+        features: ['3 databases', '100K operations/month', '10 GB-region storage', '3 team members', 'Auth APIs'],
         cta: 'Start free',
       },
       {
-        description: 'Production headroom for growing teams',
-        features: [
-          '50 databases',
-          '20M requests/month',
-          '5 GB storage',
-          '25 team members',
-          '10 regions',
-          'Stripe billing',
-        ],
+        description: 'Small production workloads with Stripe billing',
+        features: ['10 databases', '2M operations/month', '1 GB-region storage', '5 team members', 'Stripe billing'],
+        cta: 'Choose Starter',
+      },
+      {
+        description: 'More databases and team capacity',
+        features: ['50 databases', '20M operations/month', '5 GB-region storage', '25 team members', '10 regions'],
         cta: 'Choose Pro',
       },
       {
+        description: 'Default checkout plan with storage headroom',
+        features: ['25 databases', '5M operations/month', '500 GB-region storage', '25 team members', '10 regions'],
+        cta: 'Choose Scale',
+      },
+      {
         description: 'Highest seeded limits for larger organizations',
-        features: ['100 databases', '50M requests/month', '5 TB storage', '100 team members', '10 regions'],
+        features: ['100 databases', '50M operations/month', '5 TB-region storage', '100 team members', '10 regions'],
         cta: 'Choose Business',
       },
     ],
@@ -262,8 +263,8 @@ export const en = {
           a: 'Contact sales when you need limits beyond the seeded Business plan, dedicated support, or custom commercial terms.',
         },
         {
-          q: 'Why do you require a credit card for the free trial?',
-          a: 'We require a valid card to prevent abuse and ensure serious usage of our infrastructure. You won’t be charged during the 30-day trial, and you can cancel anytime. This also makes the transition to a paid plan seamless if you choose to continue.',
+          q: 'Do I need a credit card for the free Developer plan?',
+          a: 'No. The Developer plan is free. Add a payment method only when you upgrade to a paid plan through Stripe checkout.',
         },
       ],
       footerTitle: 'Still have questions?',
