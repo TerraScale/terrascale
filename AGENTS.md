@@ -17,7 +17,7 @@
 
 ## API Boundary
 
-- The SDK must interact only with public HTTP endpoints implemented by `/workspaces/TerraScale/Internals/src/API/TerraScale.API`.
+- The SDK must interact only with public HTTP endpoints implemented by `/workspaces/TerraScale/TerraScale.Internals/src/API/TerraScale.API`.
 - Architecture decision D-008 makes the SDK scope full public-API management parity, including database, repository, document, schema, query, billing, project, project database, environment, usage, notification, backup, restore, project auth API-key, and project machine-to-machine credential-management endpoints under `/api/v1`.
 - Credential-management support is allowed only through the public API. API-key and M2M create or rotate responses may surface secret values only in the creation or rotation response that the API returns; list, get, delete, revoke, docs, samples, tests, and logs must not hard-code or re-surface those secret values.
 - M2M token exchange must be constructible without pre-configured API-key or bearer-token authentication and must not attach unrelated auth headers to the anonymous token request. It may send OAuth client credentials through the endpoint-supported JSON body, form body, or HTTP Basic credential path.
