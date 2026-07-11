@@ -18,7 +18,7 @@
   const channelMeta: Array<{ icon: AppIconName; label: string; href: string; kind: ChannelHrefKind }> = [
     { icon: 'mail', label: 'Email', href: 'mailto:support@terrascale.tech', kind: 'mailto' },
     { icon: 'brandDiscord', label: 'Discord', href: 'https://discord.gg/terrascale', kind: 'external' },
-    { icon: 'brandGithub', label: 'GitHub', href: 'https://git.mariogk.com/Terrascale', kind: 'external' },
+    { icon: 'brandGithub', label: 'GitHub', href: 'https://git.mariogk.com/TerraScale', kind: 'external' },
   ]
   $: channels = channelMeta.map((meta, i) => ({
     ...meta,
