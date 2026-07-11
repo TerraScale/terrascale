@@ -8,7 +8,7 @@
 //
 // Deliberately NOT translated:
 //   - brand/product names (TerraScale, TerraBase, JetStream, NATS, Stripe),
-//   - plan names (Hobby / Pro / Enterprise),
+//   - plan names (Developer / Starter / Pro / Scale / Business),
 //   - code samples in src/lib/highlight.ts (real source code),
 //   - city / region proper nouns (San Francisco, Frankfurt, Guarulhos),
 //   - currency amounts and API field identifiers.
@@ -105,7 +105,7 @@ export const en = {
     ctaPrimary: 'Start Free',
     ctaSecondary: 'View Docs',
     highlightsAria: 'Key capabilities',
-    highlights: ['AI Ready', '99.99% Uptime', '20ms Latency'],
+    highlights: ['TQL Queries', 'Project Queues', 'Launch Regions'],
   },
 
   features: {
@@ -117,8 +117,8 @@ export const en = {
     items: [
       {
         title: 'Typed Data API',
-        text: 'Create databases, collections, schemas, entities, and SQL queries through one public API.',
-        bullets: ['Schema plans', 'SQL explain', 'SDK queries'],
+        text: 'Create databases, repositories, schemas, and documents, then query with TQL through one public API.',
+        bullets: ['Repositories', 'TQL', 'SDK clients'],
       },
       {
         title: 'Auth And Access',
@@ -158,7 +158,7 @@ export const en = {
   cta: {
     headlineLead: 'Try TerraScale',
     headlineAccent: 'free for 30 days.',
-    text: 'Set it up in minutes and get full access to all features of the Hobby and Pro plans. You won’t be charged anything until you decide to keep the service.',
+    text: 'Set it up in minutes on the free Developer plan and grow into Starter, Pro, Scale, or Business when you need more capacity. You won’t be charged until you choose a paid plan.',
     ctaPrimary: 'Start 30-Day Free Trial',
     ctaSecondary: 'Talk to Sales',
     perksAria: 'Trial details',
@@ -182,26 +182,26 @@ export const en = {
     baseNoteTrail: '/mo + usage',
     plans: [
       {
-        description: 'Great for personal projects and prototypes',
-        features: ['3 databases', '1M operations', '10 GB storage', '15 GB egress', 'Priority Discord'],
-        cta: 'Try for 30 days',
+        description: 'Free tier for prototypes and early evaluation',
+        features: ['3 databases', '100K requests/month', '10 GB storage', '3 team members', 'Auth APIs'],
+        cta: 'Start free',
       },
       {
-        description: 'Best for growing teams and production',
+        description: 'Production headroom for growing teams',
         features: [
-          '15 databases',
-          '10M operations',
-          '50 GB storage',
-          '100 GB egress',
-          'Email + Discord',
-          'Priority support',
+          '50 databases',
+          '20M requests/month',
+          '5 GB storage',
+          '25 team members',
+          '10 regions',
+          'Stripe billing',
         ],
-        cta: 'Try for 30 days',
+        cta: 'Choose Pro',
       },
       {
-        description: 'For mission-critical applications',
-        features: ['Unlimited databases', 'Custom SLAs', 'Dedicated support', 'Advanced security', 'Custom integrations'],
-        cta: 'Contact Sales',
+        description: 'Highest seeded limits for larger organizations',
+        features: ['100 databases', '50M requests/month', '5 TB storage', '100 team members', '10 regions'],
+        cta: 'Choose Business',
       },
     ],
     triad: [
@@ -219,19 +219,19 @@ export const en = {
       headDetails: 'Details',
       rows: [
         {
-          item: 'Enterprise Level Support',
+          item: 'Business plan base',
           unit: '/month',
-          details: 'Base platform access for Enterprise deployments and advanced support.',
+          details: 'Seeded Business plan starts at $99/month ($990/year) before usage overage.',
         },
         {
-          item: 'Storage Usage',
-          unit: '/GB',
-          details: 'Usage-based storage pricing on top of the base platform fee.',
+          item: 'Storage overage',
+          unit: '/GB-region',
+          details: 'Paid plans use seed storage overage ($0.70 per GB-region by default).',
         },
         {
-          item: 'Database Operations',
+          item: 'Operation overage',
           unit: '/ 1M ops',
-          details: 'Scales with workload volume for read, write, and replication activity.',
+          details: 'Paid plans use seed operation overage ($1.00 per million operation units).',
         },
       ],
       docsLink: 'Full Pricing Docs',
@@ -247,19 +247,19 @@ export const en = {
         },
         {
           q: 'What if I need more operations or storage?',
-          a: 'All plans support overage billing at usage rates ($1 per additional GB of storage, $1 per million additional operations). You’ll never be cut off mid-request — we’ll notify you well before you approach limits so you can upgrade or adjust.',
+          a: 'Paid plans support overage at seed rates ($0.70 per GB-region of storage and $1.00 per million operation units). Prefer upgrading when you consistently approach included limits.',
         },
         {
           q: 'When can I change my subscription?',
-          a: 'Anytime. Upgrades take effect immediately with prorated billing; downgrades apply at the start of your next billing cycle. No lock-in, no cancellation fees.',
+          a: 'Anytime through Stripe checkout and billing portal sessions on the organization billing routes. Upgrades take effect immediately with Stripe-prorated billing; downgrades follow Stripe period rules.',
         },
         {
           q: 'Can I export my data and leave anytime?',
-          a: 'Yes — your data is yours. Full exports are available anytime through the dashboard or API, and we never charge a cent to get it out. The only constraint is a per-request rate limit so a runaway export job can’t destabilize the cluster for other tenants; there’s no cap on total volume and no exit fee. If TerraScale isn’t working for you, you leave with everything you put in.',
+          a: 'Yes. Your data is yours. Export through the dashboard or API. Rate limits protect cluster stability, but there is no exit fee for leaving TerraScale.',
         },
         {
-          q: 'Do you offer custom enterprise solutions?',
-          a: 'Yes. For teams with specific compliance requirements, custom SLAs, or dedicated infrastructure, our Enterprise plan is fully tailored. Contact sales to scope a deployment that fits your needs.',
+          q: 'Do you offer larger custom deployments?',
+          a: 'Contact sales when you need limits beyond the seeded Business plan, dedicated support, or custom commercial terms.',
         },
         {
           q: 'Why do you require a credit card for the free trial?',

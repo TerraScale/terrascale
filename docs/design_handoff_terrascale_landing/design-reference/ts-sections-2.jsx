@@ -12,8 +12,8 @@ function FeaturesSection() {
     {
       icon: 'shield',
       title: 'Enterprise Security',
-      text: 'SOC 2 Type II, ISO 27001, and HIPAA compliant. End-to-end encryption, private networking, and fine-grained role-based access control by default.',
-      bullets: ['SOC 2 Type II', 'E2E encryption', 'RBAC'],
+      text: 'Access controls, ISO 27001, and HIPAA compliant. End-to-end encryption, private networking, and fine-grained role-based access control by default.',
+      bullets: ['Access controls', 'E2E encryption', 'RBAC'],
     },
     {
       icon: 'globe',

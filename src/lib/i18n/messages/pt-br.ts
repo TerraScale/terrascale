@@ -92,7 +92,7 @@ export const ptBr: Messages = {
     ctaPrimary: 'Começar grátis',
     ctaSecondary: 'Ver documentação',
     highlightsAria: 'Principais recursos',
-    highlights: ['Pronto para IA', '99,99% de Disponibilidade', '20ms de Latência'],
+    highlights: ['Consultas TQL', 'Filas de projeto', 'Regiões de lançamento'],
   },
 
   features: {
@@ -104,8 +104,8 @@ export const ptBr: Messages = {
     items: [
       {
         title: 'API de dados tipados',
-        text: 'Crie bancos de dados, coleções, esquemas, entidades e consultas SQL por meio de uma única API pública.',
-        bullets: ['Planos de esquema', 'Explicar SQL', 'Consultas SDK'],
+        text: 'Crie bancos de dados, repositórios, esquemas e documentos e consulte com TQL por meio de uma única API pública.',
+        bullets: ['Repositórios', 'TQL', 'Clientes SDK'],
       },
       {
         title: 'Autenticação e acesso',
@@ -145,7 +145,7 @@ export const ptBr: Messages = {
   cta: {
     headlineLead: 'Experimente a TerraScale',
     headlineAccent: 'grátis por 30 dias.',
-    text: 'Configure em minutos e tenha acesso total a todos os recursos dos planos Hobby e Pro. Você não será cobrado até decidir manter o serviço.',
+    text: 'Configure em minutos no plano gratuito Developer e avance para Starter, Pro, Scale ou Business quando precisar de mais capacidade.',
     ctaPrimary: 'Iniciar teste grátis de 30 dias',
     ctaSecondary: 'Falar com vendas',
     perksAria: 'Detalhes do teste',
@@ -169,26 +169,26 @@ export const ptBr: Messages = {
     baseNoteTrail: '/mês + uso',
     plans: [
       {
-        description: 'Ideal para projetos pessoais e protótipos',
-        features: ['3 bancos de dados', '1M de operações', '10 GB de armazenamento', '15 GB de saída', 'Discord prioritário'],
-        cta: 'Experimentar por 30 dias',
+        description: 'Free tier for prototypes and early evaluation',
+        features: ['3 databases', '100K requests/month', '10 GB storage', '3 team members', 'Auth APIs'],
+        cta: 'Start free',
       },
       {
-        description: 'Melhor para equipes em crescimento e produção',
+        description: 'Production headroom for growing teams',
         features: [
-          '15 bancos de dados',
-          '10M de operações',
-          '50 GB de armazenamento',
-          '100 GB de saída',
-          'E-mail + Discord',
-          'Suporte prioritário',
+          '50 databases',
+          '20M requests/month',
+          '5 GB storage',
+          '25 team members',
+          '10 regions',
+          'Stripe billing',
         ],
-        cta: 'Experimentar por 30 dias',
+        cta: 'Choose Pro',
       },
       {
-        description: 'Para aplicações de missão crítica',
-        features: ['Bancos de dados ilimitados', 'SLAs personalizados', 'Suporte dedicado', 'Segurança avançada', 'Integrações personalizadas'],
-        cta: 'Falar com vendas',
+        description: 'Highest seeded limits for larger organizations',
+        features: ['100 databases', '50M requests/month', '5 TB storage', '100 team members', '10 regions'],
+        cta: 'Choose Business',
       },
     ],
     triad: [

@@ -67,7 +67,7 @@ Design tokens live on `:root` in `src/index.css`. Reach for the shared utility c
 
 ### Conflict Resolution
 
-When the handoff README disagrees with the reference JSX files under `docs/design_handoff_terrascale_landing/design-reference/`, the JSX is source of truth for copy and layout.
+When the handoff README disagrees with the reference JSX files under `docs/design_handoff_terrascale_landing/design-reference/`, the JSX is historical design reference for layout only; product claims must match live code and docs.
 
 ## Icons
 
