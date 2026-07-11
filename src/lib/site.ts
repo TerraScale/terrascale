@@ -45,8 +45,7 @@ export const footerColumns: FooterColumn[] = [
     links: [
       { key: 'features', href: '/#features' },
       { key: 'pricing', href: '/pricing' },
-      { key: 'changelog', href: 'https://docs.terrascale.tech/changelog' },
-      { key: 'roadmap', href: 'https://docs.terrascale.tech/roadmap' },
+      { key: 'roadmap', href: 'https://docs.terrascale.tech/en/roadmap/' },
       { key: 'documentation', href: 'https://docs.terrascale.tech' },
     ],
   },
@@ -71,10 +70,8 @@ export const footerColumns: FooterColumn[] = [
   {
     key: 'legal',
     links: [
-      { key: 'privacy', href: 'https://docs.terrascale.tech/privacy' },
       { key: 'terms', href: '/terms' },
-      { key: 'sla', href: 'https://docs.terrascale.tech/sla' },
-      { key: 'compliance', href: 'https://docs.terrascale.tech/compliance' },
+      { key: 'support', href: '/contact' },
     ],
   },
 ]

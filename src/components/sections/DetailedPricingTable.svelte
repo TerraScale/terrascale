@@ -3,8 +3,8 @@
   import ExternalLink from '@/components/ExternalLink.svelte'
   import { dict } from '@/lib/i18n'
 
-  // Amounts are locale-independent; item/unit/details come from the dictionary.
-  const rowPrices = ['$499', '$1', '$1']
+  // Amounts match BillingPlanSeedData (Business base, storage overage, ops overage).
+  const rowPrices = ['$99', '$0.70', '$1.00']
   $: rows = $dict.pricing.detailed.rows.map((row, i) => ({
     ...row,
     price: rowPrices[i] ?? '',
@@ -42,7 +42,7 @@
 
     <div class="detailed__docs-wrap">
       <ExternalLink
-        href="https://docs.terrascale.tech/pricing"
+        href="https://docs.terrascale.tech/en/reference/pricing/"
         target="_blank"
         rel="noopener noreferrer"
         class="detailed__docs"
