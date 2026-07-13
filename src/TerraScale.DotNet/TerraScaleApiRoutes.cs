@@ -115,16 +115,16 @@ internal static class TerraScaleApiRoutes
 
     public static string NotificationsList(int skip, int take, bool unreadOnly) =>
         WithQuery(
-            "/api/v1/dashboard/notifications",
+            "/api/v1/users/me/notifications",
             ("skip", Number(skip)),
             ("take", Number(take)),
             ("unreadOnly", Boolean(unreadOnly)));
 
     public static string NotificationMarkRead(string notificationId) =>
-        $"/api/v1/dashboard/notifications/{Escape(notificationId)}:mark-read";
+        $"/api/v1/users/me/notifications/{Escape(notificationId)}:mark-read";
 
     public static string NotificationsMarkAllRead() =>
-        "/api/v1/dashboard/notifications:mark-all-read";
+        "/api/v1/users/me/notifications:mark-all-read";
 
     public static string BackupPolicyConfigure(string projectId, string databaseId) =>
         $"/api/v1/projects/{Escape(projectId)}/databases/{Escape(databaseId)}/backups/policy";

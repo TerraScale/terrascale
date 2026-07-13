@@ -77,3 +77,8 @@
 - Always `await Assert.That(...)` (un-awaited assertions pass silently). `Assert.Throws<T>`/`Assert.ThrowsAsync<T>` are valid TUnit — do not convert to fluent `.Throws<T>()`.
 - Dispose owned `HttpClient` and other `IDisposable`s; SDK clients must not dispose caller-owned `HttpClient` instances passed in.
 - Gate real-API E2E tests with a `SkipAttribute` (`ShouldSkip`) keyed off env config so they run when the API is reachable and skip cleanly otherwise.
+
+## Branch and Release Policy
+
+- Feature/fix/chore pull requests target `develop` and intentionally trigger no Forgejo actions or checks; DevHost supplies validation.
+- Direct pushes to `develop` and `main` are prohibited. Only a `develop` to `main` pull request may build an immutable SDK release candidate.

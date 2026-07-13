@@ -1,7 +1,7 @@
 namespace TerraScale.DotNet;
 
 /// <summary>
-/// Client for signed-in user dashboard notification endpoints.
+/// Client for signed-in user notification endpoints.
 /// </summary>
 public sealed class TerraScaleNotificationsClient
 {
@@ -13,7 +13,7 @@ public sealed class TerraScaleNotificationsClient
     }
 
     /// <summary>
-    /// Lists dashboard notifications for the signed-in user.
+    /// Lists notifications for the signed-in user.
     /// </summary>
     public Task<IReadOnlyList<TerraScaleNotification>> ListAsync(
         int skip = 0,
@@ -30,7 +30,7 @@ public sealed class TerraScaleNotificationsClient
     }
 
     /// <summary>
-    /// Marks one dashboard notification read.
+    /// Marks one user notification read.
     /// </summary>
     public Task<TerraScaleNotification> MarkReadAsync(
         string notificationId,
@@ -45,7 +45,7 @@ public sealed class TerraScaleNotificationsClient
     }
 
     /// <summary>
-    /// Marks all dashboard notifications read for the signed-in user.
+    /// Marks all notifications read for the signed-in user.
     /// </summary>
     public Task<TerraScaleMarkedNotificationsRead> MarkAllReadAsync(
         CancellationToken cancellationToken = default) =>
@@ -57,7 +57,7 @@ public sealed class TerraScaleNotificationsClient
 }
 
 /// <summary>
-/// Dashboard notification returned by TerraScale.
+/// User notification returned by TerraScale.
 /// </summary>
 public sealed record TerraScaleNotification(
     string NotificationId,

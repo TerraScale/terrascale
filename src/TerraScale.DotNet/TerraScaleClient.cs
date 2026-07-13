@@ -26,13 +26,21 @@ public sealed class TerraScaleClient
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(options);
-        options.Validate();
+        var optionSnapshot = options with { };
+        optionSnapshot.Validate();
+
+        if (httpClient.BaseAddress is not null && httpClient.BaseAddress != optionSnapshot.BaseAddress)
+        {
+            throw new ArgumentException(
+                $"HttpClient.BaseAddress '{httpClient.BaseAddress}' conflicts with TerraScaleClientOptions.BaseAddress '{optionSnapshot.BaseAddress}'.",
+                nameof(options));
+        }
 
         this.httpClient = httpClient;
-        this.options = options;
+        this.options = optionSnapshot;
         jsonOptions = DefaultJsonOptions;
 
-        this.httpClient.BaseAddress ??= options.BaseAddress;
+        this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
         Databases = new TerraScaleDatabasesClient(this);
         Collections = new TerraScaleCollectionsClient(this);
         Repositories = new TerraScaleRepositoriesClient(this);

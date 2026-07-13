@@ -19,12 +19,13 @@ public static class TerraScaleServiceCollectionExtensions
 
         var options = new TerraScaleClientOptions();
         configure(options);
-        options.Validate();
+        var optionSnapshot = options with { };
+        optionSnapshot.Validate();
 
-        services.AddSingleton(options);
+        services.AddSingleton(optionSnapshot);
         services.AddHttpClient<TerraScaleClient>(httpClient =>
         {
-            httpClient.BaseAddress = options.BaseAddress;
+            httpClient.BaseAddress = optionSnapshot.BaseAddress;
         });
 
         return services;

@@ -3,8 +3,8 @@
     <PackageId>TerraScale.DotNet</PackageId>
     <Version>0.1.0</Version>
     <Description>Official .NET SDK for TerraScale public APIs.</Description>
-    <PackageProjectUrl>https://git.mariogk.com/TerraScale/TerraScale.DotNet</PackageProjectUrl>
-    <RepositoryUrl>https://git.mariogk.com/TerraScale/TerraScale.DotNet</RepositoryUrl>
+    <PackageProjectUrl>https://git.terrascale.tech/TerraScale/TerraScale.DotNet</PackageProjectUrl>
+    <RepositoryUrl>https://git.terrascale.tech/TerraScale/TerraScale.DotNet</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>terrascale;database;documents;projects;queues;messaging;auth;notifications;backups;billing;stripe;sdk</PackageTags>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
