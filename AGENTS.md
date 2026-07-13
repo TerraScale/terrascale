@@ -23,9 +23,10 @@ Only these routes exist and are prerendered. Do not add or reintroduce others wi
 - `/` → `src/pages/Home.svelte`
 - `/pricing` → `src/pages/Pricing.svelte`
 - `/contact` → `src/pages/Contact.svelte`
+- `/about` → `src/pages/About.svelte`
 - `/404` → `src/pages/NotFound.svelte`
 
-Routes previously present (`/about`, `/security`, `/terms`) were removed as part of the design handoff and should not be restored unless requested.
+`/about` is published. `/terms` stays unpublished until approved legal text exists. Do not restore `/security` or `/terms` without explicit approval.
 
 ## Repository Layout
 
@@ -58,6 +59,8 @@ Three-font stack, all referenced in `src/app.html`:
 - **Quantico** — body, self-hosted woff2 in `static/fonts/`
 - **Roboto** — eyebrows, Google Fonts CDN
 - **Roboto Mono** — code/stats, Google Fonts CDN (fallback: JetBrains Mono)
+
+The sibling Documentation site intentionally uses a Quantico-only, self-hosted font policy. This divergence is intentional; do not make the two sites match.
 
 Note: the sibling TerraScale.Documentation site intentionally uses a different (Quantico-only, no external CDN) font policy — this divergence is by design, so do not "fix" this site to match it.
 
@@ -98,6 +101,8 @@ npm run cf:deploy:preview
 ```
 
 Before handing work back, verify with: `npm run check && npm run lint && npm run build`.
+
+Feature/fix/chore pull requests target `develop` and run no Forgejo automation. Direct pushes to `develop` and `main` are prohibited. Only a `develop` to `main` release pull request may build the immutable site candidate.
 
 ## Deployment
 

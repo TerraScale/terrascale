@@ -17,8 +17,8 @@
   // descriptive `value` under each is localised and pulled from the dictionary.
   const channelMeta: Array<{ icon: AppIconName; label: string; href: string; kind: ChannelHrefKind }> = [
     { icon: 'mail', label: 'Email', href: 'mailto:support@terrascale.tech', kind: 'mailto' },
-    { icon: 'brandDiscord', label: 'Discord', href: 'https://discord.gg/terrascale', kind: 'external' },
-    { icon: 'brandGithub', label: 'GitHub', href: 'https://git.mariogk.com/TerraScale', kind: 'external' },
+    { icon: 'brandDiscord', label: 'Discord', href: 'https://discord.gg/8Zr2Nw9g', kind: 'external' },
+    { icon: 'brandGithub', label: 'GitHub', href: 'https://git.terrascale.tech/TerraScale', kind: 'external' },
   ]
   $: channels = channelMeta.map((meta, i) => ({
     ...meta,
@@ -31,29 +31,7 @@
   let submitState: SubmitState = 'idle'
   let statusMessage = ''
   let submitTimer: ReturnType<typeof setTimeout> | null = null
-  let responseTimer: ReturnType<typeof setTimeout> | null = null
-  let sinkForm: HTMLFormElement | undefined
-
-  // Published Google Form backing the contact page (TER-54). The entry IDs
-  // below are the real submission field IDs, verified directly against this
-  // form's FB_PUBLIC_LOAD_DATA_ definition (not the per-item ids, and not the
-  // wrong ids — using either silently drops every response, which is the exact
-  // failure this integration exists to prevent).
-  // The form has Name / Email / Message only — there is no Company field — so
-  // the optional Company value is folded into the message body on submit.
-  const GOOGLE_FORM_ENDPOINT =
-    'https://docs.google.com/forms/d/e/1FAIpQLSfnbZR5CkFw581Bwwiy2CSbz_SDi4C8qMzxvmGrY0hfhzyULg/formResponse'
-  const GOOGLE_FORM_FIELDS = {
-    name: 'entry.2005620554',
-    email: 'entry.1045781291',
-    message: 'entry.839337160',
-  } as const
-
-  // Reactive: prepend Company to the message so it reaches the Google Form.
-  $: messageForGoogle = (() => {
-    const company = form.company.trim()
-    return company ? `Company: ${company}\n\n${form.message}` : form.message
-  })()
+  const apiBaseUrl = (import.meta.env.PUBLIC_TERRASCALE_API_BASE_URL ?? 'https://api.terrascale.tech').replace(/\/$/, '')
 
   const setStatus = (state: SubmitState, message = '') => {
     submitState = state
@@ -64,10 +42,6 @@
     if (submitTimer) {
       clearTimeout(submitTimer)
       submitTimer = null
-    }
-    if (responseTimer) {
-      clearTimeout(responseTimer)
-      responseTimer = null
     }
   }
 
@@ -83,41 +57,31 @@
     resetStatusAfter(6000)
   }
 
-  const onSinkLoad = () => {
-    // The hidden iframe fires an initial load for its empty document; only
-    // treat a load as Google's acknowledgement while a submission is in flight.
-    if (submitState !== 'submitting') return
-    markSuccess()
-  }
-
-  const handleSubmit = (event: SubmitEvent) => {
+  const handleSubmit = async (event: SubmitEvent) => {
     event.preventDefault()
     if (submitState === 'submitting') return
-    if (!sinkForm) {
-      setStatus('error', $dict.contact.errorNoForm)
-      resetStatusAfter(7000)
-      return
-    }
     clearTimers()
     setStatus('submitting')
 
     try {
-      // Native form POST into the hidden iframe — a genuine form submission that
-      // Google records identically to a direct fill. (No hidden input named
-      // "submit", since that would shadow HTMLFormElement.submit().) The
-      // cross-origin response is opaque, so success is confirmed via the
-      // iframe's load event with a watchdog fallback.
-      sinkForm.submit()
+      const company = form.company.trim()
+      const response = await fetch(`${apiBaseUrl}/api/v1/public/contact`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: form.name,
+          email: form.email,
+          subject: company ? `Contact from ${company}` : `Contact from ${form.name}`,
+          message: form.message,
+        }),
+      })
+      const payload = (await response.json().catch(() => null)) as { accepted?: boolean } | null
+      if (!response.ok || payload?.accepted !== true) throw new Error('Contact request was not accepted')
+      markSuccess()
     } catch {
       setStatus('error', $dict.contact.errorSend)
       resetStatusAfter(7000)
-      return
     }
-
-    // Watchdog: if the load signal never arrives (slow/blocked network), still
-    // resolve to success — the POST was dispatched and Google records valid
-    // submissions server-side regardless of our ability to read the response.
-    responseTimer = setTimeout(markSuccess, 6000)
   }
 </script>
 
@@ -246,32 +210,6 @@
         {/if}
       </form>
 
-      <!-- Hidden submission sink: a native form POST into a hidden iframe is the
-           reliable static-site way to record Google Forms responses (Google
-           Forms exposes no CORS for XHR/fetch). These are siblings of — never
-           nested inside — the visible form. -->
-      <iframe
-        name="ts-contact-sink"
-        class="contact-form__sink"
-        title="Contact form response target"
-        aria-hidden="true"
-        tabindex="-1"
-        on:load={onSinkLoad}
-      ></iframe>
-      <form
-        bind:this={sinkForm}
-        class="contact-form__sink"
-        action={GOOGLE_FORM_ENDPOINT}
-        method="POST"
-        target="ts-contact-sink"
-        aria-hidden="true"
-        tabindex="-1"
-      >
-        <input type="hidden" name={GOOGLE_FORM_FIELDS.name} value={form.name} />
-        <input type="hidden" name={GOOGLE_FORM_FIELDS.email} value={form.email} />
-        <input type="hidden" name={GOOGLE_FORM_FIELDS.message} value={messageForGoogle} />
-      </form>
-
       <div class="contact-channels">
         <h2 class="contact-channels__title">{$dict.contact.channelsTitle}</h2>
         <div class="contact-channels__list">
@@ -307,15 +245,6 @@
           {/each}
         </div>
 
-        <div class="contact-sla">
-          <div class="contact-sla__heading">
-            <span class="pulse-dot contact-sla__dot"></span>
-            {$dict.contact.slaHeading}
-          </div>
-          <div class="contact-sla__body">
-            {$dict.contact.slaBodyLead} <strong>{$dict.contact.slaBodyStrong}</strong> {$dict.contact.slaBodyTrail}
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -549,21 +478,6 @@
     }
   }
 
-  /* Visually hidden submission sink for the Google Forms iframe POST. Kept at
-     1px (not display:none) so the iframe can still navigate and fire load. */
-  .contact-form__sink {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    border: 0;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
   :global(.contact-form__submit-icon) {
     width: 14px;
     height: 14px;
@@ -670,45 +584,6 @@
   :global(.contact-channel:hover .contact-channel__chev) {
     transform: translateX(2px);
     color: var(--ts-primary-light);
-  }
-
-  .contact-sla {
-    margin-top: 24px;
-    padding: 20px;
-    border-radius: 8px;
-    background: linear-gradient(
-      135deg,
-      rgba(var(--ts-primary-rgb), 0.08) 0%,
-      transparent 100%
-    );
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.2);
-  }
-
-  .contact-sla__heading {
-    font-family: var(--ts-font-accent);
-    font-size: 10px;
-    color: var(--ts-primary-light);
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    font-weight: 700;
-    margin-bottom: 8px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .contact-sla__dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--ts-secondary);
-    display: inline-block;
-  }
-
-  .contact-sla__body {
-    font-size: 14px;
-    color: var(--ts-text);
-    line-height: 1.55;
   }
 
   @media (max-width: 960px) {

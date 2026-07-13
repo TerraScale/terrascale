@@ -9,9 +9,8 @@
   } from '@/lib/world-map.generated'
   import { dict } from '@/lib/i18n'
 
-  // Trust badges shown under the CTAs. Scoped to the three the hero
-  // surfaces (TER-22): AI readiness plus the two SLA stats. Icons are fixed;
-  // labels come from the active dictionary so the badges localize.
+  // Capability badges shown under the CTAs. Labels come from the active
+  // dictionary so the badges localize.
   const highlightIcons = ['globe', 'activity', 'clock'] as const
   $: highlights = $dict.hero.highlights.map((label, i) => ({
     icon: highlightIcons[i] ?? 'globe',
@@ -102,7 +101,7 @@
     </p>
 
     <div class="hero__ctas">
-      <RouteLink href="/contact" class="ts-btn ts-btn-primary cta-shine">
+      <RouteLink href="https://dash.terrascale.tech/signup" class="ts-btn ts-btn-primary cta-shine">
         {$dict.hero.ctaPrimary}
         <Icon name="arrowRight" className="hero__cta-icon" />
       </RouteLink>

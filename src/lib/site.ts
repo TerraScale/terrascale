@@ -1,6 +1,6 @@
 import type { AppIconName } from '@/lib/icons'
 
-export type RoutePath = '/' | '/about' | '/contact' | '/pricing' | '/terms'
+export type RoutePath = '/' | '/about' | '/contact' | '/pricing'
 
 // Display labels are intentionally NOT stored here — they live in the i18n
 // dictionaries (src/lib/i18n/messages/*.ts) and are resolved by key. This file
@@ -28,7 +28,7 @@ export const docsLink = {
 }
 
 export const getStartedLink = {
-  href: 'https://dash.terrascale.tech/login',
+  href: 'https://dash.terrascale.tech/signup',
   icon: 'arrowRight' as AppIconName,
 }
 
@@ -63,14 +63,13 @@ export const footerColumns: FooterColumn[] = [
       { key: 'docs', href: 'https://docs.terrascale.tech' },
       { key: 'apiReference', href: 'https://docs.terrascale.tech/en/reference/api/' },
       { key: 'status', href: 'https://status.terrascale.tech' },
-      { key: 'community', href: 'https://discord.gg/terrascale' },
+      { key: 'community', href: 'https://discord.gg/8Zr2Nw9g' },
       { key: 'support', href: '/contact' },
     ],
   },
   {
     key: 'legal',
     links: [
-      { key: 'terms', href: '/terms' },
       { key: 'support', href: '/contact' },
     ],
   },
@@ -90,7 +89,7 @@ export type SocialLink = {
 export const socialLinks: SocialLink[] = [
   {
     key: 'github',
-    href: 'https://git.mariogk.com/TerraScale',
+    href: 'https://git.terrascale.tech/TerraScale',
     icon: 'brandGithub',
     color: '#F1F5F9',
     bg: 'rgba(241,245,249,0.08)',
@@ -98,7 +97,7 @@ export const socialLinks: SocialLink[] = [
   },
   {
     key: 'discord',
-    href: 'https://discord.gg/terrascale',
+    href: 'https://discord.gg/8Zr2Nw9g',
     icon: 'brandDiscord',
     color: '#5865F2',
     bg: 'rgba(88,101,242,0.12)',

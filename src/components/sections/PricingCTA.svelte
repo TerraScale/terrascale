@@ -10,7 +10,7 @@
     <p class="pricing-cta__text">
       {$dict.pricing.finalCta.text}
     </p>
-    <RouteLink href="/contact" class="ts-btn ts-btn-primary cta-shine">
+    <RouteLink href="https://dash.terrascale.tech/signup" class="ts-btn ts-btn-primary cta-shine">
       {$dict.pricing.finalCta.cta}
       <Icon name="arrowRight" className="pricing-cta__icon" />
     </RouteLink>
