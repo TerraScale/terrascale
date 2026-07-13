@@ -127,7 +127,6 @@ export type RegisterRequest = {
 export type SignInRequest = {
   readonly email: string;
   readonly password: string;
-  readonly rememberDevice?: boolean;
   readonly deviceFingerprint?: string;
 };
 

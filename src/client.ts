@@ -69,7 +69,6 @@ export class TerraScaleClient {
   readonly notifications: NotificationsClient;
   readonly security: SecurityClient;
   readonly admin: AdminClient;
-  readonly dashboard: DashboardClient;
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.http = new TerraScaleHttp(config);
@@ -93,7 +92,6 @@ export class TerraScaleClient {
     this.notifications = new NotificationsClient(this.http);
     this.security = new SecurityClient(this.http);
     this.admin = new AdminClient(this.http);
-    this.dashboard = new DashboardClient(this.http);
   }
 
   get config(): ResolvedTerraScaleRuntimeConfig {
@@ -127,27 +125,6 @@ export class RegionsClient {
       method: "GET",
       path: `${apiRoot}/regions/${encodeURIComponent(regionCode.trim().toLowerCase())}`,
       routeName: "regions.get",
-    });
-  }
-}
-
-export class DashboardClient {
-  constructor(private readonly http: TerraScaleHttp) {}
-
-  getContext(): Promise<TerraScaleResult<Models.DashboardContext>> {
-    return this.http.request({
-      method: "GET",
-      path: `${apiRoot}/dashboard/context`,
-      routeName: "dashboard.context.get",
-    });
-  }
-
-  switchProject(projectId: Ulid): Promise<TerraScaleResult<Models.DashboardContext>> {
-    return this.http.request({
-      method: "PUT",
-      path: `${apiRoot}/dashboard/context/project`,
-      routeName: "dashboard.context.switchProject",
-      body: { projectId },
     });
   }
 }
@@ -199,6 +176,7 @@ export class AuthClient {
         sdkRouteManifest.auth.project.register,
       ),
       routeName: "auth.register",
+      headerPolicy: "anonymous",
       body: toSignupRequest(request),
     });
   }
@@ -217,6 +195,7 @@ export class AuthClient {
         sdkRouteManifest.auth.project.verifyEmail,
       ),
       routeName: "auth.verifyEmail",
+      headerPolicy: "anonymous",
       body: request,
     });
   }
@@ -236,6 +215,7 @@ export class AuthClient {
         sdkRouteManifest.auth.project.resendVerification,
       ),
       routeName: "auth.resendVerification",
+      headerPolicy: "anonymous",
       body: { pendingAuthenticationToken, verifyUrl },
     });
   }
@@ -254,6 +234,7 @@ export class AuthClient {
         sdkRouteManifest.auth.project.signIn,
       ),
       routeName: "auth.signIn",
+      headerPolicy: "anonymous",
       body: {
         email: request.email,
         password: request.password,
@@ -276,6 +257,7 @@ export class AuthClient {
         sdkRouteManifest.auth.project.forgotPassword,
       ),
       routeName: "auth.forgotPassword",
+      headerPolicy: "anonymous",
       body: { email: request.email, resetUrl: request.resetUrl ?? request.redirectUrl ?? "" },
     });
   }
@@ -294,6 +276,7 @@ export class AuthClient {
         sdkRouteManifest.auth.project.resetPassword,
       ),
       routeName: "auth.resetPassword",
+      headerPolicy: "anonymous",
       body: { token: request.token, newPassword: request.newPassword ?? request.password },
     });
   }
@@ -312,6 +295,7 @@ export class AuthClient {
         sdkRouteManifest.auth.project.magicLinkRequest,
       ),
       routeName: "auth.magicLink.request",
+      headerPolicy: "anonymous",
       body: { email: request.email, loginUrl: request.loginUrl ?? request.redirectUrl },
     });
   }
@@ -330,6 +314,7 @@ export class AuthClient {
         sdkRouteManifest.auth.project.magicLinkComplete,
       ),
       routeName: "auth.magicLink.complete",
+      headerPolicy: "anonymous",
       body: request,
     });
   }
@@ -348,6 +333,7 @@ export class AuthClient {
         sdkRouteManifest.auth.project.refresh,
       ),
       routeName: "auth.token.refresh",
+      headerPolicy: "anonymous",
       body: { refreshToken },
     });
   }
@@ -1157,6 +1143,7 @@ export class M2MApplicationsClient {
       method: "POST",
       path: `${projectAuthRoot(projectId)}/m2m/token`,
       routeName: "m2m.token.create",
+      headerPolicy: "anonymous",
       body: {
         grant_type: request.grantType ?? "client_credentials",
         client_id: request.clientId,
@@ -1332,7 +1319,7 @@ export class NotificationsClient {
   ): Promise<TerraScaleResult<readonly Models.Notification[]>> {
     return this.http.request({
       method: "GET",
-      path: `${apiRoot}/dashboard/notifications`,
+      path: `${apiRoot}/users/me/notifications`,
       routeName: "notifications.list",
       query,
     });
@@ -1341,7 +1328,7 @@ export class NotificationsClient {
   markRead(notificationId: Ulid): Promise<TerraScaleResult<Models.Notification>> {
     return this.http.request({
       method: "POST",
-      path: `${apiRoot}/dashboard/notifications/${ulidPathSegment(notificationId)}:mark-read`,
+      path: `${apiRoot}/users/me/notifications/${ulidPathSegment(notificationId)}:mark-read`,
       routeName: "notifications.markRead",
     });
   }
@@ -1349,7 +1336,7 @@ export class NotificationsClient {
   markAllRead(): Promise<TerraScaleResult<Models.MarkAllDashboardNotificationsReadResponse>> {
     return this.http.request({
       method: "POST",
-      path: `${apiRoot}/dashboard/notifications:mark-all-read`,
+      path: `${apiRoot}/users/me/notifications:mark-all-read`,
       routeName: "notifications.markAllRead",
     });
   }

@@ -8,7 +8,7 @@ if (!name || value === undefined) {
 }
 
 const token = process.env.REGISTRY_TOKEN ?? process.env.FORGEJO_TOKEN ?? process.env.GITHUB_TOKEN;
-const api = process.env.FORGEJO_API_URL ?? process.env.GITHUB_API_URL ?? "https://git.mariogk.com/api/v1";
+const api = process.env.FORGEJO_API_URL ?? process.env.GITHUB_API_URL ?? "https://git.terrascale.tech/api/v1";
 const repository = process.env.FORGEJO_REPOSITORY ?? process.env.GITHUB_REPOSITORY;
 
 if (!token) {

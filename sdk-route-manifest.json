@@ -986,7 +986,7 @@
       "operation": "list",
       "routeName": "notifications.list",
       "method": "GET",
-      "pathTemplate": "/api/v1/dashboard/notifications",
+      "pathTemplate": "/api/v1/users/me/notifications",
       "responseType": "readonly Notification[]"
     },
     {
@@ -995,7 +995,7 @@
       "operation": "markRead",
       "routeName": "notifications.markRead",
       "method": "POST",
-      "pathTemplate": "/api/v1/dashboard/notifications/{notificationId}:mark-read",
+      "pathTemplate": "/api/v1/users/me/notifications/{notificationId}:mark-read",
       "responseType": "Notification"
     },
     {
@@ -1004,7 +1004,7 @@
       "operation": "markAllRead",
       "routeName": "notifications.markAllRead",
       "method": "POST",
-      "pathTemplate": "/api/v1/dashboard/notifications:mark-all-read",
+      "pathTemplate": "/api/v1/users/me/notifications:mark-all-read",
       "responseType": "MarkAllDashboardNotificationsReadResponse"
     },
     {

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "TypeScript SDK for TerraScale public REST APIs.",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "private": false,
   "publishConfig": {
     "access": "public",
@@ -17,14 +17,18 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./internal/dashboard": {
-      "types": "./dist/internal/dashboard.d.ts",
-      "import": "./dist/internal/dashboard.js"
+    "./admin": {
+      "types": "./dist/admin.d.ts",
+      "import": "./dist/admin.js"
     }
   },
   "files": [
     "dist",
     "!dist/integration",
+    "!dist/internal",
+    "!dist/**/*.test.*",
+    "!dist/**/*capture*",
+    "!dist/**/*.map",
     "README.md",
     "LICENSE"
   ],

@@ -1,8 +1,8 @@
 import { createTerraScaleClient, type TerraScaleClient } from "./factory.js";
 import type { FetchLike } from "./config.js";
 import {
-  setTerraScaleRequestMetricRecorder,
   type TerraScaleBase,
+  type TerraScaleRequestMetric,
   type TerraScaleRouteName,
 } from "./http.js";
 import { toUlid, type Ulid } from "./ids.js";
@@ -70,12 +70,8 @@ export async function capturePublicClientRoutes(): Promise<readonly CapturedSdkR
 
   const routes: CapturedSdkRoute[] = [];
 
-  try {
-    for (const operation of captureOperations) {
-      routes.push(await captureRoute(operation));
-    }
-  } finally {
-    setTerraScaleRequestMetricRecorder(undefined);
+  for (const operation of captureOperations) {
+    routes.push(await captureRoute(operation));
   }
 
   return routes;
@@ -89,12 +85,12 @@ async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRou
   let capturedRequest: CapturedRequest | undefined;
   let capturedMetric: CapturedMetric | undefined;
 
-  setTerraScaleRequestMetricRecorder((metric) => {
+  const recordMetric = (metric: TerraScaleRequestMetric): void => {
     capturedMetric = {
       base: metric.base,
       routeName: metric.routeName,
     };
-  });
+  };
 
   const captureFetch: FetchLike = async (input) => {
     const request = input instanceof Request ? input : new Request(input);
@@ -115,6 +111,7 @@ async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRou
     authBaseUrl: "https://auth.terrascale.test",
     dashboardClientId: "sdk-route-manifest",
     fetch: captureFetch,
+    requestMetricRecorder: recordMetric,
   };
   const client = createTerraScaleClient(
     operation.defaultProject === true

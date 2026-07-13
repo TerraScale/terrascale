@@ -9,9 +9,9 @@
 - The SDK must consume TerraScale only through public REST APIs. Do not add
   MagicOnion, direct TerraBase access, Dashboard private contracts, or
   service-internal shortcuts.
-- Public customer APIs live under the root entrypoint. Dashboard/admin-only
-  helpers must be kept in an explicit internal entrypoint and must not be
-  advertised as the public customer SDK surface.
+- Public customer APIs live under the root entrypoint. Role-protected platform
+  administration is exported through an explicit public `admin` entrypoint;
+  private Dashboard business contracts are prohibited.
 
 ## Testing
 
@@ -20,3 +20,7 @@
   `TERRASCALE_AUTH_API_BASE_URL` (`src/integration/apphost-smoke.test.ts`) and
   skip when those env vars are unset.
 
+## Branch and Release Policy
+
+- Feature/fix/chore pull requests target `develop` and run no Forgejo automation. Direct pushes to `develop` and `main` are prohibited.
+- Only a `develop` to `main` pull request may build and publish the immutable major-version release candidate.

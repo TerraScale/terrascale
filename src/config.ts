@@ -4,6 +4,8 @@ export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promis
 
 export type AccessTokenProvider = string | (() => Promise<string | undefined> | string | undefined);
 
+import type { TerraScaleRequestMetricRecorder } from "./http.js";
+
 export type DashboardLogicalDatabaseKey =
   | "audit"
   | "auth"
@@ -26,6 +28,8 @@ export type TerraScaleRuntimeConfig = {
   readonly accessToken?: AccessTokenProvider;
   readonly defaultHeaders?: HeadersInit;
   readonly fetch?: FetchLike;
+  /** Records metrics for this client instance only. Recorder failures are ignored. */
+  readonly requestMetricRecorder?: TerraScaleRequestMetricRecorder;
   /** Generates a stable key once per mutating request. Disabled by default for public callers. */
   readonly idempotencyKeyFactory?: (() => string) | undefined;
 };
@@ -40,6 +44,7 @@ export type ResolvedTerraScaleRuntimeConfig = {
   readonly accessToken?: AccessTokenProvider;
   readonly defaultHeaders?: HeadersInit;
   readonly fetch: FetchLike;
+  readonly requestMetricRecorder?: TerraScaleRequestMetricRecorder;
   readonly idempotencyKeyFactory?: (() => string) | undefined;
 };
 

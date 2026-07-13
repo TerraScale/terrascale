@@ -1,4 +1,8 @@
-export type Brand<TValue, TBrand extends string> = TValue & { readonly __brand: TBrand };
+declare const terraScaleBrand: unique symbol;
+
+export type Brand<TValue, TBrand extends string> = TValue & {
+  readonly [terraScaleBrand]: TBrand;
+};
 
 export type Ulid = Brand<string, "Ulid">;
 

@@ -1,7 +1,7 @@
 import { TerraScaleClient as InternalTerraScaleClient } from "./client.js";
 import type { TerraScaleRuntimeConfig } from "./config.js";
 
-export type TerraScaleClient = Omit<InternalTerraScaleClient, "admin" | "dashboard">;
+export type TerraScaleClient = Omit<InternalTerraScaleClient, "admin">;
 
 export function createTerraScaleClient(config: TerraScaleRuntimeConfig): TerraScaleClient {
   const internal = new InternalTerraScaleClient(config);

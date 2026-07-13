@@ -548,7 +548,7 @@ describe("TerraScaleClient route contracts", () => {
       assert.deepEqual(listResult.value, [notification]);
       assert.equal("items" in listResult.value, false);
     }
-    assertRequest(requests[0], "GET", "/api/v1/dashboard/notifications");
+    assertRequest(requests[0], "GET", "/api/v1/users/me/notifications");
     assert.equal(requests[0]?.url.searchParams.get("skip"), "5");
     assert.equal(requests[0]?.url.searchParams.get("take"), "10");
     assert.equal(requests[0]?.url.searchParams.get("unreadOnly"), "true");
@@ -561,7 +561,7 @@ describe("TerraScaleClient route contracts", () => {
     assertRequest(
       requests[1],
       "POST",
-      `/api/v1/dashboard/notifications/${notificationId}:mark-read`,
+      `/api/v1/users/me/notifications/${notificationId}:mark-read`,
     );
 
     const markAllReadResult = await client.notifications.markAllRead();
@@ -569,7 +569,7 @@ describe("TerraScaleClient route contracts", () => {
     if (markAllReadResult.ok) {
       assert.deepEqual(markAllReadResult.value, { markedRead: 3 });
     }
-    assertRequest(requests[2], "POST", "/api/v1/dashboard/notifications:mark-all-read");
+    assertRequest(requests[2], "POST", "/api/v1/users/me/notifications:mark-all-read");
   });
 
   test("uses only the backed security settings PUT route", async () => {

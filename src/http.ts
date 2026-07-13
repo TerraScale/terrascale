@@ -51,6 +51,8 @@ export type TerraScaleRequestOptions<TBody = unknown> = {
   readonly body?: TBody | undefined;
   readonly headers?: HeadersInit | undefined;
   readonly signal?: AbortSignal | undefined;
+  /** Controls whether TerraScale identity and configured default headers may be attached. */
+  readonly headerPolicy?: "authenticated" | "anonymous" | undefined;
   /** Overrides automatic generation. Set to false to explicitly opt out. */
   readonly idempotencyKey?: string | false | undefined;
 };
@@ -63,14 +65,6 @@ export type TerraScaleRequestMetric = {
 };
 
 export type TerraScaleRequestMetricRecorder = (metric: TerraScaleRequestMetric) => void;
-
-let requestMetricRecorder: TerraScaleRequestMetricRecorder | undefined;
-
-export function setTerraScaleRequestMetricRecorder(
-  recorder: TerraScaleRequestMetricRecorder | undefined,
-): void {
-  requestMetricRecorder = recorder;
-}
 
 export class TerraScaleHttp {
   readonly config: ResolvedTerraScaleRuntimeConfig;
@@ -90,29 +84,28 @@ export class TerraScaleHttp {
     options: TerraScaleRequestOptions<TBody>,
   ): Promise<TerraScaleResult<TResponse>> {
     const base = options.base ?? "api";
-    const url = buildUrl(this.baseUrl(options.base ?? "api"), options.path, options.query);
-    const headers = await this.buildHeaders(options);
     const startedAt = performance.now();
 
-    const requestInit: RequestInit = {
-      method: options.method,
-      headers,
-    };
-    if (options.signal !== undefined) {
-      requestInit.signal = options.signal;
-    }
-
-    if (options.body !== undefined) {
-      headers.set("content-type", headers.get("content-type") ?? "application/json");
-      requestInit.body = JSON.stringify(options.body);
-    }
-
-    const request = new Request(url, requestInit);
-
     try {
+      const url = buildUrl(this.baseUrl(base), options.path, options.query);
+      const headers = await this.buildHeaders(options);
+      const requestInit: RequestInit = {
+        method: options.method,
+        headers,
+      };
+      if (options.signal !== undefined) {
+        requestInit.signal = options.signal;
+      }
+
+      if (options.body !== undefined) {
+        headers.set("content-type", headers.get("content-type") ?? "application/json");
+        requestInit.body = JSON.stringify(options.body);
+      }
+
+      const request = new Request(url, requestInit);
       const response = await this.config.fetch(request);
       const body = await readResponseBody(response);
-      recordRequestMetric(base, options.routeName, response.status, performance.now() - startedAt);
+      this.recordRequestMetric(base, options.routeName, response.status, performance.now() - startedAt);
 
       if (response.ok) {
         if (!body.ok) {
@@ -142,7 +135,7 @@ export class TerraScaleHttp {
         body.ok ? body.value : body.raw,
       );
     } catch (error) {
-      recordRequestMetric(base, options.routeName, undefined, performance.now() - startedAt);
+      this.recordRequestMetric(base, options.routeName, undefined, performance.now() - startedAt);
       return err(options.routeName, {
         kind: "transport",
         code: "transport_error",
@@ -164,28 +157,38 @@ export class TerraScaleHttp {
   }
 
   private async buildHeaders<TBody>(options: TerraScaleRequestOptions<TBody>): Promise<Headers> {
-    const headers = new Headers(this.config.defaultHeaders);
+    const anonymous = options.headerPolicy === "anonymous";
+    const headers = new Headers(anonymous ? undefined : this.config.defaultHeaders);
     const requestHeaders = new Headers(options.headers);
 
     headers.set("accept", headers.get("accept") ?? "application/json");
-    headers.set("x-terrascale-dashboard-client-id", this.config.dashboardClientId);
+    if (!anonymous) {
+      headers.set("x-terrascale-dashboard-client-id", this.config.dashboardClientId);
 
-    if (this.config.tenantId !== undefined) {
-      headers.set("x-terrascale-tenant-id", this.config.tenantId);
-    }
+      if (this.config.tenantId !== undefined) {
+        headers.set("x-terrascale-tenant-id", this.config.tenantId);
+      }
 
-    if (this.config.projectId !== undefined) {
-      headers.set("x-terrascale-project-id", this.config.projectId);
-    }
+      if (this.config.projectId !== undefined) {
+        headers.set("x-terrascale-project-id", this.config.projectId);
+      }
 
-    const token = await resolveAccessToken(this.config.accessToken);
+      const token = await resolveAccessToken(this.config.accessToken);
 
-    if (token !== undefined && token.length > 0) {
-      headers.set("authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
+      if (token !== undefined && token.length > 0) {
+        headers.set("authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
+      }
     }
 
     for (const [key, value] of requestHeaders.entries()) {
       headers.set(key, value);
+    }
+
+    if (anonymous) {
+      headers.delete("authorization");
+      headers.delete("x-terrascale-dashboard-client-id");
+      headers.delete("x-terrascale-project-id");
+      headers.delete("x-terrascale-tenant-id");
     }
 
     if (isMutation(options.method) && options.idempotencyKey !== false) {
@@ -201,19 +204,23 @@ export class TerraScaleHttp {
 
     return headers;
   }
+
+  private recordRequestMetric(
+    base: TerraScaleBase,
+    routeName: TerraScaleRouteName,
+    status: number | undefined,
+    durationMs: number,
+  ): void {
+    try {
+      this.config.requestMetricRecorder?.({ base, routeName, status, durationMs });
+    } catch {
+      // Observability must never change request behavior.
+    }
+  }
 }
 
 function isMutation(method: TerraScaleHttpMethod): boolean {
   return method === "POST" || method === "PATCH";
-}
-
-function recordRequestMetric(
-  base: TerraScaleBase,
-  routeName: TerraScaleRouteName,
-  status: number | undefined,
-  durationMs: number,
-): void {
-  requestMetricRecorder?.({ base, routeName, status, durationMs });
 }
 
 type ParsedBody =

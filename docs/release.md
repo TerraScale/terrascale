@@ -21,7 +21,7 @@ mocked HTTP.
 
 ## Publish
 
-Normal releases are push-driven from `main`. The `Publish SDK to npm` Forgejo
+Normal releases are built from the protected `develop` to `main` release pull request. The `Publish SDK to npm` Forgejo
 workflow runs the preflight checks, resolves the next patch version from the
 latest Forgejo Release, creates a draft Forgejo Release, updates the job-local
 package version to that release version, publishes to npm, and publishes the
