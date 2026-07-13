@@ -75,7 +75,12 @@
       description: copy.description,
       features: copy.features,
       cta: copy.cta,
-      href: '/contact',
+      href:
+        meta.name === 'Developer'
+          ? 'https://dash.terrascale.tech/signup'
+          : meta.name === 'Business'
+            ? '/contact'
+            : `https://dash.terrascale.tech/usage?checkout=${meta.name.toLowerCase()}`,
     }
   })
 

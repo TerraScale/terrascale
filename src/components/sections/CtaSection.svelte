@@ -17,7 +17,7 @@
       </p>
 
       <div class="cta__actions">
-        <RouteLink href="/contact" class="ts-btn ts-btn-primary cta-shine cta__primary">
+        <RouteLink href="https://dash.terrascale.tech/signup" class="ts-btn ts-btn-primary cta-shine cta__primary">
           {$dict.cta.ctaPrimary}
           <Icon name="arrowRight" className="cta__icon" />
         </RouteLink>
