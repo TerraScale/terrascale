@@ -226,24 +226,7 @@ public sealed class TerraScaleClient
             cancellationToken).ConfigureAwait(false);
 
         SetResponseTags(activity, response);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
-            throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
-        }
-
-        var payload = await response.Content.ReadFromJsonAsync<TResponse>(
-            jsonOptions,
-            cancellationToken).ConfigureAwait(false);
-
-        return payload ?? throw new TerraScaleApiException(
-            response.StatusCode,
-            "TerraScale returned an empty response body.",
-            errorCode: null,
-            requestId: ReadRequestId(response),
-            responseBody: null,
-            retryAfter: response.Headers.RetryAfter?.Delta);
+        return await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken).ConfigureAwait(false);
     }
 
     private static void ApplyPreferredRegion(HttpRequestMessage request, string preferredRegion)
@@ -273,24 +256,7 @@ public sealed class TerraScaleClient
             cancellationToken).ConfigureAwait(false);
 
         SetResponseTags(activity, response);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
-            throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
-        }
-
-        var payload = await response.Content.ReadFromJsonAsync<TResponse>(
-            jsonOptions,
-            cancellationToken).ConfigureAwait(false);
-
-        return payload ?? throw new TerraScaleApiException(
-            response.StatusCode,
-            "TerraScale returned an empty response body.",
-            errorCode: null,
-            requestId: ReadRequestId(response),
-            responseBody: null,
-            retryAfter: response.Headers.RetryAfter?.Delta);
+        return await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task<TResponse> SendAnonymousFormAsync<TResponse>(
@@ -317,7 +283,14 @@ public sealed class TerraScaleClient
             cancellationToken).ConfigureAwait(false);
 
         SetResponseTags(activity, response);
+        return await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken).ConfigureAwait(false);
+    }
 
+    private async Task<TResponse> ReadJsonResponseAsync<TResponse>(
+        HttpResponseMessage response,
+        Activity? activity,
+        CancellationToken cancellationToken)
+    {
         if (!response.IsSuccessStatusCode)
         {
             activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
