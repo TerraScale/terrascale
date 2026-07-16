@@ -41,6 +41,7 @@ public sealed class TerraScaleProjectsClient
         ArgumentException.ThrowIfNullOrWhiteSpace(organizationId);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.BackupRegion);
         return client.SendAsync<TerraScaleProject>(
             HttpMethod.Post,
             TerraScaleApiRoutes.ProjectsCreate(organizationId),
@@ -56,12 +57,13 @@ public sealed class TerraScaleProjectsClient
         string name,
         IReadOnlyList<string>? defaultPermissionKeys = null,
         IReadOnlyList<string>? regions = null,
+        string backupRegion = TerraScaleRegions.Gru,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         return CreateAsync(
             organizationId,
-            new TerraScaleCreateProjectRequest(name.Trim(), defaultPermissionKeys, regions),
+            new TerraScaleCreateProjectRequest(name.Trim(), defaultPermissionKeys, regions, backupRegion),
             cancellationToken);
     }
 
@@ -102,6 +104,38 @@ public sealed class TerraScaleProjectsClient
     }
 
     /// <summary>
+    /// Lists the durable placement state for each project region.
+    /// </summary>
+    public Task<IReadOnlyList<TerraScaleProjectRegionPlacement>> ListRegionPlacementsAsync(
+        string projectId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
+        return client.SendAsync<IReadOnlyList<TerraScaleProjectRegionPlacement>>(
+            HttpMethod.Get,
+            TerraScaleApiRoutes.ProjectRegionPlacementsList(projectId),
+            body: null,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Permanently deletes a project after confirming its exact name.
+    /// </summary>
+    public Task<TerraScaleDeletedProject> DeleteAsync(
+        string projectId,
+        string projectName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectName);
+        return client.SendAsync<TerraScaleDeletedProject>(
+            HttpMethod.Delete,
+            TerraScaleApiRoutes.ProjectDelete(projectId),
+            new TerraScaleDeleteProjectRequest(true, projectName.Trim()),
+            cancellationToken);
+    }
+
+    /// <summary>
     /// Updates a project's display name.
     /// </summary>
     public Task<TerraScaleProject> UpdateAsync(
@@ -123,7 +157,8 @@ public sealed class TerraScaleProjectsClient
 public sealed record TerraScaleCreateProjectRequest(
     string Name,
     IReadOnlyList<string>? DefaultPermissionKeys = null,
-    IReadOnlyList<string>? Regions = null);
+    IReadOnlyList<string>? Regions = null,
+    string BackupRegion = TerraScaleRegions.Gru);
 
 /// <summary>
 /// Request body for updating a project.
@@ -131,7 +166,13 @@ public sealed record TerraScaleCreateProjectRequest(
 public sealed record TerraScaleUpdateProjectRequest(
     string? Name,
     IReadOnlyList<string>? Regions,
-    long? PlacementGeneration);
+    long? PlacementGeneration,
+    string? BackupRegion = null);
+
+/// <summary>
+/// Confirmation body for permanent project deletion.
+/// </summary>
+public sealed record TerraScaleDeleteProjectRequest(bool Confirm, string ProjectName);
 
 /// <summary>
 /// Project metadata returned by TerraScale project endpoints.
@@ -140,11 +181,12 @@ public sealed record TerraScaleProject(
     string ProjectId,
     string OrganizationId,
     string Name,
-    string? OwnerUserId,
+    IReadOnlyList<string> OwnerUserIds,
     string? CreatedByUserId,
     DateTimeOffset? OwnershipAssignedAt,
     IReadOnlyList<string> DefaultPermissionKeys,
     IReadOnlyList<string> Regions,
+    string BackupRegion,
     string PlacementStatus,
     long PlacementGeneration,
     string Pk,
@@ -152,3 +194,27 @@ public sealed record TerraScaleProject(
     string EntityType,
     DateTimeOffset CreatedAt,
     long Version);
+
+/// <summary>
+/// Current placement state for one project region.
+/// </summary>
+public sealed record TerraScaleProjectRegionPlacement(
+    string Region,
+    long PlacementGeneration,
+    string Status,
+    bool IsBackupRegion,
+    long? ReplicationLagMilliseconds,
+    string? Error,
+    DateTimeOffset UpdatedAt);
+
+/// <summary>
+/// Result of permanently deleting a project.
+/// </summary>
+public sealed record TerraScaleDeletedProject(
+    string ProjectId,
+    string OrganizationId,
+    string Name,
+    bool Deleted,
+    int DatabasesDeleted,
+    int QueuesDeleted,
+    bool PhysicalStorageDeleted);

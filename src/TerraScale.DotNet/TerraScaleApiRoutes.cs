@@ -20,6 +20,12 @@ internal static class TerraScaleApiRoutes
     public static string ProjectUpdate(string projectId) =>
         ProjectGet(projectId);
 
+    public static string ProjectDelete(string projectId) =>
+        ProjectGet(projectId);
+
+    public static string ProjectRegionPlacementsList(string projectId) =>
+        $"{ProjectGet(projectId)}/regions";
+
     public static string ProjectDatabasesList(string projectId, int skip, int take) =>
         WithQuery($"/api/v1/projects/{Escape(projectId)}/databases", ("skip", Number(skip)), ("take", Number(take)));
 

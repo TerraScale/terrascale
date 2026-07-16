@@ -51,9 +51,13 @@ public sealed class TerraScaleApiE2ETests
         await Assert.That(projects.Any(project => project.ProjectId == currentProject.ProjectId)).IsTrue();
 
         var updated = await client.Projects.UpdateAsync(currentProject.ProjectId, currentProject.Name);
+        var placements = await client.Projects.ListRegionPlacementsAsync(currentProject.ProjectId);
         await Assert.That(updated.ProjectId).IsEqualTo(currentProject.ProjectId);
         await Assert.That(updated.OrganizationId).IsEqualTo(currentProject.OrganizationId);
         await Assert.That(updated.Name).IsEqualTo(currentProject.Name);
+        await Assert.That(updated.OwnerUserIds).IsNotNull();
+        await Assert.That(updated.BackupRegion).IsNotEmpty();
+        await Assert.That(placements.All(placement => currentProject.Regions.Contains(placement.Region))).IsTrue();
     }
 
     [Test]

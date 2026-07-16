@@ -44,9 +44,14 @@ public sealed class TerraScaleNotificationsClient
         int skip = 0,
         int take = 50,
         bool unreadOnly = false,
+        string? organizationId = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
+        if (includeOrganizationNotifications)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(organizationId);
+        }
         TerraScalePagination.Validate(skip, take);
         return client.SendAsync<IReadOnlyList<TerraScaleNotification>>(
             HttpMethod.Get,
@@ -54,6 +59,7 @@ public sealed class TerraScaleNotificationsClient
                 skip,
                 take,
                 unreadOnly,
+                organizationId: organizationId,
                 projectId: projectId,
                 includeOrganizationNotifications: includeOrganizationNotifications),
             body: null,
@@ -127,6 +133,7 @@ public sealed record TerraScaleNotification(
     string Title,
     string? Body,
     string Severity,
+    string Category,
     DateTimeOffset? ReadAt,
     string CreatedAt,
     string? OrganizationId = null,

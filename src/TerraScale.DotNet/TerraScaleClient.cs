@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
 
@@ -13,7 +14,10 @@ namespace TerraScale.DotNet;
 /// </summary>
 public sealed class TerraScaleClient
 {
-    private static readonly JsonSerializerOptions DefaultJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions DefaultJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        NumberHandling = JsonNumberHandling.AllowReadingFromString
+    };
 
     private readonly HttpClient httpClient;
     private readonly TerraScaleClientOptions options;
