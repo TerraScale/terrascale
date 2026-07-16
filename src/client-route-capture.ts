@@ -402,6 +402,29 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "auth",
+    operation: "verifyPasswordMfa",
+    variant: "global",
+    invoke: (client) =>
+      client.auth.verifyPasswordMfa({
+        pendingAuthenticationToken: "pending-token",
+        challengeId: sampleIds.sessionId,
+        code: "123456",
+      }),
+  },
+  {
+    client: "auth",
+    operation: "verifyPasswordMfa",
+    variant: "project",
+    defaultProject: true,
+    invoke: (client) =>
+      client.auth.verifyPasswordMfa({
+        pendingAuthenticationToken: "pending-token",
+        challengeId: sampleIds.sessionId,
+        code: "123456",
+      }),
+  },
+  {
+    client: "auth",
     operation: "signIn",
     variant: "project",
     defaultProject: true,
@@ -1141,9 +1164,26 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "usage",
+    operation: "getOrganizationUsage",
+    invoke: (client) => client.usage.getOrganizationUsage(sampleIds.organizationId),
+  },
+  {
+    client: "usage",
     operation: "getProjectUsageWorkload",
     defaultProject: true,
     invoke: (client) => client.usage.getProjectUsageWorkload("24h"),
+  },
+  {
+    client: "usage",
+    operation: "getProjectLatency",
+    defaultProject: true,
+    invoke: (client) => client.usage.getProjectLatency(undefined, { latitude: -23.55, longitude: -46.63 }),
+  },
+  {
+    client: "usage",
+    operation: "getProjectUsageHistory",
+    defaultProject: true,
+    invoke: (client) => client.usage.getProjectUsageHistory("30d"),
   },
   {
     client: "billing",
@@ -1194,7 +1234,13 @@ const captureOperations: readonly CaptureOperation[] = [
   {
     client: "notifications",
     operation: "list",
-    invoke: (client) => client.notifications.list({ skip: 0, take: 25, unreadOnly: true }),
+    invoke: (client) =>
+      client.notifications.list({
+        skip: 0,
+        take: 25,
+        unreadOnly: true,
+        organizationId: sampleIds.organizationId,
+      }),
   },
   {
     client: "notifications",
@@ -1204,7 +1250,8 @@ const captureOperations: readonly CaptureOperation[] = [
   {
     client: "notifications",
     operation: "markAllRead",
-    invoke: (client) => client.notifications.markAllRead(),
+    invoke: (client) =>
+      client.notifications.markAllRead({ organizationId: sampleIds.organizationId }),
   },
   {
     client: "security",

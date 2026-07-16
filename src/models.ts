@@ -130,6 +130,7 @@ export type UpdateProfileResponse = {
 export type ChangePasswordRequest = {
   readonly currentPassword: string;
   readonly newPassword: string;
+  /** @deprecated Password changes always revoke every active session. */
   readonly keepOtherSessions?: boolean;
 };
 
@@ -192,6 +193,12 @@ export type SignInRequest = {
   readonly deviceFingerprint?: string;
 };
 
+export type PasswordMfaVerifyRequest = {
+  readonly pendingAuthenticationToken: string;
+  readonly challengeId: Ulid;
+  readonly code: string;
+};
+
 export type AuthTokenResponse = {
   readonly accessToken: string;
   readonly refreshToken: string;
@@ -208,6 +215,7 @@ export type AuthTokenResponse = {
   readonly roles: readonly string[];
   readonly shouldPromptMfa: boolean;
   readonly mfaEnabled: boolean;
+  readonly requiresOrganizationSelection: boolean;
 };
 
 export type SwitchOrganizationRequest = {
@@ -1027,9 +1035,43 @@ export type UsageSummary = {
   readonly operationUnits: number;
   readonly includedOperationUnits: number;
   readonly overageOperationUnits: number;
+  readonly egressBytes: number;
   readonly updatedAt: Timestamp;
   readonly regionalTotals: Readonly<Record<string, number>>;
   readonly categoryTotals: Readonly<Record<string, number>>;
+};
+
+export type OrganizationUsageLimit = {
+  readonly resource: "storage" | "database_operations" | "egress" | string;
+  readonly unit: string;
+  readonly used: number;
+  readonly included?: number | null;
+  readonly remaining?: number | null;
+  readonly excess?: number | null;
+  readonly status: "approaching" | "exceeded" | "normal" | "not_applicable" | "reached" | string;
+  readonly provisional: boolean;
+};
+
+export type OrganizationProjectUsage = {
+  readonly projectId: ProjectId;
+  readonly projectName: string;
+  readonly storageBytes?: number | null;
+  readonly operationUnits?: number | null;
+  readonly egressBytes?: number | null;
+  readonly updatedAt?: Timestamp | null;
+  readonly provisional: boolean;
+};
+
+export type OrganizationUsage = {
+  readonly organizationId: OrganizationId;
+  readonly planId: string;
+  readonly planName: string;
+  readonly periodStart: Timestamp;
+  readonly periodEnd: Timestamp;
+  readonly updatedAt: Timestamp;
+  readonly provisional: boolean;
+  readonly resources: readonly OrganizationUsageLimit[];
+  readonly projects: readonly OrganizationProjectUsage[];
 };
 
 export type UsageMetric = {
@@ -1083,11 +1125,55 @@ export type UsageWorkloadPoint = {
   readonly value: number;
 };
 
+export type ProjectRegionLatency = {
+  readonly fromRegion: string;
+  readonly toRegion: string;
+  readonly estimatedRoundTripMilliseconds: number;
+};
+
+export type ProjectNearestRegionLatency = {
+  readonly region: string;
+  readonly estimatedRoundTripMilliseconds: number;
+};
+
+export type ProjectLatency = {
+  readonly projectId: ProjectId;
+  readonly capturedAt: Timestamp;
+  readonly source: "geographic_estimate" | string;
+  readonly interRegion: readonly ProjectRegionLatency[];
+  readonly nearestRegion?: ProjectNearestRegionLatency | null;
+};
+
+export type ProjectLatencyRequest = {
+  readonly latitude?: number;
+  readonly longitude?: number;
+};
+
+export type UsageHistoryRange = "24h" | "7d" | "30d" | "90d" | "365d";
+
+export type ProjectUsageHistoryPoint = {
+  readonly observedAt: Timestamp;
+  readonly storageBytes: number;
+  readonly operationUnits: number;
+  readonly egressBytes: number;
+};
+
+export type ProjectUsageHistory = {
+  readonly projectId: ProjectId;
+  readonly range: UsageHistoryRange;
+  readonly requestedStart: Timestamp;
+  readonly accessibleStart: Timestamp;
+  readonly end: Timestamp;
+  readonly limitedByRetention: boolean;
+  readonly points: readonly ProjectUsageHistoryPoint[];
+};
+
 export type BillingAccount = {
   readonly billingAccountId: Ulid;
   readonly organizationId: OrganizationId;
   readonly planId: Ulid;
   readonly status: "active" | "canceled" | "past_due" | "trialing";
+  readonly billingInterval: "monthly" | "annual" | string | null;
 };
 
 export type CurrentOrganizationFeatureEntitlement = {
@@ -1123,6 +1209,7 @@ export type CurrentOrganizationBilling = {
   readonly currency?: string | null;
   readonly currentPeriodStart?: Timestamp | null;
   readonly currentPeriodEnd?: Timestamp | null;
+  readonly billingInterval?: "monthly" | "annual" | string | null;
   readonly features: readonly CurrentOrganizationFeatureEntitlement[];
   readonly limits?: CurrentOrganizationLimits;
   readonly billingRoles: readonly string[];
@@ -1176,6 +1263,8 @@ export type Invoice = {
   readonly currency: string;
   readonly status: "draft" | "open" | "paid" | "void";
   readonly issuedAt: Timestamp;
+  readonly periodStart?: Timestamp | null;
+  readonly periodEnd?: Timestamp | null;
   readonly hostedInvoiceUrl?: string | null;
   readonly invoicePdf?: string | null;
 };
@@ -1237,6 +1326,9 @@ export type Notification = {
   readonly severity: "critical" | "info" | "warning";
   readonly readAt?: Timestamp;
   readonly createdAt: Timestamp;
+  readonly category: string;
+  readonly organizationId?: OrganizationId | null;
+  readonly projectId?: ProjectId | null;
 };
 
 export type MarkAllDashboardNotificationsReadResponse = {

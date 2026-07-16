@@ -16,6 +16,7 @@ const documentId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAZ");
 const keyId = toUlid("01BRZ3NDEKTSV4RRFFQ69G5FAV");
 const clientId = toUlid("01CRZ3NDEKTSV4RRFFQ69G5FAV");
 const notificationId = toUlid("01DRZ3NDEKTSV4RRFFQ69G5FAV");
+const organizationId = toUlid("01ERZ3NDEKTSV4RRFFQ69G5FAV");
 const backupPolicyId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAW");
 const backupId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAV");
 const restoreId = toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV");
@@ -542,7 +543,12 @@ describe("TerraScaleClient route contracts", () => {
       { markedRead: 3 },
     ]);
 
-    const listResult = await client.notifications.list({ skip: 5, take: 10, unreadOnly: true });
+    const listResult = await client.notifications.list({
+      skip: 5,
+      take: 10,
+      unreadOnly: true,
+      organizationId,
+    });
     assert.equal(listResult.ok, true);
     if (listResult.ok) {
       assert.deepEqual(listResult.value, [notification]);
@@ -552,6 +558,7 @@ describe("TerraScaleClient route contracts", () => {
     assert.equal(requests[0]?.url.searchParams.get("skip"), "5");
     assert.equal(requests[0]?.url.searchParams.get("take"), "10");
     assert.equal(requests[0]?.url.searchParams.get("unreadOnly"), "true");
+    assert.equal(requests[0]?.url.searchParams.get("organizationId"), organizationId);
 
     const markReadResult = await client.notifications.markRead(notificationId);
     assert.equal(markReadResult.ok, true);
@@ -564,12 +571,13 @@ describe("TerraScaleClient route contracts", () => {
       `/api/v1/users/me/notifications/${notificationId}:mark-read`,
     );
 
-    const markAllReadResult = await client.notifications.markAllRead();
+    const markAllReadResult = await client.notifications.markAllRead({ organizationId });
     assert.equal(markAllReadResult.ok, true);
     if (markAllReadResult.ok) {
       assert.deepEqual(markAllReadResult.value, { markedRead: 3 });
     }
     assertRequest(requests[2], "POST", "/api/v1/users/me/notifications:mark-all-read");
+    assert.equal(requests[2]?.url.searchParams.get("organizationId"), organizationId);
   });
 
   test("uses the backed security settings routes", async () => {

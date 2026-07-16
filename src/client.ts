@@ -29,6 +29,7 @@ export const sdkRouteManifest = {
     verifyEmail: `${apiRoot}/auth/password/verify-email`,
     resendVerification: `${apiRoot}/auth/password/resend-verification`,
     signIn: `${apiRoot}/auth/password/login`,
+    verifyPasswordMfa: `${apiRoot}/auth/password/mfa/verify`,
     forgotPassword: `${apiRoot}/auth/password/forgot-password`,
     resetPassword: `${apiRoot}/auth/password/reset-password`,
     magicLinkRequest: `${apiRoot}/auth/passwordless/magic-link`,
@@ -53,6 +54,7 @@ export const sdkRouteManifest = {
       verifyEmail: (projectId: Ulid) => `${projectAuthRoot(projectId)}/verify-email`,
       resendVerification: (projectId: Ulid) => `${projectAuthRoot(projectId)}/resend-verification`,
       signIn: (projectId: Ulid) => `${projectAuthRoot(projectId)}/login`,
+      verifyPasswordMfa: (projectId: Ulid) => `${projectAuthRoot(projectId)}/password/mfa/verify`,
       forgotPassword: (projectId: Ulid) => `${projectAuthRoot(projectId)}/forgot-password`,
       resetPassword: (projectId: Ulid) => `${projectAuthRoot(projectId)}/reset-password`,
       magicLinkRequest: (projectId: Ulid) =>
@@ -343,6 +345,25 @@ export class AuthClient {
     });
   }
 
+  verifyPasswordMfa(
+    request: Models.PasswordMfaVerifyRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "POST",
+      path: authRoute(
+        this.http,
+        projectId,
+        sdkRouteManifest.auth.verifyPasswordMfa,
+        sdkRouteManifest.auth.project.verifyPasswordMfa,
+      ),
+      routeName: "auth.passwordMfa.verify",
+      headerPolicy: "anonymous",
+      body: request,
+    });
+  }
+
   forgotPassword(
     request: Models.PasswordResetRequest,
     projectId?: Ulid,
@@ -504,7 +525,11 @@ export class AuthClient {
       method: "POST",
       path: sdkRouteManifest.auth.changePassword,
       routeName: "auth.password.change",
-      body: { ...request, keepOtherSessions: request.keepOtherSessions ?? false },
+      body: {
+        currentPassword: request.currentPassword,
+        newPassword: request.newPassword,
+        keepOtherSessions: false,
+      },
     });
   }
 
@@ -588,7 +613,7 @@ export class AuthClient {
 
   completeExternalLogin(
     request: Models.DashboardExternalLoginCompleteRequest,
-  ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
+  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
     return this.http.request({
       base: "auth",
       method: "POST",
@@ -1547,6 +1572,16 @@ export class UsageClient {
     });
   }
 
+  getOrganizationUsage(
+    organizationId: Ulid,
+  ): Promise<TerraScaleResult<Models.OrganizationUsage>> {
+    return this.http.request({
+      method: "GET",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/usage`,
+      routeName: "usage.organization.get",
+    });
+  }
+
   getProjectUsageWorkload(
     range: Models.UsageWorkloadRange,
     projectId?: Ulid,
@@ -1555,6 +1590,30 @@ export class UsageClient {
       method: "GET",
       path: `${projectRoot(this.http, projectId)}/usage/workload`,
       routeName: "usage.project.workload",
+      query: { range },
+    });
+  }
+
+  getProjectLatency(
+    projectId?: Ulid,
+    query?: Models.ProjectLatencyRequest,
+  ): Promise<TerraScaleResult<Models.ProjectLatency>> {
+    return this.http.request({
+      method: "GET",
+      path: `${projectRoot(this.http, projectId)}/latency`,
+      routeName: "usage.project.latency",
+      query,
+    });
+  }
+
+  getProjectUsageHistory(
+    range: Models.UsageHistoryRange,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectUsageHistory>> {
+    return this.http.request({
+      method: "GET",
+      path: `${projectRoot(this.http, projectId)}/usage/history`,
+      routeName: "usage.project.history",
       query: { range },
     });
   }
@@ -1648,7 +1707,12 @@ export class NotificationsClient {
   constructor(private readonly http: TerraScaleHttp) {}
 
   list(
-    query?: Models.PageRequest & { readonly unreadOnly?: boolean },
+    query?: Models.PageRequest & {
+      readonly unreadOnly?: boolean;
+      readonly projectId?: Ulid;
+      readonly organizationId?: Ulid;
+      readonly includeOrganizationNotifications?: boolean;
+    },
   ): Promise<TerraScaleResult<readonly Models.Notification[]>> {
     return this.http.request({
       method: "GET",
@@ -1666,11 +1730,14 @@ export class NotificationsClient {
     });
   }
 
-  markAllRead(): Promise<TerraScaleResult<Models.MarkAllDashboardNotificationsReadResponse>> {
+  markAllRead(query?: {
+    readonly organizationId?: Ulid;
+  }): Promise<TerraScaleResult<Models.MarkAllDashboardNotificationsReadResponse>> {
     return this.http.request({
       method: "POST",
       path: `${apiRoot}/users/me/notifications:mark-all-read`,
       routeName: "notifications.markAllRead",
+      query,
     });
   }
 }
