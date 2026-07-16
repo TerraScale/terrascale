@@ -500,15 +500,49 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "organizations",
+    operation: "update",
+    invoke: (client) =>
+      client.organizations.update(sampleIds.organizationId, { name: "Analytical Engines" }),
+  },
+  {
+    client: "organizations",
+    operation: "requestDeletion",
+    invoke: (client) =>
+      client.organizations.requestDeletion(sampleIds.organizationId, {
+        confirm: true,
+        organizationName: "Analytical Engines",
+      }),
+  },
+  {
+    client: "organizations",
+    operation: "leave",
+    invoke: (client) => client.organizations.leave(sampleIds.organizationId),
+  },
+  {
+    client: "organizations",
     operation: "listProjects",
     invoke: (client) =>
       client.organizations.listProjects(sampleIds.organizationId, { skip: 0, take: 25 }),
   },
   {
     client: "organizations",
-    operation: "listUsers",
+    operation: "listMembers",
     invoke: (client) =>
-      client.organizations.listUsers(sampleIds.organizationId, { skip: 0, take: 25 }),
+      client.organizations.listMembers(sampleIds.organizationId, { skip: 0, take: 25 }),
+  },
+  {
+    client: "organizations",
+    operation: "updateMemberRole",
+    invoke: (client) =>
+      client.organizations.updateMemberRole(sampleIds.organizationId, sampleIds.userId, {
+        role: "OrganizationOwner",
+      }),
+  },
+  {
+    client: "organizations",
+    operation: "removeMember",
+    invoke: (client) =>
+      client.organizations.removeMember(sampleIds.organizationId, sampleIds.userId),
   },
   {
     client: "organizations",
@@ -539,14 +573,31 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.organizations.createInvitation(sampleIds.organizationId, {
         email: "grace@example.test",
-        role: "admin",
       }),
   },
   {
     client: "organizations",
-    operation: "revokeInvitation",
+    operation: "acceptInvitation",
     invoke: (client) =>
-      client.organizations.revokeInvitation(sampleIds.organizationId, sampleIds.invitationId),
+      client.organizations.acceptInvitation(sampleIds.organizationId, sampleIds.invitationId),
+  },
+  {
+    client: "organizations",
+    operation: "declineInvitation",
+    invoke: (client) =>
+      client.organizations.declineInvitation(sampleIds.organizationId, sampleIds.invitationId),
+  },
+  {
+    client: "organizations",
+    operation: "resendInvitation",
+    invoke: (client) =>
+      client.organizations.resendInvitation(sampleIds.organizationId, sampleIds.invitationId),
+  },
+  {
+    client: "organizations",
+    operation: "cancelInvitation",
+    invoke: (client) =>
+      client.organizations.cancelInvitation(sampleIds.organizationId, sampleIds.invitationId),
   },
   {
     client: "regions",
@@ -936,7 +987,7 @@ const captureOperations: readonly CaptureOperation[] = [
     client: "access",
     operation: "addTeamMember",
     defaultProject: true,
-    invoke: (client) => client.access.addTeamMember({ userId: sampleIds.userId, role: "admin" }),
+    invoke: (client) => client.access.addTeamMember({ userId: sampleIds.userId, role: "owner" }),
   },
   {
     client: "access",

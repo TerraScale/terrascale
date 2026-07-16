@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 108,
+  "routeCount": 116,
   "routes": [
     {
       "base": "auth",
@@ -286,6 +286,35 @@
     {
       "base": "api",
       "client": "organizations",
+      "operation": "update",
+      "routeName": "organizations.update",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/organizations/{organizationId}",
+      "requestType": "UpdateOrganizationRequest",
+      "responseType": "Organization"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "requestDeletion",
+      "routeName": "organizations.deletion.request",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}:request-deletion",
+      "requestType": "RequestOrganizationDeletionRequest",
+      "responseType": "Organization"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "leave",
+      "routeName": "organizations.leave",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}:leave",
+      "responseType": "void"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
       "operation": "listProjects",
       "routeName": "organizations.projects.list",
       "method": "GET",
@@ -295,11 +324,31 @@
     {
       "base": "api",
       "client": "organizations",
-      "operation": "listUsers",
-      "routeName": "organizations.users.list",
+      "operation": "listMembers",
+      "routeName": "organizations.members.list",
       "method": "GET",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/users",
-      "responseType": "Page<OrganizationUser>"
+      "pathTemplate": "/api/v1/organizations/{organizationId}/members",
+      "responseType": "readonly OrganizationMember[]"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "updateMemberRole",
+      "routeName": "organizations.members.updateRole",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/members/{userId}",
+      "requestType": "UpdateOrganizationMemberRoleRequest",
+      "responseType": "OrganizationMember"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "removeMember",
+      "routeName": "organizations.members.remove",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/members/{userId}:remove",
+      "requestType": "RemoveOrganizationMemberRequest",
+      "responseType": "void"
     },
     {
       "base": "api",
@@ -352,10 +401,37 @@
     {
       "base": "api",
       "client": "organizations",
-      "operation": "revokeInvitation",
-      "routeName": "organizations.invitations.revoke",
+      "operation": "acceptInvitation",
+      "routeName": "organizations.invitations.accept",
       "method": "POST",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:revoke",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:accept",
+      "responseType": "Invitation"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "declineInvitation",
+      "routeName": "organizations.invitations.decline",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:decline",
+      "responseType": "Invitation"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "resendInvitation",
+      "routeName": "organizations.invitations.resend",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:resend",
+      "responseType": "Invitation"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "cancelInvitation",
+      "routeName": "organizations.invitations.cancel",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:cancel",
       "responseType": "Invitation"
     },
     {

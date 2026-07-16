@@ -416,6 +416,38 @@ export class OrganizationsClient {
     });
   }
 
+  update(
+    organizationId: Ulid,
+    request: Models.UpdateOrganizationRequest,
+  ): Promise<TerraScaleResult<Models.Organization>> {
+    return this.http.request({
+      method: "PATCH",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}`,
+      routeName: "organizations.update",
+      body: request,
+    });
+  }
+
+  requestDeletion(
+    organizationId: Ulid,
+    request: Models.RequestOrganizationDeletionRequest,
+  ): Promise<TerraScaleResult<Models.Organization>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}:request-deletion`,
+      routeName: "organizations.deletion.request",
+      body: request,
+    });
+  }
+
+  leave(organizationId: Ulid): Promise<TerraScaleResult<void>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}:leave`,
+      routeName: "organizations.leave",
+    });
+  }
+
   listProjects(
     organizationId: Ulid,
     query?: Models.PageRequest,
@@ -428,15 +460,41 @@ export class OrganizationsClient {
     });
   }
 
-  listUsers(
+  listMembers(
     organizationId: Ulid,
     query?: Models.PageRequest,
-  ): Promise<TerraScaleResult<Models.Page<Models.OrganizationUser>>> {
+  ): Promise<TerraScaleResult<readonly Models.OrganizationMember[]>> {
     return this.http.request({
       method: "GET",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/users`,
-      routeName: "organizations.users.list",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/members`,
+      routeName: "organizations.members.list",
       query,
+    });
+  }
+
+  updateMemberRole(
+    organizationId: Ulid,
+    userId: Ulid,
+    request: Models.UpdateOrganizationMemberRoleRequest,
+  ): Promise<TerraScaleResult<Models.OrganizationMember>> {
+    return this.http.request({
+      method: "PATCH",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/members/${ulidPathSegment(userId)}`,
+      routeName: "organizations.members.updateRole",
+      body: request,
+    });
+  }
+
+  removeMember(
+    organizationId: Ulid,
+    userId: Ulid,
+    request: Models.RemoveOrganizationMemberRequest = { confirm: true },
+  ): Promise<TerraScaleResult<void>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/members/${ulidPathSegment(userId)}:remove`,
+      routeName: "organizations.members.remove",
+      body: request,
     });
   }
 
@@ -502,14 +560,47 @@ export class OrganizationsClient {
     });
   }
 
-  revokeInvitation(
+  acceptInvitation(
     organizationId: Ulid,
     invitationId: Ulid,
   ): Promise<TerraScaleResult<Models.Invitation>> {
     return this.http.request({
       method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:revoke`,
-      routeName: "organizations.invitations.revoke",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:accept`,
+      routeName: "organizations.invitations.accept",
+    });
+  }
+
+  declineInvitation(
+    organizationId: Ulid,
+    invitationId: Ulid,
+  ): Promise<TerraScaleResult<Models.Invitation>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:decline`,
+      routeName: "organizations.invitations.decline",
+    });
+  }
+
+  resendInvitation(
+    organizationId: Ulid,
+    invitationId: Ulid,
+  ): Promise<TerraScaleResult<Models.Invitation>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:resend`,
+      routeName: "organizations.invitations.resend",
+    });
+  }
+
+  cancelInvitation(
+    organizationId: Ulid,
+    invitationId: Ulid,
+  ): Promise<TerraScaleResult<Models.Invitation>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:cancel`,
+      routeName: "organizations.invitations.cancel",
     });
   }
 }

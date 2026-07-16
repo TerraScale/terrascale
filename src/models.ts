@@ -225,29 +225,54 @@ export type PasswordLoginResponse = {
 export type Organization = {
   readonly organizationId: OrganizationId;
   readonly name: string;
-  readonly slug?: string;
+  readonly ownerUserIds: readonly UserId[];
+  readonly createdByUserId?: UserId | null;
+  readonly billingAccountId: string;
+  readonly status: OrganizationStatus;
+  readonly deletionRequestedAt?: Timestamp | null;
+  readonly deletionRequestedByUserId?: UserId | null;
   readonly createdAt: Timestamp;
 };
 
-export type OrganizationUser = {
+export type OrganizationStatus = "Active" | "DeletionPending";
+
+export type OrganizationMemberRole = "Member" | "OrganizationOwner";
+
+export type OrganizationMember = {
   readonly userId: UserId;
   readonly email: string;
   readonly displayName: string;
-  readonly organizationIds: readonly OrganizationId[];
-  readonly createdAt?: Timestamp;
+  readonly role: OrganizationMemberRole;
+  readonly joinedAt: Timestamp;
 };
 
 export type CreateOrganizationRequest = {
   readonly name: string;
-  readonly adminUserIds?: readonly UserId[];
   readonly billingAccountId?: string;
-  readonly slug?: string;
+};
+
+export type UpdateOrganizationRequest = {
+  readonly name: string;
+};
+
+export type RequestOrganizationDeletionRequest = {
+  readonly confirm: true;
+  readonly organizationName: string;
+};
+
+export type UpdateOrganizationMemberRoleRequest = {
+  readonly role: OrganizationMemberRole;
+};
+
+export type RemoveOrganizationMemberRequest = {
+  readonly confirm: true;
 };
 
 export type Project = {
   readonly projectId: ProjectId;
   readonly organizationId: OrganizationId;
   readonly name: string;
+  readonly ownerUserIds: readonly UserId[];
   readonly regions: readonly TerraScaleRegionCode[];
   readonly placementStatus: ProjectPlacementStatus;
   readonly placementGeneration: number;
@@ -316,18 +341,23 @@ export type Invitation = {
   readonly invitationId: InvitationId;
   readonly organizationId: OrganizationId;
   readonly email: string;
-  readonly role: string;
-  readonly status: string;
+  readonly role: "Member";
+  readonly status: InvitationStatus;
   readonly invitedByEmail?: string;
   readonly expiresAt: Timestamp;
   readonly acceptedAt?: Timestamp | null;
+  readonly acceptedByUserId?: UserId | null;
+  readonly declinedAt?: Timestamp | null;
+  readonly canceledAt?: Timestamp | null;
+  readonly lastSentAt: Timestamp;
+  readonly sentCount: number;
   readonly createdAt?: Timestamp;
 };
 
+export type InvitationStatus = "Accepted" | "Canceled" | "Declined" | "Expired" | "Pending";
+
 export type CreateInvitationRequest = {
   readonly email: string;
-  readonly role: string;
-  readonly redirectUrl?: string;
 };
 
 export type DatabaseStatus = "available" | "creating" | "deleting" | "failed" | "updating";
@@ -799,7 +829,7 @@ export type M2MTokenResponse = {
   readonly environment_id?: EnvironmentId | null;
 };
 
-export type AccessRole = "admin" | "billing" | "member" | "owner" | "viewer";
+export type AccessRole = "member" | "owner" | "viewer";
 
 export type TeamMember = {
   readonly userId: UserId;
