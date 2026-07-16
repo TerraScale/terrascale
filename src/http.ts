@@ -70,15 +70,8 @@ export type TerraScaleRequestMetricRecorder = (metric: TerraScaleRequestMetric) 
 export class TerraScaleHttp {
   readonly config: ResolvedTerraScaleRuntimeConfig;
 
-  constructor(config: TerraScaleRuntimeConfig | ResolvedTerraScaleRuntimeConfig) {
-    this.config =
-      "fetch" in config && typeof config.fetch === "function" && "authBaseUrl" in config
-        ? ({
-            ...config,
-            authBaseUrl: config.authBaseUrl ?? config.apiBaseUrl,
-            dashboardDatabaseIds: config.dashboardDatabaseIds ?? {},
-          } as ResolvedTerraScaleRuntimeConfig)
-        : resolveRuntimeConfig(config as TerraScaleRuntimeConfig);
+  constructor(config: TerraScaleRuntimeConfig) {
+    this.config = resolveRuntimeConfig(config);
   }
 
   async request<TResponse, TBody = unknown>(
