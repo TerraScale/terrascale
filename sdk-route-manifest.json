@@ -447,7 +447,7 @@
       "routeName": "organizations.list",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations",
-      "responseType": "Page<Organization>"
+      "responseType": "readonly Organization[]"
     },
     {
       "base": "api",
@@ -504,7 +504,7 @@
       "routeName": "organizations.projects.list",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations/{organizationId}/projects",
-      "responseType": "Page<Project>"
+      "responseType": "readonly Project[]"
     },
     {
       "base": "api",
@@ -590,7 +590,7 @@
       "routeName": "organizations.invitations.list",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations/{organizationId}/invitations",
-      "responseType": "Page<Invitation>"
+      "responseType": "readonly Invitation[]"
     },
     {
       "base": "api",

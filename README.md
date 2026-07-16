@@ -49,18 +49,23 @@ The public client follows the backed `TerraScale.API` REST surface:
   `/api/v1/projects/{projectId}/databases/{databaseId}/restores`; responses
   use logical ULID fields such as `backupId`, `restoreId`, and
   `restoredDatabaseId`.
-- Notifications: `/api/v1/dashboard/notifications` returns a bare
-  `Notification[]`; `/api/v1/dashboard/notifications/{notificationId}:mark-read`
+- Onboarding: state, account information, MFA choice, payment validation, and
+  initial organization/project creation under `/api/v1/onboarding`.
+- Organizations and projects: organization create/list/get/update/deletion,
+  membership and invitation lifecycle, plus project create/list/get/update/delete
+  and region placement.
+- Usage: project totals, workload, latency, and history plus organization totals.
+- Notifications: `/api/v1/users/me/notifications` returns a bare
+  `Notification[]`; `/api/v1/users/me/notifications/{notificationId}:mark-read`
   returns a `Notification`; and
-  `/api/v1/dashboard/notifications:mark-all-read` returns `{ markedRead }`.
-- Security settings: the backed settings upsert route,
-  `PUT /api/v1/projects/{projectId}/security/settings`.
+  `/api/v1/users/me/notifications:mark-all-read` returns `{ markedRead }`.
+- Security settings: backed get and upsert routes at
+  `/api/v1/projects/{projectId}/security/settings`.
 
 Unbacked public SDK methods are intentionally omitted until matching API
 endpoints exist. This currently excludes repository update, database
 update/region switching/environment switching, saved queries, query history,
-project settings, security webhooks, SSO/SCIM settings, organization update,
-invitation accept, and public project switching.
+project settings, security webhooks, SSO/SCIM settings, and public project switching.
 
 ## Development
 
@@ -75,11 +80,13 @@ The SDK route manifest is generated from the route-capture tests:
 
 ```bash
 npm run generate:route-manifest
-npm run check:openapi-drift -- ../TerraScale.Documentation/static/openapi/server.openapi.json
+npm run check:openapi-drift -- ../Terrascale.Documentation/public/openapi/server.openapi.json
 ```
 
 The drift checker accepts any OpenAPI JSON file path or live spec URL, including
-an AppHost-served `/openapi/v1.json`.
+an AppHost-served `/openapi/v1.json`. Refresh the Documentation snapshot from
+the current Internals OpenAPI artifact before treating a snapshot failure as an
+SDK defect.
 
 Integration tests are expected to run against a real TerraScale AppHost stack
 and its emitted API/Auth URLs:
