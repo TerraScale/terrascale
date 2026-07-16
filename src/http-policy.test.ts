@@ -92,4 +92,24 @@ describe("TerraScaleHttp request policy", () => {
     assert.equal(successful.ok, true);
     assert.deepEqual(recorded, ["regions.list"]);
   });
+
+  test("provides a useful message when an error response has no status text", async () => {
+    const http = new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      dashboardClientId: "test",
+      fetch: async () => new Response(null, { status: 500 }),
+    });
+
+    const result = await http.request({
+      method: "GET",
+      path: "/api/v1/regions",
+      routeName: "regions.list",
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(
+      result.ok ? undefined : result.error.message,
+      "The TerraScale API request failed.",
+    );
+  });
 });

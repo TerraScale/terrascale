@@ -153,7 +153,6 @@ export class TerraScaleHttp {
   private async buildHeaders<TBody>(options: TerraScaleRequestOptions<TBody>): Promise<Headers> {
     const anonymous = options.headerPolicy === "anonymous";
     const headers = new Headers(anonymous ? undefined : this.config.defaultHeaders);
-    const requestHeaders = new Headers(options.headers);
 
     headers.set("accept", headers.get("accept") ?? "application/json");
     if (!anonymous) {
@@ -174,8 +173,10 @@ export class TerraScaleHttp {
       }
     }
 
-    for (const [key, value] of requestHeaders.entries()) {
-      headers.set(key, value);
+    if (options.headers !== undefined) {
+      for (const [key, value] of new Headers(options.headers).entries()) {
+        headers.set(key, value);
+      }
     }
 
     if (anonymous) {
@@ -291,8 +292,7 @@ function errorFromResponse(response: Response, body: unknown): TerraScaleError {
       stringProperty(source, "message") ??
       stringProperty(source, "detail") ??
       stringProperty(source, "title") ??
-      response.statusText ??
-      "The TerraScale API request failed.",
+      (response.statusText || "The TerraScale API request failed."),
     status: response.status,
     target: stringProperty(source, "target"),
     requestId:
