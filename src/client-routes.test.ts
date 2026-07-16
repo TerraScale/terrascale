@@ -65,6 +65,21 @@ describe("TerraScaleClient route contracts", () => {
     assert.equal(runtimeClient.dashboard, undefined);
   });
 
+  test("routes account identity to Auth and organization billing to the product API", async () => {
+    const { client, requests } = createCapturingClientWithResponses([{}, {}, {}]);
+
+    await client.auth.getSession();
+    await client.auth.getCurrentBilling();
+    await client.auth.evaluateBillingGuard({ requireActiveSubscription: true });
+
+    assert.equal(requests[0]?.url.origin, "https://auth.terrascale.test");
+    assertRequest(requests[0], "GET", "/api/v1/auth/me");
+    assert.equal(requests[1]?.url.origin, "https://api.terrascale.test");
+    assertRequest(requests[1], "GET", "/api/v1/auth/me/billing");
+    assert.equal(requests[2]?.url.origin, "https://api.terrascale.test");
+    assertRequest(requests[2], "POST", "/api/v1/auth/me/billing/guard");
+  });
+
   test("uses root repository routes without environment scope", async () => {
     const { client, requests } = createCapturingClient([]);
 

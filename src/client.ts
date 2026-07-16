@@ -245,7 +245,7 @@ export class AuthClient {
 
   getCurrentBilling(): Promise<TerraScaleResult<Models.CurrentOrganizationBilling>> {
     return this.http.request({
-      base: "auth",
+      base: "api",
       method: "GET",
       path: sdkRouteManifest.auth.billing,
       routeName: "auth.billing.get",
@@ -256,7 +256,7 @@ export class AuthClient {
     request: Models.BillingGuardRequest,
   ): Promise<TerraScaleResult<Models.BillingGuardResponse>> {
     return this.http.request({
-      base: "auth",
+      base: "api",
       method: "POST",
       path: sdkRouteManifest.auth.billingGuard,
       routeName: "auth.billing.guard",

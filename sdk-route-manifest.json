@@ -84,7 +84,7 @@
       "responseType": "AuthMeResponse"
     },
     {
-      "base": "auth",
+      "base": "api",
       "client": "auth",
       "operation": "getCurrentBilling",
       "routeName": "auth.billing.get",
@@ -93,7 +93,7 @@
       "responseType": "CurrentOrganizationBilling"
     },
     {
-      "base": "auth",
+      "base": "api",
       "client": "auth",
       "operation": "evaluateBillingGuard",
       "routeName": "auth.billing.guard",
