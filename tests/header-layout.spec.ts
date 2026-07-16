@@ -59,6 +59,17 @@ test.describe('header layout (TER-86)', () => {
 
     await expect(page.locator('.ts-nav')).toBeHidden()
     await expect(page.locator('.ts-header__actions')).toBeHidden()
-    await expect(page.getByRole('button', { name: /toggle navigation menu/i })).toBeVisible()
+    const toggle = page.getByRole('button', { name: /toggle navigation menu/i })
+    await expect(toggle).toBeVisible()
+    const iconPath = toggle.locator('path')
+    const closedPath = await iconPath.getAttribute('d')
+
+    await toggle.click()
+    await expect(page.locator('#mobile-navigation')).toBeVisible()
+    await expect.poll(() => iconPath.getAttribute('d')).not.toBe(closedPath)
+
+    await toggle.click()
+    await expect(page.locator('#mobile-navigation')).toBeHidden()
+    await expect.poll(() => iconPath.getAttribute('d')).toBe(closedPath)
   })
 })
