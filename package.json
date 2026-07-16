@@ -12,7 +12,7 @@
     "cf:pages:dev": "npm run build && wrangler pages dev",
     "cf:deploy": "npm run build && node ./scripts/cloudflare-pages-deploy.mjs --production",
     "cf:deploy:preview": "npm run build && node ./scripts/cloudflare-pages-deploy.mjs --preview",
-    "prepare": "svelte-kit sync || echo ''",
+    "prepare": "svelte-kit sync",
     "check": "node scripts/validate-content.mjs && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.node.json",
     "icons:sync": "node ./scripts/icons-sync.mjs",
     "world-map:sync": "node ./scripts/world-map-sync.mjs",
