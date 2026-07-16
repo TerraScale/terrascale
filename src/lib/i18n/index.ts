@@ -57,8 +57,8 @@ export const dict = derived(locale, ($l) => messages[$l] ?? messages[DEFAULT_LOC
 export function initLocale(): void {
   if (typeof window === 'undefined') return
   const resolved = readPrecomputed() ?? readStored() ?? detectBrowser() ?? DEFAULT_LOCALE
-  if (resolved !== DEFAULT_LOCALE) setLocale(resolved)
-  else syncDocumentLang(resolved)
+  if (resolved !== DEFAULT_LOCALE) locale.set(resolved)
+  syncDocumentLang(resolved)
 }
 
 export function setLocale(code: LocaleCode): void {
@@ -89,9 +89,8 @@ function readPrecomputed(): LocaleCode | null {
 
 function readStored(): LocaleCode | null {
   try {
-    return isLocale(window.localStorage.getItem(STORAGE_KEY))
-      ? (window.localStorage.getItem(STORAGE_KEY) as LocaleCode)
-      : null
+    const stored = window.localStorage.getItem(STORAGE_KEY)
+    return isLocale(stored) ? stored : null
   } catch {
     return null
   }
