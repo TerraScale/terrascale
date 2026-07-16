@@ -1,11 +1,4 @@
-<script lang="ts">
-  import { onMount } from 'svelte'
-  import { resolveIconPath, type AppIconName } from '@/lib/icons'
-
-  export let name: AppIconName
-  export let className = ''
-  export let label: string | undefined = undefined
-
+<script module lang="ts">
   const iconCache: Record<string, Promise<string> | undefined> = {}
 
   const loadIconMarkup = (path: string) => {
@@ -30,14 +23,23 @@
 
     return iconCache[path]!
   }
+</script>
+
+<script lang="ts">
+  import { onMount } from 'svelte'
+  import { resolveIconPath, type AppIconName } from '@/lib/icons'
+
+  export let name: AppIconName
+  export let className = ''
+  export let label: string | undefined = undefined
 
   let iconMarkup = ''
   let isMounted = false
   let loadVersion = 0
 
-  const syncIcon = async () => {
+  const syncIcon = async (iconName: AppIconName) => {
     const currentVersion = ++loadVersion
-    const path = resolveIconPath(name)
+    const path = resolveIconPath(iconName)
     const markup = await loadIconMarkup(path)
 
     if (currentVersion === loadVersion) {
@@ -47,11 +49,10 @@
 
   onMount(() => {
     isMounted = true
-    void syncIcon()
   })
 
   $: if (isMounted) {
-    void syncIcon()
+    void syncIcon(name)
   }
 </script>
 
