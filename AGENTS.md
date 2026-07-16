@@ -102,7 +102,7 @@ npm run cf:deploy:preview
 
 Before handing work back, verify with: `npm run check && npm run lint && npm run build`.
 
-Feature/fix/chore pull requests target `develop` and run no Forgejo automation. Direct pushes to `develop` and `main` are prohibited. Only a `develop` to `main` release pull request may build the immutable site candidate.
+Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies: pull latest `develop` before work, implement on `develop`, **commit often** on substantial coherent changes, and **push directly to `origin/develop`**. Do not open pull requests for day-to-day work. Do not create feature branches or worktrees unless the user explicitly asks. Pushes to `develop` run no Forgejo automation. Only the `develop` → `main` promotion path may build the immutable site candidate.
 
 ## Deployment
 
@@ -122,4 +122,4 @@ CI needs `CLOUDFLARE_API_TOKEN` (`Account / Cloudflare Pages / Edit`) and `CLOUD
 - Use the `reveal` action (CSS classes `ts-reveal`, `ts-reveal-up`, `is-visible`) for scroll-in animation instead of rolling new IntersectionObservers.
 - Keep scoped component styles scoped; promote shared patterns to `src/index.css` utilities when they recur.
 - Do not create markdown or README files unless explicitly requested.
-- Never add an AI agent (Claude, Copilot, GPT, etc.) as a co-author on commits or pull requests. No `Co-Authored-By:` trailers for AI tools, no agent-generated signatures in commit messages, no "Generated with <tool>" footers.
+- Never add an AI agent (Claude, Copilot, GPT, etc.) as a co-author on commits. No `Co-Authored-By:` trailers for AI tools, no agent-generated signatures in commit messages, no "Generated with <tool>" footers.
