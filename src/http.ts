@@ -328,7 +328,7 @@ function stringProperty(source: Record<string, unknown>, key: string): string | 
 function validationIssues(
   source: Record<string, unknown>,
 ): readonly TerraScaleValidationIssue[] | undefined {
-  const raw = source.validationErrors ?? source.errors;
+  const raw = source.fieldErrors ?? source.validationErrors ?? source.errors;
 
   if (Array.isArray(raw)) {
     return raw
@@ -350,7 +350,7 @@ function validationIssues(
         return {
           path: stringProperty(item, "path") ?? stringProperty(item, "field"),
           message,
-          code: stringProperty(item, "code"),
+          code: stringProperty(item, "code") ?? stringProperty(item, "constraint"),
         };
       })
       .filter((item): item is TerraScaleValidationIssue => item !== undefined);

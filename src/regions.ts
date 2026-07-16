@@ -71,7 +71,15 @@ export function normalizeRegionCodes(
   const selected: TerraScaleRegionCode[] = [];
 
   for (const code of codes ?? []) {
-    const regionCode = canonicalRegionCode(code);
+    const candidate = code.trim().toLowerCase();
+    if (candidate.length === 0) {
+      continue;
+    }
+
+    // Preserve a caller-supplied malformed or unknown value so the API can
+    // reject it. Silently substituting GRU could provision data in a region
+    // the caller never selected.
+    const regionCode = canonicalRegionCode(candidate) ?? candidate;
 
     if (regionCode !== undefined && !selected.includes(regionCode)) {
       selected.push(regionCode);

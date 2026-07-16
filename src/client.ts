@@ -628,7 +628,7 @@ export class AuthClient {
 export class OrganizationsClient {
   constructor(private readonly http: TerraScaleHttp) {}
 
-  list(query?: Models.PageRequest): Promise<TerraScaleResult<Models.Page<Models.Organization>>> {
+  list(query?: Models.PageRequest): Promise<TerraScaleResult<readonly Models.Organization[]>> {
     return this.http.request({
       method: "GET",
       path: `${apiRoot}/organizations`,
@@ -691,7 +691,7 @@ export class OrganizationsClient {
   listProjects(
     organizationId: Ulid,
     query?: Models.PageRequest,
-  ): Promise<TerraScaleResult<Models.Page<Models.Project>>> {
+  ): Promise<TerraScaleResult<readonly Models.Project[]>> {
     return this.http.request({
       method: "GET",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/projects`,
@@ -806,7 +806,7 @@ export class OrganizationsClient {
   listInvitations(
     organizationId: Ulid,
     query?: Models.PageRequest,
-  ): Promise<TerraScaleResult<Models.Page<Models.Invitation>>> {
+  ): Promise<TerraScaleResult<readonly Models.Invitation[]>> {
     return this.http.request({
       method: "GET",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations`,
