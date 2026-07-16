@@ -199,17 +199,12 @@ public sealed class TerraScaleClient
 
     internal string? EnvironmentId => options.EnvironmentId;
 
-    internal async Task<TResponse> SendAsync<TResponse>(
+    internal Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
         string requestUri,
         object? body,
         CancellationToken cancellationToken) =>
-        await SendAsync<TResponse>(
-            method,
-            requestUri,
-            body,
-            preferredRegion: null,
-            cancellationToken).ConfigureAwait(false);
+        SendAsync<TResponse>(method, requestUri, body, preferredRegion: null, cancellationToken);
 
     internal async Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
@@ -224,7 +219,9 @@ public sealed class TerraScaleClient
             requestUri,
             CreateJsonContentFactory(body),
             RequestAuthenticationMode.Authenticated,
-            configureRequest: request => ApplyPreferredRegion(request, preferredRegion),
+            configureRequest: preferredRegion is null
+                ? null
+                : request => ApplyPreferredRegion(request, preferredRegion),
             activity,
             cancellationToken).ConfigureAwait(false);
 
@@ -249,7 +246,7 @@ public sealed class TerraScaleClient
             retryAfter: response.Headers.RetryAfter?.Delta);
     }
 
-    private static void ApplyPreferredRegion(HttpRequestMessage request, string? preferredRegion)
+    private static void ApplyPreferredRegion(HttpRequestMessage request, string preferredRegion)
     {
         if (!string.IsNullOrWhiteSpace(preferredRegion))
         {
