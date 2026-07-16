@@ -78,7 +78,12 @@
 - Dispose owned `HttpClient` and other `IDisposable`s; SDK clients must not dispose caller-owned `HttpClient` instances passed in.
 - Gate real-API E2E tests with a `SkipAttribute` (`ShouldSkip`) keyed off env config so they run when the API is reachable and skip cleanly otherwise.
 
-## Branch and Release Policy
+## Branch and Git Workflow
 
-- Feature/fix/chore pull requests target `develop` and intentionally trigger no Forgejo actions or checks; DevHost supplies validation.
-- Direct pushes to `develop` and `main` are prohibited. Only a `develop` to `main` pull request may build an immutable SDK release candidate.
+Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies in full:
+
+- **Before work:** `git fetch` + `git pull --ff-only origin develop`.
+- **Default:** implement on `develop`, **commit often** on substantial coherent changes, and **push directly to `origin/develop`**. Do not open pull requests for day-to-day work.
+- **Do not** create feature branches or worktrees unless the user explicitly asks; when used, branch and worktree are always paired, and finished work lands back on `develop`.
+- Pushes to `develop` intentionally trigger no Forgejo actions or checks; DevHost supplies validation.
+- `main` is for release/promotion only. Only the `develop` → `main` promotion path may build an immutable SDK release candidate.
