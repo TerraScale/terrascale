@@ -25,6 +25,7 @@ export type TerraScaleRouteName =
   | `documents.${string}`
   | `m2m.${string}`
   | `notifications.${string}`
+  | `onboarding.${string}`
   | `organizations.${string}`
   | `pricing.${string}`
   | `query.${string}`

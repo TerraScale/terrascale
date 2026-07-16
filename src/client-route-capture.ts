@@ -276,6 +276,51 @@ const registerRequest = {
 
 const captureOperations: readonly CaptureOperation[] = [
   {
+    client: "onboarding",
+    operation: "getState",
+    invoke: (client) => client.onboarding.getState(),
+  },
+  {
+    client: "onboarding",
+    operation: "updateAccountInformation",
+    invoke: (client) =>
+      client.onboarding.updateAccountInformation({
+        displayName: "Ada Lovelace",
+        phoneNumber: "+14155552671",
+      }),
+  },
+  {
+    client: "onboarding",
+    operation: "createPaymentSession",
+    invoke: (client) => client.onboarding.createPaymentSession(),
+  },
+  {
+    client: "onboarding",
+    operation: "validatePaymentMethod",
+    invoke: (client) =>
+      client.onboarding.validatePaymentMethod({ sessionId: "cs_test_onboarding" }),
+  },
+  {
+    client: "onboarding",
+    operation: "updateMfaDecision",
+    invoke: (client) => client.onboarding.updateMfaDecision({ configureLater: true }),
+  },
+  {
+    client: "onboarding",
+    operation: "createOrganization",
+    invoke: (client) => client.onboarding.createOrganization({ name: "Analytical Engines" }),
+  },
+  {
+    client: "onboarding",
+    operation: "createProject",
+    invoke: (client) =>
+      client.onboarding.createProject({
+        name: "Primary",
+        regions: ["gru"],
+        backupRegion: "gru",
+      }),
+  },
+  {
     client: "auth",
     operation: "getSession",
     invoke: (client) => client.auth.getSession(),
@@ -484,6 +529,70 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) => client.auth.revokeOtherSessions(),
   },
   {
+    client: "auth",
+    operation: "updateProfile",
+    invoke: (client) =>
+      client.auth.updateProfile({ displayName: "Ada Lovelace", phoneNumber: "+14155552671" }),
+  },
+  {
+    client: "auth",
+    operation: "changePassword",
+    invoke: (client) =>
+      client.auth.changePassword({ currentPassword: "old-secret", newPassword: "new-secret" }),
+  },
+  {
+    client: "auth",
+    operation: "listMfaFactors",
+    invoke: (client) => client.auth.listMfaFactors(),
+  },
+  {
+    client: "auth",
+    operation: "enrollTotp",
+    invoke: (client) => client.auth.enrollTotp(),
+  },
+  {
+    client: "auth",
+    operation: "verifyTotpEnrollment",
+    invoke: (client) =>
+      client.auth.verifyTotpEnrollment({ challengeId: sampleIds.sessionId, code: "123456" }),
+  },
+  {
+    client: "auth",
+    operation: "deleteMfaFactor",
+    invoke: (client) => client.auth.deleteMfaFactor(sampleIds.sessionId, { code: "123456" }),
+  },
+  {
+    client: "auth",
+    operation: "generateRecoveryCodes",
+    invoke: (client) => client.auth.generateRecoveryCodes(),
+  },
+  {
+    client: "auth",
+    operation: "switchOrganization",
+    invoke: (client) =>
+      client.auth.switchOrganization({ organizationId: sampleIds.organizationId }),
+  },
+  {
+    client: "auth",
+    operation: "beginExternalLogin",
+    invoke: (client) =>
+      client.auth.beginExternalLogin({
+        provider: "google",
+        redirectUri: "https://dashboard.terrascale.test/api/auth/external-callback",
+        state: "oauth-state",
+      }),
+  },
+  {
+    client: "auth",
+    operation: "completeExternalLogin",
+    invoke: (client) =>
+      client.auth.completeExternalLogin({
+        provider: "github",
+        code: "oauth-code",
+        redirectUri: "https://dashboard.terrascale.test/api/auth/external-callback",
+      }),
+  },
+  {
     client: "organizations",
     operation: "list",
     invoke: (client) => client.organizations.list({ skip: 0, take: 25 }),
@@ -548,7 +657,11 @@ const captureOperations: readonly CaptureOperation[] = [
     client: "organizations",
     operation: "createProject",
     invoke: (client) =>
-      client.organizations.createProject(sampleIds.organizationId, { name: "Primary" }),
+      client.organizations.createProject(sampleIds.organizationId, {
+        name: "Primary",
+        regions: ["gru"],
+        backupRegion: "gru",
+      }),
   },
   {
     client: "organizations",
@@ -558,8 +671,27 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "organizations",
+    operation: "listProjectRegionPlacements",
+    defaultProject: true,
+    invoke: (client) => client.organizations.listProjectRegionPlacements(),
+  },
+  {
+    client: "organizations",
     operation: "updateProject",
-    invoke: (client) => client.organizations.updateProject(sampleIds.projectId, { name: "Core" }),
+    invoke: (client) =>
+      client.organizations.updateProject(sampleIds.projectId, {
+        name: "Core",
+        backupRegion: "gru",
+      }),
+  },
+  {
+    client: "organizations",
+    operation: "deleteProject",
+    invoke: (client) =>
+      client.organizations.deleteProject(sampleIds.projectId, {
+        confirm: true,
+        projectName: "Core",
+      }),
   },
   {
     client: "organizations",
@@ -1076,6 +1208,12 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "security",
+    operation: "getSettings",
+    defaultProject: true,
+    invoke: (client) => client.security.getSettings(),
+  },
+  {
+    client: "security",
     operation: "updateSettings",
     defaultProject: true,
     invoke: (client) =>
@@ -1084,6 +1222,8 @@ const captureOperations: readonly CaptureOperation[] = [
         ipAllowlist: "10.0.0.0/8",
         allowedEmailDomains: "terrascale.tech",
         dataResidency: "gru",
+        authenticationEnabled: false,
+        confirmDisableAuthentication: true,
       }),
   },
 ];

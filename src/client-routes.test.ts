@@ -572,9 +572,10 @@ describe("TerraScaleClient route contracts", () => {
     assertRequest(requests[2], "POST", "/api/v1/users/me/notifications:mark-all-read");
   });
 
-  test("uses only the backed security settings PUT route", async () => {
+  test("uses the backed security settings routes", async () => {
     const { client, requests } = createCapturingClient({});
 
+    await client.security.getSettings();
     await client.security.updateSettings({
       mfaPolicy: "Required",
       ipAllowlist: "10.0.0.0/8",
@@ -582,8 +583,9 @@ describe("TerraScaleClient route contracts", () => {
       dataResidency: "gru",
     });
 
-    assertRequest(requests[0], "PUT", `/api/v1/projects/${projectId}/security/settings`);
-    assert.deepEqual(requests[0]?.body, {
+    assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/security/settings`);
+    assertRequest(requests[1], "PUT", `/api/v1/projects/${projectId}/security/settings`);
+    assert.deepEqual(requests[1]?.body, {
       mfaPolicy: "Required",
       ipAllowlist: "10.0.0.0/8",
       allowedEmailDomains: "terrascale.tech",

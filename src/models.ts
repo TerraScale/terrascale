@@ -88,6 +88,7 @@ export type AuthMeResponse = {
   readonly userId: UserId;
   readonly email: string;
   readonly name: string;
+  readonly phoneNumber: string;
   readonly avatarUrl: string;
   readonly personalOrgId: OrganizationId;
   readonly activeOrgId: OrganizationId;
@@ -114,6 +115,67 @@ export type ListAccountSessionsResponse = {
   readonly nextCursor?: string;
 };
 
+export type UpdateProfileRequest = {
+  readonly displayName: string;
+  readonly phoneNumber: string;
+};
+
+export type UpdateProfileResponse = {
+  readonly success: boolean;
+  readonly name: string;
+  readonly phoneNumber: string;
+  readonly updatedAt?: Timestamp;
+};
+
+export type ChangePasswordRequest = {
+  readonly currentPassword: string;
+  readonly newPassword: string;
+  readonly keepOtherSessions?: boolean;
+};
+
+export type ChangePasswordResponse = {
+  readonly success: boolean;
+  readonly error?: string;
+};
+
+export type MfaFactor = {
+  readonly id: Ulid;
+  readonly type: string;
+  readonly createdAt?: Timestamp | null;
+};
+
+export type ListMfaFactorsResponse = {
+  readonly factors: readonly MfaFactor[];
+};
+
+export type EnrollTotpResponse = {
+  readonly factorId: Ulid;
+  readonly type: string;
+  readonly qrCode: string;
+  readonly secret: string;
+  readonly challengeId: Ulid;
+};
+
+export type VerifyTotpEnrollmentRequest = {
+  readonly challengeId: Ulid;
+  readonly code: string;
+};
+
+export type VerifyTotpEnrollmentResponse = {
+  readonly success: boolean;
+  readonly error?: string;
+};
+
+export type DeleteMfaFactorRequest = {
+  readonly currentPassword?: string;
+  readonly code?: string;
+};
+
+export type GenerateRecoveryCodesResponse = {
+  readonly codes: readonly string[];
+  readonly generatedAt?: Timestamp;
+};
+
 export type RegisterRequest = {
   readonly email: string;
   readonly password: string;
@@ -138,6 +200,7 @@ export type AuthTokenResponse = {
   readonly userId: UserId;
   readonly email: string;
   readonly name: string;
+  readonly phoneNumber?: string;
   readonly avatarUrl: string;
   readonly personalOrgId: OrganizationId;
   readonly activeOrgId: OrganizationId;
@@ -145,6 +208,27 @@ export type AuthTokenResponse = {
   readonly roles: readonly string[];
   readonly shouldPromptMfa: boolean;
   readonly mfaEnabled: boolean;
+};
+
+export type SwitchOrganizationRequest = {
+  readonly organizationId: OrganizationId;
+};
+
+export type DashboardExternalLoginBeginRequest = {
+  readonly provider: "github" | "google";
+  readonly redirectUri: string;
+  readonly state: string;
+};
+
+export type DashboardExternalLoginBeginResponse = {
+  readonly authorizeUrl: string;
+};
+
+export type DashboardExternalLoginCompleteRequest = {
+  readonly provider: "github" | "google";
+  readonly code: string;
+  readonly idToken?: string;
+  readonly redirectUri: string;
 };
 
 export type VerifyEmailRequest = {
@@ -274,6 +358,7 @@ export type Project = {
   readonly name: string;
   readonly ownerUserIds: readonly UserId[];
   readonly regions: readonly TerraScaleRegionCode[];
+  readonly backupRegion: TerraScaleRegionCode;
   readonly placementStatus: ProjectPlacementStatus;
   readonly placementGeneration: number;
   readonly slug?: string;
@@ -289,15 +374,94 @@ export type ProjectPlacementStatus =
   | "Deleting"
   | "Failed";
 
+export type ProjectRegionPlacement = {
+  readonly region: TerraScaleRegionCode;
+  readonly placementGeneration: number;
+  readonly status: string;
+  readonly isBackupRegion: boolean;
+  readonly replicationLagMilliseconds?: number | null;
+  readonly error?: string | null;
+  readonly updatedAt: Timestamp;
+};
+
 export type CreateProjectRequest = {
   readonly name: string;
+  readonly backupRegion: TerraScaleRegionCode;
   readonly defaultPermissionKeys?: readonly string[];
-  readonly regions?: readonly TerraScaleRegionCode[];
+  readonly regions: readonly TerraScaleRegionCode[];
   readonly slug?: string;
+};
+
+export type OnboardingStep =
+  | "account-information"
+  | "payment-method"
+  | "mfa"
+  | "organization"
+  | "project"
+  | "complete";
+
+export type OnboardingMfaDecision = "pending" | "configured" | "later";
+
+export type OnboardingState = {
+  readonly userId: UserId;
+  readonly email: string;
+  readonly displayName: string;
+  readonly phoneNumber: string;
+  readonly accountInformationCompleted: boolean;
+  readonly paymentMethodValidated: boolean;
+  readonly mfaDecision: OnboardingMfaDecision;
+  readonly organizationId?: OrganizationId | null;
+  readonly projectId?: ProjectId | null;
+  readonly completed: boolean;
+  readonly nextStep: OnboardingStep;
+  readonly updatedAt: Timestamp;
+};
+
+export type UpdateOnboardingAccountRequest = {
+  readonly displayName: string;
+  readonly phoneNumber: string;
+};
+
+export type OnboardingPaymentSession = {
+  readonly checkoutUrl: string;
+  readonly sessionId: string;
+};
+
+export type ValidateOnboardingPaymentRequest = {
+  readonly sessionId: string;
+};
+
+export type UpdateOnboardingMfaRequest = {
+  readonly configureLater: boolean;
+};
+
+export type CreateOnboardingOrganizationRequest = {
+  readonly name: string;
+};
+
+export type CreateOnboardingProjectRequest = {
+  readonly name: string;
+  readonly regions: readonly TerraScaleRegionCode[];
+  readonly backupRegion: TerraScaleRegionCode;
 };
 
 export type UpdateProjectRequest = Partial<CreateProjectRequest> & {
   readonly placementGeneration?: number;
+};
+
+export type DeleteProjectRequest = {
+  readonly confirm: true;
+  readonly projectName: string;
+};
+
+export type DeletedProject = {
+  readonly projectId: ProjectId;
+  readonly organizationId: OrganizationId;
+  readonly name: string;
+  readonly deleted: boolean;
+  readonly databasesDeleted: number;
+  readonly queuesDeleted: number;
+  readonly physicalStorageDeleted: boolean;
 };
 
 export type DashboardContextUser = {
@@ -326,6 +490,7 @@ export type DashboardContextDatabase = {
   readonly projectId: ProjectId;
   readonly name: string;
   readonly regions: readonly TerraScaleRegionCode[];
+  readonly backupRegion: TerraScaleRegionCode;
   readonly createdAt: Timestamp;
 };
 
@@ -369,6 +534,7 @@ export type ProjectDatabase = {
   readonly projectId: ProjectId;
   readonly name: string;
   readonly regions: readonly TerraScaleRegionCode[];
+  readonly backupRegion: TerraScaleRegionCode;
   readonly createdAt: Timestamp;
   readonly version: number;
 };
@@ -1084,6 +1250,7 @@ export type SecuritySettings = {
   readonly allowedEmailDomains: string;
   readonly dataResidency: string;
   readonly encryption: string;
+  readonly authenticationEnabled: boolean;
   readonly updatedAt: Timestamp;
 };
 
@@ -1092,6 +1259,8 @@ export type UpdateSecuritySettingsRequest = {
   readonly ipAllowlist?: string;
   readonly allowedEmailDomains?: string;
   readonly dataResidency?: string;
+  readonly authenticationEnabled?: boolean;
+  readonly confirmDisableAuthentication?: boolean;
 };
 
 export type AdminUser = {
