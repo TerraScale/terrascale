@@ -406,6 +406,7 @@ export type CreateProjectRequest = {
 export type OnboardingStep =
   | "account-information"
   | "payment-method"
+  | "payment-validation"
   | "mfa"
   | "organization"
   | "project"
@@ -413,18 +414,47 @@ export type OnboardingStep =
 
 export type OnboardingMfaDecision = "pending" | "configured" | "later";
 
+export type OnboardingPaymentValidationStatus =
+  | "not-started"
+  | "pending"
+  | "approved"
+  | "rejected";
+
+export type OnboardingStatus =
+  | "not-started"
+  | "in-progress"
+  | "awaiting-validation"
+  | "blocked"
+  | "ready-for-project"
+  | "completed";
+
+export type OnboardingStepState = {
+  readonly key: Exclude<OnboardingStep, "complete">;
+  readonly state: "pending" | "current" | "completed" | "blocked";
+};
+
 export type OnboardingState = {
   readonly userId: UserId;
   readonly email: string;
   readonly displayName: string;
   readonly phoneNumber: string;
   readonly accountInformationCompleted: boolean;
+  readonly paymentMethodRegistered: boolean;
   readonly paymentMethodValidated: boolean;
+  readonly paymentValidationStatus: OnboardingPaymentValidationStatus;
   readonly mfaDecision: OnboardingMfaDecision;
   readonly organizationId?: OrganizationId | null;
+  readonly organizationOwnerAssigned: boolean;
+  readonly paymentMethodLinkedToOrganization: boolean;
+  readonly subscriptionOrTrialActive: boolean;
   readonly projectId?: ProjectId | null;
+  readonly projectOwnerAssigned: boolean;
+  readonly projectPrimaryRegions: readonly TerraScaleRegionCode[];
+  readonly projectBackupRegion: TerraScaleRegionCode | "";
   readonly completed: boolean;
+  readonly status: OnboardingStatus;
   readonly nextStep: OnboardingStep;
+  readonly steps: readonly OnboardingStepState[];
   readonly updatedAt: Timestamp;
 };
 
@@ -439,7 +469,7 @@ export type OnboardingPaymentSession = {
 };
 
 export type ValidateOnboardingPaymentRequest = {
-  readonly sessionId: string;
+  readonly sessionId?: string;
 };
 
 export type UpdateOnboardingMfaRequest = {
