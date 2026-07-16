@@ -86,6 +86,18 @@ internal static class TerraScaleApiRoutes
     public static string ProjectUsageWorkloadGet(string projectId, string? range) =>
         WithQuery($"/api/v1/projects/{Escape(projectId)}/usage/workload", ("range", NormalizeOptional(range)));
 
+    public static string ProjectUsageHistoryGet(string projectId, string? range) =>
+        WithQuery($"/api/v1/projects/{Escape(projectId)}/usage/history", ("range", NormalizeOptional(range)));
+
+    public static string ProjectLatencyGet(string projectId, double? latitude, double? longitude) =>
+        WithQuery(
+            $"/api/v1/projects/{Escape(projectId)}/latency",
+            ("latitude", Number(latitude)),
+            ("longitude", Number(longitude)));
+
+    public static string OrganizationUsageGet(string organizationId) =>
+        $"/api/v1/organizations/{Escape(organizationId)}/usage";
+
     public static string ApiKeysList(string projectId, string? cursor, int limit) =>
         WithQuery($"/api/v1/projects/{Escape(projectId)}/auth/api-keys", ("cursor", NormalizeOptional(cursor)), ("limit", Number(limit)));
 
@@ -113,18 +125,29 @@ internal static class TerraScaleApiRoutes
     public static string M2MTokenCreate(string projectId) =>
         $"/api/v1/projects/{Escape(projectId)}/auth/m2m/token";
 
-    public static string NotificationsList(int skip, int take, bool unreadOnly) =>
+    public static string NotificationsList(
+        int skip,
+        int take,
+        bool unreadOnly,
+        string? organizationId = null,
+        string? projectId = null,
+        bool includeOrganizationNotifications = false) =>
         WithQuery(
             "/api/v1/users/me/notifications",
             ("skip", Number(skip)),
             ("take", Number(take)),
-            ("unreadOnly", Boolean(unreadOnly)));
+            ("unreadOnly", Boolean(unreadOnly)),
+            ("organizationId", NormalizeOptional(organizationId)),
+            ("projectId", NormalizeOptional(projectId)),
+            ("includeOrganizationNotifications", Boolean(includeOrganizationNotifications)));
 
     public static string NotificationMarkRead(string notificationId) =>
         $"/api/v1/users/me/notifications/{Escape(notificationId)}:mark-read";
 
-    public static string NotificationsMarkAllRead() =>
-        "/api/v1/users/me/notifications:mark-all-read";
+    public static string NotificationsMarkAllRead(string? organizationId = null) =>
+        WithQuery(
+            "/api/v1/users/me/notifications:mark-all-read",
+            ("organizationId", NormalizeOptional(organizationId)));
 
     public static string BackupPolicyConfigure(string projectId, string databaseId) =>
         $"/api/v1/projects/{Escape(projectId)}/databases/{Escape(databaseId)}/backups/policy";
@@ -182,6 +205,9 @@ internal static class TerraScaleApiRoutes
 
     private static string Number(int value) =>
         value.ToString(CultureInfo.InvariantCulture);
+
+    private static string? Number(double? value) =>
+        value?.ToString("R", CultureInfo.InvariantCulture);
 
     private static string Boolean(bool value) =>
         value.ToString().ToLowerInvariant();

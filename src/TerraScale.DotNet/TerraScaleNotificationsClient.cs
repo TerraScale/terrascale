@@ -13,6 +13,54 @@ public sealed class TerraScaleNotificationsClient
     }
 
     /// <summary>
+    /// Lists notifications linked to one organization, including its project alerts.
+    /// </summary>
+    public Task<IReadOnlyList<TerraScaleNotification>> ListForOrganizationAsync(
+        string organizationId,
+        int skip = 0,
+        int take = 50,
+        bool unreadOnly = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(organizationId);
+        TerraScalePagination.Validate(skip, take);
+        return client.SendAsync<IReadOnlyList<TerraScaleNotification>>(
+            HttpMethod.Get,
+            TerraScaleApiRoutes.NotificationsList(
+                skip,
+                take,
+                unreadOnly,
+                organizationId: organizationId),
+            body: null,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Lists alerts linked to one project and optionally organization-wide notices.
+    /// </summary>
+    public Task<IReadOnlyList<TerraScaleNotification>> ListForProjectAsync(
+        string projectId,
+        bool includeOrganizationNotifications = false,
+        int skip = 0,
+        int take = 50,
+        bool unreadOnly = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
+        TerraScalePagination.Validate(skip, take);
+        return client.SendAsync<IReadOnlyList<TerraScaleNotification>>(
+            HttpMethod.Get,
+            TerraScaleApiRoutes.NotificationsList(
+                skip,
+                take,
+                unreadOnly,
+                projectId: projectId,
+                includeOrganizationNotifications: includeOrganizationNotifications),
+            body: null,
+            cancellationToken);
+    }
+
+    /// <summary>
     /// Lists notifications for the signed-in user.
     /// </summary>
     public Task<IReadOnlyList<TerraScaleNotification>> ListAsync(
@@ -54,6 +102,21 @@ public sealed class TerraScaleNotificationsClient
             TerraScaleApiRoutes.NotificationsMarkAllRead(),
             body: null,
             cancellationToken);
+
+    /// <summary>
+    /// Marks all notifications linked to one organization read for the signed-in user.
+    /// </summary>
+    public Task<TerraScaleMarkedNotificationsRead> MarkAllReadForOrganizationAsync(
+        string organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(organizationId);
+        return client.SendAsync<TerraScaleMarkedNotificationsRead>(
+            HttpMethod.Post,
+            TerraScaleApiRoutes.NotificationsMarkAllRead(organizationId),
+            body: null,
+            cancellationToken);
+    }
 }
 
 /// <summary>
@@ -65,7 +128,9 @@ public sealed record TerraScaleNotification(
     string? Body,
     string Severity,
     DateTimeOffset? ReadAt,
-    string CreatedAt);
+    string CreatedAt,
+    string? OrganizationId = null,
+    string? ProjectId = null);
 
 /// <summary>
 /// Result of marking all notifications read.

@@ -58,6 +58,47 @@ public sealed class TerraScaleApiE2ETests
 
     [Test]
     [RequiresTerraScaleApi]
+    public async Task ProjectUsage_HistoryLatencyAndOrganizationTotals_ReturnRealApiData()
+    {
+        var client = TerraScaleApiE2E.CreateClient();
+        var currentProject = await GetCurrentProjectAsync(client);
+
+        var usage = await client.ProjectUsage.GetAsync(currentProject.ProjectId);
+        var history = await client.ProjectUsage.GetHistoryAsync(currentProject.ProjectId, "30d");
+        var latency = await client.ProjectUsage.GetLatencyAsync(
+            currentProject.ProjectId,
+            latitude: -23.5505,
+            longitude: -46.6333);
+        var organizationUsage = await client.ProjectUsage.GetOrganizationAsync(
+            currentProject.OrganizationId);
+
+        await Assert.That(usage.ProjectId).IsEqualTo(currentProject.ProjectId);
+        await Assert.That(usage.EgressBytes).IsGreaterThanOrEqualTo(0);
+        await Assert.That(history.ProjectId).IsEqualTo(currentProject.ProjectId);
+        await Assert.That(history.Points.Count).IsGreaterThan(0);
+        await Assert.That(latency.ProjectId).IsEqualTo(currentProject.ProjectId);
+        await Assert.That(latency.Source).IsEqualTo("geographic_estimate");
+        await Assert.That(latency.NearestRegion).IsNotNull();
+        await Assert.That(organizationUsage.OrganizationId).IsEqualTo(currentProject.OrganizationId);
+        await Assert.That(organizationUsage.Projects.Any(project =>
+            project.ProjectId == currentProject.ProjectId)).IsTrue();
+    }
+
+    [Test]
+    [RequiresTerraScaleApi]
+    public async Task ProjectUsage_GetHistoryAsync_RejectsUnsupportedRange()
+    {
+        var client = TerraScaleApiE2E.CreateClient();
+        var currentProject = await GetCurrentProjectAsync(client);
+
+        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.ProjectUsage.GetHistoryAsync(currentProject.ProjectId, "all"));
+
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    [RequiresTerraScaleApi]
     public async Task ProjectDatabases_CreateGetListAndDelete_RoundTripAgainstRealApi()
     {
         var client = TerraScaleApiE2E.CreateClient();

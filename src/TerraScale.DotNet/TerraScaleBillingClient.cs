@@ -90,7 +90,8 @@ public sealed record TerraScaleBillingAccount(
     string BillingAccountId,
     string OrganizationId,
     string PlanId,
-    string Status);
+    string Status,
+    string? BillingInterval = null);
 
 /// <summary>
 /// Persisted Stripe invoice projection returned by TerraScale billing.
@@ -103,7 +104,9 @@ public sealed record TerraScaleBillingInvoice(
     string Status,
     DateTimeOffset IssuedAt,
     string? HostedInvoiceUrl = null,
-    string? InvoicePdf = null);
+    string? InvoicePdf = null,
+    DateTimeOffset? PeriodStart = null,
+    DateTimeOffset? PeriodEnd = null);
 
 /// <summary>
 /// Page of persisted Stripe invoice projections.
