@@ -224,8 +224,11 @@ type ParsedBody =
 
 function buildUrl(baseUrl: string, path: string, query: QueryRecord | undefined): URL {
   const url = new URL(path.replace(/^\/+/, ""), `${baseUrl}/`);
+  if (query === undefined) {
+    return url;
+  }
 
-  for (const [key, value] of Object.entries(query ?? {}) as [string, QueryValue][]) {
+  for (const [key, value] of Object.entries(query) as [string, QueryValue][]) {
     if (value === null || value === undefined) {
       continue;
     }
