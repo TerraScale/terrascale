@@ -7,13 +7,9 @@ internal sealed class TerraScaleOptionsExtension : IDbContextOptionsExtension
 {
     private DbContextOptionsExtensionInfo? info;
 
-    public TerraScaleOptionsExtension()
-        : this(new TerraScaleEntityFrameworkCoreOptions())
+    public TerraScaleOptionsExtension(TerraScaleEntityFrameworkCoreOptions options)
     {
-    }
-
-    private TerraScaleOptionsExtension(TerraScaleEntityFrameworkCoreOptions options)
-    {
+        ArgumentNullException.ThrowIfNull(options);
         Options = options;
     }
 
@@ -29,12 +25,6 @@ internal sealed class TerraScaleOptionsExtension : IDbContextOptionsExtension
     public void Validate(IDbContextOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-    }
-
-    public TerraScaleOptionsExtension WithOptions(TerraScaleEntityFrameworkCoreOptions options)
-    {
-        ArgumentNullException.ThrowIfNull(options);
-        return new TerraScaleOptionsExtension(options);
     }
 
     private sealed class ExtensionInfo(IDbContextOptionsExtension extension)

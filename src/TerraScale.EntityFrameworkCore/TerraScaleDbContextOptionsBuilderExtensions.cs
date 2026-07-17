@@ -21,7 +21,7 @@ public static class TerraScaleDbContextOptionsBuilderExtensions
         var options = existingExtension?.Options.Clone() ?? new TerraScaleEntityFrameworkCoreOptions();
         configure?.Invoke(options);
 
-        var extension = (existingExtension ?? new TerraScaleOptionsExtension()).WithOptions(options);
+        var extension = new TerraScaleOptionsExtension(options);
         ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
 
         return optionsBuilder;
