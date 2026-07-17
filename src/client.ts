@@ -90,7 +90,6 @@ export class TerraScaleClient {
   readonly audit: AuditClient;
   readonly notifications: NotificationsClient;
   readonly security: SecurityClient;
-  readonly admin: AdminClient;
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.http = new TerraScaleHttp(config);
@@ -114,7 +113,6 @@ export class TerraScaleClient {
     this.audit = new AuditClient(this.http);
     this.notifications = new NotificationsClient(this.http);
     this.security = new SecurityClient(this.http);
-    this.admin = new AdminClient(this.http);
   }
 
   get config(): ResolvedTerraScaleRuntimeConfig {
