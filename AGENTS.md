@@ -117,6 +117,7 @@ CI needs `CLOUDFLARE_API_TOKEN` (`Account / Cloudflare Pages / Edit`) and `CLOUD
 ## Conventions
 
 - Prefer editing existing components/utilities over introducing new ones.
+- Public TypeScript examples must use the ordinary customer `@terrascale/sdk` contract. Do not show Dashboard-only client identifiers, headers, DTOs, routes, tenant bypasses, database identifiers, direct TerraBase access, or private APIs.
 - Keep `src/lib/site.ts` as the single source of truth for nav, footer, and social link data.
 - Use `RouteLink` for internal routes and `ExternalLink` for external URLs — don't hand-roll `<a>` tags for navigation.
 - Use the `reveal` action (CSS classes `ts-reveal`, `ts-reveal-up`, `is-visible`) for scroll-in animation instead of rolling new IntersectionObservers.
