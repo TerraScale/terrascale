@@ -18,7 +18,7 @@ APIs. Role-protected owner/admin APIs use a separate explicit public entrypoint.
 
 ## Public API Surface
 
-The public client follows the backed `TerraScale.API` REST surface:
+The public client follows the backed `TerraScale.Platform` REST surface:
 
 - Project databases: list/create/get/delete under
   `/api/v1/projects/{projectId}/databases`, with environment list/get/create/delete
