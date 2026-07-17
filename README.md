@@ -178,6 +178,7 @@ var queue = await client.Queues.CreateAsync(
     projectId,
     new TerraScaleCreateProjectQueueRequest(
         "order-processing",
+        TerraScaleQueueKinds.Queue,
         RetentionSeconds: 86_400,
         PartitionCount: 8,
         DuplicateDetectionSeconds: 120),

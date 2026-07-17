@@ -23,7 +23,7 @@ public static class TerraScaleQueueKinds
 /// </summary>
 public sealed record TerraScaleCreateProjectQueueRequest(
     string Name,
-    string Kind = TerraScaleQueueKinds.Queue,
+    string Kind,
     string? Description = null,
     long? RetentionSeconds = null,
     int? MaxMessageSizeBytes = null,

@@ -28,17 +28,18 @@ public sealed class TerraScaleQueuesClient
     }
 
     /// <summary>
-    /// Creates a project work queue with the API defaults.
+    /// Creates a project queue or topic with the API defaults for the selected kind.
     /// </summary>
     public Task<TerraScaleProjectQueue> CreateAsync(
         string projectId,
         string name,
+        string kind,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         return CreateAsync(
             projectId,
-            new TerraScaleCreateProjectQueueRequest(name.Trim()),
+            new TerraScaleCreateProjectQueueRequest(name.Trim(), kind),
             cancellationToken);
     }
 

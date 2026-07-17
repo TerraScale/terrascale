@@ -163,6 +163,7 @@ public sealed class TerraScaleApiE2ETests
                 currentProject.ProjectId,
                 new TerraScaleCreateProjectQueueRequest(
                     queueName,
+                    TerraScaleQueueKinds.Queue,
                     Description: "TerraScale .NET SDK queue integration test",
                     RetentionSeconds: 3600,
                     MaxMessageSizeBytes: 64 * 1024,
