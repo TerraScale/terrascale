@@ -12,6 +12,15 @@ import type { TerraScaleResult } from "./result.js";
 const apiRoot = "/api/v1";
 
 export const sdkRouteManifest = {
+  onboarding: {
+    state: `${apiRoot}/onboarding`,
+    accountInformation: `${apiRoot}/onboarding/account-information`,
+    paymentSession: `${apiRoot}/onboarding/payment-method/checkout-session`,
+    paymentValidation: `${apiRoot}/onboarding/payment-method/validate`,
+    mfaDecision: `${apiRoot}/onboarding/mfa-decision`,
+    organization: `${apiRoot}/onboarding/organization`,
+    project: `${apiRoot}/onboarding/project`,
+  },
   auth: {
     me: `${apiRoot}/auth/me`,
     billing: `${apiRoot}/auth/me/billing`,
@@ -20,20 +29,32 @@ export const sdkRouteManifest = {
     verifyEmail: `${apiRoot}/auth/password/verify-email`,
     resendVerification: `${apiRoot}/auth/password/resend-verification`,
     signIn: `${apiRoot}/auth/password/login`,
+    verifyPasswordMfa: `${apiRoot}/auth/password/mfa/verify`,
     forgotPassword: `${apiRoot}/auth/password/forgot-password`,
     resetPassword: `${apiRoot}/auth/password/reset-password`,
     magicLinkRequest: `${apiRoot}/auth/passwordless/magic-link`,
     magicLinkComplete: `${apiRoot}/auth/passwordless/magic-link/complete`,
     refresh: `${apiRoot}/auth/refresh`,
     signOut: `${apiRoot}/auth/logout`,
+    switchOrganization: `${apiRoot}/auth/switch-organization`,
+    externalLoginBegin: `${apiRoot}/auth/external-login/begin`,
+    externalLoginComplete: `${apiRoot}/auth/external-login/complete`,
     accountSessions: `${apiRoot}/account/sessions`,
     accountSession: (sessionId: Ulid) =>
       `${apiRoot}/account/sessions/${ulidPathSegment(sessionId)}`,
+    updateProfile: `${apiRoot}/users/me/profile`,
+    changePassword: `${apiRoot}/auth/password/change-password`,
+    mfaFactors: `${apiRoot}/auth/mfa/factors`,
+    mfaFactor: (factorId: Ulid) => `${apiRoot}/auth/mfa/factors/${ulidPathSegment(factorId)}`,
+    enrollTotp: `${apiRoot}/auth/mfa/totp/enroll`,
+    verifyTotpEnrollment: `${apiRoot}/auth/mfa/totp/enroll/verify`,
+    generateRecoveryCodes: `${apiRoot}/auth/mfa/recovery-codes/generate`,
     project: {
       register: (projectId: Ulid) => `${projectAuthRoot(projectId)}/signup`,
       verifyEmail: (projectId: Ulid) => `${projectAuthRoot(projectId)}/verify-email`,
       resendVerification: (projectId: Ulid) => `${projectAuthRoot(projectId)}/resend-verification`,
       signIn: (projectId: Ulid) => `${projectAuthRoot(projectId)}/login`,
+      verifyPasswordMfa: (projectId: Ulid) => `${projectAuthRoot(projectId)}/password/mfa/verify`,
       forgotPassword: (projectId: Ulid) => `${projectAuthRoot(projectId)}/forgot-password`,
       resetPassword: (projectId: Ulid) => `${projectAuthRoot(projectId)}/reset-password`,
       magicLinkRequest: (projectId: Ulid) =>
@@ -50,6 +71,7 @@ export class TerraScaleClient {
   private readonly http: TerraScaleHttp;
 
   readonly auth: AuthClient;
+  readonly onboarding: OnboardingClient;
   readonly organizations: OrganizationsClient;
   readonly regions: RegionsClient;
   readonly databases: DatabasesClient;
@@ -68,11 +90,11 @@ export class TerraScaleClient {
   readonly audit: AuditClient;
   readonly notifications: NotificationsClient;
   readonly security: SecurityClient;
-  readonly admin: AdminClient;
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.http = new TerraScaleHttp(config);
     this.auth = new AuthClient(this.http);
+    this.onboarding = new OnboardingClient(this.http);
     this.organizations = new OrganizationsClient(this.http);
     this.regions = new RegionsClient(this.http);
     this.databases = new DatabasesClient(this.http);
@@ -91,7 +113,6 @@ export class TerraScaleClient {
     this.audit = new AuditClient(this.http);
     this.notifications = new NotificationsClient(this.http);
     this.security = new SecurityClient(this.http);
-    this.admin = new AdminClient(this.http);
   }
 
   get config(): ResolvedTerraScaleRuntimeConfig {
@@ -105,7 +126,86 @@ export class TerraScaleClient {
   }
 
   dashboardDatabaseId(name: DashboardLogicalDatabaseKey | string): Ulid | undefined {
-    return this.http.config.dashboardDatabaseIds[name];
+    return this.http.dashboardDatabaseId(name);
+  }
+}
+
+export class OnboardingClient {
+  constructor(private readonly http: TerraScaleHttp) {}
+
+  getState(): Promise<TerraScaleResult<Models.OnboardingState>> {
+    return this.http.request({
+      method: "GET",
+      path: sdkRouteManifest.onboarding.state,
+      routeName: "onboarding.getState",
+    });
+  }
+
+  updateAccountInformation(
+    request: Models.UpdateOnboardingAccountRequest,
+  ): Promise<TerraScaleResult<Models.OnboardingState>> {
+    return this.http.request({
+      method: "PATCH",
+      path: sdkRouteManifest.onboarding.accountInformation,
+      routeName: "onboarding.accountInformation.update",
+      body: request,
+    });
+  }
+
+  createPaymentSession(): Promise<TerraScaleResult<Models.OnboardingPaymentSession>> {
+    return this.http.request({
+      method: "POST",
+      path: sdkRouteManifest.onboarding.paymentSession,
+      routeName: "onboarding.paymentMethod.createSession",
+    });
+  }
+
+  validatePaymentMethod(
+    request: Models.ValidateOnboardingPaymentRequest,
+  ): Promise<TerraScaleResult<Models.OnboardingState>> {
+    return this.http.request({
+      method: "POST",
+      path: sdkRouteManifest.onboarding.paymentValidation,
+      routeName: "onboarding.paymentMethod.validate",
+      body: request,
+    });
+  }
+
+  updateMfaDecision(
+    request: Models.UpdateOnboardingMfaRequest,
+  ): Promise<TerraScaleResult<Models.OnboardingState>> {
+    return this.http.request({
+      method: "PUT",
+      path: sdkRouteManifest.onboarding.mfaDecision,
+      routeName: "onboarding.mfaDecision.update",
+      body: request,
+    });
+  }
+
+  createOrganization(
+    request: Models.CreateOnboardingOrganizationRequest,
+  ): Promise<TerraScaleResult<Models.OnboardingState>> {
+    return this.http.request({
+      method: "POST",
+      path: sdkRouteManifest.onboarding.organization,
+      routeName: "onboarding.organization.create",
+      body: request,
+    });
+  }
+
+  createProject(
+    request: Models.CreateOnboardingProjectRequest,
+  ): Promise<TerraScaleResult<Models.OnboardingState>> {
+    return this.http.request({
+      method: "POST",
+      path: sdkRouteManifest.onboarding.project,
+      routeName: "onboarding.project.create",
+      body: {
+        ...request,
+        regions: normalizeRegionCodes(request.regions),
+        backupRegion: normalizeRegionCodes([request.backupRegion])[0],
+      },
+    });
   }
 }
 
@@ -143,7 +243,7 @@ export class AuthClient {
 
   getCurrentBilling(): Promise<TerraScaleResult<Models.CurrentOrganizationBilling>> {
     return this.http.request({
-      base: "auth",
+      base: "api",
       method: "GET",
       path: sdkRouteManifest.auth.billing,
       routeName: "auth.billing.get",
@@ -154,7 +254,7 @@ export class AuthClient {
     request: Models.BillingGuardRequest,
   ): Promise<TerraScaleResult<Models.BillingGuardResponse>> {
     return this.http.request({
-      base: "auth",
+      base: "api",
       method: "POST",
       path: sdkRouteManifest.auth.billingGuard,
       routeName: "auth.billing.guard",
@@ -240,6 +340,25 @@ export class AuthClient {
         password: request.password,
         deviceFingerprint: request.deviceFingerprint ?? "",
       },
+    });
+  }
+
+  verifyPasswordMfa(
+    request: Models.PasswordMfaVerifyRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "POST",
+      path: authRoute(
+        this.http,
+        projectId,
+        sdkRouteManifest.auth.verifyPasswordMfa,
+        sdkRouteManifest.auth.project.verifyPasswordMfa,
+      ),
+      routeName: "auth.passwordMfa.verify",
+      headerPolicy: "anonymous",
+      body: request,
     });
   }
 
@@ -383,6 +502,125 @@ export class AuthClient {
       routeName: "auth.sessions.revokeOther",
     });
   }
+
+  updateProfile(
+    request: Models.UpdateProfileRequest,
+  ): Promise<TerraScaleResult<Models.UpdateProfileResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "PATCH",
+      path: sdkRouteManifest.auth.updateProfile,
+      routeName: "auth.profile.update",
+      body: request,
+    });
+  }
+
+  changePassword(
+    request: Models.ChangePasswordRequest,
+  ): Promise<TerraScaleResult<Models.ChangePasswordResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.changePassword,
+      routeName: "auth.password.change",
+      body: {
+        currentPassword: request.currentPassword,
+        newPassword: request.newPassword,
+        keepOtherSessions: false,
+      },
+    });
+  }
+
+  listMfaFactors(): Promise<TerraScaleResult<Models.ListMfaFactorsResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "GET",
+      path: sdkRouteManifest.auth.mfaFactors,
+      routeName: "auth.mfa.factors.list",
+    });
+  }
+
+  enrollTotp(): Promise<TerraScaleResult<Models.EnrollTotpResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.enrollTotp,
+      routeName: "auth.mfa.totp.enroll",
+      body: { type: "totp" },
+    });
+  }
+
+  verifyTotpEnrollment(
+    request: Models.VerifyTotpEnrollmentRequest,
+  ): Promise<TerraScaleResult<Models.VerifyTotpEnrollmentResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.verifyTotpEnrollment,
+      routeName: "auth.mfa.totp.verifyEnrollment",
+      body: request,
+    });
+  }
+
+  deleteMfaFactor(
+    factorId: Ulid,
+    request: Models.DeleteMfaFactorRequest,
+  ): Promise<TerraScaleResult<Models.VerifyTotpEnrollmentResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "DELETE",
+      path: sdkRouteManifest.auth.mfaFactor(factorId),
+      routeName: "auth.mfa.factors.delete",
+      body: request,
+    });
+  }
+
+  generateRecoveryCodes(): Promise<TerraScaleResult<Models.GenerateRecoveryCodesResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.generateRecoveryCodes,
+      routeName: "auth.mfa.recoveryCodes.generate",
+    });
+  }
+
+  switchOrganization(
+    request: Models.SwitchOrganizationRequest,
+  ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.switchOrganization,
+      routeName: "auth.organization.switch",
+      body: request,
+    });
+  }
+
+  beginExternalLogin(
+    request: Models.DashboardExternalLoginBeginRequest,
+  ): Promise<TerraScaleResult<Models.DashboardExternalLoginBeginResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.externalLoginBegin,
+      routeName: "auth.externalLogin.begin",
+      body: request,
+      headerPolicy: "anonymous",
+    });
+  }
+
+  completeExternalLogin(
+    request: Models.DashboardExternalLoginCompleteRequest,
+  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.externalLoginComplete,
+      routeName: "auth.externalLogin.complete",
+      body: request,
+      headerPolicy: "anonymous",
+    });
+  }
 }
 
 export class OrganizationsClient {
@@ -416,6 +654,38 @@ export class OrganizationsClient {
     });
   }
 
+  update(
+    organizationId: Ulid,
+    request: Models.UpdateOrganizationRequest,
+  ): Promise<TerraScaleResult<Models.Organization>> {
+    return this.http.request({
+      method: "PATCH",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}`,
+      routeName: "organizations.update",
+      body: request,
+    });
+  }
+
+  requestDeletion(
+    organizationId: Ulid,
+    request: Models.RequestOrganizationDeletionRequest,
+  ): Promise<TerraScaleResult<Models.Organization>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}:request-deletion`,
+      routeName: "organizations.deletion.request",
+      body: request,
+    });
+  }
+
+  leave(organizationId: Ulid): Promise<TerraScaleResult<void>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}:leave`,
+      routeName: "organizations.leave",
+    });
+  }
+
   listProjects(
     organizationId: Ulid,
     query?: Models.PageRequest,
@@ -428,15 +698,41 @@ export class OrganizationsClient {
     });
   }
 
-  listUsers(
+  listMembers(
     organizationId: Ulid,
     query?: Models.PageRequest,
-  ): Promise<TerraScaleResult<readonly Models.OrganizationUser[]>> {
+  ): Promise<TerraScaleResult<readonly Models.OrganizationMember[]>> {
     return this.http.request({
       method: "GET",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/users`,
-      routeName: "organizations.users.list",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/members`,
+      routeName: "organizations.members.list",
       query,
+    });
+  }
+
+  updateMemberRole(
+    organizationId: Ulid,
+    userId: Ulid,
+    request: Models.UpdateOrganizationMemberRoleRequest,
+  ): Promise<TerraScaleResult<Models.OrganizationMember>> {
+    return this.http.request({
+      method: "PATCH",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/members/${ulidPathSegment(userId)}`,
+      routeName: "organizations.members.updateRole",
+      body: request,
+    });
+  }
+
+  removeMember(
+    organizationId: Ulid,
+    userId: Ulid,
+    request: Models.RemoveOrganizationMemberRequest = { confirm: true },
+  ): Promise<TerraScaleResult<void>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/members/${ulidPathSegment(userId)}:remove`,
+      routeName: "organizations.members.remove",
+      body: request,
     });
   }
 
@@ -450,6 +746,7 @@ export class OrganizationsClient {
       routeName: "organizations.projects.create",
       body: {
         ...request,
+        backupRegion: normalizeRegionCodes([request.backupRegion])[0],
         regions: normalizeRegionCodes(request.regions),
       },
     });
@@ -463,6 +760,16 @@ export class OrganizationsClient {
     });
   }
 
+  listProjectRegionPlacements(
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<readonly Models.ProjectRegionPlacement[]>> {
+    return this.http.request({
+      method: "GET",
+      path: `${projectRoot(this.http, projectId)}/regions`,
+      routeName: "organizations.projects.regions.list",
+    });
+  }
+
   updateProject(
     projectId: Ulid,
     request: Models.UpdateProjectRequest,
@@ -473,15 +780,31 @@ export class OrganizationsClient {
       routeName: "organizations.projects.update",
       body: {
         ...request,
+        backupRegion:
+          request.backupRegion === undefined
+            ? undefined
+            : normalizeRegionCodes([request.backupRegion])[0],
         regions: request.regions === undefined ? undefined : normalizeRegionCodes(request.regions),
       },
+    });
+  }
+
+  deleteProject(
+    projectId: Ulid,
+    request: Models.DeleteProjectRequest,
+  ): Promise<TerraScaleResult<Models.DeletedProject>> {
+    return this.http.request({
+      method: "DELETE",
+      path: projectRoot(this.http, projectId),
+      routeName: "organizations.projects.delete",
+      body: request,
     });
   }
 
   listInvitations(
     organizationId: Ulid,
     query?: Models.PageRequest,
-  ): Promise<TerraScaleResult<Models.Page<Models.Invitation>>> {
+  ): Promise<TerraScaleResult<readonly Models.Invitation[]>> {
     return this.http.request({
       method: "GET",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations`,
@@ -502,14 +825,47 @@ export class OrganizationsClient {
     });
   }
 
-  revokeInvitation(
+  acceptInvitation(
     organizationId: Ulid,
     invitationId: Ulid,
   ): Promise<TerraScaleResult<Models.Invitation>> {
     return this.http.request({
       method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:revoke`,
-      routeName: "organizations.invitations.revoke",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:accept`,
+      routeName: "organizations.invitations.accept",
+    });
+  }
+
+  declineInvitation(
+    organizationId: Ulid,
+    invitationId: Ulid,
+  ): Promise<TerraScaleResult<Models.Invitation>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:decline`,
+      routeName: "organizations.invitations.decline",
+    });
+  }
+
+  resendInvitation(
+    organizationId: Ulid,
+    invitationId: Ulid,
+  ): Promise<TerraScaleResult<Models.Invitation>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:resend`,
+      routeName: "organizations.invitations.resend",
+    });
+  }
+
+  cancelInvitation(
+    organizationId: Ulid,
+    invitationId: Ulid,
+  ): Promise<TerraScaleResult<Models.Invitation>> {
+    return this.http.request({
+      method: "POST",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:cancel`,
+      routeName: "organizations.invitations.cancel",
     });
   }
 }
@@ -783,7 +1139,7 @@ export class RepositoriesClient {
   get(scope: Models.RepositoryScoped): Promise<TerraScaleResult<Models.RepositoryDefinition>> {
     return this.http.request({
       method: "GET",
-      path: repositoryRoot(this.http, scope),
+      path: repositoryRoot(scope),
       routeName: "repositories.get",
     });
   }
@@ -794,7 +1150,7 @@ export class RepositoriesClient {
   ): Promise<TerraScaleResult<Models.DeletedRepositoryResponse>> {
     return this.http.request({
       method: "DELETE",
-      path: repositoryRoot(this.http, scope),
+      path: repositoryRoot(scope),
       routeName: "repositories.delete",
       query,
     });
@@ -914,7 +1270,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DocumentPageResponse<TDocument>>> {
     return this.http.request({
       method: "GET",
-      path: `${repositoryRoot(this.http, scope)}/documents`,
+      path: `${repositoryRoot(scope)}/documents`,
       routeName: "documents.list",
       query,
     });
@@ -926,7 +1282,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
     return this.http.request({
       method: "POST",
-      path: `${repositoryRoot(this.http, scope)}/documents`,
+      path: `${repositoryRoot(scope)}/documents`,
       routeName: "documents.create",
       body: { data },
     });
@@ -938,7 +1294,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
     return this.http.request({
       method: "GET",
-      path: `${repositoryRoot(this.http, scope)}/documents/${ulidPathSegment(documentId)}`,
+      path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.get",
     });
   }
@@ -950,7 +1306,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
     return this.http.request({
       method: "PUT",
-      path: `${repositoryRoot(this.http, scope)}/documents/${ulidPathSegment(documentId)}`,
+      path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.put",
       body: { data },
     });
@@ -963,7 +1319,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
     return this.http.request({
       method: "PATCH",
-      path: `${repositoryRoot(this.http, scope)}/documents/${ulidPathSegment(documentId)}`,
+      path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.patch",
       body: { data },
     });
@@ -975,7 +1331,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DocumentBatchResponse<TDocument>>> {
     return this.http.request({
       method: "POST",
-      path: `${repositoryRoot(this.http, scope)}/documents/batch`,
+      path: `${repositoryRoot(scope)}/documents/batch`,
       routeName: "documents.batch",
       body: request,
     });
@@ -987,7 +1343,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DeletedDocumentResponse>> {
     return this.http.request({
       method: "DELETE",
-      path: `${repositoryRoot(this.http, scope)}/documents/${ulidPathSegment(documentId)}`,
+      path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.delete",
     });
   }
@@ -1002,7 +1358,7 @@ export class QueryClient {
   ): Promise<TerraScaleResult<Models.DocumentPageResponse<TDocument>>> {
     return this.http.request({
       method: "POST",
-      path: `${repositoryRoot(this.http, scope)}/tql`,
+      path: `${repositoryRoot(scope)}/tql`,
       routeName: "query.execute",
       body: request,
     });
@@ -1015,7 +1371,7 @@ export class SchemaClient {
   get(scope: Models.RepositoryScoped): Promise<TerraScaleResult<Models.RepositorySchema>> {
     return this.http.request({
       method: "GET",
-      path: `${repositoryRoot(this.http, scope)}/schema`,
+      path: `${repositoryRoot(scope)}/schema`,
       routeName: "schema.get",
     });
   }
@@ -1026,7 +1382,7 @@ export class SchemaClient {
   ): Promise<TerraScaleResult<Models.RepositorySchemaValidationResponse>> {
     return this.http.request({
       method: "POST",
-      path: `${repositoryRoot(this.http, scope)}/schema/validate`,
+      path: `${repositoryRoot(scope)}/schema/validate`,
       routeName: "schema.validate",
       body: request,
     });
@@ -1038,7 +1394,7 @@ export class SchemaClient {
   ): Promise<TerraScaleResult<Models.RepositorySchema>> {
     return this.http.request({
       method: "PUT",
-      path: `${repositoryRoot(this.http, scope)}/schema`,
+      path: `${repositoryRoot(scope)}/schema`,
       routeName: "schema.configure",
       body: request,
     });
@@ -1214,6 +1570,16 @@ export class UsageClient {
     });
   }
 
+  getOrganizationUsage(
+    organizationId: Ulid,
+  ): Promise<TerraScaleResult<Models.OrganizationUsage>> {
+    return this.http.request({
+      method: "GET",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/usage`,
+      routeName: "usage.organization.get",
+    });
+  }
+
   getProjectUsageWorkload(
     range: Models.UsageWorkloadRange,
     projectId?: Ulid,
@@ -1222,6 +1588,30 @@ export class UsageClient {
       method: "GET",
       path: `${projectRoot(this.http, projectId)}/usage/workload`,
       routeName: "usage.project.workload",
+      query: { range },
+    });
+  }
+
+  getProjectLatency(
+    projectId?: Ulid,
+    query?: Models.ProjectLatencyRequest,
+  ): Promise<TerraScaleResult<Models.ProjectLatency>> {
+    return this.http.request({
+      method: "GET",
+      path: `${projectRoot(this.http, projectId)}/latency`,
+      routeName: "usage.project.latency",
+      query,
+    });
+  }
+
+  getProjectUsageHistory(
+    range: Models.UsageHistoryRange,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectUsageHistory>> {
+    return this.http.request({
+      method: "GET",
+      path: `${projectRoot(this.http, projectId)}/usage/history`,
+      routeName: "usage.project.history",
       query: { range },
     });
   }
@@ -1315,7 +1705,12 @@ export class NotificationsClient {
   constructor(private readonly http: TerraScaleHttp) {}
 
   list(
-    query?: Models.PageRequest & { readonly unreadOnly?: boolean },
+    query?: Models.PageRequest & {
+      readonly unreadOnly?: boolean;
+      readonly projectId?: Ulid;
+      readonly organizationId?: Ulid;
+      readonly includeOrganizationNotifications?: boolean;
+    },
   ): Promise<TerraScaleResult<readonly Models.Notification[]>> {
     return this.http.request({
       method: "GET",
@@ -1333,17 +1728,28 @@ export class NotificationsClient {
     });
   }
 
-  markAllRead(): Promise<TerraScaleResult<Models.MarkAllDashboardNotificationsReadResponse>> {
+  markAllRead(query?: {
+    readonly organizationId?: Ulid;
+  }): Promise<TerraScaleResult<Models.MarkAllDashboardNotificationsReadResponse>> {
     return this.http.request({
       method: "POST",
       path: `${apiRoot}/users/me/notifications:mark-all-read`,
       routeName: "notifications.markAllRead",
+      query,
     });
   }
 }
 
 export class SecurityClient {
   constructor(private readonly http: TerraScaleHttp) {}
+
+  getSettings(projectId?: Ulid): Promise<TerraScaleResult<Models.SecuritySettings>> {
+    return this.http.request({
+      method: "GET",
+      path: `${projectRoot(this.http, projectId)}/security/settings`,
+      routeName: "security.settings.get",
+    });
+  }
 
   updateSettings(
     request: Models.UpdateSecuritySettingsRequest,
@@ -1574,7 +1980,7 @@ function environmentRoot(http: TerraScaleHttp, scope: Models.EnvironmentScoped):
   return `${databaseRoot(http, scope)}/environments/${ulidPathSegment(scope.environmentId)}`;
 }
 
-function repositoryRoot(_http: TerraScaleHttp, scope: Models.RepositoryScoped): string {
+function repositoryRoot(scope: Models.RepositoryScoped): string {
   return `${apiRoot}/repositories/${ulidPathSegment(scope.repositoryId)}`;
 }
 

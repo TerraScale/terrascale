@@ -11,6 +11,12 @@
     "forceConsistentCasingInFileNames": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noUncheckedSideEffectImports": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
@@ -20,4 +26,3 @@
   "include": ["src/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }
-

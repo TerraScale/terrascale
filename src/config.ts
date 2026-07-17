@@ -83,5 +83,5 @@ function normalizeBaseUrl(baseUrl: string): string {
     throw new TypeError("TerraScaleClient base URLs cannot be empty.");
   }
 
-  return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+  return trimmed.replace(/\/+$/, "");
 }

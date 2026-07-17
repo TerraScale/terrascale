@@ -5,7 +5,7 @@ import {
   type TerraScaleRequestMetric,
   type TerraScaleRouteName,
 } from "./http.js";
-import { toUlid, type Ulid } from "./ids.js";
+import { toUlid } from "./ids.js";
 
 const sampleIds = {
   apiKeyId: toUlid("01BRZ3NDEKTSV4RRFFQ69G5FAV"),
@@ -67,14 +67,7 @@ type PublicClientMethod = {
 
 export async function capturePublicClientRoutes(): Promise<readonly CapturedSdkRoute[]> {
   assertCaptureOperationCoverage();
-
-  const routes: CapturedSdkRoute[] = [];
-
-  for (const operation of captureOperations) {
-    routes.push(await captureRoute(operation));
-  }
-
-  return routes;
+  return Promise.all(captureOperations.map(captureRoute));
 }
 
 function routeOperation(operation: string, variant: string | undefined): string {
@@ -276,6 +269,51 @@ const registerRequest = {
 
 const captureOperations: readonly CaptureOperation[] = [
   {
+    client: "onboarding",
+    operation: "getState",
+    invoke: (client) => client.onboarding.getState(),
+  },
+  {
+    client: "onboarding",
+    operation: "updateAccountInformation",
+    invoke: (client) =>
+      client.onboarding.updateAccountInformation({
+        displayName: "Ada Lovelace",
+        phoneNumber: "+14155552671",
+      }),
+  },
+  {
+    client: "onboarding",
+    operation: "createPaymentSession",
+    invoke: (client) => client.onboarding.createPaymentSession(),
+  },
+  {
+    client: "onboarding",
+    operation: "validatePaymentMethod",
+    invoke: (client) =>
+      client.onboarding.validatePaymentMethod({ sessionId: "cs_test_onboarding" }),
+  },
+  {
+    client: "onboarding",
+    operation: "updateMfaDecision",
+    invoke: (client) => client.onboarding.updateMfaDecision({ configureLater: true }),
+  },
+  {
+    client: "onboarding",
+    operation: "createOrganization",
+    invoke: (client) => client.onboarding.createOrganization({ name: "Analytical Engines" }),
+  },
+  {
+    client: "onboarding",
+    operation: "createProject",
+    invoke: (client) =>
+      client.onboarding.createProject({
+        name: "Primary",
+        regions: ["gru"],
+        backupRegion: "gru",
+      }),
+  },
+  {
     client: "auth",
     operation: "getSession",
     invoke: (client) => client.auth.getSession(),
@@ -353,6 +391,29 @@ const captureOperations: readonly CaptureOperation[] = [
       client.auth.signIn({
         email: "ada@example.test",
         password: "correct horse battery staple",
+      }),
+  },
+  {
+    client: "auth",
+    operation: "verifyPasswordMfa",
+    variant: "global",
+    invoke: (client) =>
+      client.auth.verifyPasswordMfa({
+        pendingAuthenticationToken: "pending-token",
+        challengeId: sampleIds.sessionId,
+        code: "123456",
+      }),
+  },
+  {
+    client: "auth",
+    operation: "verifyPasswordMfa",
+    variant: "project",
+    defaultProject: true,
+    invoke: (client) =>
+      client.auth.verifyPasswordMfa({
+        pendingAuthenticationToken: "pending-token",
+        challengeId: sampleIds.sessionId,
+        code: "123456",
       }),
   },
   {
@@ -484,6 +545,70 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) => client.auth.revokeOtherSessions(),
   },
   {
+    client: "auth",
+    operation: "updateProfile",
+    invoke: (client) =>
+      client.auth.updateProfile({ displayName: "Ada Lovelace", phoneNumber: "+14155552671" }),
+  },
+  {
+    client: "auth",
+    operation: "changePassword",
+    invoke: (client) =>
+      client.auth.changePassword({ currentPassword: "old-secret", newPassword: "new-secret" }),
+  },
+  {
+    client: "auth",
+    operation: "listMfaFactors",
+    invoke: (client) => client.auth.listMfaFactors(),
+  },
+  {
+    client: "auth",
+    operation: "enrollTotp",
+    invoke: (client) => client.auth.enrollTotp(),
+  },
+  {
+    client: "auth",
+    operation: "verifyTotpEnrollment",
+    invoke: (client) =>
+      client.auth.verifyTotpEnrollment({ challengeId: sampleIds.sessionId, code: "123456" }),
+  },
+  {
+    client: "auth",
+    operation: "deleteMfaFactor",
+    invoke: (client) => client.auth.deleteMfaFactor(sampleIds.sessionId, { code: "123456" }),
+  },
+  {
+    client: "auth",
+    operation: "generateRecoveryCodes",
+    invoke: (client) => client.auth.generateRecoveryCodes(),
+  },
+  {
+    client: "auth",
+    operation: "switchOrganization",
+    invoke: (client) =>
+      client.auth.switchOrganization({ organizationId: sampleIds.organizationId }),
+  },
+  {
+    client: "auth",
+    operation: "beginExternalLogin",
+    invoke: (client) =>
+      client.auth.beginExternalLogin({
+        provider: "google",
+        redirectUri: "https://dashboard.terrascale.test/api/auth/external-callback",
+        state: "oauth-state",
+      }),
+  },
+  {
+    client: "auth",
+    operation: "completeExternalLogin",
+    invoke: (client) =>
+      client.auth.completeExternalLogin({
+        provider: "github",
+        code: "oauth-code",
+        redirectUri: "https://dashboard.terrascale.test/api/auth/external-callback",
+      }),
+  },
+  {
     client: "organizations",
     operation: "list",
     invoke: (client) => client.organizations.list({ skip: 0, take: 25 }),
@@ -500,21 +625,59 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "organizations",
+    operation: "update",
+    invoke: (client) =>
+      client.organizations.update(sampleIds.organizationId, { name: "Analytical Engines" }),
+  },
+  {
+    client: "organizations",
+    operation: "requestDeletion",
+    invoke: (client) =>
+      client.organizations.requestDeletion(sampleIds.organizationId, {
+        confirm: true,
+        organizationName: "Analytical Engines",
+      }),
+  },
+  {
+    client: "organizations",
+    operation: "leave",
+    invoke: (client) => client.organizations.leave(sampleIds.organizationId),
+  },
+  {
+    client: "organizations",
     operation: "listProjects",
     invoke: (client) =>
       client.organizations.listProjects(sampleIds.organizationId, { skip: 0, take: 25 }),
   },
   {
     client: "organizations",
-    operation: "listUsers",
+    operation: "listMembers",
     invoke: (client) =>
-      client.organizations.listUsers(sampleIds.organizationId, { skip: 0, take: 25 }),
+      client.organizations.listMembers(sampleIds.organizationId, { skip: 0, take: 25 }),
+  },
+  {
+    client: "organizations",
+    operation: "updateMemberRole",
+    invoke: (client) =>
+      client.organizations.updateMemberRole(sampleIds.organizationId, sampleIds.userId, {
+        role: "OrganizationOwner",
+      }),
+  },
+  {
+    client: "organizations",
+    operation: "removeMember",
+    invoke: (client) =>
+      client.organizations.removeMember(sampleIds.organizationId, sampleIds.userId),
   },
   {
     client: "organizations",
     operation: "createProject",
     invoke: (client) =>
-      client.organizations.createProject(sampleIds.organizationId, { name: "Primary" }),
+      client.organizations.createProject(sampleIds.organizationId, {
+        name: "Primary",
+        regions: ["gru"],
+        backupRegion: "gru",
+      }),
   },
   {
     client: "organizations",
@@ -524,8 +687,27 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "organizations",
+    operation: "listProjectRegionPlacements",
+    defaultProject: true,
+    invoke: (client) => client.organizations.listProjectRegionPlacements(),
+  },
+  {
+    client: "organizations",
     operation: "updateProject",
-    invoke: (client) => client.organizations.updateProject(sampleIds.projectId, { name: "Core" }),
+    invoke: (client) =>
+      client.organizations.updateProject(sampleIds.projectId, {
+        name: "Core",
+        backupRegion: "gru",
+      }),
+  },
+  {
+    client: "organizations",
+    operation: "deleteProject",
+    invoke: (client) =>
+      client.organizations.deleteProject(sampleIds.projectId, {
+        confirm: true,
+        projectName: "Core",
+      }),
   },
   {
     client: "organizations",
@@ -539,14 +721,31 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.organizations.createInvitation(sampleIds.organizationId, {
         email: "grace@example.test",
-        role: "admin",
       }),
   },
   {
     client: "organizations",
-    operation: "revokeInvitation",
+    operation: "acceptInvitation",
     invoke: (client) =>
-      client.organizations.revokeInvitation(sampleIds.organizationId, sampleIds.invitationId),
+      client.organizations.acceptInvitation(sampleIds.organizationId, sampleIds.invitationId),
+  },
+  {
+    client: "organizations",
+    operation: "declineInvitation",
+    invoke: (client) =>
+      client.organizations.declineInvitation(sampleIds.organizationId, sampleIds.invitationId),
+  },
+  {
+    client: "organizations",
+    operation: "resendInvitation",
+    invoke: (client) =>
+      client.organizations.resendInvitation(sampleIds.organizationId, sampleIds.invitationId),
+  },
+  {
+    client: "organizations",
+    operation: "cancelInvitation",
+    invoke: (client) =>
+      client.organizations.cancelInvitation(sampleIds.organizationId, sampleIds.invitationId),
   },
   {
     client: "regions",
@@ -592,7 +791,7 @@ const captureOperations: readonly CaptureOperation[] = [
     client: "queues",
     operation: "create",
     defaultProject: true,
-    invoke: (client) => client.queues.create({ name: "jobs" }),
+    invoke: (client) => client.queues.create({ name: "jobs", kind: "queue" }),
   },
   {
     client: "queues",
@@ -936,7 +1135,7 @@ const captureOperations: readonly CaptureOperation[] = [
     client: "access",
     operation: "addTeamMember",
     defaultProject: true,
-    invoke: (client) => client.access.addTeamMember({ userId: sampleIds.userId, role: "admin" }),
+    invoke: (client) => client.access.addTeamMember({ userId: sampleIds.userId, role: "owner" }),
   },
   {
     client: "access",
@@ -958,9 +1157,26 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "usage",
+    operation: "getOrganizationUsage",
+    invoke: (client) => client.usage.getOrganizationUsage(sampleIds.organizationId),
+  },
+  {
+    client: "usage",
     operation: "getProjectUsageWorkload",
     defaultProject: true,
     invoke: (client) => client.usage.getProjectUsageWorkload("24h"),
+  },
+  {
+    client: "usage",
+    operation: "getProjectLatency",
+    defaultProject: true,
+    invoke: (client) => client.usage.getProjectLatency(undefined, { latitude: -23.55, longitude: -46.63 }),
+  },
+  {
+    client: "usage",
+    operation: "getProjectUsageHistory",
+    defaultProject: true,
+    invoke: (client) => client.usage.getProjectUsageHistory("30d"),
   },
   {
     client: "billing",
@@ -1011,7 +1227,13 @@ const captureOperations: readonly CaptureOperation[] = [
   {
     client: "notifications",
     operation: "list",
-    invoke: (client) => client.notifications.list({ skip: 0, take: 25, unreadOnly: true }),
+    invoke: (client) =>
+      client.notifications.list({
+        skip: 0,
+        take: 25,
+        unreadOnly: true,
+        organizationId: sampleIds.organizationId,
+      }),
   },
   {
     client: "notifications",
@@ -1021,7 +1243,14 @@ const captureOperations: readonly CaptureOperation[] = [
   {
     client: "notifications",
     operation: "markAllRead",
-    invoke: (client) => client.notifications.markAllRead(),
+    invoke: (client) =>
+      client.notifications.markAllRead({ organizationId: sampleIds.organizationId }),
+  },
+  {
+    client: "security",
+    operation: "getSettings",
+    defaultProject: true,
+    invoke: (client) => client.security.getSettings(),
   },
   {
     client: "security",
@@ -1033,6 +1262,8 @@ const captureOperations: readonly CaptureOperation[] = [
         ipAllowlist: "10.0.0.0/8",
         allowedEmailDomains: "terrascale.tech",
         dataResidency: "gru",
+        authenticationEnabled: false,
+        confirmDisableAuthentication: true,
       }),
   },
 ];

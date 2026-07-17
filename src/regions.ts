@@ -43,7 +43,6 @@ export const terraScaleRegions = [
 const regionsByCode = new Map<TerraScaleRegionCode, TerraScaleRegion>(
   terraScaleRegions.map((region) => [region.code, region]),
 );
-const regionCodeValues = new Set<string>(terraScaleRegions.map((region) => region.code));
 
 export function canonicalRegionCode(code: string | undefined): TerraScaleRegionCode | undefined {
   if (code === undefined) {
@@ -62,21 +61,25 @@ export function findRegion(code: string | undefined): TerraScaleRegion | undefin
 }
 
 export function isRegionCode(code: string): code is TerraScaleRegionCode {
-  return regionCodeValues.has(code);
+  return regionsByCode.has(code);
 }
 
 export function normalizeRegionCodes(
   codes: readonly string[] | undefined,
 ): readonly TerraScaleRegionCode[] {
-  const selected: TerraScaleRegionCode[] = [];
+  const selected = new Set<TerraScaleRegionCode>();
 
   for (const code of codes ?? []) {
-    const regionCode = canonicalRegionCode(code);
-
-    if (regionCode !== undefined && !selected.includes(regionCode)) {
-      selected.push(regionCode);
+    const candidate = code.trim().toLowerCase();
+    if (candidate.length === 0) {
+      continue;
     }
+
+    // Preserve a caller-supplied malformed or unknown value so the API can
+    // reject it. Silently substituting GRU could provision data in a region
+    // the caller never selected.
+    selected.add(candidate);
   }
 
-  return selected.length === 0 ? ["gru"] : selected;
+  return selected.size === 0 ? ["gru"] : [...selected];
 }

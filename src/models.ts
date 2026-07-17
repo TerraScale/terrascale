@@ -51,8 +51,11 @@ export type RegionsResponse = {
 export type Page<TItem> = {
   readonly items: readonly TItem[];
   readonly totalCount?: number;
-  readonly nextCursor?: string;
+  readonly nextCursor?: string | null;
 };
+
+/** Exact signed 64-bit integer serialized as a base-10 JSON string. */
+export type Int64String = `${bigint}`;
 
 export type ProjectScoped = {
   readonly projectId?: ProjectId | undefined;
@@ -88,6 +91,7 @@ export type AuthMeResponse = {
   readonly userId: UserId;
   readonly email: string;
   readonly name: string;
+  readonly phoneNumber: string;
   readonly avatarUrl: string;
   readonly personalOrgId: OrganizationId;
   readonly activeOrgId: OrganizationId;
@@ -114,6 +118,68 @@ export type ListAccountSessionsResponse = {
   readonly nextCursor?: string;
 };
 
+export type UpdateProfileRequest = {
+  readonly displayName: string;
+  readonly phoneNumber: string;
+};
+
+export type UpdateProfileResponse = {
+  readonly success: boolean;
+  readonly name: string;
+  readonly phoneNumber: string;
+  readonly updatedAt?: Timestamp;
+};
+
+export type ChangePasswordRequest = {
+  readonly currentPassword: string;
+  readonly newPassword: string;
+  /** @deprecated Password changes always revoke every active session. */
+  readonly keepOtherSessions?: boolean;
+};
+
+export type ChangePasswordResponse = {
+  readonly success: boolean;
+  readonly error?: string;
+};
+
+export type MfaFactor = {
+  readonly id: Ulid;
+  readonly type: string;
+  readonly createdAt?: Timestamp | null;
+};
+
+export type ListMfaFactorsResponse = {
+  readonly factors: readonly MfaFactor[];
+};
+
+export type EnrollTotpResponse = {
+  readonly factorId: Ulid;
+  readonly type: string;
+  readonly qrCode: string;
+  readonly secret: string;
+  readonly challengeId: Ulid;
+};
+
+export type VerifyTotpEnrollmentRequest = {
+  readonly challengeId: Ulid;
+  readonly code: string;
+};
+
+export type VerifyTotpEnrollmentResponse = {
+  readonly success: boolean;
+  readonly error?: string;
+};
+
+export type DeleteMfaFactorRequest = {
+  readonly currentPassword?: string;
+  readonly code?: string;
+};
+
+export type GenerateRecoveryCodesResponse = {
+  readonly codes: readonly string[];
+  readonly generatedAt?: Timestamp;
+};
+
 export type RegisterRequest = {
   readonly email: string;
   readonly password: string;
@@ -130,6 +196,12 @@ export type SignInRequest = {
   readonly deviceFingerprint?: string;
 };
 
+export type PasswordMfaVerifyRequest = {
+  readonly pendingAuthenticationToken: string;
+  readonly challengeId: Ulid;
+  readonly code: string;
+};
+
 export type AuthTokenResponse = {
   readonly accessToken: string;
   readonly refreshToken: string;
@@ -138,6 +210,7 @@ export type AuthTokenResponse = {
   readonly userId: UserId;
   readonly email: string;
   readonly name: string;
+  readonly phoneNumber?: string;
   readonly avatarUrl: string;
   readonly personalOrgId: OrganizationId;
   readonly activeOrgId: OrganizationId;
@@ -145,6 +218,28 @@ export type AuthTokenResponse = {
   readonly roles: readonly string[];
   readonly shouldPromptMfa: boolean;
   readonly mfaEnabled: boolean;
+  readonly requiresOrganizationSelection: boolean;
+};
+
+export type SwitchOrganizationRequest = {
+  readonly organizationId: OrganizationId;
+};
+
+export type DashboardExternalLoginBeginRequest = {
+  readonly provider: "github" | "google";
+  readonly redirectUri: string;
+  readonly state: string;
+};
+
+export type DashboardExternalLoginBeginResponse = {
+  readonly authorizeUrl: string;
+};
+
+export type DashboardExternalLoginCompleteRequest = {
+  readonly provider: "github" | "google";
+  readonly code: string;
+  readonly idToken?: string;
+  readonly redirectUri: string;
 };
 
 export type VerifyEmailRequest = {
@@ -225,30 +320,56 @@ export type PasswordLoginResponse = {
 export type Organization = {
   readonly organizationId: OrganizationId;
   readonly name: string;
-  readonly slug?: string;
+  readonly ownerUserIds: readonly UserId[];
+  readonly createdByUserId?: UserId | null;
+  readonly billingAccountId: string;
+  readonly status: OrganizationStatus;
+  readonly deletionRequestedAt?: Timestamp | null;
+  readonly deletionRequestedByUserId?: UserId | null;
   readonly createdAt: Timestamp;
 };
 
-export type OrganizationUser = {
+export type OrganizationStatus = "Active" | "DeletionPending";
+
+export type OrganizationMemberRole = "Member" | "OrganizationOwner";
+
+export type OrganizationMember = {
   readonly userId: UserId;
   readonly email: string;
   readonly displayName: string;
-  readonly organizationIds: readonly OrganizationId[];
-  readonly createdAt?: Timestamp;
+  readonly role: OrganizationMemberRole;
+  readonly joinedAt: Timestamp;
 };
 
 export type CreateOrganizationRequest = {
   readonly name: string;
-  readonly adminUserIds?: readonly UserId[];
   readonly billingAccountId?: string;
-  readonly slug?: string;
+};
+
+export type UpdateOrganizationRequest = {
+  readonly name: string;
+};
+
+export type RequestOrganizationDeletionRequest = {
+  readonly confirm: true;
+  readonly organizationName: string;
+};
+
+export type UpdateOrganizationMemberRoleRequest = {
+  readonly role: OrganizationMemberRole;
+};
+
+export type RemoveOrganizationMemberRequest = {
+  readonly confirm: true;
 };
 
 export type Project = {
   readonly projectId: ProjectId;
   readonly organizationId: OrganizationId;
   readonly name: string;
+  readonly ownerUserIds: readonly UserId[];
   readonly regions: readonly TerraScaleRegionCode[];
+  readonly backupRegion: TerraScaleRegionCode;
   readonly placementStatus: ProjectPlacementStatus;
   readonly placementGeneration: number;
   readonly slug?: string;
@@ -264,15 +385,124 @@ export type ProjectPlacementStatus =
   | "Deleting"
   | "Failed";
 
+export type ProjectRegionPlacement = {
+  readonly region: TerraScaleRegionCode;
+  readonly placementGeneration: number;
+  readonly status: string;
+  readonly isBackupRegion: boolean;
+  readonly replicationLagMilliseconds?: number | null;
+  readonly error?: string | null;
+  readonly updatedAt: Timestamp;
+};
+
 export type CreateProjectRequest = {
   readonly name: string;
+  readonly backupRegion: TerraScaleRegionCode;
   readonly defaultPermissionKeys?: readonly string[];
-  readonly regions?: readonly TerraScaleRegionCode[];
+  readonly regions: readonly TerraScaleRegionCode[];
   readonly slug?: string;
+};
+
+export type OnboardingStep =
+  | "account-information"
+  | "payment-method"
+  | "payment-validation"
+  | "mfa"
+  | "organization"
+  | "project"
+  | "complete";
+
+export type OnboardingMfaDecision = "pending" | "configured" | "later";
+
+export type OnboardingPaymentValidationStatus =
+  | "not-started"
+  | "pending"
+  | "approved"
+  | "rejected";
+
+export type OnboardingStatus =
+  | "not-started"
+  | "in-progress"
+  | "awaiting-validation"
+  | "blocked"
+  | "ready-for-project"
+  | "completed";
+
+export type OnboardingStepState = {
+  readonly key: Exclude<OnboardingStep, "complete">;
+  readonly state: "pending" | "current" | "completed" | "blocked";
+};
+
+export type OnboardingState = {
+  readonly userId: UserId;
+  readonly email: string;
+  readonly displayName: string;
+  readonly phoneNumber: string;
+  readonly accountInformationCompleted: boolean;
+  readonly paymentMethodRegistered: boolean;
+  readonly paymentMethodValidated: boolean;
+  readonly paymentValidationStatus: OnboardingPaymentValidationStatus;
+  readonly mfaDecision: OnboardingMfaDecision;
+  readonly organizationId?: OrganizationId | null;
+  readonly organizationOwnerAssigned: boolean;
+  readonly paymentMethodLinkedToOrganization: boolean;
+  readonly subscriptionOrTrialActive: boolean;
+  readonly projectId?: ProjectId | null;
+  readonly projectOwnerAssigned: boolean;
+  readonly projectPrimaryRegions: readonly TerraScaleRegionCode[];
+  readonly projectBackupRegion: TerraScaleRegionCode | "";
+  readonly completed: boolean;
+  readonly status: OnboardingStatus;
+  readonly nextStep: OnboardingStep;
+  readonly steps: readonly OnboardingStepState[];
+  readonly updatedAt: Timestamp;
+};
+
+export type UpdateOnboardingAccountRequest = {
+  readonly displayName: string;
+  readonly phoneNumber: string;
+};
+
+export type OnboardingPaymentSession = {
+  readonly checkoutUrl: string;
+  readonly sessionId: string;
+};
+
+export type ValidateOnboardingPaymentRequest = {
+  readonly sessionId?: string;
+};
+
+export type UpdateOnboardingMfaRequest = {
+  readonly configureLater: boolean;
+};
+
+export type CreateOnboardingOrganizationRequest = {
+  readonly name: string;
+};
+
+export type CreateOnboardingProjectRequest = {
+  readonly name: string;
+  readonly regions: readonly TerraScaleRegionCode[];
+  readonly backupRegion: TerraScaleRegionCode;
 };
 
 export type UpdateProjectRequest = Partial<CreateProjectRequest> & {
   readonly placementGeneration?: number;
+};
+
+export type DeleteProjectRequest = {
+  readonly confirm: true;
+  readonly projectName: string;
+};
+
+export type DeletedProject = {
+  readonly projectId: ProjectId;
+  readonly organizationId: OrganizationId;
+  readonly name: string;
+  readonly deleted: boolean;
+  readonly databasesDeleted: number;
+  readonly queuesDeleted: number;
+  readonly physicalStorageDeleted: boolean;
 };
 
 export type DashboardContextUser = {
@@ -301,6 +531,7 @@ export type DashboardContextDatabase = {
   readonly projectId: ProjectId;
   readonly name: string;
   readonly regions: readonly TerraScaleRegionCode[];
+  readonly backupRegion: TerraScaleRegionCode;
   readonly createdAt: Timestamp;
 };
 
@@ -316,18 +547,23 @@ export type Invitation = {
   readonly invitationId: InvitationId;
   readonly organizationId: OrganizationId;
   readonly email: string;
-  readonly role: string;
-  readonly status: string;
+  readonly role: "Member";
+  readonly status: InvitationStatus;
   readonly invitedByEmail?: string;
   readonly expiresAt: Timestamp;
   readonly acceptedAt?: Timestamp | null;
+  readonly acceptedByUserId?: UserId | null;
+  readonly declinedAt?: Timestamp | null;
+  readonly canceledAt?: Timestamp | null;
+  readonly lastSentAt: Timestamp;
+  readonly sentCount: number;
   readonly createdAt?: Timestamp;
 };
 
+export type InvitationStatus = "Accepted" | "Canceled" | "Declined" | "Expired" | "Pending";
+
 export type CreateInvitationRequest = {
   readonly email: string;
-  readonly role: string;
-  readonly redirectUrl?: string;
 };
 
 export type DatabaseStatus = "available" | "creating" | "deleting" | "failed" | "updating";
@@ -339,6 +575,7 @@ export type ProjectDatabase = {
   readonly projectId: ProjectId;
   readonly name: string;
   readonly regions: readonly TerraScaleRegionCode[];
+  readonly backupRegion: TerraScaleRegionCode;
   readonly createdAt: Timestamp;
   readonly version: number;
 };
@@ -385,7 +622,7 @@ export type ProjectQueue = {
 
 export type CreateProjectQueueRequest = {
   readonly name: string;
-  readonly kind?: "queue" | "topic";
+  readonly kind: "queue" | "topic";
   readonly description?: string;
   readonly retentionSeconds?: number;
   readonly maxMessageSizeBytes?: number;
@@ -799,7 +1036,7 @@ export type M2MTokenResponse = {
   readonly environment_id?: EnvironmentId | null;
 };
 
-export type AccessRole = "admin" | "billing" | "member" | "owner" | "viewer";
+export type AccessRole = "member" | "owner" | "viewer";
 
 export type TeamMember = {
   readonly userId: UserId;
@@ -831,9 +1068,43 @@ export type UsageSummary = {
   readonly operationUnits: number;
   readonly includedOperationUnits: number;
   readonly overageOperationUnits: number;
+  readonly egressBytes: number;
   readonly updatedAt: Timestamp;
   readonly regionalTotals: Readonly<Record<string, number>>;
   readonly categoryTotals: Readonly<Record<string, number>>;
+};
+
+export type OrganizationUsageLimit = {
+  readonly resource: "storage" | "database_operations" | "egress" | string;
+  readonly unit: string;
+  readonly used: Int64String;
+  readonly included?: Int64String | null;
+  readonly remaining?: Int64String | null;
+  readonly excess?: Int64String | null;
+  readonly status: "approaching" | "exceeded" | "normal" | "not_applicable" | "reached" | string;
+  readonly provisional: boolean;
+};
+
+export type OrganizationProjectUsage = {
+  readonly projectId: ProjectId;
+  readonly projectName: string;
+  readonly storageBytes?: Int64String | null;
+  readonly operationUnits?: Int64String | null;
+  readonly egressBytes?: Int64String | null;
+  readonly updatedAt?: Timestamp | null;
+  readonly provisional: boolean;
+};
+
+export type OrganizationUsage = {
+  readonly organizationId: OrganizationId;
+  readonly planId: string;
+  readonly planName: string;
+  readonly periodStart: Timestamp;
+  readonly periodEnd: Timestamp;
+  readonly updatedAt: Timestamp;
+  readonly provisional: boolean;
+  readonly resources: readonly OrganizationUsageLimit[];
+  readonly projects: readonly OrganizationProjectUsage[];
 };
 
 export type UsageMetric = {
@@ -887,11 +1158,55 @@ export type UsageWorkloadPoint = {
   readonly value: number;
 };
 
+export type ProjectRegionLatency = {
+  readonly fromRegion: string;
+  readonly toRegion: string;
+  readonly estimatedRoundTripMilliseconds: number;
+};
+
+export type ProjectNearestRegionLatency = {
+  readonly region: string;
+  readonly estimatedRoundTripMilliseconds: number;
+};
+
+export type ProjectLatency = {
+  readonly projectId: ProjectId;
+  readonly capturedAt: Timestamp;
+  readonly source: "geographic_estimate" | string;
+  readonly interRegion: readonly ProjectRegionLatency[];
+  readonly nearestRegion?: ProjectNearestRegionLatency | null;
+};
+
+export type ProjectLatencyRequest = {
+  readonly latitude?: number;
+  readonly longitude?: number;
+};
+
+export type UsageHistoryRange = "24h" | "7d" | "30d" | "90d" | "365d";
+
+export type ProjectUsageHistoryPoint = {
+  readonly observedAt: Timestamp;
+  readonly storageBytes: Int64String;
+  readonly operationUnits: Int64String;
+  readonly egressBytes: Int64String;
+};
+
+export type ProjectUsageHistory = {
+  readonly projectId: ProjectId;
+  readonly range: UsageHistoryRange;
+  readonly requestedStart: Timestamp;
+  readonly accessibleStart: Timestamp;
+  readonly end: Timestamp;
+  readonly limitedByRetention: boolean;
+  readonly points: readonly ProjectUsageHistoryPoint[];
+};
+
 export type BillingAccount = {
   readonly billingAccountId: Ulid;
   readonly organizationId: OrganizationId;
   readonly planId: Ulid;
   readonly status: "active" | "canceled" | "past_due" | "trialing";
+  readonly billingInterval: "monthly" | "annual" | string | null;
 };
 
 export type CurrentOrganizationFeatureEntitlement = {
@@ -927,6 +1242,7 @@ export type CurrentOrganizationBilling = {
   readonly currency?: string | null;
   readonly currentPeriodStart?: Timestamp | null;
   readonly currentPeriodEnd?: Timestamp | null;
+  readonly billingInterval?: "monthly" | "annual" | string | null;
   readonly features: readonly CurrentOrganizationFeatureEntitlement[];
   readonly limits?: CurrentOrganizationLimits;
   readonly billingRoles: readonly string[];
@@ -980,6 +1296,8 @@ export type Invoice = {
   readonly currency: string;
   readonly status: "draft" | "open" | "paid" | "void";
   readonly issuedAt: Timestamp;
+  readonly periodStart?: Timestamp | null;
+  readonly periodEnd?: Timestamp | null;
   readonly hostedInvoiceUrl?: string | null;
   readonly invoicePdf?: string | null;
 };
@@ -1041,6 +1359,9 @@ export type Notification = {
   readonly severity: "critical" | "info" | "warning";
   readonly readAt?: Timestamp;
   readonly createdAt: Timestamp;
+  readonly category: string;
+  readonly organizationId?: OrganizationId | null;
+  readonly projectId?: ProjectId | null;
 };
 
 export type MarkAllDashboardNotificationsReadResponse = {
@@ -1054,6 +1375,7 @@ export type SecuritySettings = {
   readonly allowedEmailDomains: string;
   readonly dataResidency: string;
   readonly encryption: string;
+  readonly authenticationEnabled: boolean;
   readonly updatedAt: Timestamp;
 };
 
@@ -1062,6 +1384,8 @@ export type UpdateSecuritySettingsRequest = {
   readonly ipAllowlist?: string;
   readonly allowedEmailDomains?: string;
   readonly dataResidency?: string;
+  readonly authenticationEnabled?: boolean;
+  readonly confirmDisableAuthentication?: boolean;
 };
 
 export type AdminUser = {

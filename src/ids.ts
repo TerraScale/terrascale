@@ -27,7 +27,7 @@ export type RestoreId = Ulid;
 const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
 export function isUlid(value: string): value is Ulid {
-  return ulidPattern.test(value.trim().toUpperCase());
+  return ulidPattern.test(value);
 }
 
 export function tryUlid(value: string): Ulid | undefined {

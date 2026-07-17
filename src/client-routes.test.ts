@@ -5,7 +5,7 @@ import { describe, test } from "node:test";
 import { capturePublicClientRoutes } from "./client-route-capture.js";
 import { createTerraScaleClient } from "./factory.js";
 import type { TerraScaleClient } from "./factory.js";
-import { toUlid, type Ulid } from "./ids.js";
+import { toUlid } from "./ids.js";
 import type { JsonValue } from "./models.js";
 
 const projectId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
@@ -16,6 +16,7 @@ const documentId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAZ");
 const keyId = toUlid("01BRZ3NDEKTSV4RRFFQ69G5FAV");
 const clientId = toUlid("01CRZ3NDEKTSV4RRFFQ69G5FAV");
 const notificationId = toUlid("01DRZ3NDEKTSV4RRFFQ69G5FAV");
+const organizationId = toUlid("01ERZ3NDEKTSV4RRFFQ69G5FAV");
 const backupPolicyId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAW");
 const backupId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAV");
 const restoreId = toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV");
@@ -62,6 +63,21 @@ describe("TerraScaleClient route contracts", () => {
     assert.equal("dashboard" in runtimeClient, false);
     assert.equal(runtimeClient.admin, undefined);
     assert.equal(runtimeClient.dashboard, undefined);
+  });
+
+  test("routes account identity to Auth and organization billing to the product API", async () => {
+    const { client, requests } = createCapturingClientWithResponses([{}, {}, {}]);
+
+    await client.auth.getSession();
+    await client.auth.getCurrentBilling();
+    await client.auth.evaluateBillingGuard({ requireActiveSubscription: true });
+
+    assert.equal(requests[0]?.url.origin, "https://auth.terrascale.test");
+    assertRequest(requests[0], "GET", "/api/v1/auth/me");
+    assert.equal(requests[1]?.url.origin, "https://api.terrascale.test");
+    assertRequest(requests[1], "GET", "/api/v1/auth/me/billing");
+    assert.equal(requests[2]?.url.origin, "https://api.terrascale.test");
+    assertRequest(requests[2], "POST", "/api/v1/auth/me/billing/guard");
   });
 
   test("uses root repository routes without environment scope", async () => {
@@ -542,7 +558,12 @@ describe("TerraScaleClient route contracts", () => {
       { markedRead: 3 },
     ]);
 
-    const listResult = await client.notifications.list({ skip: 5, take: 10, unreadOnly: true });
+    const listResult = await client.notifications.list({
+      skip: 5,
+      take: 10,
+      unreadOnly: true,
+      organizationId,
+    });
     assert.equal(listResult.ok, true);
     if (listResult.ok) {
       assert.deepEqual(listResult.value, [notification]);
@@ -552,6 +573,7 @@ describe("TerraScaleClient route contracts", () => {
     assert.equal(requests[0]?.url.searchParams.get("skip"), "5");
     assert.equal(requests[0]?.url.searchParams.get("take"), "10");
     assert.equal(requests[0]?.url.searchParams.get("unreadOnly"), "true");
+    assert.equal(requests[0]?.url.searchParams.get("organizationId"), organizationId);
 
     const markReadResult = await client.notifications.markRead(notificationId);
     assert.equal(markReadResult.ok, true);
@@ -564,17 +586,19 @@ describe("TerraScaleClient route contracts", () => {
       `/api/v1/users/me/notifications/${notificationId}:mark-read`,
     );
 
-    const markAllReadResult = await client.notifications.markAllRead();
+    const markAllReadResult = await client.notifications.markAllRead({ organizationId });
     assert.equal(markAllReadResult.ok, true);
     if (markAllReadResult.ok) {
       assert.deepEqual(markAllReadResult.value, { markedRead: 3 });
     }
     assertRequest(requests[2], "POST", "/api/v1/users/me/notifications:mark-all-read");
+    assert.equal(requests[2]?.url.searchParams.get("organizationId"), organizationId);
   });
 
-  test("uses only the backed security settings PUT route", async () => {
+  test("uses the backed security settings routes", async () => {
     const { client, requests } = createCapturingClient({});
 
+    await client.security.getSettings();
     await client.security.updateSettings({
       mfaPolicy: "Required",
       ipAllowlist: "10.0.0.0/8",
@@ -582,8 +606,9 @@ describe("TerraScaleClient route contracts", () => {
       dataResidency: "gru",
     });
 
-    assertRequest(requests[0], "PUT", `/api/v1/projects/${projectId}/security/settings`);
-    assert.deepEqual(requests[0]?.body, {
+    assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/security/settings`);
+    assertRequest(requests[1], "PUT", `/api/v1/projects/${projectId}/security/settings`);
+    assert.deepEqual(requests[1]?.body, {
       mfaPolicy: "Required",
       ipAllowlist: "10.0.0.0/8",
       allowedEmailDomains: "terrascale.tech",

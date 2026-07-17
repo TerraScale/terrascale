@@ -11,6 +11,7 @@ import {
   type TerraScaleResult,
   type TerraScaleValidationIssue,
 } from "./result.js";
+import type { Ulid } from "./ids.js";
 
 export type TerraScaleRouteName =
   | `access.${string}`
@@ -25,6 +26,7 @@ export type TerraScaleRouteName =
   | `documents.${string}`
   | `m2m.${string}`
   | `notifications.${string}`
+  | `onboarding.${string}`
   | `organizations.${string}`
   | `pricing.${string}`
   | `query.${string}`
@@ -69,15 +71,8 @@ export type TerraScaleRequestMetricRecorder = (metric: TerraScaleRequestMetric) 
 export class TerraScaleHttp {
   readonly config: ResolvedTerraScaleRuntimeConfig;
 
-  constructor(config: TerraScaleRuntimeConfig | ResolvedTerraScaleRuntimeConfig) {
-    this.config =
-      "fetch" in config && typeof config.fetch === "function" && "authBaseUrl" in config
-        ? ({
-            ...config,
-            authBaseUrl: config.authBaseUrl ?? config.apiBaseUrl,
-            dashboardDatabaseIds: config.dashboardDatabaseIds ?? {},
-          } as ResolvedTerraScaleRuntimeConfig)
-        : resolveRuntimeConfig(config as TerraScaleRuntimeConfig);
+  constructor(config: TerraScaleRuntimeConfig) {
+    this.config = resolveRuntimeConfig(config);
   }
 
   async request<TResponse, TBody = unknown>(
@@ -148,7 +143,7 @@ export class TerraScaleHttp {
     }
   }
 
-  dashboardDatabaseId(name: string): string | undefined {
+  dashboardDatabaseId(name: string): Ulid | undefined {
     return this.config.dashboardDatabaseIds[name];
   }
 
@@ -159,7 +154,6 @@ export class TerraScaleHttp {
   private async buildHeaders<TBody>(options: TerraScaleRequestOptions<TBody>): Promise<Headers> {
     const anonymous = options.headerPolicy === "anonymous";
     const headers = new Headers(anonymous ? undefined : this.config.defaultHeaders);
-    const requestHeaders = new Headers(options.headers);
 
     headers.set("accept", headers.get("accept") ?? "application/json");
     if (!anonymous) {
@@ -180,8 +174,10 @@ export class TerraScaleHttp {
       }
     }
 
-    for (const [key, value] of requestHeaders.entries()) {
-      headers.set(key, value);
+    if (options.headers !== undefined) {
+      for (const [key, value] of new Headers(options.headers).entries()) {
+        headers.set(key, value);
+      }
     }
 
     if (anonymous) {
@@ -228,9 +224,17 @@ type ParsedBody =
   | { readonly ok: false; readonly errorMessage: string; readonly raw: string };
 
 function buildUrl(baseUrl: string, path: string, query: QueryRecord | undefined): URL {
-  const url = new URL(path.replace(/^\/+/, ""), `${baseUrl}/`);
+  const base = new URL(`${baseUrl}/`);
+  const url = new URL(path.replace(/^\/+/, ""), base);
+  if (url.origin !== base.origin) {
+    throw new TypeError("TerraScaleClient request paths cannot escape the configured origin.");
+  }
 
-  for (const [key, value] of Object.entries(query ?? {}) as [string, QueryValue][]) {
+  if (query === undefined) {
+    return url;
+  }
+
+  for (const [key, value] of Object.entries(query) as [string, QueryValue][]) {
     if (value === null || value === undefined) {
       continue;
     }
@@ -297,8 +301,7 @@ function errorFromResponse(response: Response, body: unknown): TerraScaleError {
       stringProperty(source, "message") ??
       stringProperty(source, "detail") ??
       stringProperty(source, "title") ??
-      response.statusText ??
-      "The TerraScale API request failed.",
+      (response.statusText || "The TerraScale API request failed."),
     status: response.status,
     target: stringProperty(source, "target"),
     requestId:
@@ -327,7 +330,7 @@ function stringProperty(source: Record<string, unknown>, key: string): string | 
 function validationIssues(
   source: Record<string, unknown>,
 ): readonly TerraScaleValidationIssue[] | undefined {
-  const raw = source.validationErrors ?? source.errors;
+  const raw = source.fieldErrors ?? source.validationErrors ?? source.errors;
 
   if (Array.isArray(raw)) {
     return raw
@@ -349,7 +352,7 @@ function validationIssues(
         return {
           path: stringProperty(item, "path") ?? stringProperty(item, "field"),
           message,
-          code: stringProperty(item, "code"),
+          code: stringProperty(item, "code") ?? stringProperty(item, "constraint"),
         };
       })
       .filter((item): item is TerraScaleValidationIssue => item !== undefined);

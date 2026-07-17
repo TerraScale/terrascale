@@ -36,8 +36,9 @@ describe("region catalog", () => {
     assert.equal(isRegionCode("ashburn"), false);
   });
 
-  test("keeps future catalog codes and defaults malformed selections to GRU", () => {
+  test("keeps future and malformed codes for API validation", () => {
     assert.deepEqual(normalizeRegionCodes(["iad"]), ["iad"]);
-    assert.deepEqual(normalizeRegionCodes(["", "not a region"]), ["gru"]);
+    assert.deepEqual(normalizeRegionCodes(["", "not a region"]), ["not a region"]);
+    assert.deepEqual(normalizeRegionCodes(["", "  "]), ["gru"]);
   });
 });

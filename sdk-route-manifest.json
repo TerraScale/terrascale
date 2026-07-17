@@ -4,8 +4,76 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 108,
+  "routeCount": 141,
   "routes": [
+    {
+      "base": "api",
+      "client": "onboarding",
+      "operation": "getState",
+      "routeName": "onboarding.getState",
+      "method": "GET",
+      "pathTemplate": "/api/v1/onboarding",
+      "responseType": "OnboardingState"
+    },
+    {
+      "base": "api",
+      "client": "onboarding",
+      "operation": "updateAccountInformation",
+      "routeName": "onboarding.accountInformation.update",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/onboarding/account-information",
+      "requestType": "UpdateOnboardingAccountRequest",
+      "responseType": "OnboardingState"
+    },
+    {
+      "base": "api",
+      "client": "onboarding",
+      "operation": "createPaymentSession",
+      "routeName": "onboarding.paymentMethod.createSession",
+      "method": "POST",
+      "pathTemplate": "/api/v1/onboarding/payment-method/checkout-session",
+      "responseType": "OnboardingPaymentSession"
+    },
+    {
+      "base": "api",
+      "client": "onboarding",
+      "operation": "validatePaymentMethod",
+      "routeName": "onboarding.paymentMethod.validate",
+      "method": "POST",
+      "pathTemplate": "/api/v1/onboarding/payment-method/validate",
+      "requestType": "ValidateOnboardingPaymentRequest",
+      "responseType": "OnboardingState"
+    },
+    {
+      "base": "api",
+      "client": "onboarding",
+      "operation": "updateMfaDecision",
+      "routeName": "onboarding.mfaDecision.update",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/onboarding/mfa-decision",
+      "requestType": "UpdateOnboardingMfaRequest",
+      "responseType": "OnboardingState"
+    },
+    {
+      "base": "api",
+      "client": "onboarding",
+      "operation": "createOrganization",
+      "routeName": "onboarding.organization.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/onboarding/organization",
+      "requestType": "CreateOnboardingOrganizationRequest",
+      "responseType": "OnboardingState"
+    },
+    {
+      "base": "api",
+      "client": "onboarding",
+      "operation": "createProject",
+      "routeName": "onboarding.project.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/onboarding/project",
+      "requestType": "CreateOnboardingProjectRequest",
+      "responseType": "OnboardingState"
+    },
     {
       "base": "auth",
       "client": "auth",
@@ -16,7 +84,7 @@
       "responseType": "AuthMeResponse"
     },
     {
-      "base": "auth",
+      "base": "api",
       "client": "auth",
       "operation": "getCurrentBilling",
       "routeName": "auth.billing.get",
@@ -25,7 +93,7 @@
       "responseType": "CurrentOrganizationBilling"
     },
     {
-      "base": "auth",
+      "base": "api",
       "client": "auth",
       "operation": "evaluateBillingGuard",
       "routeName": "auth.billing.guard",
@@ -100,6 +168,26 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/password/login",
       "requestType": "SignInRequest",
+      "responseType": "PasswordLoginResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "verifyPasswordMfa:global",
+      "routeName": "auth.passwordMfa.verify",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/mfa/verify",
+      "requestType": "PasswordMfaVerifyRequest",
+      "responseType": "PasswordLoginResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "verifyPasswordMfa:project",
+      "routeName": "auth.passwordMfa.verify",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/password/mfa/verify",
+      "requestType": "PasswordMfaVerifyRequest",
       "responseType": "PasswordLoginResponse"
     },
     {
@@ -256,13 +344,110 @@
       "responseType": "void"
     },
     {
+      "base": "auth",
+      "client": "auth",
+      "operation": "updateProfile",
+      "routeName": "auth.profile.update",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/users/me/profile",
+      "requestType": "UpdateProfileRequest",
+      "responseType": "UpdateProfileResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "changePassword",
+      "routeName": "auth.password.change",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/change-password",
+      "requestType": "ChangePasswordRequest",
+      "responseType": "ChangePasswordResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "listMfaFactors",
+      "routeName": "auth.mfa.factors.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/auth/mfa/factors",
+      "responseType": "ListMfaFactorsResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "enrollTotp",
+      "routeName": "auth.mfa.totp.enroll",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/mfa/totp/enroll",
+      "responseType": "EnrollTotpResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "verifyTotpEnrollment",
+      "routeName": "auth.mfa.totp.verifyEnrollment",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/mfa/totp/enroll/verify",
+      "requestType": "VerifyTotpEnrollmentRequest",
+      "responseType": "VerifyTotpEnrollmentResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "deleteMfaFactor",
+      "routeName": "auth.mfa.factors.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/auth/mfa/factors/{sessionId}",
+      "requestType": "DeleteMfaFactorRequest",
+      "responseType": "VerifyTotpEnrollmentResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "generateRecoveryCodes",
+      "routeName": "auth.mfa.recoveryCodes.generate",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/mfa/recovery-codes/generate",
+      "responseType": "GenerateRecoveryCodesResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "switchOrganization",
+      "routeName": "auth.organization.switch",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/switch-organization",
+      "requestType": "SwitchOrganizationRequest",
+      "responseType": "AuthTokenResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "beginExternalLogin",
+      "routeName": "auth.externalLogin.begin",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/external-login/begin",
+      "requestType": "DashboardExternalLoginBeginRequest",
+      "responseType": "DashboardExternalLoginBeginResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "completeExternalLogin",
+      "routeName": "auth.externalLogin.complete",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/external-login/complete",
+      "requestType": "DashboardExternalLoginCompleteRequest",
+      "responseType": "PasswordLoginResponse"
+    },
+    {
       "base": "api",
       "client": "organizations",
       "operation": "list",
       "routeName": "organizations.list",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations",
-      "responseType": "Page<Organization>"
+      "responseType": "readonly Organization[]"
     },
     {
       "base": "api",
@@ -286,20 +471,69 @@
     {
       "base": "api",
       "client": "organizations",
-      "operation": "listProjects",
-      "routeName": "organizations.projects.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/projects",
-      "responseType": "Page<Project>"
+      "operation": "update",
+      "routeName": "organizations.update",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/organizations/{organizationId}",
+      "requestType": "UpdateOrganizationRequest",
+      "responseType": "Organization"
     },
     {
       "base": "api",
       "client": "organizations",
-      "operation": "listUsers",
-      "routeName": "organizations.users.list",
+      "operation": "requestDeletion",
+      "routeName": "organizations.deletion.request",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}:request-deletion",
+      "requestType": "RequestOrganizationDeletionRequest",
+      "responseType": "Organization"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "leave",
+      "routeName": "organizations.leave",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}:leave",
+      "responseType": "void"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "listProjects",
+      "routeName": "organizations.projects.list",
       "method": "GET",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/users",
-      "responseType": "Page<OrganizationUser>"
+      "pathTemplate": "/api/v1/organizations/{organizationId}/projects",
+      "responseType": "readonly Project[]"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "listMembers",
+      "routeName": "organizations.members.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/members",
+      "responseType": "readonly OrganizationMember[]"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "updateMemberRole",
+      "routeName": "organizations.members.updateRole",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/members/{userId}",
+      "requestType": "UpdateOrganizationMemberRoleRequest",
+      "responseType": "OrganizationMember"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "removeMember",
+      "routeName": "organizations.members.remove",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/members/{userId}:remove",
+      "requestType": "RemoveOrganizationMemberRequest",
+      "responseType": "void"
     },
     {
       "base": "api",
@@ -323,6 +557,15 @@
     {
       "base": "api",
       "client": "organizations",
+      "operation": "listProjectRegionPlacements",
+      "routeName": "organizations.projects.regions.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/regions",
+      "responseType": "readonly ProjectRegionPlacement[]"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
       "operation": "updateProject",
       "routeName": "organizations.projects.update",
       "method": "PATCH",
@@ -333,11 +576,21 @@
     {
       "base": "api",
       "client": "organizations",
+      "operation": "deleteProject",
+      "routeName": "organizations.projects.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}",
+      "requestType": "DeleteProjectRequest",
+      "responseType": "DeletedProject"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
       "operation": "listInvitations",
       "routeName": "organizations.invitations.list",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations/{organizationId}/invitations",
-      "responseType": "Page<Invitation>"
+      "responseType": "readonly Invitation[]"
     },
     {
       "base": "api",
@@ -352,10 +605,37 @@
     {
       "base": "api",
       "client": "organizations",
-      "operation": "revokeInvitation",
-      "routeName": "organizations.invitations.revoke",
+      "operation": "acceptInvitation",
+      "routeName": "organizations.invitations.accept",
       "method": "POST",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:revoke",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:accept",
+      "responseType": "Invitation"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "declineInvitation",
+      "routeName": "organizations.invitations.decline",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:decline",
+      "responseType": "Invitation"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "resendInvitation",
+      "routeName": "organizations.invitations.resend",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:resend",
+      "responseType": "Invitation"
+    },
+    {
+      "base": "api",
+      "client": "organizations",
+      "operation": "cancelInvitation",
+      "routeName": "organizations.invitations.cancel",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:cancel",
       "responseType": "Invitation"
     },
     {
@@ -910,11 +1190,38 @@
     {
       "base": "api",
       "client": "usage",
+      "operation": "getOrganizationUsage",
+      "routeName": "usage.organization.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/usage",
+      "responseType": "OrganizationUsage"
+    },
+    {
+      "base": "api",
+      "client": "usage",
       "operation": "getProjectUsageWorkload",
       "routeName": "usage.project.workload",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/usage/workload",
       "responseType": "UsageWorkload"
+    },
+    {
+      "base": "api",
+      "client": "usage",
+      "operation": "getProjectLatency",
+      "routeName": "usage.project.latency",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/latency",
+      "responseType": "ProjectLatency"
+    },
+    {
+      "base": "api",
+      "client": "usage",
+      "operation": "getProjectUsageHistory",
+      "routeName": "usage.project.history",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/usage/history",
+      "responseType": "ProjectUsageHistory"
     },
     {
       "base": "api",
@@ -1006,6 +1313,15 @@
       "method": "POST",
       "pathTemplate": "/api/v1/users/me/notifications:mark-all-read",
       "responseType": "MarkAllDashboardNotificationsReadResponse"
+    },
+    {
+      "base": "api",
+      "client": "security",
+      "operation": "getSettings",
+      "routeName": "security.settings.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/security/settings",
+      "responseType": "SecuritySettings"
     },
     {
       "base": "api",

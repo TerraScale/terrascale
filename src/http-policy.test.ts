@@ -4,6 +4,18 @@ import { describe, test } from "node:test";
 import { TerraScaleHttp } from "./http.js";
 
 describe("TerraScaleHttp request policy", () => {
+  test("normalizes explicit base URLs when a custom fetch is configured", () => {
+    const http = new TerraScaleHttp({
+      apiBaseUrl: " https://api.terrascale.test/// ",
+      authBaseUrl: " https://auth.terrascale.test//// ",
+      dashboardClientId: "test",
+      fetch: async () => Response.json({}),
+    });
+
+    assert.equal(http.config.apiBaseUrl, "https://api.terrascale.test");
+    assert.equal(http.config.authBaseUrl, "https://auth.terrascale.test");
+  });
+
   test("strips every identity header from anonymous token exchange", async () => {
     let captured: Request | undefined;
     const http = new TerraScaleHttp({
@@ -79,5 +91,56 @@ describe("TerraScaleHttp request policy", () => {
     assert.equal(preparationFailure.ok ? undefined : preparationFailure.error.kind, "transport");
     assert.equal(successful.ok, true);
     assert.deepEqual(recorded, ["regions.list"]);
+  });
+
+  test("rejects request paths that escape the configured origin", async () => {
+    let fetches = 0;
+    let tokenResolutions = 0;
+    const http = new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      dashboardClientId: "test",
+      accessToken: () => {
+        tokenResolutions++;
+        return "secret";
+      },
+      fetch: async () => {
+        fetches++;
+        return Response.json({});
+      },
+    });
+
+    for (const path of ["https://attacker.test/capture", "\\\\attacker.test/capture"]) {
+      const result = await http.request({
+        method: "GET",
+        path,
+        routeName: "regions.list",
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.ok ? undefined : result.error.kind, "transport");
+    }
+
+    assert.equal(tokenResolutions, 0);
+    assert.equal(fetches, 0);
+  });
+
+  test("provides a useful message when an error response has no status text", async () => {
+    const http = new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      dashboardClientId: "test",
+      fetch: async () => new Response(null, { status: 500 }),
+    });
+
+    const result = await http.request({
+      method: "GET",
+      path: "/api/v1/regions",
+      routeName: "regions.list",
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(
+      result.ok ? undefined : result.error.message,
+      "The TerraScale API request failed.",
+    );
   });
 });
