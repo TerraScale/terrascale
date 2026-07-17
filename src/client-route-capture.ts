@@ -5,7 +5,7 @@ import {
   type TerraScaleRequestMetric,
   type TerraScaleRouteName,
 } from "./http.js";
-import { toUlid, type Ulid } from "./ids.js";
+import { toUlid } from "./ids.js";
 
 const sampleIds = {
   apiKeyId: toUlid("01BRZ3NDEKTSV4RRFFQ69G5FAV"),

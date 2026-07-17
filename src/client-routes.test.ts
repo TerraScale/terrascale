@@ -5,7 +5,7 @@ import { describe, test } from "node:test";
 import { capturePublicClientRoutes } from "./client-route-capture.js";
 import { createTerraScaleClient } from "./factory.js";
 import type { TerraScaleClient } from "./factory.js";
-import { toUlid, type Ulid } from "./ids.js";
+import { toUlid } from "./ids.js";
 import type { JsonValue } from "./models.js";
 
 const projectId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
