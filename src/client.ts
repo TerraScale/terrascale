@@ -1141,7 +1141,7 @@ export class RepositoriesClient {
   get(scope: Models.RepositoryScoped): Promise<TerraScaleResult<Models.RepositoryDefinition>> {
     return this.http.request({
       method: "GET",
-      path: repositoryRoot(this.http, scope),
+      path: repositoryRoot(scope),
       routeName: "repositories.get",
     });
   }
@@ -1152,7 +1152,7 @@ export class RepositoriesClient {
   ): Promise<TerraScaleResult<Models.DeletedRepositoryResponse>> {
     return this.http.request({
       method: "DELETE",
-      path: repositoryRoot(this.http, scope),
+      path: repositoryRoot(scope),
       routeName: "repositories.delete",
       query,
     });
@@ -1272,7 +1272,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DocumentPageResponse<TDocument>>> {
     return this.http.request({
       method: "GET",
-      path: `${repositoryRoot(this.http, scope)}/documents`,
+      path: `${repositoryRoot(scope)}/documents`,
       routeName: "documents.list",
       query,
     });
@@ -1284,7 +1284,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
     return this.http.request({
       method: "POST",
-      path: `${repositoryRoot(this.http, scope)}/documents`,
+      path: `${repositoryRoot(scope)}/documents`,
       routeName: "documents.create",
       body: { data },
     });
@@ -1296,7 +1296,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
     return this.http.request({
       method: "GET",
-      path: `${repositoryRoot(this.http, scope)}/documents/${ulidPathSegment(documentId)}`,
+      path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.get",
     });
   }
@@ -1308,7 +1308,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
     return this.http.request({
       method: "PUT",
-      path: `${repositoryRoot(this.http, scope)}/documents/${ulidPathSegment(documentId)}`,
+      path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.put",
       body: { data },
     });
@@ -1321,7 +1321,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
     return this.http.request({
       method: "PATCH",
-      path: `${repositoryRoot(this.http, scope)}/documents/${ulidPathSegment(documentId)}`,
+      path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.patch",
       body: { data },
     });
@@ -1333,7 +1333,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DocumentBatchResponse<TDocument>>> {
     return this.http.request({
       method: "POST",
-      path: `${repositoryRoot(this.http, scope)}/documents/batch`,
+      path: `${repositoryRoot(scope)}/documents/batch`,
       routeName: "documents.batch",
       body: request,
     });
@@ -1345,7 +1345,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<Models.DeletedDocumentResponse>> {
     return this.http.request({
       method: "DELETE",
-      path: `${repositoryRoot(this.http, scope)}/documents/${ulidPathSegment(documentId)}`,
+      path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.delete",
     });
   }
@@ -1360,7 +1360,7 @@ export class QueryClient {
   ): Promise<TerraScaleResult<Models.DocumentPageResponse<TDocument>>> {
     return this.http.request({
       method: "POST",
-      path: `${repositoryRoot(this.http, scope)}/tql`,
+      path: `${repositoryRoot(scope)}/tql`,
       routeName: "query.execute",
       body: request,
     });
@@ -1373,7 +1373,7 @@ export class SchemaClient {
   get(scope: Models.RepositoryScoped): Promise<TerraScaleResult<Models.RepositorySchema>> {
     return this.http.request({
       method: "GET",
-      path: `${repositoryRoot(this.http, scope)}/schema`,
+      path: `${repositoryRoot(scope)}/schema`,
       routeName: "schema.get",
     });
   }
@@ -1384,7 +1384,7 @@ export class SchemaClient {
   ): Promise<TerraScaleResult<Models.RepositorySchemaValidationResponse>> {
     return this.http.request({
       method: "POST",
-      path: `${repositoryRoot(this.http, scope)}/schema/validate`,
+      path: `${repositoryRoot(scope)}/schema/validate`,
       routeName: "schema.validate",
       body: request,
     });
@@ -1396,7 +1396,7 @@ export class SchemaClient {
   ): Promise<TerraScaleResult<Models.RepositorySchema>> {
     return this.http.request({
       method: "PUT",
-      path: `${repositoryRoot(this.http, scope)}/schema`,
+      path: `${repositoryRoot(scope)}/schema`,
       routeName: "schema.configure",
       body: request,
     });
@@ -1982,7 +1982,7 @@ function environmentRoot(http: TerraScaleHttp, scope: Models.EnvironmentScoped):
   return `${databaseRoot(http, scope)}/environments/${ulidPathSegment(scope.environmentId)}`;
 }
 
-function repositoryRoot(_http: TerraScaleHttp, scope: Models.RepositoryScoped): string {
+function repositoryRoot(scope: Models.RepositoryScoped): string {
   return `${apiRoot}/repositories/${ulidPathSegment(scope.repositoryId)}`;
 }
 
