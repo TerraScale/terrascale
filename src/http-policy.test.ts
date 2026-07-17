@@ -6,8 +6,8 @@ import { TerraScaleHttp } from "./http.js";
 describe("TerraScaleHttp request policy", () => {
   test("normalizes explicit base URLs when a custom fetch is configured", () => {
     const http = new TerraScaleHttp({
-      apiBaseUrl: " https://api.terrascale.test/ ",
-      authBaseUrl: " https://auth.terrascale.test/ ",
+      apiBaseUrl: " https://api.terrascale.test/// ",
+      authBaseUrl: " https://auth.terrascale.test//// ",
       dashboardClientId: "test",
       fetch: async () => Response.json({}),
     });
