@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount } from 'svelte'
   import Icon from '@/components/Icon.svelte'
   import { locale, dict, setLocale, LOCALES, type LocaleCode } from '@/lib/i18n'
 
@@ -55,11 +55,12 @@
   }
 
   onMount(() => {
+    if (variant !== 'dropdown') return
+
     window.addEventListener('click', onWindowClick)
     window.addEventListener('keydown', onKeydown)
-  })
-  onDestroy(() => {
-    if (typeof window !== 'undefined') {
+
+    return () => {
       window.removeEventListener('click', onWindowClick)
       window.removeEventListener('keydown', onKeydown)
     }
