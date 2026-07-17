@@ -622,7 +622,7 @@ export type ProjectQueue = {
 
 export type CreateProjectQueueRequest = {
   readonly name: string;
-  readonly kind?: "queue" | "topic";
+  readonly kind: "queue" | "topic";
   readonly description?: string;
   readonly retentionSeconds?: number;
   readonly maxMessageSizeBytes?: number;

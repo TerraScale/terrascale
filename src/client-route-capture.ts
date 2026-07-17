@@ -798,7 +798,7 @@ const captureOperations: readonly CaptureOperation[] = [
     client: "queues",
     operation: "create",
     defaultProject: true,
-    invoke: (client) => client.queues.create({ name: "jobs" }),
+    invoke: (client) => client.queues.create({ name: "jobs", kind: "queue" }),
   },
   {
     client: "queues",
