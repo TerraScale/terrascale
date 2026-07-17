@@ -1077,6 +1077,13 @@ export type UpdateTeamMemberRequest = {
   readonly role: AccessRole;
 };
 
+export type ProjectUsageSourceStatus = {
+  readonly source: string;
+  readonly available: boolean;
+  readonly provisional: boolean;
+  readonly detail?: string | null;
+};
+
 export type UsageSummary = {
   readonly projectId: ProjectId;
   readonly periodStart: Timestamp;
@@ -1094,6 +1101,8 @@ export type UsageSummary = {
   readonly updatedAt: Timestamp;
   readonly regionalTotals: Readonly<Record<string, number>>;
   readonly categoryTotals: Readonly<Record<string, number>>;
+  readonly provisional: boolean;
+  readonly sources: readonly ProjectUsageSourceStatus[];
 };
 
 export type OrganizationUsageLimit = {
