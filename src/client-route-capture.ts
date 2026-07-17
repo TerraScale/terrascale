@@ -102,7 +102,6 @@ async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRou
   const baseConfig = {
     apiBaseUrl: "https://api.terrascale.test",
     authBaseUrl: "https://auth.terrascale.test",
-    dashboardClientId: "sdk-route-manifest",
     fetch: captureFetch,
     requestMetricRecorder: recordMetric,
   };
@@ -177,7 +176,6 @@ function enumeratePublicClientMethods(): readonly PublicClientMethod[] {
   const client = createTerraScaleClient({
     apiBaseUrl: "https://api.terrascale.test",
     authBaseUrl: "https://auth.terrascale.test",
-    dashboardClientId: "sdk-route-manifest",
     fetch: async () =>
       new Response("{}", {
         status: 200,
@@ -264,7 +262,7 @@ const registerRequest = {
   password: "correct horse battery staple",
   firstName: "Ada",
   lastName: "Lovelace",
-  verifyUrl: "https://dashboard.terrascale.test/verify",
+  verifyUrl: "https://app.example.test/verify",
 };
 
 const captureOperations: readonly CaptureOperation[] = [
@@ -285,7 +283,11 @@ const captureOperations: readonly CaptureOperation[] = [
   {
     client: "onboarding",
     operation: "createPaymentSession",
-    invoke: (client) => client.onboarding.createPaymentSession(),
+    invoke: (client) =>
+      client.onboarding.createPaymentSession({
+        successUrl: "https://app.example.test/onboarding?payment=success",
+        cancelUrl: "https://app.example.test/onboarding?payment=cancelled",
+      }),
   },
   {
     client: "onboarding",
@@ -369,7 +371,7 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.auth.resendVerification(
         "pending-token",
-        "https://dashboard.terrascale.test/verify",
+        "https://app.example.test/verify",
       ),
   },
   {
@@ -380,7 +382,7 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.auth.resendVerification(
         "pending-token",
-        "https://dashboard.terrascale.test/verify",
+        "https://app.example.test/verify",
       ),
   },
   {
@@ -434,7 +436,7 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.auth.forgotPassword({
         email: "ada@example.test",
-        resetUrl: "https://dashboard.terrascale.test/reset",
+        resetUrl: "https://app.example.test/reset",
       }),
   },
   {
@@ -445,7 +447,7 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.auth.forgotPassword({
         email: "ada@example.test",
-        resetUrl: "https://dashboard.terrascale.test/reset",
+        resetUrl: "https://app.example.test/reset",
       }),
   },
   {
@@ -476,7 +478,7 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.auth.requestMagicLink({
         email: "ada@example.test",
-        redirectUrl: "https://dashboard.terrascale.test/login",
+        redirectUrl: "https://app.example.test/login",
       }),
   },
   {
@@ -487,7 +489,7 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.auth.requestMagicLink({
         email: "ada@example.test",
-        redirectUrl: "https://dashboard.terrascale.test/login",
+        redirectUrl: "https://app.example.test/login",
       }),
   },
   {
@@ -594,7 +596,7 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.auth.beginExternalLogin({
         provider: "google",
-        redirectUri: "https://dashboard.terrascale.test/api/auth/external-callback",
+        redirectUri: "https://app.example.test/api/auth/external-callback",
         state: "oauth-state",
       }),
   },
@@ -605,7 +607,31 @@ const captureOperations: readonly CaptureOperation[] = [
       client.auth.completeExternalLogin({
         provider: "github",
         code: "oauth-code",
-        redirectUri: "https://dashboard.terrascale.test/api/auth/external-callback",
+        redirectUri: "https://app.example.test/api/auth/external-callback",
+      }),
+  },
+  {
+    client: "auth",
+    operation: "listProjectProviders",
+    defaultProject: true,
+    invoke: (client) => client.auth.listProjectProviders(undefined, { cursor: "next", limit: 25 }),
+  },
+  {
+    client: "auth",
+    operation: "initiateEmailChange",
+    invoke: (client) =>
+      client.auth.initiateEmailChange({
+        newEmail: "augusta@example.test",
+        password: "correct horse battery staple",
+      }),
+  },
+  {
+    client: "auth",
+    operation: "verifyEmailChange",
+    invoke: (client) =>
+      client.auth.verifyEmailChange({
+        newEmail: "augusta@example.test",
+        otpCode: "123456",
       }),
   },
   {
@@ -721,6 +747,8 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.organizations.createInvitation(sampleIds.organizationId, {
         email: "grace@example.test",
+        responseUrlTemplate:
+          "https://app.example.test/invitations/{invitationId}?organizationId={organizationId}",
       }),
   },
   {
@@ -1194,8 +1222,8 @@ const captureOperations: readonly CaptureOperation[] = [
     operation: "createCheckoutSession",
     invoke: (client) =>
       client.billing.createCheckoutSession(sampleIds.organizationId, {
-        successUrl: "https://dashboard.terrascale.test/success",
-        cancelUrl: "https://dashboard.terrascale.test/cancel",
+        successUrl: "https://app.example.test/success",
+        cancelUrl: "https://app.example.test/cancel",
       }),
   },
   {
@@ -1204,7 +1232,7 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.billing.createPortalSession(
         sampleIds.organizationId,
-        "https://dashboard.terrascale.test/billing",
+        "https://app.example.test/billing",
       ),
   },
   {

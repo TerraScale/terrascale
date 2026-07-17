@@ -1,4 +1,4 @@
-import type { ProjectId, TenantId, Ulid } from "./ids.js";
+import type { ProjectId } from "./ids.js";
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -6,25 +6,10 @@ export type AccessTokenProvider = string | (() => Promise<string | undefined> | 
 
 import type { TerraScaleRequestMetricRecorder } from "./http.js";
 
-export type DashboardLogicalDatabaseKey =
-  | "audit"
-  | "auth"
-  | "billing"
-  | "notifications"
-  | "primary"
-  | "settings"
-  | "usage";
-
-export type DashboardLogicalDatabaseIds = Partial<Record<DashboardLogicalDatabaseKey, Ulid>> &
-  Record<string, Ulid | undefined>;
-
 export type TerraScaleRuntimeConfig = {
   readonly apiBaseUrl: string;
   readonly authBaseUrl?: string;
-  readonly dashboardClientId: string;
-  readonly tenantId?: TenantId;
   readonly projectId?: ProjectId;
-  readonly dashboardDatabaseIds?: DashboardLogicalDatabaseIds;
   readonly accessToken?: AccessTokenProvider;
   readonly defaultHeaders?: HeadersInit;
   readonly fetch?: FetchLike;
@@ -37,10 +22,7 @@ export type TerraScaleRuntimeConfig = {
 export type ResolvedTerraScaleRuntimeConfig = {
   readonly apiBaseUrl: string;
   readonly authBaseUrl: string;
-  readonly dashboardClientId: string;
-  readonly tenantId?: TenantId;
   readonly projectId?: ProjectId;
-  readonly dashboardDatabaseIds: DashboardLogicalDatabaseIds;
   readonly accessToken?: AccessTokenProvider;
   readonly defaultHeaders?: HeadersInit;
   readonly fetch: FetchLike;
@@ -61,7 +43,6 @@ export function resolveRuntimeConfig(
     ...config,
     apiBaseUrl: normalizeBaseUrl(config.apiBaseUrl),
     authBaseUrl: normalizeBaseUrl(config.authBaseUrl ?? config.apiBaseUrl),
-    dashboardDatabaseIds: config.dashboardDatabaseIds ?? {},
     fetch: fetchHandler,
   };
 }

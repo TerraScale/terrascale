@@ -80,6 +80,53 @@ describe("TerraScaleClient route contracts", () => {
     assertRequest(requests[2], "POST", "/api/v1/auth/me/billing/guard");
   });
 
+  test("sends onboarding checkout return URLs to the public product API", async () => {
+    const { client, requests } = createCapturingClient({});
+
+    await client.onboarding.createPaymentSession({
+      successUrl: "https://app.example.test/onboarding?payment=success",
+      cancelUrl: "https://app.example.test/onboarding?payment=cancelled",
+    });
+
+    assert.equal(requests[0]?.url.origin, "https://api.terrascale.test");
+    assertRequest(requests[0], "POST", "/api/v1/onboarding/payment-method/checkout-session");
+    assert.deepEqual(requests[0]?.body, {
+      successUrl: "https://app.example.test/onboarding?payment=success",
+      cancelUrl: "https://app.example.test/onboarding?payment=cancelled",
+    });
+  });
+
+  test("uses typed public Auth routes for providers and email changes", async () => {
+    const { client, requests } = createCapturingClient({});
+
+    await client.auth.listProjectProviders(undefined, { cursor: "next", limit: 25 });
+    await client.auth.initiateEmailChange({
+      newEmail: "augusta@example.test",
+      password: "current-password",
+    });
+    await client.auth.verifyEmailChange({
+      newEmail: "augusta@example.test",
+      otpCode: "123456",
+    });
+
+    for (const request of requests) {
+      assert.equal(request.url.origin, "https://auth.terrascale.test");
+    }
+    assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/auth/providers`);
+    assert.equal(requests[0]?.url.searchParams.get("cursor"), "next");
+    assert.equal(requests[0]?.url.searchParams.get("limit"), "25");
+    assertRequest(requests[1], "POST", "/api/v1/users/me/email/change");
+    assert.deepEqual(requests[1]?.body, {
+      newEmail: "augusta@example.test",
+      password: "current-password",
+    });
+    assertRequest(requests[2], "POST", "/api/v1/users/me/email/verify");
+    assert.deepEqual(requests[2]?.body, {
+      newEmail: "augusta@example.test",
+      otpCode: "123456",
+    });
+  });
+
   test("uses root repository routes without environment scope", async () => {
     const { client, requests } = createCapturingClient([]);
 
@@ -110,6 +157,27 @@ describe("TerraScaleClient route contracts", () => {
     await client.repositories.delete({ repositoryId }, { deleteDocuments: true });
     assertRequest(requests[3], "DELETE", `/api/v1/repositories/${repositoryId}`);
     assert.equal(requests[3]?.url.searchParams.get("deleteDocuments"), "true");
+  });
+
+  test("passes the caller-owned invitation response URL template", async () => {
+    const { client, requests } = createCapturingClient({});
+    const responseUrlTemplate =
+      "https://app.example.test/invitations/{invitationId}?organizationId={organizationId}";
+
+    await client.organizations.createInvitation(organizationId, {
+      email: "grace@example.test",
+      responseUrlTemplate,
+    });
+
+    assertRequest(
+      requests[0],
+      "POST",
+      `/api/v1/organizations/${organizationId}/invitations`,
+    );
+    assert.deepEqual(requests[0]?.body, {
+      email: "grace@example.test",
+      responseUrlTemplate,
+    });
   });
 
   test("locks document list, get, and delete routes directly", async () => {
@@ -444,6 +512,7 @@ describe("TerraScaleClient route contracts", () => {
     const { client, requests } = createCapturingClient(created);
 
     await client.apiKeys.list(undefined, { cursor: "next", limit: 25 });
+    assert.equal(requests[0]?.url.origin, "https://auth.terrascale.test");
     assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/auth/api-keys`);
     assert.equal(requests[0]?.url.searchParams.get("cursor"), "next");
     assert.equal(requests[0]?.url.searchParams.get("limit"), "25");
@@ -509,6 +578,9 @@ describe("TerraScaleClient route contracts", () => {
       assert.equal(createResult.value.clientSecret, "client_secret");
     }
     assertRequest(requests[1], "POST", `/api/v1/projects/${projectId}/auth/m2m-applications`);
+    for (const request of requests) {
+      assert.equal(request.url.origin, "https://auth.terrascale.test");
+    }
     assert.deepEqual(requests[1]?.body, {
       name: "worker",
       scopes: ["documents:write"],
@@ -536,6 +608,7 @@ describe("TerraScaleClient route contracts", () => {
       scope: "documents:write",
     });
     assertRequest(requests[4], "POST", `/api/v1/projects/${projectId}/auth/m2m/token`);
+    assert.equal(requests[4]?.url.origin, "https://auth.terrascale.test");
     assert.deepEqual(requests[4]?.body, {
       grant_type: "client_credentials",
       client_id: clientId,
@@ -634,7 +707,6 @@ function createCapturingClientWithResponses(responseBodies: readonly JsonValue[]
   const client = createTerraScaleClient({
     apiBaseUrl: "https://api.terrascale.test",
     authBaseUrl: "https://auth.terrascale.test",
-    dashboardClientId: "sdk-route-tests",
     projectId,
     fetch: async (input) => {
       const request = input instanceof Request ? input : new Request(input);

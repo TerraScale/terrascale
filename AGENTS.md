@@ -12,6 +12,11 @@
 - Public customer APIs live under the root entrypoint. Role-protected platform
   administration is exported through an explicit public `admin` entrypoint;
   private Dashboard business contracts are prohibited.
+- The SDK exports no Dashboard-named entrypoint, method, DTO, or route. Dashboard
+  is a full-stack consumer that composes typed, Dashboard-agnostic public product
+  operations locally; the SDK is its sole TerraScale data-access boundary and
+  gives it no special identity, header, authorization, or tenant bypass beyond
+  what any external user receives.
 
 ## Testing
 

@@ -16,6 +16,11 @@ APIs. Role-protected owner/admin APIs use a separate explicit public entrypoint.
 - `@terrascale/sdk/admin` exports role-protected platform administration.
   Dashboard business flows use the same root clients as customer applications.
 
+The SDK has no Dashboard-specific entrypoint, DTO, method, or route. Dashboard
+Next composes these typed public product clients inside its own full-stack route
+handlers as an ordinary external user and never receives special headers,
+authorization, tenant access, direct database access, or private API access.
+
 ## Public API Surface
 
 The public client follows the backed `TerraScale.Platform` REST surface:
@@ -38,6 +43,8 @@ The public client follows the backed `TerraScale.Platform` REST surface:
   `/api/v1/repositories/{repositoryId}/schema/validate`.
 - Project auth API keys: `/api/v1/projects/{projectId}/auth/api-keys`,
   including create/list/rotate/revoke wrappers.
+- Project auth providers: typed listing under
+  `/api/v1/projects/{projectId}/auth/providers`.
 - Project auth M2M applications:
   `/api/v1/projects/{projectId}/auth/m2m-applications`, including
   create/list/rotate/revoke and OAuth token creation.
@@ -49,8 +56,11 @@ The public client follows the backed `TerraScale.Platform` REST surface:
   `/api/v1/projects/{projectId}/databases/{databaseId}/restores`; responses
   use logical ULID fields such as `backupId`, `restoreId`, and
   `restoredDatabaseId`.
-- Onboarding: state, account information, MFA choice, payment validation, and
-  initial organization/project creation under `/api/v1/onboarding`.
+- Account identity: typed external login and email-change initiation/verification
+  through the public Auth API.
+- Onboarding: state, account information, MFA choice, checkout creation with
+  explicit success/cancel URLs, payment validation, and initial
+  organization/project creation under `/api/v1/onboarding`.
 - Organizations and projects: organization create/list/get/update/deletion,
   membership and invitation lifecycle, plus project create/list/get/update/delete
   and region placement.

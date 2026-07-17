@@ -8,7 +8,6 @@ export type Ulid = Brand<string, "Ulid">;
 
 export type OrganizationId = Ulid;
 export type ProjectId = Ulid;
-export type TenantId = Ulid;
 export type DatabaseId = Ulid;
 export type EnvironmentId = Ulid;
 export type RepositoryId = Ulid;

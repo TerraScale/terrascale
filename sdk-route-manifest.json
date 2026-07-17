@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 141,
+  "routeCount": 144,
   "routes": [
     {
       "base": "api",
@@ -32,6 +32,7 @@
       "routeName": "onboarding.paymentMethod.createSession",
       "method": "POST",
       "pathTemplate": "/api/v1/onboarding/payment-method/checkout-session",
+      "requestType": "CreateOnboardingPaymentSessionRequest",
       "responseType": "OnboardingPaymentSession"
     },
     {
@@ -427,8 +428,8 @@
       "routeName": "auth.externalLogin.begin",
       "method": "POST",
       "pathTemplate": "/api/v1/auth/external-login/begin",
-      "requestType": "DashboardExternalLoginBeginRequest",
-      "responseType": "DashboardExternalLoginBeginResponse"
+      "requestType": "ExternalLoginBeginRequest",
+      "responseType": "ExternalLoginBeginResponse"
     },
     {
       "base": "auth",
@@ -437,8 +438,37 @@
       "routeName": "auth.externalLogin.complete",
       "method": "POST",
       "pathTemplate": "/api/v1/auth/external-login/complete",
-      "requestType": "DashboardExternalLoginCompleteRequest",
+      "requestType": "ExternalLoginCompleteRequest",
       "responseType": "PasswordLoginResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "listProjectProviders",
+      "routeName": "auth.project.providers.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/providers",
+      "responseType": "ListProjectAuthProvidersResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "initiateEmailChange",
+      "routeName": "auth.emailChange.initiate",
+      "method": "POST",
+      "pathTemplate": "/api/v1/users/me/email/change",
+      "requestType": "InitiateEmailChangeRequest",
+      "responseType": "InitiateEmailChangeResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "verifyEmailChange",
+      "routeName": "auth.emailChange.verify",
+      "method": "POST",
+      "pathTemplate": "/api/v1/users/me/email/verify",
+      "requestType": "VerifyEmailChangeRequest",
+      "responseType": "VerifyEmailChangeResponse"
     },
     {
       "base": "api",
@@ -1057,7 +1087,7 @@
       "responseType": "RepositorySchema"
     },
     {
-      "base": "api",
+      "base": "auth",
       "client": "apiKeys",
       "operation": "list",
       "routeName": "apiKeys.list",
@@ -1066,7 +1096,7 @@
       "responseType": "ListApiKeysResponse"
     },
     {
-      "base": "api",
+      "base": "auth",
       "client": "apiKeys",
       "operation": "create",
       "routeName": "apiKeys.create",
@@ -1076,7 +1106,7 @@
       "responseType": "CreatedApiKey"
     },
     {
-      "base": "api",
+      "base": "auth",
       "client": "apiKeys",
       "operation": "rotate",
       "routeName": "apiKeys.rotate",
@@ -1085,7 +1115,7 @@
       "responseType": "RotatedApiKey"
     },
     {
-      "base": "api",
+      "base": "auth",
       "client": "apiKeys",
       "operation": "revoke",
       "routeName": "apiKeys.revoke",
@@ -1094,7 +1124,7 @@
       "responseType": "RevokedApiKey"
     },
     {
-      "base": "api",
+      "base": "auth",
       "client": "m2m",
       "operation": "list",
       "routeName": "m2m.list",
@@ -1103,7 +1133,7 @@
       "responseType": "ListM2MApplicationsResponse"
     },
     {
-      "base": "api",
+      "base": "auth",
       "client": "m2m",
       "operation": "create",
       "routeName": "m2m.create",
@@ -1113,7 +1143,7 @@
       "responseType": "CreatedM2MApplication"
     },
     {
-      "base": "api",
+      "base": "auth",
       "client": "m2m",
       "operation": "rotate",
       "routeName": "m2m.rotate",
@@ -1122,7 +1152,7 @@
       "responseType": "RotatedM2MApplicationSecret"
     },
     {
-      "base": "api",
+      "base": "auth",
       "client": "m2m",
       "operation": "revoke",
       "routeName": "m2m.revoke",
@@ -1131,7 +1161,7 @@
       "responseType": "RevokedM2MApplication"
     },
     {
-      "base": "api",
+      "base": "auth",
       "client": "m2m",
       "operation": "createToken",
       "routeName": "m2m.token.create",
@@ -1312,7 +1342,7 @@
       "routeName": "notifications.markAllRead",
       "method": "POST",
       "pathTemplate": "/api/v1/users/me/notifications:mark-all-read",
-      "responseType": "MarkAllDashboardNotificationsReadResponse"
+      "responseType": "MarkAllNotificationsReadResponse"
     },
     {
       "base": "api",

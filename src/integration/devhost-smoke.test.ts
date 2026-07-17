@@ -15,7 +15,6 @@ describe("DevHost smoke", { skip: apiBaseUrl === undefined || authBaseUrl === un
     const client = createTerraScaleClient({
       apiBaseUrl: apiBaseUrl!,
       authBaseUrl: authBaseUrl!,
-      dashboardClientId: "terrascale-sdk-integration",
     });
 
     const result = await client.auth.getSession();
@@ -41,7 +40,6 @@ describe(
       const client = createTerraScaleClient({
         apiBaseUrl: apiBaseUrl!,
         authBaseUrl: authBaseUrl!,
-        dashboardClientId: "terrascale-sdk-integration",
         accessToken: accessToken!,
         projectId: projectId!,
       });

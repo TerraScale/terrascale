@@ -1,8 +1,4 @@
-import type {
-  DashboardLogicalDatabaseKey,
-  ResolvedTerraScaleRuntimeConfig,
-  TerraScaleRuntimeConfig,
-} from "./config.js";
+import type { ResolvedTerraScaleRuntimeConfig, TerraScaleRuntimeConfig } from "./config.js";
 import { TerraScaleHttp, type QueryRecord, type TerraScaleRequestOptions } from "./http.js";
 import { type Ulid, ulidPathSegment } from "./ids.js";
 import type * as Models from "./models.js";
@@ -39,6 +35,8 @@ export const sdkRouteManifest = {
     switchOrganization: `${apiRoot}/auth/switch-organization`,
     externalLoginBegin: `${apiRoot}/auth/external-login/begin`,
     externalLoginComplete: `${apiRoot}/auth/external-login/complete`,
+    initiateEmailChange: `${apiRoot}/users/me/email/change`,
+    verifyEmailChange: `${apiRoot}/users/me/email/verify`,
     accountSessions: `${apiRoot}/account/sessions`,
     accountSession: (sessionId: Ulid) =>
       `${apiRoot}/account/sessions/${ulidPathSegment(sessionId)}`,
@@ -63,6 +61,7 @@ export const sdkRouteManifest = {
         `${projectAuthRoot(projectId)}/passwordless/magic-link/complete`,
       refresh: (projectId: Ulid) => `${projectAuthRoot(projectId)}/refresh`,
       signOut: (projectId: Ulid) => `${projectAuthRoot(projectId)}/logout`,
+      providers: (projectId: Ulid) => `${projectAuthRoot(projectId)}/providers`,
     },
   },
 } as const;
@@ -125,9 +124,6 @@ export class TerraScaleClient {
     return this.http.request<TResponse, TBody>(options);
   }
 
-  dashboardDatabaseId(name: DashboardLogicalDatabaseKey | string): Ulid | undefined {
-    return this.http.dashboardDatabaseId(name);
-  }
 }
 
 export class OnboardingClient {
@@ -152,11 +148,14 @@ export class OnboardingClient {
     });
   }
 
-  createPaymentSession(): Promise<TerraScaleResult<Models.OnboardingPaymentSession>> {
+  createPaymentSession(
+    request: Models.CreateOnboardingPaymentSessionRequest,
+  ): Promise<TerraScaleResult<Models.OnboardingPaymentSession>> {
     return this.http.request({
       method: "POST",
       path: sdkRouteManifest.onboarding.paymentSession,
       routeName: "onboarding.paymentMethod.createSession",
+      body: request,
     });
   }
 
@@ -597,8 +596,8 @@ export class AuthClient {
   }
 
   beginExternalLogin(
-    request: Models.DashboardExternalLoginBeginRequest,
-  ): Promise<TerraScaleResult<Models.DashboardExternalLoginBeginResponse>> {
+    request: Models.ExternalLoginBeginRequest,
+  ): Promise<TerraScaleResult<Models.ExternalLoginBeginResponse>> {
     return this.http.request({
       base: "auth",
       method: "POST",
@@ -610,7 +609,7 @@ export class AuthClient {
   }
 
   completeExternalLogin(
-    request: Models.DashboardExternalLoginCompleteRequest,
+    request: Models.ExternalLoginCompleteRequest,
   ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
     return this.http.request({
       base: "auth",
@@ -619,6 +618,43 @@ export class AuthClient {
       routeName: "auth.externalLogin.complete",
       body: request,
       headerPolicy: "anonymous",
+    });
+  }
+
+  listProjectProviders(
+    projectId?: Ulid,
+    query?: Models.ListProjectAuthProvidersRequest,
+  ): Promise<TerraScaleResult<Models.ListProjectAuthProvidersResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "GET",
+      path: sdkRouteManifest.auth.project.providers(projectRootId(this.http, projectId)),
+      routeName: "auth.project.providers.list",
+      query,
+    });
+  }
+
+  initiateEmailChange(
+    request: Models.InitiateEmailChangeRequest,
+  ): Promise<TerraScaleResult<Models.InitiateEmailChangeResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.initiateEmailChange,
+      routeName: "auth.emailChange.initiate",
+      body: request,
+    });
+  }
+
+  verifyEmailChange(
+    request: Models.VerifyEmailChangeRequest,
+  ): Promise<TerraScaleResult<Models.VerifyEmailChangeResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.verifyEmailChange,
+      routeName: "auth.emailChange.verify",
+      body: request,
     });
   }
 }
@@ -1409,6 +1445,7 @@ export class ApiKeysClient {
     query?: Models.ListApiKeysRequest,
   ): Promise<TerraScaleResult<Models.ListApiKeysResponse>> {
     return this.http.request({
+      base: "auth",
       method: "GET",
       path: `${projectAuthRoot(projectRootId(this.http, projectId))}/api-keys`,
       routeName: "apiKeys.list",
@@ -1421,6 +1458,7 @@ export class ApiKeysClient {
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.CreatedApiKey>> {
     return this.http.request({
+      base: "auth",
       method: "POST",
       path: `${projectAuthRoot(projectRootId(this.http, projectId))}/api-keys`,
       routeName: "apiKeys.create",
@@ -1430,6 +1468,7 @@ export class ApiKeysClient {
 
   rotate(apiKeyId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.RotatedApiKey>> {
     return this.http.request({
+      base: "auth",
       method: "POST",
       path: `${projectAuthRoot(projectRootId(this.http, projectId))}/api-keys/${ulidPathSegment(apiKeyId)}/rotate`,
       routeName: "apiKeys.rotate",
@@ -1438,6 +1477,7 @@ export class ApiKeysClient {
 
   revoke(apiKeyId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.RevokedApiKey>> {
     return this.http.request({
+      base: "auth",
       method: "DELETE",
       path: `${projectAuthRoot(projectRootId(this.http, projectId))}/api-keys/${ulidPathSegment(apiKeyId)}`,
       routeName: "apiKeys.revoke",
@@ -1453,6 +1493,7 @@ export class M2MApplicationsClient {
     query?: Models.ListM2MApplicationsRequest,
   ): Promise<TerraScaleResult<Models.ListM2MApplicationsResponse>> {
     return this.http.request({
+      base: "auth",
       method: "GET",
       path: `${projectAuthRoot(projectRootId(this.http, projectId))}/m2m-applications`,
       routeName: "m2m.list",
@@ -1465,6 +1506,7 @@ export class M2MApplicationsClient {
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.CreatedM2MApplication>> {
     return this.http.request({
+      base: "auth",
       method: "POST",
       path: `${projectAuthRoot(projectRootId(this.http, projectId))}/m2m-applications`,
       routeName: "m2m.create",
@@ -1477,6 +1519,7 @@ export class M2MApplicationsClient {
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.RotatedM2MApplicationSecret>> {
     return this.http.request({
+      base: "auth",
       method: "POST",
       path: `${projectAuthRoot(projectRootId(this.http, projectId))}/m2m-applications/${ulidPathSegment(clientId)}/rotate`,
       routeName: "m2m.rotate",
@@ -1485,6 +1528,7 @@ export class M2MApplicationsClient {
 
   revoke(clientId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.RevokedM2MApplication>> {
     return this.http.request({
+      base: "auth",
       method: "DELETE",
       path: `${projectAuthRoot(projectRootId(this.http, projectId))}/m2m-applications/${ulidPathSegment(clientId)}`,
       routeName: "m2m.revoke",
@@ -1496,6 +1540,7 @@ export class M2MApplicationsClient {
     request: Models.M2MTokenRequest,
   ): Promise<TerraScaleResult<Models.M2MTokenResponse>> {
     return this.http.request({
+      base: "auth",
       method: "POST",
       path: `${projectAuthRoot(projectId)}/m2m/token`,
       routeName: "m2m.token.create",
@@ -1730,7 +1775,7 @@ export class NotificationsClient {
 
   markAllRead(query?: {
     readonly organizationId?: Ulid;
-  }): Promise<TerraScaleResult<Models.MarkAllDashboardNotificationsReadResponse>> {
+  }): Promise<TerraScaleResult<Models.MarkAllNotificationsReadResponse>> {
     return this.http.request({
       method: "POST",
       path: `${apiRoot}/users/me/notifications:mark-all-read`,

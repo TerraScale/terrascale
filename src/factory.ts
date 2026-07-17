@@ -31,8 +31,5 @@ export function createTerraScaleClient(config: TerraScaleRuntimeConfig): TerraSc
       return internal.config;
     },
     request: internal.request.bind(internal) as InternalTerraScaleClient["request"],
-    dashboardDatabaseId: internal.dashboardDatabaseId.bind(
-      internal,
-    ) as InternalTerraScaleClient["dashboardDatabaseId"],
   };
 }

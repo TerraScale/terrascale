@@ -11,8 +11,6 @@ import {
   type TerraScaleResult,
   type TerraScaleValidationIssue,
 } from "./result.js";
-import type { Ulid } from "./ids.js";
-
 export type TerraScaleRouteName =
   | `access.${string}`
   | `admin.${string}`
@@ -21,7 +19,6 @@ export type TerraScaleRouteName =
   | `auth.${string}`
   | `backups.${string}`
   | `billing.${string}`
-  | `dashboard.${string}`
   | `databases.${string}`
   | `documents.${string}`
   | `m2m.${string}`
@@ -143,10 +140,6 @@ export class TerraScaleHttp {
     }
   }
 
-  dashboardDatabaseId(name: string): Ulid | undefined {
-    return this.config.dashboardDatabaseIds[name];
-  }
-
   private baseUrl(base: TerraScaleBase): string {
     return base === "auth" ? this.config.authBaseUrl : this.config.apiBaseUrl;
   }
@@ -157,12 +150,6 @@ export class TerraScaleHttp {
 
     headers.set("accept", headers.get("accept") ?? "application/json");
     if (!anonymous) {
-      headers.set("x-terrascale-dashboard-client-id", this.config.dashboardClientId);
-
-      if (this.config.tenantId !== undefined) {
-        headers.set("x-terrascale-tenant-id", this.config.tenantId);
-      }
-
       if (this.config.projectId !== undefined) {
         headers.set("x-terrascale-project-id", this.config.projectId);
       }
@@ -182,9 +169,7 @@ export class TerraScaleHttp {
 
     if (anonymous) {
       headers.delete("authorization");
-      headers.delete("x-terrascale-dashboard-client-id");
       headers.delete("x-terrascale-project-id");
-      headers.delete("x-terrascale-tenant-id");
     }
 
     if (isMutation(options.method) && options.idempotencyKey !== false) {

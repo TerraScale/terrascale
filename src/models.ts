@@ -225,17 +225,17 @@ export type SwitchOrganizationRequest = {
   readonly organizationId: OrganizationId;
 };
 
-export type DashboardExternalLoginBeginRequest = {
+export type ExternalLoginBeginRequest = {
   readonly provider: "github" | "google";
   readonly redirectUri: string;
   readonly state: string;
 };
 
-export type DashboardExternalLoginBeginResponse = {
+export type ExternalLoginBeginResponse = {
   readonly authorizeUrl: string;
 };
 
-export type DashboardExternalLoginCompleteRequest = {
+export type ExternalLoginCompleteRequest = {
   readonly provider: "github" | "google";
   readonly code: string;
   readonly idToken?: string;
@@ -245,6 +245,27 @@ export type DashboardExternalLoginCompleteRequest = {
 export type VerifyEmailRequest = {
   readonly pendingAuthenticationToken: string;
   readonly code: string;
+};
+
+export type InitiateEmailChangeRequest = {
+  readonly newEmail: string;
+  readonly password: string;
+};
+
+export type InitiateEmailChangeResponse = {
+  readonly success: boolean;
+  readonly message: string;
+  readonly expiresAt?: Timestamp | null;
+};
+
+export type VerifyEmailChangeRequest = {
+  readonly newEmail: string;
+  readonly otpCode: string;
+};
+
+export type VerifyEmailChangeResponse = {
+  readonly success: boolean;
+  readonly error: string;
 };
 
 export type PasswordResetRequest = {
@@ -463,6 +484,11 @@ export type UpdateOnboardingAccountRequest = {
   readonly phoneNumber: string;
 };
 
+export type CreateOnboardingPaymentSessionRequest = {
+  readonly successUrl: string;
+  readonly cancelUrl: string;
+};
+
 export type OnboardingPaymentSession = {
   readonly checkoutUrl: string;
   readonly sessionId: string;
@@ -505,44 +531,6 @@ export type DeletedProject = {
   readonly physicalStorageDeleted: boolean;
 };
 
-export type DashboardContextUser = {
-  readonly userId: UserId;
-  readonly email: string;
-  readonly displayName: string;
-};
-
-export type DashboardContextOrganization = {
-  readonly organizationId: OrganizationId;
-  readonly name: string;
-};
-
-export type DashboardContextProject = {
-  readonly projectId: ProjectId;
-  readonly organizationId: OrganizationId;
-  readonly name: string;
-  readonly regions: readonly TerraScaleRegionCode[];
-  readonly placementStatus: ProjectPlacementStatus;
-  readonly placementGeneration: number;
-  readonly isCurrent: boolean;
-};
-
-export type DashboardContextDatabase = {
-  readonly databaseId: DatabaseId;
-  readonly projectId: ProjectId;
-  readonly name: string;
-  readonly regions: readonly TerraScaleRegionCode[];
-  readonly backupRegion: TerraScaleRegionCode;
-  readonly createdAt: Timestamp;
-};
-
-export type DashboardContext = {
-  readonly user: DashboardContextUser;
-  readonly organization: DashboardContextOrganization;
-  readonly projects: readonly DashboardContextProject[];
-  readonly currentProjectId: ProjectId;
-  readonly databases: readonly DashboardContextDatabase[];
-};
-
 export type Invitation = {
   readonly invitationId: InvitationId;
   readonly organizationId: OrganizationId;
@@ -564,6 +552,7 @@ export type InvitationStatus = "Accepted" | "Canceled" | "Declined" | "Expired" 
 
 export type CreateInvitationRequest = {
   readonly email: string;
+  readonly responseUrlTemplate: string;
 };
 
 export type DatabaseStatus = "available" | "creating" | "deleting" | "failed" | "updating";
@@ -948,6 +937,39 @@ export type ListApiKeysRequest = {
 export type ListApiKeysResponse = {
   readonly apiKeys: readonly ApiKey[];
   readonly nextCursor?: string;
+};
+
+export type ProjectAuthProvider = {
+  readonly projectId: ProjectId;
+  readonly provider: string;
+  readonly protocol: string;
+  readonly displayName: string;
+  readonly enabled: boolean;
+  readonly builtIn: boolean;
+  readonly clientId: string;
+  readonly hasClientSecret: boolean;
+  readonly authorizationEndpoint: string;
+  readonly tokenEndpoint: string;
+  readonly userInfoEndpoint: string;
+  readonly redirectUri: string;
+  readonly scopes: readonly string[];
+  readonly samlServiceProviderEntityId: string;
+  readonly samlIdentityProviderEntityId: string;
+  readonly samlSingleSignOnUrl: string;
+  readonly hasSamlSigningCertificate: boolean;
+  readonly samlAssertionConsumerServiceUrl: string;
+  readonly createdAt: Timestamp;
+  readonly updatedAt: Timestamp;
+};
+
+export type ListProjectAuthProvidersRequest = {
+  readonly cursor?: string;
+  readonly limit?: number;
+};
+
+export type ListProjectAuthProvidersResponse = {
+  readonly providers: readonly ProjectAuthProvider[];
+  readonly nextCursor: string;
 };
 
 export type CreatedApiKey = {
@@ -1364,7 +1386,7 @@ export type Notification = {
   readonly projectId?: ProjectId | null;
 };
 
-export type MarkAllDashboardNotificationsReadResponse = {
+export type MarkAllNotificationsReadResponse = {
   readonly markedRead: number;
 };
 

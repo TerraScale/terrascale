@@ -8,7 +8,6 @@ describe("TerraScaleHttp request policy", () => {
     const http = new TerraScaleHttp({
       apiBaseUrl: " https://api.terrascale.test/// ",
       authBaseUrl: " https://auth.terrascale.test//// ",
-      dashboardClientId: "test",
       fetch: async () => Response.json({}),
     });
 
@@ -20,8 +19,6 @@ describe("TerraScaleHttp request policy", () => {
     let captured: Request | undefined;
     const http = new TerraScaleHttp({
       apiBaseUrl: "https://api.terrascale.test",
-      dashboardClientId: "dashboard",
-      tenantId: "tenant" as never,
       projectId: "project" as never,
       accessToken: () => {
         throw new Error("anonymous requests must not resolve an access token");
@@ -40,21 +37,14 @@ describe("TerraScaleHttp request policy", () => {
       headerPolicy: "anonymous",
       headers: {
         authorization: "Bearer request",
-        "x-terrascale-dashboard-client-id": "request-dashboard",
         "x-terrascale-project-id": "request-project",
-        "x-terrascale-tenant-id": "request-tenant",
       },
       body: { email: "user@example.test", password: "secret" },
     });
 
     assert.equal(result.ok, true);
     assert.ok(captured);
-    for (const name of [
-      "authorization",
-      "x-terrascale-dashboard-client-id",
-      "x-terrascale-project-id",
-      "x-terrascale-tenant-id",
-    ]) {
+    for (const name of ["authorization", "x-terrascale-project-id"]) {
       assert.equal(captured.headers.has(name), false, name);
     }
   });
@@ -63,13 +53,11 @@ describe("TerraScaleHttp request policy", () => {
     const recorded: string[] = [];
     const failing = new TerraScaleHttp({
       apiBaseUrl: "not-a-url",
-      dashboardClientId: "test",
       requestMetricRecorder: metric => recorded.push(metric.routeName),
       fetch: async () => Response.json({}),
     });
     const isolated = new TerraScaleHttp({
       apiBaseUrl: "https://api.terrascale.test",
-      dashboardClientId: "test",
       requestMetricRecorder: () => {
         throw new Error("recorder failure");
       },
@@ -98,7 +86,6 @@ describe("TerraScaleHttp request policy", () => {
     let tokenResolutions = 0;
     const http = new TerraScaleHttp({
       apiBaseUrl: "https://api.terrascale.test",
-      dashboardClientId: "test",
       accessToken: () => {
         tokenResolutions++;
         return "secret";
@@ -127,7 +114,6 @@ describe("TerraScaleHttp request policy", () => {
   test("provides a useful message when an error response has no status text", async () => {
     const http = new TerraScaleHttp({
       apiBaseUrl: "https://api.terrascale.test",
-      dashboardClientId: "test",
       fetch: async () => new Response(null, { status: 500 }),
     });
 
