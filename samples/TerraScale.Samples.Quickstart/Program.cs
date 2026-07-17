@@ -3,7 +3,7 @@ using TerraScale.DotNet;
 var configuration = TerraScaleSampleConfiguration.FromEnvironment();
 if (!configuration.IsConfigured)
 {
-    Console.Error.WriteLine(configuration.MissingConfigurationMessage);
+    Console.Error.WriteLine(TerraScaleSampleConfiguration.MissingConfigurationMessage);
     return 2;
 }
 
@@ -153,7 +153,7 @@ internal sealed record TerraScaleSampleConfiguration(
         (!string.IsNullOrWhiteSpace(BearerToken) ||
             (!string.IsNullOrWhiteSpace(ApiKey) && !string.IsNullOrWhiteSpace(ProjectId)));
 
-    public string MissingConfigurationMessage =>
+    public const string MissingConfigurationMessage =
         "Set TERRASCALE_API_BASE_ADDRESS plus either TERRASCALE_BEARER_TOKEN or both TERRASCALE_API_KEY and TERRASCALE_PROJECT_ID.";
 
     public static TerraScaleSampleConfiguration FromEnvironment()
