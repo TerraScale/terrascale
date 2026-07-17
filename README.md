@@ -430,7 +430,7 @@ export TERRASCALE_E2E_REPOSITORY=01J00000000000000000000001
 dotnet test TerraScale.DotNet.slnx --configuration Release --no-progress
 ```
 
-Route and DTO contract tests for the newer project, auth management, notification, and backups families run locally without fake HTTP servers. Full live-stack coverage for those API families belongs in the TerraScale.API integration test suite and is intentionally not duplicated here yet.
+Route and DTO contract tests for the newer project, auth management, notification, and backups families run locally without fake HTTP servers. Full live-stack coverage for those API families belongs in the TerraScale.Platform integration test suite and is intentionally not duplicated here yet.
 
 For bearer-token coverage, set `TERRASCALE_E2E_BEARER_TOKEN` with
 `TERRASCALE_E2E_BASE_URL` and `TERRASCALE_E2E_REPOSITORY`.

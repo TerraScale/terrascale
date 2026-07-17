@@ -746,7 +746,7 @@ public sealed class TerraScaleClient
 
         activity.SetTag("http.request.method", method.Method);
         activity.SetTag("url.path", requestUri);
-        activity.SetTag("server.address", "TerraScale.API");
+        activity.SetTag("server.address", "TerraScale.Platform");
         return activity;
     }
 
