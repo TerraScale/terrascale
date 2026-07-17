@@ -1236,6 +1236,7 @@ export type BillingAccount = {
   readonly billingAccountId: Ulid;
   readonly organizationId: OrganizationId;
   readonly planId: Ulid;
+  readonly provider: "polar" | "stripe";
   readonly status: "active" | "canceled" | "past_due" | "trialing";
   readonly billingInterval: "monthly" | "annual" | string | null;
 };
@@ -1341,6 +1342,11 @@ export type PricingPlan = {
   readonly annualBaseCents: number;
   readonly includedUsage: readonly UsageMetric[];
   readonly key?: string;
+  readonly provider: "polar" | "stripe";
+  readonly monthlyPriceId?: string | null;
+  readonly annualPriceId?: string | null;
+  readonly monthlyPolarProductId?: string | null;
+  readonly annualPolarProductId?: string | null;
   readonly monthlyStripePriceId?: string | null;
   readonly annualStripePriceId?: string | null;
   readonly visible?: boolean;
@@ -1355,6 +1361,8 @@ export type AdminPricingPlanRequest = {
   readonly currency?: string;
   readonly monthlyBaseCents?: number;
   readonly annualBaseCents?: number;
+  readonly monthlyPolarProductId?: string;
+  readonly annualPolarProductId?: string;
   readonly monthlyStripePriceId?: string;
   readonly annualStripePriceId?: string;
   readonly visible?: boolean;
