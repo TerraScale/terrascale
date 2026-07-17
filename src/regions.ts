@@ -43,7 +43,6 @@ export const terraScaleRegions = [
 const regionsByCode = new Map<TerraScaleRegionCode, TerraScaleRegion>(
   terraScaleRegions.map((region) => [region.code, region]),
 );
-const regionCodeValues = new Set<string>(terraScaleRegions.map((region) => region.code));
 
 export function canonicalRegionCode(code: string | undefined): TerraScaleRegionCode | undefined {
   if (code === undefined) {
@@ -62,7 +61,7 @@ export function findRegion(code: string | undefined): TerraScaleRegion | undefin
 }
 
 export function isRegionCode(code: string): code is TerraScaleRegionCode {
-  return regionCodeValues.has(code);
+  return regionsByCode.has(code);
 }
 
 export function normalizeRegionCodes(
