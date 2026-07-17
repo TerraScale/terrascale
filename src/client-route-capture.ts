@@ -67,14 +67,7 @@ type PublicClientMethod = {
 
 export async function capturePublicClientRoutes(): Promise<readonly CapturedSdkRoute[]> {
   assertCaptureOperationCoverage();
-
-  const routes: CapturedSdkRoute[] = [];
-
-  for (const operation of captureOperations) {
-    routes.push(await captureRoute(operation));
-  }
-
-  return routes;
+  return Promise.all(captureOperations.map(captureRoute));
 }
 
 function routeOperation(operation: string, variant: string | undefined): string {
