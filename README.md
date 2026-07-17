@@ -1,6 +1,6 @@
 # TerraScale.DotNet
 
-Official C# SDK for TerraScale public API families.
+Official C# SDK for TerraScale Platform API families.
 
 ## Idempotent mutations
 
@@ -387,7 +387,7 @@ var orders = await source.Set<Order>().ListAsync(take: 25);
 
 ## Quickstart Sample
 
-The sample app uses the real TerraScale API and is environment-gated:
+The sample app uses the real TerraScale Platform API and is environment-gated:
 
 ```bash
 export TERRASCALE_API_BASE_ADDRESS=http://localhost:5294
@@ -404,7 +404,7 @@ Use `TERRASCALE_BEARER_TOKEN` instead of `TERRASCALE_API_KEY` and `TERRASCALE_PR
 ## Running Tests
 
 The test projects are E2E-first and intentionally environment-gated. Without
-TerraScale API configuration they verify local configuration handling and skip
+TerraScale Platform API configuration they verify local configuration handling and skip
 networked success-path coverage instead of substituting a fake API.
 
 ```bash
