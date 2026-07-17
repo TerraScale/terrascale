@@ -223,7 +223,12 @@ type ParsedBody =
   | { readonly ok: false; readonly errorMessage: string; readonly raw: string };
 
 function buildUrl(baseUrl: string, path: string, query: QueryRecord | undefined): URL {
-  const url = new URL(path.replace(/^\/+/, ""), `${baseUrl}/`);
+  const base = new URL(`${baseUrl}/`);
+  const url = new URL(path.replace(/^\/+/, ""), base);
+  if (url.origin !== base.origin) {
+    throw new TypeError("TerraScaleClient request paths cannot escape the configured origin.");
+  }
+
   if (query === undefined) {
     return url;
   }

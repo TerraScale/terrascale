@@ -93,6 +93,37 @@ describe("TerraScaleHttp request policy", () => {
     assert.deepEqual(recorded, ["regions.list"]);
   });
 
+  test("rejects request paths that escape the configured origin", async () => {
+    let fetches = 0;
+    let tokenResolutions = 0;
+    const http = new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      dashboardClientId: "test",
+      accessToken: () => {
+        tokenResolutions++;
+        return "secret";
+      },
+      fetch: async () => {
+        fetches++;
+        return Response.json({});
+      },
+    });
+
+    for (const path of ["https://attacker.test/capture", "\\\\attacker.test/capture"]) {
+      const result = await http.request({
+        method: "GET",
+        path,
+        routeName: "regions.list",
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.ok ? undefined : result.error.kind, "transport");
+    }
+
+    assert.equal(tokenResolutions, 0);
+    assert.equal(fetches, 0);
+  });
+
   test("provides a useful message when an error response has no status text", async () => {
     const http = new TerraScaleHttp({
       apiBaseUrl: "https://api.terrascale.test",
