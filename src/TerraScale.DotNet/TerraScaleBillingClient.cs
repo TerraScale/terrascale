@@ -1,7 +1,7 @@
 namespace TerraScale.DotNet;
 
 /// <summary>
-/// Client for TerraScale organization billing endpoints backed by direct Stripe billing.
+/// Client for provider-neutral TerraScale organization billing endpoints.
 /// </summary>
 public sealed class TerraScaleBillingClient
 {
@@ -28,7 +28,7 @@ public sealed class TerraScaleBillingClient
     }
 
     /// <summary>
-    /// Lists persisted Stripe invoice projections for an organization.
+    /// Lists persisted payment-provider invoice projections for an organization.
     /// </summary>
     public Task<TerraScaleBillingInvoicePage> ListInvoicesAsync(
         string organizationId,
@@ -46,7 +46,7 @@ public sealed class TerraScaleBillingClient
     }
 
     /// <summary>
-    /// Creates a direct Stripe checkout session for an organization.
+    /// Creates a payment-provider checkout session for an organization.
     /// </summary>
     public Task<TerraScaleCheckoutSession> CreateCheckoutSessionAsync(
         string organizationId,
@@ -63,7 +63,7 @@ public sealed class TerraScaleBillingClient
     }
 
     /// <summary>
-    /// Creates a direct Stripe billing portal session for an organization.
+    /// Creates a payment-provider customer portal session for an organization.
     /// </summary>
     public Task<TerraScaleBillingPortalSession> CreatePortalSessionAsync(
         string organizationId,
@@ -91,10 +91,11 @@ public sealed record TerraScaleBillingAccount(
     string OrganizationId,
     string PlanId,
     string Status,
-    string? BillingInterval = null);
+    string? BillingInterval = null,
+    string Provider = "polar");
 
 /// <summary>
-/// Persisted Stripe invoice projection returned by TerraScale billing.
+/// Persisted payment-provider invoice projection returned by TerraScale billing.
 /// </summary>
 public sealed record TerraScaleBillingInvoice(
     string InvoiceId,
@@ -109,7 +110,7 @@ public sealed record TerraScaleBillingInvoice(
     DateTimeOffset? PeriodEnd = null);
 
 /// <summary>
-/// Page of persisted Stripe invoice projections.
+/// Page of persisted payment-provider invoice projections.
 /// </summary>
 public sealed record TerraScaleBillingInvoicePage(
     IReadOnlyList<TerraScaleBillingInvoice> Items,
@@ -117,7 +118,7 @@ public sealed record TerraScaleBillingInvoicePage(
     string? NextCursor);
 
 /// <summary>
-/// Request body for creating a direct Stripe checkout session.
+/// Request body for creating a payment-provider checkout session.
 /// </summary>
 public sealed record TerraScaleCreateCheckoutSessionRequest(
     string? PriceId = null,
@@ -127,19 +128,19 @@ public sealed record TerraScaleCreateCheckoutSessionRequest(
     int? Quantity = null);
 
 /// <summary>
-/// Direct Stripe checkout session returned by TerraScale billing.
+/// Payment-provider checkout session returned by TerraScale billing.
 /// </summary>
 public sealed record TerraScaleCheckoutSession(
     string SessionId,
     string Url);
 
 /// <summary>
-/// Request body for creating a direct Stripe billing portal session.
+/// Request body for creating a payment-provider customer portal session.
 /// </summary>
 public sealed record TerraScaleCreateBillingPortalSessionRequest(
     string? ReturnUrl = null);
 
 /// <summary>
-/// Direct Stripe billing portal session returned by TerraScale billing.
+/// Payment-provider customer portal session returned by TerraScale billing.
 /// </summary>
 public sealed record TerraScaleBillingPortalSession(string Url);

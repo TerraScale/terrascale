@@ -101,7 +101,7 @@ public sealed class TerraScaleClient
     public TerraScaleChangesClient Changes { get; }
 
     /// <summary>
-    /// Organization billing, invoices, Stripe checkout, and Stripe portal operations.
+    /// Organization billing, invoices, checkout, and customer portal operations.
     /// </summary>
     public TerraScaleBillingClient Billing { get; }
 
