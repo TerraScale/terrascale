@@ -126,7 +126,7 @@ export class TerraScaleClient {
   }
 
   dashboardDatabaseId(name: DashboardLogicalDatabaseKey | string): Ulid | undefined {
-    return this.http.config.dashboardDatabaseIds[name];
+    return this.http.dashboardDatabaseId(name);
   }
 }
 

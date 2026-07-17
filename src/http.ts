@@ -11,6 +11,7 @@ import {
   type TerraScaleResult,
   type TerraScaleValidationIssue,
 } from "./result.js";
+import type { Ulid } from "./ids.js";
 
 export type TerraScaleRouteName =
   | `access.${string}`
@@ -142,7 +143,7 @@ export class TerraScaleHttp {
     }
   }
 
-  dashboardDatabaseId(name: string): string | undefined {
+  dashboardDatabaseId(name: string): Ulid | undefined {
     return this.config.dashboardDatabaseIds[name];
   }
 
