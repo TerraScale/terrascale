@@ -16,8 +16,8 @@
 ## Testing
 
 - TypeScript SDK tests follow the workspace no-mocks rule (root `AGENTS.md`).
-- Integration tests run against AppHost-emitted `TERRASCALE_API_BASE_URL` and
-  `TERRASCALE_AUTH_API_BASE_URL` (`src/integration/apphost-smoke.test.ts`) and
+- Integration tests run against DevHost-emitted `TERRASCALE_API_BASE_URL` and
+  `TERRASCALE_AUTH_API_BASE_URL` (`src/integration/devhost-smoke.test.ts`) and
   skip when those env vars are unset.
 
 ## Branch and Release Policy

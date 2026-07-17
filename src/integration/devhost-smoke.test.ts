@@ -6,7 +6,7 @@ import { createTerraScaleClient } from "../factory.js";
 const apiBaseUrl = process.env.TERRASCALE_API_BASE_URL;
 const authBaseUrl = process.env.TERRASCALE_AUTH_API_BASE_URL;
 
-describe("AppHost smoke", { skip: apiBaseUrl === undefined || authBaseUrl === undefined }, () => {
+describe("DevHost smoke", { skip: apiBaseUrl === undefined || authBaseUrl === undefined }, () => {
   test("reaches the real auth HTTP boundary", async () => {
     const client = createTerraScaleClient({
       apiBaseUrl: apiBaseUrl!,

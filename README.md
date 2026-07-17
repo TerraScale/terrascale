@@ -79,9 +79,9 @@ npm run check:openapi-drift -- ../TerraScale.Documentation/static/openapi/server
 ```
 
 The drift checker accepts any OpenAPI JSON file path or live spec URL, including
-an AppHost-served `/openapi/v1.json`.
+a DevHost-served `/openapi/v1.json`.
 
-Integration tests are expected to run against a real TerraScale AppHost stack
+Integration tests are expected to run against a real TerraScale DevHost stack
 and its emitted API/Auth URLs:
 
 ```bash
