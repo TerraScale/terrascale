@@ -99,7 +99,7 @@ the current Internals OpenAPI artifact before treating a snapshot failure as an
 SDK defect.
 
 Integration tests are expected to run against a real TerraScale DevHost stack
-and its emitted API/Auth URLs:
+and its emitted Platform/Auth URLs:
 
 ```bash
 TERRASCALE_API_BASE_URL=http://127.0.0.1:... \
