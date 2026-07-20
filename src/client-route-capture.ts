@@ -586,6 +586,26 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "auth",
+    operation: "getRecoveryCodeCount",
+    invoke: (client) => client.auth.getRecoveryCodeCount(),
+  },
+  {
+    client: "auth",
+    operation: "verifyRecoveryCode",
+    variant: "global",
+    invoke: (client) =>
+      client.auth.verifyRecoveryCode({ email: "ada@example.test", code: "abcd-1234" }),
+  },
+  {
+    client: "auth",
+    operation: "verifyRecoveryCode",
+    variant: "project",
+    defaultProject: true,
+    invoke: (client) =>
+      client.auth.verifyRecoveryCode({ email: "ada@example.test", code: "abcd-1234" }),
+  },
+  {
+    client: "auth",
     operation: "switchOrganization",
     invoke: (client) =>
       client.auth.switchOrganization({ organizationId: sampleIds.organizationId }),

@@ -47,12 +47,16 @@ export const sdkRouteManifest = {
     enrollTotp: `${apiRoot}/auth/mfa/totp/enroll`,
     verifyTotpEnrollment: `${apiRoot}/auth/mfa/totp/enroll/verify`,
     generateRecoveryCodes: `${apiRoot}/auth/mfa/recovery-codes/generate`,
+    recoveryCodeCount: `${apiRoot}/auth/mfa/recovery-codes/count`,
+    verifyRecoveryCode: `${apiRoot}/auth/mfa/recovery-codes/verify`,
     project: {
       register: (projectId: Ulid) => `${projectAuthRoot(projectId)}/signup`,
       verifyEmail: (projectId: Ulid) => `${projectAuthRoot(projectId)}/verify-email`,
       resendVerification: (projectId: Ulid) => `${projectAuthRoot(projectId)}/resend-verification`,
       signIn: (projectId: Ulid) => `${projectAuthRoot(projectId)}/login`,
       verifyPasswordMfa: (projectId: Ulid) => `${projectAuthRoot(projectId)}/password/mfa/verify`,
+      verifyRecoveryCode: (projectId: Ulid) =>
+        `${projectAuthRoot(projectId)}/mfa/recovery-codes/verify`,
       forgotPassword: (projectId: Ulid) => `${projectAuthRoot(projectId)}/forgot-password`,
       resetPassword: (projectId: Ulid) => `${projectAuthRoot(projectId)}/reset-password`,
       magicLinkRequest: (projectId: Ulid) =>
@@ -580,6 +584,34 @@ export class AuthClient {
       method: "POST",
       path: sdkRouteManifest.auth.generateRecoveryCodes,
       routeName: "auth.mfa.recoveryCodes.generate",
+    });
+  }
+
+  getRecoveryCodeCount(): Promise<TerraScaleResult<Models.RecoveryCodeCountResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "GET",
+      path: sdkRouteManifest.auth.recoveryCodeCount,
+      routeName: "auth.mfa.recoveryCodes.count",
+    });
+  }
+
+  verifyRecoveryCode(
+    request: Models.VerifyRecoveryCodeRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.VerifyRecoveryCodeResponse>> {
+    return this.http.request({
+      base: "auth",
+      method: "POST",
+      path: authRoute(
+        this.http,
+        projectId,
+        sdkRouteManifest.auth.verifyRecoveryCode,
+        sdkRouteManifest.auth.project.verifyRecoveryCode,
+      ),
+      routeName: "auth.mfa.recoveryCodes.verify",
+      headerPolicy: "anonymous",
+      body: request,
     });
   }
 

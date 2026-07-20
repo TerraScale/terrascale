@@ -180,6 +180,22 @@ export type GenerateRecoveryCodesResponse = {
   readonly generatedAt?: Timestamp;
 };
 
+export type RecoveryCodeCountResponse = {
+  readonly count: number;
+};
+
+export type VerifyRecoveryCodeRequest = {
+  readonly email: string;
+  readonly code: string;
+};
+
+export type VerifyRecoveryCodeResponse = {
+  readonly success: boolean;
+  readonly accessToken: string;
+  readonly refreshToken: string;
+  readonly expiresIn: number;
+};
+
 export type RegisterRequest = {
   readonly email: string;
   readonly password: string;
@@ -410,10 +426,11 @@ export type ProjectRegionPlacement = {
   readonly region: TerraScaleRegionCode;
   readonly placementGeneration: number;
   readonly status: string;
+  readonly availability: "available" | "unavailable" | "unknown";
   readonly isBackupRegion: boolean;
   readonly replicationLagMilliseconds?: number | null;
   readonly error?: string | null;
-  readonly updatedAt: Timestamp;
+  readonly updatedAt: Timestamp | null;
 };
 
 export type CreateProjectRequest = {
@@ -1203,6 +1220,8 @@ export type ProjectNearestRegionLatency = {
 export type ProjectLatency = {
   readonly projectId: ProjectId;
   readonly capturedAt: Timestamp;
+  readonly referencePeriodStart: Timestamp;
+  readonly referencePeriodEnd: Timestamp;
   readonly source: "geographic_estimate" | string;
   readonly interRegion: readonly ProjectRegionLatency[];
   readonly nearestRegion?: ProjectNearestRegionLatency | null;
@@ -1229,6 +1248,7 @@ export type ProjectUsageHistory = {
   readonly accessibleStart: Timestamp;
   readonly end: Timestamp;
   readonly limitedByRetention: boolean;
+  readonly hasData: boolean;
   readonly points: readonly ProjectUsageHistoryPoint[];
 };
 
