@@ -1311,9 +1311,16 @@ export type BillingGuardResponse = {
 };
 
 export type CreateCheckoutSessionRequest = {
+  /** @deprecated Prefer planId and billingInterval. */
   readonly priceId?: string;
+  readonly planId?: Ulid;
+  readonly billingInterval?: "monthly" | "annual";
+  readonly provider?: "polar" | "stripe";
+  /** @deprecated Checkout redirects are deployment-configured. */
   readonly successUrl?: string;
+  /** @deprecated Checkout redirects are deployment-configured. */
   readonly cancelUrl?: string;
+  /** @deprecated The authenticated TerraScale user's email is used. */
   readonly customerEmail?: string;
   readonly quantity?: number;
 };
@@ -1351,6 +1358,8 @@ export type PricingPlan = {
   readonly annualPolarProductId?: string | null;
   readonly monthlyStripePriceId?: string | null;
   readonly annualStripePriceId?: string | null;
+  readonly monthlyTrialDays: number;
+  readonly annualTrialDays: number;
   readonly visible?: boolean;
   readonly maxRegions: number;
   readonly operationOverageCentsPerMillion: number;
@@ -1367,6 +1376,8 @@ export type AdminPricingPlanRequest = {
   readonly annualPolarProductId?: string;
   readonly monthlyStripePriceId?: string;
   readonly annualStripePriceId?: string;
+  readonly monthlyTrialDays?: number;
+  readonly annualTrialDays?: number;
   readonly visible?: boolean;
   readonly defaultCheckout?: boolean;
   readonly displayOrder?: number;
