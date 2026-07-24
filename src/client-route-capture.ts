@@ -37,7 +37,6 @@ export type CapturedSdkRoute = {
   readonly client: string;
   readonly method: string;
   readonly operation: string;
-  readonly path: string;
   readonly pathTemplate: string;
   readonly routeName: TerraScaleRouteName;
 };
@@ -68,10 +67,6 @@ type PublicClientMethod = {
 export async function capturePublicClientRoutes(): Promise<readonly CapturedSdkRoute[]> {
   assertCaptureOperationCoverage();
   return Promise.all(captureOperations.map(captureRoute));
-}
-
-function routeOperation(operation: string, variant: string | undefined): string {
-  return variant === undefined ? operation : `${operation}:${variant}`;
 }
 
 async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRoute> {
@@ -127,8 +122,10 @@ async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRou
     base: capturedMetric.base,
     client: operation.client,
     method: capturedRequest.method,
-    operation: routeOperation(operation.operation, operation.variant),
-    path: capturedRequest.pathname,
+    operation:
+      operation.variant === undefined
+        ? operation.operation
+        : `${operation.operation}:${operation.variant}`,
     pathTemplate: pathToTemplate(capturedRequest.pathname),
     routeName: capturedMetric.routeName,
   };
@@ -137,7 +134,9 @@ async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRou
 function assertCaptureOperationCoverage(): void {
   const publicMethods = enumeratePublicClientMethods();
   const publicMethodsByKey = new Map(publicMethods.map((method) => [method.key, method]));
-  const capturedKeys = new Set(captureOperations.map(captureOperationKey));
+  const capturedKeys = new Set(
+    captureOperations.map((operation) => `${operation.client}.${operation.operation}`),
+  );
   const coveredCanonicalKeys = new Set<string>();
   const staleCaptureKeys = [...capturedKeys].filter((key) => {
     const publicMethod = publicMethodsByKey.get(key);
@@ -186,7 +185,7 @@ function enumeratePublicClientMethods(): readonly PublicClientMethod[] {
   const methods: PublicClientMethod[] = [];
 
   for (const [clientName, value] of Object.entries(client)) {
-    if (!isObject(value)) {
+    if (typeof value !== "object" || value === null) {
       continue;
     }
 
@@ -228,14 +227,6 @@ function publicMethodNames(value: object): readonly string[] {
   }
 
   return [...names].sort();
-}
-
-function captureOperationKey(operation: CaptureOperation): string {
-  return `${operation.client}.${operation.operation}`;
-}
-
-function isObject(value: unknown): value is object {
-  return typeof value === "object" && value !== null;
 }
 
 function uniqueSorted(values: readonly string[]): readonly string[] {
