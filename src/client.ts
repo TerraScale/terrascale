@@ -526,11 +526,7 @@ export class AuthClient {
       method: "POST",
       path: sdkRouteManifest.auth.changePassword,
       routeName: "auth.password.change",
-      body: {
-        currentPassword: request.currentPassword,
-        newPassword: request.newPassword,
-        keepOtherSessions: false,
-      },
+      body: request,
     });
   }
 

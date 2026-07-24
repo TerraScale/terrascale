@@ -96,7 +96,7 @@ describe("TerraScaleClient route contracts", () => {
     });
   });
 
-  test("uses typed public Auth routes for providers and email changes", async () => {
+  test("uses typed public Auth routes for providers, email, and password changes", async () => {
     const { client, requests } = createCapturingClient({});
 
     await client.auth.listProjectProviders(undefined, { cursor: "next", limit: 25 });
@@ -107,6 +107,10 @@ describe("TerraScaleClient route contracts", () => {
     await client.auth.verifyEmailChange({
       newEmail: "augusta@example.test",
       otpCode: "123456",
+    });
+    await client.auth.changePassword({
+      currentPassword: "current-password",
+      newPassword: "new-password",
     });
 
     for (const request of requests) {
@@ -124,6 +128,11 @@ describe("TerraScaleClient route contracts", () => {
     assert.deepEqual(requests[2]?.body, {
       newEmail: "augusta@example.test",
       otpCode: "123456",
+    });
+    assertRequest(requests[3], "POST", "/api/v1/auth/password/change-password");
+    assert.deepEqual(requests[3]?.body, {
+      currentPassword: "current-password",
+      newPassword: "new-password",
     });
   });
 

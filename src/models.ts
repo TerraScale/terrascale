@@ -133,8 +133,6 @@ export type UpdateProfileResponse = {
 export type ChangePasswordRequest = {
   readonly currentPassword: string;
   readonly newPassword: string;
-  /** @deprecated Password changes always revoke every active session. */
-  readonly keepOtherSessions?: boolean;
 };
 
 export type ChangePasswordResponse = {
