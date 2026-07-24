@@ -1,5 +1,5 @@
 using System.Globalization;
-using System.Text;
+using Cysharp.Text;
 
 namespace TerraScale.DotNet;
 
@@ -181,7 +181,8 @@ internal static class TerraScaleApiRoutes
 
     private static string WithQuery(string path, params (string Name, string? Value)[] values)
     {
-        var builder = new StringBuilder(path);
+        using var builder = ZString.CreateStringBuilder();
+        builder.Append(path);
         var hasQuery = false;
         foreach (var (name, value) in values)
         {

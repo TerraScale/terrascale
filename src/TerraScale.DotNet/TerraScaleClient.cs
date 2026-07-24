@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Cysharp.Text;
 
 namespace TerraScale.DotNet;
 
@@ -383,7 +384,7 @@ public sealed class TerraScaleClient
                 bufferSize: 1024,
                 leaveOpen: true);
             var currentEvent = string.Empty;
-            var data = new StringBuilder();
+            using var data = ZString.CreateStringBuilder();
 
             while (!cancellationToken.IsCancellationRequested)
             {

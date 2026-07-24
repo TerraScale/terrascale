@@ -1,5 +1,5 @@
 using System.Globalization;
-using System.Text;
+using Cysharp.Text;
 
 namespace TerraScale.DotNet;
 
@@ -150,22 +150,20 @@ public sealed record TerraScaleQuery
     /// </summary>
     public string ToTql()
     {
-        var builder = new StringBuilder()
-            .Append("from ")
-            .Append(Collection);
+        using var builder = ZString.CreateStringBuilder();
+        builder.Append("from ");
+        builder.Append(Collection);
 
         if (Predicates.Count > 0)
         {
-            builder
-                .Append(" where ")
-                .AppendJoin(" and ", Predicates);
+            builder.Append(" where ");
+            builder.AppendJoin(" and ", Predicates);
         }
 
         if (Orderings.Count > 0)
         {
-            builder
-                .Append(" order by ")
-                .AppendJoin(", ", Orderings);
+            builder.Append(" order by ");
+            builder.AppendJoin(", ", Orderings);
         }
 
         return builder.ToString();

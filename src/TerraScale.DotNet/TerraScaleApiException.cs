@@ -2,6 +2,7 @@ using System.Net;
 using System.Buffers;
 using System.Text;
 using System.Text.Json;
+using Cysharp.Text;
 
 namespace TerraScale.DotNet;
 
@@ -114,10 +115,7 @@ public sealed class TerraScaleApiException : HttpRequestException
             detectEncodingFromByteOrderMarks: true,
             bufferSize: 8192,
             leaveOpen: false);
-        var capacity = content.Headers.ContentLength is > 0 and <= MaxCapturedResponseBodyChars
-            ? (int)content.Headers.ContentLength.Value
-            : MaxCapturedResponseBodyChars;
-        var builder = new StringBuilder(capacity);
+        using var builder = ZString.CreateStringBuilder();
         var buffer = ArrayPool<char>.Shared.Rent(4096);
         try
         {
@@ -133,11 +131,10 @@ public sealed class TerraScaleApiException : HttpRequestException
                 builder.Append(buffer, 0, read);
             }
 
-            builder
-                .AppendLine()
-                .Append("... response body truncated after ")
-                .Append(MaxCapturedResponseBodyChars)
-                .Append(" characters.");
+            builder.AppendLine();
+            builder.Append("... response body truncated after ");
+            builder.Append(MaxCapturedResponseBodyChars);
+            builder.Append(" characters.");
             return builder.ToString();
         }
         finally
