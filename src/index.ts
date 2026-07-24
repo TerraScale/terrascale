@@ -5,7 +5,7 @@ export * from "./ids.js";
 export * from "./models.js";
 export * from "./regions.js";
 export * from "./result.js";
-export { queryRecord, sdkRouteManifest } from "./client.js";
+export { sdkRouteManifest } from "./client.js";
 export type {
   AccessClient,
   ApiKeysClient,

@@ -1,5 +1,5 @@
 import type { ResolvedTerraScaleRuntimeConfig, TerraScaleRuntimeConfig } from "./config.js";
-import { TerraScaleHttp, type QueryRecord, type TerraScaleRequestOptions } from "./http.js";
+import { TerraScaleHttp, type TerraScaleRequestOptions } from "./http.js";
 import { type Ulid, ulidPathSegment } from "./ids.js";
 import type * as Models from "./models.js";
 import { normalizeRegionCodes } from "./regions.js";
@@ -2055,8 +2055,4 @@ function environmentRoot(http: TerraScaleHttp, scope: Models.EnvironmentScoped):
 
 function repositoryRoot(scope: Models.RepositoryScoped): string {
   return `${apiRoot}/repositories/${ulidPathSegment(scope.repositoryId)}`;
-}
-
-export function queryRecord(query: QueryRecord): QueryRecord {
-  return query;
 }
