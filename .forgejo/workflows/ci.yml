@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [develop, main]
   push:
-    branches: [develop, main]
+    branches: [main]
 
 concurrency:
   group: ${{ forgejo.event_name == 'pull_request' && format('pr-{0}-{1}', forgejo.repository, forgejo.event.pull_request.number) || format('delivery-{0}-{1}', forgejo.repository, forgejo.ref) }}
