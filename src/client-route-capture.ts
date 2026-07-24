@@ -49,16 +49,6 @@ type CaptureOperation = {
   readonly variant?: string;
 };
 
-type CapturedRequest = {
-  readonly method: string;
-  readonly pathname: string;
-};
-
-type CapturedMetric = {
-  readonly base: TerraScaleBase;
-  readonly routeName: TerraScaleRouteName;
-};
-
 type PublicClientMethod = {
   readonly canonicalKey: string;
   readonly key: string;
@@ -70,23 +60,11 @@ export async function capturePublicClientRoutes(): Promise<readonly CapturedSdkR
 }
 
 async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRoute> {
-  let capturedRequest: CapturedRequest | undefined;
-  let capturedMetric: CapturedMetric | undefined;
-
-  const recordMetric = (metric: TerraScaleRequestMetric): void => {
-    capturedMetric = {
-      base: metric.base,
-      routeName: metric.routeName,
-    };
-  };
+  let capturedRequest: Request | undefined;
+  let capturedMetric: TerraScaleRequestMetric | undefined;
 
   const captureFetch: FetchLike = async (input) => {
-    const request = input instanceof Request ? input : new Request(input);
-    const url = new URL(request.url);
-    capturedRequest = {
-      method: request.method,
-      pathname: url.pathname,
-    };
+    capturedRequest = input instanceof Request ? input : new Request(input);
 
     return new Response("{}", {
       status: 200,
@@ -98,7 +76,9 @@ async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRou
     apiBaseUrl: "https://api.terrascale.test",
     authBaseUrl: "https://auth.terrascale.test",
     fetch: captureFetch,
-    requestMetricRecorder: recordMetric,
+    requestMetricRecorder: (metric: TerraScaleRequestMetric): void => {
+      capturedMetric = metric;
+    },
   };
   const client = createTerraScaleClient(
     operation.defaultProject === true
@@ -126,7 +106,7 @@ async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRou
       operation.variant === undefined
         ? operation.operation
         : `${operation.operation}:${operation.variant}`,
-    pathTemplate: pathToTemplate(capturedRequest.pathname),
+    pathTemplate: pathToTemplate(new URL(capturedRequest.url).pathname),
     routeName: capturedMetric.routeName,
   };
 }
