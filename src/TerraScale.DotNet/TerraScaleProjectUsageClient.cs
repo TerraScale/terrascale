@@ -111,7 +111,27 @@ public sealed record TerraScaleProjectUsage(
     DateTimeOffset UpdatedAt,
     IReadOnlyDictionary<string, long> RegionalTotals,
     IReadOnlyDictionary<string, long> CategoryTotals,
-    long EgressBytes = 0);
+    long EgressBytes = 0)
+{
+    /// <summary>
+    /// Whether one or more usage sources are provisional or unavailable.
+    /// </summary>
+    public bool Provisional { get; init; }
+
+    /// <summary>
+    /// Availability and provisional state for each usage source.
+    /// </summary>
+    public IReadOnlyList<TerraScaleProjectUsageSourceStatus> Sources { get; init; } = [];
+}
+
+/// <summary>
+/// Availability and provisional state for one project usage source.
+/// </summary>
+public sealed record TerraScaleProjectUsageSourceStatus(
+    string Source,
+    bool Available,
+    bool Provisional,
+    string? Detail);
 
 /// <summary>
 /// Named project usage metric.
@@ -186,7 +206,13 @@ public sealed record TerraScaleProjectUsageHistory(
     DateTimeOffset AccessibleStart,
     DateTimeOffset End,
     bool LimitedByRetention,
-    IReadOnlyList<TerraScaleProjectUsageHistoryPoint> Points);
+    IReadOnlyList<TerraScaleProjectUsageHistoryPoint> Points)
+{
+    /// <summary>
+    /// Whether the retained interval contains at least one observation.
+    /// </summary>
+    public bool HasData { get; init; }
+}
 
 /// <summary>
 /// One retained project usage observation.
@@ -205,7 +231,18 @@ public sealed record TerraScaleProjectLatency(
     DateTimeOffset CapturedAt,
     string Source,
     IReadOnlyList<TerraScaleProjectRegionLatency> InterRegion,
-    TerraScaleProjectNearestRegionLatency? NearestRegion);
+    TerraScaleProjectNearestRegionLatency? NearestRegion)
+{
+    /// <summary>
+    /// Start of the observation period used for the estimate.
+    /// </summary>
+    public DateTimeOffset ReferencePeriodStart { get; init; }
+
+    /// <summary>
+    /// End of the observation period used for the estimate.
+    /// </summary>
+    public DateTimeOffset ReferencePeriodEnd { get; init; }
+}
 
 /// <summary>
 /// Estimated round-trip latency between two configured project regions.

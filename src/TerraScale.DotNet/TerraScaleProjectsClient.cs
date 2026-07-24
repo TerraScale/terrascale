@@ -205,7 +205,13 @@ public sealed record TerraScaleProjectRegionPlacement(
     bool IsBackupRegion,
     long? ReplicationLagMilliseconds,
     string? Error,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset? UpdatedAt)
+{
+    /// <summary>
+    /// Whether the region is currently available, unavailable, or unknown.
+    /// </summary>
+    public string Availability { get; init; } = "unknown";
+}
 
 /// <summary>
 /// Result of permanently deleting a project.

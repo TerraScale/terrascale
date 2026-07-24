@@ -58,6 +58,8 @@ public sealed class TerraScaleApiE2ETests
         await Assert.That(updated.OwnerUserIds).IsNotNull();
         await Assert.That(updated.BackupRegion).IsNotEmpty();
         await Assert.That(placements.All(placement => currentProject.Regions.Contains(placement.Region))).IsTrue();
+        await Assert.That(placements.All(placement =>
+            placement.Availability is "available" or "unavailable" or "unknown")).IsTrue();
     }
 
     [Test]
@@ -78,10 +80,14 @@ public sealed class TerraScaleApiE2ETests
 
         await Assert.That(usage.ProjectId).IsEqualTo(currentProject.ProjectId);
         await Assert.That(usage.EgressBytes).IsGreaterThanOrEqualTo(0);
+        await Assert.That(usage.Sources.Count).IsGreaterThan(0);
+        await Assert.That(usage.Provisional).IsEqualTo(
+            usage.Sources.Any(source => source.Provisional || !source.Available));
         await Assert.That(history.ProjectId).IsEqualTo(currentProject.ProjectId);
-        await Assert.That(history.Points.Count).IsGreaterThan(0);
+        await Assert.That(history.HasData).IsEqualTo(history.Points.Count > 0);
         await Assert.That(latency.ProjectId).IsEqualTo(currentProject.ProjectId);
         await Assert.That(latency.Source).IsEqualTo("geographic_estimate");
+        await Assert.That(latency.ReferencePeriodStart).IsLessThanOrEqualTo(latency.ReferencePeriodEnd);
         await Assert.That(latency.NearestRegion).IsNotNull();
         await Assert.That(organizationUsage.OrganizationId).IsEqualTo(currentProject.OrganizationId);
         await Assert.That(organizationUsage.Projects.Any(project =>
