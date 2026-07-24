@@ -49,11 +49,6 @@ type CaptureOperation = {
   readonly variant?: string;
 };
 
-type PublicClientMethod = {
-  readonly canonicalKey: string;
-  readonly key: string;
-};
-
 export async function capturePublicClientRoutes(): Promise<readonly CapturedSdkRoute[]> {
   assertCaptureOperationCoverage();
   return Promise.all(captureOperations.map(captureRoute));
@@ -112,25 +107,12 @@ async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRou
 }
 
 function assertCaptureOperationCoverage(): void {
-  const publicMethods = enumeratePublicClientMethods();
-  const publicMethodsByKey = new Map(publicMethods.map((method) => [method.key, method]));
+  const publicMethods = new Set(enumeratePublicClientMethods());
   const capturedKeys = new Set(
     captureOperations.map((operation) => `${operation.client}.${operation.operation}`),
   );
-  const coveredCanonicalKeys = new Set<string>();
-  const staleCaptureKeys = [...capturedKeys].filter((key) => {
-    const publicMethod = publicMethodsByKey.get(key);
-
-    if (publicMethod !== undefined) {
-      coveredCanonicalKeys.add(publicMethod.canonicalKey);
-      return false;
-    }
-
-    return true;
-  });
-  const uncoveredMethods = publicMethods.filter(
-    (method) => !coveredCanonicalKeys.has(method.canonicalKey),
-  );
+  const staleCaptureKeys = [...capturedKeys].filter((key) => !publicMethods.has(key)).sort();
+  const uncoveredMethods = [...publicMethods].filter((key) => !capturedKeys.has(key));
 
   if (staleCaptureKeys.length === 0 && uncoveredMethods.length === 0) {
     return;
@@ -140,18 +122,18 @@ function assertCaptureOperationCoverage(): void {
 
   if (uncoveredMethods.length > 0) {
     lines.push("Uncovered public client methods:");
-    lines.push(...uniqueSorted(uncoveredMethods.map((method) => method.key)).map((key) => `  - ${key}`));
+    lines.push(...uncoveredMethods.map((key) => `  - ${key}`));
   }
 
   if (staleCaptureKeys.length > 0) {
     lines.push("Capture operations reference methods that no longer exist on the public client surface:");
-    lines.push(...uniqueSorted(staleCaptureKeys).map((key) => `  - ${key}`));
+    lines.push(...staleCaptureKeys.map((key) => `  - ${key}`));
   }
 
   throw new Error(lines.join("\n"));
 }
 
-function enumeratePublicClientMethods(): readonly PublicClientMethod[] {
+function enumeratePublicClientMethods(): readonly string[] {
   const client = createTerraScaleClient({
     apiBaseUrl: "https://api.terrascale.test",
     authBaseUrl: "https://auth.terrascale.test",
@@ -161,56 +143,25 @@ function enumeratePublicClientMethods(): readonly PublicClientMethod[] {
         headers: { "content-type": "application/json" },
       }),
   });
-  const canonicalClientNamesByInstance = new Map<object, string>();
-  const methods: PublicClientMethod[] = [];
+  const methods: string[] = [];
 
   for (const [clientName, value] of Object.entries(client)) {
     if (typeof value !== "object" || value === null) {
       continue;
     }
 
-    const methodNames = publicMethodNames(value);
-
-    if (methodNames.length === 0) {
-      continue;
-    }
-
-    const canonicalClientName = canonicalClientNamesByInstance.get(value) ?? clientName;
-    canonicalClientNamesByInstance.set(value, canonicalClientName);
-
-    for (const methodName of methodNames) {
-      methods.push({
-        canonicalKey: `${canonicalClientName}.${methodName}`,
-        key: `${clientName}.${methodName}`,
-      });
-    }
-  }
-
-  return methods.sort((left, right) => left.key.localeCompare(right.key));
-}
-
-function publicMethodNames(value: object): readonly string[] {
-  const names = new Set<string>();
-
-  for (
-    let prototype = Object.getPrototypeOf(value) as object | null;
-    prototype !== null && prototype !== Object.prototype;
-    prototype = Object.getPrototypeOf(prototype) as object | null
-  ) {
-    for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(prototype))) {
+    for (const [name, descriptor] of Object.entries(
+      Object.getOwnPropertyDescriptors(Object.getPrototypeOf(value) as object),
+    )) {
       if (name === "constructor" || typeof descriptor.value !== "function") {
         continue;
       }
 
-      names.add(name);
+      methods.push(`${clientName}.${name}`);
     }
   }
 
-  return [...names].sort();
-}
-
-function uniqueSorted(values: readonly string[]): readonly string[] {
-  return [...new Set(values)].sort();
+  return methods.sort();
 }
 
 function pathToTemplate(pathname: string): string {
