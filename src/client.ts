@@ -96,6 +96,7 @@ export class TerraScaleClient {
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.#http = new TerraScaleHttp(config);
+    this.request = this.request.bind(this);
     this.auth = new AuthClient(this.#http);
     this.onboarding = new OnboardingClient(this.#http);
     this.organizations = new OrganizationsClient(this.#http);
