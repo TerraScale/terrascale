@@ -165,18 +165,11 @@ function enumeratePublicClientMethods(): readonly string[] {
 }
 
 function pathToTemplate(pathname: string): string {
-  return pathname
-    .split("/")
-    .map((segment) => {
-      let templated = segment;
+  for (const [value, template] of pathTemplateSegments) {
+    pathname = pathname.replaceAll(value, template);
+  }
 
-      for (const [value, template] of pathTemplateSegments.entries()) {
-        templated = templated.replaceAll(value, template);
-      }
-
-      return templated;
-    })
-    .join("/");
+  return pathname;
 }
 
 const registerRequest = {
