@@ -77,13 +77,3 @@ export function err(
     body,
   };
 }
-
-export function isSuccess<TValue>(
-  result: TerraScaleResult<TValue>,
-): result is TerraScaleSuccess<TValue> {
-  return result.ok;
-}
-
-export function isFailure<TValue>(result: TerraScaleResult<TValue>): result is TerraScaleFailure {
-  return !result.ok;
-}
