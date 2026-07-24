@@ -1712,6 +1712,29 @@ export class BillingClient {
     });
   }
 
+  listAccess(
+    organizationId: Ulid,
+  ): Promise<TerraScaleResult<readonly Models.BillingAccessMember[]>> {
+    return this.http.request({
+      method: "GET",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/access`,
+      routeName: "billing.access.list",
+    });
+  }
+
+  setAccess(
+    organizationId: Ulid,
+    userId: Ulid,
+    enabled: boolean,
+  ): Promise<TerraScaleResult<Models.BillingAccessMember>> {
+    return this.http.request({
+      method: "PUT",
+      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/access/${ulidPathSegment(userId)}`,
+      routeName: "billing.access.set",
+      body: { enabled },
+    });
+  }
+
   createCheckoutSession(
     organizationId: Ulid,
     request: Models.CreateCheckoutSessionRequest,

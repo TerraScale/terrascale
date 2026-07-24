@@ -1210,6 +1210,17 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "billing",
+    operation: "listAccess",
+    invoke: (client) => client.billing.listAccess(sampleIds.organizationId),
+  },
+  {
+    client: "billing",
+    operation: "setAccess",
+    invoke: (client) =>
+      client.billing.setAccess(sampleIds.organizationId, sampleIds.userId, true),
+  },
+  {
+    client: "billing",
     operation: "createCheckoutSession",
     invoke: (client) =>
       client.billing.createCheckoutSession(sampleIds.organizationId, {

@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 147,
+  "routeCount": 149,
   "routes": [
     {
       "base": "api",
@@ -1299,6 +1299,24 @@
       "method": "GET",
       "pathTemplate": "/api/v1/organizations/{organizationId}/billing/invoices",
       "responseType": "Page<Invoice>"
+    },
+    {
+      "base": "api",
+      "client": "billing",
+      "operation": "listAccess",
+      "routeName": "billing.access.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/billing/access",
+      "responseType": "readonly BillingAccessMember[]"
+    },
+    {
+      "base": "api",
+      "client": "billing",
+      "operation": "setAccess",
+      "routeName": "billing.access.set",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/billing/access/{userId}",
+      "responseType": "BillingAccessMember"
     },
     {
       "base": "api",

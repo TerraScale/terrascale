@@ -1330,6 +1330,16 @@ export type CheckoutSession = {
   readonly url: string;
 };
 
+export type BillingAccessMember = {
+  readonly userId: Ulid;
+  readonly email: string;
+  readonly displayName: string;
+  readonly role: "billing_manager";
+  readonly enabled: boolean;
+  readonly grantedAt: Timestamp;
+  readonly grantedByUserId: Ulid;
+};
+
 export type Invoice = {
   readonly invoiceId: Ulid;
   readonly billingAccountId: Ulid;
