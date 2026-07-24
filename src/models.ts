@@ -1344,8 +1344,16 @@ export type Invoice = {
   readonly invoiceId: Ulid;
   readonly billingAccountId: Ulid;
   readonly amountCents: number;
+  readonly refundedAmountCents: number;
   readonly currency: string;
-  readonly status: "draft" | "open" | "paid" | "void";
+  readonly status:
+    | "draft"
+    | "open"
+    | "paid"
+    | "void"
+    | "uncollectible"
+    | "partially_refunded"
+    | "refunded";
   readonly issuedAt: Timestamp;
   readonly periodStart?: Timestamp | null;
   readonly periodEnd?: Timestamp | null;
