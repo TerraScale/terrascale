@@ -70,7 +70,6 @@ export const CODE_SAMPLES: Record<Lang, string> = {
 const client = createTerraScaleClient({
   apiBaseUrl: 'https://api.terrascale.tech',
   authBaseUrl: 'https://auth.terrascale.tech',
-  dashboardClientId: 'landing-example',
   projectId: toUlid(process.env.TERRASCALE_PROJECT_ID!),
   accessToken: async () => process.env.TERRASCALE_TOKEN!,
 });
