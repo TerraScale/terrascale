@@ -230,7 +230,7 @@ export type SwitchOrganizationRequest = {
 };
 
 export type ExternalLoginBeginRequest = {
-  readonly provider: "github" | "google";
+  readonly provider: "apple" | "github" | "google";
   readonly redirectUri: string;
   readonly state: string;
 };
@@ -240,7 +240,7 @@ export type ExternalLoginBeginResponse = {
 };
 
 export type ExternalLoginCompleteRequest = {
-  readonly provider: "github" | "google";
+  readonly provider: "apple" | "github" | "google";
   readonly code: string;
   readonly idToken?: string;
   readonly redirectUri: string;
