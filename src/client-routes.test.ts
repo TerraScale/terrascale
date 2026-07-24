@@ -52,17 +52,28 @@ describe("TerraScaleClient route contracts", () => {
     );
   });
 
-  test("public factory hides admin and dashboard clients at runtime", () => {
-    const { client } = createCapturingClient({});
+  test("public factory hides private clients and keeps generic requests bound", async () => {
+    const { client, requests } = createCapturingClient({});
     const runtimeClient = client as TerraScaleClient & {
       readonly admin?: unknown;
       readonly dashboard?: unknown;
+      readonly http?: unknown;
     };
 
     assert.equal("admin" in runtimeClient, false);
     assert.equal("dashboard" in runtimeClient, false);
+    assert.equal("http" in runtimeClient, false);
     assert.equal(runtimeClient.admin, undefined);
     assert.equal(runtimeClient.dashboard, undefined);
+    assert.equal(runtimeClient.http, undefined);
+
+    const request = client.request;
+    await request({
+      method: "GET",
+      path: "/api/v1/regions",
+      routeName: "regions.list",
+    });
+    assertRequest(requests[0], "GET", "/api/v1/regions");
   });
 
   test("routes account identity to Auth and organization billing to the product API", async () => {

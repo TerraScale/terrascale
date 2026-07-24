@@ -71,7 +71,7 @@ export const sdkRouteManifest = {
 } as const;
 
 export class TerraScaleClient {
-  private readonly http: TerraScaleHttp;
+  readonly #http: TerraScaleHttp;
 
   readonly auth: AuthClient;
   readonly onboarding: OnboardingClient;
@@ -95,39 +95,38 @@ export class TerraScaleClient {
   readonly security: SecurityClient;
 
   constructor(config: TerraScaleRuntimeConfig) {
-    this.http = new TerraScaleHttp(config);
-    this.auth = new AuthClient(this.http);
-    this.onboarding = new OnboardingClient(this.http);
-    this.organizations = new OrganizationsClient(this.http);
-    this.regions = new RegionsClient(this.http);
-    this.databases = new DatabasesClient(this.http);
-    this.queues = new QueuesClient(this.http);
-    this.repositories = new RepositoriesClient(this.http);
-    this.backups = new BackupsClient(this.http);
-    this.documents = new DocumentsClient(this.http);
-    this.query = new QueryClient(this.http);
-    this.schema = new SchemaClient(this.http);
-    this.apiKeys = new ApiKeysClient(this.http);
-    this.m2m = new M2MApplicationsClient(this.http);
-    this.access = new AccessClient(this.http);
-    this.usage = new UsageClient(this.http);
-    this.billing = new BillingClient(this.http);
-    this.pricing = new PricingClient(this.http);
-    this.audit = new AuditClient(this.http);
-    this.notifications = new NotificationsClient(this.http);
-    this.security = new SecurityClient(this.http);
+    this.#http = new TerraScaleHttp(config);
+    this.auth = new AuthClient(this.#http);
+    this.onboarding = new OnboardingClient(this.#http);
+    this.organizations = new OrganizationsClient(this.#http);
+    this.regions = new RegionsClient(this.#http);
+    this.databases = new DatabasesClient(this.#http);
+    this.queues = new QueuesClient(this.#http);
+    this.repositories = new RepositoriesClient(this.#http);
+    this.backups = new BackupsClient(this.#http);
+    this.documents = new DocumentsClient(this.#http);
+    this.query = new QueryClient(this.#http);
+    this.schema = new SchemaClient(this.#http);
+    this.apiKeys = new ApiKeysClient(this.#http);
+    this.m2m = new M2MApplicationsClient(this.#http);
+    this.access = new AccessClient(this.#http);
+    this.usage = new UsageClient(this.#http);
+    this.billing = new BillingClient(this.#http);
+    this.pricing = new PricingClient(this.#http);
+    this.audit = new AuditClient(this.#http);
+    this.notifications = new NotificationsClient(this.#http);
+    this.security = new SecurityClient(this.#http);
   }
 
   get config(): ResolvedTerraScaleRuntimeConfig {
-    return this.http.config;
+    return this.#http.config;
   }
 
   request<TResponse, TBody = unknown>(
     options: TerraScaleRequestOptions<TBody>,
   ): Promise<TerraScaleResult<TResponse>> {
-    return this.http.request<TResponse, TBody>(options);
+    return this.#http.request<TResponse, TBody>(options);
   }
-
 }
 
 export class OnboardingClient {
