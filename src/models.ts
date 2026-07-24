@@ -156,6 +156,9 @@ export type VerifyTotpEnrollmentRequest = {
 export type VerifyTotpEnrollmentResponse = {
   readonly success: boolean;
   readonly error?: string;
+  readonly accessToken?: string;
+  readonly expiresIn?: number;
+  readonly verifiedAt?: Timestamp;
 };
 
 export type DeleteMfaFactorRequest = {
