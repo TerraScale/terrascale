@@ -13,6 +13,7 @@
             return response.text()
           })
           .catch((error) => {
+            delete iconCache[path]
             if (import.meta.env.DEV) {
               console.warn(`[Icon] ${error instanceof Error ? error.message : String(error)}`)
             }

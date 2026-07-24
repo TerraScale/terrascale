@@ -72,4 +72,21 @@ test.describe('header layout (TER-86)', () => {
     await expect(page.locator('#mobile-navigation')).toBeHidden()
     await expect.poll(() => iconPath.getAttribute('d')).toBe(closedPath)
   })
+
+  test('a shared icon retries after a transient load failure', async ({ page }) => {
+    let attempts = 0
+    await page.route('**/icons/lucide/home.svg', async (route) => {
+      attempts++
+      if (attempts === 1) await route.abort('failed')
+      else await route.continue()
+    })
+    await page.setViewportSize({ width: 1100, height: 720 })
+    await page.goto('/')
+    await expect.poll(() => attempts).toBe(1)
+
+    await page.getByRole('button', { name: /toggle navigation menu/i }).click()
+
+    await expect.poll(() => attempts).toBe(2)
+    await expect(page.locator('#mobile-navigation a[href="/"] .ts-icon svg')).toHaveCount(1)
+  })
 })
