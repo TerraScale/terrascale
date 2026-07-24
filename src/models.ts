@@ -23,7 +23,6 @@ export type Timestamp = string;
 export type JsonPrimitive = boolean | null | number | string;
 export type JsonValue = JsonPrimitive | JsonObject | readonly JsonValue[];
 export type JsonObject = { readonly [key: string]: JsonValue };
-export type SortDirection = "asc" | "desc";
 
 export type PageRequest = {
   readonly skip?: number;
@@ -67,15 +66,6 @@ export type DatabaseScoped = ProjectScoped & {
 
 export type EnvironmentScoped = DatabaseScoped & {
   readonly environmentId: EnvironmentId;
-};
-
-export type AuthSession = {
-  readonly userId: UserId;
-  readonly email: string;
-  readonly displayName?: string;
-  readonly projectId?: ProjectId;
-  readonly organizationIds: readonly OrganizationId[];
-  readonly expiresAt: Timestamp;
 };
 
 export type AuthMePreferences = {
@@ -570,7 +560,6 @@ export type CreateInvitationRequest = {
   readonly responseUrlTemplate: string;
 };
 
-export type DatabaseStatus = "available" | "creating" | "deleting" | "failed" | "updating";
 export type EnvironmentKind = "Custom" | "Dev" | "Preview" | "Prod";
 export type EnvironmentStatus = "Active" | "Deleted" | "Expired" | "Merged" | "Merging";
 
@@ -843,14 +832,6 @@ export type DocumentPageResponse<TDocument extends JsonValue = JsonObject> = {
 };
 
 export type DocumentListQuery = PageRequest;
-
-export type UpsertDocumentRequest<TDocument extends JsonValue = JsonObject> = {
-  readonly data: TDocument;
-};
-
-export type PatchDocumentRequest<TDocument extends JsonValue = JsonObject> = {
-  readonly data: TDocument;
-};
 
 export type DocumentBatchOperationRequest<TDocument extends JsonValue = JsonObject> = {
   readonly operation: "create" | "delete" | "patch" | "upsert" | string;
