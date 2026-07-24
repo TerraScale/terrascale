@@ -107,7 +107,8 @@ public sealed record TerraScaleBillingInvoice(
     string? HostedInvoiceUrl = null,
     string? InvoicePdf = null,
     DateTimeOffset? PeriodStart = null,
-    DateTimeOffset? PeriodEnd = null);
+    DateTimeOffset? PeriodEnd = null,
+    long RefundedAmountCents = 0);
 
 /// <summary>
 /// Page of persisted payment-provider invoice projections.
