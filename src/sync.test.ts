@@ -43,6 +43,12 @@ describe("TerraScale Sync v1 protocol", () => {
     numericVersion.ConnectionSequence = 4;
     assert.throws(() => parseCompleteTransitionEnvelope(numericVersion), TypeError);
 
+    const zeroSequence = JSON.parse(fixture) as {
+      MessageSequence: unknown;
+    };
+    zeroSequence.MessageSequence = "0";
+    assert.throws(() => parseCompleteTransitionEnvelope(zeroSequence), TypeError);
+
     const wrongRevision = JSON.parse(fixture) as {
       Payload: {
         QueryUpdated: Array<{
@@ -52,6 +58,12 @@ describe("TerraScale Sync v1 protocol", () => {
     };
     wrongRevision.Payload.QueryUpdated[0]!.ValidatedThroughRevision.CommitSequence = "8";
     assert.throws(() => parseCompleteTransitionEnvelope(wrongRevision), TypeError);
+
+    const stationary = JSON.parse(fixture) as {
+      Payload: { EndVersion: SyncStateVersion; StartVersion: SyncStateVersion };
+    };
+    stationary.Payload.EndVersion = stationary.Payload.StartVersion;
+    assert.throws(() => parseCompleteTransitionEnvelope(stationary), TypeError);
   });
 });
 
@@ -171,6 +183,26 @@ describe("TerraScaleSyncStore", () => {
       { id: "b" },
     ]);
     assert.equal(store.getSnapshot().Queries.get(updatedQueryId)?.Optimistic, false);
+  });
+
+  test("does not retain an optimistic layer whose patch throws", () => {
+    const start = version("1", "1");
+    const store = new TerraScaleSyncStore(snapshot(start, [
+      query(updatedQueryId, { count: 1 }, "a".repeat(64), start.DatabaseRevision),
+    ]));
+    const before = store.getSnapshot();
+
+    assert.throws(() => store.beginOptimisticMutation("invalid", [{
+      QueryId: updatedQueryId,
+      Apply: () => {
+        throw new Error("invalid patch");
+      },
+    }]), /invalid patch/);
+    assert.equal(store.getSnapshot(), before);
+    assert.doesNotThrow(() => store.beginOptimisticMutation("invalid", [{
+      QueryId: updatedQueryId,
+      Apply: () => ({ count: 2 }),
+    }]));
   });
 });
 

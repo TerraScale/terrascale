@@ -151,8 +151,8 @@ export function parseCompleteTransitionEnvelope(value: unknown): CompleteTransit
   return Object.freeze({
     Protocol: syncProtocolVersion,
     MessageType: "Transition",
-    ConnectionSequence: uint64(envelope.ConnectionSequence, "ConnectionSequence"),
-    MessageSequence: uint64(envelope.MessageSequence, "MessageSequence"),
+    ConnectionSequence: positiveUInt64(envelope.ConnectionSequence, "ConnectionSequence"),
+    MessageSequence: positiveUInt64(envelope.MessageSequence, "MessageSequence"),
     Payload: parseCompleteTransition(envelope.Payload),
   });
 }
@@ -173,8 +173,8 @@ export function parseSyncServerEnvelope(value: unknown): SyncServerEnvelope {
   }
   const common = {
     Protocol: syncProtocolVersion,
-    ConnectionSequence: uint64(envelope.ConnectionSequence, "ConnectionSequence"),
-    MessageSequence: uint64(envelope.MessageSequence, "MessageSequence"),
+    ConnectionSequence: positiveUInt64(envelope.ConnectionSequence, "ConnectionSequence"),
+    MessageSequence: positiveUInt64(envelope.MessageSequence, "MessageSequence"),
   };
 
   switch (envelope.MessageType) {
@@ -280,6 +280,9 @@ function transition(value: unknown): CompleteTransition {
     || compareUInt64(endVersion.IdentityVersion, startVersion.IdentityVersion) < 0
   ) {
     throw new TypeError("A transition version cannot move backward.");
+  }
+  if (equalStateVersion(startVersion, endVersion)) {
+    throw new TypeError("A transition must strictly advance its state version.");
   }
   for (const query of [...updated, ...failed]) {
     if (compareDatabaseRevision(query.ValidatedThroughRevision, endVersion.DatabaseRevision) !== 0) {
@@ -606,6 +609,14 @@ function uint64(value: unknown, path: string): SyncUInt64 {
   return value as SyncUInt64;
 }
 
+function positiveUInt64(value: unknown, path: string): SyncUInt64 {
+  const parsed = uint64(value, path);
+  if (parsed === "0") {
+    throw new TypeError(`${path} must be positive.`);
+  }
+  return parsed;
+}
+
 function ulid(value: unknown, path: string): string {
   if (typeof value !== "string" || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(value)) {
     throw new TypeError(`${path} must be an uppercase ULID.`);
@@ -687,7 +698,10 @@ function base64DecodedLength(value: string): number {
     - (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0);
 }
 
-function json(value: unknown, path: string): JsonValue {
+function json(value: unknown, path: string, depth = 0): JsonValue {
+  if (depth > 128) {
+    throw new RangeError(`${path} exceeds the supported JSON depth.`);
+  }
   if (
     value === null
     || typeof value === "boolean"
@@ -697,12 +711,12 @@ function json(value: unknown, path: string): JsonValue {
     return value as JsonValue;
   }
   if (Array.isArray(value)) {
-    return Object.freeze(value.map((item, index) => json(item, `${path}[${index}]`)));
+    return Object.freeze(value.map((item, index) => json(item, `${path}[${index}]`, depth + 1)));
   }
   const source = object(value, path);
   const result = Object.create(null) as Record<string, JsonValue>;
   for (const key of Object.keys(source)) {
-    result[key] = json(source[key], `${path}.${key}`);
+    result[key] = json(source[key], `${path}.${key}`, depth + 1);
   }
   return Object.freeze(result);
 }

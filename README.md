@@ -21,6 +21,40 @@ Next composes these typed public product clients inside its own full-stack route
 handlers as an ordinary external user and never receives special headers,
 authorization, tenant access, direct database access, or private API access.
 
+## Sync
+
+`TerraScaleSyncSession` is the framework-neutral live-query client. Browser
+sessions use a fresh single-use ticket for every connection; server runtimes
+use a bearer-token provider. Both use the native `WebSocket` implementation.
+
+```ts
+import { TerraScaleSyncSession } from "@terrascale/sdk";
+
+const sync = new TerraScaleSyncSession({
+  Url: "wss://api.example.com/api/v1/sync",
+  DatabaseId: databaseId,
+  EnvironmentId: environmentId,
+  Tenant: tenantId,
+  AuthorizationScope: authorizationHash,
+  TicketProvider: getSingleUseSyncTicket,
+});
+
+const tasks = sync.subscribeQuery({
+  Query: "from Tasks where State = $state",
+  Arguments: { state: "open" },
+  SchemaVersion: "1",
+});
+
+const unsubscribe = tasks.subscribe(render);
+await sync.connect();
+```
+
+`tasks.getSnapshot()` and `tasks.getServerSnapshot()` implement the
+`useSyncExternalStore` contract without a React dependency. Identical queries
+share one wire registration until their last handle is released. Call
+`executeMutation` with a stable idempotency key and optional optimistic patches;
+call `disconnect` or `dispose` with the owning application lifetime.
+
 ## Public API Surface
 
 The public client follows the backed `TerraScale.Platform` REST surface:

@@ -5,6 +5,7 @@ export * from "./ids.js";
 export * from "./models.js";
 export * from "./regions.js";
 export * from "./result.js";
+export * from "./sync/client.js";
 export * from "./sync/protocol.js";
 export * from "./sync/store.js";
 export { sdkRouteManifest } from "./client.js";

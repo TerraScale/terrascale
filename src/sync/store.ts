@@ -153,6 +153,9 @@ export class TerraScaleSyncStore {
 
   public clear(): void {
     const changed = new Set(this.#observable.Queries.keys());
+    if (changed.size === 0 && this.#optimistic.length === 0) {
+      return;
+    }
     this.#optimistic = [];
     this.#base = freezeClientSnapshot({ Version: this.#base.Version, Queries: new Map() });
     this.#observable = this.#base;
@@ -180,6 +183,7 @@ export class TerraScaleSyncStore {
       throw new TypeError("A transition cannot move state backward.");
     }
 
+    const previousObservable = this.#observable;
     const identityChanged =
       transition.EndVersion.IdentityVersion !== transition.StartVersion.IdentityVersion;
     const queries = resync || identityChanged
@@ -251,6 +255,14 @@ export class TerraScaleSyncStore {
       changed.add(queryId);
     }
     this.#rebuildObservable();
+    for (const queryId of changed) {
+      if (sameObservable(
+        previousObservable.Queries.get(queryId),
+        this.#observable.Queries.get(queryId),
+      )) {
+        changed.delete(queryId);
+      }
+    }
     this.#notify(changed);
   }
 
@@ -265,8 +277,15 @@ export class TerraScaleSyncStore {
       MutationId: mutationId,
       Patches: Object.freeze([...patches]),
     };
-    this.#optimistic = [...this.#optimistic, layer];
-    this.#rebuildObservable();
+    const previous = this.#optimistic;
+    this.#optimistic = [...previous, layer];
+    try {
+      this.#rebuildObservable();
+    } catch (error) {
+      this.#optimistic = previous;
+      this.#rebuildObservable();
+      throw error;
+    }
     this.#notify(new Set(patches.map(patch => patch.QueryId)));
   }
 
@@ -377,7 +396,10 @@ export function canonicalQueryKey(identity: SyncQueryIdentity): string {
   return canonicalJson(identity);
 }
 
-function canonicalJson(value: unknown): string {
+function canonicalJson(value: unknown, depth = 0): string {
+  if (depth > 128) {
+    throw new RangeError("Query keys exceed the supported JSON depth.");
+  }
   if (value === null || typeof value === "boolean" || typeof value === "string") {
     return JSON.stringify(value);
   }
@@ -388,13 +410,13 @@ function canonicalJson(value: unknown): string {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
+    return `[${value.map(item => canonicalJson(item, depth + 1)).join(",")}]`;
   }
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
     return `{${Object.keys(record)
       .sort()
-      .map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .map(key => `${JSON.stringify(key)}:${canonicalJson(record[key], depth + 1)}`)
       .join(",")}}`;
   }
   throw new TypeError("Query keys can contain only JSON values.");
@@ -422,16 +444,19 @@ function freezeQuerySnapshot(snapshot: SyncQuerySnapshot): SyncQuerySnapshot {
   });
 }
 
-function freezeJson(value: JsonValue): JsonValue {
+function freezeJson(value: JsonValue, depth = 0): JsonValue {
+  if (depth > 128) {
+    throw new RangeError("Sync JSON exceeds the supported depth.");
+  }
   if (value === null || typeof value !== "object") {
     return value;
   }
   if (Array.isArray(value)) {
-    return Object.freeze(value.map(freezeJson));
+    return Object.freeze(value.map(item => freezeJson(item, depth + 1)));
   }
   const result: Record<string, JsonValue> = {};
   for (const [key, item] of Object.entries(value)) {
-    result[key] = freezeJson(item);
+    result[key] = freezeJson(item, depth + 1);
   }
   return Object.freeze(result);
 }
@@ -442,12 +467,13 @@ function readonlyMap<T>(source: ReadonlyMap<string, T>): ReadonlyMap<string, T> 
 
 function sameObservable(
   current: SyncQuerySnapshot | undefined,
-  next: SyncQuerySnapshot,
+  next: SyncQuerySnapshot | undefined,
 ): boolean {
-  return current?.ResultHash === next.ResultHash
-    && current?.Error?.Code === next.Error?.Code
-    && current?.Error?.Message === next.Error?.Message
-    && current?.Error?.Retryable === next.Error?.Retryable;
+  return current?.ResultHash === next?.ResultHash
+    && current?.Error?.Code === next?.Error?.Code
+    && current?.Error?.Message === next?.Error?.Message
+    && current?.Error?.Retryable === next?.Error?.Retryable
+    && current?.Optimistic === next?.Optimistic;
 }
 
 class ImmutableMap<T> implements ReadonlyMap<string, T> {
