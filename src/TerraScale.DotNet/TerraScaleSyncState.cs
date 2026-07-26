@@ -517,6 +517,32 @@ public static class TerraScaleSyncStateReducer
         return next;
     }
 
+    internal static TerraScaleSyncClientState PrepareForResync(
+        TerraScaleSyncClientState current,
+        IReadOnlySet<TerraScaleSyncId> activeQueryIds)
+    {
+        var retained = current.AuthoritativeQueries
+            .Where(pair => activeQueryIds.Contains(pair.Key))
+            .ToDictionary();
+        var layers = current.OptimisticLayers
+            .Select(layer => layer with
+            {
+                Patches = layer.Patches
+                    .Where(patch => activeQueryIds.Contains(patch.QueryId))
+                    .ToArray()
+            })
+            .Where(static layer => layer.Patches.Length > 0)
+            .ToArray();
+        return TerraScaleSyncClientState.Create(
+            TerraScaleSyncStateVersion.Zero,
+            retained,
+            current.IngressRegion,
+            current.ServingRegion,
+            current.DatabaseRegion,
+            current.RouteGeneration,
+            layers);
+    }
+
     private static TerraScaleSyncValidationError? Validate(TerraScaleSyncTransition transition)
     {
         if (transition.TransitionId.IsEmpty)
@@ -652,6 +678,7 @@ public static class TerraScaleSyncStateReducer
 
         if (current is null || next is null ||
             current.Error != next.Error ||
+            current.Optimistic != next.Optimistic ||
             current.Result is null != (next.Result is null))
         {
             return false;

@@ -5,6 +5,8 @@ namespace TerraScale.DotNet;
 
 internal static class TerraScaleApiRoutes
 {
+    public const string Sync = "/api/v1/sync";
+
     public static string RegionsList() =>
         "/api/v1/regions";
 

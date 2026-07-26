@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -64,6 +65,7 @@ public sealed class TerraScaleClient
         M2MApplications = new TerraScaleM2MApplicationsClient(this);
         Notifications = new TerraScaleNotificationsClient(this);
         Backups = new TerraScaleBackupsClient(this);
+        Sync = new TerraScaleSyncClient(this);
     }
 
     /// <summary>
@@ -155,6 +157,11 @@ public sealed class TerraScaleClient
     /// Project database backup, restore point, and restore operations.
     /// </summary>
     public TerraScaleBackupsClient Backups { get; }
+
+    /// <summary>
+    /// TerraScale Sync live-query and mutation sessions.
+    /// </summary>
+    public TerraScaleSyncClient Sync { get; }
 
     /// <summary>
     /// Creates a typed repository facade for document CRUD, list, and query operations.
@@ -627,11 +634,7 @@ public sealed class TerraScaleClient
             return;
         }
 
-        var bearerToken = options.BearerToken;
-        if (string.IsNullOrWhiteSpace(bearerToken) && options.BearerTokenProvider is { } provider)
-        {
-            bearerToken = await provider(cancellationToken).ConfigureAwait(false);
-        }
+        var bearerToken = await ResolveBearerTokenAsync(cancellationToken).ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(bearerToken))
         {
@@ -639,6 +642,88 @@ public sealed class TerraScaleClient
         }
 
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken.Trim());
+    }
+
+    internal async ValueTask<string?> ConfigureSyncWebSocketAsync(
+        ClientWebSocketOptions webSocketOptions,
+        TerraScaleSyncId databaseId,
+        TerraScaleSyncId environmentId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(webSocketOptions);
+        webSocketOptions.SetRequestHeader("X-TerraScale-Database-Id", databaseId.Value);
+        webSocketOptions.SetRequestHeader("X-TerraScale-Environment-Id", environmentId.Value);
+        if (!string.IsNullOrWhiteSpace(options.ProjectId))
+        {
+            webSocketOptions.SetRequestHeader("X-TerraScale-Project-Id", options.ProjectId.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.ApiKey))
+        {
+            webSocketOptions.SetRequestHeader("X-TerraScale-Auth-Key", options.ApiKey.Trim());
+            return null;
+        }
+
+        var bearerToken = await ResolveBearerTokenAsync(cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(bearerToken))
+        {
+            throw new InvalidOperationException(
+                "Configure an API key, bearer token, or bearer token provider for TerraScale Sync.");
+        }
+
+        var normalized = bearerToken.Trim();
+        webSocketOptions.SetRequestHeader("Authorization", $"Bearer {normalized}");
+        return normalized;
+    }
+
+    internal async ValueTask<string> ResolveSyncBearerTokenAsync(
+        CancellationToken cancellationToken)
+    {
+        var bearerToken = await ResolveBearerTokenAsync(cancellationToken).ConfigureAwait(false);
+        return !string.IsNullOrWhiteSpace(bearerToken)
+            ? bearerToken.Trim()
+            : throw new InvalidOperationException(
+                "Authentication refresh requires a bearer token or bearer-token provider.");
+    }
+
+    internal bool CanRefreshSyncBearerToken => options.BearerTokenProvider is not null;
+
+    internal bool HasSyncAuthentication =>
+        !string.IsNullOrWhiteSpace(options.ApiKey) ||
+        !string.IsNullOrWhiteSpace(options.BearerToken) ||
+        options.BearerTokenProvider is not null;
+
+    internal Uri SyncEndpoint
+    {
+        get
+        {
+            var builder = new UriBuilder(options.BaseAddress)
+            {
+                Scheme = options.BaseAddress.Scheme switch
+                {
+                    "https" => "wss",
+                    "http" => "ws",
+                    _ => throw new InvalidOperationException(
+                        "TerraScale Sync requires an HTTP or HTTPS base address.")
+                },
+                Path = TerraScaleApiRoutes.Sync,
+                Query = string.Empty,
+                Fragment = string.Empty
+            };
+            return builder.Uri;
+        }
+    }
+
+    private async ValueTask<string?> ResolveBearerTokenAsync(
+        CancellationToken cancellationToken)
+    {
+        var bearerToken = options.BearerToken;
+        if (string.IsNullOrWhiteSpace(bearerToken) && options.BearerTokenProvider is { } provider)
+        {
+            bearerToken = await provider(cancellationToken).ConfigureAwait(false);
+        }
+
+        return bearerToken;
     }
 
     private static void ApplyRequestHeaders(

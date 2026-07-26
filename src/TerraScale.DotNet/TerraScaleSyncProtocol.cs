@@ -663,4 +663,7 @@ public sealed record TerraScaleSyncFatalProtocolErrorMessage(
 [JsonSerializable(typeof(TerraScaleSyncEnvelope<TerraScaleSyncResyncRequiredMessage>))]
 [JsonSerializable(typeof(TerraScaleSyncEnvelope<TerraScaleSyncRegionRouteChangedMessage>))]
 [JsonSerializable(typeof(TerraScaleSyncEnvelope<TerraScaleSyncFatalProtocolErrorMessage>))]
+[JsonSerializable(typeof(TerraScaleSyncEnvelope<JsonElement>))]
+[JsonSerializable(typeof(TerraScaleSyncTransitionFrame))]
+[JsonSerializable(typeof(TerraScaleSyncTransition))]
 public sealed partial class TerraScaleSyncJsonContext : JsonSerializerContext;
