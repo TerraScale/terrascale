@@ -144,7 +144,27 @@ export class TerraScaleSyncStore {
   }
 
   public applyTransition(transition: CompleteTransition): void {
-    if (!equalStateVersion(this.#base.Version, transition.StartVersion)) {
+    this.#applyTransition(transition, false);
+  }
+
+  public applyResyncTransition(transition: CompleteTransition): void {
+    this.#applyTransition(transition, true);
+  }
+
+  public clear(): void {
+    const changed = new Set(this.#observable.Queries.keys());
+    this.#optimistic = [];
+    this.#base = freezeClientSnapshot({ Version: this.#base.Version, Queries: new Map() });
+    this.#observable = this.#base;
+    this.#notify(changed);
+  }
+
+  public getReferenceCount(identity: SyncQueryIdentity): number {
+    return this.#entriesByKey.get(canonicalQueryKey(identity))?.References ?? 0;
+  }
+
+  #applyTransition(transition: CompleteTransition, resync: boolean): void {
+    if (!resync && !equalStateVersion(this.#base.Version, transition.StartVersion)) {
       throw new SyncVersionMismatchError(this.#base.Version, transition.StartVersion);
     }
     if (
@@ -160,8 +180,20 @@ export class TerraScaleSyncStore {
       throw new TypeError("A transition cannot move state backward.");
     }
 
-    const queries = new Map(this.#base.Queries);
+    const identityChanged =
+      transition.EndVersion.IdentityVersion !== transition.StartVersion.IdentityVersion;
+    const queries = resync || identityChanged
+      ? new Map<string, SyncQuerySnapshot>()
+      : new Map(this.#base.Queries);
     const changed = new Set<string>();
+    if (resync || identityChanged) {
+      for (const queryId of this.#observable.Queries.keys()) {
+        changed.add(queryId);
+      }
+    }
+    if (identityChanged) {
+      this.#optimistic = [];
+    }
 
     for (const removed of transition.QueryRemoved) {
       if (queries.delete(removed.QueryId)) {
@@ -260,10 +292,6 @@ export class TerraScaleSyncStore {
     this.#optimistic = this.#optimistic.filter(candidate => candidate !== layer);
     this.#rebuildObservable();
     this.#notify(new Set(layer.Patches.map(patch => patch.QueryId)));
-  }
-
-  public getReferenceCount(identity: SyncQueryIdentity): number {
-    return this.#entriesByKey.get(canonicalQueryKey(identity))?.References ?? 0;
   }
 
   #removeCaughtUpOptimisticLayers(): ReadonlySet<string> {

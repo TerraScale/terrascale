@@ -70,6 +70,73 @@ export type CompleteTransitionEnvelope = {
   readonly Payload: CompleteTransition;
 };
 
+export type TransitionChunk = {
+  readonly FrameType: "Chunk";
+  readonly TransitionId: string;
+  readonly ChunkIndex: number;
+  readonly ChunkCount: number;
+  readonly UncompressedLength: number;
+  readonly Sha256: string;
+  readonly Data: string;
+};
+
+export type MutationResult = {
+  readonly ClientRequestId: string;
+  readonly Succeeded: boolean;
+  readonly Result?: JsonValue | undefined;
+  readonly Error?: SyncError | undefined;
+  readonly CommittedRevision?: DatabaseRevision | undefined;
+};
+
+export type AuthenticationError = {
+  readonly Error: SyncError;
+};
+
+export type ResyncRequired = {
+  readonly Reason: string;
+  readonly EarliestRetainedRevision: DatabaseRevision;
+  readonly LastAcknowledgedVersion?: SyncStateVersion | undefined;
+};
+
+export type RegionRouteChanged = {
+  readonly IngressRegion: string;
+  readonly ServingRegion: string;
+  readonly DatabaseRegion: string;
+  readonly RouteGeneration: SyncUInt64;
+  readonly ReconnectRequired: boolean;
+};
+
+export type SyncPing = {
+  readonly Nonce: SyncUInt64;
+  readonly SentAt: string;
+};
+
+export type FatalProtocolError = {
+  readonly Error: {
+    readonly Code: string;
+    readonly Message: string;
+  };
+  readonly ResumeVersion?: SyncStateVersion | undefined;
+};
+
+export type SyncServerEnvelope =
+  | CompleteTransitionEnvelope
+  | SyncEnvelope<"Transition", TransitionChunk>
+  | SyncEnvelope<"MutationResult", MutationResult>
+  | SyncEnvelope<"AuthenticationError", AuthenticationError>
+  | SyncEnvelope<"ResyncRequired", ResyncRequired>
+  | SyncEnvelope<"RegionRouteChanged", RegionRouteChanged>
+  | SyncEnvelope<"Ping", SyncPing>
+  | SyncEnvelope<"FatalProtocolError", FatalProtocolError>;
+
+type SyncEnvelope<TMessage extends string, TPayload> = {
+  readonly Protocol: typeof syncProtocolVersion;
+  readonly MessageType: TMessage;
+  readonly ConnectionSequence: SyncUInt64;
+  readonly MessageSequence: SyncUInt64;
+  readonly Payload: TPayload;
+};
+
 export function parseCompleteTransitionEnvelope(value: unknown): CompleteTransitionEnvelope {
   const envelope = object(value, "envelope");
   exactKeys(
@@ -86,8 +153,72 @@ export function parseCompleteTransitionEnvelope(value: unknown): CompleteTransit
     MessageType: "Transition",
     ConnectionSequence: uint64(envelope.ConnectionSequence, "ConnectionSequence"),
     MessageSequence: uint64(envelope.MessageSequence, "MessageSequence"),
-    Payload: transition(envelope.Payload),
+    Payload: parseCompleteTransition(envelope.Payload),
   });
+}
+
+export function parseCompleteTransition(value: unknown): CompleteTransition {
+  return transition(value);
+}
+
+export function parseSyncServerEnvelope(value: unknown): SyncServerEnvelope {
+  const envelope = object(value, "envelope");
+  exactKeys(
+    envelope,
+    ["Protocol", "MessageType", "ConnectionSequence", "MessageSequence", "Payload"],
+    "envelope",
+  );
+  if (envelope.Protocol !== syncProtocolVersion) {
+    throw new TypeError("The value is not a TerraScale Sync v1 envelope.");
+  }
+  const common = {
+    Protocol: syncProtocolVersion,
+    ConnectionSequence: uint64(envelope.ConnectionSequence, "ConnectionSequence"),
+    MessageSequence: uint64(envelope.MessageSequence, "MessageSequence"),
+  };
+
+  switch (envelope.MessageType) {
+    case "Transition": {
+      const payload = object(envelope.Payload, "Payload");
+      return Object.freeze(payload.FrameType === "Complete"
+        ? { ...common, MessageType: "Transition", Payload: transition(payload) }
+        : { ...common, MessageType: "Transition", Payload: transitionChunk(payload) });
+    }
+    case "MutationResult":
+      return Object.freeze({
+        ...common,
+        MessageType: "MutationResult",
+        Payload: mutationResult(envelope.Payload),
+      });
+    case "AuthenticationError":
+      return Object.freeze({
+        ...common,
+        MessageType: "AuthenticationError",
+        Payload: authenticationError(envelope.Payload),
+      });
+    case "ResyncRequired":
+      return Object.freeze({
+        ...common,
+        MessageType: "ResyncRequired",
+        Payload: resyncRequired(envelope.Payload),
+      });
+    case "RegionRouteChanged":
+      return Object.freeze({
+        ...common,
+        MessageType: "RegionRouteChanged",
+        Payload: regionRouteChanged(envelope.Payload),
+      });
+    case "Ping":
+      return Object.freeze({ ...common, MessageType: "Ping", Payload: ping(envelope.Payload) });
+    case "FatalProtocolError":
+      return Object.freeze({
+        ...common,
+        MessageType: "FatalProtocolError",
+        Payload: fatalProtocolError(envelope.Payload),
+      });
+    default:
+      throw new TypeError("MessageType is not a TerraScale Sync v1 server message.");
+  }
 }
 
 export function compareDatabaseRevision(left: DatabaseRevision, right: DatabaseRevision): number {
@@ -182,6 +313,163 @@ function transition(value: unknown): CompleteTransition {
     : { ...parsed, ServerTiming: serverTiming(frame.ServerTiming) });
 }
 
+function transitionChunk(value: unknown): TransitionChunk {
+  const chunk = object(value, "Payload");
+  exactKeys(
+    chunk,
+    [
+      "FrameType",
+      "TransitionId",
+      "ChunkIndex",
+      "ChunkCount",
+      "UncompressedLength",
+      "Sha256",
+      "Data",
+    ],
+    "Payload",
+  );
+  if (chunk.FrameType !== "Chunk") {
+    throw new TypeError("Transition FrameType must be Complete or Chunk.");
+  }
+  const uncompressedLength = integer(
+    chunk.UncompressedLength,
+    1,
+    8 * 1024 * 1024,
+    "UncompressedLength",
+  );
+  const chunkCount = integer(chunk.ChunkCount, 1, 32, "ChunkCount");
+  const chunkIndex = integer(chunk.ChunkIndex, 0, chunkCount - 1, "ChunkIndex");
+  const expectedChunkCount = Math.ceil(uncompressedLength / (256 * 1024));
+  if (chunkCount !== expectedChunkCount) {
+    throw new TypeError("ChunkCount does not match UncompressedLength.");
+  }
+  const data = base64(chunk.Data, "Data");
+  const expectedLength = chunkIndex === chunkCount - 1
+    ? uncompressedLength - chunkIndex * 256 * 1024
+    : 256 * 1024;
+  if (base64DecodedLength(data) !== expectedLength) {
+    throw new TypeError("Data length does not match the declared chunk position.");
+  }
+  return Object.freeze({
+    FrameType: "Chunk",
+    TransitionId: ulid(chunk.TransitionId, "TransitionId"),
+    ChunkIndex: chunkIndex,
+    ChunkCount: chunkCount,
+    UncompressedLength: uncompressedLength,
+    Sha256: hash(chunk.Sha256, "Sha256"),
+    Data: data,
+  });
+}
+
+function mutationResult(value: unknown): MutationResult {
+  const result = object(value, "Payload");
+  exactKeys(
+    result,
+    ["ClientRequestId", "Succeeded", "Result", "Error", "CommittedRevision"],
+    "Payload",
+    ["Result", "Error", "CommittedRevision"],
+  );
+  const succeeded = boolean(result.Succeeded, "Succeeded");
+  const parsed = {
+    ClientRequestId: ulid(result.ClientRequestId, "ClientRequestId"),
+    Succeeded: succeeded,
+  };
+  if (succeeded) {
+    if (result.Error !== undefined || result.CommittedRevision === undefined) {
+      throw new TypeError("A successful mutation requires CommittedRevision and no Error.");
+    }
+    return Object.freeze({
+      ...parsed,
+      Result: result.Result === undefined ? undefined : json(result.Result, "Result"),
+      CommittedRevision: revision(result.CommittedRevision, "CommittedRevision"),
+    });
+  }
+  if (result.Error === undefined || result.CommittedRevision !== undefined) {
+    throw new TypeError("A failed mutation requires Error and no CommittedRevision.");
+  }
+  return Object.freeze({ ...parsed, Error: syncError(result.Error, "Error") });
+}
+
+function authenticationError(value: unknown): AuthenticationError {
+  const payload = object(value, "Payload");
+  exactKeys(payload, ["Error"], "Payload");
+  return Object.freeze({ Error: syncError(payload.Error, "Error") });
+}
+
+function resyncRequired(value: unknown): ResyncRequired {
+  const payload = object(value, "Payload");
+  exactKeys(
+    payload,
+    ["Reason", "EarliestRetainedRevision", "LastAcknowledgedVersion"],
+    "Payload",
+    ["LastAcknowledgedVersion"],
+  );
+  const parsed = {
+    Reason: limitedString(payload.Reason, 4 * 1024, "Reason"),
+    EarliestRetainedRevision: revision(
+      payload.EarliestRetainedRevision,
+      "EarliestRetainedRevision",
+    ),
+  };
+  return Object.freeze(payload.LastAcknowledgedVersion === undefined
+    ? parsed
+    : {
+        ...parsed,
+        LastAcknowledgedVersion: stateVersion(
+          payload.LastAcknowledgedVersion,
+          "LastAcknowledgedVersion",
+        ),
+      });
+}
+
+function regionRouteChanged(value: unknown): RegionRouteChanged {
+  const payload = object(value, "Payload");
+  exactKeys(
+    payload,
+    [
+      "IngressRegion",
+      "ServingRegion",
+      "DatabaseRegion",
+      "RouteGeneration",
+      "ReconnectRequired",
+    ],
+    "Payload",
+  );
+  return Object.freeze({
+    IngressRegion: region(payload.IngressRegion, "IngressRegion"),
+    ServingRegion: region(payload.ServingRegion, "ServingRegion"),
+    DatabaseRegion: region(payload.DatabaseRegion, "DatabaseRegion"),
+    RouteGeneration: uint64(payload.RouteGeneration, "RouteGeneration"),
+    ReconnectRequired: boolean(payload.ReconnectRequired, "ReconnectRequired"),
+  });
+}
+
+function ping(value: unknown): SyncPing {
+  const payload = object(value, "Payload");
+  exactKeys(payload, ["Nonce", "SentAt"], "Payload");
+  const sentAt = limitedString(payload.SentAt, 64, "SentAt");
+  if (!Number.isFinite(Date.parse(sentAt))) {
+    throw new TypeError("SentAt must be an ISO-8601 timestamp.");
+  }
+  return Object.freeze({ Nonce: uint64(payload.Nonce, "Nonce"), SentAt: sentAt });
+}
+
+function fatalProtocolError(value: unknown): FatalProtocolError {
+  const payload = object(value, "Payload");
+  exactKeys(payload, ["Error", "ResumeVersion"], "Payload", ["ResumeVersion"]);
+  const error = object(payload.Error, "Error");
+  exactKeys(error, ["Code", "Message"], "Error");
+  const parsed = {
+    Error: Object.freeze({
+      Code: errorCode(error.Code, "Error.Code"),
+      Message: limitedString(error.Message, 4 * 1024, "Error.Message"),
+    }),
+  };
+  return Object.freeze(payload.ResumeVersion === undefined
+    ? parsed
+    : { ...parsed, ResumeVersion: stateVersion(payload.ResumeVersion, "ResumeVersion") });
+}
+
 function stateVersion(value: unknown, path: string): SyncStateVersion {
   const version = object(value, path);
   exactKeys(version, ["QuerySetVersion", "DatabaseRevision", "IdentityVersion"], path);
@@ -237,15 +525,9 @@ function queryFailed(value: unknown, index: number): QueryFailed {
   const path = `QueryFailed[${index}]`;
   const query = object(value, path);
   exactKeys(query, ["QueryId", "Error", "ValidatedThroughRevision"], path);
-  const error = object(query.Error, `${path}.Error`);
-  exactKeys(error, ["Code", "Message", "Retryable"], `${path}.Error`);
   return Object.freeze({
     QueryId: ulid(query.QueryId, `${path}.QueryId`),
-    Error: Object.freeze({
-      Code: limitedString(error.Code, 128, `${path}.Error.Code`),
-      Message: limitedString(error.Message, 4 * 1024, `${path}.Error.Message`),
-      Retryable: boolean(error.Retryable, `${path}.Error.Retryable`),
-    }),
+    Error: syncError(query.Error, `${path}.Error`),
     ValidatedThroughRevision: revision(
       query.ValidatedThroughRevision,
       `${path}.ValidatedThroughRevision`,
@@ -294,7 +576,12 @@ function array(value: unknown, path: string): readonly unknown[] {
   return value;
 }
 
-function exactKeys(value: Record<string, unknown>, allowed: readonly string[], path: string): void {
+function exactKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  path: string,
+  optional: readonly string[] = ["Journal", "ServerTiming"],
+): void {
   const allowedKeys = new Set(allowed);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
@@ -302,7 +589,7 @@ function exactKeys(value: Record<string, unknown>, allowed: readonly string[], p
     }
   }
   for (const key of allowed) {
-    if (key !== "Journal" && key !== "ServerTiming" && !(key in value)) {
+    if (!optional.includes(key) && !(key in value)) {
       throw new TypeError(`${path} is missing required member '${key}'.`);
     }
   }
@@ -355,10 +642,49 @@ function boolean(value: unknown, path: string): boolean {
 }
 
 function milliseconds(value: unknown, path: string): number {
-  if (!Number.isInteger(value) || typeof value !== "number" || value < 0 || value > 60_000) {
-    throw new TypeError(`${path} must be an integer from 0 through 60000.`);
+  return integer(value, 0, 60_000, path);
+}
+
+function integer(value: unknown, minimum: number, maximum: number, path: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new TypeError(`${path} must be an integer from ${minimum} through ${maximum}.`);
   }
   return value;
+}
+
+function syncError(value: unknown, path: string): SyncError {
+  const error = object(value, path);
+  exactKeys(error, ["Code", "Message", "Retryable"], path);
+  return Object.freeze({
+    Code: errorCode(error.Code, `${path}.Code`),
+    Message: limitedString(error.Message, 4 * 1024, `${path}.Message`),
+    Retryable: boolean(error.Retryable, `${path}.Retryable`),
+  });
+}
+
+function errorCode(value: unknown, path: string): string {
+  const code = limitedString(value, 128, path);
+  if (!/^[A-Za-z0-9._-]+$/.test(code)) {
+    throw new TypeError(`${path} contains unsupported characters.`);
+  }
+  return code;
+}
+
+function base64(value: unknown, path: string): string {
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || value.length > Math.ceil(256 * 1024 / 3) * 4
+    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+  ) {
+    throw new TypeError(`${path} must be canonical bounded base64.`);
+  }
+  return value;
+}
+
+function base64DecodedLength(value: string): number {
+  return value.length / 4 * 3
+    - (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0);
 }
 
 function json(value: unknown, path: string): JsonValue {
