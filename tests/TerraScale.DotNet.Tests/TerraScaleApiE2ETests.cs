@@ -288,6 +288,45 @@ public sealed class TerraScaleApiE2ETests
 
     [Test]
     [RequiresTerraScaleApi]
+    [NotInParallel("database-branch-capability")]
+    public async Task DatabaseBranches_GetCapabilityAndRejectCloneAgainstRealApi()
+    {
+        var client = TerraScaleApiE2E.CreateClient();
+        var currentProject = await GetCurrentProjectAsync(client);
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        TerraScaleProjectDatabase? database = null;
+
+        try
+        {
+            database = await client.ProjectDatabases.CreateAsync(
+                currentProject.ProjectId,
+                $"sdk-e2e-branch-source-{suffix}");
+
+            var capability = await client.DatabaseBranches.GetCapabilityAsync(currentProject.ProjectId);
+            await Assert.That(capability.ProjectId).IsEqualTo(currentProject.ProjectId);
+            await Assert.That(capability.AdmissionState).IsEqualTo("unavailable");
+            await Assert.That(capability.PhysicalCloneAvailable).IsFalse();
+            await Assert.That(capability.PromotionAvailable).IsFalse();
+            await Assert.That(capability.MergeAvailable).IsFalse();
+
+            var unavailable = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.DatabaseBranches.RequestCloneAsync(
+                    currentProject.ProjectId,
+                    new TerraScaleCreateDatabaseBranchRequest(database.DatabaseId)));
+            await Assert.That(unavailable!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(unavailable.ErrorCode).IsEqualTo("TERRASCALE-5001");
+        }
+        finally
+        {
+            if (database is not null)
+            {
+                await DeleteProjectDatabaseIfPresentAsync(client, currentProject.ProjectId, database.DatabaseId);
+            }
+        }
+    }
+
+    [Test]
+    [RequiresTerraScaleApi]
     public async Task SavedQueries_CreateListUpdateAndDelete_RoundTripAgainstRealApi()
     {
         var client = TerraScaleApiE2E.CreateClient();

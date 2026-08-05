@@ -6,7 +6,7 @@ Official C# SDK for TerraScale Platform API families.
 
 Public clients opt in by configuring `TerraScaleClientOptions.IdempotencyKeyFactory`. The SDK creates one key per logical mutation, reuses it across retries, and never retries an unsafe mutation without a key. Keys must be nonblank and no longer than 128 characters. Replayable API results expire after 24 hours; replays include `Idempotency-Replayed: true`, while reuse with different input returns `409 idempotency_key_reused`.
 
-The SDK calls verified TerraScale public endpoints. It covers region catalog, database, repository, document, schema, TQL, changes, billing, project, project database, environment, queue, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, restore, v2 saved-query conditional-update, and v3 saved-query snapshot-pagination operations. It does not call TerraBase storage directly and does not cover admin, user-management, organization-management, auth-provider, invitation, audit, or Dashboard-internal test endpoints.
+The SDK calls verified TerraScale public endpoints. It covers region catalog, database, repository, document, schema, TQL, changes, billing, project, project database, physical database-branch capability and clone requests, environment, queue, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, restore, v2 saved-query conditional-update, and v3 saved-query snapshot-pagination operations. It does not call TerraBase storage directly and does not cover admin, user-management, organization-management, auth-provider, invitation, audit, or Dashboard-internal test endpoints.
 
 ## Billing checkout
 
@@ -162,6 +162,24 @@ var deletion = await client.Environments.DeleteAsync(
 // Deletion is durable: completion requires both values below.
 var deletionCompleted = deletion.Deleted && deletion.Status == "Completed";
 // "RetryScheduled" means it remains pending; RetryAt is the server's retry hint.
+```
+
+Physical database branches are a separate capability from logical environments. Inspect capability before requesting a clone; Platform currently fails clone requests closed with `TerraScaleApiException` (`503`, `TERRASCALE-5001`) until physical lifecycle provisioning is available:
+
+```csharp
+var branchCapability = await client.DatabaseBranches.GetCapabilityAsync(project.ProjectId, cancellationToken);
+
+try
+{
+    await client.DatabaseBranches.RequestCloneAsync(
+        project.ProjectId,
+        new TerraScaleCreateDatabaseBranchRequest(database.DatabaseId),
+        cancellationToken);
+}
+catch (TerraScaleApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+{
+    // No physical clone has been created; use the capability response and retry guidance.
+}
 ```
 
 Select a logical database and environment when creating repositories:
