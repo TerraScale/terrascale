@@ -5,9 +5,6 @@
   "type": "module",
   "license": "Apache-2.0",
   "private": false,
-  "workspaces": [
-    "mcp"
-  ],
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
@@ -37,7 +34,6 @@
   ],
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
-    "build:mcp": "npm run build --workspace @terrascale/mcp",
     "check:openapi-drift": "node scripts/check-openapi-drift.mjs",
     "check:public-contract-fixture": "node scripts/check-public-contract-fixture.mjs",
     "check:route-manifest": "node scripts/generate-client-route-manifest.mjs --check",
@@ -45,8 +41,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/*.test.js dist/integration/*.test.js",
     "test:integration": "node --test dist/integration/*.test.js",
-    "test:unit": "node --test dist/*.test.js",
-    "test:mcp": "npm run test --workspace @terrascale/mcp"
+    "test:unit": "node --test dist/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",
