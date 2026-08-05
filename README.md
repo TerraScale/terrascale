@@ -94,7 +94,10 @@ var loadedDatabase = await client.Databases.GetAsync(database.DatabaseId, cancel
 var collections = await client.Collections.ListAsync(loadedDatabase.DatabaseId, cancellationToken);
 
 // Later, after repositories/data are no longer needed:
-await client.Databases.DeleteAsync(loadedDatabase.DatabaseId, cancellationToken: cancellationToken);
+await client.Databases.DeleteAsync(
+    loadedDatabase.DatabaseId,
+    new TerraScaleDeleteDatabaseOptions(loadedDatabase.DatabaseId),
+    cancellationToken);
 ```
 
 Use project-scoped projects, databases, and environments when working through the live project metadata API:
