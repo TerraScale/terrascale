@@ -28,19 +28,27 @@
 - DevHost integration work requires an exclusive fixture lease covering its
   tenant, project, database, and credentials; record only redacted fixture
   identifiers in coordination and handoff notes.
-- Implement public capabilities contract-first: land the Platform public REST
-  contract, route manifest, and OpenAPI surface first; then add the matching
-  typed SDK DTOs and operation; finally update consumers, docs, and adapters.
-  Never invent an SDK-only route or contract to unblock a consumer.
-- Every typed public SDK operation needs proof at the public boundary: verify
-  its OpenAPI and route-manifest mapping have not drifted, and show DevHost live
-  success and expected-failure evidence for its authorization/validation path
-  when the required environment is available.
-- Treat OpenAPI, the route manifest, and the SDK operation as one public
-  contract. Before merge, gate a changed operation on exact method, path,
-  parameter location/name/requiredness, request and response media types,
-  status/error shapes, operation identity, and DTO field/nullability parity.
-  Do not accept a passing TypeScript build as evidence that these surfaces agree.
+- Implement public capabilities contract-first. For REST, land the Platform
+  public REST contract, route manifest, and OpenAPI surface first; for public
+  realtime APIs, land the versioned WebSocket or SSE protocol and schema
+  contract first. Then add the matching typed SDK DTOs and operation, followed
+  by consumers, docs, and adapters. Never invent an SDK-only route, protocol,
+  or contract to unblock a consumer.
+- Every typed public SDK operation needs proof at the public boundary. For REST,
+  verify its OpenAPI and route-manifest mapping have not drifted; for WebSocket
+  or SSE, verify the versioned protocol, event/message schemas, handshake or
+  subscription semantics, and compatibility behavior have not drifted. Show
+  DevHost live success and expected-failure evidence for its
+  authorization/validation path when the required environment is available.
+- Treat the SDK operation and its public contract as one unit. For REST, before
+  merge gate exact method, path, parameter location/name/requiredness, request
+  and response media types, status/error shapes, operation identity, and DTO
+  field/nullability parity against OpenAPI and the route manifest. For
+  WebSocket/SSE, gate the versioned endpoint and protocol/schema identity,
+  connection/authentication and subscription semantics, event/message and
+  error shapes, reconnect/resume behavior where specified, and DTO
+  field/nullability parity. Do not represent realtime APIs as REST or accept a
+  passing TypeScript build as evidence that either public surface agrees.
 - Transport stays typed end-to-end: each public operation must use the SDK's
   typed operation/client path and typed request/response models. Do not add
   raw `fetch`, generic request helpers, stringly route construction, untyped
@@ -83,7 +91,8 @@
   mocks, fixed secrets, local `.env` loading, or fabricated proof.
 - Contract-drift checks are release gates for changed public operations. Run
   the repository's applicable generation/verification and type/test commands;
-  inspect the resulting OpenAPI, route-manifest, and exported SDK diff. A
+  inspect the REST OpenAPI/route-manifest or realtime versioned
+  protocol/schema contract, as applicable, and the exported SDK diff. A
   mismatch, unexplained generated-file change, or missing public-boundary
   evidence blocks handoff until resolved or explicitly accepted by the
   contract owner.
@@ -104,7 +113,8 @@ Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies in full:
 - Stage named owned files only (for example, `git add -- AGENTS.md`); never
   use broad staging commands. Before requesting review or root validation,
   hand off the owned files, exact diff/commit, OpenAPI and route-manifest
-  parity result, compatibility/retry decision, commands and results, live
-  evidence status, and known gaps. The reviewer/root validator must be able to
-  confirm the public contract without secrets or access to unredacted tenant
-  data.
+  parity result for REST or versioned realtime protocol/schema compatibility
+  result for WebSocket/SSE, compatibility/retry decision, commands and
+  results, live evidence status, and known gaps. The reviewer/root validator
+  must be able to confirm the public contract without secrets or access to
+  unredacted tenant data.
