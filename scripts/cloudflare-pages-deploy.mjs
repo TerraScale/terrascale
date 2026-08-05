@@ -1,12 +1,14 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { readPagesConfig, verifyRemoteProductionBranch } from './cloudflare-pages-project.mjs'
+import { pathToFileURL } from 'node:url'
+import {
+  readPagesConfig,
+  rejectApiOriginOverride,
+  verifyRemoteProductionBranch,
+} from './cloudflare-pages-project.mjs'
 
-const previewFlag = process.argv.includes('--preview')
-const productionFlag = process.argv.includes('--production')
-
-const readEnv = (...names) => {
+const readEnv = (environment, ...names) => {
   for (const name of names) {
-    const value = process.env[name]?.trim()
+    const value = environment[name]?.trim()
     if (value) {
       return value
     }
@@ -15,7 +17,7 @@ const readEnv = (...names) => {
   return null
 }
 
-const inferBranchName = () => {
+const inferBranchName = (environment) => {
   for (const candidate of [
     'CLOUDFLARE_PAGES_BRANCH',
     'FORGEJO_HEAD_REF',
@@ -23,7 +25,7 @@ const inferBranchName = () => {
     'GITHUB_HEAD_REF',
     'GITHUB_REF_NAME',
   ]) {
-    const value = process.env[candidate]?.trim()
+    const value = environment[candidate]?.trim()
     if (value) {
       return value
     }
@@ -44,83 +46,80 @@ const readGit = (args) => {
   }
 }
 
-const inferCommitHash = () =>
-  readEnv('CLOUDFLARE_PAGES_COMMIT_SHA', 'FORGEJO_SHA', 'GITHUB_SHA') ?? readGit(['rev-parse', 'HEAD'])
+export const buildDeployCommand = async ({ argv = process.argv, environment = process.env, fetchImpl }) => {
+  rejectApiOriginOverride(environment)
+  const preview = argv.includes('--preview')
+  const production = argv.includes('--production')
+  const productionBranch = readEnv(environment, 'CLOUDFLARE_PAGES_PRODUCTION_BRANCH') ?? 'main'
+  const branchName = production ? productionBranch : preview ? inferBranchName(environment) : null
+  const { projectName } = readPagesConfig()
 
-const inferCommitMessage = () =>
-  readEnv(
-    'CLOUDFLARE_PAGES_COMMIT_MESSAGE',
-    'FORGEJO_EVENT_HEAD_COMMIT_MESSAGE',
-    'GITHUB_EVENT_HEAD_COMMIT_MESSAGE',
-  ) ??
-  readGit(['log', '-1', '--pretty=%s'])
+  if (!projectName) {
+    throw new Error('Missing "name" in wrangler.toml.')
+  }
 
-const args = ['pages', 'deploy']
-
-const productionBranch = readEnv('CLOUDFLARE_PAGES_PRODUCTION_BRANCH') ?? 'main'
-const branchName = productionFlag ? productionBranch : previewFlag ? inferBranchName() : null
-const { projectName } = readPagesConfig()
-
-if (branchName) {
-  args.push('--branch', branchName)
-}
-
-if (previewFlag && !branchName) {
-  console.error(
-    'Preview deploys need a branch name. Set CLOUDFLARE_PAGES_BRANCH or run from a git branch.',
-  )
-  process.exit(1)
-}
-
-if (previewFlag && branchName === productionBranch) {
-  console.error(
-    `Preview deploys cannot target the production branch "${productionBranch}". Choose another branch.`,
-  )
-  process.exit(1)
-}
-
-if (!projectName) {
-  console.error('Missing "name" in wrangler.toml.')
-  process.exit(1)
-}
-
-try {
-  await verifyRemoteProductionBranch({
-    accountId: readEnv('CLOUDFLARE_ACCOUNT_ID'),
-    apiBaseUrl: readEnv('CLOUDFLARE_PAGES_API_BASE_URL'),
-    apiToken: readEnv('CLOUDFLARE_API_TOKEN'),
+  const remoteProductionBranch = await verifyRemoteProductionBranch({
+    accountId: readEnv(environment, 'CLOUDFLARE_ACCOUNT_ID'),
+    apiToken: readEnv(environment, 'CLOUDFLARE_API_TOKEN'),
+    fetchImpl,
     productionBranch,
     projectName,
   })
-} catch (error) {
-  console.error(error.message)
-  process.exit(1)
-}
 
-const commitHash = inferCommitHash()
-if (commitHash) {
-  args.push('--commit-hash', commitHash)
-}
-
-const commitMessage = inferCommitMessage()
-if (commitMessage) {
-  args.push('--commit-message', commitMessage)
-}
-
-if (readEnv('CLOUDFLARE_PAGES_COMMIT_DIRTY') === '1') {
-  args.push('--commit-dirty')
-}
-
-const child = spawn('wrangler', args, {
-  stdio: 'inherit',
-  env: process.env,
-})
-
-child.on('exit', (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal)
-    return
+  if (preview && !branchName) {
+    throw new Error('Preview deploys need a branch name. Set CLOUDFLARE_PAGES_BRANCH or run from a git branch.')
   }
 
-  process.exit(code ?? 1)
-})
+  if (preview && branchName === remoteProductionBranch) {
+    throw new Error(
+      `Preview deploys cannot target the verified production branch "${remoteProductionBranch}". Choose another branch.`,
+    )
+  }
+
+  const args = ['pages', 'deploy']
+  if (branchName) {
+    args.push('--branch', branchName)
+  }
+
+  const commitHash = readEnv(environment, 'CLOUDFLARE_PAGES_COMMIT_SHA', 'FORGEJO_SHA', 'GITHUB_SHA') ?? readGit(['rev-parse', 'HEAD'])
+  if (commitHash) {
+    args.push('--commit-hash', commitHash)
+  }
+
+  const commitMessage =
+    readEnv(
+      environment,
+      'CLOUDFLARE_PAGES_COMMIT_MESSAGE',
+      'FORGEJO_EVENT_HEAD_COMMIT_MESSAGE',
+      'GITHUB_EVENT_HEAD_COMMIT_MESSAGE',
+    ) ?? readGit(['log', '-1', '--pretty=%s'])
+  if (commitMessage) {
+    args.push('--commit-message', commitMessage)
+  }
+
+  if (readEnv(environment, 'CLOUDFLARE_PAGES_COMMIT_DIRTY') === '1') {
+    args.push('--commit-dirty')
+  }
+
+  return args
+}
+
+export const runDeploy = async ({ spawnImpl = spawn, ...options } = {}) =>
+  spawnImpl('wrangler', await buildDeployCommand(options), { stdio: 'inherit', env: options.environment ?? process.env })
+
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  try {
+    const child = await runDeploy()
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        process.kill(process.pid, signal)
+        return
+      }
+
+      process.exit(code ?? 1)
+    })
+  } catch (error) {
+    console.error(error.message)
+    process.exit(1)
+  }
+}

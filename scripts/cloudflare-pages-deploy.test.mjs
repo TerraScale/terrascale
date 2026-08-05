@@ -1,84 +1,100 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { createServer } from 'node:http'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import test from 'node:test'
+import { runDeploy } from './cloudflare-pages-deploy.mjs'
+import { verifyExistingProject } from './cloudflare-pages-project-create.mjs'
 
-const deployScript = new URL('./cloudflare-pages-deploy.mjs', import.meta.url)
-const projectCreateScript = new URL('./cloudflare-pages-project-create.mjs', import.meta.url)
-
-const startApi = async (t, { result, status = 200 }) => {
-  let calls = 0
-  const server = createServer((_request, response) => {
-    calls += 1
-    response.writeHead(status, { 'Content-Type': 'application/json' })
-    response.end(JSON.stringify({ result }))
-  })
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-  t.after(() => server.close())
-  const address = server.address()
-  return { apiBaseUrl: `http://127.0.0.1:${address.port}`, calls: () => calls }
-}
-
-const runScript = (script, args, env) => {
-  const binDirectory = mkdtempSync(join(tmpdir(), 'terrascale-wrangler-'))
-  const wrangler = join(binDirectory, 'wrangler')
-  writeFileSync(wrangler, '#!/bin/sh\nprintf "%s\\n" "$@"\n')
-  chmodSync(wrangler, 0o755)
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script.pathname, ...args], {
-      env: { ...process.env, ...env, PATH: `${binDirectory}:${process.env.PATH}` },
-    })
-    let stderr = ''
-    let stdout = ''
-    child.stderr.on('data', (chunk) => (stderr += chunk))
-    child.stdout.on('data', (chunk) => (stdout += chunk))
-    child.on('error', reject)
-    child.on('close', (status) => {
-      rmSync(binDirectory, { force: true, recursive: true })
-      resolve({ status, stderr, stdout })
-    })
-  })
-}
-
-const verifiedEnv = (apiBaseUrl, productionBranch) => ({
+const environment = (overrides = {}) => ({
   CLOUDFLARE_ACCOUNT_ID: 'account',
   CLOUDFLARE_API_TOKEN: 'token',
-  CLOUDFLARE_PAGES_API_BASE_URL: apiBaseUrl,
-  CLOUDFLARE_PAGES_PRODUCTION_BRANCH: productionBranch,
+  CLOUDFLARE_PAGES_PRODUCTION_BRANCH: 'release',
+  ...overrides,
 })
 
-test('production deploy uses a verified configured non-main branch', async (t) => {
-  const api = await startApi(t, { result: { production_branch: 'release' } })
-  const result = await runScript(deployScript, ['--production'], verifiedEnv(api.apiBaseUrl, 'release'))
+const response = (body, status = 200) => new Response(body, { status })
+const project = (overrides = {}) => ({ name: 'terrascale-landing-page', production_branch: 'release', ...overrides })
+const success = (result = project()) => response(JSON.stringify({ success: true, result }))
 
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /^pages\ndeploy\n--branch\nrelease\n/m)
-  assert.equal(api.calls(), 1)
-})
-
-test('preview deploy fails closed on remote production-branch drift without spawning Wrangler', async (t) => {
-  const api = await startApi(t, { result: { production_branch: 'main' } })
-  const result = await runScript(deployScript, ['--preview'], {
-    ...verifiedEnv(api.apiBaseUrl, 'release'),
-    CLOUDFLARE_PAGES_BRANCH: 'main',
+const run = (argv, env, fetchImpl, spawnCalls = []) =>
+  runDeploy({
+    argv,
+    environment: env,
+    fetchImpl,
+    spawnImpl: (...args) => {
+      spawnCalls.push(args)
+      return {}
+    },
   })
 
-  assert.equal(result.status, 1)
-  assert.match(result.stderr, /production branch mismatch: remote "main", configured "release"/)
-  assert.equal(result.stdout, '')
-  assert.equal(api.calls(), 1)
+test('production deploy uses a verified configured non-main branch', async () => {
+  const spawnCalls = []
+  await run(['node', 'script', '--production'], environment(), async () => success(), spawnCalls)
+
+  assert.deepEqual(spawnCalls[0][1].slice(0, 4), ['pages', 'deploy', '--branch', 'release'])
 })
 
-test('existing project creation fails closed on a production-branch mismatch', async (t) => {
-  const api = await startApi(t, { result: { production_branch: 'main' } })
-  const result = await runScript(projectCreateScript, [], verifiedEnv(api.apiBaseUrl, 'release'))
+test('preview deploy checks verified remote truth before rejecting its production branch', async () => {
+  const spawnCalls = []
+  await assert.rejects(
+    run(
+      ['node', 'script', '--preview'],
+      environment({ CLOUDFLARE_PAGES_BRANCH: 'release' }),
+      async () => success(),
+      spawnCalls,
+    ),
+    /verified production branch "release"/,
+  )
+  assert.equal(spawnCalls.length, 0)
+})
 
-  assert.equal(result.status, 1)
-  assert.match(result.stderr, /production branch mismatch: remote "main", configured "release"/)
-  assert.equal(result.stdout, '')
-  assert.equal(api.calls(), 1)
+test('deploy fails closed on remote branch drift without spawning Wrangler', async () => {
+  const spawnCalls = []
+  await assert.rejects(
+    run(['node', 'script', '--preview'], environment({ CLOUDFLARE_PAGES_BRANCH: 'main' }), async () => success(project({ production_branch: 'main' })), spawnCalls),
+    /production branch mismatch: remote "main", configured "release"/,
+  )
+  assert.equal(spawnCalls.length, 0)
+})
+
+for (const [name, env, fetchImpl, message] of [
+  ['missing credentials', environment({ CLOUDFLARE_API_TOKEN: '' }), async () => success(), /needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN/],
+  ['404', environment(), async () => response('', 404), /was not found/],
+  ['HTTP API error', environment(), async () => response('', 500), /Failed to read Cloudflare Pages project/],
+  ['branch absent', environment(), async () => success({ name: 'terrascale-landing-page' }), /invalid metadata/],
+  ['envelope failure', environment(), async () => response(JSON.stringify({ success: false, result: project() })), /invalid metadata/],
+  ['malformed JSON', environment(), async () => response('{'), /invalid metadata/],
+]) {
+  test(`deploy ${name} fails without spawning Wrangler`, async () => {
+    const spawnCalls = []
+    await assert.rejects(run(['node', 'script', '--production'], env, fetchImpl, spawnCalls), message)
+    assert.equal(spawnCalls.length, 0)
+  })
+}
+
+test('runtime API-base overrides cannot send a token to a hostile origin', async () => {
+  const spawnCalls = []
+  await assert.rejects(
+    run(
+      ['node', 'script', '--production'],
+      environment({ CLOUDFLARE_PAGES_API_BASE_URL: 'https://hostile.example' }),
+      async () => assert.fail('fetch must not run when an API-origin override is set'),
+      spawnCalls,
+    ),
+    /CLOUDFLARE_PAGES_API_BASE_URL is not supported/,
+  )
+  assert.equal(spawnCalls.length, 0)
+})
+
+test('project creation requires verified remote metadata and never spawns Wrangler', async () => {
+  await assert.rejects(
+    verifyExistingProject({ environment: environment(), fetchImpl: async () => response('', 404) }),
+    /was not found/,
+  )
+  await assert.rejects(
+    verifyExistingProject({ environment: environment({ CLOUDFLARE_API_TOKEN: '' }), fetchImpl: async () => success() }),
+    /needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN/,
+  )
+  await assert.rejects(
+    verifyExistingProject({ environment: environment(), fetchImpl: async () => success(project({ production_branch: 'main' })) }),
+    /production branch mismatch/,
+  )
 })
