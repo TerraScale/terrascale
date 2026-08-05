@@ -102,7 +102,7 @@ Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies in full:
 - **Default:** implement on `develop`, **commit often** on substantial coherent changes, and **push directly to `origin/develop`**. Do not open pull requests for day-to-day work.
 - **Do not** create feature branches or worktrees unless the user explicitly asks; when used, branch and worktree are always paired, and finished work lands back on `develop`.
 - Pushes to `develop` intentionally trigger no Forgejo actions or checks; DevHost supplies validation.
-- `main` is for release/promotion only. Only the `develop` → `main` promotion path may build an immutable SDK release candidate.
+- `main` is for release/promotion only. PRs never build, store, sign, publish, or promote SDK candidates, regardless of source branch or artifact/tree match. This SDK workflow fails closed until `TerraScale.Orchestrator` provides a trusted post-merge candidate with verified provenance for the `develop` → `main` promotion path.
 - Immediately before commit and again before push, check `git status`, review the
   owned-path diff, and `git fetch origin`. If `origin/develop` moved, the checkout
   is dirty, or a shared-checkout/index lease conflicts, stop and coordinate rather
