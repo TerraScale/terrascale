@@ -1326,19 +1326,6 @@ export class BackupsClient {
     });
   }
 
-  triggerBackup(
-    databaseId: Ulid,
-    request?: Models.TriggerBackupRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.BackupJobResponse>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${databaseRoot(this.#http, { projectId, databaseId })}/backups`,
-      routeName: "backups.trigger",
-      body: request,
-    });
-  }
-
   planBackup(
     databaseId: Ulid,
     request: Models.DatabaseBackupConfirmationPlanRequest,

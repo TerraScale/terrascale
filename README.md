@@ -85,9 +85,13 @@ The public client follows the backed `TerraScale.Platform` REST surface:
 - Backups and restores:
   `/api/v1/projects/{projectId}/databases/{databaseId}/backups/policy`,
   `/api/v1/projects/{projectId}/databases/{databaseId}/backups`,
+  `/api/v1/projects/{projectId}/databases/{databaseId}/backups:plan`, and
+  `/api/v1/projects/{projectId}/databases/{databaseId}/backups:execute`,
   `/api/v1/projects/{projectId}/databases/{databaseId}/backups/{backupId}`,
   `/api/v1/projects/{projectId}/databases/{databaseId}/restore-points`, and
-  `/api/v1/projects/{projectId}/databases/{databaseId}/restores`; responses
+  `/api/v1/projects/{projectId}/databases/{databaseId}/restores`; on-demand backups require
+  an explicit `planBackup` then `executeBackup` confirmation flow, with no unconfirmed trigger.
+  Responses
   use logical ULID fields such as `backupId`, `restoreId`, and
   `restoredDatabaseId`.
 - Account identity: typed external login and email-change initiation/verification

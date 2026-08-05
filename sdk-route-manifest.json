@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 155,
+  "routeCount": 154,
   "routes": [
     {
       "base": "api",
@@ -984,16 +984,6 @@
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups/policy",
       "requestType": "ConfigureBackupPolicyRequest",
       "responseType": "BackupPolicyResponse"
-    },
-    {
-      "base": "api",
-      "client": "backups",
-      "operation": "triggerBackup",
-      "routeName": "backups.trigger",
-      "method": "POST",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups",
-      "requestType": "TriggerBackupRequest",
-      "responseType": "BackupJobResponse"
     },
     {
       "base": "api",

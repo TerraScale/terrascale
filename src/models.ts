@@ -757,10 +757,6 @@ export type BackupPolicyResponse = {
   readonly updatedAt: Timestamp;
 };
 
-export type TriggerBackupRequest = {
-  readonly idempotencyKey?: string | null;
-};
-
 export type DatabaseBackupConfirmationPlanRequest = {
   readonly operationSessionId: string;
 };

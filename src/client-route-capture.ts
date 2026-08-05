@@ -926,15 +926,6 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "backups",
-    operation: "triggerBackup",
-    defaultProject: true,
-    invoke: (client) =>
-      client.backups.triggerBackup(sampleIds.databaseId, {
-        idempotencyKey: "manual-backup-1",
-      }),
-  },
-  {
-    client: "backups",
     operation: "planBackup",
     defaultProject: true,
     invoke: (client) =>

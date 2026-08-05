@@ -53,10 +53,15 @@ type ManifestRoute = {
   readonly routeName: string;
 };
 
+// @ts-expect-error Unconfirmed backup triggers are intentionally not part of the public SDK.
+type LegacyTriggerBackup = TerraScaleClient["backups"]["triggerBackup"];
+void (undefined as unknown as LegacyTriggerBackup);
+
 describe("TerraScaleClient route contracts", () => {
   test("keeps the generated SDK route manifest aligned with captured public routes", async () => {
     const manifestUrl = new URL("../sdk-route-manifest.json", import.meta.url);
     const manifest = JSON.parse(await readFile(manifestUrl, "utf8")) as {
+      readonly routeCount: number;
       readonly routes: readonly ManifestRoute[];
     };
     const capturedRoutes = await capturePublicClientRoutes();
@@ -64,6 +69,25 @@ describe("TerraScaleClient route contracts", () => {
     assert.deepEqual(
       manifest.routes.map(routeManifestCore),
       capturedRoutes.map(routeManifestCore),
+    );
+    assert.equal(manifest.routeCount, 154);
+    assert.equal(manifest.routeCount, capturedRoutes.length);
+    assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
+    assert.deepEqual(
+      manifest.routes
+        .filter((route) => route.client === "backups" && route.method === "POST")
+        .map((route) => [route.operation, route.pathTemplate]),
+      [
+        [
+          "planBackup",
+          "/api/v1/projects/{projectId}/databases/{databaseId}/backups:plan",
+        ],
+        [
+          "executeBackup",
+          "/api/v1/projects/{projectId}/databases/{databaseId}/backups:execute",
+        ],
+        ["startRestore", "/api/v1/projects/{projectId}/databases/{databaseId}/restores"],
+      ],
     );
   });
 
@@ -530,7 +554,6 @@ describe("TerraScaleClient route contracts", () => {
     };
     const { client, requests } = createCapturingClientWithResponses([
       backupPolicy,
-      backupJob,
       [backupJob],
       backupJob,
       [restorePoint],
@@ -565,22 +588,6 @@ describe("TerraScaleClient route contracts", () => {
       disabled: false,
     });
 
-    const triggerResult = await client.backups.triggerBackup(databaseId, {
-      idempotencyKey: "manual-backup-1",
-    });
-    assert.equal(triggerResult.ok, true);
-    if (triggerResult.ok) {
-      assert.deepEqual(triggerResult.value, backupJob);
-      assert.equal("terraBaseTaskId" in triggerResult.value, false);
-      assert.equal("physicalDatabaseName" in triggerResult.value, false);
-    }
-    assertRequest(
-      requests[1],
-      "POST",
-      `/api/v1/projects/${projectId}/databases/${databaseId}/backups`,
-    );
-    assert.deepEqual(requests[1]?.body, { idempotencyKey: "manual-backup-1" });
-
     const listBackupsResult = await client.backups.listBackups(databaseId, { skip: 5, take: 10 });
     assert.equal(listBackupsResult.ok, true);
     if (listBackupsResult.ok) {
@@ -588,16 +595,16 @@ describe("TerraScaleClient route contracts", () => {
       assert.equal("items" in listBackupsResult.value, false);
     }
     assertRequest(
-      requests[2],
+      requests[1],
       "GET",
       `/api/v1/projects/${projectId}/databases/${databaseId}/backups`,
     );
-    assert.equal(requests[2]?.url.searchParams.get("skip"), "5");
-    assert.equal(requests[2]?.url.searchParams.get("take"), "10");
+    assert.equal(requests[1]?.url.searchParams.get("skip"), "5");
+    assert.equal(requests[1]?.url.searchParams.get("take"), "10");
 
     await client.backups.getBackup(databaseId, backupId);
     assertRequest(
-      requests[3],
+      requests[2],
       "GET",
       `/api/v1/projects/${projectId}/databases/${databaseId}/backups/${backupId}`,
     );
@@ -611,7 +618,7 @@ describe("TerraScaleClient route contracts", () => {
       assert.equal("terraBaseDatabaseName" in capturedRestorePoint, false);
     }
     assertRequest(
-      requests[4],
+      requests[3],
       "GET",
       `/api/v1/projects/${projectId}/databases/${databaseId}/restore-points`,
     );
@@ -627,15 +634,15 @@ describe("TerraScaleClient route contracts", () => {
       assert.equal("physicalRestoredDatabaseName" in startRestoreResult.value, false);
     }
     assertRequest(
-      requests[5],
+      requests[4],
       "POST",
       `/api/v1/projects/${projectId}/databases/${databaseId}/restores`,
     );
-    assert.deepEqual(requests[5]?.body, { backupId, idempotencyKey: "restore-1" });
+    assert.deepEqual(requests[4]?.body, { backupId, idempotencyKey: "restore-1" });
 
     await client.backups.getRestore(databaseId, restoreId);
     assertRequest(
-      requests[6],
+      requests[5],
       "GET",
       `/api/v1/projects/${projectId}/databases/${databaseId}/restores/${restoreId}`,
     );
@@ -650,12 +657,27 @@ describe("TerraScaleClient route contracts", () => {
       assert.equal("items" in listRestoresResult.value, false);
     }
     assertRequest(
-      requests[7],
+      requests[6],
       "GET",
       `/api/v1/projects/${projectId}/databases/${databaseId}/restores`,
     );
-    assert.equal(requests[7]?.url.searchParams.get("skip"), "2");
-    assert.equal(requests[7]?.url.searchParams.get("take"), "3");
+    assert.equal(requests[6]?.url.searchParams.get("skip"), "2");
+    assert.equal(requests[6]?.url.searchParams.get("take"), "3");
+
+    assert.throws(
+      () => client.backups.planBackup(databaseId, { operationSessionId: " " }),
+      TypeError,
+    );
+    assert.throws(
+      () =>
+        client.backups.executeBackup(
+          databaseId,
+          { operationSessionId: "backup-operation-session", confirmationToken: " " },
+          "backup-execution-key",
+        ),
+      TypeError,
+    );
+    assert.equal(requests.length, 7);
 
     const planResult = await client.backups.planBackup(databaseId, {
       operationSessionId: "backup-operation-session",
@@ -666,12 +688,12 @@ describe("TerraScaleClient route contracts", () => {
       assert.equal("physicalDatabaseName" in planResult.value, false);
     }
     assertRequest(
-      requests[8],
+      requests[7],
       "POST",
       `/api/v1/projects/${projectId}/databases/${databaseId}/backups:plan`,
     );
-    assert.deepEqual(requests[8]?.body, { operationSessionId: "backup-operation-session" });
-    assert.equal(requests[8]?.headers.has("idempotency-key"), false);
+    assert.deepEqual(requests[7]?.body, { operationSessionId: "backup-operation-session" });
+    assert.equal(requests[7]?.headers.has("idempotency-key"), false);
 
     const executeResult = await client.backups.executeBackup(
       databaseId,
@@ -686,16 +708,16 @@ describe("TerraScaleClient route contracts", () => {
       assert.deepEqual(executeResult.value, backupJob);
     }
     assertRequest(
-      requests[9],
+      requests[8],
       "POST",
       `/api/v1/projects/${projectId}/databases/${databaseId}/backups:execute`,
     );
-    assert.deepEqual(requests[9]?.body, {
+    assert.deepEqual(requests[8]?.body, {
       operationSessionId: "backup-operation-session",
       confirmationToken: "backup-confirmation-token",
     });
-    assert.equal(requests[9]?.headers.get("idempotency-key"), "backup-execution-key");
-    assert.equal(requests[9]?.headers.has("x-terrascale-delete-confirmation"), false);
+    assert.equal(requests[8]?.headers.get("idempotency-key"), "backup-execution-key");
+    assert.equal(requests[8]?.headers.has("x-terrascale-delete-confirmation"), false);
   });
 
   test("uses project auth API key wrappers and rotate/delete routes", async () => {
