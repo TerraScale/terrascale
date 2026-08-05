@@ -84,6 +84,23 @@ public sealed class TerraScaleClientE2ETests
     }
 
     [Test]
+    public async Task ProjectDatabases_DeleteAsync_WithMismatchedConfirmation_ThrowsBeforeSending()
+    {
+        using var httpClient = new HttpClient();
+        var client = new TerraScaleClient(
+            httpClient,
+            new TerraScaleClientOptions { BaseAddress = new Uri("https://api.example.invalid/") });
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.ProjectDatabases.DeleteAsync(
+                "project-a",
+                "database-a",
+                new TerraScaleDeleteDatabaseOptions("database-b")));
+
+        await Assert.That(exception!.ParamName).IsEqualTo("options");
+    }
+
+    [Test]
     [RequiresTerraScaleApi]
     public async Task Collections_ListAsync_ReturnsRealDatabaseCollections()
     {

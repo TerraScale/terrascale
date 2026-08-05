@@ -133,7 +133,10 @@ public sealed class TerraScaleApiE2ETests
             var listed = await client.ProjectDatabases.ListAsync(currentProject.ProjectId, take: 100);
             await Assert.That(listed.Any(database => database.DatabaseId == created.DatabaseId)).IsTrue();
 
-            var deleted = await client.ProjectDatabases.DeleteAsync(currentProject.ProjectId, created.DatabaseId);
+            var deleted = await client.ProjectDatabases.DeleteAsync(
+                currentProject.ProjectId,
+                created.DatabaseId,
+                new TerraScaleDeleteDatabaseOptions(created.DatabaseId));
             await Assert.That(deleted.DatabaseId).IsEqualTo(created.DatabaseId);
             await Assert.That(deleted.ProjectId).IsEqualTo(created.ProjectId);
             await Assert.That(deleted.Deleted).IsTrue();
@@ -590,7 +593,10 @@ public sealed class TerraScaleApiE2ETests
     {
         try
         {
-            await client.ProjectDatabases.DeleteAsync(projectId, databaseId);
+            await client.ProjectDatabases.DeleteAsync(
+                projectId,
+                databaseId,
+                new TerraScaleDeleteDatabaseOptions(databaseId));
         }
         catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {

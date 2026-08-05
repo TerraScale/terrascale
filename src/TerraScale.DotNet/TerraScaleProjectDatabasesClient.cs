@@ -65,19 +65,31 @@ public sealed class TerraScaleProjectDatabasesClient
     }
 
     /// <summary>
-    /// Deletes a logical project database by id.
+    /// Deletes a logical project database after explicit acknowledgement of its id.
     /// </summary>
     public Task<TerraScaleDeletedProjectDatabase> DeleteAsync(
         string projectId,
         string databaseId,
+        TerraScaleDeleteDatabaseOptions options,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
         ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!string.Equals(databaseId.Trim(), options.Confirmation, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "The deletion confirmation must exactly match the target database id.",
+                nameof(options));
+        }
+
         return client.SendAsync<TerraScaleDeletedProjectDatabase>(
             HttpMethod.Delete,
             TerraScaleApiRoutes.ProjectDatabaseDelete(projectId, databaseId),
             body: null,
+            request => request.Headers.TryAddWithoutValidation(
+                "X-TerraScale-Delete-Confirmation",
+                options.Confirmation),
             cancellationToken);
     }
 }
