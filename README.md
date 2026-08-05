@@ -105,11 +105,13 @@ The public client follows the backed `TerraScale.Platform` REST surface:
   `/api/v1/users/me/notifications:mark-all-read` returns `{ markedRead }`.
 - Security settings: backed get and upsert routes at
   `/api/v1/projects/{projectId}/security/settings`.
+- Saved queries: typed list/create/update/delete operations under
+  `/api/v1/projects/{projectId}/saved-queries`.
 
 Unbacked public SDK methods are intentionally omitted until matching API
 endpoints exist. This currently excludes repository update, database
-update/region switching/environment switching, saved queries, query history,
-project settings, security webhooks, SSO/SCIM settings, and public project switching.
+update/region switching/environment switching, query history, project settings,
+security webhooks, SSO/SCIM settings, and public project switching.
 
 ## Development
 
@@ -143,6 +145,12 @@ npm run test:integration
 
 When those URLs are not set, integration tests skip instead of substituting
 mocked HTTP.
+
+The saved-query CRUD smoke test additionally requires
+`TERRASCALE_E2E_ACCESS_TOKEN` and `TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID`.
+Set the latter only to a dedicated disposable DevHost project for which the
+token has saved-query permissions; it never falls back to
+`TERRASCALE_E2E_PROJECT_ID`.
 
 ## Releases
 
