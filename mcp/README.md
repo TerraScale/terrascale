@@ -20,6 +20,8 @@ TERRASCALE_API_BASE_URL=https://api.example TERRASCALE_ACCESS_TOKEN=... node dis
 
 For production Streamable HTTP, set `TERRASCALE_MCP_TRANSPORT=http` and optionally `TERRASCALE_MCP_PORT` (default `3000`). Each MCP session must send its caller's public `Authorization` header; the service has no configured service identity. `/mcp` is the MCP endpoint and `/healthz` and `/readyz` return plain, non-sensitive health responses. Put TLS and network access controls in the ingress layer.
 
+The HTTP listener limits headers to 10 seconds, complete requests to 15 seconds, request bodies to 10 seconds and 1 MiB, and idle keep-alive connections to 5 seconds. Sessions are retained only through the MCP SDK's successful lifecycle callback, bound to the initiating caller credential, and removed on the SDK's DELETE/close lifecycle callbacks.
+
 Structured stderr logs use OpenTelemetry-compatible timestamp/severity/body/attributes fields and never include credentials or API response bodies.
 
 ## Verify

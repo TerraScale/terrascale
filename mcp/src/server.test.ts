@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
-import { createServer, type Server } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { once } from "node:events";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { createStructuredLogger } from "./logger.js";
 import { readRuntimeConfig } from "./config.js";
-import { createHttpMcpServer } from "./http.js";
+import { createHttpMcpServer, type McpHttpServerOptions } from "./http.js";
 import { createMcpServer } from "./server.js";
 
 const projectA = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -106,6 +108,70 @@ test("validates configuration without echoing secrets and exposes non-sensitive 
   }
 });
 
+test("uses the Streamable HTTP session lifecycle without credential bleed", async () => {
+  const secretA = "caller-a-secret";
+  const secretB = "caller-b-secret";
+  const logs: string[] = [];
+  const publicRequests: string[] = [];
+  const boundary = await publicBoundary((request, response) => {
+    publicRequests.push(request.headers.authorization ?? "");
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAV", email: "caller@example.test", name: "Caller", phoneNumber: "", avatarUrl: "", personalOrgId: "01ARZ3NDEKTSV4RRFFQ69G5FAW", activeOrgId: "01ARZ3NDEKTSV4RRFFQ69G5FAX", permissions: [], roles: [],
+    }));
+  });
+  const mcp = await mcpHttpServer(boundary.url, createStructuredLogger((line) => logs.push(line)));
+  const first = await connectedHttpClient(mcp.url, secretA);
+  const second = await connectedHttpClient(mcp.url, secretB);
+  try {
+    assert.ok(first.transport.sessionId !== undefined);
+    assert.ok(second.transport.sessionId !== undefined);
+    assert.notEqual(first.transport.sessionId, second.transport.sessionId);
+    assert.ok((await first.client.listTools()).tools.some((tool) => tool.name === "identity_get_context"));
+    await first.client.callTool({ name: "identity_get_context" });
+    await second.client.callTool({ name: "identity_get_context" });
+
+    assert.equal((await mcpRequest(mcp.url, secretA, undefined, "tools/list")).status, 400);
+    assert.equal((await mcpRequest(mcp.url, secretA, "unknown-session", "tools/list")).status, 404);
+    const wrongCredential = await mcpRequest(mcp.url, secretB, first.transport.sessionId, "tools/list");
+    assert.equal(wrongCredential.status, 404);
+    assert.doesNotMatch(await wrongCredential.text(), new RegExp(secretA));
+    assert.deepEqual(publicRequests, [`Bearer ${secretA}`, `Bearer ${secretB}`]);
+
+    const firstSessionId = first.transport.sessionId;
+    await first.transport.terminateSession();
+    assert.equal((await mcpRequest(mcp.url, secretA, firstSessionId, "tools/list")).status, 404);
+    await second.transport.terminateSession();
+    assert.doesNotMatch(logs.join("\n"), new RegExp(`${secretA}|${secretB}`));
+  } finally {
+    await first.client.close();
+    await second.client.close();
+    await mcp.close();
+    await boundary.close();
+  }
+});
+
+test("rejects a slow request body and releases the connection", async () => {
+  const mcp = await mcpHttpServer("https://api.terrascale.example", createStructuredLogger((_) => undefined), { bodyTimeoutMs: 25, headersTimeoutMs: 50, requestTimeoutMs: 100, keepAliveTimeoutMs: 25 });
+  const address = new URL(mcp.url);
+  const request = httpRequest({ host: address.hostname, port: Number(address.port), method: "POST", path: "/mcp", headers: { authorization: "Bearer slow-caller", "content-type": "application/json", "content-length": "64" } });
+  request.on("error", () => undefined);
+  try {
+    const response = eventWithin(once(request, "response"), 1_000) as Promise<[IncomingMessage]>;
+    const closed = once(request, "close");
+    request.write("{");
+    const [incoming] = await response;
+    incoming.resume();
+    await eventWithin(once(incoming, "end"), 1_000);
+    await eventWithin(closed, 1_000);
+    assert.equal(incoming.statusCode, 408);
+    assert.equal(request.destroyed, true);
+  } finally {
+    request.destroy();
+    await mcp.close();
+  }
+});
+
 async function connectedClient(apiBaseUrl: string, accessToken: string, logger = createStructuredLogger((_) => undefined)) {
   const server = createMcpServer({ apiBaseUrl, accessToken, requestTimeoutMs: 1_000 }, logger);
   const client = new Client({ name: "terrascale-mcp-test", version: "1.0.0" });
@@ -123,4 +189,37 @@ async function publicBoundary(handler: (request: import("node:http").IncomingMes
     throw new Error("test_server_unavailable");
   }
   return { url: `http://127.0.0.1:${address.port}`, close: async () => { server.close(); await once(server, "close"); } };
+}
+
+async function mcpHttpServer(apiBaseUrl: string, logger: ReturnType<typeof createStructuredLogger>, options: McpHttpServerOptions = {}) {
+  const server = createHttpMcpServer({ apiBaseUrl, requestTimeoutMs: 1_000 }, logger, options);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("test_server_unavailable");
+  }
+  return { url: `http://127.0.0.1:${address.port}/mcp`, close: async () => { server.close(); await once(server, "close"); } };
+}
+
+async function connectedHttpClient(url: string, accessToken: string) {
+  const transport = new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
+  const client = new Client({ name: "terrascale-mcp-http-test", version: "1.0.0" });
+  await client.connect(transport as unknown as Transport);
+  return { client, transport };
+}
+
+function mcpRequest(url: string, accessToken: string, sessionId: string | undefined, method: "tools/list"): Promise<Response> {
+  return fetch(url, {
+    method: "POST",
+    headers: { accept: "application/json, text/event-stream", authorization: `Bearer ${accessToken}`, "content-type": "application/json", "mcp-protocol-version": "2025-03-26", ...(sessionId === undefined ? {} : { "mcp-session-id": sessionId }) },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: {} }),
+  });
+}
+
+function eventWithin(event: Promise<unknown>, timeoutMs: number): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("event_timeout")), timeoutMs);
+    event.then((value) => { clearTimeout(timer); resolve(value); }, (error: unknown) => { clearTimeout(timer); reject(error); });
+  });
 }
