@@ -2,6 +2,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { readHttpConfig, readHttpListenConfig, readHttpSessionLimits, readStdioConfig } from "./config.js";
 import { createHttpMcpServer } from "./http.js";
+import { listen } from "./listen.js";
 import { createStructuredLogger } from "./logger.js";
 import { createMcpServer } from "./server.js";
 
@@ -12,10 +13,11 @@ try {
   if (transport === "stdio") {
     await createMcpServer(readStdioConfig(process.env), logger).connect(new StdioServerTransport(undefined, undefined, { maxBufferSize: 1_048_576 }));
   } else if (transport === "http") {
-    const listen = readHttpListenConfig(process.env);
-    const server = createHttpMcpServer(readHttpConfig(process.env), logger, { ...readHttpSessionLimits(process.env), allowedHosts: listen.allowedHosts, allowedOrigins: listen.allowedOrigins });
+    const listenConfig = readHttpListenConfig(process.env);
+    const server = createHttpMcpServer(readHttpConfig(process.env), logger, { ...readHttpSessionLimits(process.env), allowedHosts: listenConfig.allowedHosts, allowedOrigins: listenConfig.allowedOrigins });
     const port = readPort(process.env.TERRASCALE_MCP_PORT);
-    server.listen(port, listen.host, () => logger.info("mcp.http.listening", { port }));
+    await listen(server, port, listenConfig.host, logger);
+    logger.info("mcp.http.listening", { port });
   } else {
     throw new Error("transport_invalid");
   }

@@ -10,6 +10,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { createStructuredLogger } from "./logger.js";
 import { readHttpListenConfig, readHttpSessionLimits, readRuntimeConfig } from "./config.js";
 import { createHttpMcpServer, type McpHttpServerOptions } from "./http.js";
+import { listen, McpListenError } from "./listen.js";
 import { createMcpServer } from "./server.js";
 
 const projectA = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -197,6 +198,11 @@ test("caps and expires sessions without retaining caller credentials", async () 
     const source = await readFile(new URL("../src/http.ts", import.meta.url), "utf8");
     assert.match(source, /type Session = \{ readonly transport: .*credentialHash/);
     assert.doesNotMatch(source, /type Session = \{[^}]*accessToken/);
+    assert.match(source, /createMcpServer\(config, logger, \(extra\) => callerAccessToken\(requestAuthorization\(extra\.requestInfo\?\.headers\.authorization\)\)\)/);
+    assert.doesNotMatch(source, /runtimeConfig/);
+    const serverSource = await readFile(new URL("../src/server.ts", import.meta.url), "utf8");
+    assert.match(serverSource, /accessToken: \(\) => context\.getStore\(\)\?\.accessToken/);
+    assert.match(serverSource, /context\.run\(\{ signal: extra\.signal, accessToken: credentialProvider\(extra\) \}/);
   } finally {
     await first.client.close();
     await blockedClient.close();
@@ -209,6 +215,7 @@ test("expires idle sessions before their absolute TTL", async () => {
   const mcp = await mcpHttpServer("https://api.terrascale.example", createStructuredLogger((_) => undefined), { sessionIdleTimeoutMs: 25, sessionTtlMs: 1_000 });
   const connection = await connectedHttpClient(mcp.url, secret);
   try {
+    await connection.client.close();
     await delay(60);
     assert.equal((await mcpRequest(mcp.url, secret, connection.transport.sessionId, "tools/list")).status, 404);
   } finally {
@@ -217,9 +224,9 @@ test("expires idle sessions before their absolute TTL", async () => {
   }
 });
 
-test("keeps a valid SSE stream open beyond the former socket timeout", async () => {
+test("keeps a live SSE stream beyond the idle deadline", async () => {
   const secret = "stream-caller";
-  const mcp = await mcpHttpServer("https://api.terrascale.example", createStructuredLogger((_) => undefined), { requestTimeoutMs: 25, keepAliveTimeoutMs: 25, sessionIdleTimeoutMs: 1_000, sessionTtlMs: 1_000 });
+  const mcp = await mcpHttpServer("https://api.terrascale.example", createStructuredLogger((_) => undefined), { requestTimeoutMs: 25, keepAliveTimeoutMs: 25, sessionIdleTimeoutMs: 25, sessionTtlMs: 1_000 });
   const connection = await connectedHttpClient(mcp.url, secret);
   try {
     const sessionId = connection.transport.sessionId ?? "";
@@ -236,6 +243,27 @@ test("keeps a valid SSE stream open beyond the former socket timeout", async () 
   } finally {
     await connection.client.close();
     await mcp.close();
+  }
+});
+
+test("reports listener failures without leaking bind details", async () => {
+  const blocker = createServer();
+  await listen(blocker, 0, "127.0.0.1", createStructuredLogger((_) => undefined));
+  const address = blocker.address();
+  if (address === null || typeof address === "string") throw new Error("test_server_unavailable");
+  const logs: string[] = [];
+  const logger = createStructuredLogger((line) => logs.push(line));
+  const occupied = createServer();
+  const invalid = createServer();
+  try {
+    await assert.rejects(listen(occupied, address.port, "127.0.0.1", logger), (error: unknown) => error instanceof McpListenError && error.code === "EADDRINUSE");
+    await assert.rejects(listen(invalid, 0, "invalid host!", logger), (error: unknown) => error instanceof McpListenError && error.code.length > 0);
+    assert.match(logs.join("\n"), /mcp\.http\.listen_failed/);
+    assert.doesNotMatch(logs.join("\n"), /invalid host!/);
+  } finally {
+    occupied.close();
+    invalid.close();
+    await closeServer(blocker);
   }
 });
 
@@ -266,7 +294,13 @@ async function publicBoundary(handler: (request: import("node:http").IncomingMes
   if (address === null || typeof address === "string") {
     throw new Error("test_server_unavailable");
   }
-  return { url: `http://127.0.0.1:${address.port}`, close: async () => { server.close(); await once(server, "close"); } };
+  return { url: `http://127.0.0.1:${address.port}`, close: () => closeServer(server) };
+}
+
+async function closeServer(server: Server): Promise<void> {
+  if (!server.listening) return;
+  server.close();
+  await once(server, "close");
 }
 
 async function mcpHttpServer(apiBaseUrl: string, logger: ReturnType<typeof createStructuredLogger>, options: McpHttpServerOptions = {}) {

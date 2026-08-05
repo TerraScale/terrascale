@@ -2,7 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { callerAccessToken, type McpHttpConfig, type McpRuntimeConfig } from "./config.js";
+import { callerAccessToken, type McpHttpConfig } from "./config.js";
 import type { McpLogger } from "./logger.js";
 import { createMcpServer } from "./server.js";
 
@@ -15,7 +15,7 @@ export type McpHttpServerOptions = Partial<Limits> & {
   readonly allowedOrigins?: readonly string[];
 };
 
-type Session = { readonly transport: StreamableHTTPServerTransport; readonly credentialHash: Buffer; idleTimer: NodeJS.Timeout; readonly ttlTimer: NodeJS.Timeout; closed: boolean };
+type Session = { readonly transport: StreamableHTTPServerTransport; readonly credentialHash: Buffer; idleTimer: NodeJS.Timeout; readonly ttlTimer: NodeJS.Timeout; activeWork: number; closed: boolean };
 type Pending = { transport?: StreamableHTTPServerTransport; timer: NodeJS.Timeout; settled: boolean };
 type NewSession = { readonly transport: StreamableHTTPServerTransport; readonly pending: Pending };
 
@@ -41,6 +41,11 @@ export function createHttpMcpServer(config: McpHttpConfig, logger: McpLogger, op
         ? sessionId === undefined ? undefined : registry.find(request, sessionId)
         : { transport: created.transport };
       if (session === undefined) return send(response, sessionId === undefined ? 400 : 404, "session unavailable");
+
+      if (sessionId !== undefined) {
+        const releaseWork = registry.beginWork(sessionId);
+        response.once("close", releaseWork);
+      }
 
       const body = request.method === "POST" ? await readJson(request, response, limits.bodyTimeoutMs) : undefined;
       await session.transport.handleRequest(request, response, body);
@@ -91,8 +96,7 @@ async function createUninitializedSession(
   transport.onclose = () => {
     if (transport.sessionId !== undefined) void registry.close(transport.sessionId, false);
   };
-  const runtimeConfig: McpRuntimeConfig = { ...config, accessToken };
-  await createMcpServer(runtimeConfig, logger).connect(transport as unknown as Transport);
+  await createMcpServer(config, logger, (extra) => callerAccessToken(requestAuthorization(extra.requestInfo?.headers.authorization))).connect(transport as unknown as Transport);
   return { transport, pending };
 }
 
@@ -128,8 +132,8 @@ class SessionRegistry {
       void transport.close();
       return;
     }
-    const session = { transport, credentialHash, idleTimer: undefined as unknown as NodeJS.Timeout, ttlTimer: undefined as unknown as NodeJS.Timeout, closed: false };
-    session.idleTimer = setTimeout(() => { void this.close(sessionId); }, this.#limits.sessionIdleTimeoutMs);
+    const session = { transport, credentialHash, idleTimer: undefined as unknown as NodeJS.Timeout, ttlTimer: undefined as unknown as NodeJS.Timeout, activeWork: 0, closed: false };
+    session.idleTimer = this.#idleTimer(sessionId);
     session.ttlTimer = setTimeout(() => { void this.close(sessionId); }, this.#limits.sessionTtlMs);
     this.#sessions.set(sessionId, session);
   }
@@ -138,9 +142,22 @@ class SessionRegistry {
     const session = this.#sessions.get(sessionId);
     const accessToken = callerAccessToken(header(request, "authorization"));
     if (session === undefined || accessToken === undefined || !sameHash(session.credentialHash, hash(accessToken))) return undefined;
-    clearTimeout(session.idleTimer);
-    session.idleTimer = setTimeout(() => { void this.close(sessionId); }, this.#limits.sessionIdleTimeoutMs);
+    this.#touch(sessionId, session);
     return session;
+  }
+
+  beginWork(sessionId: string): () => void {
+    const session = this.#sessions.get(sessionId);
+    if (session === undefined || session.closed) return () => undefined;
+    session.activeWork += 1;
+    clearTimeout(session.idleTimer);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      session.activeWork -= 1;
+      this.#touch(sessionId, session);
+    };
   }
 
   async releasePending(pending: Pending | undefined): Promise<void> {
@@ -170,6 +187,15 @@ class SessionRegistry {
       this.#pending.delete(pending);
       clearTimeout(pending.timer);
     }
+  }
+
+  #touch(sessionId: string, session: Session): void {
+    clearTimeout(session.idleTimer);
+    if (session.activeWork === 0 && !session.closed) session.idleTimer = this.#idleTimer(sessionId);
+  }
+
+  #idleTimer(sessionId: string): NodeJS.Timeout {
+    return setTimeout(() => { void this.close(sessionId); }, this.#limits.sessionIdleTimeoutMs);
   }
 }
 
@@ -206,6 +232,10 @@ function isAllowed(request: IncomingMessage, allowedHosts: readonly string[], al
 
 function header(request: IncomingMessage, name: string): string | undefined {
   const value = request.headers[name];
+  return typeof value === "string" ? value : undefined;
+}
+
+function requestAuthorization(value: string | readonly string[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
