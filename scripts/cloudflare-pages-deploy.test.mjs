@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import { runDeploy } from './cloudflare-pages-deploy.mjs'
 import { runProjectCreate } from './cloudflare-pages-project-create.mjs'
 import { verifyPagesReadOnly } from './cloudflare-pages-verify.mjs'
+import { stagePagesCandidate } from './stage-pages-candidate.mjs'
 
 const writeEnvironment = {
   CLOUDFLARE_ACCOUNT_ID: 'account',
@@ -65,10 +68,37 @@ test('PR static CI runs retirement guards through the approved check command', (
   assert.ok(releaseProfile.commands.some((command) => command.arguments.join(' ') === 'test'))
   assert.ok(releaseProfile.commands.some((command) => command.arguments.join(' ') === 'run check'))
   assert.ok(releaseProfile.commands.some((command) => command.arguments.join(' ') === 'run test:e2e'))
-  assert.match(workflow, /ci release-test --repository-root \. --profile "\$\{\{ matrix\.profile \}\}" --result artifacts\/test-results\/release-e2e\.json/)
-  assert.match(workflow, /name: release-test-results-release-e2e, path: artifacts\/test-results\/release-e2e\.json/)
-  assert.match(workflow, /name: release-test-results-release-e2e, path: artifacts\/test-results/)
+  assert.match(packageJson.scripts['candidate:stage'], /stage-pages-candidate\.mjs/)
+  assert.match(workflow, /ci release-test --repository-root \. --profile "\$\{\{ matrix\.profile \}\}" --result artifacts\/candidate\/test-results\/release-e2e\.test-result\.json/)
+  assert.match(workflow, /name: release-test-result-release-e2e, path: artifacts\/candidate\/test-results\/release-e2e\.test-result\.json, if-no-files-found: error/)
+  assert.match(workflow, /name: candidate-pages, path: artifacts\/candidate, if-no-files-found: error/)
+  assert.match(workflow, /npm run build\n          \.tools\/terrascale-deploy ci build-candidate/)
+  assert.match(workflow, /npm run candidate:stage/)
+  assert.match(workflow, /name: candidate-pages, path: artifacts\/candidate/)
+  assert.match(workflow, /name: release-test-result-release-e2e, path: artifacts\/candidate\/test-results/)
   assert.match(workflow, /test -f "\$\{test_results\}"/)
-  assert.match(workflow, /find artifacts\/test-results -type f \| wc -l\)" -eq 1/)
+  assert.match(workflow, /find artifacts\/candidate\/test-results -type f \| wc -l\)" -eq 1/)
   assert.match(workflow, /candidate-manifest .*--test-results "\$\{test_results\}"/)
+  assert.match(workflow, /bundle_entry="test-results\/release-e2e\.test-result\.json"/)
+  assert.match(workflow, /unzip -Z1 artifacts\/candidate\.zip \| grep -Fx "\$\{bundle_entry\}"/)
+  assert.match(workflow, /unzip -p artifacts\/candidate\.zip "\$\{bundle_entry\}" \| sha256sum/)
+  assert.doesNotMatch(workflow, /with: \{ path: artifacts\/candidate \}/)
+  assert.match(workflow, /name: deploy-cli, path: \.tools/)
+})
+
+test('candidate staging copies the static site into the deterministic payload tree', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'terrascale-candidate-'))
+  const buildDirectory = join(directory, 'build')
+  const candidateDirectory = join(directory, 'artifacts', 'candidate')
+  mkdirSync(join(buildDirectory, '_app'), { recursive: true })
+  writeFileSync(join(buildDirectory, 'index.html'), '<!doctype html>')
+  writeFileSync(join(buildDirectory, '_app', 'entry.js'), 'export {}')
+
+  try {
+    assert.equal(stagePagesCandidate({ buildDirectory, candidateDirectory }), join(candidateDirectory, 'site'))
+    assert.ok(existsSync(join(candidateDirectory, 'site', 'index.html')))
+    assert.ok(existsSync(join(candidateDirectory, 'site', '_app', 'entry.js')))
+  } finally {
+    rmSync(directory, { force: true, recursive: true })
+  }
 })
