@@ -69,13 +69,13 @@ npm install
 npm run cf:login
 ```
 
-3. Create the Pages project once if it does not already exist:
+3. Verify the Pages project before deployment:
 
 ```bash
 npm run cf:project:create
 ```
 
-That reads the Pages project name and compatibility date from `wrangler.toml`. The production branch defaults to `main`; set `CLOUDFLARE_PAGES_PRODUCTION_BRANCH` to use another branch consistently for project creation and production deploys. If the project already exists, its remote production branch must match exactly.
+That reads remote metadata from the fixed HTTPS Cloudflare API origin. It requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`, and fails if the project is absent, malformed, or its production branch differs from `CLOUDFLARE_PAGES_PRODUCTION_BRANCH` (default `main`). It does not create or retarget a project.
 
 4. Deploy to production:
 
@@ -89,7 +89,7 @@ npm run cf:deploy
 npm run cf:deploy:preview
 ```
 
-Both deploy scripts first read the Pages project metadata and fail closed unless its remote production branch exactly matches `CLOUDFLARE_PAGES_PRODUCTION_BRANCH`; this prevents a preview from deploying to the real production branch under environment drift. The preview deploy script then uses the current git branch by default and refuses that verified production branch. Override it only with a non-production branch when needed:
+Both deploy scripts first read the Pages project metadata from that fixed origin and fail closed unless its remote production branch exactly matches `CLOUDFLARE_PAGES_PRODUCTION_BRANCH`; the preview check runs after that verified read and refuses the verified production branch. This is a preflight, not an external lock: a provider-side retarget after verification remains possible. Use a deploy identity that cannot retarget Pages projects, and reserve retarget permission for a separate administrative role. Override the preview branch only with a non-production branch when needed:
 
 ```bash
 export CLOUDFLARE_PAGES_BRANCH=staging
@@ -113,7 +113,7 @@ For CI or any non-interactive environment, provide:
 - `CLOUDFLARE_API_TOKEN`: Cloudflare API token with `Account / Cloudflare Pages / Edit`.
 - `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account ID for the target Pages account.
 
-Both values are also required for `cf:deploy` and `cf:deploy:preview`, because they perform the read-only production-branch verification before invoking Wrangler.
+Both values are also required for `cf:project:create`, `cf:deploy`, and `cf:deploy:preview`, because they perform the read-only production-branch verification before invoking Wrangler. The metadata client has no runtime API-origin override.
 
 Optional deploy metadata overrides:
 
