@@ -48,7 +48,6 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   ]) {
     assert.match(workflow, new RegExp(`uses: https://data\\.forgejo\\.org/actions/${action}`, "u"));
   }
-  assert.doesNotMatch(workflow, /forgejo\.event\.pull_request\.head\.repo\.full_name == forgejo\.repository/u);
   for (const job of ["bootstrap", "plan", "release-tests", "release-e2e", "release-artifacts", "release-contract-fixture", "release-version-availability", "candidate", "promote"]) {
     assert.match(jobDefinition(workflow, job), /forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main'/u);
   }
@@ -69,6 +68,7 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "promotion-admission"), /forgejo\.event_name == 'pull_request' && forgejo\.base_ref == 'main'/u);
   assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.base_ref \}\}" = main/u);
   assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.head_ref \}\}" = develop/u);
+  assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.event\.pull_request\.head\.repo\.full_name \}\}" = "\$\{\{ forgejo\.repository \}\}"/u);
   assert.doesNotMatch(jobDefinition(workflow, "promotion-admission"), /(?:secrets\.|candidate-store|upload-artifact|download-artifact|terrascale-deploy)/u);
   assert.match(jobDefinition(workflow, "pr-static"), /git -c credential\.helper= clone --depth 1 --branch develop https:\/\/git\.terrascale\.tech\/TerraScale\/TerraScale\.Documentation\.git Documentation/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm ci/u);
@@ -106,6 +106,11 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.doesNotMatch(jobDefinition(workflow, "promote"), /^    env:/mu);
   assert.match(jobDefinition(workflow, "promote"), /needs: \[candidate\]/u);
   assert.match(jobDefinition(workflow, "promote"), /candidate-store download/u);
+  assertCredentialStepIsFinal(workflow, "bootstrap", "DEPLOY_CLI_READ_TOKEN");
+  assertCredentialStepIsFinal(workflow, "release-e2e", "TERRASCALE_E2E_ACCESS_TOKEN");
+  assertCredentialStepIsFinal(workflow, "candidate", "CANDIDATE_STORE_TOKEN");
+  assertCredentialStepIsFinal(workflow, "promote", "CANDIDATE_STORE_TOKEN");
+  assertCredentialStepIsFinal(workflow, "promote", "NPM_TOKEN");
 });
 
 test("release E2E configuration guard fails closed before skip-capable tests", async () => {
@@ -345,6 +350,22 @@ function jobDefinition(workflow: string, job: string): string {
   const remaining = workflow.slice(start);
   const next = remaining.slice(1).search(/\n  [a-z][a-z0-9-]+:\n/u);
   return next === -1 ? remaining : remaining.slice(0, next + 1);
+}
+
+function assertCredentialStepIsFinal(workflow: string, job: string, credential: string): void {
+  const definition = jobDefinition(workflow, job);
+  assert.doesNotMatch(definition, /^    env:/mu, `${job} must not set job-level environment variables.`);
+
+  const credentialIndex = definition.indexOf(`secrets.${credential}`);
+  assert.notEqual(credentialIndex, -1, `${job} must use ${credential}.`);
+  const stepStart = definition.lastIndexOf("\n      - ", credentialIndex);
+  assert.notEqual(stepStart, -1, `${credential} must be scoped to a shell step.`);
+  const credentialStep = definition.slice(stepStart + 1);
+  assert.match(credentialStep, /^      - (?:(?:env:)|[\s\S]*^        env:)[\s\S]*^        run:/mu, `${credential} must be scoped to a run step.`);
+  const runIndex = credentialStep.indexOf("\n        run:");
+  assert.notEqual(runIndex, -1);
+  assert.doesNotMatch(credentialStep.slice(runIndex + 1), /^      - run:/mu, `${credential} must be on the final shell step.`);
+  assert.doesNotMatch(definition.slice(0, stepStart), /secrets\./u, `${credential} must not be present before its scoped step.`);
 }
 
 async function sha256(filePath: string): Promise<string> {

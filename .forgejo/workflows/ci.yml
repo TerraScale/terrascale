@@ -95,6 +95,7 @@ jobs:
       - run: |
           test "${{ forgejo.base_ref }}" = main
           test "${{ forgejo.head_ref }}" = develop
+          test "${{ forgejo.event.pull_request.head.repo.full_name }}" = "${{ forgejo.repository }}"
 
   release-tests:
     name: release/tests

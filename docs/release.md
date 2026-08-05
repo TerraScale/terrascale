@@ -42,7 +42,7 @@ that exact tarball to npm. Pull-request jobs targeting either `develop` or
 `main` run the unprivileged static, build, and contract checks. They never
 receive candidate-store, publish, or signing credentials and cannot create
 candidate artifacts. The required `promotion/admission` status accepts only a
-`develop` to `main` pull request. npm
+canonical-repository `develop` to `main` pull request. npm
 rejects an existing name/version rather than overwriting a published package if
 another publisher wins the race.
 
