@@ -1,0 +1,33 @@
+{
+  "name": "@terrascale/mcp",
+  "version": "0.1.0",
+  "description": "Read-only MCP server for the public TerraScale API.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "terrascale-mcp": "./dist/main.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "prebuild": "npm --prefix .. run build",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/*.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@terrascale/sdk": "file:..",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=11.0.0"
+  }
+}
