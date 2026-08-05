@@ -4,6 +4,37 @@ import { describe, test } from "node:test";
 import { TerraScaleHttp } from "./http.js";
 
 describe("TerraScaleHttp request policy", () => {
+  test("attaches idempotency keys to all requested mutation methods only", async () => {
+    const captured: Request[] = [];
+    const http = new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      idempotencyKeyFactory: () => "generated-key",
+      fetch: async input => {
+        captured.push(input instanceof Request ? input : new Request(input));
+        return Response.json({});
+      },
+    });
+
+    for (const method of ["POST", "PATCH", "PUT", "DELETE", "GET"] as const) {
+      await http.request({
+        method,
+        path: "/api/v1/test",
+        routeName: "savedQueries.create",
+      });
+    }
+    await http.request({
+      method: "DELETE",
+      path: "/api/v1/test",
+      routeName: "regions.list",
+      idempotencyKey: false,
+    });
+
+    assert.deepEqual(
+      captured.map(request => request.headers.get("idempotency-key")),
+      ["generated-key", "generated-key", "generated-key", "generated-key", null, null],
+    );
+  });
+
   test("normalizes explicit base URLs when a custom fetch is configured", () => {
     const http = new TerraScaleHttp({
       apiBaseUrl: " https://api.terrascale.test/// ",

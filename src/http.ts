@@ -30,6 +30,7 @@ export type TerraScaleRouteName =
   | `queues.${string}`
   | `regions.${string}`
   | `repositories.${string}`
+  | `savedQueries.${string}`
   | `schema.${string}`
   | `security.${string}`
   | `settings.${string}`
@@ -201,7 +202,7 @@ export class TerraScaleHttp {
 }
 
 function isMutation(method: TerraScaleHttpMethod): boolean {
-  return method === "POST" || method === "PATCH";
+  return method === "DELETE" || method === "PATCH" || method === "POST" || method === "PUT";
 }
 
 type ParsedBody =
