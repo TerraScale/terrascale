@@ -247,6 +247,15 @@ describe("TerraScaleClient route contracts", () => {
     });
   });
 
+  test("sends the explicit development payment bypass through the typed onboarding operation", async () => {
+    const { client, requests } = createCapturingClient({});
+
+    await client.onboarding.validatePaymentMethod({ developmentBypass: true });
+
+    assertRequest(requests[0], "POST", "/api/v1/onboarding/payment-method/validate");
+    assert.deepEqual(requests[0]?.body, { developmentBypass: true });
+  });
+
   test("uses typed public Auth routes for providers, email, and password changes", async () => {
     const { client, requests } = createCapturingClient({});
 

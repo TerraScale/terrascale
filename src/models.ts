@@ -504,6 +504,7 @@ export type OnboardingPaymentSession = {
 
 export type ValidateOnboardingPaymentRequest = {
   readonly sessionId?: string;
+  readonly developmentBypass?: boolean;
 };
 
 export type UpdateOnboardingMfaRequest = {
