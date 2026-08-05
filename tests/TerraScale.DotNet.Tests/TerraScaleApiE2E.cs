@@ -39,7 +39,7 @@ internal static class TerraScaleApiE2E
         "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_NONOWNER_PLAN_ID, TERRASCALE_E2E_ADMIN_WEBHOOK_PROVIDER, TERRASCALE_E2E_ADMIN_WEBHOOK_EVENT_ID, and TERRASCALE_E2E_ENABLE_ADMIN_NONOWNER_MUTATION_AUTHORIZATION=true to run the non-mutating administration authorization E2E test.";
 
     private const string MissingAdministrationPricingPlanUpdateConfigurationReason =
-        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_UPDATE_PLAN_ID, and TERRASCALE_E2E_ENABLE_ADMIN_PLAN_UPDATE_LIFECYCLE=true to run the isolated administration pricing-plan update E2E test.";
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_UPDATE_PLAN_ID, TERRASCALE_E2E_ADMIN_UPDATE_PLAN_CONFIRMED_DISPOSABLE=true, and TERRASCALE_E2E_ENABLE_ADMIN_PLAN_UPDATE_LIFECYCLE=true to run the isolated administration pricing-plan update E2E test.";
 
     private const string MissingAdministrationSupportNoteConfigurationReason =
         "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_SUPPORT_NOTE_PROJECT_ID, TERRASCALE_E2E_ENABLE_ADMIN_SUPPORT_NOTE_CREATE=true, and TERRASCALE_E2E_ADMIN_SUPPORT_NOTE_CONFIRMED_ISOLATED_DISPOSABLE_ENVIRONMENT=true to run the irreversible support-note E2E test.";
@@ -133,6 +133,7 @@ internal static class TerraScaleApiE2E
         BaseAddress is not null &&
         !string.IsNullOrWhiteSpace(AdminBearerToken) &&
         !string.IsNullOrWhiteSpace(AdminUpdatePlanId) &&
+        string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ADMIN_UPDATE_PLAN_CONFIRMED_DISPOSABLE"), "true", StringComparison.OrdinalIgnoreCase) &&
         string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_ADMIN_PLAN_UPDATE_LIFECYCLE"), "true", StringComparison.OrdinalIgnoreCase);
 
     public static bool IsAdministrationSupportNoteConfigured =>
