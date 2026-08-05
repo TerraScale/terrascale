@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace TerraScale.DotNet;
 
@@ -13,37 +15,37 @@ public sealed class TerraScaleAdministrationClient
 
     /// <summary>Gets the platform overview.</summary>
     public Task<TerraScaleAdminPlatformUsage> GetOverviewAsync(CancellationToken cancellationToken = default) =>
-        client.SendAsync<TerraScaleAdminPlatformUsage>(HttpMethod.Get, TerraScaleApiRoutes.AdminOverviewGet(), null, cancellationToken);
+        GetAsync<TerraScaleAdminPlatformUsage>(HttpMethod.Get, TerraScaleApiRoutes.AdminOverviewGet(), cancellationToken);
 
     /// <summary>Lists platform users.</summary>
     public Task<TerraScaleAdminPage<TerraScaleAdminUser>> ListUsersAsync(int skip = 0, int take = 100, string? search = null, CancellationToken cancellationToken = default)
     {
         TerraScalePagination.Validate(skip, take);
-        return client.SendAsync<TerraScaleAdminPage<TerraScaleAdminUser>>(HttpMethod.Get, TerraScaleApiRoutes.AdminUsersList(skip, take, search), null, cancellationToken);
+        return GetAsync<TerraScaleAdminPage<TerraScaleAdminUser>>(HttpMethod.Get, TerraScaleApiRoutes.AdminUsersList(skip, take, search), cancellationToken);
     }
 
     /// <summary>Gets a platform user.</summary>
     public Task<TerraScaleAdminUser> GetUserAsync(string userId, CancellationToken cancellationToken = default) =>
-        SendForIdAsync<TerraScaleAdminUser>(HttpMethod.Get, TerraScaleApiRoutes.AdminUserGet, userId, null, cancellationToken);
+        SendForIdAsync<TerraScaleAdminUser>(HttpMethod.Get, TerraScaleApiRoutes.AdminUserGet, userId, cancellationToken);
 
     /// <summary>Enables a platform user.</summary>
     public Task<TerraScaleAdminUser> EnableUserAsync(string userId, CancellationToken cancellationToken = default) =>
-        SendForIdAsync<TerraScaleAdminUser>(HttpMethod.Post, TerraScaleApiRoutes.AdminUserEnable, userId, null, cancellationToken);
+        SendForIdAsync<TerraScaleAdminUser>(HttpMethod.Post, TerraScaleApiRoutes.AdminUserEnable, userId, cancellationToken);
 
     /// <summary>Disables a platform user and optionally records a reason.</summary>
     public Task<TerraScaleAdminUser> DisableUserAsync(string userId, string? reason = null, CancellationToken cancellationToken = default) =>
-        SendForIdAsync<TerraScaleAdminUser>(HttpMethod.Post, TerraScaleApiRoutes.AdminUserDisable, userId, new TerraScaleAdminDisableUserRequest(reason), cancellationToken);
+        SendForIdAsync<TerraScaleAdminDisableUserRequest, TerraScaleAdminUser>(HttpMethod.Post, TerraScaleApiRoutes.AdminUserDisable, userId, new TerraScaleAdminDisableUserRequest(reason), cancellationToken);
 
     /// <summary>Permanently deletes a platform user.</summary>
     public Task<bool> DeleteUserAsync(string userId, CancellationToken cancellationToken = default) =>
-        SendForIdAsync<bool>(HttpMethod.Delete, TerraScaleApiRoutes.AdminUserGet, userId, null, cancellationToken);
+        SendForIdAsync<bool>(HttpMethod.Delete, TerraScaleApiRoutes.AdminUserGet, userId, cancellationToken);
 
     /// <summary>Creates a support note attached to a user, organization, or project.</summary>
     public Task<TerraScaleAdminSupportNote> CreateSupportNoteAsync(TerraScaleAdminCreateSupportNoteRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Note);
-        return client.SendAsync<TerraScaleAdminSupportNote>(HttpMethod.Post, TerraScaleApiRoutes.AdminSupportNotesCreate(), request, cancellationToken);
+        return SendAsync<TerraScaleAdminCreateSupportNoteRequest, TerraScaleAdminSupportNote>(HttpMethod.Post, TerraScaleApiRoutes.AdminSupportNotesCreate(), request, cancellationToken);
     }
 
     /// <summary>Lists all organizations.</summary>
@@ -60,11 +62,11 @@ public sealed class TerraScaleAdministrationClient
 
     /// <summary>Gets platform usage.</summary>
     public Task<TerraScaleAdminPlatformUsage> GetUsageAsync(CancellationToken cancellationToken = default) =>
-        client.SendAsync<TerraScaleAdminPlatformUsage>(HttpMethod.Get, TerraScaleApiRoutes.AdminUsageGet(), null, cancellationToken);
+        GetAsync<TerraScaleAdminPlatformUsage>(HttpMethod.Get, TerraScaleApiRoutes.AdminUsageGet(), cancellationToken);
 
     /// <summary>Lists pricing plans, including non-public plans.</summary>
     public Task<IReadOnlyList<TerraScalePricingPlan>> ListPricingPlansAsync(CancellationToken cancellationToken = default) =>
-        client.SendAsync<IReadOnlyList<TerraScalePricingPlan>>(HttpMethod.Get, TerraScaleApiRoutes.AdminPlansList(), null, cancellationToken);
+        GetAsync<IReadOnlyList<TerraScalePricingPlan>>(HttpMethod.Get, TerraScaleApiRoutes.AdminPlansList(), cancellationToken);
 
     /// <summary>Creates a pricing plan.</summary>
     public Task<TerraScalePricingPlan> CreatePricingPlanAsync(TerraScaleAdminPricingPlanRequest request, CancellationToken cancellationToken = default) =>
@@ -79,7 +81,7 @@ public sealed class TerraScaleAdministrationClient
 
     /// <summary>Deletes a pricing plan.</summary>
     public Task<bool> DeletePricingPlanAsync(string planId, CancellationToken cancellationToken = default) =>
-        SendForIdAsync<bool>(HttpMethod.Delete, TerraScaleApiRoutes.AdminPlanGet, planId, null, cancellationToken);
+        SendForIdAsync<bool>(HttpMethod.Delete, TerraScaleApiRoutes.AdminPlanGet, planId, cancellationToken);
 
     /// <summary>Lists platform audit events.</summary>
     public Task<TerraScaleAdminPage<TerraScaleAdminAuditEvent>> ListAuditAsync(int skip = 0, int take = 100, CancellationToken cancellationToken = default) =>
@@ -89,23 +91,72 @@ public sealed class TerraScaleAdministrationClient
     public Task<TerraScaleAdminPage<TerraScaleAdminNotification>> ListNotificationsAsync(int skip = 0, int take = 100, CancellationToken cancellationToken = default) =>
         ListAsync<TerraScaleAdminNotification>(TerraScaleApiRoutes.AdminNotificationsList, skip, take, cancellationToken);
 
-    private Task<T> SendForIdAsync<T>(HttpMethod method, Func<string, string> route, string id, object? body, CancellationToken cancellationToken)
+    /// <summary>Gets a payment-provider webhook event.</summary>
+    public Task<TerraScaleAdminPaymentWebhookEvent> GetPaymentWebhookAsync(string provider, string eventId, CancellationToken cancellationToken = default) =>
+        GetForWebhookAsync<TerraScaleAdminPaymentWebhookEvent>(HttpMethod.Get, TerraScaleApiRoutes.AdminPaymentWebhookGet, provider, eventId, cancellationToken);
+
+    /// <summary>Lists payment-provider webhook events awaiting replay.</summary>
+    public Task<TerraScaleAdminPage<TerraScaleAdminPaymentWebhookEvent>> ListDeadLetteredPaymentWebhooksAsync(int skip = 0, int take = 50, CancellationToken cancellationToken = default) =>
+        ListAsync<TerraScaleAdminPaymentWebhookEvent>(TerraScaleApiRoutes.AdminPaymentWebhookDeadLettersList, skip, take, cancellationToken);
+
+    /// <summary>Replays a dedicated dead-lettered payment webhook event.</summary>
+    public Task<TerraScaleAdminPaymentWebhookReplay> ReplayPaymentWebhookAsync(string provider, string eventId, string idempotencyKey, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
+        ArgumentException.ThrowIfNullOrWhiteSpace(eventId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
+        if (idempotencyKey.Trim().Length > 128)
+        {
+            throw new ArgumentException("Idempotency key must not exceed 128 characters.", nameof(idempotencyKey));
+        }
+
+        return client.SendJsonAsync(
+            HttpMethod.Post,
+            TerraScaleApiRoutes.AdminPaymentWebhookReplay(provider, eventId),
+            TypeInfo<TerraScaleAdminPaymentWebhookReplay>(),
+            cancellationToken,
+            idempotencyKey.Trim());
+    }
+
+    private Task<T> SendForIdAsync<T>(HttpMethod method, Func<string, string> route, string id, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
-        return client.SendAsync<T>(method, route(id), body, cancellationToken);
+        return GetAsync<T>(method, route(id), cancellationToken);
+    }
+
+    private Task<TResponse> SendForIdAsync<TRequest, TResponse>(HttpMethod method, Func<string, string> route, string id, TRequest body, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        return SendAsync<TRequest, TResponse>(method, route(id), body, cancellationToken);
     }
 
     private Task<TerraScalePricingPlan> SendPlanAsync(HttpMethod method, string route, TerraScaleAdminPricingPlanRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return client.SendAsync<TerraScalePricingPlan>(method, route, request, cancellationToken);
+        return SendAsync<TerraScaleAdminPricingPlanRequest, TerraScalePricingPlan>(method, route, request, cancellationToken);
     }
 
     private Task<TerraScaleAdminPage<T>> ListAsync<T>(Func<int, int, string> route, int skip, int take, CancellationToken cancellationToken)
     {
         TerraScalePagination.Validate(skip, take);
-        return client.SendAsync<TerraScaleAdminPage<T>>(HttpMethod.Get, route(skip, take), null, cancellationToken);
+        return GetAsync<TerraScaleAdminPage<T>>(HttpMethod.Get, route(skip, take), cancellationToken);
     }
+
+    private Task<T> GetAsync<T>(HttpMethod method, string route, CancellationToken cancellationToken) =>
+        client.SendJsonAsync(method, route, TypeInfo<T>(), cancellationToken);
+
+    private Task<T> GetForWebhookAsync<T>(HttpMethod method, Func<string, string, string> route, string provider, string eventId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
+        ArgumentException.ThrowIfNullOrWhiteSpace(eventId);
+        return GetAsync<T>(method, route(provider, eventId), cancellationToken);
+    }
+
+    private Task<TResponse> SendAsync<TRequest, TResponse>(HttpMethod method, string route, TRequest request, CancellationToken cancellationToken) =>
+        client.SendJsonAsync(method, route, request, TypeInfo<TRequest>(), TypeInfo<TResponse>(), cancellationToken);
+
+    private static JsonTypeInfo<T> TypeInfo<T>() =>
+        (JsonTypeInfo<T>)TerraScaleAdminJsonContext.Default.GetTypeInfo(typeof(T))!;
 }
 
 /// <summary>Page returned by a platform administration list operation.</summary>
@@ -134,6 +185,10 @@ public sealed record TerraScaleAdminPlatformUsage(long Organizations, long Proje
 public sealed record TerraScaleAdminAuditEvent(string AuditEventId, string? ProjectId, string? ActorUserId, string Action, string TargetType, string? TargetId, DateTimeOffset OccurredAt, JsonElement? Metadata);
 /// <summary>Platform-wide user notification.</summary>
 public sealed record TerraScaleAdminNotification(string NotificationId, string? UserId, string Title, string? Body, string Severity, DateTimeOffset? ReadAt, DateTimeOffset CreatedAt);
+/// <summary>Payment-provider webhook event available to a platform owner.</summary>
+public sealed record TerraScaleAdminPaymentWebhookEvent(string Provider, string EventId, string EventType, string State, long DeliveryCount, long ProjectionAttemptCount, long ConflictCount, long ReplayRequestCount, DateTimeOffset FirstReceivedAt, DateTimeOffset LastReceivedAt, DateTimeOffset? LastAttemptAt, DateTimeOffset? ProjectedAt, DateTimeOffset? DeadLetteredAt, DateTimeOffset? LastReplayRequestedAt, string? LastReplayRequestedByUserId, string? LastError, bool ReplayAvailable);
+/// <summary>Result of replaying a dead-lettered payment-provider webhook event.</summary>
+public sealed record TerraScaleAdminPaymentWebhookReplay(string Provider, string EventId, string EventType, string MessageId, DateTimeOffset RequestedAt, string RequestedByUserId);
 /// <summary>Optional reason recorded when disabling a platform user.</summary>
 public sealed record TerraScaleAdminDisableUserRequest(string? Reason);
 
@@ -145,7 +200,9 @@ public sealed record TerraScaleAdminPricingPlanRequest(
     int? MonthlyBaseCents = null,
     int? AnnualBaseCents = null,
     string? MonthlyPolarProductId = null,
+    string? MonthlyPolarProductPriceId = null,
     string? AnnualPolarProductId = null,
+    string? AnnualPolarProductPriceId = null,
     string? MonthlyStripePriceId = null,
     string? AnnualStripePriceId = null,
     int? MonthlyTrialDays = null,
@@ -163,3 +220,28 @@ public sealed record TerraScaleAdminPricingPlanRequest(
     int? OperationOverageCentsPerMillion = null,
     int? StorageOverageCentsPerGbRegion = null,
     IReadOnlyList<TerraScalePricingUsageMetric>? IncludedUsage = null);
+
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web, NumberHandling = JsonNumberHandling.AllowReadingFromString)]
+[JsonSerializable(typeof(TerraScaleAdminPlatformUsage))]
+[JsonSerializable(typeof(TerraScaleAdminPage<TerraScaleAdminUser>))]
+[JsonSerializable(typeof(TerraScaleAdminUser))]
+[JsonSerializable(typeof(TerraScaleAdminCreateSupportNoteRequest))]
+[JsonSerializable(typeof(TerraScaleAdminSupportNote))]
+[JsonSerializable(typeof(TerraScaleAdminPage<TerraScaleAdminOrganization>))]
+[JsonSerializable(typeof(TerraScaleAdminOrganization))]
+[JsonSerializable(typeof(TerraScaleAdminPage<TerraScaleAdminProject>))]
+[JsonSerializable(typeof(TerraScaleAdminProject))]
+[JsonSerializable(typeof(TerraScaleAdminPage<TerraScaleAdminDatabase>))]
+[JsonSerializable(typeof(TerraScaleAdminDatabase))]
+[JsonSerializable(typeof(IReadOnlyList<TerraScalePricingPlan>))]
+[JsonSerializable(typeof(TerraScalePricingPlan))]
+[JsonSerializable(typeof(TerraScaleAdminPricingPlanRequest))]
+[JsonSerializable(typeof(TerraScaleAdminPage<TerraScaleAdminAuditEvent>))]
+[JsonSerializable(typeof(TerraScaleAdminAuditEvent))]
+[JsonSerializable(typeof(TerraScaleAdminPage<TerraScaleAdminNotification>))]
+[JsonSerializable(typeof(TerraScaleAdminNotification))]
+[JsonSerializable(typeof(TerraScaleAdminPage<TerraScaleAdminPaymentWebhookEvent>))]
+[JsonSerializable(typeof(TerraScaleAdminPaymentWebhookEvent))]
+[JsonSerializable(typeof(TerraScaleAdminPaymentWebhookReplay))]
+[JsonSerializable(typeof(TerraScaleAdminDisableUserRequest))]
+internal partial class TerraScaleAdminJsonContext : JsonSerializerContext;

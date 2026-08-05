@@ -23,6 +23,15 @@ internal static class TerraScaleApiE2E
     private const string MissingAdministrationAuthorizationConfigurationReason =
         "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, and TERRASCALE_E2E_BEARER_TOKEN to run the public administration authorization E2E test.";
 
+    private const string MissingAdministrationWebhookReplayConfigurationReason =
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_SENSITIVE_BEARER_TOKEN, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_WEBHOOK_PROVIDER, TERRASCALE_E2E_ADMIN_WEBHOOK_EVENT_ID, and TERRASCALE_E2E_ENABLE_ADMIN_WEBHOOK_REPLAY=true to run the dedicated disposable webhook replay E2E test.";
+
+    private const string MissingAdministrationMutationConfigurationReason =
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_MUTATION_USER_ID, TERRASCALE_E2E_ADMIN_MUTATION_PROJECT_ID, and TERRASCALE_E2E_ENABLE_ADMIN_MUTATION_LIFECYCLE=true to run the isolated disposable administration mutation E2E test.";
+
+    private const string MissingAdministrationDeleteUserConfigurationReason =
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_DELETE_USER_ID, and TERRASCALE_E2E_ENABLE_ADMIN_DELETE_USER=true to run the one-time disposable user deletion E2E test.";
+
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingAccessLifecycleLocks = new(StringComparer.Ordinal);
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingCheckoutLocks = new(StringComparer.Ordinal);
@@ -63,6 +72,29 @@ internal static class TerraScaleApiE2E
         !string.IsNullOrWhiteSpace(AdminBearerToken) &&
         !string.IsNullOrWhiteSpace(BearerToken);
 
+    public static bool IsAdministrationWebhookReplayConfigured =>
+        BaseAddress is not null &&
+        !string.IsNullOrWhiteSpace(AdminSensitiveBearerToken) &&
+        !string.IsNullOrWhiteSpace(BearerToken) &&
+        !string.IsNullOrWhiteSpace(AdminWebhookProvider) &&
+        !string.IsNullOrWhiteSpace(AdminWebhookEventId) &&
+        string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_ADMIN_WEBHOOK_REPLAY"), "true", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsAdministrationMutationConfigured =>
+        BaseAddress is not null &&
+        !string.IsNullOrWhiteSpace(AdminBearerToken) &&
+        !string.IsNullOrWhiteSpace(BearerToken) &&
+        !string.IsNullOrWhiteSpace(AdminMutationUserId) &&
+        !string.IsNullOrWhiteSpace(AdminMutationProjectId) &&
+        string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_ADMIN_MUTATION_LIFECYCLE"), "true", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsAdministrationDeleteUserConfigured =>
+        BaseAddress is not null &&
+        !string.IsNullOrWhiteSpace(AdminBearerToken) &&
+        !string.IsNullOrWhiteSpace(BearerToken) &&
+        !string.IsNullOrWhiteSpace(AdminDeleteUserId) &&
+        string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_ADMIN_DELETE_USER"), "true", StringComparison.OrdinalIgnoreCase);
+
     public static bool HasCompleteAuthenticationConfiguration => IsConfigured || IsBearerConfigured;
 
     public static string SkipReason => MissingApiKeyConfigurationReason;
@@ -77,6 +109,12 @@ internal static class TerraScaleApiE2E
 
     public static string AdministrationAuthorizationSkipReason => MissingAdministrationAuthorizationConfigurationReason;
 
+    public static string AdministrationWebhookReplaySkipReason => MissingAdministrationWebhookReplayConfigurationReason;
+
+    public static string AdministrationMutationSkipReason => MissingAdministrationMutationConfigurationReason;
+
+    public static string AdministrationDeleteUserSkipReason => MissingAdministrationDeleteUserConfigurationReason;
+
     public static Uri? BaseAddress =>
         Uri.TryCreate(Environment.GetEnvironmentVariable("TERRASCALE_E2E_BASE_URL"), UriKind.Absolute, out var uri)
             ? uri
@@ -87,6 +125,18 @@ internal static class TerraScaleApiE2E
     public static string BearerToken => Required("TERRASCALE_E2E_BEARER_TOKEN");
 
     public static string AdminBearerToken => Required("TERRASCALE_E2E_ADMIN_BEARER_TOKEN");
+
+    public static string AdminSensitiveBearerToken => Required("TERRASCALE_E2E_ADMIN_SENSITIVE_BEARER_TOKEN");
+
+    public static string AdminWebhookProvider => Required("TERRASCALE_E2E_ADMIN_WEBHOOK_PROVIDER");
+
+    public static string AdminWebhookEventId => Required("TERRASCALE_E2E_ADMIN_WEBHOOK_EVENT_ID");
+
+    public static string AdminMutationUserId => Required("TERRASCALE_E2E_ADMIN_MUTATION_USER_ID");
+
+    public static string AdminMutationProjectId => Required("TERRASCALE_E2E_ADMIN_MUTATION_PROJECT_ID");
+
+    public static string AdminDeleteUserId => Required("TERRASCALE_E2E_ADMIN_DELETE_USER_ID");
 
     public static string ProjectId => Required("TERRASCALE_E2E_PROJECT_ID");
 
@@ -189,6 +239,15 @@ internal static class TerraScaleApiE2E
                 BearerToken = AdminBearerToken
             });
 
+    public static TerraScaleClient CreateSensitiveAdminClient() =>
+        new(
+            new HttpClient(),
+            new TerraScaleClientOptions
+            {
+                BaseAddress = BaseAddress ?? throw new InvalidOperationException(MissingAdministrationWebhookReplayConfigurationReason),
+                BearerToken = AdminSensitiveBearerToken
+            });
+
     private static string Required(string name) =>
         Environment.GetEnvironmentVariable(name)?.Trim() ?? string.Empty;
 
@@ -243,4 +302,25 @@ internal sealed class RequiresTerraScaleAdministrationAuthorizationAttribute()
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
         Task.FromResult(!TerraScaleApiE2E.IsAdministrationAuthorizationConfigured);
+}
+
+internal sealed class RequiresTerraScaleAdministrationWebhookReplayAttribute()
+    : SkipAttribute(TerraScaleApiE2E.AdministrationWebhookReplaySkipReason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(!TerraScaleApiE2E.IsAdministrationWebhookReplayConfigured);
+}
+
+internal sealed class RequiresTerraScaleAdministrationMutationAttribute()
+    : SkipAttribute(TerraScaleApiE2E.AdministrationMutationSkipReason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(!TerraScaleApiE2E.IsAdministrationMutationConfigured);
+}
+
+internal sealed class RequiresTerraScaleAdministrationDeleteUserAttribute()
+    : SkipAttribute(TerraScaleApiE2E.AdministrationDeleteUserSkipReason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(!TerraScaleApiE2E.IsAdministrationDeleteUserConfigured);
 }

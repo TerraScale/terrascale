@@ -25,6 +25,153 @@ public sealed class TerraScaleApiE2ETests
     }
 
     [Test]
+    [RequiresTerraScaleAdministrationAuthorization]
+    [NotInParallel("administration-authorization")]
+    public async Task Administration_ReadOperationsAllowOwnerAndForbidStandardBearer()
+    {
+        var owner = TerraScaleApiE2E.CreateAdminClient();
+        var users = await owner.Administration.ListUsersAsync(take: 1);
+        var organizations = await owner.Administration.ListOrganizationsAsync(take: 1);
+        var projects = await owner.Administration.ListProjectsAsync(take: 1);
+        var databases = await owner.Administration.ListDatabasesAsync(take: 1);
+        var usage = await owner.Administration.GetUsageAsync();
+        var plans = await owner.Administration.ListPricingPlansAsync();
+        var audit = await owner.Administration.ListAuditAsync(take: 1);
+        var notifications = await owner.Administration.ListNotificationsAsync(take: 1);
+        var deadLetters = await owner.Administration.ListDeadLetteredPaymentWebhooksAsync(take: 1);
+
+        if (users.Items.FirstOrDefault() is { } user)
+        {
+            var loaded = await owner.Administration.GetUserAsync(user.UserId);
+            await Assert.That(loaded.UserId).IsEqualTo(user.UserId);
+        }
+
+        var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
+            ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
+        var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            standardBearer.Administration.ListDeadLetteredPaymentWebhooksAsync());
+
+        await Assert.That(organizations.Items).IsNotNull();
+        await Assert.That(projects.Items).IsNotNull();
+        await Assert.That(databases.Items).IsNotNull();
+        await Assert.That(usage.Usage).IsNotNull();
+        await Assert.That(plans).IsNotNull();
+        await Assert.That(audit.Items).IsNotNull();
+        await Assert.That(notifications.Items).IsNotNull();
+        await Assert.That(deadLetters.Items).IsNotNull();
+        await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+    }
+
+    [Test]
+    [RequiresTerraScaleAdministrationWebhookReplay]
+    [NotInParallel("administration-webhook-replay")]
+    public async Task Administration_WebhookReplayUsesDedicatedDeadLetterFixtureAndForbidsStandardBearer()
+    {
+        var provider = TerraScaleApiE2E.AdminWebhookProvider;
+        var eventId = TerraScaleApiE2E.AdminWebhookEventId;
+        var owner = TerraScaleApiE2E.CreateSensitiveAdminClient();
+        var webhook = await owner.Administration.GetPaymentWebhookAsync(provider, eventId);
+        if (!webhook.ReplayAvailable)
+        {
+            throw new SkipTestException("The configured webhook fixture must be a disposable dead-lettered event with replay payload available.");
+        }
+
+        var replay = await owner.Administration.ReplayPaymentWebhookAsync(provider, eventId, $"sdk-e2e-webhook-replay-{Guid.NewGuid():N}");
+        var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
+            ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
+        var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            standardBearer.Administration.GetPaymentWebhookAsync(provider, eventId));
+
+        await Assert.That(replay.EventId).IsEqualTo(eventId);
+        await Assert.That(replay.Provider).IsEqualTo(provider);
+        await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+    }
+
+    [Test]
+    [RequiresTerraScaleAdministrationMutation]
+    [NotInParallel("administration-mutation-lifecycle")]
+    public async Task Administration_MutationsUseDedicatedDisposableFixturesAndForbidStandardBearer()
+    {
+        var owner = TerraScaleApiE2E.CreateAdminClient();
+        var userId = TerraScaleApiE2E.AdminMutationUserId;
+        var originalUser = await owner.Administration.GetUserAsync(userId);
+        if (originalUser.Owner)
+        {
+            throw new SkipTestException("The configured administration mutation user must be a disposable non-owner user.");
+        }
+
+        var planId = string.Empty;
+        try
+        {
+            var disabled = await owner.Administration.DisableUserAsync(userId, "SDK E2E disposable fixture");
+            await Assert.That(disabled.Enabled).IsFalse();
+            var enabled = await owner.Administration.EnableUserAsync(userId);
+            await Assert.That(enabled.Enabled).IsTrue();
+
+            var createdPlan = await owner.Administration.CreatePricingPlanAsync(new TerraScaleAdminPricingPlanRequest(
+                Key: $"sdk-e2e-{Guid.NewGuid():N}",
+                Name: "SDK E2E disposable plan",
+                Currency: "USD",
+                MonthlyBaseCents: 100,
+                AnnualBaseCents: 100,
+                Visible: false));
+            planId = createdPlan.PlanId;
+            var updatedPlan = await owner.Administration.UpdatePricingPlanAsync(planId, new TerraScaleAdminPricingPlanRequest(Name: "SDK E2E updated plan"));
+            await Assert.That(updatedPlan.PlanId).IsEqualTo(planId);
+
+            var note = await owner.Administration.CreateSupportNoteAsync(new TerraScaleAdminCreateSupportNoteRequest(
+                UserId: null,
+                OrganizationId: null,
+                ProjectId: TerraScaleApiE2E.AdminMutationProjectId,
+                Note: $"SDK E2E disposable fixture {Guid.NewGuid():N}"));
+            await Assert.That(note.ProjectId).IsEqualTo(TerraScaleApiE2E.AdminMutationProjectId);
+
+            var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
+                ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
+            var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                standardBearer.Administration.CreateSupportNoteAsync(new TerraScaleAdminCreateSupportNoteRequest(
+                    null,
+                    null,
+                    TerraScaleApiE2E.AdminMutationProjectId,
+                    "must not be persisted")));
+            await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(planId))
+            {
+                await owner.Administration.DeletePricingPlanAsync(planId);
+            }
+
+            if (originalUser.Enabled)
+            {
+                await owner.Administration.EnableUserAsync(userId);
+            }
+            else
+            {
+                await owner.Administration.DisableUserAsync(userId, "restore SDK E2E fixture state");
+            }
+        }
+    }
+
+    [Test]
+    [RequiresTerraScaleAdministrationDeleteUser]
+    [NotInParallel("administration-delete-user")]
+    public async Task Administration_DeleteUserUsesOneTimeDisposableFixtureAndForbidsStandardBearer()
+    {
+        var userId = TerraScaleApiE2E.AdminDeleteUserId;
+        var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
+            ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
+        var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            standardBearer.Administration.DeleteUserAsync(userId));
+        await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+
+        var owner = TerraScaleApiE2E.CreateAdminClient();
+        var deleted = await owner.Administration.DeleteUserAsync(userId);
+        await Assert.That(deleted).IsTrue();
+    }
+
+    [Test]
     [RequiresTerraScaleBaseAddress]
     public async Task Billing_GetPricingPlansAsync_ReturnsPublicCatalogAgainstRealApi()
     {

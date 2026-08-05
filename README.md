@@ -10,7 +10,7 @@ The SDK calls verified TerraScale public endpoints. It covers region catalog, da
 
 ## Platform administration
 
-Use `client.Administration` with a bearer token that carries the platform owner role. The client exposes only the published `/api/v1/admin` operations: platform usage, user lifecycle, support notes, platform-wide resource pages, pricing-plan management, audit, and notifications. Authorization failures are returned as `TerraScaleApiException` with the public HTTP status and error code.
+Use `client.Administration` with a bearer token that carries the platform owner role. The client exposes only the published `/api/v1/admin` operations: platform usage, user lifecycle, support notes, platform-wide resource pages, pricing-plan management, audit, notifications, and payment-webhook inspection/replay. Webhook replay requires an explicit idempotency key and a fresh MFA-verified owner session. Authorization failures are returned as `TerraScaleApiException` with the public HTTP status and error code.
 
 ## Billing checkout
 

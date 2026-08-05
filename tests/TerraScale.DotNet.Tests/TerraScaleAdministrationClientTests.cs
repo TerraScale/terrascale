@@ -25,11 +25,17 @@ public sealed class TerraScaleAdministrationClientTests
         await admin.ListDatabasesAsync(skip: 2, take: 3);
         await admin.GetUsageAsync();
         await admin.ListPricingPlansAsync();
-        await admin.CreatePricingPlanAsync(new TerraScaleAdminPricingPlanRequest(Name: "Developer"));
+        await admin.CreatePricingPlanAsync(new TerraScaleAdminPricingPlanRequest(
+            Name: "Developer",
+            MonthlyPolarProductPriceId: "polar-monthly-price",
+            AnnualPolarProductPriceId: "polar-annual-price"));
         await admin.UpdatePricingPlanAsync("plan/a", new TerraScaleAdminPricingPlanRequest(Visible: true));
         await admin.DeletePricingPlanAsync("plan/a");
         await admin.ListAuditAsync(skip: 2, take: 3);
         await admin.ListNotificationsAsync(skip: 2, take: 3);
+        await admin.GetPaymentWebhookAsync("polar", "event/a");
+        await admin.ListDeadLetteredPaymentWebhooksAsync(skip: 2, take: 3);
+        await admin.ReplayPaymentWebhookAsync("polar", "event/a", "webhook-replay-key");
 
         await Assert.That(handler.Requests.Select(request => request.Uri)).IsEquivalentTo([
             "https://api.example.invalid/api/v1/admin",
@@ -48,9 +54,16 @@ public sealed class TerraScaleAdministrationClientTests
             "https://api.example.invalid/api/v1/admin/plans/plan%2Fa",
             "https://api.example.invalid/api/v1/admin/plans/plan%2Fa",
             "https://api.example.invalid/api/v1/admin/audit?skip=2&take=3",
-            "https://api.example.invalid/api/v1/admin/notifications?skip=2&take=3"
+            "https://api.example.invalid/api/v1/admin/notifications?skip=2&take=3",
+            "https://api.example.invalid/api/v1/admin/billing/webhooks/polar/event%2Fa",
+            "https://api.example.invalid/api/v1/admin/billing/webhooks/dead-lettered?skip=2&take=3",
+            "https://api.example.invalid/api/v1/admin/billing/webhooks/polar/event%2Fa:replay"
         ]);
         await Assert.That(handler.Requests.Single(request => request.Uri.EndsWith(":disable", StringComparison.Ordinal)).Body).Contains("support request");
+        var planCreate = handler.Requests.Single(request => request.Uri.EndsWith("/admin/plans", StringComparison.Ordinal) && request.Body?.Contains("polar-monthly-price", StringComparison.Ordinal) is true);
+        await Assert.That(planCreate.Body).Contains("monthlyPolarProductPriceId");
+        await Assert.That(planCreate.Body).Contains("annualPolarProductPriceId");
+        await Assert.That(handler.Requests.Single(request => request.Uri.EndsWith(":replay", StringComparison.Ordinal)).IdempotencyKey).IsEqualTo("webhook-replay-key");
     }
 
     [Test]
@@ -78,7 +91,8 @@ public sealed class TerraScaleAdministrationClientTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-            Requests.Add(new RecordedRequest(request.RequestUri!.ToString(), body));
+            request.Headers.TryGetValues("Idempotency-Key", out var idempotencyKeys);
+            Requests.Add(new RecordedRequest(request.RequestUri!.ToString(), body, idempotencyKeys?.SingleOrDefault()));
             var response = statusCode == HttpStatusCode.OK
                 ? request.Method == HttpMethod.Delete ? "true" : request.RequestUri!.AbsolutePath.EndsWith("/plans", StringComparison.Ordinal) && request.Method == HttpMethod.Get ? "[]" : "{}"
                 : "{\"code\":\"TERRASCALE-ADMIN-OWNER-REQUIRED\",\"message\":\"Platform owner role required.\"}";
@@ -86,5 +100,5 @@ public sealed class TerraScaleAdministrationClientTests
         }
     }
 
-    private sealed record RecordedRequest(string Uri, string? Body);
+    private sealed record RecordedRequest(string Uri, string? Body, string? IdempotencyKey);
 }

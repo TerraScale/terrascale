@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Cysharp.Text;
 
 namespace TerraScale.DotNet;
@@ -276,6 +277,48 @@ public sealed class TerraScaleClient
             static (response, _) => response,
             cancellationToken);
 
+    internal Task<TResponse> SendJsonAsync<TResponse>(
+        HttpMethod method,
+        string requestUri,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        CancellationToken cancellationToken,
+        string? idempotencyKey = null) =>
+        SendTypedJsonAsync<object, TResponse>(method, requestUri, body: null, requestTypeInfo: null, responseTypeInfo, cancellationToken, idempotencyKey);
+
+    internal Task<TResponse> SendJsonAsync<TRequest, TResponse>(
+        HttpMethod method,
+        string requestUri,
+        TRequest body,
+        JsonTypeInfo<TRequest> requestTypeInfo,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        CancellationToken cancellationToken,
+        string? idempotencyKey = null) =>
+        SendTypedJsonAsync(method, requestUri, body, requestTypeInfo, responseTypeInfo, cancellationToken, idempotencyKey);
+
+    private async Task<TResponse> SendTypedJsonAsync<TRequest, TResponse>(
+        HttpMethod method,
+        string requestUri,
+        TRequest? body,
+        JsonTypeInfo<TRequest>? requestTypeInfo,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        CancellationToken cancellationToken,
+        string? idempotencyKey = null)
+    {
+        using var activity = StartActivity(method, requestUri);
+        using var response = await SendWithRetriesAsync(
+            method,
+            requestUri,
+            body is null ? static () => null : () => JsonContent.Create(body, requestTypeInfo!),
+            RequestAuthenticationMode.Authenticated,
+            configureRequest: null,
+            activity,
+            cancellationToken,
+            idempotencyKey).ConfigureAwait(false);
+
+        SetResponseTags(activity, response);
+        return await ReadJsonResponseAsync(response, responseTypeInfo, activity, cancellationToken).ConfigureAwait(false);
+    }
+
     internal Task<TResponse> SendWithIdempotencyKeyAsync<TResponse>(
         HttpMethod method,
         string requestUri,
@@ -436,6 +479,28 @@ public sealed class TerraScaleClient
             jsonOptions,
             cancellationToken).ConfigureAwait(false);
 
+        return payload ?? throw new TerraScaleApiException(
+            response.StatusCode,
+            "TerraScale returned an empty response body.",
+            errorCode: null,
+            requestId: ReadRequestId(response),
+            responseBody: null,
+            retryAfter: response.Headers.RetryAfter?.Delta);
+    }
+
+    private async Task<TResponse> ReadJsonResponseAsync<TResponse>(
+        HttpResponseMessage response,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        Activity? activity,
+        CancellationToken cancellationToken)
+    {
+        if (!response.IsSuccessStatusCode)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
+            throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync(responseTypeInfo, cancellationToken).ConfigureAwait(false);
         return payload ?? throw new TerraScaleApiException(
             response.StatusCode,
             "TerraScale returned an empty response body.",

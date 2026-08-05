@@ -250,6 +250,15 @@ internal static class TerraScaleApiRoutes
     public static string AdminNotificationsList(int skip, int take) =>
         WithQuery("/api/v1/admin/notifications", ("skip", Number(skip)), ("take", Number(take)));
 
+    public static string AdminPaymentWebhookGet(string provider, string eventId) =>
+        $"/api/v1/admin/billing/webhooks/{Escape(provider)}/{Escape(eventId)}";
+
+    public static string AdminPaymentWebhookDeadLettersList(int skip, int take) =>
+        WithQuery("/api/v1/admin/billing/webhooks/dead-lettered", ("skip", Number(skip)), ("take", Number(take)));
+
+    public static string AdminPaymentWebhookReplay(string provider, string eventId) =>
+        $"{AdminPaymentWebhookGet(provider, eventId)}:replay";
+
     public static string BackupPolicyConfigure(string projectId, string databaseId) =>
         $"/api/v1/projects/{Escape(projectId)}/databases/{Escape(databaseId)}/backups/policy";
 
