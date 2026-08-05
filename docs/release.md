@@ -11,13 +11,18 @@ Run these checks from the repository root:
 npm ci
 npm run typecheck
 npm run build
+npm run test:unit
 npm run test:integration
+npm pack --pack-destination artifacts/candidate
 ```
 
 `test:integration` must use real `TERRASCALE_API_BASE_URL` and
 `TERRASCALE_AUTH_API_BASE_URL` values when validating a release candidate. The
 publish workflow fails closed when those variables are absent instead of using
 mocked HTTP.
+
+Each release-candidate test and package job performs its own clean install and
+build before testing or packing; do not rely on artifacts from another job.
 
 ## Publish
 
