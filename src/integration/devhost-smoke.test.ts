@@ -121,6 +121,42 @@ describe("DevHost saved-query CRUD", { skip: savedQueriesSkipReason }, () => {
       assert.equal(updated.ok, true);
       if (updated.ok) assert.equal(updated.value.name, `SDK smoke updated ${suffix}`);
 
+      const fetchedV2 = await client.savedQueries.v2.get(savedQueryId);
+      assert.equal(fetchedV2.ok, true);
+      if (!fetchedV2.ok) return;
+
+      const listedV2 = await client.savedQueries.v2.list();
+      assert.equal(listedV2.ok, true);
+      if (listedV2.ok) {
+        assert.equal(
+          listedV2.value.some(
+            (savedQuery) =>
+              savedQuery.savedQueryId === savedQueryId && savedQuery.revision === fetchedV2.value.revision,
+          ),
+          true,
+        );
+      }
+
+      const updatedV2 = await client.savedQueries.v2.update(savedQueryId, {
+        name: `SDK smoke v2 updated ${suffix}`,
+        query: "from sdk_smoke where active = false",
+        revision: fetchedV2.value.revision,
+      });
+      assert.equal(updatedV2.ok, true);
+      if (updatedV2.ok) assert.equal(updatedV2.value.name, `SDK smoke v2 updated ${suffix}`);
+
+      const stale = await client.savedQueries.v2.update(savedQueryId, {
+        name: `SDK smoke stale ${suffix}`,
+        query: "from sdk_smoke where active = false",
+        revision: fetchedV2.value.revision,
+      });
+      assert.equal(stale.ok, false);
+      if (!stale.ok) {
+        assert.equal(stale.status, 409);
+        assert.equal(stale.error.kind, "conflict");
+        assert.equal(stale.error.code, "TERRASCALE-1401");
+      }
+
       const invalid = await client.savedQueries.create({ name: "", query: "from sdk_smoke" });
       assert.equal(invalid.ok, false);
       if (!invalid.ok) {

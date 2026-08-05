@@ -593,7 +593,7 @@ describe("TerraScaleClient route contracts", () => {
       projectId,
       fetch: async () =>
         Response.json(
-          { code: "EntityVersionConflict", message: "The saved query was changed." },
+          { code: "TERRASCALE-1401", message: "The saved query was changed." },
           { status: 409 },
         ),
     });
@@ -608,7 +608,7 @@ describe("TerraScaleClient route contracts", () => {
     if (!result.ok) {
       assert.equal(result.status, 409);
       assert.equal(result.error.kind, "conflict");
-      assert.equal(result.error.code, "EntityVersionConflict");
+      assert.equal(result.error.code, "TERRASCALE-1401");
     }
   });
 
