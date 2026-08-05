@@ -104,7 +104,7 @@ npm run cf:pages:verify  # optional non-authorizing Pages Read diagnostic
 
 Before handing work back, verify with: `npm run check && npm run lint && npm run build`.
 
-Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies: pull latest `develop` before work, implement on `develop`, **commit often** on substantial coherent changes, and **push directly to `origin/develop`**. Do not open pull requests for day-to-day work. Do not create feature branches or worktrees unless the user explicitly asks. Pushes to `develop` run no Forgejo automation. Remote `main` is the production deployment/admission target only; it does not authorize source changes or routine delivery outside `develop`, nor bypass the required `develop` → `main` promotion/admission. Only that promotion path may build the immutable site candidate.
+Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies: pull latest `develop` before work, implement on `develop`, **commit often** on substantial coherent changes, and **push directly to `origin/develop`**. Do not open pull requests for day-to-day work. Do not create feature branches or worktrees unless the user explicitly asks. Pushes to `develop` run non-deployment Forgejo automation (including bootstrap and plan); production admission and deployment remain reserved for the required `develop` → `main` promotion path. Remote `main` is the production deployment/admission target only; it does not authorize source changes or routine delivery outside `develop`, nor bypass that promotion/admission. Only that promotion path may build the immutable site candidate.
 
 ## Deployment
 
