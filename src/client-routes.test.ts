@@ -6,7 +6,7 @@ import { capturePublicClientRoutes } from "./client-route-capture.js";
 import { createTerraScaleClient } from "./factory.js";
 import type { TerraScaleClient } from "./factory.js";
 import { toUlid } from "./ids.js";
-import type { JsonValue } from "./models.js";
+import type { JsonValue, ProjectSavedQueryResponse } from "./models.js";
 
 const projectId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
 const databaseId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAW");
@@ -23,6 +23,19 @@ const restoreId = toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV");
 const restoredDatabaseId = toUlid("01QRZ3NDEKTSV4RRFFQ69G5FAV");
 const savedQueryId = toUlid("01SRZ3NDEKTSV4RRFFQ69G5FAV");
 const otherProjectId = toUlid("01TRZ3NDEKTSV4RRFFQ69G5FAV");
+
+const savedQueryWithoutRepository = {
+  savedQueryId,
+  projectId,
+  name: "Missing repository field",
+  query: "SELECT 1",
+  createdAt: "2026-08-05T00:00:00Z",
+  updatedAt: "2026-08-05T00:00:00Z",
+};
+
+// @ts-expect-error Saved-query responses always include repositoryId, which may be null.
+const invalidSavedQueryResponse: ProjectSavedQueryResponse = savedQueryWithoutRepository;
+void invalidSavedQueryResponse;
 
 type CapturedRequest = {
   readonly method: string;
@@ -335,10 +348,10 @@ describe("TerraScaleClient route contracts", () => {
       projectId,
       name: "Active users",
       query: "SELECT * FROM users WHERE active = true",
-      repositoryId,
+      repositoryId: null,
       createdAt: "2026-08-05T00:00:00Z",
       updatedAt: "2026-08-05T00:00:00Z",
-    };
+    } satisfies ProjectSavedQueryResponse;
     const { client, requests } = createCapturingClientWithResponses([
       [savedQuery],
       [savedQuery],
@@ -351,6 +364,8 @@ describe("TerraScaleClient route contracts", () => {
     assert.equal(defaultListResult.ok, true);
     if (defaultListResult.ok) {
       assert.deepEqual(defaultListResult.value, [savedQuery]);
+      assert.equal(defaultListResult.value[0]?.repositoryId, null);
+      assert.equal(Object.hasOwn(defaultListResult.value[0]!, "repositoryId"), true);
     }
     assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/saved-queries`);
     assert.equal(requests[0]?.url.searchParams.get("skip"), "0");

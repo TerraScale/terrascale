@@ -602,7 +602,7 @@ export type ProjectSavedQueryResponse = {
   readonly projectId: ProjectId;
   readonly name: string;
   readonly query: string;
-  readonly repositoryId?: RepositoryId | null;
+  readonly repositoryId: RepositoryId | null;
   readonly createdAt: Timestamp;
   readonly updatedAt: Timestamp;
 };
