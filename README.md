@@ -327,12 +327,13 @@ var backupPlan = await client.Backups.PlanAsync(
     databaseId,
     new TerraScaleBackupConfirmationPlanRequest(operationSessionId),
     cancellationToken);
-var backup = await client.Backups.ExecuteAsync(
+var backupExecution = await client.Backups.ExecuteAsync(
     projectId,
     databaseId,
     new TerraScaleBackupConfirmationExecuteRequest(operationSessionId, backupPlan.ConfirmationToken),
     idempotencyKey: $"backup-{operationSessionId}",
     cancellationToken);
+var backup = backupExecution.Job;
 var restore = await client.Backups.StartRestoreAsync(
     projectId,
     databaseId,

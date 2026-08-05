@@ -27,15 +27,15 @@ public sealed class TerraScaleBackupConfirmationRequestTests
     }
 
     [Test]
-    public async Task ExecuteAsync_SendsExpectedRouteBodyAndCallerIdempotencyKey()
+    public async Task ExecuteAsync_SendsExpectedRouteBodyCallerIdempotencyKeyAndResponseMetadata()
     {
         using var handler = new RecordingHandler("""
             {"backupId":"backup-a","projectId":"project-a","databaseId":"database-a","databaseName":"orders","policy":"on-demand","retention":"default","status":"queued","destinationType":"object-storage","hasRestorePoint":false,"requestedBy":"owner@example.com","requestedAt":"2026-08-05T12:00:00+00:00","updatedAt":"2026-08-05T12:00:00+00:00","completedAt":null,"errorMessage":null}
-            """);
+            """, HttpStatusCode.Accepted, idempotencyReplayed: true);
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient, () => "factory-key");
 
-        await client.Backups.ExecuteAsync(
+        var execution = await client.Backups.ExecuteAsync(
             "project-a",
             "database-a",
             new TerraScaleBackupConfirmationExecuteRequest("session-a", "confirmation-a"),
@@ -45,6 +45,15 @@ public sealed class TerraScaleBackupConfirmationRequestTests
         await Assert.That(handler.Request.Uri).IsEqualTo("https://api.example.invalid/api/v1/projects/project-a/databases/database-a/backups:execute");
         await Assert.That(handler.Request.Body).IsEqualTo("{\"operationSessionId\":\"session-a\",\"confirmationToken\":\"confirmation-a\"}");
         await Assert.That(handler.Request.IdempotencyKey).IsEqualTo("caller-key");
+        await Assert.That(execution.Job.BackupId).IsEqualTo("backup-a");
+        await Assert.That(execution.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+        await Assert.That(execution.IdempotencyReplayed).IsTrue();
+    }
+
+    [Test]
+    public async Task BackupsClient_DoesNotExposeLegacyTriggerAsync()
+    {
+        await Assert.That(typeof(TerraScaleBackupsClient).GetMethod("TriggerAsync")).IsNull();
     }
 
     [Test]
@@ -102,7 +111,10 @@ public sealed class TerraScaleBackupConfirmationRequestTests
             IdempotencyKeyFactory = idempotencyKeyFactory
         });
 
-    private sealed class RecordingHandler(string responseBody) : HttpMessageHandler
+    private sealed class RecordingHandler(
+        string responseBody,
+        HttpStatusCode statusCode = HttpStatusCode.OK,
+        bool idempotencyReplayed = false) : HttpMessageHandler
     {
         public RecordedRequest? Request { get; private set; }
 
@@ -115,10 +127,17 @@ public sealed class TerraScaleBackupConfirmationRequestTests
                 request.RequestUri!.ToString(),
                 request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken),
                 request.Headers.TryGetValues("Idempotency-Key", out var values) ? values.Single() : null);
-            return new HttpResponseMessage(HttpStatusCode.OK)
+            var response = new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
             };
+
+            if (idempotencyReplayed)
+            {
+                response.Headers.Add("Idempotency-Replayed", "true");
+            }
+
+            return response;
         }
     }
 

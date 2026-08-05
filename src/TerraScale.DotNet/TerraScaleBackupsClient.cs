@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace TerraScale.DotNet;
 
 /// <summary>
@@ -33,24 +35,6 @@ public sealed class TerraScaleBackupsClient
     }
 
     /// <summary>
-    /// Triggers an on-demand backup for a project database.
-    /// </summary>
-    public Task<TerraScaleBackupJob> TriggerAsync(
-        string projectId,
-        string databaseId,
-        string? idempotencyKey = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        return client.SendAsync<TerraScaleBackupJob>(
-            HttpMethod.Post,
-            TerraScaleApiRoutes.BackupsCreate(projectId, databaseId),
-            new TerraScaleTriggerBackupRequest(idempotencyKey),
-            cancellationToken);
-    }
-
-    /// <summary>
     /// Plans a confirmed on-demand backup for a project database.
     /// </summary>
     public Task<TerraScaleBackupConfirmationPlan> PlanAsync(
@@ -78,7 +62,7 @@ public sealed class TerraScaleBackupsClient
     /// <summary>
     /// Executes a previously confirmed on-demand backup for a project database.
     /// </summary>
-    public Task<TerraScaleBackupJob> ExecuteAsync(
+    public Task<TerraScaleBackupExecution> ExecuteAsync(
         string projectId,
         string databaseId,
         TerraScaleBackupConfirmationExecuteRequest request,
@@ -108,15 +92,22 @@ public sealed class TerraScaleBackupsClient
             throw new ArgumentException("Idempotency key must not exceed 128 characters.", nameof(idempotencyKey));
         }
 
-        return client.SendAsync<TerraScaleBackupJob>(
+        return client.SendAsync<TerraScaleBackupJob, TerraScaleBackupExecution>(
             HttpMethod.Post,
             TerraScaleApiRoutes.BackupsExecute(projectId, databaseId),
             request,
+            preferredRegion: null,
             configureRequest: message =>
             {
                 message.Headers.Remove("Idempotency-Key");
                 message.Headers.TryAddWithoutValidation("Idempotency-Key", normalizedIdempotencyKey);
             },
+            responseFactory: static (job, response) => new TerraScaleBackupExecution(
+                job,
+                response.StatusCode,
+                response.Headers.TryGetValues("Idempotency-Replayed", out var values) &&
+                bool.TryParse(values.FirstOrDefault(), out var replayed) &&
+                replayed),
             cancellationToken);
     }
 
@@ -245,8 +236,6 @@ public sealed record TerraScaleConfigureBackupPolicyRequest(
     int RetentionDays = 30,
     bool Disabled = false);
 
-internal sealed record TerraScaleTriggerBackupRequest(string? IdempotencyKey);
-
 /// <summary>
 /// Request body for planning a confirmed project database backup.
 /// </summary>
@@ -270,6 +259,14 @@ public sealed record TerraScaleBackupConfirmationPlan(
     string RequestDigest,
     string ConfirmationToken,
     DateTimeOffset ExpiresAt);
+
+/// <summary>
+/// Result of executing a confirmed backup, including idempotency replay metadata.
+/// </summary>
+public sealed record TerraScaleBackupExecution(
+    TerraScaleBackupJob Job,
+    HttpStatusCode StatusCode,
+    bool IdempotencyReplayed);
 
 internal sealed record TerraScaleStartRestoreRequest(
     string BackupId,

@@ -230,14 +230,32 @@ public sealed class TerraScaleClient
         CancellationToken cancellationToken) =>
         SendAsync<TResponse>(method, requestUri, body, preferredRegion, configureRequest: null, cancellationToken);
 
-    internal async Task<TResponse> SendAsync<TResponse>(
+    internal Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
         string requestUri,
         object? body,
         string? preferredRegion,
         Action<HttpRequestMessage>? configureRequest,
+        CancellationToken cancellationToken) =>
+        SendAsync<TResponse, TResponse>(
+            method,
+            requestUri,
+            body,
+            preferredRegion,
+            configureRequest,
+            static (response, _) => response,
+            cancellationToken);
+
+    internal async Task<TResult> SendAsync<TResponse, TResult>(
+        HttpMethod method,
+        string requestUri,
+        object? body,
+        string? preferredRegion,
+        Action<HttpRequestMessage>? configureRequest,
+        Func<TResponse, HttpResponseMessage, TResult> responseFactory,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(responseFactory);
         using var activity = StartActivity(method, requestUri);
         using var response = await SendWithRetriesAsync(
             method,
@@ -257,7 +275,8 @@ public sealed class TerraScaleClient
             cancellationToken).ConfigureAwait(false);
 
         SetResponseTags(activity, response);
-        return await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken).ConfigureAwait(false);
+        var payload = await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken).ConfigureAwait(false);
+        return responseFactory(payload, response);
     }
 
     private static void ApplyPreferredRegion(HttpRequestMessage request, string preferredRegion)
