@@ -1,0 +1,122 @@
+{
+  "contractVersion": 1,
+  "pricingPlan": {
+    "required": [
+      "planId",
+      "name",
+      "currency",
+      "monthlyBaseCents",
+      "annualBaseCents",
+      "includedUsage",
+      "key",
+      "provider",
+      "monthlyPriceId",
+      "annualPriceId",
+      "monthlyPolarProductId",
+      "annualPolarProductId",
+      "monthlyStripePriceId",
+      "annualStripePriceId",
+      "monthlyTrialDays",
+      "annualTrialDays",
+      "visible",
+      "maxRegions",
+      "operationOverageCentsPerMillion",
+      "storageOverageCentsPerGbRegion"
+    ],
+    "providerType": [
+      "string"
+    ],
+    "nullableStringFields": [
+      "monthlyPriceId",
+      "annualPriceId",
+      "monthlyPolarProductId",
+      "annualPolarProductId",
+      "monthlyStripePriceId",
+      "annualStripePriceId"
+    ],
+    "checkout": {
+      "priceId": {
+        "types": [
+          "string",
+          "null"
+        ],
+        "nullableUlid": false,
+        "deprecated": true
+      },
+      "quantity": {
+        "types": [
+          "integer",
+          "null"
+        ],
+        "nullableUlid": false,
+        "deprecated": false,
+        "minimum": 1,
+        "maximum": 1000,
+        "default": 1
+      },
+      "planId": {
+        "nullableUlid": true,
+        "deprecated": false
+      },
+      "billingInterval": {
+        "types": [
+          "string",
+          "null"
+        ],
+        "nullableUlid": false,
+        "deprecated": false
+      },
+      "provider": {
+        "types": [
+          "string",
+          "null"
+        ],
+        "nullableUlid": false,
+        "deprecated": false
+      }
+    }
+  },
+  "savedQueriesV3": {
+    "method": "get",
+    "operationId": "ListProjectSavedQueriesV3",
+    "path": "/api/v3/projects/{projectId}/saved-queries",
+    "parameters": [
+      {
+        "name": "cursor",
+        "required": false,
+        "types": [
+          "string"
+        ],
+        "maxLength": 4096
+      },
+      {
+        "name": "take",
+        "required": false,
+        "types": [
+          "integer"
+        ],
+        "minimum": 1,
+        "maximum": 500,
+        "default": 100
+      }
+    ],
+    "response": {
+      "required": [
+        "items"
+      ],
+      "itemsRef": "#/components/schemas/ProjectSavedQueryV2Response",
+      "nextCursorTypes": [
+        "string",
+        "null"
+      ]
+    },
+    "errorStatuses": [
+      400,
+      401,
+      403,
+      404,
+      409,
+      503
+    ]
+  }
+}
