@@ -55,6 +55,15 @@ describe("OpenAPI drift checker", () => {
     assert.equal(checker.exitCodeForOpenApiDriftResult({ ...accepted, strict: true }), 1);
   });
 
+  test("rejects malformed and duplicate typed-contract baseline entries", async () => {
+    const checker = await checkerModule;
+    assert.throws(() => checker.validateTypedContractBaseline([{ method: "GET" }]), /must contain/u);
+    assert.throws(() => checker.validateTypedContractBaseline([
+      { method: "GET", pathTemplate: "/api/v1/widgets", missingSide: "response:200" },
+      { method: "GET", pathTemplate: "/api/v1/widgets", missingSide: "response:200" },
+    ]), /duplicate/u);
+  });
+
   test("exits nonzero and reports drift when an SDK route is missing", async () => {
     const checker = await checkerModule;
     const specPath = path.join(fixtureDirectory, "openapi-missing-route.json");
@@ -102,6 +111,7 @@ type FormattedOpenApiDriftResult = {
 };
 
 type OpenApiDriftModule = {
+  readonly validateTypedContractBaseline: (baseline: unknown) => void;
   readonly runOpenApiDriftCli: (args: readonly string[], output: { readonly log: (line: string) => void; readonly error: (line: string) => void }) => Promise<number>;
   readonly compareOpenApiDrift: (manifest: unknown, spec: unknown, baseline?: unknown) => OpenApiDriftResult;
   readonly typedContractViolation: (

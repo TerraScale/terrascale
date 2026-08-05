@@ -29,6 +29,10 @@ a valid ULID.
 Each release-candidate test and package job performs its own clean install and
 build before testing or packing; do not rely on artifacts from another job.
 
+Release admission runs strict OpenAPI drift validation. The normal-CI debt
+baseline does not permit promotion: unresolved entries stop production release
+until Platform publishes the matching typed schemas.
+
 ## Publish
 
 Normal releases merge the protected `develop` to `main` promotion PR. Only the

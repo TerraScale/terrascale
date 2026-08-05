@@ -52,12 +52,26 @@ export async function checkOpenApiDrift(
     readSpecSnapshotInfo(specReference),
     baselineReference === undefined ? Promise.resolve([]) : Array.isArray(baselineReference) ? Promise.resolve(baselineReference) : readJson(baselineReference),
   ]);
+  validateTypedContractBaseline(baseline);
 
   return {
     ...compareOpenApiDrift(manifest, spec, baseline),
     specSnapshot,
     strict,
   };
+}
+
+export function validateTypedContractBaseline(baseline) {
+  if (!Array.isArray(baseline)) throw new Error("Typed-contract debt baseline must be an array.");
+  const keys = new Set();
+  for (const [index, entry] of baseline.entries()) {
+    if (!entry || typeof entry.method !== "string" || typeof entry.pathTemplate !== "string" || typeof entry.missingSide !== "string" || !/^(request|response(?::2\d\d)?)$/u.test(entry.missingSide)) {
+      throw new Error(`Typed-contract debt baseline entry ${index} must contain method, pathTemplate, and request or response[:2xx] missingSide.`);
+    }
+    const key = typedContractDebtKey(entry);
+    if (keys.has(key)) throw new Error(`Typed-contract debt baseline contains duplicate entry: ${key}.`);
+    keys.add(key);
+  }
 }
 
 export function compareOpenApiDrift(manifest, spec, baseline = []) {
