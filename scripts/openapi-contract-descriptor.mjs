@@ -84,7 +84,7 @@ function contentSchemas(content, spec) {
 
 function schemaDescriptor(schema, spec) {
   if (schema === undefined) return { kind: "void" };
-  return { ref: typeof schema.$ref === "string" ? schema.$ref : undefined, schema: resolveSchema(schema, spec) };
+  return canonicalize(schema, spec);
 }
 
 function findPathItem(spec, route) {
@@ -109,9 +109,10 @@ function canonicalize(value, spec, seen = new Set()) {
   if (typeof value.$ref === "string") {
     if (seen.has(value.$ref)) return { $ref: value.$ref };
     seen.add(value.$ref);
-    const resolved = canonicalize(resolveSchema(value, spec), spec, seen);
+    const resolved = canonicalize(resolveSchema({ $ref: value.$ref }, spec), spec, seen);
     seen.delete(value.$ref);
-    return resolved;
+    const siblings = Object.fromEntries(Object.entries(value).filter(([key]) => key !== "$ref").sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, canonicalize(entry, spec, seen)]));
+    return Object.keys(siblings).length === 0 ? { $ref: value.$ref, resolved } : { $ref: value.$ref, siblings, resolved };
   }
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, canonicalize(entry, spec, seen)]));
 }

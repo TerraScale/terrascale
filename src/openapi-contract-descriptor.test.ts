@@ -13,7 +13,7 @@ test("descriptor pins operation identity, parameter contract, and complete JSON 
   try {
     const manifestPath = path.join(directory, "manifest.json");
     const specPath = path.join(directory, "openapi.json");
-    await writeFile(manifestPath, JSON.stringify({ routes: [{ base: "api", client: "widgets", method: "POST", operation: "create", pathTemplate: "/api/v1/widgets/{widgetId}", routeName: "widgets.create", requestType: "CreateWidget", responseType: "Widget", sourceContract: { body: { kind: "json", shape: { label: "Ada" } }, headers: ["content-type"], query: [] } }] }));
+    await writeFile(manifestPath, JSON.stringify({ routes: [{ base: "api", client: "widgets", method: "POST", operation: "create", pathTemplate: "/api/v1/widgets/{widgetId}", routeName: "widgets.create", requestType: "CreateWidget", responseType: "Widget", sourceContract: { body: { kind: "json", shape: { label: "Ada" } }, headers: [{ name: "content-type", value: "application/json" }], query: [] } }] }));
     const descriptor = await descriptorFor(specPath, { operationId: "CreateWidget", parameterName: "widgetId", required: true, type: "string", nullable: true, fields: { label: { type: "string", nullable: true } } });
     for (const mutation of [
       { operationId: "CreateWidgetV2" }, { parameterName: "id" }, { required: false }, { type: "integer" }, { nullable: false }, { fields: { label: { type: "string", nullable: true }, count: { type: "integer" } } },
@@ -28,7 +28,7 @@ test("descriptor fails closed for stale source body metadata and preserves refer
   try {
     const manifestPath = path.join(directory, "manifest.json");
     const specPath = path.join(directory, "openapi.json");
-    const route = { base: "api", client: "widgets", method: "POST", operation: "create", pathTemplate: "/api/v1/widgets", routeName: "widgets.create", requestType: "void", responseType: "never", sourceContract: { body: { kind: "json", shape: { name: "Ada" } }, headers: ["content-type"], query: ["limit"] } };
+    const route = { base: "api", client: "widgets", method: "POST", operation: "create", pathTemplate: "/api/v1/widgets", routeName: "widgets.create", requestType: "void", responseType: "never", sourceContract: { body: { kind: "json", shape: { name: "Ada" } }, headers: [{ name: "content-type", value: "application/json" }, { name: "x-confirm", value: "true" }], query: [{ name: "limit", value: "50" }, { name: "tag", value: "one" }, { name: "tag", value: "two" }] } };
     await writeFile(manifestPath, JSON.stringify({ routes: [route] }));
     const openApi = { openapi: "3.1.0", paths: { "/api/v1/widgets": { post: {
       operationId: "Create",
@@ -41,10 +41,23 @@ test("descriptor fails closed for stale source body metadata and preserves refer
     const updatedRoute = { ...route, requestType: "json", responseType: "Widget" };
     await writeFile(manifestPath, JSON.stringify({ routes: [updatedRoute] }));
     const first = await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath });
+    const changedValues = { ...updatedRoute, sourceContract: { ...updatedRoute.sourceContract, headers: [{ name: "content-type", value: "application/json" }, { name: "x-confirm", value: "false" }], query: [{ name: "limit", value: "51" }, { name: "tag", value: "one" }, { name: "tag", value: "two" }] } };
+    await writeFile(manifestPath, JSON.stringify({ routes: [changedValues] }));
+    assert.notDeepEqual(await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }), first);
+    await writeFile(manifestPath, JSON.stringify({ routes: [updatedRoute] }));
     const swapped = JSON.parse(await (await import("node:fs/promises")).readFile(specPath, "utf8"));
     swapped.paths["/api/v1/widgets"].post.responses[200].content["application/json"].schema.$ref = "#/components/schemas/Second";
     await writeFile(specPath, JSON.stringify(swapped));
     assert.notDeepEqual(await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }), first);
+    swapped.paths["/api/v1/widgets"].post.responses[200].content["application/json"].schema.$ref = "#/components/schemas/First";
+    swapped.components.schemas.First.properties.name = { $ref: "#/components/schemas/Text", maxLength: 4 };
+    swapped.components.schemas.Text = { type: "string" };
+    await writeFile(specPath, JSON.stringify(swapped));
+    const nested = await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath });
+    swapped.components.schemas.First.properties.name = { $ref: "#/components/schemas/OtherText", maxLength: 5 };
+    swapped.components.schemas.OtherText = { type: "string" };
+    await writeFile(specPath, JSON.stringify(swapped));
+    assert.notDeepEqual(await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }), nested);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

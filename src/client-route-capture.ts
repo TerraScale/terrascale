@@ -42,8 +42,8 @@ export type CapturedSdkRoute = {
   readonly routeName: TerraScaleRouteName;
   readonly sourceContract: {
     readonly body: { readonly kind: "void" } | { readonly kind: "json"; readonly shape: unknown };
-    readonly headers: readonly string[];
-    readonly query: readonly string[];
+    readonly headers: readonly { readonly name: string; readonly value: string }[];
+    readonly query: readonly { readonly name: string; readonly value: string }[];
   };
 };
 
@@ -117,9 +117,17 @@ async function capturedSourceContract(request: Request): Promise<CapturedSdkRout
   const text = await request.clone().text();
   return {
     body: text.length === 0 ? { kind: "void" } : { kind: "json", shape: JSON.parse(text) },
-    headers: [...request.headers.keys()].sort(),
-    query: [...new URL(request.url).searchParams.keys()].sort(),
+    headers: [...request.headers].map(([name, value]) => contractPair(name, value)).sort(compareContractPair),
+    query: [...new URL(request.url).searchParams].map(([name, value]) => contractPair(name, value)).sort(compareContractPair),
   };
+}
+
+function contractPair(name: string, value: string): { readonly name: string; readonly value: string } {
+  return { name, value: /(?:authorization|cookie|password|secret|token|api[-_]?key)/iu.test(name) ? "<redacted>" : value };
+}
+
+function compareContractPair(left: { readonly name: string; readonly value: string }, right: { readonly name: string; readonly value: string }): number {
+  return left.name.localeCompare(right.name) || left.value.localeCompare(right.value);
 }
 
 function assertCaptureOperationCoverage(): void {
