@@ -160,9 +160,22 @@ jobs:
           path: Documentation
       - run: node scripts/check-public-contract-fixture.mjs Documentation/public/openapi/server.openapi.json
 
+  release-version-availability:
+    name: release/version-availability
+    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' }}
+    needs: [bootstrap, release-policy, plan]
+    runs-on: terrascale-builder
+    container: { image: "terrascale-builder:2026.07.1" }
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+        with: { github-server-url: "https://git.terrascale.tech" }
+      - run: |
+          version="$(node -p 'require("./package.json").version')"
+          node scripts/promote-npm-candidate.mjs --check-availability --package @terrascale/sdk --version "${version}" --registry https://registry.npmjs.org/
+
   candidate:
     if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' }}
-    needs: [bootstrap, plan, release-tests, release-artifacts, release-contract-fixture]
+    needs: [bootstrap, plan, release-tests, release-artifacts, release-contract-fixture, release-version-availability]
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     env:

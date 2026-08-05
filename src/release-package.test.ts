@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,7 +37,9 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   }
   assert.doesNotMatch(jobDefinition(workflow, "pr-static"), /\n\s+token:/u);
   assert.match(jobDefinition(workflow, "release-contract-fixture"), /check-public-contract-fixture\.mjs Documentation\/public\/openapi\/server\.openapi\.json/u);
+  assert.match(jobDefinition(workflow, "release-version-availability"), /--check-availability --package @terrascale\/sdk/u);
   assert.match(jobDefinition(workflow, "candidate"), /release-contract-fixture/u);
+  assert.match(jobDefinition(workflow, "candidate"), /release-version-availability/u);
   assert.doesNotMatch(jobDefinition(workflow, "candidate"), /NPM_TOKEN/u);
   assert.match(jobDefinition(workflow, "promote"), /promote-npm-candidate\.mjs/u);
   assert.match(jobDefinition(workflow, "promote"), /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
@@ -76,7 +78,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
     const manifestPath = path.join(workspace, "release-candidate.json");
     await writeFile(manifestPath, JSON.stringify({
       reservedVersion: packageJson.version,
-      artifacts: [{ name: path.basename(tarball), sha256: await sha256(tarball) }],
+      artifacts: [{ name: path.basename(tarball), sha256: `sha256:${await sha256(tarball)}` }],
     }));
     await run(
       "node",
@@ -89,6 +91,15 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       ],
       { cwd: checkout },
     );
+    await assert.rejects(
+      verifyCandidate(checkout, manifestPath, packages, { ...JSON.parse(await readFile(manifestPath, "utf8")), artifacts: [{ name: `../${path.basename(tarball)}`, sha256: `sha256:${await sha256(tarball)}` }] }),
+    );
+    const symlinkedTarball = path.join(packages, "linked-candidate.tgz");
+    await symlink(tarball, symlinkedTarball);
+    await assert.rejects(
+      verifyCandidate(checkout, manifestPath, packages, { ...JSON.parse(await readFile(manifestPath, "utf8")), artifacts: [{ name: path.basename(symlinkedTarball), sha256: `sha256:${await sha256(tarball)}` }] }),
+    );
+    await verifyLifecycleSafePublish(checkout, workspace, packages, packageJson);
     await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], { cwd: consumer });
     await run(
       "node",
@@ -99,6 +110,73 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
     await rm(workspace, { recursive: true, force: true });
   }
 });
+
+async function verifyCandidate(
+  checkout: string,
+  manifestPath: string,
+  packages: string,
+  manifest: unknown,
+): Promise<void> {
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  await run(
+    "node",
+    [path.join(checkout, "scripts", "promote-npm-candidate.mjs"), "--manifest", manifestPath, "--artifacts", packages, "--registry", "https://registry.npmjs.org/", "--verify-only"],
+    { cwd: checkout },
+  );
+}
+
+async function verifyLifecycleSafePublish(
+  checkout: string,
+  workspace: string,
+  packages: string,
+  packageJson: { readonly name: string; readonly version: string },
+): Promise<void> {
+  const lifecycleRoot = path.join(workspace, "lifecycle");
+  const lifecyclePackage = path.join(lifecycleRoot, "package");
+  const lifecycleMarker = path.join(workspace, "lifecycle-ran");
+  const lifecycleTarball = path.join(packages, "lifecycle-candidate.tgz");
+  const manifestPath = path.join(workspace, "lifecycle-candidate.json");
+  const fakeBin = path.join(workspace, "fake-bin");
+  const fakeNpm = path.join(fakeBin, "npm");
+  const publishRecord = path.join(workspace, "publish-record.json");
+
+  await mkdir(lifecyclePackage, { recursive: true });
+  await mkdir(fakeBin);
+  await writeFile(path.join(lifecyclePackage, "package.json"), JSON.stringify({
+    name: packageJson.name,
+    version: packageJson.version,
+    scripts: { prepublishOnly: `node -e \"require('node:fs').writeFileSync('${lifecycleMarker}', 'ran')\"` },
+  }));
+  await run("tar", ["-czf", lifecycleTarball, "-C", lifecycleRoot, "package"]);
+  await writeFile(manifestPath, JSON.stringify({
+    reservedVersion: packageJson.version,
+    artifacts: [{ name: path.basename(lifecycleTarball), sha256: `sha256:${await sha256(lifecycleTarball)}` }],
+  }));
+  await writeFile(fakeNpm, `#!/usr/bin/env node
+const { readFileSync, writeFileSync } = require('node:fs');
+const [command, ...arguments_] = process.argv.slice(2);
+if (command === 'view') { if (process.env.NPM_TOKEN || process.env.NPM_CONFIG_USERCONFIG) process.exit(3); process.stderr.write('npm error code E404\\n'); process.exit(1); }
+if (command !== 'publish') process.exit(2);
+writeFileSync(${JSON.stringify(publishRecord)}, JSON.stringify({ arguments_, token: process.env.NPM_TOKEN, ignoreScripts: process.env.NPM_CONFIG_IGNORE_SCRIPTS, configHasAuth: /_authToken=/.test(readFileSync(process.env.NPM_CONFIG_USERCONFIG, 'utf8')) }));
+`);
+  await chmod(fakeNpm, 0o755);
+  await run(
+    "node",
+    [path.join(checkout, "scripts", "promote-npm-candidate.mjs"), "--manifest", manifestPath, "--artifacts", packages, "--registry", "https://registry.npmjs.org/"],
+    { cwd: checkout, env: { ...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`, NPM_TOKEN: "test-token" } },
+  );
+  const record = JSON.parse(await readFile(publishRecord, "utf8")) as {
+    readonly arguments_: readonly string[];
+    readonly token?: string;
+    readonly ignoreScripts?: string;
+    readonly configHasAuth: boolean;
+  };
+  assert.equal(record.token, undefined);
+  assert.equal(record.ignoreScripts, "true");
+  assert.equal(record.configHasAuth, true);
+  assert.equal(record.arguments_.includes("--ignore-scripts"), true);
+  await assert.rejects(readFile(lifecycleMarker));
+}
 
 function jobDefinition(workflow: string, job: string): string {
   const start = workflow.indexOf(`  ${job}:\n`);
