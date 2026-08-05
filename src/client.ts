@@ -1113,7 +1113,7 @@ export class SavedQueriesClient {
       method: "GET",
       path: `${projectRoot(this.#http, projectId)}/saved-queries`,
       routeName: "savedQueries.list",
-      query: query ?? { skip: 0, take: 100 },
+      query: { skip: query?.skip ?? 0, take: query?.take ?? 100 },
     });
   }
 

@@ -355,6 +355,9 @@ describe("TerraScaleClient route contracts", () => {
     const { client, requests } = createCapturingClientWithResponses([
       [savedQuery],
       [savedQuery],
+      [savedQuery],
+      [savedQuery],
+      [savedQuery],
       savedQuery,
       savedQuery,
       { savedQueryId, projectId, deleted: true },
@@ -368,17 +371,34 @@ describe("TerraScaleClient route contracts", () => {
       assert.equal(Object.hasOwn(defaultListResult.value[0]!, "repositoryId"), true);
     }
     assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/saved-queries`);
-    assert.equal(requests[0]?.url.searchParams.get("skip"), "0");
-    assert.equal(requests[0]?.url.searchParams.get("take"), "100");
+    assert.equal(requests[0]?.url.search, "?skip=0&take=100");
+
+    const emptyQueryResult = await client.savedQueries.list(projectId, {});
+    assert.equal(emptyQueryResult.ok, true);
+    assertRequest(requests[1], "GET", `/api/v1/projects/${projectId}/saved-queries`);
+    assert.equal(requests[1]?.url.search, "?skip=0&take=100");
+
+    const skipOnlyQuery = { skip: 10 };
+    const skipOnlyResult = await client.savedQueries.list(projectId, skipOnlyQuery);
+    assert.equal(skipOnlyResult.ok, true);
+    assert.deepEqual(skipOnlyQuery, { skip: 10 });
+    assertRequest(requests[2], "GET", `/api/v1/projects/${projectId}/saved-queries`);
+    assert.equal(requests[2]?.url.search, "?skip=10&take=100");
+
+    const takeOnlyQuery = { take: 20 };
+    const takeOnlyResult = await client.savedQueries.list(projectId, takeOnlyQuery);
+    assert.equal(takeOnlyResult.ok, true);
+    assert.deepEqual(takeOnlyQuery, { take: 20 });
+    assertRequest(requests[3], "GET", `/api/v1/projects/${projectId}/saved-queries`);
+    assert.equal(requests[3]?.url.search, "?skip=0&take=20");
 
     const listResult = await client.savedQueries.list(otherProjectId, { skip: 10, take: 20 });
     assert.equal(listResult.ok, true);
     if (listResult.ok) {
       assert.deepEqual(listResult.value, [savedQuery]);
     }
-    assertRequest(requests[1], "GET", `/api/v1/projects/${otherProjectId}/saved-queries`);
-    assert.equal(requests[1]?.url.searchParams.get("skip"), "10");
-    assert.equal(requests[1]?.url.searchParams.get("take"), "20");
+    assertRequest(requests[4], "GET", `/api/v1/projects/${otherProjectId}/saved-queries`);
+    assert.equal(requests[4]?.url.search, "?skip=10&take=20");
 
     const createResult = await client.savedQueries.create({
       name: savedQuery.name,
@@ -389,28 +409,28 @@ describe("TerraScaleClient route contracts", () => {
     if (createResult.ok) {
       assert.deepEqual(createResult.value, savedQuery);
     }
-    assertRequest(requests[2], "POST", `/api/v1/projects/${projectId}/saved-queries`);
-    assert.deepEqual(requests[2]?.body, {
+    assertRequest(requests[5], "POST", `/api/v1/projects/${projectId}/saved-queries`);
+    assert.deepEqual(requests[5]?.body, {
       name: savedQuery.name,
       query: savedQuery.query,
       repositoryId,
     });
-    assert.equal(requests[2]?.headers.get("idempotency-key"), "saved-query-replay-key");
+    assert.equal(requests[5]?.headers.get("idempotency-key"), "saved-query-replay-key");
 
     await client.savedQueries.update(savedQueryId, {
       name: "Active users v2",
       query: savedQuery.query,
     });
     assertRequest(
-      requests[3],
+      requests[6],
       "PUT",
       `/api/v1/projects/${projectId}/saved-queries/${savedQueryId}`,
     );
-    assert.deepEqual(requests[3]?.body, {
+    assert.deepEqual(requests[6]?.body, {
       name: "Active users v2",
       query: savedQuery.query,
     });
-    assert.equal(requests[3]?.headers.get("idempotency-key"), "saved-query-replay-key");
+    assert.equal(requests[6]?.headers.get("idempotency-key"), "saved-query-replay-key");
 
     const deleteResult = await client.savedQueries.delete(savedQueryId);
     assert.equal(deleteResult.ok, true);
@@ -418,11 +438,11 @@ describe("TerraScaleClient route contracts", () => {
       assert.deepEqual(deleteResult.value, { savedQueryId, projectId, deleted: true });
     }
     assertRequest(
-      requests[4],
+      requests[7],
       "DELETE",
       `/api/v1/projects/${projectId}/saved-queries/${savedQueryId}`,
     );
-    assert.equal(requests[4]?.headers.get("idempotency-key"), "saved-query-replay-key");
+    assert.equal(requests[7]?.headers.get("idempotency-key"), "saved-query-replay-key");
   });
 
   test("uses backed database backup and restore routes with public DTO shapes", async () => {
