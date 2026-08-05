@@ -162,24 +162,37 @@ public sealed class TerraScaleApiE2ETests
         var client = TerraScaleApiE2E.CreateClient();
         var currentProject = await GetCurrentProjectAsync(client);
         var suffix = Guid.NewGuid().ToString("N")[..12];
+        var name = $"sdk-e2e-saved-query-{suffix}";
+        var createRequest = new TerraScaleSaveQueryRequest(name, "from Orders");
+        using var replayHttpClient = new HttpClient();
+        var replayClient = new TerraScaleClient(
+            replayHttpClient,
+            new TerraScaleClientOptions
+            {
+                BaseAddress = TerraScaleApiE2E.BaseAddress ?? throw new InvalidOperationException(TerraScaleApiE2E.SkipReason),
+                ApiKey = TerraScaleApiE2E.ApiKey,
+                ProjectId = TerraScaleApiE2E.ProjectId,
+                IdempotencyKeyFactory = () => $"sdk-e2e-saved-query-{suffix}"
+            });
         TerraScaleSavedQuery? created = null;
 
         try
         {
             var invalid = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.SavedQueries.CreateAsync(
                 currentProject.ProjectId,
-                new TerraScaleSaveQueryRequest($"sdk-e2e-saved-query-{suffix}", new string('q', 8001))));
+                new TerraScaleSaveQueryRequest(name, new string('q', 8001))));
             await Assert.That(invalid!.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
 
-            created = await client.SavedQueries.CreateAsync(
-                currentProject.ProjectId,
-                new TerraScaleSaveQueryRequest($"sdk-e2e-saved-query-{suffix}", "from Orders"));
+            created = await replayClient.SavedQueries.CreateAsync(currentProject.ProjectId, createRequest);
+            var replayed = await replayClient.SavedQueries.CreateAsync(currentProject.ProjectId, createRequest);
             await Assert.That(created.ProjectId).IsEqualTo(currentProject.ProjectId);
-            await Assert.That(created.Name).IsEqualTo($"sdk-e2e-saved-query-{suffix}");
+            await Assert.That(created.Name).IsEqualTo(name);
             await Assert.That(created.RepositoryId).IsNull();
+            await Assert.That(replayed.SavedQueryId).IsEqualTo(created.SavedQueryId);
 
             var listed = await client.SavedQueries.ListAsync(currentProject.ProjectId, take: 0);
             await Assert.That(listed.Any(savedQuery => savedQuery.SavedQueryId == created.SavedQueryId)).IsTrue();
+            await Assert.That(listed.Count(savedQuery => savedQuery.Name == name)).IsEqualTo(1);
 
             var updated = await client.SavedQueries.UpdateAsync(
                 currentProject.ProjectId,
