@@ -13,6 +13,18 @@ public sealed class TerraScaleSyncTransportIntegrationTests
         TerraScaleSyncStateVersion.Zero;
 
     [Test]
+    public async Task PhysicalConnectionCancellationIsSafeAfterDisposal()
+    {
+        var connection = new TerraScaleSyncSession.PhysicalConnection(
+            new ClientWebSocket(),
+            sequence: 1,
+            CancellationToken.None);
+
+        await connection.DisposeAsync();
+        connection.Cancel();
+    }
+
+    [Test]
     public async Task OutOfOrderServerMessageReconnectsWithoutApplyingIt()
     {
         await using var endpoint = new LoopbackWebSocketEndpoint();

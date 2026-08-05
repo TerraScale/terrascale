@@ -1768,7 +1768,13 @@ public sealed class TerraScaleSyncSession : IAsyncDisposable
         public void Cancel()
         {
             Outgoing.Writer.TryComplete();
-            cancellation.Cancel();
+            try
+            {
+                cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
 
         public void Abort()
