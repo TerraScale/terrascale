@@ -22,16 +22,23 @@ mocked HTTP.
 ## Publish
 
 Normal releases are built from the protected `develop` to `main` release pull request. The `Publish SDK to npm` Forgejo
-workflow runs the preflight checks, resolves the next patch version from the
-latest Forgejo Release, creates a draft Forgejo Release, updates the job-local
-package version to that release version, publishes to npm, and publishes the
-matching Forgejo Release.
+workflow runs the preflight checks, creates a draft Forgejo Release, updates
+the job-local package version to the selected release version, publishes to
+npm, and publishes the matching Forgejo Release. The committed `package.json`
+and `package-lock.json` declare that selected version.
 
-Forgejo Releases are the intended version history. The workflow also compares
-the latest npm registry version before choosing the next patch version so an
-interrupted run that published to npm but failed before release finalization
-publishes the matching Forgejo Release instead of bumping past that package
-version.
+Forgejo Releases are the intended version history. The workflow compares the
+latest npm registry version so an interrupted run that published to npm but
+failed before release finalization publishes the matching Forgejo Release
+instead of bumping past that package version.
+
+## Version classification
+
+Use the next patch version only for backward-compatible changes. Before `1.0`,
+a source-breaking exported TypeScript type change requires the next minor
+version. This release is `0.2.0`: `PricingPlan.key` and `PricingPlan.visible`
+are now required to match the public API, so callers that construct a
+`PricingPlan` must provide both fields.
 
 The workflow executes `npm publish --access public --registry=https://registry.npmjs.org/`
 with `NPM_TOKEN`.
