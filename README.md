@@ -57,6 +57,8 @@ This repo is intentionally configured for static output only. Do not assume Clou
 
 The safe future design is a **new** Git-integrated Pages project connected to a supported hosted GitHub or GitLab mirror, with its source production branch protected. Cloudflare supports GitHub and GitLab integrations, but not self-hosted GitHub/GitLab instances, so Forgejo cannot connect directly. See [Git integration](https://developers.cloudflare.com/pages/configuration/git-integration/). Creating, migrating, or retargeting a Pages project is not authorized by this repository workflow.
 
+Release candidates remain verified artifacts: they package the static site and test evidence, but they are not a deployment. Activation requires explicit authorization to provision a new Git-integrated Pages project, connect a supported hosted mirror, protect its production branch, and record the resulting deployment endpoint before replacing the blocked promotion workflow.
+
 ### Local Pages Preview
 
 To verify the static build through the Cloudflare Pages CLI locally:
