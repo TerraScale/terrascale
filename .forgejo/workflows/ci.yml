@@ -163,10 +163,11 @@ jobs:
         with: { name: release-test-result-release-e2e, path: artifacts/candidate/test-results }
       - run: |
           chmod +x .tools/terrascale-deploy
-          test_results="artifacts/candidate/test-results/release-e2e.test-result.json"
+          test_results_directory="artifacts/candidate/test-results"
+          test_results="${test_results_directory}/release-e2e.test-result.json"
           test -f "${test_results}"
-          test "$(find artifacts/candidate/test-results -type f | wc -l)" -eq 1
-          .tools/terrascale-deploy ci candidate-manifest --repository-root . --artifacts artifacts/candidate --test-results "${test_results}" --version "0.0.0-candidate.${FORGEJO_RUN_NUMBER}"
+          test "$(find "${test_results_directory}" -type f | wc -l)" -eq 1
+          .tools/terrascale-deploy ci candidate-manifest --repository-root . --artifacts artifacts/candidate --test-results "${test_results_directory}" --version "0.0.0-candidate.${FORGEJO_RUN_NUMBER}"
           test_result_digest="$(sha256sum "${test_results}" | awk '{print $1}')"
           bundle_entry="test-results/release-e2e.test-result.json"
           unzip -Z1 artifacts/candidate.zip | grep -Fx "${bundle_entry}"
