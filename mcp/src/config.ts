@@ -8,6 +8,18 @@ export type McpRuntimeConfig = {
 
 export type McpHttpConfig = Omit<McpRuntimeConfig, "accessToken">;
 
+export type McpHttpListenConfig = {
+  readonly host: string;
+  readonly allowedHosts: readonly string[];
+  readonly allowedOrigins: readonly string[];
+};
+
+export type McpHttpSessionLimits = {
+  readonly maxSessions?: number;
+  readonly sessionIdleTimeoutMs?: number;
+  readonly sessionTtlMs?: number;
+};
+
 const defaultRequestTimeoutMs = 10_000;
 
 export function readStdioConfig(environment: NodeJS.ProcessEnv): McpRuntimeConfig {
@@ -25,6 +37,33 @@ export function readHttpConfig(environment: NodeJS.ProcessEnv): McpHttpConfig {
     requestTimeoutMs: environment.TERRASCALE_MCP_REQUEST_TIMEOUT_MS,
   });
   return config;
+}
+
+export function readHttpListenConfig(environment: NodeJS.ProcessEnv): McpHttpListenConfig {
+  const host = environment.TERRASCALE_MCP_HOST?.trim() || "127.0.0.1";
+  const allowedHosts = list(environment.TERRASCALE_MCP_ALLOWED_HOSTS);
+  const allowedOrigins = list(environment.TERRASCALE_MCP_ALLOWED_ORIGINS);
+  if (!isLoopback(host) && (allowedHosts.length === 0 || allowedOrigins.length === 0)) {
+    throw new McpConfigurationError("public_bind_requires_allowed_hosts_and_origins");
+  }
+  if (!allowedOrigins.every(isOrigin)) {
+    throw new McpConfigurationError("allowed_origins_invalid");
+  }
+  return { host, allowedHosts, allowedOrigins };
+}
+
+export function readHttpSessionLimits(environment: NodeJS.ProcessEnv): McpHttpSessionLimits {
+  const maxSessions = optionalInteger(environment.TERRASCALE_MCP_MAX_SESSIONS, 1, 10_000, "max_sessions_invalid");
+  const sessionIdleTimeoutMs = optionalInteger(environment.TERRASCALE_MCP_SESSION_IDLE_TIMEOUT_MS, 1_000, 86_400_000, "session_idle_timeout_invalid");
+  const sessionTtlMs = optionalInteger(environment.TERRASCALE_MCP_SESSION_TTL_MS, 1_000, 604_800_000, "session_ttl_invalid");
+  if ((sessionIdleTimeoutMs ?? 15 * 60_000) > (sessionTtlMs ?? 60 * 60_000)) {
+    throw new McpConfigurationError("session_idle_timeout_exceeds_ttl");
+  }
+  return {
+    ...(maxSessions === undefined ? {} : { maxSessions }),
+    ...(sessionIdleTimeoutMs === undefined ? {} : { sessionIdleTimeoutMs }),
+    ...(sessionTtlMs === undefined ? {} : { sessionTtlMs }),
+  };
 }
 
 export function readRuntimeConfig(input: {
@@ -103,6 +142,30 @@ function readTimeout(value: string | number | undefined): number {
     throw new McpConfigurationError("request_timeout_invalid");
   }
   return timeout;
+}
+
+function optionalInteger(value: string | undefined, minimum: number, maximum: number, code: string): number | undefined {
+  if (value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) throw new McpConfigurationError(code);
+  return parsed;
+}
+
+function list(value: string | undefined): readonly string[] {
+  return value?.split(",").map((item) => item.trim()).filter((item) => item.length > 0) ?? [];
+}
+
+function isLoopback(host: string): boolean {
+  return host === "127.0.0.1" || host === "::1" || host === "localhost";
+}
+
+function isOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && url.pathname === "/" && url.search.length === 0 && url.hash.length === 0;
+  } catch {
+    return false;
+  }
 }
 
 export class McpConfigurationError extends Error {

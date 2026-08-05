@@ -18,9 +18,11 @@ For stdio, the launching caller supplies its own public credential:
 TERRASCALE_API_BASE_URL=https://api.example TERRASCALE_ACCESS_TOKEN=... node dist/main.js
 ```
 
-For production Streamable HTTP, set `TERRASCALE_MCP_TRANSPORT=http` and optionally `TERRASCALE_MCP_PORT` (default `3000`). Each MCP session must send its caller's public `Authorization` header; the service has no configured service identity. `/mcp` is the MCP endpoint and `/healthz` and `/readyz` return plain, non-sensitive health responses. Put TLS and network access controls in the ingress layer.
+For Streamable HTTP, set `TERRASCALE_MCP_TRANSPORT=http` and optionally `TERRASCALE_MCP_PORT` (default `3000`). It binds to `127.0.0.1` by default. A public `TERRASCALE_MCP_HOST` is rejected unless both `TERRASCALE_MCP_ALLOWED_HOSTS` (comma-separated exact Host values) and `TERRASCALE_MCP_ALLOWED_ORIGINS` (comma-separated origins) are configured; the official MCP DNS-rebinding protection is enabled for that allowlist. Terminate TLS and enforce network access at the proxy/ingress, forwarding only the approved Host and Origin values.
 
-The HTTP listener limits headers to 10 seconds, complete requests to 15 seconds, request bodies to 10 seconds and 1 MiB, and idle keep-alive connections to 5 seconds. Sessions are retained only through the MCP SDK's successful lifecycle callback, bound to the initiating caller credential, and removed on the SDK's DELETE/close lifecycle callbacks.
+Each MCP session must send its caller's public `Authorization` header; the service has no configured service identity. `/mcp` is the MCP endpoint and `/healthz` and `/readyz` return plain, non-sensitive health responses.
+
+The HTTP listener limits headers to 10 seconds, complete inbound requests and pending initialization to 15 seconds, request bodies to 10 seconds and 1 MiB, and idle keep-alive connections to 5 seconds. It does not use a socket inactivity timeout, so active SSE streams remain open. At most 100 initialized-or-pending sessions are retained; initialized sessions have a 15-minute idle limit and one-hour absolute limit. Override these three limits with `TERRASCALE_MCP_MAX_SESSIONS`, `TERRASCALE_MCP_SESSION_IDLE_TIMEOUT_MS`, and `TERRASCALE_MCP_SESSION_TTL_MS`. They retain only a credential fingerprint, are promoted/removed through the MCP SDK lifecycle callbacks, and are closed on expiration, DELETE, or transport close.
 
 Structured stderr logs use OpenTelemetry-compatible timestamp/severity/body/attributes fields and never include credentials or API response bodies.
 
