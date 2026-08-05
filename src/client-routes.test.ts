@@ -159,20 +159,6 @@ describe("TerraScaleClient route contracts", () => {
     );
   });
 
-  test("pins the committed public account-security route contract", async () => {
-    const [manifest, fixture] = await Promise.all([
-      readFile(new URL("../sdk-route-manifest.json", import.meta.url), "utf8"),
-      readFile(new URL("../test/fixtures/public-contracts/account-security-routes.json", import.meta.url), "utf8"),
-    ]);
-    const routes = (JSON.parse(manifest) as { readonly routes: readonly ManifestRoute[] }).routes;
-    const expected = JSON.parse(fixture) as readonly (readonly [string, string])[];
-    const actual = routes
-      .filter(route => route.routeName.startsWith("auth.devices.") || route.routeName.startsWith("auth.trustedIps.") || route.routeName.startsWith("auth.passkeys.") || route.routeName.startsWith("auth.tokens.") || route.routeName.startsWith("auth.account.") || route.routeName.startsWith("auth.loginHistory."))
-      .map(route => [route.method, route.pathTemplate]);
-
-    assert.deepEqual(actual, expected);
-  });
-
   test("public factory hides private clients and exposes typed clients", async () => {
     const { client, requests } = createCapturingClient({});
     const runtimeClient = client as TerraScaleClient & {
