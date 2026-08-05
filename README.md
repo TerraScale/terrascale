@@ -148,6 +148,16 @@ var loadedEnvironment = await client.Environments.GetAsync(
     database.DatabaseId,
     environment.EnvironmentId,
     cancellationToken);
+
+var deletion = await client.Environments.DeleteAsync(
+    project.ProjectId,
+    database.DatabaseId,
+    environment.EnvironmentId,
+    cancellationToken);
+
+// Deletion is durable: completion requires both values below.
+var deletionCompleted = deletion.Deleted && deletion.Status == "Completed";
+// "RetryScheduled" means it remains pending; RetryAt is the server's retry hint.
 ```
 
 Select a logical database and environment when creating repositories:

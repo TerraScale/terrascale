@@ -73,7 +73,10 @@ public sealed class TerraScaleEnvironmentsClient
     }
 
     /// <summary>
-    /// Deletes an environment under a project database.
+    /// Requests deletion of an environment under a project database.
+    /// A deletion is complete only when <see cref="TerraScaleDeletedProjectDatabaseEnvironment.Deleted"/>
+    /// is <see langword="true"/> and <see cref="TerraScaleDeletedProjectDatabaseEnvironment.Status"/>
+    /// is <c>Completed</c>.
     /// </summary>
     public Task<TerraScaleDeletedProjectDatabaseEnvironment> DeleteAsync(
         string projectId,
@@ -122,4 +125,20 @@ public sealed record TerraScaleDeletedProjectDatabaseEnvironment(
     string Name,
     bool Deleted,
     bool PhysicalDatabaseDeleted,
-    int RepositoriesDeleted);
+    int RepositoriesDeleted)
+{
+    /// <summary>
+    /// The durable deletion operation identifier, when returned by the server.
+    /// </summary>
+    public string? OperationId { get; init; }
+
+    /// <summary>
+    /// The durable deletion status, when returned by the server. A missing value is not completion.
+    /// </summary>
+    public string? Status { get; init; }
+
+    /// <summary>
+    /// The next scheduled retry time when deletion is pending, if returned by the server.
+    /// </summary>
+    public DateTimeOffset? RetryAt { get; init; }
+}

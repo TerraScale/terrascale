@@ -528,12 +528,22 @@ public sealed class TerraScaleApiE2ETests
             await Assert.That(deleted.EnvironmentId).IsEqualTo(createdEnvironment.EnvironmentId);
             await Assert.That(deleted.ProjectId).IsEqualTo(currentProject.ProjectId);
             await Assert.That(deleted.DatabaseId).IsEqualTo(database.DatabaseId);
-            await Assert.That(deleted.Deleted).IsTrue();
-            createdEnvironment = null;
+            await Assert.That(deleted.OperationId).IsNotNull();
+            await Assert.That(deleted.Status).IsNotNull();
 
-            var missing = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-                client.Environments.GetAsync(currentProject.ProjectId, database.DatabaseId, deleted.EnvironmentId));
-            await Assert.That(missing!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            if (deleted.Deleted && string.Equals(deleted.Status, "Completed", StringComparison.Ordinal))
+            {
+                createdEnvironment = null;
+
+                var missing = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                    client.Environments.GetAsync(currentProject.ProjectId, database.DatabaseId, deleted.EnvironmentId));
+                await Assert.That(missing!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            }
+            else
+            {
+                await Assert.That(deleted.Deleted).IsFalse();
+                await Assert.That(string.Equals(deleted.Status, "Completed", StringComparison.Ordinal)).IsFalse();
+            }
         }
         finally
         {
