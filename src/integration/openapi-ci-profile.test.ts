@@ -37,6 +37,9 @@ test("configured OpenAPI drift profile runs against the checked-out Documentatio
       path.join(repositoryRoot, "test", "fixtures", "openapi-drift", "sdk-route-manifest.json"),
       path.join(workspace, "sdk-route-manifest.json"),
     );
+    const baselinePath = path.join(workspace, "typed-contract-debt-baseline.json");
+    const fixtureBaseline = path.join(repositoryRoot, "test", "fixtures", "openapi-drift", "typed-contract-debt-baseline.json");
+    await cp(fixtureBaseline, baselinePath);
     await cp(
       path.join(
         repositoryRoot,
@@ -48,6 +51,9 @@ test("configured OpenAPI drift profile runs against the checked-out Documentatio
       path.join(workspace, "Documentation", "public", "openapi", "server.openapi.json"),
     );
 
+    await rm(baselinePath);
+    await assert.rejects(run(command.command, command.arguments, { cwd: workspace }), /typed-contract-debt-baseline\.json/u);
+    await cp(fixtureBaseline, baselinePath);
     const result = await run(command.command, command.arguments, { cwd: workspace });
 
     assert.match(result.stdout, /OpenAPI drift check passed: 2\/2 SDK routes covered/u);

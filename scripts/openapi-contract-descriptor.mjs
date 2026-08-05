@@ -70,7 +70,7 @@ function requestDescriptor(operation, spec) {
 
 function successfulResponses(operation, spec) {
   return Object.entries(operation.responses ?? {})
-    .filter(([status]) => /^2\d\d$/u.test(status))
+    .filter(([status]) => /^2(?:\d\d|xx)$/iu.test(status))
     .map(([status, response]) => ({ status, response: canonicalize(response, spec) }))
     .sort((left, right) => left.status.localeCompare(right.status));
 }

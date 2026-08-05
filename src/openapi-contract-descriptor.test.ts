@@ -53,6 +53,13 @@ test("descriptor fails closed for stale source body metadata and preserves refer
     const updatedRoute = { ...route, requestType: "json", responseType: "Widget" };
     await writeFile(manifestPath, JSON.stringify({ routes: [updatedRoute] }));
     const first = await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath });
+    const rangeSpec = JSON.parse(await (await import("node:fs/promises")).readFile(specPath, "utf8"));
+    rangeSpec.paths["/api/v1/widgets"].post.responses = { "2XX": { description: "any success" } };
+    await writeFile(specPath, JSON.stringify(rangeSpec));
+    await writeFile(manifestPath, JSON.stringify({ routes: [{ ...updatedRoute, responseType: "never" }] }));
+    await assert.rejects((await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }), /response never mismatch/u);
+    await writeFile(specPath, JSON.stringify(openApi));
+    await writeFile(manifestPath, JSON.stringify({ routes: [updatedRoute] }));
     const changedValues = { ...updatedRoute, sourceContract: { ...updatedRoute.sourceContract, headers: [{ name: "content-type", value: "application/json" }, { name: "x-confirm", value: "false" }], query: [{ name: "limit", value: "51" }, { name: "tag", value: "one" }, { name: "tag", value: "two" }] } };
     await writeFile(manifestPath, JSON.stringify({ routes: [changedValues] }));
     assert.notDeepEqual(await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }), first);
