@@ -118,6 +118,27 @@ internal static class TerraScaleApiRoutes
     public static string OrganizationUsageGet(string organizationId) =>
         $"/api/v1/organizations/{Escape(organizationId)}/usage";
 
+    public static string PricingPlansList() =>
+        "/api/v1/pricing/plans";
+
+    public static string BillingAccountGet(string organizationId) =>
+        $"/api/v1/organizations/{Escape(organizationId)}/billing";
+
+    public static string BillingInvoicesList(string organizationId, int skip, int take) =>
+        WithQuery($"{BillingAccountGet(organizationId)}/invoices", ("skip", Number(skip)), ("take", Number(take)));
+
+    public static string BillingCheckoutSessionsCreate(string organizationId) =>
+        $"{BillingAccountGet(organizationId)}/checkout-sessions";
+
+    public static string BillingPortalSessionsCreate(string organizationId) =>
+        $"{BillingAccountGet(organizationId)}/portal-sessions";
+
+    public static string BillingAccessList(string organizationId) =>
+        $"{BillingAccountGet(organizationId)}/access";
+
+    public static string BillingAccessUpdate(string organizationId, string userId) =>
+        $"{BillingAccessList(organizationId)}/{Escape(userId)}";
+
     public static string ApiKeysList(string projectId, string? cursor, int limit) =>
         WithQuery($"/api/v1/projects/{Escape(projectId)}/auth/api-keys", ("cursor", NormalizeOptional(cursor)), ("limit", Number(limit)));
 

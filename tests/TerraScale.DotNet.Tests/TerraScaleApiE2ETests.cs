@@ -7,6 +7,31 @@ public sealed class TerraScaleApiE2ETests
 {
     [Test]
     [RequiresTerraScaleBaseAddress]
+    public async Task Billing_ListPricingPlansAsync_ReturnsPublicCatalogAgainstRealApi()
+    {
+        var client = TerraScaleApiE2E.CreateAnonymousClient();
+
+        var plans = await client.Billing.ListPricingPlansAsync();
+
+        await Assert.That(plans).IsNotNull();
+        await Assert.That(plans.All(plan => !string.IsNullOrWhiteSpace(plan.PlanId))).IsTrue();
+        await Assert.That(plans.All(plan => plan.IncludedUsage is not null)).IsTrue();
+    }
+
+    [Test]
+    [RequiresTerraScaleBaseAddress]
+    public async Task Billing_ListAccessAsync_WithInvalidBearerToken_ThrowsTypedApiException()
+    {
+        var client = TerraScaleApiE2E.CreateInvalidBearerProviderClient();
+
+        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Billing.ListAccessAsync("01ARZ3NDEKTSV4RRFFQ69G5FAV"));
+
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    [RequiresTerraScaleBaseAddress]
     public async Task Regions_ListAsync_ReturnsCanonicalCatalogAgainstRealApi()
     {
         var client = TerraScaleApiE2E.CreateAnonymousClient();
