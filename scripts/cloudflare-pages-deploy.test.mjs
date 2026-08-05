@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { runDeploy } from './cloudflare-pages-deploy.mjs'
 import { runProjectCreate } from './cloudflare-pages-project-create.mjs'
@@ -49,4 +50,16 @@ test('read-only diagnostic refuses a write token without a separate read token b
     }),
     /CLOUDFLARE_PAGES_READ_TOKEN/,
   )
+})
+
+test('PR static CI runs retirement guards through the approved check command', () => {
+  const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const deployConfig = JSON.parse(readFileSync(new URL('../.terrascale/deploy.json', import.meta.url), 'utf8'))
+  const staticProfile = deployConfig.prProfiles.find((profile) => profile.name === 'static')
+  const releaseProfile = deployConfig.releaseProfiles.find((profile) => profile.name === 'release-e2e')
+
+  assert.match(packageJson.scripts.check, /node --test scripts\/cloudflare-pages-deploy\.test\.mjs/)
+  assert.ok(staticProfile.commands.some((command) => command.arguments.join(' ') === 'run check'))
+  assert.ok(!staticProfile.commands.some((command) => command.arguments.join(' ') === 'test'))
+  assert.ok(releaseProfile.commands.some((command) => command.arguments.join(' ') === 'test'))
 })

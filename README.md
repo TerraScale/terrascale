@@ -43,7 +43,7 @@ npm run cf:deploy:preview
 
 ## Deployment
 
-- Target: Cloudflare Pages static upload
+- Target: future Cloudflare Pages Git-integrated delivery (Direct Upload retired)
 - Build command: `npm run build`
 - Output directory: `build`
 - CLI: Wrangler (`npm run cf:*`)

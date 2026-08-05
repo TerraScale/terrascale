@@ -14,7 +14,7 @@
     "cf:deploy:preview": "node ./scripts/cloudflare-pages-deploy.mjs --preview",
     "cf:pages:verify": "node ./scripts/cloudflare-pages-verify.mjs",
     "prepare": "svelte-kit sync",
-    "check": "node scripts/validate-content.mjs && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.node.json",
+    "check": "node scripts/validate-content.mjs && node --test scripts/cloudflare-pages-deploy.test.mjs && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.node.json",
     "icons:sync": "node ./scripts/icons-sync.mjs",
     "world-map:sync": "node ./scripts/world-map-sync.mjs",
     "lint": "eslint .",
