@@ -67,12 +67,13 @@ jobs:
           persist-credentials: false
       - run: git -c credential.helper= clone --depth 1 --branch develop https://git.terrascale.tech/TerraScale/TerraScale.Documentation.git Documentation
       - run: node scripts/check-public-contract-fixture.mjs Documentation/public/openapi/server.openapi.json
-      - run: npm ci && npm run check:openapi-drift -- --strict Documentation/public/openapi/server.openapi.json
+      - run: npm ci && npm run build && npm run check:route-manifest && npm run check:openapi-drift -- --strict Documentation/public/openapi/server.openapi.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
       - run: npm run check:openapi-drift -- Documentation/public/openapi/server.openapi.json
       - run: npm run check:route-manifest
+      - run: npm run check:openapi-contract-descriptor -- Documentation/public/openapi/server.openapi.json
 
   pr-build:
     name: pr/build
@@ -166,6 +167,7 @@ jobs:
           path: Documentation
       - run: node scripts/check-public-contract-fixture.mjs Documentation/public/openapi/server.openapi.json
       - run: npm ci && npm run check:openapi-drift -- --strict Documentation/public/openapi/server.openapi.json
+      - run: npm run check:openapi-contract-descriptor -- Documentation/public/openapi/server.openapi.json
 
   release-version-availability:
     name: release/version-availability

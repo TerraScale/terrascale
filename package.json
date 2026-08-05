@@ -35,9 +35,11 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
     "check:openapi-drift": "node scripts/check-openapi-drift.mjs",
+    "check:openapi-contract-descriptor": "node scripts/check-openapi-contract-descriptor.mjs",
     "check:public-contract-fixture": "node scripts/check-public-contract-fixture.mjs",
     "check:route-manifest": "node scripts/generate-client-route-manifest.mjs --check",
     "generate:route-manifest": "npm run build && node scripts/generate-client-route-manifest.mjs",
+    "generate:openapi-contract-descriptor": "npm run build && node scripts/generate-openapi-contract-descriptor.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/*.test.js dist/integration/*.test.js",
     "test:integration": "node --test dist/integration/*.test.js",

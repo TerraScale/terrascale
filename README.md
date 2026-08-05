@@ -149,7 +149,15 @@ The SDK route manifest is generated from the route-capture tests:
 ```bash
 npm run generate:route-manifest
 npm run check:openapi-drift -- ../Terrascale.Documentation/public/openapi/server.openapi.json
+npm run generate:openapi-contract-descriptor -- ../Terrascale.Documentation/public/openapi/server.openapi.json
+npm run check:openapi-contract-descriptor -- ../Terrascale.Documentation/public/openapi/server.openapi.json
 ```
+
+`sdk-openapi-contract-descriptor.json` is the reviewable, deterministic pin for
+every captured SDK route: OpenAPI operation ID, parameters, request schema, and
+each successful response schema. `void` and `never` SDK types are explicit in
+the descriptor; any OpenAPI identity, parameter, nullability, field-shape, or
+schema-constraint drift fails the descriptor check.
 
 The drift checker accepts any OpenAPI JSON file path or live spec URL, including
 a DevHost-served `/openapi/v1.json`. Refresh the Documentation snapshot from
