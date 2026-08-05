@@ -322,7 +322,17 @@ var policy = await client.Backups.ConfigurePolicyAsync(
         RetentionDays: 14),
     cancellationToken);
 
-var backup = await client.Backups.TriggerAsync(projectId, databaseId, cancellationToken: cancellationToken);
+var backupPlan = await client.Backups.PlanAsync(
+    projectId,
+    databaseId,
+    new TerraScaleBackupConfirmationPlanRequest(operationSessionId),
+    cancellationToken);
+var backup = await client.Backups.ExecuteAsync(
+    projectId,
+    databaseId,
+    new TerraScaleBackupConfirmationExecuteRequest(operationSessionId, backupPlan.ConfirmationToken),
+    idempotencyKey: $"backup-{operationSessionId}",
+    cancellationToken);
 var restore = await client.Backups.StartRestoreAsync(
     projectId,
     databaseId,

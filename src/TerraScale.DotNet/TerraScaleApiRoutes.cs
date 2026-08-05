@@ -163,6 +163,12 @@ internal static class TerraScaleApiRoutes
     public static string BackupsCreate(string projectId, string databaseId) =>
         $"/api/v1/projects/{Escape(projectId)}/databases/{Escape(databaseId)}/backups";
 
+    public static string BackupsPlan(string projectId, string databaseId) =>
+        $"{BackupsCreate(projectId, databaseId)}:plan";
+
+    public static string BackupsExecute(string projectId, string databaseId) =>
+        $"{BackupsCreate(projectId, databaseId)}:execute";
+
     public static string BackupsList(string projectId, string databaseId, int skip, int take) =>
         WithQuery(BackupsCreate(projectId, databaseId), ("skip", Number(skip)), ("take", Number(take)));
 
