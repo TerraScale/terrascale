@@ -82,6 +82,21 @@ export function compareOpenApiDrift(manifest, spec) {
   };
 }
 
+export function typedContractViolation(route, operation) {
+  const jsonRequest = operation.requestBody?.content?.["application/json"]?.schema;
+  const jsonResponse = operation.responses?.["200"]?.content?.["application/json"]?.schema;
+
+  if (route.requestType !== undefined && jsonRequest === undefined) {
+    return `${route.method} ${route.pathTemplate} declares ${route.requestType} without a published JSON request schema.`;
+  }
+
+  if (route.responseType !== undefined && route.responseType !== "void" && jsonResponse?.$ref === "#/components/schemas/JsonElement") {
+    return `${route.method} ${route.pathTemplate} declares ${route.responseType} but OpenAPI only publishes JsonElement.`;
+  }
+
+  return undefined;
+}
+
 export function exitCodeForOpenApiDriftResult(result) {
   return result.missingSdkRoutes.length === 0 ? 0 : 1;
 }

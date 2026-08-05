@@ -125,8 +125,9 @@ The public client follows the backed `TerraScale.Platform` REST surface:
   `client.savedQueries.v3.list` under `/api/v3/projects/{projectId}/saved-queries`.
   V2 revisions and v3 cursors are opaque; reload a v3 collection after a cursor conflict.
 
-Unbacked public SDK methods are intentionally omitted until matching API
-endpoints exist. This currently excludes repository update, database
+Unbacked public SDK methods are intentionally omitted until matching versioned
+OpenAPI request and response schemas are published. This currently excludes account-security
+extensions, repository update, database
 update/region switching/environment switching, query history, project settings,
 security webhooks, SSO/SCIM settings, and public project switching.
 
