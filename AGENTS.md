@@ -95,10 +95,11 @@ npm run icons:sync       # regenerate static/icons/ from scripts/icons-manifest.
 
 npm run cf:login         # wrangler login
 npm run cf:whoami        # confirm wrangler identity
-npm run cf:project:create
+npm run cf:project:create # retired: always refuses external execution
 npm run cf:pages:dev     # build + wrangler pages dev
-npm run cf:deploy        # production deploy
-npm run cf:deploy:preview
+npm run cf:deploy        # retired: always refuses external execution
+npm run cf:deploy:preview # retired: always refuses external execution
+npm run cf:pages:verify  # optional non-authorizing Pages Read diagnostic
 ```
 
 Before handing work back, verify with: `npm run check && npm run lint && npm run build`.
@@ -107,22 +108,19 @@ Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies: pull lates
 
 ## Deployment
 
-- Target: Cloudflare Pages static direct upload
+- Target: future Cloudflare Pages Git integration (Direct Upload retired)
 - Build command: `npm run build`
 - Output directory: `build/`
 - CLI: Wrangler (`npm run cf:*`)
 - Pages project config lives in `wrangler.toml` (source of truth for project name, compatibility date, bindings)
 
-CI needs `CLOUDFLARE_API_TOKEN` (`Account / Cloudflare Pages / Edit`) and `CLOUDFLARE_ACCOUNT_ID`. See `README.md` for the full non-interactive deploy env var list.
-
-For parallel work, the writer assigned a Cloudflare preview or deploy target owns that target exclusively until handoff. Do not deploy, preview, or retarget it concurrently.
+Normal CI must not receive `CLOUDFLARE_API_TOKEN` or any Pages Write credential. `cf:pages:verify` is the only retained remote command and uses a separate `CLOUDFLARE_PAGES_READ_TOKEN` for non-authorizing metadata diagnostics.
 
 ### Deployment admission
 
 - Routine local development and verification commands (`npm run dev`, `npm run check`, `npm run lint`, `npm run build`, and `npm run preview`) are safe to run without deployment authorization; they must not create projects, retarget deployments, or alter external production state.
-- Any external production deploy, production retarget, or Cloudflare Pages project creation requires all of: explicit user authorization for that specific action, an exclusive named target lease recorded for the writer until handoff, and redacted artifact/build provenance (commit SHA, command, timestamp, and artifact identifier or checksum). Never include tokens, account IDs, or other credentials in that record.
-- `cf:project:create` and `cf:deploy` are therefore admission-controlled commands. Their production target is the remote Pages project's `production_branch`, which must exactly match `CLOUDFLARE_PAGES_PRODUCTION_BRANCH` (default `main`) through the fixed HTTPS Cloudflare API before Wrangler runs; record the lease against that verified named project/branch target. `cf:project:create` verifies only and fails if the project is absent; it does not create or retarget a project. Treat a target change in `wrangler.toml` as a production retarget and require the same admission.
-- `cf:deploy:preview` is also an external mutation: require explicit user authorization, an exclusive named non-production preview-target lease, and the same redacted artifact/build provenance before running it. It verifies remote production-branch truth first, then rejects that verified production branch. This preflight is not an external lock: the deploy identity must lack Pages project-retarget permission, which belongs to a separate administrative role.
+- `cf:project:create`, `cf:deploy`, and `cf:deploy:preview` are permanently fail-safe deprecated: they must refuse before fetch, Wrangler, or any external mutation because Direct Upload requires Pages Write and cannot be constrained to deploy-only. Do not add a Pages Write token to CI or revive these commands.
+- The safe future delivery design is a new Git-integrated Pages project backed by a protected branch in a supported hosted GitHub or GitLab mirror. Forgejo direct integration is unsupported. This workspace grants no authority to create, migrate, retarget, or deploy that project.
 
 ## Conventions
 

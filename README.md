@@ -35,8 +35,7 @@ npm run preview
 npm run check
 npm run lint
 npm run icons:sync
-npm run cf:login
-npm run cf:project:create
+npm run cf:pages:verify
 npm run cf:pages:dev
 npm run cf:deploy
 npm run cf:deploy:preview
@@ -51,50 +50,13 @@ npm run cf:deploy:preview
 
 This repo is intentionally configured for static output only. Do not assume Cloudflare Functions, Workers, or SSR are part of the deployment flow unless the repo instructions change.
 
-### Cloudflare CLI Setup
+### Cloudflare Pages delivery
 
-Cloudflare's current Pages direct-upload flow uses `wrangler pages deploy` for prebuilt static assets and `wrangler pages dev` for local Pages-style serving. This repo now includes Wrangler as a dev dependency and exposes the common flows as npm scripts.
+`cf:deploy`, `cf:deploy:preview`, and `cf:project:create` are intentionally retired and always fail before any network or Wrangler invocation. Cloudflare documents Direct Upload with a Cloudflare Pages **Edit** token, while its Pages API identifies deployment creation as requiring **Pages Write**; that permission cannot be safely restricted to deployment-only and can affect project state. [Direct Upload with CI](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/) and [Pages API permissions](https://developers.cloudflare.com/pages/configuration/api/) describe these capabilities.
 
-The Pages project is configured in [wrangler.toml](/home/mariogk/Projects/TerraScale/TerraScale.LandingPage/wrangler.toml:1). That file is the source of truth for the Pages project name, build output directory, compatibility date, and any shared or environment-specific bindings you add later.
+`npm run cf:pages:verify` is an optional, non-authorizing diagnostic only. It reads Pages metadata from the fixed Cloudflare API origin using `CLOUDFLARE_ACCOUNT_ID` and a separate `CLOUDFLARE_PAGES_READ_TOKEN`; it never accepts or sends a Pages Write token.
 
-1. Install dependencies:
-
-```bash
-npm install
-```
-
-2. Log in to Cloudflare in your local shell:
-
-```bash
-npm run cf:login
-```
-
-3. Verify the Pages project before deployment:
-
-```bash
-npm run cf:project:create
-```
-
-That reads remote metadata from the fixed HTTPS Cloudflare API origin. It requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`, and fails if the project is absent, malformed, or its production branch differs from `CLOUDFLARE_PAGES_PRODUCTION_BRANCH` (default `main`). It does not create or retarget a project.
-
-4. Deploy to production:
-
-```bash
-npm run cf:deploy
-```
-
-5. Deploy a branch preview:
-
-```bash
-npm run cf:deploy:preview
-```
-
-Both deploy scripts first read the Pages project metadata from that fixed origin and fail closed unless its remote production branch exactly matches `CLOUDFLARE_PAGES_PRODUCTION_BRANCH`; the preview check runs after that verified read and refuses the verified production branch. This is a preflight, not an external lock: a provider-side retarget after verification remains possible. Use a deploy identity that cannot retarget Pages projects, and reserve retarget permission for a separate administrative role. Override the preview branch only with a non-production branch when needed:
-
-```bash
-export CLOUDFLARE_PAGES_BRANCH=staging
-npm run cf:deploy:preview
-```
+The safe future design is a **new** Git-integrated Pages project connected to a supported hosted GitHub or GitLab mirror, with its source production branch protected. Cloudflare supports GitHub and GitLab integrations, but not self-hosted GitHub/GitLab instances, so Forgejo cannot connect directly. See [Git integration](https://developers.cloudflare.com/pages/configuration/git-integration/). Creating, migrating, or retargeting a Pages project is not authorized by this repository workflow.
 
 ### Local Pages Preview
 
@@ -106,28 +68,9 @@ npm run cf:pages:dev
 
 That builds the site and serves the generated `build/` output through `wrangler pages dev`.
 
-### Non-Interactive CI Deploys
+### CI credentials
 
-For CI or any non-interactive environment, provide:
-
-- `CLOUDFLARE_API_TOKEN`: Cloudflare API token with `Account / Cloudflare Pages / Edit`.
-- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account ID for the target Pages account.
-
-Both values are also required for `cf:project:create`, `cf:deploy`, and `cf:deploy:preview`, because they perform the read-only production-branch verification before invoking Wrangler. The metadata client has no runtime API-origin override.
-
-Optional deploy metadata overrides:
-
-- `CLOUDFLARE_PAGES_PRODUCTION_BRANCH`: override the production branch used for Pages project creation and production deploys (defaults to `main`).
-- `CLOUDFLARE_PAGES_BRANCH`: force the preview branch name.
-- `CLOUDFLARE_PAGES_COMMIT_SHA`: override the commit SHA attached to the deployment.
-- `CLOUDFLARE_PAGES_COMMIT_MESSAGE`: override the commit message attached to the deployment.
-- `CLOUDFLARE_PAGES_COMMIT_DIRTY=1`: mark the deployment as dirty if you want Cloudflare to record that state explicitly.
-
-The direct upload flow is documented by Cloudflare here:
-
-- [Direct Upload](https://developers.cloudflare.com/pages/get-started/direct-upload/)
-- [Use Direct Upload with continuous integration](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/)
-- [Local development with wrangler pages dev](https://developers.cloudflare.com/pages/functions/local-development/)
+Normal CI must not receive a Cloudflare Pages Write token. If read-only metadata diagnostics are needed, provide only `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_PAGES_READ_TOKEN` to the explicit diagnostic command; the normal test/build pipeline needs neither.
 
 ## Icons
 
