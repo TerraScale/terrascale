@@ -564,7 +564,8 @@ export type CreateInvitationRequest = {
 };
 
 export type EnvironmentKind = "Custom" | "Dev" | "Preview" | "Prod";
-export type EnvironmentStatus = "Active" | "Deleted" | "Expired" | "Merged" | "Merging";
+export type EnvironmentStatus = "Active" | "Deleting" | "Deleted" | "Expired" | "Merged" | "Merging";
+export type EnvironmentDeletionStatus = "Completed" | "Requested" | "RetryScheduled";
 
 export type ProjectDatabase = {
   readonly databaseId: DatabaseId;
@@ -733,6 +734,9 @@ export type DeletedProjectDatabaseEnvironmentResponse = {
   readonly deleted: boolean;
   readonly physicalDatabaseDeleted: boolean;
   readonly repositoriesDeleted: number;
+  readonly operationId?: Ulid;
+  readonly status?: EnvironmentDeletionStatus;
+  readonly retryAt?: Timestamp | null;
 };
 
 export type ConfigureBackupPolicyRequest = {

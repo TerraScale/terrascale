@@ -6,7 +6,12 @@ import { capturePublicClientRoutes } from "./client-route-capture.js";
 import { createTerraScaleClient } from "./factory.js";
 import type { TerraScaleClient } from "./factory.js";
 import { toUlid } from "./ids.js";
-import type { JsonValue, ProjectSavedQueryResponse } from "./models.js";
+import type {
+  DatabaseEnvironment,
+  DeletedProjectDatabaseEnvironmentResponse,
+  JsonValue,
+  ProjectSavedQueryResponse,
+} from "./models.js";
 
 const projectId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
 const databaseId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAW");
@@ -36,6 +41,18 @@ const savedQueryWithoutRepository = {
 // @ts-expect-error Saved-query responses always include repositoryId, which may be null.
 const invalidSavedQueryResponse: ProjectSavedQueryResponse = savedQueryWithoutRepository;
 void invalidSavedQueryResponse;
+
+const deletingEnvironment = {
+  environmentId,
+  projectId,
+  databaseId,
+  name: "Preview",
+  kind: "Preview",
+  status: "Deleting",
+  createdAt: "2026-08-05T00:00:00Z",
+  version: 1,
+} satisfies DatabaseEnvironment;
+void deletingEnvironment;
 
 type CapturedRequest = {
   readonly method: string;
@@ -336,7 +353,24 @@ describe("TerraScaleClient route contracts", () => {
       physicalDatabasesDeleted: 1,
       repositoriesDeleted: 2,
     };
-    const { client, requests } = createCapturingClient(deletedDatabase);
+    const retryScheduledEnvironmentDeletion = {
+      environmentId,
+      projectId,
+      databaseId,
+      name: "Preview",
+      deleted: false,
+      physicalDatabaseDeleted: false,
+      repositoriesDeleted: 0,
+      operationId: toUlid("01VRZ3NDEKTSV4RRFFQ69G5FAV"),
+      status: "RetryScheduled",
+      retryAt: "2026-08-05T00:05:00Z",
+    } satisfies DeletedProjectDatabaseEnvironmentResponse;
+    const { client, requests } = createCapturingClientWithResponses([
+      deletedDatabase,
+      deletedDatabase,
+      deletedDatabase,
+      retryScheduledEnvironmentDeletion,
+    ]);
 
     await client.databases.list();
     assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/databases`);
@@ -377,7 +411,15 @@ describe("TerraScaleClient route contracts", () => {
     );
     assert.deepEqual(requests[2]?.body, { name: "Preview", kind: "Preview" });
 
-    await client.databases.deleteEnvironment(databaseId, environmentId);
+    const environmentDeleteResult = await client.databases.deleteEnvironment(databaseId, environmentId);
+    assert.equal(environmentDeleteResult.ok, true);
+    if (environmentDeleteResult.ok) {
+      assert.deepEqual(environmentDeleteResult.value, retryScheduledEnvironmentDeletion);
+      assert.equal(environmentDeleteResult.value.deleted, false);
+      assert.equal(environmentDeleteResult.value.status, "RetryScheduled");
+      assert.equal(environmentDeleteResult.value.operationId, retryScheduledEnvironmentDeletion.operationId);
+      assert.equal(environmentDeleteResult.value.retryAt, "2026-08-05T00:05:00Z");
+    }
     assertRequest(
       requests[3],
       "DELETE",
