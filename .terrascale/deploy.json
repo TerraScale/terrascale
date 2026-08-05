@@ -7,6 +7,5 @@
   ],
   "releaseProfiles": [{ "name": "release-e2e", "resourceWeight": "heavy", "commands": [{ "description": "Svelte, TypeScript, and Direct Upload retirement checks", "command": "npm", "arguments": ["run", "check"] }, { "description": "Direct Upload retirement guards", "command": "npm", "arguments": ["test"] }, { "description": "All Playwright specifications", "command": "npm", "arguments": ["run", "test:e2e"] }] }],
   "buildTargets": [{ "name": "pages", "resourceWeight": "medium", "commands": [{ "description": "Build Pages candidate", "command": "npm", "arguments": ["run", "build"] }] }],
-  "candidate": { "genericPackageName": "ci-candidates-landing", "retentionDays": 7 },
-  "promotion": { "strategy": "pages", "endpoints": [] }
+  "candidate": { "genericPackageName": "ci-candidates-landing", "retentionDays": 7 }
 }

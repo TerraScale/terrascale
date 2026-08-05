@@ -59,6 +59,8 @@ test('PR static CI runs retirement guards through the approved check command', (
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   const deployConfig = JSON.parse(readFileSync(new URL('../.terrascale/deploy.json', import.meta.url), 'utf8'))
   const workflow = readFileSync(new URL('../.forgejo/workflows/ci.yml', import.meta.url), 'utf8')
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8')
+  const promotionWorkflow = workflow.slice(workflow.search(/\n {2}promote:/))
   const staticProfile = deployConfig.prProfiles.find((profile) => profile.name === 'static')
   const releaseProfile = deployConfig.releaseProfiles.find((profile) => profile.name === 'release-e2e')
 
@@ -72,7 +74,7 @@ test('PR static CI runs retirement guards through the approved check command', (
   assert.match(workflow, /ci release-test --repository-root \. --profile "\$\{\{ matrix\.profile \}\}" --result artifacts\/candidate\/test-results\/release-e2e\.test-result\.json/)
   assert.match(workflow, /name: release-test-result-release-e2e, path: artifacts\/candidate\/test-results\/release-e2e\.test-result\.json, if-no-files-found: error/)
   assert.match(workflow, /name: candidate-pages, path: artifacts\/candidate, if-no-files-found: error/)
-  assert.match(workflow, /npm run build\n          \.tools\/terrascale-deploy ci build-candidate/)
+  assert.match(workflow, /npm run build\n {10}\.tools\/terrascale-deploy ci build-candidate/)
   assert.match(workflow, /npm run candidate:stage/)
   assert.match(workflow, /name: candidate-pages, path: artifacts\/candidate/)
   assert.match(workflow, /name: release-test-result-release-e2e, path: artifacts\/candidate\/test-results/)
@@ -84,6 +86,12 @@ test('PR static CI runs retirement guards through the approved check command', (
   assert.match(workflow, /unzip -p artifacts\/candidate\.zip "\$\{bundle_entry\}" \| sha256sum/)
   assert.doesNotMatch(workflow, /with: \{ path: artifacts\/candidate \}/)
   assert.match(workflow, /name: deploy-cli, path: \.tools/)
+  assert.ok(!('promotion' in deployConfig))
+  assert.match(promotionWorkflow, /Promotion blocked: Git-integrated Pages migration is required and external provisioning is not authorized\./)
+  assert.match(promotionWorkflow, /exit 1/)
+  assert.doesNotMatch(promotionWorkflow, /candidate-store|ci promote|download-artifact|checkout@/)
+  assert.match(readme, /Release candidates remain verified artifacts.*not a deployment/s)
+  assert.match(readme, /Activation requires explicit authorization to provision a new Git-integrated Pages project/)
 })
 
 test('candidate staging copies the static site into the deterministic payload tree', () => {

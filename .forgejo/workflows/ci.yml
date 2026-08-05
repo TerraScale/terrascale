@@ -176,16 +176,9 @@ jobs:
 
   promote:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
-    needs: [bootstrap, plan]
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
-        with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
-        with: { name: deploy-cli, path: .tools }
       - run: |
-          chmod +x .tools/terrascale-deploy
-          .tools/terrascale-deploy ci candidate-store download --tree "${{ needs.plan.outputs.tree }}" --file artifacts/release-candidate.json
-          .tools/terrascale-deploy ci candidate-store download --tree "${{ needs.plan.outputs.tree }}" --file artifacts/candidate.zip
-          .tools/terrascale-deploy ci promote --repository-root . --manifest artifacts/release-candidate.json --bundle artifacts/candidate.zip
+          echo "Promotion blocked: Git-integrated Pages migration is required and external provisioning is not authorized." >&2
+          exit 1
