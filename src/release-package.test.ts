@@ -176,7 +176,13 @@ if (command === 'view') {
   process.stderr.write('npm error code E404\\n'); process.exit(1);
 }
 if (command !== 'publish') process.exit(2);
-writeFileSync(${JSON.stringify(publishRecord)}, JSON.stringify({ arguments_, token: process.env.NPM_TOKEN, ignoreScripts: process.env.NPM_CONFIG_IGNORE_SCRIPTS, configHasAuth: /_authToken=/.test(readFileSync(process.env.NPM_CONFIG_USERCONFIG, 'utf8')) }));
+writeFileSync(${JSON.stringify(publishRecord)}, JSON.stringify({
+  arguments_, cwd: process.cwd(), token: process.env.NPM_TOKEN,
+  ignoreScripts: process.env.NPM_CONFIG_IGNORE_SCRIPTS,
+  configHasAuth: /_authToken=/.test(readFileSync(process.env.NPM_CONFIG_USERCONFIG, 'utf8')),
+  globalConfig: process.env.NPM_CONFIG_GLOBALCONFIG,
+  globalConfigHasAuth: /_authToken=/.test(readFileSync(process.env.NPM_CONFIG_GLOBALCONFIG, 'utf8')),
+}));
 `);
   await chmod(fakeNpm, 0o755);
   await run(
@@ -211,13 +217,19 @@ writeFileSync(${JSON.stringify(publishRecord)}, JSON.stringify({ arguments_, tok
   assert.equal(availability.arguments_.includes("--ignore-scripts"), true);
   const record = JSON.parse(await readFile(publishRecord, "utf8")) as {
     readonly arguments_: readonly string[];
+    readonly cwd: string;
     readonly token?: string;
     readonly ignoreScripts?: string;
     readonly configHasAuth: boolean;
+    readonly globalConfig: string;
+    readonly globalConfigHasAuth: boolean;
   };
   assert.equal(record.token, undefined);
+  assert.notEqual(record.cwd, checkout);
   assert.equal(record.ignoreScripts, "true");
   assert.equal(record.configHasAuth, true);
+  assert.notEqual(record.globalConfig, globalConfig);
+  assert.equal(record.globalConfigHasAuth, false);
   assert.equal(record.arguments_.includes("--ignore-scripts"), true);
   await assert.rejects(readFile(lifecycleMarker));
 }

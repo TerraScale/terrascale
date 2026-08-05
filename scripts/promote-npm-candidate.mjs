@@ -93,10 +93,19 @@ async function publishCandidate(candidate, registry) {
 
   const configDirectory = await mkdtemp(path.join(tmpdir(), "terrascale-npm-publish-"));
   const configPath = path.join(configDirectory, "npmrc");
+  const globalConfigPath = path.join(configDirectory, "global-npmrc");
   try {
-    await writeFile(configPath, `//registry.npmjs.org/:_authToken=${token}\nignore-scripts=true\n`);
+    await Promise.all([
+      writeFile(configPath, `//registry.npmjs.org/:_authToken=${token}\nignore-scripts=true\n`),
+      writeFile(globalConfigPath, ""),
+    ]);
     await run("npm", ["publish", candidate.tarball, "--access", "public", "--ignore-scripts", "--registry", registry], {
-      env: npmEnvironment({ NPM_CONFIG_USERCONFIG: configPath, NPM_CONFIG_IGNORE_SCRIPTS: "true" }),
+      cwd: configDirectory,
+      env: npmEnvironment({
+        NPM_CONFIG_USERCONFIG: configPath,
+        NPM_CONFIG_GLOBALCONFIG: globalConfigPath,
+        NPM_CONFIG_IGNORE_SCRIPTS: "true",
+      }),
     });
     console.log(`Published ${candidate.name}@${candidate.version} from the verified candidate tarball.`);
   } finally {

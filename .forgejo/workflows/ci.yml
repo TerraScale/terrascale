@@ -31,6 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           config="$(mktemp -d)"
+          trap 'rm -rf -- "${config}"' EXIT
           dotnet new nugetconfig --output "${config}" --force >/dev/null
           dotnet nuget add source https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json --name terrascale --username forgejo-actions --password "${DEPLOY_CLI_READ_TOKEN}" --store-password-in-clear-text --configfile "${config}/nuget.config" >/dev/null
           dotnet tool install TerraScale.Deploy.Cli --tool-path .tools --configfile "${config}/nuget.config"

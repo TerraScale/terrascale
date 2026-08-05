@@ -9,5 +9,10 @@ The npm availability preflight now runs in a disposable directory with empty,
 private npm user and global configuration files. It does not inherit npm
 credentials, project `.npmrc`, or caller-provided npm configuration.
 
+Privileged npm publishing uses the same disposable working directory and an
+empty private global configuration, while its private user configuration holds
+only the job-local npm token. The bootstrap NuGet credential directory is
+removed by an exit trap on both successful and failed runs.
+
 The promotion workflow verifies its candidate and publishes it to npm; it does
 not create, finalize, or recover Forgejo Releases.
