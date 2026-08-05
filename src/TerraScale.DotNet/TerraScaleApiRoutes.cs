@@ -208,6 +208,48 @@ internal static class TerraScaleApiRoutes
             "/api/v1/users/me/notifications:mark-all-read",
             ("organizationId", NormalizeOptional(organizationId)));
 
+    public static string AdminOverviewGet() =>
+        "/api/v1/admin";
+
+    public static string AdminUsersList(int skip, int take, string? search) =>
+        WithQuery("/api/v1/admin/users", ("skip", Number(skip)), ("take", Number(take)), ("search", NormalizeOptional(search)));
+
+    public static string AdminUserGet(string userId) =>
+        $"/api/v1/admin/users/{Escape(userId)}";
+
+    public static string AdminUserEnable(string userId) =>
+        $"{AdminUserGet(userId)}:enable";
+
+    public static string AdminUserDisable(string userId) =>
+        $"{AdminUserGet(userId)}:disable";
+
+    public static string AdminSupportNotesCreate() =>
+        "/api/v1/admin/support-notes";
+
+    public static string AdminOrganizationsList(int skip, int take) =>
+        WithQuery("/api/v1/admin/organizations", ("skip", Number(skip)), ("take", Number(take)));
+
+    public static string AdminProjectsList(int skip, int take) =>
+        WithQuery("/api/v1/admin/projects", ("skip", Number(skip)), ("take", Number(take)));
+
+    public static string AdminDatabasesList(int skip, int take) =>
+        WithQuery("/api/v1/admin/databases", ("skip", Number(skip)), ("take", Number(take)));
+
+    public static string AdminUsageGet() =>
+        "/api/v1/admin/usage";
+
+    public static string AdminPlansList() =>
+        "/api/v1/admin/plans";
+
+    public static string AdminPlanGet(string planId) =>
+        $"{AdminPlansList()}/{Escape(planId)}";
+
+    public static string AdminAuditList(int skip, int take) =>
+        WithQuery("/api/v1/admin/audit", ("skip", Number(skip)), ("take", Number(take)));
+
+    public static string AdminNotificationsList(int skip, int take) =>
+        WithQuery("/api/v1/admin/notifications", ("skip", Number(skip)), ("take", Number(take)));
+
     public static string BackupPolicyConfigure(string projectId, string databaseId) =>
         $"/api/v1/projects/{Escape(projectId)}/databases/{Escape(databaseId)}/backups/policy";
 

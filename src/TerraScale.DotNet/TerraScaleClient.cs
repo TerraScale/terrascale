@@ -68,6 +68,7 @@ public sealed class TerraScaleClient
         ApiKeys = new TerraScaleApiKeysClient(this);
         M2MApplications = new TerraScaleM2MApplicationsClient(this);
         Notifications = new TerraScaleNotificationsClient(this);
+        Administration = new TerraScaleAdministrationClient(this);
         Backups = new TerraScaleBackupsClient(this);
         Sync = new TerraScaleSyncClient(this);
     }
@@ -176,6 +177,11 @@ public sealed class TerraScaleClient
     /// Dashboard notification operations for the signed-in user.
     /// </summary>
     public TerraScaleNotificationsClient Notifications { get; }
+
+    /// <summary>
+    /// Role-protected TerraScale platform administration operations.
+    /// </summary>
+    public TerraScaleAdministrationClient Administration { get; }
 
     /// <summary>
     /// Project database backup, restore point, and restore operations.

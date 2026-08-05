@@ -6,7 +6,11 @@ Official C# SDK for TerraScale Platform API families.
 
 Public clients opt in by configuring `TerraScaleClientOptions.IdempotencyKeyFactory`. The SDK creates one key per logical mutation, reuses it across retries, and never retries an unsafe mutation without a key. Keys must be nonblank and no longer than 128 characters. Replayable API results expire after 24 hours; replays include `Idempotency-Replayed: true`, while reuse with different input returns `409 idempotency_key_reused`.
 
-The SDK calls verified TerraScale public endpoints. It covers region catalog, database, repository, document, schema, TQL, changes, billing, project, project database, physical database-branch capability and clone requests, environment, queue, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, restore, v2 saved-query conditional-update, and v3 saved-query snapshot-pagination operations. It does not call TerraBase storage directly and does not cover admin, user-management, organization-management, auth-provider, invitation, audit, or Dashboard-internal test endpoints.
+The SDK calls verified TerraScale public endpoints. It covers region catalog, database, repository, document, schema, TQL, changes, billing, project, project database, physical database-branch capability and clone requests, environment, queue, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, restore, v2 saved-query conditional-update, v3 saved-query snapshot-pagination, and role-protected platform administration operations. It does not call TerraBase storage directly or Dashboard-internal endpoints.
+
+## Platform administration
+
+Use `client.Administration` with a bearer token that carries the platform owner role. The client exposes only the published `/api/v1/admin` operations: platform usage, user lifecycle, support notes, platform-wide resource pages, pricing-plan management, audit, and notifications. Authorization failures are returned as `TerraScaleApiException` with the public HTTP status and error code.
 
 ## Billing checkout
 

@@ -20,6 +20,9 @@ internal static class TerraScaleApiE2E
     private const string MissingBillingCheckoutConfigurationReason =
         "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_BILLING_CHECKOUT_ORGANIZATION_ID, TERRASCALE_E2E_BILLING_CHECKOUT_PLAN_ID, TERRASCALE_E2E_BILLING_CHECKOUT_INVALID_PLAN_ID, TERRASCALE_E2E_BILLING_CHECKOUT_INTERVAL, TERRASCALE_E2E_BILLING_CHECKOUT_PROVIDER, and TERRASCALE_E2E_ENABLE_BILLING_CHECKOUT=true to run the dedicated checkout E2E test.";
 
+    private const string MissingAdministrationAuthorizationConfigurationReason =
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, and TERRASCALE_E2E_BEARER_TOKEN to run the public administration authorization E2E test.";
+
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingAccessLifecycleLocks = new(StringComparer.Ordinal);
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingCheckoutLocks = new(StringComparer.Ordinal);
@@ -55,6 +58,11 @@ internal static class TerraScaleApiE2E
         !string.IsNullOrWhiteSpace(BillingCheckoutProvider) &&
         string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_BILLING_CHECKOUT"), "true", StringComparison.OrdinalIgnoreCase);
 
+    public static bool IsAdministrationAuthorizationConfigured =>
+        BaseAddress is not null &&
+        !string.IsNullOrWhiteSpace(AdminBearerToken) &&
+        !string.IsNullOrWhiteSpace(BearerToken);
+
     public static bool HasCompleteAuthenticationConfiguration => IsConfigured || IsBearerConfigured;
 
     public static string SkipReason => MissingApiKeyConfigurationReason;
@@ -67,6 +75,8 @@ internal static class TerraScaleApiE2E
 
     public static string BillingCheckoutSkipReason => MissingBillingCheckoutConfigurationReason;
 
+    public static string AdministrationAuthorizationSkipReason => MissingAdministrationAuthorizationConfigurationReason;
+
     public static Uri? BaseAddress =>
         Uri.TryCreate(Environment.GetEnvironmentVariable("TERRASCALE_E2E_BASE_URL"), UriKind.Absolute, out var uri)
             ? uri
@@ -75,6 +85,8 @@ internal static class TerraScaleApiE2E
     public static string ApiKey => Required("TERRASCALE_E2E_API_KEY");
 
     public static string BearerToken => Required("TERRASCALE_E2E_BEARER_TOKEN");
+
+    public static string AdminBearerToken => Required("TERRASCALE_E2E_ADMIN_BEARER_TOKEN");
 
     public static string ProjectId => Required("TERRASCALE_E2E_PROJECT_ID");
 
@@ -168,6 +180,15 @@ internal static class TerraScaleApiE2E
                 BearerTokenProvider = static _ => ValueTask.FromResult($"invalid-{Guid.NewGuid():N}")
             });
 
+    public static TerraScaleClient CreateAdminClient() =>
+        new(
+            new HttpClient(),
+            new TerraScaleClientOptions
+            {
+                BaseAddress = BaseAddress ?? throw new InvalidOperationException(MissingAdministrationAuthorizationConfigurationReason),
+                BearerToken = AdminBearerToken
+            });
+
     private static string Required(string name) =>
         Environment.GetEnvironmentVariable(name)?.Trim() ?? string.Empty;
 
@@ -215,4 +236,11 @@ internal sealed class RequiresTerraScaleBillingCheckoutAttribute()
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
         Task.FromResult(!TerraScaleApiE2E.IsBillingCheckoutConfigured);
+}
+
+internal sealed class RequiresTerraScaleAdministrationAuthorizationAttribute()
+    : SkipAttribute(TerraScaleApiE2E.AdministrationAuthorizationSkipReason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(!TerraScaleApiE2E.IsAdministrationAuthorizationConfigured);
 }

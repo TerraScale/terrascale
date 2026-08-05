@@ -7,6 +7,24 @@ namespace TerraScale.DotNet.Tests;
 public sealed class TerraScaleApiE2ETests
 {
     [Test]
+    [RequiresTerraScaleAdministrationAuthorization]
+    [NotInParallel("administration-authorization")]
+    public async Task Administration_OverviewAllowsOwnerAndForbidsStandardBearer()
+    {
+        var owner = TerraScaleApiE2E.CreateAdminClient();
+        var overview = await owner.Administration.GetOverviewAsync();
+
+        var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
+            ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
+        var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            standardBearer.Administration.GetOverviewAsync());
+
+        await Assert.That(overview.Organizations).IsGreaterThanOrEqualTo(0);
+        await Assert.That(overview.Regions).IsNotNull();
+        await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+    }
+
+    [Test]
     [RequiresTerraScaleBaseAddress]
     public async Task Billing_GetPricingPlansAsync_ReturnsPublicCatalogAgainstRealApi()
     {
