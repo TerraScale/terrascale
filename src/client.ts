@@ -79,6 +79,7 @@ export class TerraScaleClient {
   readonly regions: RegionsClient;
   readonly savedQueries: SavedQueriesClient;
   readonly databases: DatabasesClient;
+  readonly databaseBranches: DatabaseBranchesClient;
   readonly queues: QueuesClient;
   readonly repositories: RepositoriesClient;
   readonly backups: BackupsClient;
@@ -103,6 +104,7 @@ export class TerraScaleClient {
     this.regions = new RegionsClient(this.#http);
     this.savedQueries = new SavedQueriesClient(this.#http);
     this.databases = new DatabasesClient(this.#http);
+    this.databaseBranches = new DatabaseBranchesClient(this.#http);
     this.queues = new QueuesClient(this.#http);
     this.repositories = new RepositoriesClient(this.#http);
     this.backups = new BackupsClient(this.#http);
@@ -1323,6 +1325,42 @@ export class DatabasesClient {
       method: "DELETE",
       path: environmentRoot(this.#http, { projectId, databaseId, environmentId }),
       routeName: "databases.environments.delete",
+    });
+  }
+}
+
+export class DatabaseBranchesClient {
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
+
+  getCapability(
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.DatabaseBranchCapabilityResponse>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${projectRoot(this.#http, projectId)}/database-branches/capability`,
+      routeName: "databaseBranches.getCapability",
+    });
+  }
+
+  /**
+   * Always returns the Platform's typed failure today (normally 503); no
+   * physical branch is created until the capability reports admission.
+   */
+  requestClone(
+    request: Models.CreateDatabaseBranchRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<never>> {
+    return this.#http.request({
+      method: "POST",
+      path: `${projectRoot(this.#http, projectId)}/database-branches`,
+      routeName: "databaseBranches.requestClone",
+      body: request,
+      // The public contract has no idempotency or successful clone semantics.
+      idempotencyKey: false,
     });
   }
 }

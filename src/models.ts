@@ -593,6 +593,27 @@ export type CreateDatabaseRequest = {
   readonly name: string;
 };
 
+/**
+ * Physical database branch admission. The Platform currently returns
+ * `"unavailable"` and all availability flags as false.
+ */
+export type DatabaseBranchCapabilityResponse = {
+  readonly projectId: ProjectId;
+  readonly admissionState: string;
+  readonly physicalCloneAvailable: boolean;
+  readonly promotionAvailable: boolean;
+  readonly mergeAvailable: boolean;
+  readonly detail: string;
+};
+
+/**
+ * Requests a physical database clone. The Platform currently rejects every
+ * request with its typed 503 error response; it does not create a branch.
+ */
+export type CreateDatabaseBranchRequest = {
+  readonly sourceDatabaseId?: DatabaseId;
+};
+
 export type DeleteProjectDatabaseOptions = {
   readonly confirm: true;
   readonly projectId?: ProjectId | undefined;

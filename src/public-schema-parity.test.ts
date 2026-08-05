@@ -4,13 +4,15 @@ import { describe, test } from "node:test";
 
 import type {
   CreateCheckoutSessionRequest,
+  CreateDatabaseBranchRequest,
+  DatabaseBranchCapabilityResponse,
   PricingPlan,
   ProjectSavedQuerySnapshotPageRequest,
   ProjectSavedQuerySnapshotPageResponse,
   ProjectSavedQueryV2Response,
   UsageMetric,
 } from "./models.js";
-import type { SavedQueriesClient, SavedQueriesV3Client } from "./client.js";
+import type { DatabaseBranchesClient, SavedQueriesClient, SavedQueriesV3Client } from "./client.js";
 import type { Ulid } from "./ids.js";
 import type { TerraScaleResult } from "./result.js";
 
@@ -66,6 +68,19 @@ type ExpectedSnapshotPage = {
   readonly nextCursor?: string | null;
 };
 
+type ExpectedDatabaseBranchCapability = {
+  readonly projectId: Ulid;
+  readonly admissionState: string;
+  readonly physicalCloneAvailable: boolean;
+  readonly promotionAvailable: boolean;
+  readonly mergeAvailable: boolean;
+  readonly detail: string;
+};
+
+type ExpectedCreateDatabaseBranchRequest = {
+  readonly sourceDatabaseId?: Ulid;
+};
+
 type ExpectedSnapshotList = (
   projectId?: Ulid,
   query?: ExpectedSnapshotRequest,
@@ -78,7 +93,10 @@ const staticSdkParity: readonly [
   Assert<Equal<ProjectSavedQuerySnapshotPageResponse, ExpectedSnapshotPage>>,
   Assert<Equal<SavedQueriesV3Client["list"], ExpectedSnapshotList>>,
   Assert<Equal<SavedQueriesClient["v3"], SavedQueriesV3Client>>,
-] = [true, true, true, true, true, true];
+  Assert<Equal<DatabaseBranchCapabilityResponse, ExpectedDatabaseBranchCapability>>,
+  Assert<Equal<CreateDatabaseBranchRequest, ExpectedCreateDatabaseBranchRequest>>,
+  Assert<Equal<DatabaseBranchesClient["requestClone"], (request: ExpectedCreateDatabaseBranchRequest, projectId?: Ulid) => Promise<TerraScaleResult<never>>>>,
+] = [true, true, true, true, true, true, true, true, true];
 void staticSdkParity;
 
 type PublicContractFixture = {
@@ -114,6 +132,24 @@ type PublicContractFixture = {
       readonly nextCursorTypes: readonly string[];
     };
     readonly errorStatuses: readonly number[];
+  };
+  readonly databaseBranches: {
+    readonly capability: {
+      readonly path: string;
+      readonly method: string;
+      readonly operationId: string;
+      readonly required: readonly string[];
+      readonly propertyTypes: Readonly<Record<string, readonly (string | null)[]>>;
+      readonly errorStatuses: readonly number[];
+    };
+    readonly clone: {
+      readonly path: string;
+      readonly method: string;
+      readonly operationId: string;
+      readonly sourceDatabaseIdRequired: boolean;
+      readonly hasSuccessResponse: boolean;
+      readonly errorStatuses: readonly number[];
+    };
   };
 };
 
@@ -158,6 +194,30 @@ describe("public contract fixture parity", () => {
       nextCursorTypes: ["string", "null"],
     });
     assert.deepEqual(v3.errorStatuses, [400, 401, 403, 404, 409, 503]);
+  });
+
+  test("keeps physical database branching fail-closed and clone without a success response", async () => {
+    const branches = (await readContract()).databaseBranches;
+
+    assert.deepEqual(branches.capability, {
+      path: "/api/v1/projects/{projectId}/database-branches/capability",
+      method: "get",
+      operationId: "GetDatabaseBranchCapability",
+      required: ["projectId", "admissionState", "physicalCloneAvailable", "promotionAvailable", "mergeAvailable", "detail"],
+      propertyTypes: {
+        projectId: [null], admissionState: ["string"], physicalCloneAvailable: ["boolean"],
+        promotionAvailable: ["boolean"], mergeAvailable: ["boolean"], detail: ["string"],
+      },
+      errorStatuses: [400, 401, 403, 404, 409, 429, 500, 503],
+    });
+    assert.deepEqual(branches.clone, {
+      path: "/api/v1/projects/{projectId}/database-branches",
+      method: "post",
+      operationId: "CreateDatabaseBranch",
+      sourceDatabaseIdRequired: false,
+      hasSuccessResponse: false,
+      errorStatuses: [400, 401, 403, 404, 409, 429, 500, 503],
+    });
   });
 });
 

@@ -118,5 +118,67 @@
       409,
       503
     ]
+  },
+  "databaseBranches": {
+    "capability": {
+      "path": "/api/v1/projects/{projectId}/database-branches/capability",
+      "method": "get",
+      "operationId": "GetDatabaseBranchCapability",
+      "required": [
+        "projectId",
+        "admissionState",
+        "physicalCloneAvailable",
+        "promotionAvailable",
+        "mergeAvailable",
+        "detail"
+      ],
+      "propertyTypes": {
+        "projectId": [
+          null
+        ],
+        "admissionState": [
+          "string"
+        ],
+        "physicalCloneAvailable": [
+          "boolean"
+        ],
+        "promotionAvailable": [
+          "boolean"
+        ],
+        "mergeAvailable": [
+          "boolean"
+        ],
+        "detail": [
+          "string"
+        ]
+      },
+      "errorStatuses": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        429,
+        500,
+        503
+      ]
+    },
+    "clone": {
+      "path": "/api/v1/projects/{projectId}/database-branches",
+      "method": "post",
+      "operationId": "CreateDatabaseBranch",
+      "sourceDatabaseIdRequired": false,
+      "hasSuccessResponse": false,
+      "errorStatuses": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        429,
+        500,
+        503
+      ]
+    }
   }
 }

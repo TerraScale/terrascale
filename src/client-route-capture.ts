@@ -815,6 +815,18 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) => client.databases.delete(sampleIds.databaseId, { confirm: true }),
   },
   {
+    client: "databaseBranches",
+    operation: "getCapability",
+    defaultProject: true,
+    invoke: (client) => client.databaseBranches.getCapability(),
+  },
+  {
+    client: "databaseBranches",
+    operation: "requestClone",
+    defaultProject: true,
+    invoke: (client) => client.databaseBranches.requestClone({ sourceDatabaseId: sampleIds.databaseId }),
+  },
+  {
     client: "queues",
     operation: "list",
     defaultProject: true,

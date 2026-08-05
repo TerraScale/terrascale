@@ -8,6 +8,8 @@ import type { TerraScaleClient } from "./factory.js";
 import { toUlid } from "./ids.js";
 import type {
   DatabaseEnvironment,
+  DatabaseBranchCapabilityResponse,
+  CreateDatabaseBranchRequest,
   DeletedProjectDatabaseEnvironmentResponse,
   JsonValue,
   PricingPlan,
@@ -136,7 +138,7 @@ describe("TerraScaleClient route contracts", () => {
       manifest.routes.map(routeManifestCore),
       capturedRoutes.map(routeManifestCore),
     );
-    assert.equal(manifest.routeCount, 158);
+    assert.equal(manifest.routeCount, 160);
     assert.equal(manifest.routeCount, capturedRoutes.length);
     assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
     assert.deepEqual(
@@ -524,6 +526,57 @@ describe("TerraScaleClient route contracts", () => {
       `/api/v1/projects/${projectId}/databases/${databaseId}/environments/${environmentId}`,
     );
     assert.equal(requests[3]?.headers.has("x-terrascale-delete-confirmation"), false);
+  });
+
+  test("exposes fail-closed physical database branch capability and clone request routes", async () => {
+    const capability = {
+      projectId,
+      admissionState: "unavailable",
+      physicalCloneAvailable: false,
+      promotionAvailable: false,
+      mergeAvailable: false,
+      detail: "Physical database branching is not available.",
+    } satisfies DatabaseBranchCapabilityResponse;
+    const cloneRequest = { sourceDatabaseId: databaseId } satisfies CreateDatabaseBranchRequest;
+    const { client, requests } = createCapturingClientWithResponses(
+      [capability],
+      { idempotencyKeyFactory: () => "not-admitted-clone-key" },
+    );
+
+    const capabilityResult = await client.databaseBranches.getCapability();
+    assert.equal(capabilityResult.ok, true);
+    if (capabilityResult.ok) assert.deepEqual(capabilityResult.value, capability);
+    assertRequest(
+      requests[0],
+      "GET",
+      `/api/v1/projects/${projectId}/database-branches/capability`,
+    );
+
+    await client.databaseBranches.requestClone(cloneRequest);
+    assertRequest(requests[1], "POST", `/api/v1/projects/${projectId}/database-branches`);
+    assert.deepEqual(requests[1]?.body, cloneRequest);
+    assert.equal(requests[1]?.headers.has("idempotency-key"), false);
+  });
+
+  test("keeps unavailable physical database clone typed as the Platform 503 failure", async () => {
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      projectId,
+      fetch: async () =>
+        Response.json(
+          { code: "database_branch_unavailable", message: "Physical database branching is unavailable." },
+          { status: 503 },
+        ),
+    });
+
+    const result = await client.databaseBranches.requestClone({ sourceDatabaseId: databaseId });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.status, 503);
+      assert.equal(result.error.kind, "server");
+      assert.equal(result.error.code, "database_branch_unavailable");
+    }
   });
 
   test("uses typed project saved-query CRUD routes, DTOs, pagination, and idempotency", async () => {

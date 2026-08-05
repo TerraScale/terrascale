@@ -36,6 +36,12 @@ function normalizeContract(spec) {
   const checkout = schemas.CreateCheckoutSessionRequest;
   const v3 = spec.paths["/api/v3/projects/{projectId}/saved-queries"].get;
   const page = schemas.ProjectSavedQuerySnapshotPageResponse;
+  const capabilityPath = "/api/v1/projects/{projectId}/database-branches/capability";
+  const clonePath = "/api/v1/projects/{projectId}/database-branches";
+  const capability = spec.paths[capabilityPath].get;
+  const clone = spec.paths[clonePath].post;
+  const branchCapability = schemas.DatabaseBranchCapabilityResponse;
+  const createBranch = schemas.CreateDatabaseBranchRequest;
 
   return {
     contractVersion: 1,
@@ -78,6 +84,29 @@ function normalizeContract(spec) {
         nextCursorTypes: types(page.properties.nextCursor),
       },
       errorStatuses: Object.keys(v3.responses).filter((status) => status !== "200").map(Number),
+    },
+    databaseBranches: {
+      capability: {
+        path: capabilityPath,
+        method: "get",
+        operationId: capability.operationId,
+        required: branchCapability.required,
+        propertyTypes: Object.fromEntries(
+          Object.entries(branchCapability.properties).map(([name, field]) => [
+            name,
+            types(field.$ref === undefined ? field : schemas[field.$ref.split("/").at(-1)]),
+          ]),
+        ),
+        errorStatuses: Object.keys(capability.responses).filter((status) => status !== "200").map(Number),
+      },
+      clone: {
+        path: clonePath,
+        method: "post",
+        operationId: clone.operationId,
+        sourceDatabaseIdRequired: createBranch.required?.includes("sourceDatabaseId") === true,
+        hasSuccessResponse: Object.keys(clone.responses).some((status) => /^2/u.test(status)),
+        errorStatuses: Object.keys(clone.responses).filter((status) => !/^2/u.test(status)).map(Number),
+      },
     },
   };
 }

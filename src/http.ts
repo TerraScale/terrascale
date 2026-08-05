@@ -19,6 +19,7 @@ export type TerraScaleRouteName =
   | `auth.${string}`
   | `backups.${string}`
   | `billing.${string}`
+  | `databaseBranches.${string}`
   | `databases.${string}`
   | `documents.${string}`
   | `m2m.${string}`

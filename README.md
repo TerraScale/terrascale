@@ -62,6 +62,11 @@ The public client follows the backed `TerraScale.Platform` REST surface:
 - Project databases: list/create/get/delete under
   `/api/v1/projects/{projectId}/databases`, with environment list/get/create/delete
   under `/api/v1/projects/{projectId}/databases/{databaseId}/environments`.
+- Physical database branching: `client.databaseBranches.getCapability` reads
+  `/api/v1/projects/{projectId}/database-branches/capability` and
+  `requestClone` sends the typed clone request to `/api/v1/projects/{projectId}/database-branches`.
+  The currently admitted state is fail-closed (`"unavailable"`): clone has no success response and returns
+  the typed `503` failure until Platform reports otherwise.
 - Project queues and topics: create/list/get/delete, publish/peek/purge, and
   at-least-once receive/complete/abandon/dead-letter/renew-lock under
   `/api/v1/projects/{projectId}/queues`. Received messages carry an opaque,

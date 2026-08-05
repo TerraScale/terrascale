@@ -14,6 +14,7 @@ export type {
   AuditClient,
   AuthClient,
   BackupsClient,
+  DatabaseBranchesClient,
   BillingClient,
   DatabasesClient,
   DocumentsClient,

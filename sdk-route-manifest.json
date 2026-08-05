@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 158,
+  "routeCount": 160,
   "routes": [
     {
       "base": "api",
@@ -826,6 +826,25 @@
       "method": "DELETE",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}",
       "responseType": "DeletedProjectDatabaseResponse"
+    },
+    {
+      "base": "api",
+      "client": "databaseBranches",
+      "operation": "getCapability",
+      "routeName": "databaseBranches.getCapability",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/database-branches/capability",
+      "responseType": "DatabaseBranchCapabilityResponse"
+    },
+    {
+      "base": "api",
+      "client": "databaseBranches",
+      "operation": "requestClone",
+      "routeName": "databaseBranches.requestClone",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/database-branches",
+      "requestType": "CreateDatabaseBranchRequest",
+      "responseType": "never"
     },
     {
       "base": "api",
