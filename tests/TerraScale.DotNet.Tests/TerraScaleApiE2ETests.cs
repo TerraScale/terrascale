@@ -132,6 +132,13 @@ public sealed class TerraScaleApiE2ETests
     public async Task Administration_DeleteUserUsesOneTimeDisposableFixtureAndForbidsStandardBearer()
     {
         var userId = TerraScaleApiE2E.AdminDeleteUserId;
+        var owner = TerraScaleApiE2E.CreateAdminClient();
+        var target = await owner.Administration.GetUserAsync(userId);
+        if (target.Owner)
+        {
+            throw new SkipTestException("The configured deletion fixture must be a confirmed disposable non-owner user.");
+        }
+
         var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
             ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
         await RequireNonOwnerAdminDeniedAsync(standardBearer);
@@ -139,8 +146,8 @@ public sealed class TerraScaleApiE2ETests
             standardBearer.Administration.DeleteUserAsync(userId));
         await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
 
-        var owner = TerraScaleApiE2E.CreateAdminClient();
         var deleted = await owner.Administration.DeleteUserAsync(userId);
+        await Assert.That(target.Owner).IsFalse();
         await Assert.That(deleted).IsTrue();
     }
 
