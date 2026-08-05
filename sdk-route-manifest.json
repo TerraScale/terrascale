@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 160,
+  "routeCount": 185,
   "routes": [
     {
       "base": "api",
@@ -343,6 +343,239 @@
       "method": "DELETE",
       "pathTemplate": "/api/v1/account/sessions",
       "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "listDevices",
+      "routeName": "auth.devices.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/account/devices",
+      "responseType": "ListTrustedDevicesResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "trustDevice",
+      "routeName": "auth.devices.trust",
+      "method": "POST",
+      "pathTemplate": "/api/v1/account/devices/{contextKey}/trust",
+      "responseType": "TrustedDevice"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "untrustDevice",
+      "routeName": "auth.devices.untrust",
+      "method": "POST",
+      "pathTemplate": "/api/v1/account/devices/{contextKey}/untrust",
+      "responseType": "TrustedDevice"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "removeDevice",
+      "routeName": "auth.devices.remove",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/account/devices/{contextKey}",
+      "responseType": "void"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "listTrustedIps",
+      "routeName": "auth.trustedIps.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/account/trusted-ips",
+      "responseType": "ListTrustedIpsResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "addTrustedIp",
+      "routeName": "auth.trustedIps.add",
+      "method": "POST",
+      "pathTemplate": "/api/v1/account/trusted-ips",
+      "requestType": "AddTrustedIpRequest",
+      "responseType": "TrustedIp"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "removeTrustedIp",
+      "routeName": "auth.trustedIps.remove",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/account/trusted-ips/{ipAddress}",
+      "responseType": "TrustedIpMutationResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "listPasskeys",
+      "routeName": "auth.passkeys.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/account/passkeys",
+      "responseType": "ListPasskeysResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "getPasskeyRegistrationOptions",
+      "routeName": "auth.passkeys.registrationOptions",
+      "method": "POST",
+      "pathTemplate": "/api/v1/account/passkeys/register/options",
+      "responseType": "PasskeyOptionsResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "completePasskeyRegistration",
+      "routeName": "auth.passkeys.register",
+      "method": "POST",
+      "pathTemplate": "/api/v1/account/passkeys/register",
+      "requestType": "CompletePasskeyRegistrationRequest",
+      "responseType": "Passkey"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "updatePasskey",
+      "routeName": "auth.passkeys.update",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/account/passkeys/{credentialId}",
+      "requestType": "UpdatePasskeyRequest",
+      "responseType": "Passkey"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "deletePasskey",
+      "routeName": "auth.passkeys.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/account/passkeys/{credentialId}",
+      "responseType": "DeletePasskeyResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "getPasskeyAuthenticationOptions:global",
+      "routeName": "auth.passkeys.authenticationOptions",
+      "method": "POST",
+      "pathTemplate": "/api/v1/account/passkeys/authenticate/options",
+      "requestType": "GetPasskeyAuthenticationOptionsRequest",
+      "responseType": "PasskeyOptionsResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "getPasskeyAuthenticationOptions:project",
+      "routeName": "auth.passkeys.authenticationOptions",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/passkeys/authenticate/options",
+      "requestType": "GetPasskeyAuthenticationOptionsRequest",
+      "responseType": "PasskeyOptionsResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "authenticateWithPasskey:global",
+      "routeName": "auth.passkeys.authenticate",
+      "method": "POST",
+      "pathTemplate": "/api/v1/account/passkeys/authenticate",
+      "requestType": "AuthenticateWithPasskeyRequest",
+      "responseType": "AuthTokenResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "authenticateWithPasskey:project",
+      "routeName": "auth.passkeys.authenticate",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/auth/passkeys/authenticate",
+      "requestType": "AuthenticateWithPasskeyRequest",
+      "responseType": "AuthTokenResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "listAccountTokens",
+      "routeName": "auth.tokens.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/account/tokens",
+      "responseType": "ListAccountTokensResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "revokeAccountToken",
+      "routeName": "auth.tokens.revoke",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/account/tokens/{tokenId}",
+      "responseType": "RevokeAllAccountTokensResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "revokeAllAccountTokens",
+      "routeName": "auth.tokens.revokeAll",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/account/tokens",
+      "responseType": "RevokeAllAccountTokensResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "exportAccountData",
+      "routeName": "auth.account.export",
+      "method": "GET",
+      "pathTemplate": "/api/v1/account/export",
+      "responseType": "AccountExportData"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "initiateAccountDeletion",
+      "routeName": "auth.account.deletion.initiate",
+      "method": "POST",
+      "pathTemplate": "/api/v1/users/me/delete",
+      "requestType": "InitiateAccountDeletionRequest",
+      "responseType": "AccountDeletionResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "getAccountDeletionStatus",
+      "routeName": "auth.account.deletion.status",
+      "method": "GET",
+      "pathTemplate": "/api/v1/users/me/delete/status",
+      "responseType": "AccountDeletionStatusResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "cancelAccountDeletion",
+      "routeName": "auth.account.deletion.cancel",
+      "method": "POST",
+      "pathTemplate": "/api/v1/users/me/delete/cancel",
+      "responseType": "AccountDeletionResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "getLoginHistory",
+      "routeName": "auth.loginHistory.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/account/login-history",
+      "responseType": "ListLoginHistoryResponse"
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "getSuspiciousLogins",
+      "routeName": "auth.loginHistory.suspicious",
+      "method": "GET",
+      "pathTemplate": "/api/v1/account/login-history/suspicious",
+      "responseType": "ListLoginHistoryResponse"
     },
     {
       "base": "auth",

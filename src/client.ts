@@ -49,6 +49,25 @@ export const sdkRouteManifest = {
     generateRecoveryCodes: `${apiRoot}/auth/mfa/recovery-codes/generate`,
     recoveryCodeCount: `${apiRoot}/auth/mfa/recovery-codes/count`,
     verifyRecoveryCode: `${apiRoot}/auth/mfa/recovery-codes/verify`,
+    accountDevices: `${apiRoot}/account/devices`,
+    accountDevice: (contextKey: string) =>
+      `${apiRoot}/account/devices/${encodeURIComponent(contextKey)}`,
+    trustedIps: `${apiRoot}/account/trusted-ips`,
+    trustedIp: (ipAddress: string) => `${apiRoot}/account/trusted-ips/${encodeURIComponent(ipAddress)}`,
+    passkeys: `${apiRoot}/account/passkeys`,
+    passkey: (credentialId: string) => `${apiRoot}/account/passkeys/${encodeURIComponent(credentialId)}`,
+    passkeyAuthentication: `${apiRoot}/account/passkeys/authenticate`,
+    passkeyAuthenticationOptions: `${apiRoot}/account/passkeys/authenticate/options`,
+    passkeyRegistration: `${apiRoot}/account/passkeys/register`,
+    passkeyRegistrationOptions: `${apiRoot}/account/passkeys/register/options`,
+    accountTokens: `${apiRoot}/account/tokens`,
+    accountToken: (tokenId: Ulid) => `${apiRoot}/account/tokens/${ulidPathSegment(tokenId)}`,
+    accountExport: `${apiRoot}/account/export`,
+    accountDeletion: `${apiRoot}/users/me/delete`,
+    accountDeletionStatus: `${apiRoot}/users/me/delete/status`,
+    accountDeletionCancel: `${apiRoot}/users/me/delete/cancel`,
+    accountLoginHistory: `${apiRoot}/account/login-history`,
+    suspiciousAccountLogins: `${apiRoot}/account/login-history/suspicious`,
     project: {
       register: (projectId: Ulid) => `${projectAuthRoot(projectId)}/signup`,
       verifyEmail: (projectId: Ulid) => `${projectAuthRoot(projectId)}/verify-email`,
@@ -66,6 +85,10 @@ export const sdkRouteManifest = {
       refresh: (projectId: Ulid) => `${projectAuthRoot(projectId)}/refresh`,
       signOut: (projectId: Ulid) => `${projectAuthRoot(projectId)}/logout`,
       providers: (projectId: Ulid) => `${projectAuthRoot(projectId)}/providers`,
+      passkeyAuthentication: (projectId: Ulid) =>
+        `${projectAuthRoot(projectId)}/passkeys/authenticate`,
+      passkeyAuthenticationOptions: (projectId: Ulid) =>
+        `${projectAuthRoot(projectId)}/passkeys/authenticate/options`,
     },
   },
 } as const;
@@ -514,6 +537,100 @@ export class AuthClient {
       path: sdkRouteManifest.auth.accountSessions,
       routeName: "auth.sessions.revokeOther",
     });
+  }
+
+  listDevices(
+    query?: Models.AccountSecurityPageRequest,
+  ): Promise<TerraScaleResult<Models.ListTrustedDevicesResponse>> {
+    return this.#http.request({ base: "auth", method: "GET", path: sdkRouteManifest.auth.accountDevices, routeName: "auth.devices.list", query });
+  }
+
+  trustDevice(contextKey: string): Promise<TerraScaleResult<Models.TrustedDevice>> {
+    return this.#http.request({ base: "auth", method: "POST", path: `${sdkRouteManifest.auth.accountDevice(contextKey)}/trust`, routeName: "auth.devices.trust" });
+  }
+
+  untrustDevice(contextKey: string): Promise<TerraScaleResult<Models.TrustedDevice>> {
+    return this.#http.request({ base: "auth", method: "POST", path: `${sdkRouteManifest.auth.accountDevice(contextKey)}/untrust`, routeName: "auth.devices.untrust" });
+  }
+
+  removeDevice(contextKey: string): Promise<TerraScaleResult<void>> {
+    return this.#http.request({ base: "auth", method: "DELETE", path: sdkRouteManifest.auth.accountDevice(contextKey), routeName: "auth.devices.remove" });
+  }
+
+  listTrustedIps(): Promise<TerraScaleResult<Models.ListTrustedIpsResponse>> {
+    return this.#http.request({ base: "auth", method: "GET", path: sdkRouteManifest.auth.trustedIps, routeName: "auth.trustedIps.list" });
+  }
+
+  addTrustedIp(request: Models.AddTrustedIpRequest): Promise<TerraScaleResult<Models.TrustedIp>> {
+    return this.#http.request({ base: "auth", method: "POST", path: sdkRouteManifest.auth.trustedIps, routeName: "auth.trustedIps.add", body: request });
+  }
+
+  removeTrustedIp(ipAddress: string): Promise<TerraScaleResult<Models.TrustedIpMutationResponse>> {
+    return this.#http.request({ base: "auth", method: "DELETE", path: sdkRouteManifest.auth.trustedIp(ipAddress), routeName: "auth.trustedIps.remove" });
+  }
+
+  listPasskeys(): Promise<TerraScaleResult<Models.ListPasskeysResponse>> {
+    return this.#http.request({ base: "auth", method: "GET", path: sdkRouteManifest.auth.passkeys, routeName: "auth.passkeys.list" });
+  }
+
+  getPasskeyRegistrationOptions(): Promise<TerraScaleResult<Models.PasskeyOptionsResponse>> {
+    return this.#http.request({ base: "auth", method: "POST", path: sdkRouteManifest.auth.passkeyRegistrationOptions, routeName: "auth.passkeys.registrationOptions" });
+  }
+
+  completePasskeyRegistration(request: Models.CompletePasskeyRegistrationRequest): Promise<TerraScaleResult<Models.Passkey>> {
+    return this.#http.request({ base: "auth", method: "POST", path: sdkRouteManifest.auth.passkeyRegistration, routeName: "auth.passkeys.register", body: request });
+  }
+
+  updatePasskey(credentialId: string, request: Models.UpdatePasskeyRequest): Promise<TerraScaleResult<Models.Passkey>> {
+    return this.#http.request({ base: "auth", method: "PUT", path: sdkRouteManifest.auth.passkey(credentialId), routeName: "auth.passkeys.update", body: request });
+  }
+
+  deletePasskey(credentialId: string): Promise<TerraScaleResult<Models.DeletePasskeyResponse>> {
+    return this.#http.request({ base: "auth", method: "DELETE", path: sdkRouteManifest.auth.passkey(credentialId), routeName: "auth.passkeys.delete" });
+  }
+
+  getPasskeyAuthenticationOptions(request: Models.GetPasskeyAuthenticationOptionsRequest, projectId?: Ulid): Promise<TerraScaleResult<Models.PasskeyOptionsResponse>> {
+    return this.#http.request({ base: "auth", method: "POST", path: authRoute(this.#http, projectId, sdkRouteManifest.auth.passkeyAuthenticationOptions, sdkRouteManifest.auth.project.passkeyAuthenticationOptions), routeName: "auth.passkeys.authenticationOptions", headerPolicy: "anonymous", body: request });
+  }
+
+  authenticateWithPasskey(request: Models.AuthenticateWithPasskeyRequest, projectId?: Ulid): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
+    return this.#http.request({ base: "auth", method: "POST", path: authRoute(this.#http, projectId, sdkRouteManifest.auth.passkeyAuthentication, sdkRouteManifest.auth.project.passkeyAuthentication), routeName: "auth.passkeys.authenticate", headerPolicy: "anonymous", body: request });
+  }
+
+  listAccountTokens(query?: Models.AccountSecurityPageRequest): Promise<TerraScaleResult<Models.ListAccountTokensResponse>> {
+    return this.#http.request({ base: "auth", method: "GET", path: sdkRouteManifest.auth.accountTokens, routeName: "auth.tokens.list", query });
+  }
+
+  revokeAccountToken(tokenId: Ulid): Promise<TerraScaleResult<Models.RevokeAllAccountTokensResponse>> {
+    return this.#http.request({ base: "auth", method: "DELETE", path: sdkRouteManifest.auth.accountToken(tokenId), routeName: "auth.tokens.revoke" });
+  }
+
+  revokeAllAccountTokens(): Promise<TerraScaleResult<Models.RevokeAllAccountTokensResponse>> {
+    return this.#http.request({ base: "auth", method: "DELETE", path: sdkRouteManifest.auth.accountTokens, routeName: "auth.tokens.revokeAll" });
+  }
+
+  exportAccountData(): Promise<TerraScaleResult<Models.AccountExportData>> {
+    return this.#http.request({ base: "auth", method: "GET", path: sdkRouteManifest.auth.accountExport, routeName: "auth.account.export" });
+  }
+
+  initiateAccountDeletion(request: Models.InitiateAccountDeletionRequest): Promise<TerraScaleResult<Models.AccountDeletionResponse>> {
+    return this.#http.request({ base: "auth", method: "POST", path: sdkRouteManifest.auth.accountDeletion, routeName: "auth.account.deletion.initiate", body: request });
+  }
+
+  getAccountDeletionStatus(): Promise<TerraScaleResult<Models.AccountDeletionStatusResponse>> {
+    return this.#http.request({ base: "auth", method: "GET", path: sdkRouteManifest.auth.accountDeletionStatus, routeName: "auth.account.deletion.status" });
+  }
+
+  cancelAccountDeletion(): Promise<TerraScaleResult<Models.AccountDeletionResponse>> {
+    return this.#http.request({ base: "auth", method: "POST", path: sdkRouteManifest.auth.accountDeletionCancel, routeName: "auth.account.deletion.cancel" });
+  }
+
+  getLoginHistory(query?: Models.AccountSecurityPageRequest): Promise<TerraScaleResult<Models.ListLoginHistoryResponse>> {
+    return this.#http.request({ base: "auth", method: "GET", path: sdkRouteManifest.auth.accountLoginHistory, routeName: "auth.loginHistory.list", query });
+  }
+
+  getSuspiciousLogins(query?: Models.AccountSecurityPageRequest): Promise<TerraScaleResult<Models.ListLoginHistoryResponse>> {
+    return this.#http.request({ base: "auth", method: "GET", path: sdkRouteManifest.auth.suspiciousAccountLogins, routeName: "auth.loginHistory.suspicious", query });
   }
 
   updateProfile(

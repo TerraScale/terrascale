@@ -108,6 +108,151 @@ export type ListAccountSessionsResponse = {
   readonly nextCursor?: string;
 };
 
+export type AccountSecurityPageRequest = {
+  readonly cursor?: string;
+  readonly limit?: number;
+};
+
+export type TrustedDevice = {
+  readonly contextKey: string;
+  readonly deviceName: string;
+  readonly deviceType: string;
+  readonly browser: string;
+  readonly os: string;
+  readonly trusted: boolean;
+  readonly lastSeenAt?: Timestamp | null;
+  readonly firstSeenAt?: Timestamp | null;
+};
+
+export type ListTrustedDevicesResponse = {
+  readonly devices: readonly TrustedDevice[];
+  readonly nextCursor?: string | null;
+};
+
+export type TrustedIp = {
+  readonly ipAddress: string;
+  readonly description: string;
+  readonly addedAt?: Timestamp | null;
+};
+
+export type AddTrustedIpRequest = {
+  readonly ipAddress: string;
+  readonly description?: string;
+};
+
+export type ListTrustedIpsResponse = {
+  readonly ipAddresses: readonly TrustedIp[];
+};
+
+export type TrustedIpMutationResponse = {
+  readonly ipAddress: string;
+  readonly removed: boolean;
+};
+
+export type Passkey = {
+  readonly credentialId: string;
+  readonly deviceName: string;
+  readonly credentialType: string;
+  readonly registeredAt?: Timestamp | null;
+  readonly lastUsedAt?: Timestamp | null;
+};
+
+export type ListPasskeysResponse = {
+  readonly passkeys: readonly Passkey[];
+};
+
+export type GetPasskeyAuthenticationOptionsRequest = {
+  readonly email?: string;
+};
+
+export type PasskeyOptionsResponse = {
+  readonly optionsJson: string;
+};
+
+export type AuthenticateWithPasskeyRequest = {
+  readonly assertionResponseJson: string;
+};
+
+export type CompletePasskeyRegistrationRequest = {
+  readonly attestationResponseJson: string;
+  readonly deviceName?: string;
+};
+
+export type UpdatePasskeyRequest = {
+  readonly deviceName: string;
+};
+
+export type DeletePasskeyResponse = {
+  readonly credentialId: string;
+  readonly deleted: boolean;
+};
+
+export type RefreshToken = {
+  readonly tokenId: Ulid;
+  readonly deviceType: string;
+  readonly browser: string;
+  readonly ipAddress: string;
+  readonly createdAt?: Timestamp | null;
+  readonly expiresAt?: Timestamp | null;
+  readonly isCurrent: boolean;
+};
+
+export type ListAccountTokensResponse = {
+  readonly tokens: readonly RefreshToken[];
+  readonly nextCursor?: string | null;
+};
+
+export type RevokeAllAccountTokensResponse = {
+  readonly revokedCount: number;
+};
+
+export type AccountExportData = {
+  readonly projectId: ProjectId;
+  readonly userId: UserId;
+  readonly email: string;
+  readonly name: string;
+  readonly roles: readonly string[];
+  readonly sessions: readonly AccountSession[];
+  readonly tokens: readonly RefreshToken[];
+  readonly exportedAt?: Timestamp | null;
+};
+
+export type InitiateAccountDeletionRequest = {
+  readonly password: string;
+  readonly reason?: string;
+};
+
+export type AccountDeletionResponse = {
+  readonly success: boolean;
+  readonly message: string;
+  readonly scheduledAt?: Timestamp | null;
+};
+
+export type AccountDeletionStatusResponse = {
+  readonly pendingDeletion: boolean;
+  readonly reason: string;
+  readonly requestedAt?: Timestamp | null;
+  readonly scheduledAt?: Timestamp | null;
+};
+
+export type LoginHistoryEntry = {
+  readonly loginId: Ulid;
+  readonly ipAddress: string;
+  readonly location: string;
+  readonly deviceType: string;
+  readonly browser: string;
+  readonly os: string;
+  readonly success: boolean;
+  readonly failureReason: string;
+  readonly suspicious: boolean;
+  readonly timestamp?: Timestamp | null;
+};
+
+export type ListLoginHistoryResponse = {
+  readonly entries: readonly LoginHistoryEntry[];
+  readonly nextCursor?: string | null;
+};
+
 export type UpdateProfileRequest = {
   readonly displayName: string;
   readonly phoneNumber: string;

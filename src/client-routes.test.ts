@@ -138,7 +138,7 @@ describe("TerraScaleClient route contracts", () => {
       manifest.routes.map(routeManifestCore),
       capturedRoutes.map(routeManifestCore),
     );
-    assert.equal(manifest.routeCount, 160);
+    assert.equal(manifest.routeCount, 185);
     assert.equal(manifest.routeCount, capturedRoutes.length);
     assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
     assert.deepEqual(
@@ -296,6 +296,42 @@ describe("TerraScaleClient route contracts", () => {
       currentPassword: "current-password",
       newPassword: "new-password",
     });
+  });
+
+  test("uses authenticated account-security routes and anonymous passkey exchanges", async () => {
+    const requests: Request[] = [];
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      authBaseUrl: "https://auth.terrascale.test",
+      projectId,
+      accessToken: "account-token",
+      fetch: async input => {
+        requests.push(input instanceof Request ? input : new Request(input));
+        return Response.json({});
+      },
+    });
+
+    await client.auth.listTrustedIps();
+    await client.auth.getPasskeyAuthenticationOptions({ email: "ada@example.test" });
+
+    assert.equal(requests[0]?.headers.get("authorization"), "Bearer account-token");
+    assert.equal(requests[0]?.headers.get("x-terrascale-project-id"), projectId);
+    assert.equal(requests[1]?.headers.has("authorization"), false);
+    assert.equal(requests[1]?.headers.has("x-terrascale-project-id"), false);
+  });
+
+  test("maps account-security authorization errors through the typed result", async () => {
+    for (const [status, kind] of [[401, "authentication"], [403, "authorization"]] as const) {
+      const client = createTerraScaleClient({
+        apiBaseUrl: "https://api.terrascale.test",
+        authBaseUrl: "https://auth.terrascale.test",
+        fetch: async () => Response.json({ code: "TERRASCALE-401", message: "Denied." }, { status }),
+      });
+      const result = await client.auth.getLoginHistory();
+
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.kind, kind);
+    }
   });
 
   test("uses root repository routes without environment scope", async () => {

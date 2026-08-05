@@ -25,6 +25,7 @@ const sampleIds = {
   restoreId: toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV"),
   savedQueryId: toUlid("01SRZ3NDEKTSV4RRFFQ69G5FAV"),
   sessionId: toUlid("01JRZ3NDEKTSV4RRFFQ69G5FAV"),
+  tokenId: toUlid("01VRZ3NDEKTSV4RRFFQ69G5FAV"),
   userId: toUlid("01KRZ3NDEKTSV4RRFFQ69G5FAV"),
 } as const;
 
@@ -32,6 +33,9 @@ const pathTemplateSegments = new Map<string, string>(
   Object.entries(sampleIds).map(([name, value]) => [value, `{${name}}`]),
 );
 pathTemplateSegments.set("sfo", "{regionCode}");
+pathTemplateSegments.set("device-context", "{contextKey}");
+pathTemplateSegments.set("credential-id", "{credentialId}");
+pathTemplateSegments.set("203.0.113.10", "{ipAddress}");
 
 export type CapturedSdkRoute = {
   readonly base: TerraScaleBase;
@@ -467,6 +471,137 @@ const captureOperations: readonly CaptureOperation[] = [
     client: "auth",
     operation: "revokeOtherSessions",
     invoke: (client) => client.auth.revokeOtherSessions(),
+  },
+  {
+    client: "auth",
+    operation: "listDevices",
+    invoke: (client) => client.auth.listDevices({ cursor: "next", limit: 25 }),
+  },
+  {
+    client: "auth",
+    operation: "trustDevice",
+    invoke: (client) => client.auth.trustDevice("device-context"),
+  },
+  {
+    client: "auth",
+    operation: "untrustDevice",
+    invoke: (client) => client.auth.untrustDevice("device-context"),
+  },
+  {
+    client: "auth",
+    operation: "removeDevice",
+    invoke: (client) => client.auth.removeDevice("device-context"),
+  },
+  {
+    client: "auth",
+    operation: "listTrustedIps",
+    invoke: (client) => client.auth.listTrustedIps(),
+  },
+  {
+    client: "auth",
+    operation: "addTrustedIp",
+    invoke: (client) => client.auth.addTrustedIp({ ipAddress: "203.0.113.10", description: "Office" }),
+  },
+  {
+    client: "auth",
+    operation: "removeTrustedIp",
+    invoke: (client) => client.auth.removeTrustedIp("203.0.113.10"),
+  },
+  {
+    client: "auth",
+    operation: "listPasskeys",
+    invoke: (client) => client.auth.listPasskeys(),
+  },
+  {
+    client: "auth",
+    operation: "getPasskeyRegistrationOptions",
+    invoke: (client) => client.auth.getPasskeyRegistrationOptions(),
+  },
+  {
+    client: "auth",
+    operation: "completePasskeyRegistration",
+    invoke: (client) => client.auth.completePasskeyRegistration({ attestationResponseJson: "{}", deviceName: "Laptop" }),
+  },
+  {
+    client: "auth",
+    operation: "updatePasskey",
+    invoke: (client) => client.auth.updatePasskey("credential-id", { deviceName: "Laptop" }),
+  },
+  {
+    client: "auth",
+    operation: "deletePasskey",
+    invoke: (client) => client.auth.deletePasskey("credential-id"),
+  },
+  {
+    client: "auth",
+    operation: "getPasskeyAuthenticationOptions",
+    variant: "global",
+    invoke: (client) => client.auth.getPasskeyAuthenticationOptions({ email: "ada@example.test" }),
+  },
+  {
+    client: "auth",
+    operation: "getPasskeyAuthenticationOptions",
+    variant: "project",
+    defaultProject: true,
+    invoke: (client) => client.auth.getPasskeyAuthenticationOptions({ email: "ada@example.test" }),
+  },
+  {
+    client: "auth",
+    operation: "authenticateWithPasskey",
+    variant: "global",
+    invoke: (client) => client.auth.authenticateWithPasskey({ assertionResponseJson: "{}" }),
+  },
+  {
+    client: "auth",
+    operation: "authenticateWithPasskey",
+    variant: "project",
+    defaultProject: true,
+    invoke: (client) => client.auth.authenticateWithPasskey({ assertionResponseJson: "{}" }),
+  },
+  {
+    client: "auth",
+    operation: "listAccountTokens",
+    invoke: (client) => client.auth.listAccountTokens({ cursor: "next", limit: 25 }),
+  },
+  {
+    client: "auth",
+    operation: "revokeAccountToken",
+    invoke: (client) => client.auth.revokeAccountToken(sampleIds.tokenId),
+  },
+  {
+    client: "auth",
+    operation: "revokeAllAccountTokens",
+    invoke: (client) => client.auth.revokeAllAccountTokens(),
+  },
+  {
+    client: "auth",
+    operation: "exportAccountData",
+    invoke: (client) => client.auth.exportAccountData(),
+  },
+  {
+    client: "auth",
+    operation: "initiateAccountDeletion",
+    invoke: (client) => client.auth.initiateAccountDeletion({ password: "current-password", reason: "No longer needed" }),
+  },
+  {
+    client: "auth",
+    operation: "getAccountDeletionStatus",
+    invoke: (client) => client.auth.getAccountDeletionStatus(),
+  },
+  {
+    client: "auth",
+    operation: "cancelAccountDeletion",
+    invoke: (client) => client.auth.cancelAccountDeletion(),
+  },
+  {
+    client: "auth",
+    operation: "getLoginHistory",
+    invoke: (client) => client.auth.getLoginHistory({ cursor: "next", limit: 25 }),
+  },
+  {
+    client: "auth",
+    operation: "getSuspiciousLogins",
+    invoke: (client) => client.auth.getSuspiciousLogins({ cursor: "next", limit: 25 }),
   },
   {
     client: "auth",

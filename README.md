@@ -101,6 +101,9 @@ The public client follows the backed `TerraScale.Platform` REST surface:
   `restoredDatabaseId`.
 - Account identity: typed external login and email-change initiation/verification
   through the public Auth API.
+- Account security: passkey registration/authentication, trusted devices and IPs,
+  account token listing/revocation/export, deletion status/initiation/cancellation,
+  and login/suspicious-login history through `client.auth`.
 - Onboarding: state, account information, MFA choice, checkout creation with
   explicit success/cancel URLs, payment validation, and initial
   organization/project creation under `/api/v1/onboarding`.
