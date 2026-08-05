@@ -69,7 +69,7 @@ public sealed class TerraScaleBillingClientTests
     }
 
     [Test]
-    public async Task CreateCheckoutSessionAsync_SendsProviderNeutralPlanSelectionAndRejectsIllegalCombinations()
+    public async Task CreateCheckoutSessionAsync_SendsOnlyCanonicalProviderNeutralFieldsAndRejectsIllegalCombinations()
     {
         using var handler = new BillingRecordingHandler();
         using var httpClient = new HttpClient(handler);
@@ -79,9 +79,21 @@ public sealed class TerraScaleBillingClientTests
             BearerTokenProvider = static _ => ValueTask.FromResult("test-token")
         });
 
+        #pragma warning disable CS0618 // Compatibility members must be proven absent from the wire contract.
+        var checkoutRequest = new TerraScaleCreateCheckoutSessionRequest
+        {
+            PlanId = "plan-a",
+            BillingInterval = "annual",
+            Provider = "polar",
+            SuccessUrl = "https://app.example.test/checkout/success",
+            CancelUrl = "https://app.example.test/checkout/cancel",
+            CustomerEmail = "customer@example.test"
+        };
+        #pragma warning restore CS0618
+
         var checkout = await client.Billing.CreateCheckoutSessionAsync(
             "organization-a",
-            new TerraScaleCreateCheckoutSessionRequest() { PlanId = "plan-a", BillingInterval = "annual", Provider = "polar" });
+            checkoutRequest);
         var bothPlanAndPrice = await Assert.ThrowsAsync<ArgumentException>(() => client.Billing.CreateCheckoutSessionAsync(
             "organization-a",
             new TerraScaleCreateCheckoutSessionRequest("legacy-price") { PlanId = "plan-a" }));
@@ -97,7 +109,7 @@ public sealed class TerraScaleBillingClientTests
 
         await Assert.That(checkout.SessionId).IsEqualTo("checkout-a");
         await Assert.That(handler.Requests).Count().IsEqualTo(1);
-        await Assert.That(handler.Requests[0].Body).IsEqualTo("{\"priceId\":null,\"successUrl\":null,\"cancelUrl\":null,\"customerEmail\":null,\"quantity\":null,\"planId\":\"plan-a\",\"billingInterval\":\"annual\",\"provider\":\"polar\"}");
+        await Assert.That(handler.Requests[0].Body).IsEqualTo("{\"priceId\":null,\"quantity\":null,\"planId\":\"plan-a\",\"billingInterval\":\"annual\",\"provider\":\"polar\"}");
         await Assert.That(bothPlanAndPrice).IsNotNull();
         await Assert.That(invalidInterval).IsNotNull();
         await Assert.That(invalidProvider).IsNotNull();

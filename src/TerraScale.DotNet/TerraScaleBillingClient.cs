@@ -1,5 +1,7 @@
 namespace TerraScale.DotNet;
 
+using System.Text.Json.Serialization;
+
 /// <summary>
 /// Client for provider-neutral TerraScale organization billing endpoints.
 /// </summary>
@@ -292,12 +294,21 @@ public sealed record TerraScaleBillingAccessMember(
 public sealed record TerraScaleUpdateBillingAccessRequest(bool Enabled);
 
 /// <summary>
-/// Request body for creating a payment-provider checkout session.
+/// Request body for creating a payment-provider checkout session. The supported inputs are
+/// <see cref="PlanId"/>, <see cref="BillingInterval"/>, <see cref="Provider"/>, optional
+/// <see cref="Quantity"/>, and the deprecated legacy <see cref="PriceId"/>. The retained
+/// callback and customer-email compatibility members are never sent because checkout does not use them.
 /// </summary>
 public sealed record TerraScaleCreateCheckoutSessionRequest(
     string? PriceId = null,
+    [property: Obsolete("Checkout does not use SuccessUrl. This compatibility member is not sent to TerraScale.")]
+    [property: JsonIgnore]
     string? SuccessUrl = null,
+    [property: Obsolete("Checkout does not use CancelUrl. This compatibility member is not sent to TerraScale.")]
+    [property: JsonIgnore]
     string? CancelUrl = null,
+    [property: Obsolete("Checkout does not use CustomerEmail. This compatibility member is not sent to TerraScale.")]
+    [property: JsonIgnore]
     string? CustomerEmail = null,
     int? Quantity = null)
 {

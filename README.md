@@ -8,6 +8,10 @@ Public clients opt in by configuring `TerraScaleClientOptions.IdempotencyKeyFact
 
 The SDK calls verified TerraScale public endpoints. It covers region catalog, database, repository, document, schema, TQL, changes, billing, project, project database, environment, queue, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, restore, and v2 saved-query conditional-update operations. It does not call TerraBase storage directly and does not cover admin, user-management, organization-management, auth-provider, invitation, audit, or Dashboard-internal test endpoints.
 
+## Billing checkout
+
+Create a checkout session with a provider-neutral `PlanId`, `BillingInterval` (`monthly` or `annual`), optional `Provider` (`polar` or `stripe`), and optional `Quantity`. `PriceId` remains available only for legacy integrations. `SuccessUrl`, `CancelUrl`, and `CustomerEmail` remain as obsolete compatibility members but are not sent: the checkout contract does not use them.
+
 ## Install
 
 Use the project reference in this checkout, or install the package once it is published:
