@@ -155,6 +155,53 @@ test("uses the Streamable HTTP session lifecycle without credential bleed", asyn
   }
 });
 
+test("keeps concurrent HTTP session credentials isolated across delayed public calls", async () => {
+  const secretA = "concurrent-caller-a";
+  const secretB = "concurrent-caller-b";
+  const publicRequests: string[] = [];
+  let markBothRequests: () => void = () => undefined;
+  const bothRequests = new Promise<void>((resolve) => { markBothRequests = resolve; });
+  let releaseSecondResponse: () => void = () => undefined;
+  const secondResponse = new Promise<void>((resolve) => { releaseSecondResponse = resolve; });
+  let markFirstAborted: () => void = () => undefined;
+  const firstAborted = new Promise<void>((resolve) => { markFirstAborted = resolve; });
+  const boundary = await publicBoundary((request, response) => {
+    const authorization = request.headers.authorization ?? "";
+    publicRequests.push(authorization);
+    if (publicRequests.length === 2) markBothRequests();
+    if (authorization === `Bearer ${secretA}`) {
+      request.once("aborted", markFirstAborted);
+      return;
+    }
+    void secondResponse.then(() => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        userId: "01ARZ3NDEKTSV4RRFFQ69G5FAV", email: "caller@example.test", name: "Caller B", phoneNumber: "", avatarUrl: "", personalOrgId: "01ARZ3NDEKTSV4RRFFQ69G5FAW", activeOrgId: "01ARZ3NDEKTSV4RRFFQ69G5FAX", permissions: [], roles: [],
+      }));
+    });
+  });
+  const mcp = await mcpHttpServer(boundary.url, createStructuredLogger((_) => undefined));
+  const first = await connectedHttpClient(mcp.url, secretA);
+  const second = await connectedHttpClient(mcp.url, secretB);
+  try {
+    const abortFirst = new AbortController();
+    const firstResult = first.client.callTool({ name: "identity_get_context" }, undefined, { signal: abortFirst.signal });
+    const secondResult = second.client.callTool({ name: "identity_get_context" });
+    await eventWithin(bothRequests, 1_000);
+    abortFirst.abort();
+    await assert.rejects(firstResult);
+    await eventWithin(firstAborted, 1_000);
+    releaseSecondResponse();
+    assert.deepEqual([...publicRequests].sort(), [`Bearer ${secretA}`, `Bearer ${secretB}`]);
+    assert.match(JSON.stringify(await secondResult), /Caller B/);
+  } finally {
+    await first.client.close();
+    await second.client.close();
+    await mcp.close();
+    await boundary.close();
+  }
+});
+
 test("rejects a slow request body and releases the connection", async () => {
   const mcp = await mcpHttpServer("https://api.terrascale.example", createStructuredLogger((_) => undefined), { bodyTimeoutMs: 1_000, headersTimeoutMs: 50, requestTimeoutMs: 200, keepAliveTimeoutMs: 25, initializeTimeoutMs: 100, maxSessions: 1 });
   const address = new URL(mcp.url);
@@ -246,6 +293,30 @@ test("keeps a live SSE stream beyond the idle deadline", async () => {
   }
 });
 
+test("closes an active SSE stream and frees its session at the absolute TTL", async () => {
+  const secret = "ttl-stream-caller";
+  const mcp = await mcpHttpServer("https://api.terrascale.example", createStructuredLogger((_) => undefined), { maxSessions: 1, sessionIdleTimeoutMs: 25, sessionTtlMs: 200 });
+  const connection = await connectedHttpClient(mcp.url, secret);
+  try {
+    const sessionId = connection.transport.sessionId ?? "";
+    await connection.client.close();
+    const response = await fetch(mcp.url, { headers: { accept: "text/event-stream", authorization: `Bearer ${secret}`, "mcp-protocol-version": "2025-03-26", "mcp-session-id": sessionId } });
+    assert.equal(response.status, 200);
+    const reader = response.body?.getReader();
+    assert.notEqual(reader, undefined);
+    const streamClosed = (async () => {
+      while (!(await (reader?.read() ?? Promise.reject(new Error("sse_reader_unavailable")))).done) continue;
+    })();
+    await eventWithin(streamClosed, 750);
+    assert.equal((await mcpDelete(mcp.url, secret, sessionId)).status, 404);
+    const replacement = await connectedHttpClient(mcp.url, "replacement-after-ttl");
+    await replacement.transport.terminateSession();
+  } finally {
+    await connection.client.close();
+    await mcp.close();
+  }
+});
+
 test("reports listener failures without leaking bind details", async () => {
   const blocker = createServer();
   await listen(blocker, 0, "127.0.0.1", createStructuredLogger((_) => undefined));
@@ -300,6 +371,7 @@ async function publicBoundary(handler: (request: import("node:http").IncomingMes
 async function closeServer(server: Server): Promise<void> {
   if (!server.listening) return;
   server.close();
+  server.closeAllConnections();
   await once(server, "close");
 }
 
