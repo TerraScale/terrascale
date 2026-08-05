@@ -22,6 +22,14 @@
 - A public SDK change is not evidenced by compilation alone: verify the typed client call, source-generated request/response metadata, and real public API E2E success and failure paths. Record the Platform/API dependency and the exact cross-repository commits or outstanding dependency in the handoff.
 - Keep live-service tests environment-gated when an endpoint or credentials are unavailable locally. A skipped, correctly gated real-API test is acceptable; a mock, fake, direct server reference, or weakened assertion is not a substitute.
 - Treat credentials, one-time secrets, tokens, connection strings, and raw sensitive response bodies as secrets: use local environment configuration, never commit them, and redact them from fixtures, test output, logs, commit messages, and cross-repo reports.
+- In a shared checkout, an ownership claim names the exact paths and public behavior
+  being changed. Review working and staged diffs and stage only those paths with
+  explicit `git add <path>`; never use broad staging, index cleanup, reset, or a
+  repository-wide formatter that could capture another task's changes.
+- Real public-API E2E and environment-affecting contract validation run in an
+  exclusive lane for the endpoint, tenant/project/database fixtures, and credentials
+  they use. Do not concurrently create, mutate, delete, or recover the same fixture;
+  include the lane and redacted result in handoff.
 
 ## API Boundary
 
@@ -95,3 +103,8 @@ Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies in full:
 - **Do not** create feature branches or worktrees unless the user explicitly asks; when used, branch and worktree are always paired, and finished work lands back on `develop`.
 - Pushes to `develop` intentionally trigger no Forgejo actions or checks; DevHost supplies validation.
 - `main` is for release/promotion only. Only the `develop` → `main` promotion path may build an immutable SDK release candidate.
+- Immediately before commit and again before push, check `git status`, review the
+  owned-path diff, and `git fetch origin`. If `origin/develop` moved, the checkout
+  is dirty, or a shared-checkout/index lease conflicts, stop and coordinate rather
+  than staging or pushing through it. Handoff identifies owned paths, commit,
+  validation results, Platform dependency commits, and known gaps.
