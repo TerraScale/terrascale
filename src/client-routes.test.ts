@@ -496,6 +496,15 @@ describe("TerraScaleClient route contracts", () => {
       completedAt: "2026-07-05T00:02:00Z",
       errorMessage: null,
     };
+    const backupConfirmationPlan = {
+      action: "backup",
+      projectId,
+      databaseId,
+      databaseName: "primary",
+      requestDigest: "backup-request-digest",
+      confirmationToken: "backup-confirmation-token",
+      expiresAt: "2026-08-05T00:05:00Z",
+    };
     const restorePoint = {
       name: "restore-point-20260705",
       backupId,
@@ -528,6 +537,8 @@ describe("TerraScaleClient route contracts", () => {
       restoreJob,
       restoreJob,
       [restoreJob],
+      backupConfirmationPlan,
+      backupJob,
     ]);
 
     const policyResult = await client.backups.configurePolicy(databaseId, {
@@ -645,6 +656,46 @@ describe("TerraScaleClient route contracts", () => {
     );
     assert.equal(requests[7]?.url.searchParams.get("skip"), "2");
     assert.equal(requests[7]?.url.searchParams.get("take"), "3");
+
+    const planResult = await client.backups.planBackup(databaseId, {
+      operationSessionId: "backup-operation-session",
+    });
+    assert.equal(planResult.ok, true);
+    if (planResult.ok) {
+      assert.deepEqual(planResult.value, backupConfirmationPlan);
+      assert.equal("physicalDatabaseName" in planResult.value, false);
+    }
+    assertRequest(
+      requests[8],
+      "POST",
+      `/api/v1/projects/${projectId}/databases/${databaseId}/backups:plan`,
+    );
+    assert.deepEqual(requests[8]?.body, { operationSessionId: "backup-operation-session" });
+    assert.equal(requests[8]?.headers.has("idempotency-key"), false);
+
+    const executeResult = await client.backups.executeBackup(
+      databaseId,
+      {
+        operationSessionId: "backup-operation-session",
+        confirmationToken: "backup-confirmation-token",
+      },
+      "backup-execution-key",
+    );
+    assert.equal(executeResult.ok, true);
+    if (executeResult.ok) {
+      assert.deepEqual(executeResult.value, backupJob);
+    }
+    assertRequest(
+      requests[9],
+      "POST",
+      `/api/v1/projects/${projectId}/databases/${databaseId}/backups:execute`,
+    );
+    assert.deepEqual(requests[9]?.body, {
+      operationSessionId: "backup-operation-session",
+      confirmationToken: "backup-confirmation-token",
+    });
+    assert.equal(requests[9]?.headers.get("idempotency-key"), "backup-execution-key");
+    assert.equal(requests[9]?.headers.has("x-terrascale-delete-confirmation"), false);
   });
 
   test("uses project auth API key wrappers and rotate/delete routes", async () => {

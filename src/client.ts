@@ -1339,6 +1339,40 @@ export class BackupsClient {
     });
   }
 
+  planBackup(
+    databaseId: Ulid,
+    request: Models.DatabaseBackupConfirmationPlanRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.DatabaseBackupConfirmationPlanResponse>> {
+    validateBackupConfirmationValue(request?.operationSessionId, "operationSessionId", 128);
+
+    return this.#http.request({
+      method: "POST",
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/backups:plan`,
+      routeName: "backups.plan",
+      body: request,
+    });
+  }
+
+  executeBackup(
+    databaseId: Ulid,
+    request: Models.DatabaseBackupConfirmationExecuteRequest,
+    idempotencyKey: string,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.BackupJobResponse>> {
+    validateBackupConfirmationValue(request?.operationSessionId, "operationSessionId", 128);
+    validateBackupConfirmationValue(request?.confirmationToken, "confirmationToken", 8192);
+    validateBackupConfirmationValue(idempotencyKey, "idempotencyKey", 128);
+
+    return this.#http.request({
+      method: "POST",
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/backups:execute`,
+      routeName: "backups.execute",
+      body: request,
+      idempotencyKey,
+    });
+  }
+
   listBackups(
     databaseId: Ulid,
     query?: Models.BackupListQuery,
@@ -2169,6 +2203,16 @@ function toSignupRequest(request: Models.RegisterRequest) {
     lastName,
     verifyUrl: request.verifyUrl ?? request.redirectUrl ?? "",
   };
+}
+
+function validateBackupConfirmationValue(
+  value: unknown,
+  name: string,
+  maximumLength: number,
+): asserts value is string {
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > maximumLength) {
+    throw new TypeError(`${name} must be nonblank and contain at most ${maximumLength} characters.`);
+  }
 }
 
 function projectRootId(http: TerraScaleHttp, projectId: Ulid | undefined): Ulid {

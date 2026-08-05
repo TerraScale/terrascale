@@ -935,6 +935,29 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "backups",
+    operation: "planBackup",
+    defaultProject: true,
+    invoke: (client) =>
+      client.backups.planBackup(sampleIds.databaseId, {
+        operationSessionId: "backup-operation-session",
+      }),
+  },
+  {
+    client: "backups",
+    operation: "executeBackup",
+    defaultProject: true,
+    invoke: (client) =>
+      client.backups.executeBackup(
+        sampleIds.databaseId,
+        {
+          operationSessionId: "backup-operation-session",
+          confirmationToken: "backup-confirmation-token",
+        },
+        "backup-execution-key",
+      ),
+  },
+  {
+    client: "backups",
     operation: "listBackups",
     defaultProject: true,
     invoke: (client) => client.backups.listBackups(sampleIds.databaseId, { skip: 0, take: 25 }),

@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 153,
+  "routeCount": 155,
   "routes": [
     {
       "base": "api",
@@ -993,6 +993,26 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups",
       "requestType": "TriggerBackupRequest",
+      "responseType": "BackupJobResponse"
+    },
+    {
+      "base": "api",
+      "client": "backups",
+      "operation": "planBackup",
+      "routeName": "backups.plan",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups:plan",
+      "requestType": "DatabaseBackupConfirmationPlanRequest",
+      "responseType": "DatabaseBackupConfirmationPlanResponse"
+    },
+    {
+      "base": "api",
+      "client": "backups",
+      "operation": "executeBackup",
+      "routeName": "backups.execute",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups:execute",
+      "requestType": "DatabaseBackupConfirmationExecuteRequest",
       "responseType": "BackupJobResponse"
     },
     {

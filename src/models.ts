@@ -761,6 +761,25 @@ export type TriggerBackupRequest = {
   readonly idempotencyKey?: string | null;
 };
 
+export type DatabaseBackupConfirmationPlanRequest = {
+  readonly operationSessionId: string;
+};
+
+export type DatabaseBackupConfirmationPlanResponse = {
+  readonly action: string;
+  readonly projectId: ProjectId;
+  readonly databaseId: DatabaseId;
+  readonly databaseName: string;
+  readonly requestDigest: string;
+  readonly confirmationToken: string;
+  readonly expiresAt: Timestamp;
+};
+
+export type DatabaseBackupConfirmationExecuteRequest = {
+  readonly operationSessionId: string;
+  readonly confirmationToken: string;
+};
+
 export type BackupJobResponse = {
   readonly backupId: BackupId;
   readonly projectId: ProjectId;
