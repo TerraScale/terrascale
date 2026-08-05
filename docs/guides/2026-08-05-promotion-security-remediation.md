@@ -1,9 +1,9 @@
 # Promotion Security Remediation
 
-The release-candidate upload job now requires both the `develop` branch name
-and a pull-request head repository equal to the current canonical Forgejo
-repository. Fork pull requests therefore cannot receive or use the candidate
-store credential.
+Release-candidate creation and upload run only after a protected push to `main`.
+No pull-request job, including a same-repository `develop` to `main` PR,
+receives candidate-store, publish, or signing credentials, uploads candidate
+artifacts, or calls the candidate store.
 
 The npm availability preflight now runs in a disposable directory with empty,
 private npm user and global configuration files. It does not inherit npm
@@ -14,16 +14,19 @@ empty private global configuration, while its private user configuration holds
 only the job-local npm token. The bootstrap NuGet credential directory is
 removed by an exit trap on both successful and failed runs.
 
-Fork pull requests run the SDK static and build checks directly, without the
-private Deploy CLI artifact. Private-feed bootstrap, planning, and release
-jobs require a canonical Forgejo pull-request head repository; the main push
-promotion path remains trusted.
+Pull requests run the SDK static and build checks directly, without the private
+Deploy CLI artifact. There is no privileged canonical pull-request path:
+private-feed bootstrap, planning, release checks, candidate creation, and
+promotion run only on the protected `main` push. Promotion depends on the
+candidate created in that same trusted workflow and fails closed if it is not
+available; it never promotes a candidate uploaded by a pull request based only
+on a matching tree.
 
 Fork-reachable SDK checkouts disable persisted action credentials. The public
 Documentation fixture is cloned without a credential helper rather than using
 an action credential.
 
-Release E2E runs in its own canonical-head-gated job. A preflight rejects
+Release E2E runs only after the protected `main` push. A preflight rejects
 missing or malformed endpoints, access token, or test resource identifiers before the
 otherwise skip-capable live integration tests execute.
 

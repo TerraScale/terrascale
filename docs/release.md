@@ -21,24 +21,27 @@ The release E2E profile fails before tests run unless real
 `TERRASCALE_E2E_ACCESS_TOKEN`, `TERRASCALE_E2E_PROJECT_ID`,
 `TERRASCALE_E2E_ORGANIZATION_ID`, and
 `TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID` are all configured. These values are
-scoped only to the canonical `develop` to `main` release E2E job; fork and
-ordinary PR jobs do not receive them. Both endpoints must be `http` or `https`
-URLs, and each resource identifier must be a valid ULID.
+scoped only to the protected post-merge `main` release E2E job; no pull-request
+job, including a same-repository `develop` to `main` PR, receives them. Both
+endpoints must be `http` or `https` URLs, and each resource identifier must be
+a valid ULID.
 
 Each release-candidate test and package job performs its own clean install and
 build before testing or packing; do not rely on artifacts from another job.
 
 ## Publish
 
-Normal releases are built from the protected `develop` to `main` release pull request. The `Publish SDK to npm` Forgejo
-workflow validates the Documentation contract fixture before candidate creation,
+Normal releases merge the protected `develop` to `main` promotion PR. Only the
+protected post-merge `main` workflow validates the Documentation contract fixture,
 confirms the committed SDK version is not yet present on the public npm registry,
-then packages it. This is an availability preflight, not a reservation. After `main` receives that tested tree,
-the trusted promotion job verifies the candidate manifest, tarball digest,
+packages the candidate, and uploads it to the candidate store. This is an
+availability preflight, not a reservation. The promotion job depends on that
+same trusted candidate job and verifies the candidate manifest, tarball digest,
 package name, and version, repeats the public availability check, then publishes
-that exact tarball to npm. The promotion job has the npm token; pull-request jobs
-do not. npm rejects an existing name/version rather than overwriting a published
-package if another publisher wins the race.
+that exact tarball to npm. Pull-request jobs never receive candidate-store,
+publish, or signing credentials and cannot create candidate artifacts. npm
+rejects an existing name/version rather than overwriting a published package if
+another publisher wins the race.
 
 This workflow does not create or finalize a Forgejo Release. Its implemented
 promotion sequence is candidate verification followed by publishing the

@@ -36,15 +36,14 @@ test("release paths clean-install, build, test, and pack the SDK independently",
     ["Clean install", "Build SDK", "Require live integration configuration", "Authenticated live API integration"],
   );
   assert.doesNotMatch(workflow, /^  (?:REGISTRY_TOKEN|FORGEJO_TOKEN|NPM_TOKEN):/mu);
-  const canonicalHead = /forgejo\.event\.pull_request\.head\.repo\.full_name == forgejo\.repository/u;
-  for (const job of ["bootstrap", "pr-policy", "release-policy", "plan", "release-tests", "release-e2e", "release-artifacts", "release-contract-fixture", "release-version-availability", "candidate"]) {
-    assert.match(jobDefinition(workflow, job), canonicalHead);
+  assert.doesNotMatch(workflow, /forgejo\.event\.pull_request\.head\.repo\.full_name == forgejo\.repository/u);
+  for (const job of ["bootstrap", "plan", "release-tests", "release-e2e", "release-artifacts", "release-contract-fixture", "release-version-availability", "candidate", "promote"]) {
+    assert.match(jobDefinition(workflow, job), /forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main'/u);
   }
-  assert.match(jobDefinition(workflow, "bootstrap"), /forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main'/u);
   assert.match(jobDefinition(workflow, "bootstrap"), /secrets\.DEPLOY_CLI_READ_TOKEN/u);
-  for (const job of ["pr-static", "pr-build", "release-version-availability"]) {
+  for (const job of ["pr-static", "pr-build"]) {
     assert.doesNotMatch(jobDefinition(workflow, job), /secrets\.[A-Z0-9_]+/u);
-    assert.doesNotMatch(jobDefinition(workflow, job), /(?:CANDIDATE_STORE_TOKEN|DEPLOY_CLI_READ_TOKEN)/u);
+    assert.doesNotMatch(jobDefinition(workflow, job), /(?:CANDIDATE_STORE_TOKEN|DEPLOY_CLI_READ_TOKEN|NPM_TOKEN|candidate-store|upload-artifact)/u);
   }
   for (const job of ["pr-static", "pr-build"]) {
     assert.doesNotMatch(jobDefinition(workflow, job), /(?:needs:|download-artifact|terrascale-deploy)/u);
@@ -72,15 +71,18 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   ]) {
     assert.match(jobDefinition(workflow, "release-e2e"), new RegExp(`${name}: \\$\\{\\{ vars\\.${name} \\}\\}`, "u"));
   }
-  for (const job of ["pr-static", "pr-build", "release-tests"]) {
+  for (const job of ["pr-static", "pr-build"]) {
     assert.doesNotMatch(jobDefinition(workflow, job), /TERRASCALE_E2E_ACCESS_TOKEN/u);
   }
   assert.match(jobDefinition(workflow, "candidate"), /release-contract-fixture/u);
   assert.match(jobDefinition(workflow, "candidate"), /release-e2e/u);
   assert.match(jobDefinition(workflow, "candidate"), /release-version-availability/u);
   assert.doesNotMatch(jobDefinition(workflow, "candidate"), /NPM_TOKEN/u);
+  assert.match(jobDefinition(workflow, "candidate"), /candidate-store upload/u);
   assert.match(jobDefinition(workflow, "promote"), /promote-npm-candidate\.mjs/u);
   assert.match(jobDefinition(workflow, "promote"), /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
+  assert.match(jobDefinition(workflow, "promote"), /needs: \[candidate\]/u);
+  assert.match(jobDefinition(workflow, "promote"), /candidate-store download/u);
 });
 
 test("release E2E configuration guard fails closed before skip-capable tests", async () => {
