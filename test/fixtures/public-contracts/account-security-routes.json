@@ -1,0 +1,9 @@
+[
+  ["GET", "/api/v1/account/devices"], ["POST", "/api/v1/account/devices/{contextKey}/trust"], ["POST", "/api/v1/account/devices/{contextKey}/untrust"], ["DELETE", "/api/v1/account/devices/{contextKey}"],
+  ["GET", "/api/v1/account/trusted-ips"], ["POST", "/api/v1/account/trusted-ips"], ["DELETE", "/api/v1/account/trusted-ips/{ipAddress}"],
+  ["GET", "/api/v1/account/passkeys"], ["POST", "/api/v1/account/passkeys/register/options"], ["POST", "/api/v1/account/passkeys/register"], ["PUT", "/api/v1/account/passkeys/{credentialId}"], ["DELETE", "/api/v1/account/passkeys/{credentialId}"],
+  ["POST", "/api/v1/account/passkeys/authenticate/options"], ["POST", "/api/v1/projects/{projectId}/auth/passkeys/authenticate/options"], ["POST", "/api/v1/account/passkeys/authenticate"], ["POST", "/api/v1/projects/{projectId}/auth/passkeys/authenticate"],
+  ["GET", "/api/v1/account/tokens"], ["DELETE", "/api/v1/account/tokens/{tokenId}"], ["DELETE", "/api/v1/account/tokens"], ["GET", "/api/v1/account/export"],
+  ["POST", "/api/v1/users/me/delete"], ["GET", "/api/v1/users/me/delete/status"], ["POST", "/api/v1/users/me/delete/cancel"],
+  ["GET", "/api/v1/account/login-history"], ["GET", "/api/v1/account/login-history/suspicious"]
+]
