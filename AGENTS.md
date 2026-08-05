@@ -103,6 +103,7 @@ Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies in full:
 - **Do not** create feature branches or worktrees unless the user explicitly asks; when used, branch and worktree are always paired, and finished work lands back on `develop`.
 - Pushes to `develop` intentionally trigger no Forgejo actions or checks; DevHost supplies validation.
 - `main` is for release/promotion only. PRs never build, store, sign, publish, or promote SDK candidates, regardless of source branch or artifact/tree match. This SDK workflow fails closed until `TerraScale.Orchestrator` provides a trusted post-merge candidate with verified provenance for the `develop` → `main` promotion path.
+- PR validation is scheduled only on `terrascale-untrusted`. `TerraScale.Orchestrator` must provision that label as an isolated, unprivileged runner with no secrets, credentials, host mounts, or shared package/build cache; this workflow does not attest those properties. If the label is unavailable, validation must remain unscheduled rather than falling back to `terrascale-builder`.
 - Immediately before commit and again before push, check `git status`, review the
   owned-path diff, and `git fetch origin`. If `origin/develop` moved, the checkout
   is dirty, or a shared-checkout/index lease conflicts, stop and coordinate rather

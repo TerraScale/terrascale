@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <PackageReference Include="TUnit" Version="1.56.18" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

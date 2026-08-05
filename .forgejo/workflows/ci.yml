@@ -17,7 +17,7 @@ jobs:
   pr-validation:
     name: pr/validation (build, test, contracts)
     if: ${{ forgejo.event_name == 'pull_request' }}
-    runs-on: terrascale-builder
+    runs-on: terrascale-untrusted
     permissions:
       contents: read
     steps:
