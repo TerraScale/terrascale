@@ -2,12 +2,6 @@ import { readFileSync } from 'node:fs'
 
 const cloudflareApiOrigin = 'https://api.cloudflare.com/client/v4'
 
-export const rejectApiOriginOverride = (environment) => {
-  if (environment.CLOUDFLARE_PAGES_API_BASE_URL?.trim()) {
-    throw new Error('CLOUDFLARE_PAGES_API_BASE_URL is not supported; Pages metadata uses the fixed Cloudflare API origin.')
-  }
-}
-
 export const readPagesConfig = () => {
   const config = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8')
   const readTomlString = (key) => {
@@ -21,16 +15,16 @@ export const readPagesConfig = () => {
   }
 }
 
-export const readRemotePagesProject = async ({ accountId, apiToken, fetchImpl = fetch, projectName }) => {
-  if (!accountId || !apiToken) {
-    throw new Error('Cloudflare project verification needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN.')
+export const readRemotePagesProject = async ({ accountId, fetchImpl = fetch, projectName, readToken }) => {
+  if (!accountId || !readToken) {
+    throw new Error('Cloudflare diagnostic needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_PAGES_READ_TOKEN.')
   }
 
   let response
   try {
     response = await fetchImpl(
       `${cloudflareApiOrigin}/accounts/${encodeURIComponent(accountId)}/pages/projects/${encodeURIComponent(projectName)}`,
-      { headers: { Authorization: `Bearer ${apiToken}` } },
+      { headers: { Authorization: `Bearer ${readToken}` } },
     )
   } catch {
     throw new Error(`Failed to read Cloudflare Pages project "${projectName}".`)
@@ -63,15 +57,4 @@ export const readRemotePagesProject = async ({ accountId, apiToken, fetchImpl = 
   }
 
   return project
-}
-
-export const verifyRemoteProductionBranch = async (options) => {
-  const project = await readRemotePagesProject(options)
-  if (project.production_branch !== options.productionBranch) {
-    throw new Error(
-      `Cloudflare Pages project "${options.projectName}" production branch mismatch: remote "${project.production_branch}", configured "${options.productionBranch}".`,
-    )
-  }
-
-  return project.production_branch
 }
