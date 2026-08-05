@@ -27,10 +27,12 @@ build before testing or packing; do not rely on artifacts from another job.
 ## Publish
 
 Normal releases are built from the protected `develop` to `main` release pull request. The `Publish SDK to npm` Forgejo
-workflow runs the preflight checks, creates a draft Forgejo Release, updates
-the job-local package version to the selected release version, publishes to
-npm, and publishes the matching Forgejo Release. The committed `package.json`
-and `package-lock.json` declare that selected version.
+workflow validates the Documentation contract fixture before candidate creation,
+then packages the committed SDK version. After `main` receives that tested tree,
+the trusted promotion job verifies the candidate manifest, tarball digest,
+package name, and version before publishing that exact tarball to npm. The
+promotion job has the npm token; pull-request jobs do not. npm rejects an
+existing name/version rather than overwriting a published package.
 
 Forgejo Releases are the intended version history. The workflow compares the
 latest npm registry version so an interrupted run that published to npm but
@@ -46,8 +48,8 @@ all provider price/product identifier fields are now required (nullable where
 the public API permits `null`); `PricingPlan.provider` is the public string
 value. Callers that construct a `PricingPlan` must provide every required field.
 
-The workflow executes `npm publish --access public --registry=https://registry.npmjs.org/`
-with `NPM_TOKEN`.
+The trusted main-promotion job executes `npm publish <verified-tarball> --access public
+--registry=https://registry.npmjs.org/` with a job-local `NPM_TOKEN`.
 
-The workflow intentionally writes npm credentials only to the job-local
-`~/.npmrc`.
+The workflow writes npm credentials only to a temporary npm configuration in
+the trusted promotion job.

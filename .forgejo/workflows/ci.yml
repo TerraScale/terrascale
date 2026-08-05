@@ -13,8 +13,6 @@ concurrency:
 env:
   TERRASCALE_TOOLBOX_REVISION: "2026.07.1"
   TERRASCALE_DEPLOY_CLI_VERSION: ${{ needs.bootstrap.outputs.version }}
-  REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-  FORGEJO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
   TERRASCALE_API_BASE_URL: ${{ vars.TERRASCALE_API_BASE_URL }}
   TERRASCALE_AUTH_API_BASE_URL: ${{ vars.TERRASCALE_AUTH_API_BASE_URL }}
 
@@ -24,6 +22,8 @@ jobs:
     container: { image: "terrascale-builder:2026.07.1" }
     outputs:
       version: ${{ steps.cli.outputs.version }}
+    env:
+      DEPLOY_CLI_READ_TOKEN: ${{ secrets.DEPLOY_CLI_READ_TOKEN }}
     steps:
       - name: Resolve newest stable Deploy CLI once
         id: cli
@@ -32,7 +32,7 @@ jobs:
           set -euo pipefail
           config="$(mktemp -d)"
           dotnet new nugetconfig --output "${config}" --force >/dev/null
-          dotnet nuget add source https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json --name terrascale --username forgejo-actions --password "${REGISTRY_TOKEN}" --store-password-in-clear-text --configfile "${config}/nuget.config" >/dev/null
+          dotnet nuget add source https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json --name terrascale --username forgejo-actions --password "${DEPLOY_CLI_READ_TOKEN}" --store-password-in-clear-text --configfile "${config}/nuget.config" >/dev/null
           dotnet tool install TerraScale.Deploy.Cli --tool-path .tools --configfile "${config}/nuget.config"
           .tools/terrascale-deploy ci resolve-cli
       - uses: https://data.forgejo.org/actions/upload-artifact@v3
@@ -91,7 +91,6 @@ jobs:
           repository: TerraScale/TerraScale.Documentation
           ref: develop
           path: Documentation
-          token: ${{ secrets.REGISTRY_TOKEN }}
       - run: node scripts/check-public-contract-fixture.mjs Documentation/public/openapi/server.openapi.json
       - uses: https://data.forgejo.org/actions/download-artifact@v3
         with: { name: deploy-cli, path: .tools }
@@ -144,11 +143,30 @@ jobs:
       - uses: https://data.forgejo.org/actions/upload-artifact@v3
         with: { name: "candidate-${{ matrix.profile }}", path: artifacts/candidate }
 
-  candidate:
+  release-contract-fixture:
+    name: release/contract-fixture
     if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' }}
-    needs: [bootstrap, plan, release-tests, release-artifacts]
+    needs: [bootstrap, release-policy, plan]
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+        with: { github-server-url: "https://git.terrascale.tech" }
+      - uses: https://data.forgejo.org/actions/checkout@v6
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          repository: TerraScale/TerraScale.Documentation
+          ref: develop
+          path: Documentation
+      - run: node scripts/check-public-contract-fixture.mjs Documentation/public/openapi/server.openapi.json
+
+  candidate:
+    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' }}
+    needs: [bootstrap, plan, release-tests, release-artifacts, release-contract-fixture]
+    runs-on: terrascale-builder
+    container: { image: "terrascale-builder:2026.07.1" }
+    env:
+      FORGEJO_TOKEN: ${{ secrets.CANDIDATE_STORE_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
         with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
@@ -158,7 +176,7 @@ jobs:
         with: { path: artifacts/candidate }
       - run: |
           chmod +x .tools/terrascale-deploy
-          .tools/terrascale-deploy ci candidate-manifest --repository-root . --artifacts artifacts/candidate --version "0.0.0-candidate.${FORGEJO_RUN_NUMBER}"
+          .tools/terrascale-deploy ci candidate-manifest --repository-root . --artifacts artifacts/candidate --version "$(node -p \"require('./package.json').version\")"
           .tools/terrascale-deploy ci candidate-store upload --tree "${{ needs.plan.outputs.tree }}" --file artifacts/release-candidate.json
           .tools/terrascale-deploy ci candidate-store upload --tree "${{ needs.plan.outputs.tree }}" --file artifacts/candidate.zip
 
@@ -167,6 +185,9 @@ jobs:
     needs: [bootstrap, plan]
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
+    env:
+      FORGEJO_TOKEN: ${{ secrets.CANDIDATE_STORE_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
         with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
@@ -176,4 +197,5 @@ jobs:
           chmod +x .tools/terrascale-deploy
           .tools/terrascale-deploy ci candidate-store download --tree "${{ needs.plan.outputs.tree }}" --file artifacts/release-candidate.json
           .tools/terrascale-deploy ci candidate-store download --tree "${{ needs.plan.outputs.tree }}" --file artifacts/candidate.zip
-          .tools/terrascale-deploy ci promote --repository-root . --manifest artifacts/release-candidate.json --bundle artifacts/candidate.zip
+          .tools/terrascale-deploy ci promote --repository-root . --manifest artifacts/release-candidate.json --bundle artifacts/candidate.zip --verify-only
+          node scripts/promote-npm-candidate.mjs --manifest artifacts/release-candidate.json --artifacts artifacts/candidate --registry https://registry.npmjs.org/
