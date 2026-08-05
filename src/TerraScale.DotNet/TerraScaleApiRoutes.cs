@@ -61,6 +61,9 @@ internal static class TerraScaleApiRoutes
     public static string ProjectSavedQueryV2Update(string projectId, string savedQueryId) =>
         ProjectSavedQueryV2Get(projectId, savedQueryId);
 
+    public static string ProjectSavedQueriesV3List(string projectId, string? cursor, int take) =>
+        WithQuery($"/api/v3/projects/{Escape(projectId)}/saved-queries", ("cursor", cursor), ("take", Number(take)));
+
     public static string ProjectQueuesList(string projectId) =>
         $"/api/v1/projects/{Escape(projectId)}/queues";
 

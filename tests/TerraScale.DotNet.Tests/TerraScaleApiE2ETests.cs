@@ -392,6 +392,19 @@ public sealed class TerraScaleApiE2ETests
 
     [Test]
     [RequiresTerraScaleApi]
+    public async Task SavedQueriesV3_ListSnapshotPageAgainstRealApi()
+    {
+        var client = TerraScaleApiE2E.CreateClient();
+        var currentProject = await GetCurrentProjectAsync(client);
+
+        var page = await client.SavedQueriesV3.ListAsync(currentProject.ProjectId, take: 1);
+
+        await Assert.That(page.Items.Count).IsLessThanOrEqualTo(1);
+        await Assert.That(page.Items.All(savedQuery => savedQuery.ProjectId == currentProject.ProjectId)).IsTrue();
+    }
+
+    [Test]
+    [RequiresTerraScaleApi]
     public async Task ProjectQueues_CreatePublishReceiveAcknowledgePurgeAndDelete_RoundTripAgainstRealApi()
     {
         var client = TerraScaleApiE2E.CreateClient();
