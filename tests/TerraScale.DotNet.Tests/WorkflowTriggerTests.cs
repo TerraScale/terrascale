@@ -1,4 +1,6 @@
 using YamlDotNet.RepresentationModel;
+using YamlDotNet.Core;
+using YamlDotNet.Core.Events;
 
 namespace TerraScale.DotNet.Tests;
 
@@ -56,6 +58,41 @@ public sealed class WorkflowTriggerTests
         await Assert.That(violations.Any(violation => violation.Contains(
             "pr-validation: runs-on must be terrascale-untrusted.",
             StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    public async Task PullRequestAliasAndMergeInjectionsAreRejectedBeforePolicyEvaluation()
+    {
+        var aliasedEnvironment = """
+            unsafe_environment: &unsafe_environment
+              REGISTRY_TOKEN: not-a-secret
+            jobs:
+              pr-validation:
+                if: ${{ forgejo.event_name == 'pull_request' }}
+                runs-on: terrascale-untrusted
+                permissions:
+                  contents: read
+                env: *unsafe_environment
+                steps:
+                  - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+                    with:
+                      persist-credentials: false
+            """;
+        var mergedContainerAndAction = """
+            jobs:
+              pr-validation:
+                <<:
+                  container: untrusted-container
+                  steps:
+                    - uses: https://data.forgejo.org/actions/checkout@v6
+                if: ${{ forgejo.event_name == 'pull_request' }}
+                runs-on: terrascale-untrusted
+                permissions:
+                  contents: read
+            """;
+
+        await Assert.That(RejectWorkflow(aliasedEnvironment)).Contains("aliases and merge keys are not allowed");
+        await Assert.That(RejectWorkflow(mergedContainerAndAction)).Contains("aliases and merge keys are not allowed");
     }
 
     [Test]
@@ -241,12 +278,21 @@ public sealed class WorkflowTriggerTests
 
     private static IReadOnlyDictionary<string, YamlMappingNode> ParseJobs(string workflow)
     {
+        RejectAliases(workflow);
+
         var yaml = new YamlStream();
         yaml.Load(new StringReader(workflow));
 
-        if (yaml.Documents.Count != 1 || yaml.Documents[0].RootNode is not YamlMappingNode root)
+        if (yaml.Documents.Count != 1)
         {
             throw new InvalidDataException("Workflow must be a single YAML mapping document.");
+        }
+
+        RejectMergeKeys(yaml.Documents[0].RootNode);
+
+        if (yaml.Documents[0].RootNode is not YamlMappingNode root)
+        {
+            throw new InvalidDataException("Workflow must be a YAML mapping document.");
         }
 
         var jobs = GetMapping(root, "jobs") ?? throw new InvalidDataException("Workflow must define jobs.");
@@ -254,6 +300,56 @@ public sealed class WorkflowTriggerTests
             pair => (pair.Key as YamlScalarNode)?.Value ?? throw new InvalidDataException("Workflow job names must be scalars."),
             pair => pair.Value as YamlMappingNode ?? throw new InvalidDataException("Workflow jobs must be mappings."),
             StringComparer.Ordinal);
+    }
+
+    private static string RejectWorkflow(string workflow)
+    {
+        try
+        {
+            _ = ParseJobs(workflow);
+            return string.Empty;
+        }
+        catch (InvalidDataException exception)
+        {
+            return exception.Message;
+        }
+    }
+
+    private static void RejectAliases(string workflow)
+    {
+        // YamlStream resolves aliases while loading its representation model.
+        var parser = new Parser(new StringReader(workflow));
+        while (parser.MoveNext())
+        {
+            if (parser.Current is AnchorAlias)
+            {
+                throw new InvalidDataException("Workflow YAML aliases and merge keys are not allowed.");
+            }
+        }
+    }
+
+    private static void RejectMergeKeys(YamlNode node)
+    {
+        if (node is YamlMappingNode mapping)
+        {
+            foreach (var pair in mapping.Children)
+            {
+                if (pair.Key is YamlScalarNode { Value: "<<" })
+                {
+                    throw new InvalidDataException("Workflow YAML aliases and merge keys are not allowed.");
+                }
+
+                RejectMergeKeys(pair.Key);
+                RejectMergeKeys(pair.Value);
+            }
+        }
+        else if (node is YamlSequenceNode sequence)
+        {
+            foreach (var child in sequence.Children)
+            {
+                RejectMergeKeys(child);
+            }
+        }
     }
 
     private static async Task<string> ReadWorkflowAsync()
