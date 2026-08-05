@@ -131,6 +131,10 @@ extensions, repository update, database
 update/region switching/environment switching, query history, project settings,
 security webhooks, SSO/SCIM settings, and public project switching.
 
+The OpenAPI drift check carries a reviewed typed-contract debt baseline. It prevents
+new or changed untyped SDK contracts, while the listed debt still blocks production
+qualification until Platform publishes the missing schemas and removes the baseline.
+
 ## Development
 
 ```bash

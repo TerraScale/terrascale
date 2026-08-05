@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 
 const httpMethods = new Set(["delete", "get", "head", "options", "patch", "post", "put", "trace"]);
 const uncoveredDisplayLimit = 25;
+const defaultBaseline = "typed-contract-debt-baseline.json";
 const execFileAsync = promisify(execFile);
 
 if (isMainModule()) {
@@ -15,6 +16,7 @@ if (isMainModule()) {
 }
 
 export async function runOpenApiDriftCli(args, output = console) {
+  const strict = args.includes("--strict");
   const [specReference, manifestReference = "sdk-route-manifest.json"] = args.filter(
     (argument) => !argument.startsWith("--"),
   );
@@ -27,7 +29,7 @@ export async function runOpenApiDriftCli(args, output = console) {
   }
 
   try {
-    const result = await checkOpenApiDrift(specReference, manifestReference);
+    const result = await checkOpenApiDrift(specReference, manifestReference, strict ? undefined : defaultBaseline, strict);
     const formatted = formatOpenApiDriftResult(result, specReference, manifestReference);
     writeFormattedResult(formatted, output);
     return exitCodeForOpenApiDriftResult(result);
@@ -41,20 +43,24 @@ export async function runOpenApiDriftCli(args, output = console) {
 export async function checkOpenApiDrift(
   specReference,
   manifestReference = "sdk-route-manifest.json",
+  baselineReference = defaultBaseline,
+  strict = false,
 ) {
-  const [spec, manifest, specSnapshot] = await Promise.all([
+  const [spec, manifest, specSnapshot, baseline] = await Promise.all([
     readJson(specReference),
     readJson(manifestReference),
     readSpecSnapshotInfo(specReference),
+    baselineReference === undefined ? Promise.resolve([]) : Array.isArray(baselineReference) ? Promise.resolve(baselineReference) : readJson(baselineReference),
   ]);
 
   return {
-    ...compareOpenApiDrift(manifest, spec),
+    ...compareOpenApiDrift(manifest, spec, baseline),
     specSnapshot,
+    strict,
   };
 }
 
-export function compareOpenApiDrift(manifest, spec) {
+export function compareOpenApiDrift(manifest, spec, baseline = []) {
   const sdkRoutes = manifestRoutes(manifest);
   const specRoutes = openApiRoutes(spec);
   const specRouteKeys = new Set(specRoutes.map((route) => comparableRouteKey(route)));
@@ -73,17 +79,23 @@ export function compareOpenApiDrift(manifest, spec) {
     (route) => !sdkRouteKeys.has(comparableRouteKey(route)),
   );
 
+  const typedContractViolations = sdkRoutes.flatMap((route) => {
+    const operation = operationForRoute(spec, route);
+    const violation = operation === undefined ? undefined : typedContractViolation(route, operation);
+    return violation === undefined ? [] : [{ route, ...violation }];
+  });
+  const baselineKeys = new Set(baseline.map(typedContractDebtKey));
+  const violationKeys = new Set(typedContractViolations.map(typedContractDebtKey));
+
   return {
     coveredSdkRouteCount: sdkRoutes.length - missingSdkRoutes.length,
     missingSdkRoutes,
     sdkRouteCount: sdkRoutes.length,
     specRouteCount: specRoutes.length,
     uncoveredSpecRoutes,
-    typedContractViolations: sdkRoutes.flatMap((route) => {
-      const operation = operationForRoute(spec, route);
-      const violation = operation === undefined ? undefined : typedContractViolation(route, operation);
-      return violation === undefined ? [] : [{ route, violation }];
-    }),
+    typedContractViolations,
+    staleTypedContractBaseline: baseline.filter((entry) => !violationKeys.has(typedContractDebtKey(entry))),
+    unexpectedTypedContractViolations: typedContractViolations.filter((entry) => !baselineKeys.has(typedContractDebtKey(entry))),
   };
 }
 
@@ -100,18 +112,18 @@ export function typedContractViolation(route, operation) {
   const jsonRequest = operation.requestBody?.content?.["application/json"]?.schema;
 
   if (route.requestType !== undefined && (jsonRequest === undefined || isJsonElement(jsonRequest))) {
-    return `${route.method} ${route.pathTemplate} declares ${route.requestType} without a published JSON request schema.`;
+    return { missingSide: "request", message: `${route.method} ${route.pathTemplate} declares ${route.requestType} without a published JSON request schema.` };
   }
 
   if (route.responseType !== undefined && route.responseType !== "void" && route.responseType !== "never") {
     const successes = Object.entries(operation.responses ?? {}).filter(([status]) => /^2\d\d$/u.test(status));
     if (successes.length === 0) {
-      return `${route.method} ${route.pathTemplate} declares ${route.responseType} without a published 2xx JSON response schema.`;
+      return { missingSide: "response", message: `${route.method} ${route.pathTemplate} declares ${route.responseType} without a published 2xx JSON response schema.` };
     }
     for (const [status, response] of successes) {
       const schema = response.content?.["application/json"]?.schema;
       if (schema === undefined || isJsonElement(schema)) {
-        return `${route.method} ${route.pathTemplate} declares ${route.responseType} but ${status} has no published typed JSON response schema.`;
+        return { missingSide: `response:${status}`, message: `${route.method} ${route.pathTemplate} declares ${route.responseType} but ${status} has no published typed JSON response schema.` };
       }
     }
   }
@@ -119,20 +131,26 @@ export function typedContractViolation(route, operation) {
   return undefined;
 }
 
+function typedContractDebtKey(entry) {
+  const route = entry.route ?? entry;
+  return `${route.method} ${route.pathTemplate} ${entry.missingSide}`;
+}
+
 function isJsonElement(schema) {
   return schema?.$ref === "#/components/schemas/JsonElement";
 }
 
 export function exitCodeForOpenApiDriftResult(result) {
-  return result.missingSdkRoutes.length === 0 && result.typedContractViolations.length === 0 ? 0 : 1;
+  return result.missingSdkRoutes.length === 0 && result.unexpectedTypedContractViolations.length === 0 && result.staleTypedContractBaseline.length === 0 && (!result.strict || result.typedContractViolations.length === 0) ? 0 : 1;
 }
 
 export function formatOpenApiDriftResult(result, specReference, manifestReference) {
-  const status = result.missingSdkRoutes.length === 0 && result.typedContractViolations.length === 0 ? "passed" : "failed";
+  const status = exitCodeForOpenApiDriftResult(result) === 0 ? "passed" : "failed";
   const specSnapshotLines = formatSpecSnapshotLines(result.specSnapshot);
   const stdout = [
     `OpenAPI drift check ${status}: ${result.coveredSdkRouteCount}/${result.sdkRouteCount} SDK routes covered by ${specReference}.`,
     `Manifest: ${manifestReference}`,
+    `Typed contract debt baseline: ${result.typedContractViolations.length} entries (blocks production qualification).`,
   ];
   const stderr = [];
 
@@ -163,9 +181,13 @@ export function formatOpenApiDriftResult(result, specReference, manifestReferenc
   if (result.typedContractViolations.length > 0) {
     stderr.push("");
     stderr.push(`SDK routes missing published typed contracts: ${result.typedContractViolations.length}`);
-    for (const { route, violation } of result.typedContractViolations) {
-      stderr.push(`  - ${formatSdkRoute(route)}: ${violation}`);
+    for (const { route, message } of result.typedContractViolations) {
+      stderr.push(`  - ${formatSdkRoute(route)}: ${message}`);
     }
+  }
+
+  if (result.unexpectedTypedContractViolations.length > 0 || result.staleTypedContractBaseline.length > 0) {
+    stderr.push("\nTyped-contract debt baseline changed; production qualification remains blocked until Platform publishes schemas and the reviewed baseline is reduced.");
   }
 
   if (result.missingSdkRoutes.length === 0 && specSnapshotLines.length > 0) {

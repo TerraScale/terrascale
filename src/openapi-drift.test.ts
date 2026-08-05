@@ -41,10 +41,24 @@ describe("OpenAPI drift checker", () => {
     assert.match(lines.join("\n"), /missing published typed contracts/u);
   });
 
+  test("allows only the exact reviewed debt baseline outside strict mode", async () => {
+    const checker = await checkerModule;
+    const untyped = { requestBody: undefined, responses: { 200: typedSchema() } };
+    const baseline = [{ method: "POST", pathTemplate: "/api/v1/widgets", missingSide: "request" }];
+    const accepted = checker.compareOpenApiDrift(manifestFor(untyped), specFor(untyped), baseline);
+    const newDebt = checker.compareOpenApiDrift(manifestFor(untyped), specFor(untyped), []);
+    const stale = checker.compareOpenApiDrift(manifestFor({ requestBody: { content: { "application/json": { schema: { type: "object" } } } }, responses: { 200: typedSchema() } }), specFor({ requestBody: { content: { "application/json": { schema: { type: "object" } } } }, responses: { 200: typedSchema() } }), baseline);
+
+    assert.equal(checker.exitCodeForOpenApiDriftResult(accepted), 0);
+    assert.equal(checker.exitCodeForOpenApiDriftResult(newDebt), 1);
+    assert.equal(checker.exitCodeForOpenApiDriftResult(stale), 1);
+    assert.equal(checker.exitCodeForOpenApiDriftResult({ ...accepted, strict: true }), 1);
+  });
+
   test("exits nonzero and reports drift when an SDK route is missing", async () => {
     const checker = await checkerModule;
     const specPath = path.join(fixtureDirectory, "openapi-missing-route.json");
-    const result = await checker.checkOpenApiDrift(specPath, fixtureManifest);
+    const result = await checker.checkOpenApiDrift(specPath, fixtureManifest, []);
     const formatted = checker.formatOpenApiDriftResult(result, specPath, fixtureManifest);
 
     assert.equal(checker.exitCodeForOpenApiDriftResult(result), 1, formatted.stderr);
@@ -64,7 +78,7 @@ describe("OpenAPI drift checker", () => {
   test("keeps uncovered spec routes informational when SDK routes are covered", async () => {
     const checker = await checkerModule;
     const specPath = path.join(fixtureDirectory, "openapi-covered-with-extra.json");
-    const result = await checker.checkOpenApiDrift(specPath, fixtureManifest);
+    const result = await checker.checkOpenApiDrift(specPath, fixtureManifest, []);
     const formatted = checker.formatOpenApiDriftResult(result, specPath, fixtureManifest);
 
     assert.equal(checker.exitCodeForOpenApiDriftResult(result), 0, formatted.stderr);
@@ -77,6 +91,9 @@ describe("OpenAPI drift checker", () => {
 type OpenApiDriftResult = {
   readonly missingSdkRoutes: readonly unknown[];
   readonly typedContractViolations: readonly unknown[];
+  readonly unexpectedTypedContractViolations: readonly unknown[];
+  readonly staleTypedContractBaseline: readonly unknown[];
+  readonly strict?: boolean;
 };
 
 type FormattedOpenApiDriftResult = {
@@ -86,14 +103,15 @@ type FormattedOpenApiDriftResult = {
 
 type OpenApiDriftModule = {
   readonly runOpenApiDriftCli: (args: readonly string[], output: { readonly log: (line: string) => void; readonly error: (line: string) => void }) => Promise<number>;
-  readonly compareOpenApiDrift: (manifest: unknown, spec: unknown) => OpenApiDriftResult;
+  readonly compareOpenApiDrift: (manifest: unknown, spec: unknown, baseline?: unknown) => OpenApiDriftResult;
   readonly typedContractViolation: (
     route: { readonly method: string; readonly pathTemplate: string; readonly requestType?: string; readonly responseType?: string },
     operation: { readonly requestBody?: unknown; readonly responses?: unknown },
-  ) => string | undefined;
+  ) => { readonly missingSide: string; readonly message: string } | undefined;
   readonly checkOpenApiDrift: (
     specReference: string,
     manifestReference: string,
+    baselineReference?: string | readonly unknown[], strict?: boolean,
   ) => Promise<OpenApiDriftResult>;
   readonly exitCodeForOpenApiDriftResult: (result: OpenApiDriftResult) => number;
   readonly formatOpenApiDriftResult: (
