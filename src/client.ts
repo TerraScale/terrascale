@@ -1106,8 +1106,8 @@ export class SavedQueriesClient {
   }
 
   list(
-    query?: Models.PageRequest,
     projectId?: Ulid,
+    query?: Models.PageRequest,
   ): Promise<TerraScaleResult<readonly Models.ProjectSavedQueryResponse[]>> {
     return this.#http.request({
       method: "GET",

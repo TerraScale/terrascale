@@ -725,7 +725,7 @@ const captureOperations: readonly CaptureOperation[] = [
     client: "savedQueries",
     operation: "list",
     defaultProject: true,
-    invoke: (client) => client.savedQueries.list({ skip: 0, take: 25 }),
+    invoke: (client) => client.savedQueries.list(),
   },
   {
     client: "savedQueries",
