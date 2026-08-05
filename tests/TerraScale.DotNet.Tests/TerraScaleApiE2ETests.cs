@@ -112,7 +112,10 @@ public sealed class TerraScaleApiE2ETests
             await RequireNonOwnerAdminDeniedAsync(standardBearer);
             var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
                 standardBearer.Administration.DisableUserAsync(userId, "must not be persisted"));
+            var enableDenied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                standardBearer.Administration.EnableUserAsync(userId));
             await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            await Assert.That(enableDenied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         }
         finally
         {
@@ -257,9 +260,70 @@ public sealed class TerraScaleApiE2ETests
             var createdPlans = await owner.Administration.ListPricingPlansAsync();
             foreach (var createdPlan in createdPlans.Where(plan => string.Equals(plan.Key, planKey, StringComparison.Ordinal)))
             {
-                await owner.Administration.DeletePricingPlanAsync(createdPlan.PlanId);
+                var deleted = await owner.Administration.DeletePricingPlanAsync(createdPlan.PlanId);
+                await Assert.That(deleted).IsTrue();
+            }
+
+            var plansAfterCleanup = await owner.Administration.ListPricingPlansAsync();
+            await Assert.That(plansAfterCleanup.Any(plan => string.Equals(plan.Key, planKey, StringComparison.Ordinal))).IsFalse();
+        }
+    }
+
+    [Test]
+    [RequiresTerraScaleAdministrationPricingPlanUpdate]
+    [NotInParallel("administration-pricing-plan-update")]
+    public async Task Administration_PricingPlanUpdateRestoresDedicatedFixture()
+    {
+        var owner = TerraScaleApiE2E.CreateAdminClient();
+        var planId = TerraScaleApiE2E.AdminUpdatePlanId;
+        var original = (await owner.Administration.ListPricingPlansAsync())
+            .SingleOrDefault(plan => plan.PlanId == planId)
+            ?? throw new SkipTestException("The configured pricing-plan update fixture must exist.");
+        var updatedName = $"sdk-e2e-plan-{Guid.NewGuid():N}";
+        var updateAttempted = false;
+
+        try
+        {
+            updateAttempted = true;
+            var updated = await owner.Administration.UpdatePricingPlanAsync(
+                planId,
+                new TerraScaleAdminPricingPlanRequest(Name: updatedName, Visible: !original.Visible));
+            await Assert.That(updated.Name).IsEqualTo(updatedName);
+            await Assert.That(updated.Visible).IsEqualTo(!original.Visible);
+        }
+        finally
+        {
+            if (updateAttempted)
+            {
+                var restored = await owner.Administration.UpdatePricingPlanAsync(
+                    planId,
+                    new TerraScaleAdminPricingPlanRequest(Name: original.Name, Visible: original.Visible));
+                await Assert.That(restored.Name).IsEqualTo(original.Name);
+                await Assert.That(restored.Visible).IsEqualTo(original.Visible);
+
+                var restoredPlan = (await owner.Administration.ListPricingPlansAsync())
+                    .Single(plan => plan.PlanId == planId);
+                await Assert.That(restoredPlan.Name).IsEqualTo(original.Name);
+                await Assert.That(restoredPlan.Visible).IsEqualTo(original.Visible);
             }
         }
+    }
+
+    [Test]
+    [RequiresTerraScaleAdministrationSupportNote]
+    [NotInParallel("administration-support-note")]
+    public async Task Administration_CreateSupportNoteRequiresExplicitDisposableEnvironmentAcknowledgement()
+    {
+        var note = $"SDK E2E irreversible support note {Guid.NewGuid():N}";
+        var created = await TerraScaleApiE2E.CreateAdminClient().Administration.CreateSupportNoteAsync(
+            new TerraScaleAdminCreateSupportNoteRequest(
+                null,
+                null,
+                TerraScaleApiE2E.AdminSupportNoteProjectId,
+                note));
+
+        await Assert.That(created.ProjectId).IsEqualTo(TerraScaleApiE2E.AdminSupportNoteProjectId);
+        await Assert.That(created.Note).IsEqualTo(note);
     }
 
     [Test]

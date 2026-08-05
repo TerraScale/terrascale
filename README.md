@@ -12,6 +12,8 @@ The SDK calls verified TerraScale public endpoints. It covers region catalog, da
 
 Use `client.Administration` with a bearer token that carries the platform owner role. The client exposes only the published `/api/v1/admin` operations: platform usage, user lifecycle, support notes, platform-wide resource pages, pricing-plan management, audit, notifications, and payment-webhook inspection/replay. Webhook replay requires an explicit idempotency key and a fresh MFA-verified owner session. Authorization failures are returned as `TerraScaleApiException` with the public HTTP status and error code.
 
+Administration E2E mutations are disabled unless their dedicated environment gates are set. User-state and delete-user fixtures must be different IDs. Pricing-plan updates restore the original name and visibility. Support-note creation has no public list or delete contract, so its owner-success E2E test is intentionally irreversible and additionally requires `TERRASCALE_E2E_ENABLE_ADMIN_SUPPORT_NOTE_CREATE=true`, `TERRASCALE_E2E_ADMIN_SUPPORT_NOTE_CONFIRMED_ISOLATED_DISPOSABLE_ENVIRONMENT=true`, and a disposable `TERRASCALE_E2E_ADMIN_SUPPORT_NOTE_PROJECT_ID`; do not enable it outside an isolated disposable environment.
+
 ## Billing checkout
 
 Create a checkout session with a provider-neutral `PlanId`, `BillingInterval` (`monthly` or `annual`), optional `Provider` (`polar` or `stripe`), and optional `Quantity`. `PriceId` remains available only for legacy integrations. `SuccessUrl`, `CancelUrl`, and `CustomerEmail` remain as obsolete compatibility members but are not sent: the checkout contract does not use them.
