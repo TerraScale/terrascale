@@ -613,6 +613,16 @@ export type ProjectSavedQueryResponse = {
   readonly updatedAt: Timestamp;
 };
 
+/** A v2 saved query with an opaque, resource-bound conditional revision token. */
+export type ProjectSavedQueryV2Response = ProjectSavedQueryResponse & {
+  readonly revision: string;
+};
+
+/** Conditional v2 saved-query update. Pass the revision returned by a v2 read or list. */
+export type UpdateProjectSavedQueryV2Request = ProjectSavedQueryRequest & {
+  readonly revision: string;
+};
+
 export type DeletedProjectSavedQueryResponse = {
   readonly savedQueryId: Ulid;
   readonly projectId: ProjectId;

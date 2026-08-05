@@ -109,8 +109,10 @@ The public client follows the backed `TerraScale.Platform` REST surface:
   `/api/v1/users/me/notifications:mark-all-read` returns `{ markedRead }`.
 - Security settings: backed get and upsert routes at
   `/api/v1/projects/{projectId}/security/settings`.
-- Saved queries: typed list/create/update/delete operations under
-  `/api/v1/projects/{projectId}/saved-queries`.
+- Saved queries: typed v1 list/create/update/delete operations under
+  `/api/v1/projects/{projectId}/saved-queries`, plus revision-aware v2
+  `client.savedQueries.v2.list/get/update` under `/api/v2/projects/{projectId}/saved-queries`.
+  V2 revisions are opaque values returned by v2 reads and required unchanged for updates.
 
 Unbacked public SDK methods are intentionally omitted until matching API
 endpoints exist. This currently excludes repository update, database

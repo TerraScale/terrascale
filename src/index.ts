@@ -29,5 +29,6 @@ export type {
   SchemaClient,
   SecurityClient,
   SavedQueriesClient,
+  SavedQueriesV2Client,
   UsageClient,
 } from "./client.js";

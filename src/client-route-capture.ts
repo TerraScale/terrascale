@@ -147,22 +147,28 @@ function enumeratePublicClientMethods(): readonly string[] {
   const methods: string[] = [];
 
   for (const [clientName, value] of Object.entries(client)) {
-    if (typeof value !== "object" || value === null) {
-      continue;
-    }
+    enumerateMethods(clientName, value, methods);
+  }
 
-    for (const [name, descriptor] of Object.entries(
-      Object.getOwnPropertyDescriptors(Object.getPrototypeOf(value) as object),
-    )) {
-      if (name === "constructor" || typeof descriptor.value !== "function") {
-        continue;
-      }
+  return methods.sort();
+}
 
+function enumerateMethods(clientName: string, value: unknown, methods: string[]): void {
+  if (typeof value !== "object" || value === null) {
+    return;
+  }
+
+  for (const [name, descriptor] of Object.entries(
+    Object.getOwnPropertyDescriptors(Object.getPrototypeOf(value) as object),
+  )) {
+    if (name !== "constructor" && typeof descriptor.value === "function") {
       methods.push(`${clientName}.${name}`);
     }
   }
 
-  return methods.sort();
+  for (const [name, nestedValue] of Object.entries(value)) {
+    enumerateMethods(`${clientName}.${name}`, nestedValue, methods);
+  }
 }
 
 function pathToTemplate(pathname: string): string {
@@ -753,6 +759,29 @@ const captureOperations: readonly CaptureOperation[] = [
     operation: "delete",
     defaultProject: true,
     invoke: (client) => client.savedQueries.delete(sampleIds.savedQueryId),
+  },
+  {
+    client: "savedQueries.v2",
+    operation: "list",
+    defaultProject: true,
+    invoke: (client) => client.savedQueries.v2.list(),
+  },
+  {
+    client: "savedQueries.v2",
+    operation: "get",
+    defaultProject: true,
+    invoke: (client) => client.savedQueries.v2.get(sampleIds.savedQueryId),
+  },
+  {
+    client: "savedQueries.v2",
+    operation: "update",
+    defaultProject: true,
+    invoke: (client) =>
+      client.savedQueries.v2.update(sampleIds.savedQueryId, {
+        name: "Active users",
+        query: "SELECT * FROM users WHERE active = true",
+        revision: "opaque-revision",
+      }),
   },
   {
     client: "databases",

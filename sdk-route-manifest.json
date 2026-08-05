@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 154,
+  "routeCount": 157,
   "routes": [
     {
       "base": "api",
@@ -752,6 +752,34 @@
       "method": "DELETE",
       "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
       "responseType": "DeletedProjectSavedQueryResponse"
+    },
+    {
+      "base": "api",
+      "client": "savedQueries.v2",
+      "operation": "list",
+      "routeName": "savedQueries.v2.list",
+      "method": "GET",
+      "pathTemplate": "/api/v2/projects/{projectId}/saved-queries",
+      "responseType": "readonly ProjectSavedQueryV2Response[]"
+    },
+    {
+      "base": "api",
+      "client": "savedQueries.v2",
+      "operation": "get",
+      "routeName": "savedQueries.v2.get",
+      "method": "GET",
+      "pathTemplate": "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}",
+      "responseType": "ProjectSavedQueryV2Response"
+    },
+    {
+      "base": "api",
+      "client": "savedQueries.v2",
+      "operation": "update",
+      "routeName": "savedQueries.v2.update",
+      "method": "PUT",
+      "pathTemplate": "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}",
+      "requestType": "UpdateProjectSavedQueryV2Request",
+      "responseType": "ProjectSavedQueryV2Response"
     },
     {
       "base": "api",

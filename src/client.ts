@@ -1100,9 +1100,11 @@ export class QueuesClient {
 
 export class SavedQueriesClient {
   readonly #http: TerraScaleHttp;
+  readonly v2: SavedQueriesV2Client;
 
   constructor(http: TerraScaleHttp) {
     this.#http = http;
+    this.v2 = new SavedQueriesV2Client(http);
   }
 
   list(
@@ -1150,6 +1152,50 @@ export class SavedQueriesClient {
       method: "DELETE",
       path: `${projectRoot(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
       routeName: "savedQueries.delete",
+    });
+  }
+}
+
+export class SavedQueriesV2Client {
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
+
+  list(
+    projectId?: Ulid,
+    query?: Models.PageRequest,
+  ): Promise<TerraScaleResult<readonly Models.ProjectSavedQueryV2Response[]>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${projectV2Root(this.#http, projectId)}/saved-queries`,
+      routeName: "savedQueries.v2.list",
+      query: { skip: query?.skip ?? 0, take: query?.take ?? 100 },
+    });
+  }
+
+  get(
+    savedQueryId: Ulid,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectSavedQueryV2Response>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${projectV2Root(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
+      routeName: "savedQueries.v2.get",
+    });
+  }
+
+  update(
+    savedQueryId: Ulid,
+    request: Models.UpdateProjectSavedQueryV2Request,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectSavedQueryV2Response>> {
+    return this.#http.request({
+      method: "PUT",
+      path: `${projectV2Root(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
+      routeName: "savedQueries.v2.update",
+      body: request,
     });
   }
 }
@@ -2216,6 +2262,10 @@ function projectRootId(http: TerraScaleHttp, projectId: Ulid | undefined): Ulid 
 
 function projectRoot(http: TerraScaleHttp, projectId: Ulid | undefined): string {
   return `${apiRoot}/projects/${ulidPathSegment(projectRootId(http, projectId))}`;
+}
+
+function projectV2Root(http: TerraScaleHttp, projectId: Ulid | undefined): string {
+  return `/api/v2/projects/${ulidPathSegment(projectRootId(http, projectId))}`;
 }
 
 function projectAuthRoot(projectId: Ulid): string {

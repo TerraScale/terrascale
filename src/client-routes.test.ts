@@ -11,6 +11,8 @@ import type {
   DeletedProjectDatabaseEnvironmentResponse,
   JsonValue,
   ProjectSavedQueryResponse,
+  ProjectSavedQueryV2Response,
+  UpdateProjectSavedQueryV2Request,
 } from "./models.js";
 
 const projectId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
@@ -41,6 +43,13 @@ const savedQueryWithoutRepository = {
 // @ts-expect-error Saved-query responses always include repositoryId, which may be null.
 const invalidSavedQueryResponse: ProjectSavedQueryResponse = savedQueryWithoutRepository;
 void invalidSavedQueryResponse;
+
+// @ts-expect-error V2 updates require an opaque revision returned by a v2 read or list.
+const invalidV2SavedQueryUpdate: UpdateProjectSavedQueryV2Request = {
+  name: "Missing revision",
+  query: "SELECT 1",
+};
+void invalidV2SavedQueryUpdate;
 
 const deletingEnvironment = {
   environmentId,
@@ -87,7 +96,7 @@ describe("TerraScaleClient route contracts", () => {
       manifest.routes.map(routeManifestCore),
       capturedRoutes.map(routeManifestCore),
     );
-    assert.equal(manifest.routeCount, 154);
+    assert.equal(manifest.routeCount, 157);
     assert.equal(manifest.routeCount, capturedRoutes.length);
     assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
     assert.deepEqual(
@@ -529,6 +538,78 @@ describe("TerraScaleClient route contracts", () => {
       `/api/v1/projects/${projectId}/saved-queries/${savedQueryId}`,
     );
     assert.equal(requests[7]?.headers.get("idempotency-key"), "saved-query-replay-key");
+  });
+
+  test("uses opaque revision-aware v2 saved-query reads and conditional updates", async () => {
+    const savedQuery = {
+      savedQueryId,
+      projectId,
+      name: "Active users",
+      query: "SELECT * FROM users WHERE active = true",
+      repositoryId: null,
+      createdAt: "2026-08-05T00:00:00Z",
+      updatedAt: "2026-08-05T00:00:00Z",
+      revision: "opaque-resource-revision",
+    } satisfies ProjectSavedQueryV2Response;
+    const { client, requests } = createCapturingClientWithResponses([
+      [savedQuery],
+      [savedQuery],
+      savedQuery,
+      savedQuery,
+    ], { idempotencyKeyFactory: () => "saved-query-v2-replay-key" });
+
+    await client.savedQueries.v2.list();
+    assertRequest(requests[0], "GET", `/api/v2/projects/${projectId}/saved-queries`);
+    assert.equal(requests[0]?.url.search, "?skip=0&take=100");
+
+    const listed = await client.savedQueries.v2.list(undefined, { skip: 10, take: 20 });
+    assert.equal(listed.ok, true);
+    if (listed.ok) assert.deepEqual(listed.value, [savedQuery]);
+    assertRequest(requests[1], "GET", `/api/v2/projects/${projectId}/saved-queries`);
+    assert.equal(requests[1]?.url.search, "?skip=10&take=20");
+
+    const fetched = await client.savedQueries.v2.get(savedQueryId);
+    assert.equal(fetched.ok, true);
+    if (fetched.ok) assert.equal(fetched.value.revision, savedQuery.revision);
+    assertRequest(requests[2], "GET", `/api/v2/projects/${projectId}/saved-queries/${savedQueryId}`);
+
+    await client.savedQueries.v2.update(savedQueryId, {
+      name: "Active users v2",
+      query: savedQuery.query,
+      revision: savedQuery.revision,
+    });
+    assertRequest(requests[3], "PUT", `/api/v2/projects/${projectId}/saved-queries/${savedQueryId}`);
+    assert.deepEqual(requests[3]?.body, {
+      name: "Active users v2",
+      query: savedQuery.query,
+      revision: savedQuery.revision,
+    });
+    assert.equal(requests[3]?.headers.get("idempotency-key"), "saved-query-v2-replay-key");
+  });
+
+  test("maps v2 revision conflicts to the public conflict result", async () => {
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      projectId,
+      fetch: async () =>
+        Response.json(
+          { code: "EntityVersionConflict", message: "The saved query was changed." },
+          { status: 409 },
+        ),
+    });
+
+    const result = await client.savedQueries.v2.update(savedQueryId, {
+      name: "Active users v2",
+      query: "SELECT * FROM users WHERE active = true",
+      revision: "opaque-resource-revision",
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.status, 409);
+      assert.equal(result.error.kind, "conflict");
+      assert.equal(result.error.code, "EntityVersionConflict");
+    }
   });
 
   test("uses backed database backup and restore routes with public DTO shapes", async () => {
