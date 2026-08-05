@@ -1197,6 +1197,10 @@ export class DatabasesClient {
     databaseId: Ulid,
     options: Models.DeleteProjectDatabaseOptions,
   ): Promise<TerraScaleResult<Models.DeletedProjectDatabaseResponse>> {
+    if (options?.confirm !== true) {
+      throw new TypeError("Database deletion requires options.confirm to be true.");
+    }
+
     return this.#http.request({
       method: "DELETE",
       path: databaseRoot(this.#http, { projectId: options.projectId, databaseId }),

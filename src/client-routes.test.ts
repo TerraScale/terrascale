@@ -324,6 +324,19 @@ describe("TerraScaleClient route contracts", () => {
       void client.databases.delete(databaseId);
     }
 
+    for (const options of [
+      {},
+      { confirm: false },
+      { confirm: "true" },
+      { confirm: new Boolean(true) },
+    ]) {
+      assert.throws(
+        () => client.databases.delete(databaseId, options as never),
+        TypeError,
+      );
+    }
+    assert.equal(requests.filter(request => request.method === "DELETE").length, 0);
+
     const deleteResult = await client.databases.delete(databaseId, { confirm: true });
     assert.equal(deleteResult.ok, true);
     if (deleteResult.ok) {
