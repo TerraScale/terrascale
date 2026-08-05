@@ -58,6 +58,30 @@ public sealed class TerraScaleSavedQueriesClientTests
     }
 
     [Test]
+    public async Task ListAsync_AllowsPublicDefaultAndMaximumTakeButRejectsHigherValues()
+    {
+        using var handler = new RecordingHandler();
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleClient(httpClient, new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri("https://api.example.invalid/"),
+            ApiKey = "test-key",
+            ProjectId = "project-a"
+        });
+
+        await client.SavedQueries.ListAsync("project-a", take: 0);
+        await client.SavedQueries.ListAsync("project-a", take: 500);
+        var exception = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            client.SavedQueries.ListAsync("project-a", take: 501));
+
+        await Assert.That(handler.Requests[0].Uri).IsEqualTo(
+            "https://api.example.invalid/api/v1/projects/project-a/saved-queries?skip=0&take=0");
+        await Assert.That(handler.Requests[1].Uri).IsEqualTo(
+            "https://api.example.invalid/api/v1/projects/project-a/saved-queries?skip=0&take=500");
+        await Assert.That(exception).IsNotNull();
+    }
+
+    [Test]
     public async Task SavedQueryModels_SerializeAndDeserializeContractFields()
     {
         var request = new TerraScaleSaveQueryRequest("Orders", "from Orders");
@@ -83,7 +107,7 @@ public sealed class TerraScaleSavedQueriesClientTests
             ProjectId = "project-a"
         });
 
-        var listException = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.SavedQueries.ListAsync("project-a", take: 0));
+        var listException = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.SavedQueries.ListAsync("project-a", take: -1));
         var createException = await Assert.ThrowsAsync<ArgumentException>(() => client.SavedQueries.CreateAsync(
             "project-a",
             new TerraScaleSaveQueryRequest(" ", "from Orders")));
@@ -116,7 +140,7 @@ public sealed class TerraScaleSavedQueriesClientTests
                 : request.Method == HttpMethod.Get
                     ? "[{\"savedQueryId\":\"saved-query-a\",\"projectId\":\"project-a\",\"name\":\"Orders\",\"query\":\"from Orders\",\"repositoryId\":null,\"createdAt\":\"2026-08-05T12:00:00+00:00\",\"updatedAt\":\"2026-08-05T13:00:00+00:00\"}]"
                     : "{\"savedQueryId\":\"saved-query-a\",\"projectId\":\"project-a\",\"name\":\"Recent paid orders\",\"query\":\"from Orders where Paid = true\",\"repositoryId\":null,\"createdAt\":\"2026-08-05T12:00:00+00:00\",\"updatedAt\":\"2026-08-05T13:00:00+00:00\"}";
-            return new HttpResponseMessage(HttpStatusCode.OK)
+            return new HttpResponseMessage(request.Method == HttpMethod.Post ? HttpStatusCode.Created : HttpStatusCode.OK)
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
             };

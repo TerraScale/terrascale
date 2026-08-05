@@ -157,6 +157,55 @@ public sealed class TerraScaleApiE2ETests
 
     [Test]
     [RequiresTerraScaleApi]
+    public async Task SavedQueries_CreateListUpdateAndDelete_RoundTripAgainstRealApi()
+    {
+        var client = TerraScaleApiE2E.CreateClient();
+        var currentProject = await GetCurrentProjectAsync(client);
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        TerraScaleSavedQuery? created = null;
+
+        try
+        {
+            var invalid = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.SavedQueries.CreateAsync(
+                currentProject.ProjectId,
+                new TerraScaleSaveQueryRequest($"sdk-e2e-saved-query-{suffix}", new string('q', 8001))));
+            await Assert.That(invalid!.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+
+            created = await client.SavedQueries.CreateAsync(
+                currentProject.ProjectId,
+                new TerraScaleSaveQueryRequest($"sdk-e2e-saved-query-{suffix}", "from Orders"));
+            await Assert.That(created.ProjectId).IsEqualTo(currentProject.ProjectId);
+            await Assert.That(created.Name).IsEqualTo($"sdk-e2e-saved-query-{suffix}");
+            await Assert.That(created.RepositoryId).IsNull();
+
+            var listed = await client.SavedQueries.ListAsync(currentProject.ProjectId, take: 0);
+            await Assert.That(listed.Any(savedQuery => savedQuery.SavedQueryId == created.SavedQueryId)).IsTrue();
+
+            var updated = await client.SavedQueries.UpdateAsync(
+                currentProject.ProjectId,
+                created.SavedQueryId,
+                new TerraScaleSaveQueryRequest($"sdk-e2e-saved-query-updated-{suffix}", "from Orders where Status = 'paid'"));
+            await Assert.That(updated.SavedQueryId).IsEqualTo(created.SavedQueryId);
+            await Assert.That(updated.Name).IsEqualTo($"sdk-e2e-saved-query-updated-{suffix}");
+            await Assert.That(updated.UpdatedAt).IsGreaterThanOrEqualTo(created.UpdatedAt);
+
+            var deleted = await client.SavedQueries.DeleteAsync(currentProject.ProjectId, created.SavedQueryId);
+            await Assert.That(deleted.SavedQueryId).IsEqualTo(created.SavedQueryId);
+            await Assert.That(deleted.ProjectId).IsEqualTo(currentProject.ProjectId);
+            await Assert.That(deleted.Deleted).IsTrue();
+            created = null;
+        }
+        finally
+        {
+            if (created is not null)
+            {
+                await DeleteSavedQueryIfPresentAsync(client, currentProject.ProjectId, created.SavedQueryId);
+            }
+        }
+    }
+
+    [Test]
+    [RequiresTerraScaleApi]
     public async Task ProjectQueues_CreatePublishReceiveAcknowledgePurgeAndDelete_RoundTripAgainstRealApi()
     {
         var client = TerraScaleApiE2E.CreateClient();
@@ -626,6 +675,20 @@ public sealed class TerraScaleApiE2ETests
         try
         {
             await client.Queues.DeleteAsync(projectId, queueId);
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
+        }
+    }
+
+    private static async Task DeleteSavedQueryIfPresentAsync(
+        TerraScaleClient client,
+        string projectId,
+        string savedQueryId)
+    {
+        try
+        {
+            await client.SavedQueries.DeleteAsync(projectId, savedQueryId);
         }
         catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {

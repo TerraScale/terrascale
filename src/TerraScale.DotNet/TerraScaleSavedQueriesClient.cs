@@ -22,7 +22,7 @@ public sealed class TerraScaleSavedQueriesClient
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-        TerraScalePagination.Validate(skip, take);
+        ValidatePagination(skip, take);
         return client.SendAsync<IReadOnlyList<TerraScaleSavedQuery>>(
             HttpMethod.Get,
             TerraScaleApiRoutes.ProjectSavedQueriesList(projectId, skip, take),
@@ -88,6 +88,19 @@ public sealed class TerraScaleSavedQueriesClient
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Name);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Query);
+    }
+
+    private static void ValidatePagination(int skip, int take)
+    {
+        if (skip < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(skip), "Skip must be greater than or equal to zero.");
+        }
+
+        if (take is < 0 or > 500)
+        {
+            throw new ArgumentOutOfRangeException(nameof(take), "Take must be between zero and 500.");
+        }
     }
 }
 
