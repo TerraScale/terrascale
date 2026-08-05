@@ -26,8 +26,7 @@ export async function generateOpenApiContractDescriptor({ manifestPath, specPath
       operation: route.operation,
       operationId: operation.operationId,
       parameters: [...(pathItem.parameters ?? []), ...(operation.parameters ?? [])]
-        .map((parameter) => resolveSchema(parameter, spec))
-        .map((parameter) => ({ in: parameter.in, name: parameter.name, required: parameter.required === true, schema: schemaDescriptor(parameter.schema, spec) }))
+        .map((parameter) => parameterDescriptor(parameter, spec))
         .sort(compareParameter),
       pathTemplate: route.pathTemplate,
       request,
@@ -66,15 +65,19 @@ export async function writeOpenApiContractDescriptor({ manifestPath, outputPath,
 function requestDescriptor(operation, spec) {
   const body = operation.requestBody === undefined ? undefined : resolveSchema(operation.requestBody, spec);
   if (body === undefined) return { kind: "void" };
-  return { ref: typeof operation.requestBody?.$ref === "string" ? operation.requestBody.$ref : undefined, required: body.required === true, content: contentSchemas(body.content, spec) };
+  return { requestBody: canonicalize(operation.requestBody, spec), required: body.required === true, content: contentSchemas(body.content, spec) };
 }
 
 function successfulResponses(operation, spec) {
   return Object.entries(operation.responses ?? {})
     .filter(([status]) => /^2\d\d$/u.test(status))
-    .map(([status, response]) => [status, resolveSchema(response, spec)])
-    .map(([status, response]) => ({ status, content: contentSchemas(response.content, spec) }))
+    .map(([status, response]) => ({ status, response: canonicalize(response, spec) }))
     .sort((left, right) => left.status.localeCompare(right.status));
+}
+
+function parameterDescriptor(parameter, spec) {
+  const resolved = resolveSchema(parameter, spec);
+  return { in: resolved.in, name: resolved.name, required: resolved.required === true, parameter: canonicalize(parameter, spec), schema: schemaDescriptor(resolved.schema, spec) };
 }
 
 function contentSchemas(content, spec) {

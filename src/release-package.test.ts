@@ -81,6 +81,8 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "release-contract-fixture"), /check:openapi-contract-descriptor -- Documentation\/public\/openapi\/server\.openapi\.json/u);
   assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("npm run build") < jobDefinition(workflow, "release-contract-fixture").indexOf("npm run check:route-manifest"));
   assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("npm run check:route-manifest") < jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-contract-descriptor"));
+  assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-contract-descriptor") < jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-drift -- --strict"));
+  assert.ok(jobDefinition(workflow, "pr-static").indexOf("check:openapi-contract-descriptor") < jobDefinition(workflow, "pr-static").indexOf("check:openapi-drift -- --strict"));
   assert.match(jobDefinition(workflow, "release-version-availability"), /--check-availability --package @terrascale\/sdk/u);
   assert.match(jobDefinition(workflow, "release-e2e"), /secrets\.TERRASCALE_E2E_ACCESS_TOKEN/u);
   assert.doesNotMatch(jobDefinition(workflow, "release-e2e"), /^    env:/mu);

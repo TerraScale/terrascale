@@ -7,6 +7,18 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const generator = import(pathToFileURL(path.join(root, "scripts", "openapi-contract-descriptor.mjs")).href) as Promise<{ generateOpenApiContractDescriptor(input: { manifestPath: string; specPath: string }): Promise<unknown> }>;
+const capture = import(pathToFileURL(path.join(root, "dist", "client-route-capture.js")).href) as Promise<{ canonicalContractHeaders(headers: Headers): readonly { readonly name: string; readonly value: string }[] }>;
+
+test("capture pins only allowlisted values and canonical single-valued Fetch headers", async () => {
+  const headers = new Headers();
+  headers.append("accept", "application/json");
+  headers.append("accept", "text/plain");
+  headers.set("x-credential", "never-commit");
+  assert.deepEqual((await capture).canonicalContractHeaders(headers), [
+    { name: "accept", value: "application/json, text/plain" },
+    { name: "x-credential", value: "<redacted>" },
+  ]);
+});
 
 test("descriptor pins operation identity, parameter contract, and complete JSON shapes", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "terrascale-openapi-descriptor-"));
@@ -32,10 +44,10 @@ test("descriptor fails closed for stale source body metadata and preserves refer
     await writeFile(manifestPath, JSON.stringify({ routes: [route] }));
     const openApi = { openapi: "3.1.0", paths: { "/api/v1/widgets": { post: {
       operationId: "Create",
-      parameters: ["path", "query", "header", "cookie"].map((inLocation, index) => ({ in: inLocation, name: `p${index}`, required: inLocation === "path", schema: { type: "string", minLength: index + 1 } })),
+      parameters: ["path", "query", "header", "cookie"].map((inLocation, index) => index === 1 ? { $ref: "#/components/parameters/Query" } : ({ in: inLocation, name: `p${index}`, required: inLocation === "path", schema: { type: "string", minLength: index + 1 } })),
       requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/First" } } } },
-      responses: { 200: { content: { "application/json": { schema: { $ref: "#/components/schemas/First" } } } }, 201: { content: { "application/json": { schema: { $ref: "#/components/schemas/Second" } } } } },
-    } } }, components: { schemas: { First: { type: "object", properties: { name: { type: "string" } } }, Second: { type: "object", properties: { name: { type: "string" } } } } } };
+      responses: { 200: { $ref: "#/components/responses/Ok" }, 201: { content: { "application/json": { schema: { $ref: "#/components/schemas/Second" } } } } },
+    } } }, components: { parameters: { Query: { in: "query", name: "p1", required: false, schema: { type: "string", minLength: 2 } } }, responses: { Ok: { description: "ok", content: { "application/json": { schema: { $ref: "#/components/schemas/First" } } } }, Other: { description: "ok", content: { "application/json": { schema: { $ref: "#/components/schemas/First" } } } } }, schemas: { First: { type: "object", properties: { name: { type: "string" }, self: { $ref: "#/components/schemas/First" } } }, Second: { type: "object", properties: { name: { type: "string" } } } } } };
     await writeFile(specPath, JSON.stringify(openApi));
     await assert.rejects((await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }), /declares void but captures a request body/u);
     const updatedRoute = { ...route, requestType: "json", responseType: "Widget" };
@@ -46,10 +58,11 @@ test("descriptor fails closed for stale source body metadata and preserves refer
     assert.notDeepEqual(await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }), first);
     await writeFile(manifestPath, JSON.stringify({ routes: [updatedRoute] }));
     const swapped = JSON.parse(await (await import("node:fs/promises")).readFile(specPath, "utf8"));
-    swapped.paths["/api/v1/widgets"].post.responses[200].content["application/json"].schema.$ref = "#/components/schemas/Second";
+    assert.match(JSON.stringify(first), /"\$ref":"#\/components\/(?:parameters\/Query|responses\/Ok|schemas\/First)"/u);
+    swapped.paths["/api/v1/widgets"].post.responses[200].$ref = "#/components/responses/Other";
     await writeFile(specPath, JSON.stringify(swapped));
     assert.notDeepEqual(await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }), first);
-    swapped.paths["/api/v1/widgets"].post.responses[200].content["application/json"].schema.$ref = "#/components/schemas/First";
+    swapped.paths["/api/v1/widgets"].post.responses[200] = { $ref: "#/components/responses/Ok", description: "alternate" };
     swapped.components.schemas.First.properties.name = { $ref: "#/components/schemas/Text", maxLength: 4 };
     swapped.components.schemas.Text = { type: "string" };
     await writeFile(specPath, JSON.stringify(swapped));

@@ -161,8 +161,12 @@ schema-constraint drift fails the descriptor check.
 The route manifest also records the actual captured JSON body shape plus sorted
 query and header name/value pairs (including repeated query values), so changes
 to pagination or destructive-confirmation semantics cannot pass unnoticed.
-Sensitive pair values are redacted. Schema entries retain every nested OpenAPI
+Only an explicit deterministic test-value allowlist is retained; all other pair
+values are redacted. Schema entries retain every nested OpenAPI
 `$ref`, its legal sibling constraints, and canonical resolved shape.
+Headers are captured after the Fetch `Headers` boundary as one effective value
+per lowercase name; repeated SDK header values are intentionally coalesced by
+that boundary and are not represented as distinct wire fields.
 
 The drift checker accepts any OpenAPI JSON file path or live spec URL, including
 a DevHost-served `/openapi/v1.json`. Refresh the Documentation snapshot from

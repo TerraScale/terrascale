@@ -117,13 +117,21 @@ async function capturedSourceContract(request: Request): Promise<CapturedSdkRout
   const text = await request.clone().text();
   return {
     body: text.length === 0 ? { kind: "void" } : { kind: "json", shape: JSON.parse(text) },
-    headers: [...request.headers].map(([name, value]) => contractPair(name, value)).sort(compareContractPair),
+    headers: canonicalContractHeaders(request.headers),
     query: [...new URL(request.url).searchParams].map(([name, value]) => contractPair(name, value)).sort(compareContractPair),
   };
 }
 
+const safeContractValueNames = new Set([
+  "accept", "content-type", "cursor", "deletedocuments", "idempotency-key", "latitude", "limit", "longitude", "maxmessages", "organizationid", "range", "skip", "take", "unreadonly", "x-terrascale-delete-confirmation", "x-terrascale-preferred-region", "x-terrascale-project-id",
+]);
+
+export function canonicalContractHeaders(headers: Headers): readonly { readonly name: string; readonly value: string }[] {
+  return [...headers].map(([name, value]) => contractPair(name, value)).sort(compareContractPair);
+}
+
 function contractPair(name: string, value: string): { readonly name: string; readonly value: string } {
-  return { name, value: /(?:authorization|cookie|password|secret|token|api[-_]?key)/iu.test(name) ? "<redacted>" : value };
+  return { name, value: safeContractValueNames.has(name.toLowerCase()) ? value : "<redacted>" };
 }
 
 function compareContractPair(left: { readonly name: string; readonly value: string }, right: { readonly name: string; readonly value: string }): number {
