@@ -23,6 +23,8 @@
 - Claim clear ownership before editing: each agent owns a bounded file/module
   slice. Inspect the worktree first, coordinate any shared contract, export, or
   generated-file change, and do not overwrite or reformat another agent's work.
+- Concurrent writers use explicit file ownership and explicit `git add` paths;
+  the integration owner alone resolves shared export or generated-file conflicts.
 - Implement public capabilities contract-first: land the Platform public REST
   contract, route manifest, and OpenAPI surface first; then add the matching
   typed SDK DTOs and operation; finally update consumers, docs, and adapters.

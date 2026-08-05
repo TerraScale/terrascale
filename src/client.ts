@@ -1,5 +1,5 @@
 import type { ResolvedTerraScaleRuntimeConfig, TerraScaleRuntimeConfig } from "./config.js";
-import { TerraScaleHttp, type TerraScaleRequestOptions } from "./http.js";
+import { TerraScaleHttp } from "./http.js";
 import { type Ulid, ulidPathSegment } from "./ids.js";
 import type * as Models from "./models.js";
 import { normalizeRegionCodes } from "./regions.js";
@@ -96,7 +96,6 @@ export class TerraScaleClient {
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.#http = new TerraScaleHttp(config);
-    this.request = this.request.bind(this);
     this.auth = new AuthClient(this.#http);
     this.onboarding = new OnboardingClient(this.#http);
     this.organizations = new OrganizationsClient(this.#http);
@@ -123,11 +122,6 @@ export class TerraScaleClient {
     return this.#http.config;
   }
 
-  request<TResponse, TBody = unknown>(
-    options: TerraScaleRequestOptions<TBody>,
-  ): Promise<TerraScaleResult<TResponse>> {
-    return this.#http.request<TResponse, TBody>(options);
-  }
 }
 
 export class OnboardingClient {

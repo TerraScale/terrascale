@@ -52,7 +52,7 @@ describe("TerraScaleClient route contracts", () => {
     );
   });
 
-  test("public factory hides private clients and keeps generic requests bound", async () => {
+  test("public factory hides private clients and exposes typed clients", async () => {
     const { client, requests } = createCapturingClient({});
     const runtimeClient = client as TerraScaleClient & {
       readonly admin?: unknown;
@@ -67,12 +67,7 @@ describe("TerraScaleClient route contracts", () => {
     assert.equal(runtimeClient.dashboard, undefined);
     assert.equal(runtimeClient.http, undefined);
 
-    const request = client.request;
-    await request({
-      method: "GET",
-      path: "/api/v1/regions",
-      routeName: "regions.list",
-    });
+    await client.regions.list();
     assertRequest(requests[0], "GET", "/api/v1/regions");
   });
 
