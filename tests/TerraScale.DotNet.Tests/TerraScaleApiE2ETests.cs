@@ -7,11 +7,11 @@ public sealed class TerraScaleApiE2ETests
 {
     [Test]
     [RequiresTerraScaleBaseAddress]
-    public async Task Billing_ListPricingPlansAsync_ReturnsPublicCatalogAgainstRealApi()
+    public async Task Billing_GetPricingPlansAsync_ReturnsPublicCatalogAgainstRealApi()
     {
         var client = TerraScaleApiE2E.CreateAnonymousClient();
 
-        var plans = await client.Billing.ListPricingPlansAsync();
+        var plans = await client.Billing.GetPricingPlansAsync();
 
         await Assert.That(plans).IsNotNull();
         await Assert.That(plans.All(plan => !string.IsNullOrWhiteSpace(plan.PlanId))).IsTrue();
@@ -28,6 +28,58 @@ public sealed class TerraScaleApiE2ETests
             client.Billing.ListAccessAsync("01ARZ3NDEKTSV4RRFFQ69G5FAV"));
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    [RequiresTerraScaleBillingAccessLifecycle]
+    public async Task Billing_UpdateAccessAsync_GrantsRevokesRestoresAndDeniesCrossTenantAccess()
+    {
+        var organizationId = TerraScaleApiE2E.BillingOrganizationId;
+        var forbiddenOrganizationId = TerraScaleApiE2E.BillingForbiddenOrganizationId;
+        if (string.Equals(organizationId, forbiddenOrganizationId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("The billing access lifecycle and forbidden organization ids must differ.");
+        }
+
+        var client = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
+            ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
+        var userId = TerraScaleApiE2E.BillingAccessTestUserId;
+        var original = await client.Billing.ListAccessAsync(organizationId);
+        var originalEnabled = original.SingleOrDefault(member => member.UserId == userId)?.Enabled ?? false;
+        var mutated = false;
+
+        try
+        {
+            var granted = await client.Billing.UpdateAccessAsync(
+                organizationId,
+                userId,
+                new TerraScaleUpdateBillingAccessRequest(true),
+                $"sdk-e2e-billing-grant-{Guid.NewGuid():N}");
+            mutated = true;
+            await Assert.That(granted.Enabled).IsTrue();
+
+            var revoked = await client.Billing.UpdateAccessAsync(
+                organizationId,
+                userId,
+                new TerraScaleUpdateBillingAccessRequest(false),
+                $"sdk-e2e-billing-revoke-{Guid.NewGuid():N}");
+            await Assert.That(revoked.Enabled).IsFalse();
+
+            var forbidden = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.Billing.ListAccessAsync(forbiddenOrganizationId));
+            await Assert.That(forbidden!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        }
+        finally
+        {
+            if (mutated)
+            {
+                await client.Billing.UpdateAccessAsync(
+                    organizationId,
+                    userId,
+                    new TerraScaleUpdateBillingAccessRequest(originalEnabled),
+                    $"sdk-e2e-billing-restore-{Guid.NewGuid():N}");
+            }
+        }
     }
 
     [Test]

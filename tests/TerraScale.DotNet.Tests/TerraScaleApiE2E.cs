@@ -13,6 +13,9 @@ internal static class TerraScaleApiE2E
     private const string MissingBaseAddressConfigurationReason =
         "Set TERRASCALE_E2E_BASE_URL to run TerraScale SDK authentication-failure E2E tests.";
 
+    private const string MissingBillingAccessLifecycleConfigurationReason =
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_BILLING_ORGANIZATION_ID, TERRASCALE_E2E_BILLING_ACCESS_TEST_USER_ID, TERRASCALE_E2E_BILLING_FORBIDDEN_ORGANIZATION_ID, and TERRASCALE_E2E_ENABLE_BILLING_ACCESS_LIFECYCLE=true to run the isolated billing-access lifecycle E2E test.";
+
     public static bool IsConfigured =>
         BaseAddress is not null &&
         !string.IsNullOrWhiteSpace(ApiKey) &&
@@ -26,6 +29,14 @@ internal static class TerraScaleApiE2E
 
     public static bool IsBaseAddressConfigured => BaseAddress is not null;
 
+    public static bool IsBillingAccessLifecycleConfigured =>
+        BaseAddress is not null &&
+        !string.IsNullOrWhiteSpace(BearerToken) &&
+        !string.IsNullOrWhiteSpace(BillingOrganizationId) &&
+        !string.IsNullOrWhiteSpace(BillingAccessTestUserId) &&
+        !string.IsNullOrWhiteSpace(BillingForbiddenOrganizationId) &&
+        string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_BILLING_ACCESS_LIFECYCLE"), "true", StringComparison.OrdinalIgnoreCase);
+
     public static bool HasCompleteAuthenticationConfiguration => IsConfigured || IsBearerConfigured;
 
     public static string SkipReason => MissingApiKeyConfigurationReason;
@@ -33,6 +44,8 @@ internal static class TerraScaleApiE2E
     public static string BearerSkipReason => MissingBearerConfigurationReason;
 
     public static string BaseAddressSkipReason => MissingBaseAddressConfigurationReason;
+
+    public static string BillingAccessLifecycleSkipReason => MissingBillingAccessLifecycleConfigurationReason;
 
     public static Uri? BaseAddress =>
         Uri.TryCreate(Environment.GetEnvironmentVariable("TERRASCALE_E2E_BASE_URL"), UriKind.Absolute, out var uri)
@@ -46,6 +59,12 @@ internal static class TerraScaleApiE2E
     public static string ProjectId => Required("TERRASCALE_E2E_PROJECT_ID");
 
     public static string Repository => Required("TERRASCALE_E2E_REPOSITORY");
+
+    public static string BillingOrganizationId => Required("TERRASCALE_E2E_BILLING_ORGANIZATION_ID");
+
+    public static string BillingAccessTestUserId => Required("TERRASCALE_E2E_BILLING_ACCESS_TEST_USER_ID");
+
+    public static string BillingForbiddenOrganizationId => Required("TERRASCALE_E2E_BILLING_FORBIDDEN_ORGANIZATION_ID");
 
     public static IReadOnlyList<(string Name, string Value)> ConfigurationVariables =>
     [
@@ -116,4 +135,11 @@ internal sealed class RequiresTerraScaleBaseAddressAttribute()
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
         Task.FromResult(!TerraScaleApiE2E.IsBaseAddressConfigured);
+}
+
+internal sealed class RequiresTerraScaleBillingAccessLifecycleAttribute()
+    : SkipAttribute(TerraScaleApiE2E.BillingAccessLifecycleSkipReason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(!TerraScaleApiE2E.IsBillingAccessLifecycleConfigured);
 }

@@ -19,7 +19,7 @@ public sealed class TerraScaleBillingClientTests
             IdempotencyKeyFactory = () => "factory-key"
         });
 
-        var plans = await client.Billing.ListPricingPlansAsync();
+        var plans = await client.Billing.GetPricingPlansAsync();
         var account = await client.Billing.GetAccountAsync("organization / a");
         var invoices = await client.Billing.ListInvoicesAsync("organization / a", skip: 2, take: 10);
         var members = await client.Billing.ListAccessAsync("organization / a");
@@ -40,6 +40,7 @@ public sealed class TerraScaleBillingClientTests
             HttpMethod.Get, "https://api.example.invalid/api/v1/organizations/organization %2F a/billing/access", null, null));
         await Assert.That(handler.Requests[4]).IsEqualTo(new BillingRecordedRequest(
             HttpMethod.Put, "https://api.example.invalid/api/v1/organizations/organization %2F a/billing/access/user %2F a", "{\"enabled\":true}", "retry-key"));
+        await Assert.That(handler.PricingRequestIncludedCredentials).IsFalse();
         await Assert.That(plans[0].IncludedUsage[0].Quantity).IsEqualTo(1_000_000L);
         await Assert.That(account.BillingInterval).IsEqualTo("month");
         await Assert.That(invoices.TotalCount).IsEqualTo(1);
@@ -60,6 +61,22 @@ public sealed class TerraScaleBillingClientTests
         await Assert.That(plan).IsNotNull();
         await Assert.That(plan!.AnnualStripePriceId).IsEqualTo("price-year");
         await Assert.That(plan.IncludedUsage[0].Unit).IsEqualTo("requests");
+    }
+
+    [Test]
+    public async Task BillingAccountAndInvoice_KeepLegacyPositionalFieldsCompatible()
+    {
+        var account = new TerraScaleBillingAccount("account-a", "organization-a", "plan-a", "active", "month", "stripe");
+        var invoice = new TerraScaleBillingInvoice(
+            "invoice-a", "account-a", 1000, "USD", "paid", DateTimeOffset.UnixEpoch, RefundedAmountCents: 250);
+        var deserialized = JsonSerializer.Deserialize<TerraScaleBillingInvoice>("""
+            {"invoiceId":"invoice-a","billingAccountId":"account-a","amountCents":1000,"currency":"USD","status":"paid","issuedAt":"1970-01-01T00:00:00+00:00"}
+            """, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        await Assert.That(account.Provider).IsEqualTo("stripe");
+        await Assert.That(invoice.RefundedAmountCents).IsEqualTo(250L);
+        await Assert.That(deserialized).IsNotNull();
+        await Assert.That(deserialized!.RefundedAmountCents).IsEqualTo(0L);
     }
 
     [Test]
@@ -91,8 +108,17 @@ public sealed class TerraScaleBillingClientTests
     {
         public List<BillingRecordedRequest> Requests { get; } = [];
 
+        public bool PricingRequestIncludedCredentials { get; private set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri!.AbsolutePath == "/api/v1/pricing/plans")
+            {
+                PricingRequestIncludedCredentials = request.Headers.Authorization is not null ||
+                    request.Headers.Contains("X-TerraScale-Auth-Key") ||
+                    request.Headers.Contains("X-TerraScale-Project-Id");
+            }
+
             Requests.Add(new BillingRecordedRequest(
                 request.Method,
                 request.RequestUri!.ToString(),

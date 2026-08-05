@@ -46,15 +46,22 @@ public sealed class TerraScaleBillingClient
     }
 
     /// <summary>
-    /// Lists publicly visible pricing plans.
+    /// Gets publicly visible pricing plans without sending caller credentials.
     /// </summary>
-    public Task<IReadOnlyList<TerraScalePricingPlan>> ListPricingPlansAsync(
+    public Task<IReadOnlyList<TerraScalePricingPlan>> GetPricingPlansAsync(
         CancellationToken cancellationToken = default) =>
-        client.SendAsync<IReadOnlyList<TerraScalePricingPlan>>(
+        client.SendAnonymousJsonAsync<IReadOnlyList<TerraScalePricingPlan>>(
             HttpMethod.Get,
             TerraScaleApiRoutes.PricingPlansList(),
             body: null,
             cancellationToken);
+
+    /// <summary>
+    /// Lists publicly visible pricing plans.
+    /// </summary>
+    public Task<IReadOnlyList<TerraScalePricingPlan>> ListPricingPlansAsync(
+        CancellationToken cancellationToken = default) =>
+        GetPricingPlansAsync(cancellationToken);
 
     /// <summary>
     /// Lists members with delegated billing access for an organization.
@@ -153,7 +160,8 @@ public sealed record TerraScaleBillingAccount(
     string OrganizationId,
     string PlanId,
     string Status,
-    string? BillingInterval = null);
+    string? BillingInterval = null,
+    string Provider = "polar");
 
 /// <summary>
 /// Persisted payment-provider invoice projection returned by TerraScale billing.
@@ -168,7 +176,8 @@ public sealed record TerraScaleBillingInvoice(
     string? HostedInvoiceUrl = null,
     string? InvoicePdf = null,
     DateTimeOffset? PeriodStart = null,
-    DateTimeOffset? PeriodEnd = null);
+    DateTimeOffset? PeriodEnd = null,
+    long RefundedAmountCents = 0);
 
 /// <summary>
 /// Page of persisted payment-provider invoice projections.
