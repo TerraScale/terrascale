@@ -13,15 +13,35 @@ public sealed class TerraScaleSyncTransportIntegrationTests
         TerraScaleSyncStateVersion.Zero;
 
     [Test]
-    public async Task PhysicalConnectionCancellationIsSafeAfterDisposal()
+    public async Task DisposalAfterConnectionCaptureCancelsMutationAndAuthenticationRefresh()
     {
-        var connection = new TerraScaleSyncSession.PhysicalConnection(
-            new ClientWebSocket(),
-            sequence: 1,
-            CancellationToken.None);
+        await using var endpoint = new LoopbackWebSocketEndpoint();
+        using var httpClient = CreateHttpClient();
+        var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshRelease = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = CreateSession(
+            httpClient,
+            endpoint,
+            _ =>
+            {
+                refreshStarted.TrySetResult();
+                return new(refreshRelease.Task);
+            });
+        var start = session.StartAsync();
+        var server = await endpoint.Accepted.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        _ = await ReadHandshakeAsync(server);
+        await start;
 
-        await connection.DisposeAsync();
-        connection.Cancel();
+        var refresh = session.RefreshAuthenticationAsync();
+        await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var mutation = session.ExecuteMutationAsync(
+            new TerraScaleSyncMutation("mutation-1", "update Counter", Json("{}")));
+
+        await session.DisposeAsync();
+        refreshRelease.TrySetResult("refreshed-token");
+
+        _ = await Assert.ThrowsAsync<OperationCanceledException>(() => refresh);
+        _ = await Assert.ThrowsAsync<OperationCanceledException>(() => mutation);
     }
 
     [Test]
@@ -351,14 +371,16 @@ public sealed class TerraScaleSyncTransportIntegrationTests
 
     private static TerraScaleSyncSession CreateSession(
         HttpClient httpClient,
-        LoopbackWebSocketEndpoint endpoint)
+        LoopbackWebSocketEndpoint endpoint,
+        Func<CancellationToken, ValueTask<string>>? bearerTokenProvider = null)
     {
         var client = new TerraScaleClient(
             httpClient,
             new TerraScaleClientOptions
             {
                 BaseAddress = httpClient.BaseAddress!,
-                BearerToken = "test-token"
+                BearerToken = bearerTokenProvider is null ? "test-token" : null,
+                BearerTokenProvider = bearerTokenProvider
             });
         return new TerraScaleSyncSession(
             client,

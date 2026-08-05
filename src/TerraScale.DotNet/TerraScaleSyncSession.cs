@@ -1699,6 +1699,7 @@ public sealed class TerraScaleSyncSession : IAsyncDisposable
     internal sealed class PhysicalConnection : IAsyncDisposable
     {
         private readonly CancellationTokenSource cancellation;
+        private readonly CancellationToken token;
         private long messageSequence;
         private long pingNonce;
 
@@ -1710,6 +1711,7 @@ public sealed class TerraScaleSyncSession : IAsyncDisposable
             Socket = socket;
             Sequence = sequence;
             cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            token = cancellation.Token;
             LastInboundTimestamp = Stopwatch.GetTimestamp();
             Outgoing = Channel.CreateBounded<OutboundFrame>(
                 new BoundedChannelOptions(OutgoingMessageCapacity)
@@ -1729,7 +1731,7 @@ public sealed class TerraScaleSyncSession : IAsyncDisposable
 
         public SemaphoreSlim OutboundGate { get; } = new(1, 1);
 
-        public CancellationToken Token => cancellation.Token;
+        public CancellationToken Token => token;
 
         public ConcurrentDictionary<ulong, long> Pings { get; } = [];
 
