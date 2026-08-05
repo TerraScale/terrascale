@@ -75,7 +75,7 @@ npm run cf:login
 npm run cf:project:create
 ```
 
-That reads the Pages project name and compatibility date from `wrangler.toml`. The production branch defaults to `main`; override it with `CLOUDFLARE_PAGES_PRODUCTION_BRANCH` if needed when creating the project.
+That reads the Pages project name and compatibility date from `wrangler.toml`. The production branch defaults to `main`; set `CLOUDFLARE_PAGES_PRODUCTION_BRANCH` to use another branch consistently for project creation and production deploys.
 
 4. Deploy to production:
 
@@ -89,7 +89,7 @@ npm run cf:deploy
 npm run cf:deploy:preview
 ```
 
-The preview deploy script uses the current git branch by default. Override it only when needed:
+The preview deploy script uses the current git branch by default and refuses the configured production branch. Override it only with a non-production branch when needed:
 
 ```bash
 export CLOUDFLARE_PAGES_BRANCH=staging
@@ -115,7 +115,7 @@ For CI or any non-interactive environment, provide:
 
 Optional deploy metadata overrides:
 
-- `CLOUDFLARE_PAGES_PRODUCTION_BRANCH`: override the production branch used only when creating the Pages project.
+- `CLOUDFLARE_PAGES_PRODUCTION_BRANCH`: override the production branch used for Pages project creation and production deploys (defaults to `main`).
 - `CLOUDFLARE_PAGES_BRANCH`: force the preview branch name.
 - `CLOUDFLARE_PAGES_COMMIT_SHA`: override the commit SHA attached to the deployment.
 - `CLOUDFLARE_PAGES_COMMIT_MESSAGE`: override the commit message attached to the deployment.
