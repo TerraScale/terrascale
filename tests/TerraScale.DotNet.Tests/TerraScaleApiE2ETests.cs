@@ -144,6 +144,40 @@ public sealed class TerraScaleApiE2ETests
     }
 
     [Test]
+    [RequiresTerraScaleAdministrationNonOwnerMutationAuthorization]
+    [NotInParallel("administration-non-owner-mutation-authorization")]
+    public async Task Administration_NonOwnerMutationRequestsAreForbiddenBeforeStateChanges()
+    {
+        var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
+            ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
+        var planId = TerraScaleApiE2E.AdminNonOwnerPlanId;
+        var provider = TerraScaleApiE2E.AdminWebhookProvider;
+        var eventId = TerraScaleApiE2E.AdminWebhookEventId;
+
+        var createPlan = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            standardBearer.Administration.CreatePricingPlanAsync(new TerraScaleAdminPricingPlanRequest(
+                Key: $"forbidden-{Guid.NewGuid():N}",
+                Name: "must not be created",
+                Currency: "USD",
+                MonthlyBaseCents: 100,
+                AnnualBaseCents: 100)));
+        var updatePlan = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            standardBearer.Administration.UpdatePricingPlanAsync(planId, new TerraScaleAdminPricingPlanRequest(Name: "must not be updated")));
+        var deletePlan = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            standardBearer.Administration.DeletePricingPlanAsync(planId));
+        var supportNote = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            standardBearer.Administration.CreateSupportNoteAsync(new TerraScaleAdminCreateSupportNoteRequest(null, null, null, "must not be persisted")));
+        var replay = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            standardBearer.Administration.ReplayPaymentWebhookAsync(provider, eventId, $"forbidden-replay-{Guid.NewGuid():N}"));
+
+        await Assert.That(createPlan!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(updatePlan!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(deletePlan!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(supportNote!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(replay!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+    }
+
+    [Test]
     [RequiresTerraScaleAdministrationPolarPlan]
     [NotInParallel("administration-polar-plan-lifecycle")]
     public async Task Administration_PolarPlanLifecycleUsesDedicatedProviderValuesAndCleansUp()

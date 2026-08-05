@@ -35,6 +35,9 @@ internal static class TerraScaleApiE2E
     private const string MissingAdministrationPolarPlanConfigurationReason =
         "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_POLAR_MONTHLY_PRODUCT_ID, TERRASCALE_E2E_ADMIN_POLAR_MONTHLY_PRICE_ID, TERRASCALE_E2E_ADMIN_POLAR_ANNUAL_PRODUCT_ID, TERRASCALE_E2E_ADMIN_POLAR_ANNUAL_PRICE_ID, and TERRASCALE_E2E_ENABLE_ADMIN_POLAR_PLAN_LIFECYCLE=true to run the disposable Polar plan E2E test.";
 
+    private const string MissingAdministrationNonOwnerMutationConfigurationReason =
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_NONOWNER_PLAN_ID, TERRASCALE_E2E_ADMIN_WEBHOOK_PROVIDER, TERRASCALE_E2E_ADMIN_WEBHOOK_EVENT_ID, and TERRASCALE_E2E_ENABLE_ADMIN_NONOWNER_MUTATION_AUTHORIZATION=true to run the non-mutating administration authorization E2E test.";
+
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingAccessLifecycleLocks = new(StringComparer.Ordinal);
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingCheckoutLocks = new(StringComparer.Ordinal);
@@ -106,6 +109,14 @@ internal static class TerraScaleApiE2E
         !string.IsNullOrWhiteSpace(AdminPolarAnnualPriceId) &&
         string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_ADMIN_POLAR_PLAN_LIFECYCLE"), "true", StringComparison.OrdinalIgnoreCase);
 
+    public static bool IsAdministrationNonOwnerMutationAuthorizationConfigured =>
+        BaseAddress is not null &&
+        !string.IsNullOrWhiteSpace(BearerToken) &&
+        !string.IsNullOrWhiteSpace(AdminNonOwnerPlanId) &&
+        !string.IsNullOrWhiteSpace(AdminWebhookProvider) &&
+        !string.IsNullOrWhiteSpace(AdminWebhookEventId) &&
+        string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_ADMIN_NONOWNER_MUTATION_AUTHORIZATION"), "true", StringComparison.OrdinalIgnoreCase);
+
     public static bool HasCompleteAuthenticationConfiguration => IsConfigured || IsBearerConfigured;
 
     public static string SkipReason => MissingApiKeyConfigurationReason;
@@ -127,6 +138,8 @@ internal static class TerraScaleApiE2E
     public static string AdministrationDeleteUserSkipReason => MissingAdministrationDeleteUserConfigurationReason;
 
     public static string AdministrationPolarPlanSkipReason => MissingAdministrationPolarPlanConfigurationReason;
+
+    public static string AdministrationNonOwnerMutationAuthorizationSkipReason => MissingAdministrationNonOwnerMutationConfigurationReason;
 
     public static Uri? BaseAddress =>
         Uri.TryCreate(Environment.GetEnvironmentVariable("TERRASCALE_E2E_BASE_URL"), UriKind.Absolute, out var uri)
@@ -156,6 +169,8 @@ internal static class TerraScaleApiE2E
     public static string AdminPolarAnnualProductId => Required("TERRASCALE_E2E_ADMIN_POLAR_ANNUAL_PRODUCT_ID");
 
     public static string AdminPolarAnnualPriceId => Required("TERRASCALE_E2E_ADMIN_POLAR_ANNUAL_PRICE_ID");
+
+    public static string AdminNonOwnerPlanId => Required("TERRASCALE_E2E_ADMIN_NONOWNER_PLAN_ID");
 
     public static string ProjectId => Required("TERRASCALE_E2E_PROJECT_ID");
 
@@ -349,4 +364,11 @@ internal sealed class RequiresTerraScaleAdministrationPolarPlanAttribute()
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
         Task.FromResult(!TerraScaleApiE2E.IsAdministrationPolarPlanConfigured);
+}
+
+internal sealed class RequiresTerraScaleAdministrationNonOwnerMutationAuthorizationAttribute()
+    : SkipAttribute(TerraScaleApiE2E.AdministrationNonOwnerMutationAuthorizationSkipReason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(!TerraScaleApiE2E.IsAdministrationNonOwnerMutationAuthorizationConfigured);
 }
