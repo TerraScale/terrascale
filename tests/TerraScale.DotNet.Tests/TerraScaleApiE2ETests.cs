@@ -33,6 +33,7 @@ public sealed class TerraScaleApiE2ETests
 
     [Test]
     [RequiresTerraScaleBillingAccessLifecycle]
+    [NotInParallel("billing-access-lifecycle")]
     public async Task Billing_UpdateAccessAsync_GrantsRevokesRestoresAndDeniesCrossTenantAccess()
     {
         var organizationId = TerraScaleApiE2E.BillingOrganizationId;
@@ -45,6 +46,7 @@ public sealed class TerraScaleApiE2ETests
         var client = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
             ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
         var userId = TerraScaleApiE2E.BillingAccessTestUserId;
+        using var lifecycleLock = await TerraScaleApiE2E.AcquireBillingAccessLifecycleLockAsync(organizationId, userId);
         var original = await client.Billing.ListAccessAsync(organizationId);
         var originalMember = original.SingleOrDefault(member => member.UserId == userId);
         if (originalMember is not { Enabled: true })
@@ -86,6 +88,47 @@ public sealed class TerraScaleApiE2ETests
                     $"sdk-e2e-billing-restore-{Guid.NewGuid():N}");
             }
         }
+    }
+
+    [Test]
+    [RequiresTerraScaleBillingCheckout]
+    public async Task Billing_CreateCheckoutSessionAsync_UsesDedicatedProviderNeutralFixtureAndRejectsInvalidPlan()
+    {
+        var anonymousClient = TerraScaleApiE2E.CreateAnonymousClient();
+        var plans = await anonymousClient.Billing.GetPricingPlansAsync();
+        var plan = plans.SingleOrDefault(candidate => candidate.PlanId == TerraScaleApiE2E.BillingCheckoutPlanId);
+        if (plan is null)
+        {
+            throw new SkipTestException("The configured billing checkout plan is not present in the public pricing catalog.");
+        }
+
+        await Assert.That(plan.Provider).IsEqualTo(TerraScaleApiE2E.BillingCheckoutProvider);
+        await Assert.That(plan.MonthlyTrialDays).IsGreaterThanOrEqualTo(0);
+        await Assert.That(plan.AnnualTrialDays).IsGreaterThanOrEqualTo(0);
+
+        var client = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
+            ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
+        var checkout = await client.Billing.CreateCheckoutSessionAsync(
+            TerraScaleApiE2E.BillingCheckoutOrganizationId,
+            new TerraScaleCreateCheckoutSessionRequest
+            {
+                PlanId = plan.PlanId,
+                BillingInterval = TerraScaleApiE2E.BillingCheckoutInterval,
+                Provider = plan.Provider
+            });
+        var invalid = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Billing.CreateCheckoutSessionAsync(
+                TerraScaleApiE2E.BillingCheckoutOrganizationId,
+                new TerraScaleCreateCheckoutSessionRequest
+                {
+                    PlanId = TerraScaleApiE2E.BillingCheckoutInvalidPlanId,
+                    BillingInterval = TerraScaleApiE2E.BillingCheckoutInterval,
+                    Provider = plan.Provider
+                }));
+
+        await Assert.That(checkout.SessionId).IsNotEmpty();
+        await Assert.That(checkout.Url).IsNotEmpty();
+        await Assert.That(invalid!.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound).IsTrue();
     }
 
     [Test]

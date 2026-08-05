@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using TerraScale.DotNet;
 
 namespace TerraScale.DotNet.Tests;
@@ -15,6 +16,11 @@ internal static class TerraScaleApiE2E
 
     private const string MissingBillingAccessLifecycleConfigurationReason =
         "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_BILLING_ORGANIZATION_ID, TERRASCALE_E2E_BILLING_ACCESS_TEST_USER_ID, TERRASCALE_E2E_BILLING_FORBIDDEN_ORGANIZATION_ID, and TERRASCALE_E2E_ENABLE_BILLING_ACCESS_LIFECYCLE=true to run the isolated billing-access lifecycle E2E test.";
+
+    private const string MissingBillingCheckoutConfigurationReason =
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_BILLING_CHECKOUT_ORGANIZATION_ID, TERRASCALE_E2E_BILLING_CHECKOUT_PLAN_ID, TERRASCALE_E2E_BILLING_CHECKOUT_INVALID_PLAN_ID, TERRASCALE_E2E_BILLING_CHECKOUT_INTERVAL, TERRASCALE_E2E_BILLING_CHECKOUT_PROVIDER, and TERRASCALE_E2E_ENABLE_BILLING_CHECKOUT=true to run the dedicated checkout E2E test.";
+
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingAccessLifecycleLocks = new(StringComparer.Ordinal);
 
     public static bool IsConfigured =>
         BaseAddress is not null &&
@@ -37,6 +43,16 @@ internal static class TerraScaleApiE2E
         !string.IsNullOrWhiteSpace(BillingForbiddenOrganizationId) &&
         string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_BILLING_ACCESS_LIFECYCLE"), "true", StringComparison.OrdinalIgnoreCase);
 
+    public static bool IsBillingCheckoutConfigured =>
+        BaseAddress is not null &&
+        !string.IsNullOrWhiteSpace(BearerToken) &&
+        !string.IsNullOrWhiteSpace(BillingCheckoutOrganizationId) &&
+        !string.IsNullOrWhiteSpace(BillingCheckoutPlanId) &&
+        !string.IsNullOrWhiteSpace(BillingCheckoutInvalidPlanId) &&
+        !string.IsNullOrWhiteSpace(BillingCheckoutInterval) &&
+        !string.IsNullOrWhiteSpace(BillingCheckoutProvider) &&
+        string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_BILLING_CHECKOUT"), "true", StringComparison.OrdinalIgnoreCase);
+
     public static bool HasCompleteAuthenticationConfiguration => IsConfigured || IsBearerConfigured;
 
     public static string SkipReason => MissingApiKeyConfigurationReason;
@@ -46,6 +62,8 @@ internal static class TerraScaleApiE2E
     public static string BaseAddressSkipReason => MissingBaseAddressConfigurationReason;
 
     public static string BillingAccessLifecycleSkipReason => MissingBillingAccessLifecycleConfigurationReason;
+
+    public static string BillingCheckoutSkipReason => MissingBillingCheckoutConfigurationReason;
 
     public static Uri? BaseAddress =>
         Uri.TryCreate(Environment.GetEnvironmentVariable("TERRASCALE_E2E_BASE_URL"), UriKind.Absolute, out var uri)
@@ -65,6 +83,28 @@ internal static class TerraScaleApiE2E
     public static string BillingAccessTestUserId => Required("TERRASCALE_E2E_BILLING_ACCESS_TEST_USER_ID");
 
     public static string BillingForbiddenOrganizationId => Required("TERRASCALE_E2E_BILLING_FORBIDDEN_ORGANIZATION_ID");
+
+    public static string BillingCheckoutOrganizationId => Required("TERRASCALE_E2E_BILLING_CHECKOUT_ORGANIZATION_ID");
+
+    public static string BillingCheckoutPlanId => Required("TERRASCALE_E2E_BILLING_CHECKOUT_PLAN_ID");
+
+    public static string BillingCheckoutInvalidPlanId => Required("TERRASCALE_E2E_BILLING_CHECKOUT_INVALID_PLAN_ID");
+
+    public static string BillingCheckoutInterval => Required("TERRASCALE_E2E_BILLING_CHECKOUT_INTERVAL");
+
+    public static string BillingCheckoutProvider => Required("TERRASCALE_E2E_BILLING_CHECKOUT_PROVIDER");
+
+    public static async ValueTask<IDisposable> AcquireBillingAccessLifecycleLockAsync(
+        string organizationId,
+        string userId,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = BillingAccessLifecycleLocks.GetOrAdd(
+            $"{organizationId.Trim()}:{userId.Trim()}",
+            static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return new BillingAccessLifecycleLease(gate);
+    }
 
     public static IReadOnlyList<(string Name, string Value)> ConfigurationVariables =>
     [
@@ -114,6 +154,11 @@ internal static class TerraScaleApiE2E
 
     private static string Required(string name) =>
         Environment.GetEnvironmentVariable(name)?.Trim() ?? string.Empty;
+
+    private sealed class BillingAccessLifecycleLease(SemaphoreSlim gate) : IDisposable
+    {
+        public void Dispose() => gate.Release();
+    }
 }
 
 internal sealed class RequiresTerraScaleApiAttribute()
@@ -142,4 +187,11 @@ internal sealed class RequiresTerraScaleBillingAccessLifecycleAttribute()
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
         Task.FromResult(!TerraScaleApiE2E.IsBillingAccessLifecycleConfigured);
+}
+
+internal sealed class RequiresTerraScaleBillingCheckoutAttribute()
+    : SkipAttribute(TerraScaleApiE2E.BillingCheckoutSkipReason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(!TerraScaleApiE2E.IsBillingCheckoutConfigured);
 }
