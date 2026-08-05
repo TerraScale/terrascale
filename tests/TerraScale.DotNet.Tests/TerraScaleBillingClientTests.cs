@@ -104,6 +104,30 @@ public sealed class TerraScaleBillingClientTests
         await Assert.That(forbidden.RequestId).IsEqualTo("request-a");
     }
 
+    [Test]
+    public async Task UpdateAccessAsync_RetriesTransientFailureWithExplicitIdempotencyKeyWithoutFactory()
+    {
+        using var handler = new TransientBillingAccessHandler();
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleClient(httpClient, new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri("https://api.example.invalid/"),
+            BearerTokenProvider = static _ => ValueTask.FromResult("test-token"),
+            MaxRetryAttempts = 1,
+            RetryDelay = TimeSpan.Zero
+        });
+
+        var updated = await client.Billing.UpdateAccessAsync(
+            "organization-a",
+            "user-a",
+            new TerraScaleUpdateBillingAccessRequest(true),
+            "explicit-retry-key");
+
+        await Assert.That(updated.Enabled).IsTrue();
+        await Assert.That(handler.IdempotencyKeys).Count().IsEqualTo(2);
+        await Assert.That(handler.IdempotencyKeys.All(key => key == "explicit-retry-key")).IsTrue();
+    }
+
     private sealed class BillingRecordingHandler(bool forbidden = false) : HttpMessageHandler
     {
         public List<BillingRecordedRequest> Requests { get; } = [];
@@ -146,6 +170,25 @@ public sealed class TerraScaleBillingClientTests
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
             };
+        }
+    }
+
+    private sealed class TransientBillingAccessHandler : HttpMessageHandler
+    {
+        public List<string?> IdempotencyKeys { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            IdempotencyKeys.Add(request.Headers.TryGetValues("Idempotency-Key", out var values) ? values.Single() : null);
+            if (IdempotencyKeys.Count == 1)
+            {
+                throw new HttpRequestException("transient transport failure");
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"userId\":\"user-a\",\"email\":\"user@example.test\",\"displayName\":\"User A\",\"role\":\"member\",\"enabled\":true,\"grantedAt\":\"2026-08-05T12:00:00+00:00\",\"grantedByUserId\":\"owner-a\"}", Encoding.UTF8, "application/json")
+            });
         }
     }
 

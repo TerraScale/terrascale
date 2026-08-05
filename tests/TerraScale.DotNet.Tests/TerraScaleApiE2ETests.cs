@@ -1,5 +1,6 @@
 using System.Net;
 using TerraScale.DotNet;
+using TUnit.Core.Exceptions;
 
 namespace TerraScale.DotNet.Tests;
 
@@ -45,17 +46,22 @@ public sealed class TerraScaleApiE2ETests
             ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
         var userId = TerraScaleApiE2E.BillingAccessTestUserId;
         var original = await client.Billing.ListAccessAsync(organizationId);
-        var originalEnabled = original.SingleOrDefault(member => member.UserId == userId)?.Enabled ?? false;
-        var mutated = false;
+        var originalMember = original.SingleOrDefault(member => member.UserId == userId);
+        if (originalMember is not { Enabled: true })
+        {
+            throw new SkipTestException("The configured billing access test user must already have an enabled dedicated grant.");
+        }
+
+        var cleanupRequired = false;
 
         try
         {
+            cleanupRequired = true;
             var granted = await client.Billing.UpdateAccessAsync(
                 organizationId,
                 userId,
                 new TerraScaleUpdateBillingAccessRequest(true),
                 $"sdk-e2e-billing-grant-{Guid.NewGuid():N}");
-            mutated = true;
             await Assert.That(granted.Enabled).IsTrue();
 
             var revoked = await client.Billing.UpdateAccessAsync(
@@ -71,12 +77,12 @@ public sealed class TerraScaleApiE2ETests
         }
         finally
         {
-            if (mutated)
+            if (cleanupRequired)
             {
                 await client.Billing.UpdateAccessAsync(
                     organizationId,
                     userId,
-                    new TerraScaleUpdateBillingAccessRequest(originalEnabled),
+                    new TerraScaleUpdateBillingAccessRequest(true),
                     $"sdk-e2e-billing-restore-{Guid.NewGuid():N}");
             }
         }

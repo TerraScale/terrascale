@@ -252,14 +252,49 @@ public sealed class TerraScaleClient
             static (response, _) => response,
             cancellationToken);
 
-    internal async Task<TResult> SendAsync<TResponse, TResult>(
+    internal Task<TResponse> SendWithIdempotencyKeyAsync<TResponse>(
+        HttpMethod method,
+        string requestUri,
+        object? body,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        SendAsync<TResponse, TResponse>(
+            method,
+            requestUri,
+            body,
+            preferredRegion: null,
+            configureRequest: null,
+            responseFactory: static (response, _) => response,
+            cancellationToken,
+            idempotencyKey);
+
+    internal Task<TResult> SendAsync<TResponse, TResult>(
         HttpMethod method,
         string requestUri,
         object? body,
         string? preferredRegion,
         Action<HttpRequestMessage>? configureRequest,
         Func<TResponse, HttpResponseMessage, TResult> responseFactory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            method,
+            requestUri,
+            body,
+            preferredRegion,
+            configureRequest,
+            responseFactory,
+            cancellationToken,
+            idempotencyKeyOverride: null);
+
+    private async Task<TResult> SendAsync<TResponse, TResult>(
+        HttpMethod method,
+        string requestUri,
+        object? body,
+        string? preferredRegion,
+        Action<HttpRequestMessage>? configureRequest,
+        Func<TResponse, HttpResponseMessage, TResult> responseFactory,
+        CancellationToken cancellationToken,
+        string? idempotencyKeyOverride)
     {
         ArgumentNullException.ThrowIfNull(responseFactory);
         using var activity = StartActivity(method, requestUri);
@@ -278,7 +313,8 @@ public sealed class TerraScaleClient
                 configureRequest?.Invoke(request);
             },
             activity,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            idempotencyKeyOverride).ConfigureAwait(false);
 
         SetResponseTags(activity, response);
         var payload = await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken).ConfigureAwait(false);
@@ -510,10 +546,11 @@ public sealed class TerraScaleClient
         RequestAuthenticationMode authenticationMode,
         Action<HttpRequestMessage>? configureRequest,
         Activity? activity,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? idempotencyKeyOverride = null)
     {
         var requestId = CreateRequestId();
-        var idempotencyKey = CreateIdempotencyKey(method);
+        var idempotencyKey = idempotencyKeyOverride ?? CreateIdempotencyKey(method);
         var attempt = 0;
 
         while (true)

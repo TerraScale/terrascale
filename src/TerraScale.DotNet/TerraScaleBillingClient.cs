@@ -102,18 +102,18 @@ public sealed class TerraScaleBillingClient
             }
         }
 
-        return client.SendAsync<TerraScaleBillingAccessMember>(
-            HttpMethod.Put,
-            TerraScaleApiRoutes.BillingAccessUpdate(organizationId, userId),
-            request,
-            idempotencyKey is null
-                ? null
-                : message =>
-                {
-                    message.Headers.Remove("Idempotency-Key");
-                    message.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey.Trim());
-                },
-            cancellationToken);
+        return idempotencyKey is null
+            ? client.SendAsync<TerraScaleBillingAccessMember>(
+                HttpMethod.Put,
+                TerraScaleApiRoutes.BillingAccessUpdate(organizationId, userId),
+                request,
+                cancellationToken)
+            : client.SendWithIdempotencyKeyAsync<TerraScaleBillingAccessMember>(
+                HttpMethod.Put,
+                TerraScaleApiRoutes.BillingAccessUpdate(organizationId, userId),
+                request,
+                idempotencyKey.Trim(),
+                cancellationToken);
     }
 
     /// <summary>
