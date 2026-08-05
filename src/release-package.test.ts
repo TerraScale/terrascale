@@ -54,6 +54,8 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "pr-static"), /git -c credential\.helper= clone --depth 1 --branch develop https:\/\/git\.terrascale\.tech\/TerraScale\/TerraScale\.Documentation\.git Documentation/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm ci/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm run typecheck/u);
+  assert.match(jobDefinition(workflow, "pr-static"), /npm run build/u);
+  assert.ok(jobDefinition(workflow, "pr-static").indexOf("npm run build") < jobDefinition(workflow, "pr-static").indexOf("npm run check:route-manifest"));
   assert.match(jobDefinition(workflow, "pr-build"), /npm ci/u);
   assert.match(jobDefinition(workflow, "pr-build"), /npm run build/u);
   assert.match(jobDefinition(workflow, "release-contract-fixture"), /check-public-contract-fixture\.mjs Documentation\/public\/openapi\/server\.openapi\.json/u);
@@ -94,6 +96,10 @@ test("release E2E configuration guard fails closed before skip-capable tests", a
   };
 
   await assert.rejects(run("node", [guard], { env: { PATH: environment.PATH } }), /Release E2E configuration is missing/u);
+  await assert.rejects(
+    run("node", [guard], { env: { ...environment, TERRASCALE_API_BASE_URL: "not-a-url", TERRASCALE_E2E_PROJECT_ID: "not-a-ulid" } }),
+    /Release E2E configuration is invalid: TERRASCALE_API_BASE_URL, TERRASCALE_E2E_PROJECT_ID/u,
+  );
   await run("node", [guard], { env: environment });
 });
 
@@ -113,6 +119,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
     await run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: checkout });
     await run("npm", ["run", "build"], { cwd: checkout });
     await run("node", ["--test", "dist/public-schema-parity.test.js"], { cwd: checkout });
+    await run("npm", ["run", "check:route-manifest"], { cwd: checkout });
     const packed = await run("npm", ["pack", "--pack-destination", packages], { cwd: checkout });
     const tarball = path.join(packages, packed.stdout.trim().split("\n").at(-1)!);
     const listing = await run("tar", ["-tf", tarball]);

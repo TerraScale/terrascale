@@ -91,6 +91,7 @@ jobs:
       - run: node scripts/check-public-contract-fixture.mjs Documentation/public/openapi/server.openapi.json
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run build
       - run: npm run check:openapi-drift -- Documentation/public/openapi/server.openapi.json
       - run: npm run check:route-manifest
 

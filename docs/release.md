@@ -22,7 +22,8 @@ The release E2E profile fails before tests run unless real
 `TERRASCALE_E2E_ORGANIZATION_ID`, and
 `TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID` are all configured. These values are
 scoped only to the canonical `develop` to `main` release E2E job; fork and
-ordinary PR jobs do not receive them.
+ordinary PR jobs do not receive them. Both endpoints must be `http` or `https`
+URLs, and each resource identifier must be a valid ULID.
 
 Each release-candidate test and package job performs its own clean install and
 build before testing or packing; do not rely on artifacts from another job.
