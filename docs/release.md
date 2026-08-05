@@ -36,10 +36,12 @@ that exact tarball to npm. The promotion job has the npm token; pull-request job
 do not. npm rejects an existing name/version rather than overwriting a published
 package if another publisher wins the race.
 
-Forgejo Releases are the intended version history. The workflow compares the
-latest npm registry version so an interrupted run that published to npm but
-failed before release finalization publishes the matching Forgejo Release
-instead of bumping past that package version.
+This workflow does not create or finalize a Forgejo Release. Its implemented
+promotion sequence is candidate verification followed by publishing the
+verified tarball to npm. If npm publishing is interrupted or its result is
+uncertain, operators must inspect npm and the candidate-store records before
+any recovery action; do not assume this workflow will create or repair a
+Forgejo Release.
 
 ## Version classification
 

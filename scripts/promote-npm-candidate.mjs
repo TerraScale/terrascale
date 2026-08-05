@@ -111,16 +111,29 @@ async function ensureVersionAvailable(name, version, registry) {
   if (registry !== "https://registry.npmjs.org/") {
     throw new Error("The SDK promotion registry must be https://registry.npmjs.org/.");
   }
+  const configDirectory = await mkdtemp(path.join(tmpdir(), "terrascale-npm-view-"));
+  const userConfigPath = path.join(configDirectory, "npmrc");
+  const globalConfigPath = path.join(configDirectory, "global-npmrc");
   try {
-    await run("npm", ["view", `${name}@${version}`, "version", "--json", "--ignore-scripts", "--registry", registry], {
-      env: npmEnvironment({ NPM_CONFIG_IGNORE_SCRIPTS: "true" }),
-    });
-  } catch (error) {
-    if (error !== null && typeof error === "object" && "stderr" in error && /E404/u.test(String(error.stderr))) {
-      console.log(`${name}@${version} is available on the public registry.`);
-      return;
+    await Promise.all([writeFile(userConfigPath, ""), writeFile(globalConfigPath, "")]);
+    try {
+      await run("npm", ["view", `${name}@${version}`, "version", "--json", "--ignore-scripts", "--registry", registry], {
+        cwd: configDirectory,
+        env: npmEnvironment({
+          NPM_CONFIG_USERCONFIG: userConfigPath,
+          NPM_CONFIG_GLOBALCONFIG: globalConfigPath,
+          NPM_CONFIG_IGNORE_SCRIPTS: "true",
+        }),
+      });
+    } catch (error) {
+      if (error !== null && typeof error === "object" && "stderr" in error && /E404/u.test(String(error.stderr))) {
+        console.log(`${name}@${version} is available on the public registry.`);
+        return;
+      }
+      throw new Error(`Could not confirm public registry availability for ${name}@${version}.`, { cause: error });
     }
-    throw new Error(`Could not confirm public registry availability for ${name}@${version}.`, { cause: error });
+  } finally {
+    await rm(configDirectory, { recursive: true, force: true });
   }
   throw new Error(`${name}@${version} already exists on the public registry.`);
 }

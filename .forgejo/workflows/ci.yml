@@ -174,7 +174,7 @@ jobs:
           node scripts/promote-npm-candidate.mjs --check-availability --package @terrascale/sdk --version "${version}" --registry https://registry.npmjs.org/
 
   candidate:
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' }}
+    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository }}
     needs: [bootstrap, plan, release-tests, release-artifacts, release-contract-fixture, release-version-availability]
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }

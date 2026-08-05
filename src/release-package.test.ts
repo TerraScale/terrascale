@@ -41,6 +41,7 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "candidate"), /release-contract-fixture/u);
   assert.match(jobDefinition(workflow, "candidate"), /release-version-availability/u);
   assert.doesNotMatch(jobDefinition(workflow, "candidate"), /NPM_TOKEN/u);
+  assert.match(jobDefinition(workflow, "candidate"), /forgejo\.event\.pull_request\.head\.repo\.full_name == forgejo\.repository/u);
   assert.match(jobDefinition(workflow, "promote"), /promote-npm-candidate\.mjs/u);
   assert.match(jobDefinition(workflow, "promote"), /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
 });
@@ -139,9 +140,18 @@ async function verifyLifecycleSafePublish(
   const fakeBin = path.join(workspace, "fake-bin");
   const fakeNpm = path.join(fakeBin, "npm");
   const publishRecord = path.join(workspace, "publish-record.json");
+  const availabilityRecord = path.join(workspace, "availability-record.json");
+  const projectConfig = path.join(checkout, ".npmrc");
+  const userConfig = path.join(workspace, "user.npmrc");
+  const globalConfig = path.join(workspace, "global-npmrc");
 
   await mkdir(lifecyclePackage, { recursive: true });
   await mkdir(fakeBin);
+  await Promise.all([
+    writeFile(projectConfig, "//registry.npmjs.org/:_authToken=project-token\\n"),
+    writeFile(userConfig, "//registry.npmjs.org/:_authToken=user-token\\n"),
+    writeFile(globalConfig, "//registry.npmjs.org/:_authToken=global-token\\n"),
+  ]);
   await writeFile(path.join(lifecyclePackage, "package.json"), JSON.stringify({
     name: packageJson.name,
     version: packageJson.version,
@@ -155,7 +165,16 @@ async function verifyLifecycleSafePublish(
   await writeFile(fakeNpm, `#!/usr/bin/env node
 const { readFileSync, writeFileSync } = require('node:fs');
 const [command, ...arguments_] = process.argv.slice(2);
-if (command === 'view') { if (process.env.NPM_TOKEN || process.env.NPM_CONFIG_USERCONFIG) process.exit(3); process.stderr.write('npm error code E404\\n'); process.exit(1); }
+if (command === 'view') {
+  writeFileSync(${JSON.stringify(availabilityRecord)}, JSON.stringify({
+    arguments_, cwd: process.cwd(), token: process.env.NPM_TOKEN,
+    userConfig: process.env.NPM_CONFIG_USERCONFIG,
+    userConfigHasAuth: /_authToken=/.test(readFileSync(process.env.NPM_CONFIG_USERCONFIG, 'utf8')),
+    globalConfig: process.env.NPM_CONFIG_GLOBALCONFIG,
+    globalConfigHasAuth: /_authToken=/.test(readFileSync(process.env.NPM_CONFIG_GLOBALCONFIG, 'utf8')),
+  }));
+  process.stderr.write('npm error code E404\\n'); process.exit(1);
+}
 if (command !== 'publish') process.exit(2);
 writeFileSync(${JSON.stringify(publishRecord)}, JSON.stringify({ arguments_, token: process.env.NPM_TOKEN, ignoreScripts: process.env.NPM_CONFIG_IGNORE_SCRIPTS, configHasAuth: /_authToken=/.test(readFileSync(process.env.NPM_CONFIG_USERCONFIG, 'utf8')) }));
 `);
@@ -163,8 +182,33 @@ writeFileSync(${JSON.stringify(publishRecord)}, JSON.stringify({ arguments_, tok
   await run(
     "node",
     [path.join(checkout, "scripts", "promote-npm-candidate.mjs"), "--manifest", manifestPath, "--artifacts", packages, "--registry", "https://registry.npmjs.org/"],
-    { cwd: checkout, env: { ...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`, NPM_TOKEN: "test-token" } },
+    {
+      cwd: checkout,
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
+        NPM_TOKEN: "test-token",
+        NPM_CONFIG_USERCONFIG: userConfig,
+        NPM_CONFIG_GLOBALCONFIG: globalConfig,
+      },
+    },
   );
+  const availability = JSON.parse(await readFile(availabilityRecord, "utf8")) as {
+    readonly arguments_: readonly string[];
+    readonly cwd: string;
+    readonly token?: string;
+    readonly userConfig: string;
+    readonly userConfigHasAuth: boolean;
+    readonly globalConfig: string;
+    readonly globalConfigHasAuth: boolean;
+  };
+  assert.equal(availability.token, undefined);
+  assert.notEqual(availability.cwd, checkout);
+  assert.notEqual(availability.userConfig, userConfig);
+  assert.equal(availability.userConfigHasAuth, false);
+  assert.notEqual(availability.globalConfig, globalConfig);
+  assert.equal(availability.globalConfigHasAuth, false);
+  assert.equal(availability.arguments_.includes("--ignore-scripts"), true);
   const record = JSON.parse(await readFile(publishRecord, "utf8")) as {
     readonly arguments_: readonly string[];
     readonly token?: string;
