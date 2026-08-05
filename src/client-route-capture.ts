@@ -1245,8 +1245,10 @@ const captureOperations: readonly CaptureOperation[] = [
     operation: "createCheckoutSession",
     invoke: (client) =>
       client.billing.createCheckoutSession(sampleIds.organizationId, {
-        successUrl: "https://app.example.test/success",
-        cancelUrl: "https://app.example.test/cancel",
+        planId: sampleIds.planId,
+        billingInterval: "monthly",
+        provider: "polar",
+        quantity: 1,
       }),
   },
   {

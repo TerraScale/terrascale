@@ -102,6 +102,11 @@ The public client follows the backed `TerraScale.Platform` REST surface:
 - Organizations and projects: organization create/list/get/update/deletion,
   membership and invitation lifecycle, plus project create/list/get/update/delete
   and region placement.
+- Billing and pricing: organization checkout sessions accept `planId`,
+  `billingInterval`, `provider`, optional `quantity`, or deprecated `priceId`.
+  Deprecated `successUrl`, `cancelUrl`, and `customerEmail` properties remain
+  source-compatible but are ignored and never sent; organization checkout
+  redirects and customer identity are deployment/authentication configured.
 - Usage: project totals, workload, latency, and history plus organization totals.
 - Notifications: `/api/v1/users/me/notifications` returns a bare
   `Notification[]`; `/api/v1/users/me/notifications/{notificationId}:mark-read`

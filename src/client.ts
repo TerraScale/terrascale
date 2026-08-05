@@ -1932,7 +1932,13 @@ export class BillingClient {
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/checkout-sessions`,
       routeName: "billing.checkoutSessions.create",
-      body: request,
+      body: {
+        priceId: request.priceId,
+        planId: request.planId,
+        billingInterval: request.billingInterval,
+        provider: request.provider,
+        quantity: request.quantity,
+      },
     });
   }
 

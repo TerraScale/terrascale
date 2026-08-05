@@ -10,6 +10,7 @@ import type {
   DatabaseEnvironment,
   DeletedProjectDatabaseEnvironmentResponse,
   JsonValue,
+  PricingPlan,
   ProjectSavedQueryResponse,
   ProjectSavedQueryV2Response,
   UpdateProjectSavedQueryV2Request,
@@ -39,6 +40,33 @@ const savedQueryWithoutRepository = {
   createdAt: "2026-08-05T00:00:00Z",
   updatedAt: "2026-08-05T00:00:00Z",
 };
+
+const pricingPlan = {
+  planId: toUlid("01HRZ3NDEKTSV4RRFFQ69G5FAV"),
+  name: "Developer",
+  currency: "USD",
+  monthlyBaseCents: 1000,
+  annualBaseCents: 10000,
+  includedUsage: [],
+  key: "developer",
+  provider: "polar",
+  monthlyTrialDays: 14,
+  annualTrialDays: 14,
+  visible: true,
+  maxRegions: 3,
+  operationOverageCentsPerMillion: 100,
+  storageOverageCentsPerGbRegion: 25,
+} satisfies PricingPlan;
+
+const pricingPlanWithoutKey: Omit<PricingPlan, "key"> = pricingPlan;
+// @ts-expect-error Pricing responses always include key.
+const invalidPricingPlanWithoutKey: PricingPlan = pricingPlanWithoutKey;
+void invalidPricingPlanWithoutKey;
+
+const pricingPlanWithoutVisible: Omit<PricingPlan, "visible"> = pricingPlan;
+// @ts-expect-error Pricing responses always include visible.
+const invalidPricingPlanWithoutVisible: PricingPlan = pricingPlanWithoutVisible;
+void invalidPricingPlanWithoutVisible;
 
 // @ts-expect-error Saved-query responses always include repositoryId, which may be null.
 const invalidSavedQueryResponse: ProjectSavedQueryResponse = savedQueryWithoutRepository;
@@ -149,6 +177,46 @@ describe("TerraScaleClient route contracts", () => {
     assertRequest(requests[1], "GET", "/api/v1/auth/me/billing");
     assert.equal(requests[2]?.url.origin, "https://api.terrascale.test");
     assertRequest(requests[2], "POST", "/api/v1/auth/me/billing/guard");
+  });
+
+  test("omits ignored legacy checkout fields while preserving their source compatibility", async () => {
+    const { client, requests } = createCapturingClient({});
+
+    await client.billing.createCheckoutSession(organizationId, {
+      priceId: "legacy-price",
+      planId: pricingPlan.planId,
+      billingInterval: "annual",
+      provider: "stripe",
+      quantity: 2,
+      successUrl: "https://app.example.test/success",
+      cancelUrl: "https://app.example.test/cancel",
+      customerEmail: "billing@example.test",
+    });
+
+    assertRequest(
+      requests[0],
+      "POST",
+      `/api/v1/organizations/${organizationId}/billing/checkout-sessions`,
+    );
+    assert.deepEqual(requests[0]?.body, {
+      priceId: "legacy-price",
+      planId: pricingPlan.planId,
+      billingInterval: "annual",
+      provider: "stripe",
+      quantity: 2,
+    });
+  });
+
+  test("preserves required pricing key and visibility from the public wire response", async () => {
+    const { client, requests } = createCapturingClient([pricingPlan]);
+
+    const result = await client.pricing.listPlans();
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.deepEqual(result.value, [pricingPlan]);
+    }
+    assertRequest(requests[0], "GET", "/api/v1/pricing/plans");
   });
 
   test("sends onboarding checkout return URLs to the public product API", async () => {

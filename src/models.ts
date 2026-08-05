@@ -1372,11 +1372,11 @@ export type CreateCheckoutSessionRequest = {
   readonly planId?: Ulid;
   readonly billingInterval?: "monthly" | "annual";
   readonly provider?: "polar" | "stripe";
-  /** @deprecated Checkout redirects are deployment-configured. */
+  /** @deprecated Retained for source compatibility; ignored and never serialized. Checkout redirects are deployment-configured. */
   readonly successUrl?: string;
-  /** @deprecated Checkout redirects are deployment-configured. */
+  /** @deprecated Retained for source compatibility; ignored and never serialized. Checkout redirects are deployment-configured. */
   readonly cancelUrl?: string;
-  /** @deprecated The authenticated TerraScale user's email is used. */
+  /** @deprecated Retained for source compatibility; ignored and never serialized. The authenticated TerraScale user's email is used. */
   readonly customerEmail?: string;
   readonly quantity?: number;
 };
@@ -1424,7 +1424,7 @@ export type PricingPlan = {
   readonly monthlyBaseCents: number;
   readonly annualBaseCents: number;
   readonly includedUsage: readonly UsageMetric[];
-  readonly key?: string;
+  readonly key: string;
   readonly provider: "polar" | "stripe";
   readonly monthlyPriceId?: string | null;
   readonly annualPriceId?: string | null;
@@ -1434,7 +1434,7 @@ export type PricingPlan = {
   readonly annualStripePriceId?: string | null;
   readonly monthlyTrialDays: number;
   readonly annualTrialDays: number;
-  readonly visible?: boolean;
+  readonly visible: boolean;
   readonly maxRegions: number;
   readonly operationOverageCentsPerMillion: number;
   readonly storageOverageCentsPerGbRegion: number;
