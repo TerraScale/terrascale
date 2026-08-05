@@ -36,7 +36,7 @@ internal static class TerraScaleApiE2E
         "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_POLAR_MONTHLY_PRODUCT_ID, TERRASCALE_E2E_ADMIN_POLAR_MONTHLY_PRICE_ID, TERRASCALE_E2E_ADMIN_POLAR_ANNUAL_PRODUCT_ID, TERRASCALE_E2E_ADMIN_POLAR_ANNUAL_PRICE_ID, and TERRASCALE_E2E_ENABLE_ADMIN_POLAR_PLAN_LIFECYCLE=true to run the disposable Polar plan E2E test.";
 
     private const string MissingAdministrationNonOwnerMutationConfigurationReason =
-        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_NONOWNER_PLAN_ID, TERRASCALE_E2E_ADMIN_WEBHOOK_PROVIDER, TERRASCALE_E2E_ADMIN_WEBHOOK_EVENT_ID, and TERRASCALE_E2E_ENABLE_ADMIN_NONOWNER_MUTATION_AUTHORIZATION=true to run the non-mutating administration authorization E2E test.";
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_NONOWNER_PLAN_ID, TERRASCALE_E2E_ADMIN_WEBHOOK_PROVIDER, TERRASCALE_E2E_ADMIN_WEBHOOK_EVENT_ID, and TERRASCALE_E2E_ENABLE_ADMIN_NONOWNER_MUTATION_AUTHORIZATION=true to run the non-mutating administration authorization E2E test.";
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingAccessLifecycleLocks = new(StringComparer.Ordinal);
 
@@ -111,6 +111,7 @@ internal static class TerraScaleApiE2E
 
     public static bool IsAdministrationNonOwnerMutationAuthorizationConfigured =>
         BaseAddress is not null &&
+        !string.IsNullOrWhiteSpace(AdminBearerToken) &&
         !string.IsNullOrWhiteSpace(BearerToken) &&
         !string.IsNullOrWhiteSpace(AdminNonOwnerPlanId) &&
         !string.IsNullOrWhiteSpace(AdminWebhookProvider) &&

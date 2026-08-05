@@ -148,11 +148,18 @@ public sealed class TerraScaleApiE2ETests
     [NotInParallel("administration-non-owner-mutation-authorization")]
     public async Task Administration_NonOwnerMutationRequestsAreForbiddenBeforeStateChanges()
     {
+        var owner = TerraScaleApiE2E.CreateAdminClient();
         var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
             ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
         var planId = TerraScaleApiE2E.AdminNonOwnerPlanId;
         var provider = TerraScaleApiE2E.AdminWebhookProvider;
         var eventId = TerraScaleApiE2E.AdminWebhookEventId;
+        var planBefore = (await owner.Administration.ListPricingPlansAsync())
+            .SingleOrDefault(plan => plan.PlanId == planId)
+            ?? throw new SkipTestException("The configured non-owner plan fixture must exist.");
+        var webhookBefore = await owner.Administration.GetPaymentWebhookAsync(provider, eventId);
+
+        await RequireNonOwnerAdminDeniedAsync(standardBearer);
 
         var createPlan = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
             standardBearer.Administration.CreatePricingPlanAsync(new TerraScaleAdminPricingPlanRequest(
@@ -175,6 +182,35 @@ public sealed class TerraScaleApiE2ETests
         await Assert.That(deletePlan!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(supportNote!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(replay!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+
+        var planAfter = (await owner.Administration.ListPricingPlansAsync())
+            .Single(plan => plan.PlanId == planId);
+        var webhookAfter = await owner.Administration.GetPaymentWebhookAsync(provider, eventId);
+        await Assert.That(planAfter.Name).IsEqualTo(planBefore.Name);
+        await Assert.That(planAfter.Key).IsEqualTo(planBefore.Key);
+        await Assert.That(planAfter.MonthlyPriceId).IsEqualTo(planBefore.MonthlyPriceId);
+        await Assert.That(planAfter.AnnualPriceId).IsEqualTo(planBefore.AnnualPriceId);
+        await Assert.That(webhookAfter.State).IsEqualTo(webhookBefore.State);
+        await Assert.That(webhookAfter.ReplayRequestCount).IsEqualTo(webhookBefore.ReplayRequestCount);
+        await Assert.That(webhookAfter.LastReplayRequestedAt).IsEqualTo(webhookBefore.LastReplayRequestedAt);
+    }
+
+    private static async Task RequireNonOwnerAdminDeniedAsync(TerraScaleClient standardBearer)
+    {
+        try
+        {
+            await standardBearer.Administration.GetOverviewAsync();
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.Forbidden)
+        {
+            return;
+        }
+        catch (TerraScaleApiException exception)
+        {
+            throw new SkipTestException($"The configured standard bearer must receive 403 from administration overview; received {exception.StatusCode?.ToString() ?? "no HTTP status"}.");
+        }
+
+        throw new SkipTestException("The configured standard bearer is an administration owner; no mutation authorization probes were sent.");
     }
 
     [Test]
