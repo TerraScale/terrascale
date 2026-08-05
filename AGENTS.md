@@ -36,9 +36,34 @@
   its OpenAPI and route-manifest mapping have not drifted, and show DevHost live
   success and expected-failure evidence for its authorization/validation path
   when the required environment is available.
+- Treat OpenAPI, the route manifest, and the SDK operation as one public
+  contract. Before merge, gate a changed operation on exact method, path,
+  parameter location/name/requiredness, request and response media types,
+  status/error shapes, operation identity, and DTO field/nullability parity.
+  Do not accept a passing TypeScript build as evidence that these surfaces agree.
+- Transport stays typed end-to-end: each public operation must use the SDK's
+  typed operation/client path and typed request/response models. Do not add
+  raw `fetch`, generic request helpers, stringly route construction, untyped
+  JSON casts, arbitrary headers, or per-consumer transport escape hatches.
 - MCP adapters may compose and expose only typed SDK operations. Do not add a
   generic request method, arbitrary path/body forwarding, or another escape
   hatch that bypasses the public typed contract.
+
+## Retry, Idempotency, and Compatibility
+
+- Classify each operation before adding automatic retry. Retry only documented
+  transient failures for operations that are safe to repeat; respect server
+  retry guidance and cancellation/deadline signals. Never retry validation,
+  authentication, authorization, or other deterministic client failures.
+- Mutations are not implicitly retryable. A retryable create or command needs
+  a documented public idempotency contract, a caller-supplied or explicitly
+  generated idempotency key with stable reuse for the logical attempt, and
+  evidence that duplicate delivery preserves the documented result.
+- Preserve compatibility for supported SDK consumers: make additive changes by
+  default, keep serialized field names and optionality stable, and avoid
+  changing exported behavior, error semantics, or defaults without a versioned
+  public API and release plan. Coordinate any removal, rename, or narrowing
+  with the Platform contract owner before implementation.
 
 ## Testing
 
@@ -50,6 +75,18 @@
   tokens, `.env` files, captured authorization headers, or real tenant data;
   supply secrets only through the local/CI environment and redact them from
   logs, fixtures, test output, and commits.
+- Real-API evidence is conditional, never simulated: when both DevHost base
+  URLs and authorized test credentials are supplied by the environment, run
+  the affected live success and expected-failure paths and report the command
+  and redacted result. When any required variable is absent, keep the tests
+  skipped, state that live evidence was unavailable, and do not substitute
+  mocks, fixed secrets, local `.env` loading, or fabricated proof.
+- Contract-drift checks are release gates for changed public operations. Run
+  the repository's applicable generation/verification and type/test commands;
+  inspect the resulting OpenAPI, route-manifest, and exported SDK diff. A
+  mismatch, unexplained generated-file change, or missing public-boundary
+  evidence blocks handoff until resolved or explicitly accepted by the
+  contract owner.
 
 ## Branch and Git Workflow
 
@@ -64,3 +101,10 @@ Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies in full:
   relevant checks, then `git fetch origin`. If `origin/develop` moved, stop and
   coordinate before any push. Report the commit, validation, owned paths, and
   only redacted fixture/credential details.
+- Stage named owned files only (for example, `git add -- AGENTS.md`); never
+  use broad staging commands. Before requesting review or root validation,
+  hand off the owned files, exact diff/commit, OpenAPI and route-manifest
+  parity result, compatibility/retry decision, commands and results, live
+  evidence status, and known gaps. The reviewer/root validator must be able to
+  confirm the public contract without secrets or access to unredacted tenant
+  data.
