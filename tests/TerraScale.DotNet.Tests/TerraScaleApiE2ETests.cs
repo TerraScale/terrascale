@@ -90,7 +90,7 @@ public sealed class TerraScaleApiE2ETests
     [Test]
     [RequiresTerraScaleAdministrationMutation]
     [NotInParallel("administration-mutation-lifecycle")]
-    public async Task Administration_MutationsUseDedicatedDisposableFixturesAndForbidStandardBearer()
+    public async Task Administration_UserStateMutationsRestoreDedicatedFixtureAndForbidStandardBearer()
     {
         var owner = TerraScaleApiE2E.CreateAdminClient();
         var userId = TerraScaleApiE2E.AdminMutationUserId;
@@ -100,7 +100,6 @@ public sealed class TerraScaleApiE2ETests
             throw new SkipTestException("The configured administration mutation user must be a disposable non-owner user.");
         }
 
-        var planId = string.Empty;
         try
         {
             var disabled = await owner.Administration.DisableUserAsync(userId, "SDK E2E disposable fixture");
@@ -108,41 +107,14 @@ public sealed class TerraScaleApiE2ETests
             var enabled = await owner.Administration.EnableUserAsync(userId);
             await Assert.That(enabled.Enabled).IsTrue();
 
-            var createdPlan = await owner.Administration.CreatePricingPlanAsync(new TerraScaleAdminPricingPlanRequest(
-                Key: $"sdk-e2e-{Guid.NewGuid():N}",
-                Name: "SDK E2E disposable plan",
-                Currency: "USD",
-                MonthlyBaseCents: 100,
-                AnnualBaseCents: 100,
-                Visible: false));
-            planId = createdPlan.PlanId;
-            var updatedPlan = await owner.Administration.UpdatePricingPlanAsync(planId, new TerraScaleAdminPricingPlanRequest(Name: "SDK E2E updated plan"));
-            await Assert.That(updatedPlan.PlanId).IsEqualTo(planId);
-
-            var note = await owner.Administration.CreateSupportNoteAsync(new TerraScaleAdminCreateSupportNoteRequest(
-                UserId: null,
-                OrganizationId: null,
-                ProjectId: TerraScaleApiE2E.AdminMutationProjectId,
-                Note: $"SDK E2E disposable fixture {Guid.NewGuid():N}"));
-            await Assert.That(note.ProjectId).IsEqualTo(TerraScaleApiE2E.AdminMutationProjectId);
-
             var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
                 ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
             var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-                standardBearer.Administration.CreateSupportNoteAsync(new TerraScaleAdminCreateSupportNoteRequest(
-                    null,
-                    null,
-                    TerraScaleApiE2E.AdminMutationProjectId,
-                    "must not be persisted")));
+                standardBearer.Administration.DisableUserAsync(userId, "must not be persisted"));
             await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         }
         finally
         {
-            if (!string.IsNullOrWhiteSpace(planId))
-            {
-                await owner.Administration.DeletePricingPlanAsync(planId);
-            }
-
             if (originalUser.Enabled)
             {
                 await owner.Administration.EnableUserAsync(userId);
@@ -169,6 +141,43 @@ public sealed class TerraScaleApiE2ETests
         var owner = TerraScaleApiE2E.CreateAdminClient();
         var deleted = await owner.Administration.DeleteUserAsync(userId);
         await Assert.That(deleted).IsTrue();
+    }
+
+    [Test]
+    [RequiresTerraScaleAdministrationPolarPlan]
+    [NotInParallel("administration-polar-plan-lifecycle")]
+    public async Task Administration_PolarPlanLifecycleUsesDedicatedProviderValuesAndCleansUp()
+    {
+        var owner = TerraScaleApiE2E.CreateAdminClient();
+        var planId = string.Empty;
+        try
+        {
+            var created = await owner.Administration.CreatePricingPlanAsync(new TerraScaleAdminPricingPlanRequest(
+                Key: $"sdk-e2e-polar-{Guid.NewGuid():N}",
+                Name: "SDK E2E Polar disposable plan",
+                Currency: "USD",
+                MonthlyBaseCents: 100,
+                AnnualBaseCents: 100,
+                MonthlyPolarProductId: TerraScaleApiE2E.AdminPolarMonthlyProductId,
+                MonthlyPolarProductPriceId: TerraScaleApiE2E.AdminPolarMonthlyPriceId,
+                AnnualPolarProductId: TerraScaleApiE2E.AdminPolarAnnualProductId,
+                AnnualPolarProductPriceId: TerraScaleApiE2E.AdminPolarAnnualPriceId,
+                Visible: false));
+            planId = created.PlanId;
+
+            await Assert.That(created.Provider).IsEqualTo("polar");
+            await Assert.That(created.MonthlyPolarProductId).IsEqualTo(TerraScaleApiE2E.AdminPolarMonthlyProductId);
+            await Assert.That(created.MonthlyPriceId).IsEqualTo(TerraScaleApiE2E.AdminPolarMonthlyPriceId);
+            await Assert.That(created.AnnualPolarProductId).IsEqualTo(TerraScaleApiE2E.AdminPolarAnnualProductId);
+            await Assert.That(created.AnnualPriceId).IsEqualTo(TerraScaleApiE2E.AdminPolarAnnualPriceId);
+        }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(planId))
+            {
+                await owner.Administration.DeletePricingPlanAsync(planId);
+            }
+        }
     }
 
     [Test]

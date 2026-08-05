@@ -27,10 +27,13 @@ internal static class TerraScaleApiE2E
         "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_SENSITIVE_BEARER_TOKEN, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_WEBHOOK_PROVIDER, TERRASCALE_E2E_ADMIN_WEBHOOK_EVENT_ID, and TERRASCALE_E2E_ENABLE_ADMIN_WEBHOOK_REPLAY=true to run the dedicated disposable webhook replay E2E test.";
 
     private const string MissingAdministrationMutationConfigurationReason =
-        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_MUTATION_USER_ID, TERRASCALE_E2E_ADMIN_MUTATION_PROJECT_ID, and TERRASCALE_E2E_ENABLE_ADMIN_MUTATION_LIFECYCLE=true to run the isolated disposable administration mutation E2E test.";
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_MUTATION_USER_ID, and TERRASCALE_E2E_ENABLE_ADMIN_MUTATION_LIFECYCLE=true to run the isolated administration user-state E2E test.";
 
     private const string MissingAdministrationDeleteUserConfigurationReason =
         "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_DELETE_USER_ID, and TERRASCALE_E2E_ENABLE_ADMIN_DELETE_USER=true to run the one-time disposable user deletion E2E test.";
+
+    private const string MissingAdministrationPolarPlanConfigurationReason =
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_POLAR_MONTHLY_PRODUCT_ID, TERRASCALE_E2E_ADMIN_POLAR_MONTHLY_PRICE_ID, TERRASCALE_E2E_ADMIN_POLAR_ANNUAL_PRODUCT_ID, TERRASCALE_E2E_ADMIN_POLAR_ANNUAL_PRICE_ID, and TERRASCALE_E2E_ENABLE_ADMIN_POLAR_PLAN_LIFECYCLE=true to run the disposable Polar plan E2E test.";
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingAccessLifecycleLocks = new(StringComparer.Ordinal);
 
@@ -85,7 +88,6 @@ internal static class TerraScaleApiE2E
         !string.IsNullOrWhiteSpace(AdminBearerToken) &&
         !string.IsNullOrWhiteSpace(BearerToken) &&
         !string.IsNullOrWhiteSpace(AdminMutationUserId) &&
-        !string.IsNullOrWhiteSpace(AdminMutationProjectId) &&
         string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_ADMIN_MUTATION_LIFECYCLE"), "true", StringComparison.OrdinalIgnoreCase);
 
     public static bool IsAdministrationDeleteUserConfigured =>
@@ -94,6 +96,15 @@ internal static class TerraScaleApiE2E
         !string.IsNullOrWhiteSpace(BearerToken) &&
         !string.IsNullOrWhiteSpace(AdminDeleteUserId) &&
         string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_ADMIN_DELETE_USER"), "true", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsAdministrationPolarPlanConfigured =>
+        BaseAddress is not null &&
+        !string.IsNullOrWhiteSpace(AdminBearerToken) &&
+        !string.IsNullOrWhiteSpace(AdminPolarMonthlyProductId) &&
+        !string.IsNullOrWhiteSpace(AdminPolarMonthlyPriceId) &&
+        !string.IsNullOrWhiteSpace(AdminPolarAnnualProductId) &&
+        !string.IsNullOrWhiteSpace(AdminPolarAnnualPriceId) &&
+        string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_ADMIN_POLAR_PLAN_LIFECYCLE"), "true", StringComparison.OrdinalIgnoreCase);
 
     public static bool HasCompleteAuthenticationConfiguration => IsConfigured || IsBearerConfigured;
 
@@ -115,6 +126,8 @@ internal static class TerraScaleApiE2E
 
     public static string AdministrationDeleteUserSkipReason => MissingAdministrationDeleteUserConfigurationReason;
 
+    public static string AdministrationPolarPlanSkipReason => MissingAdministrationPolarPlanConfigurationReason;
+
     public static Uri? BaseAddress =>
         Uri.TryCreate(Environment.GetEnvironmentVariable("TERRASCALE_E2E_BASE_URL"), UriKind.Absolute, out var uri)
             ? uri
@@ -134,9 +147,15 @@ internal static class TerraScaleApiE2E
 
     public static string AdminMutationUserId => Required("TERRASCALE_E2E_ADMIN_MUTATION_USER_ID");
 
-    public static string AdminMutationProjectId => Required("TERRASCALE_E2E_ADMIN_MUTATION_PROJECT_ID");
-
     public static string AdminDeleteUserId => Required("TERRASCALE_E2E_ADMIN_DELETE_USER_ID");
+
+    public static string AdminPolarMonthlyProductId => Required("TERRASCALE_E2E_ADMIN_POLAR_MONTHLY_PRODUCT_ID");
+
+    public static string AdminPolarMonthlyPriceId => Required("TERRASCALE_E2E_ADMIN_POLAR_MONTHLY_PRICE_ID");
+
+    public static string AdminPolarAnnualProductId => Required("TERRASCALE_E2E_ADMIN_POLAR_ANNUAL_PRODUCT_ID");
+
+    public static string AdminPolarAnnualPriceId => Required("TERRASCALE_E2E_ADMIN_POLAR_ANNUAL_PRICE_ID");
 
     public static string ProjectId => Required("TERRASCALE_E2E_PROJECT_ID");
 
@@ -323,4 +342,11 @@ internal sealed class RequiresTerraScaleAdministrationDeleteUserAttribute()
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
         Task.FromResult(!TerraScaleApiE2E.IsAdministrationDeleteUserConfigured);
+}
+
+internal sealed class RequiresTerraScaleAdministrationPolarPlanAttribute()
+    : SkipAttribute(TerraScaleApiE2E.AdministrationPolarPlanSkipReason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(!TerraScaleApiE2E.IsAdministrationPolarPlanConfigured);
 }
