@@ -63,6 +63,11 @@ public sealed class TerraScaleBackupsClient
         ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.OperationSessionId);
+        if (request.OperationSessionId.Length > 128)
+        {
+            throw new ArgumentException("Operation session ID must not exceed 128 characters.", nameof(request));
+        }
+
         return client.SendAsync<TerraScaleBackupConfirmationPlan>(
             HttpMethod.Post,
             TerraScaleApiRoutes.BackupsPlan(projectId, databaseId),
@@ -85,6 +90,16 @@ public sealed class TerraScaleBackupsClient
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.OperationSessionId);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.ConfirmationToken);
+        if (request.OperationSessionId.Length > 128)
+        {
+            throw new ArgumentException("Operation session ID must not exceed 128 characters.", nameof(request));
+        }
+
+        if (request.ConfirmationToken.Length > 8192)
+        {
+            throw new ArgumentException("Confirmation token must not exceed 8192 characters.", nameof(request));
+        }
+
         ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
 
         var normalizedIdempotencyKey = idempotencyKey.Trim();

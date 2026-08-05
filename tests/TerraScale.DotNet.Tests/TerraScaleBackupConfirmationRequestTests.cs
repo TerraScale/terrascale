@@ -67,6 +67,32 @@ public sealed class TerraScaleBackupConfirmationRequestTests
         await Assert.That(executeException).IsNotNull();
     }
 
+    [Test]
+    public async Task ConfirmationRequests_RejectValuesBeyondServerLimits()
+    {
+        using var httpClient = new HttpClient(new RecordingHandler("{}"));
+        var client = CreateClient(httpClient);
+
+        var planException = await Assert.ThrowsAsync<ArgumentException>(() => client.Backups.PlanAsync(
+            "project-a",
+            "database-a",
+            new TerraScaleBackupConfirmationPlanRequest(new string('s', 129))));
+        var operationSessionException = await Assert.ThrowsAsync<ArgumentException>(() => client.Backups.ExecuteAsync(
+            "project-a",
+            "database-a",
+            new TerraScaleBackupConfirmationExecuteRequest(new string('s', 129), "confirmation-a"),
+            "caller-key"));
+        var confirmationTokenException = await Assert.ThrowsAsync<ArgumentException>(() => client.Backups.ExecuteAsync(
+            "project-a",
+            "database-a",
+            new TerraScaleBackupConfirmationExecuteRequest("session-a", new string('t', 8193)),
+            "caller-key"));
+
+        await Assert.That(planException).IsNotNull();
+        await Assert.That(operationSessionException).IsNotNull();
+        await Assert.That(confirmationTokenException).IsNotNull();
+    }
+
     private static TerraScaleClient CreateClient(HttpClient httpClient, Func<string>? idempotencyKeyFactory = null) =>
         new(httpClient, new TerraScaleClientOptions
         {
