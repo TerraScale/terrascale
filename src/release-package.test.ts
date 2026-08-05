@@ -38,6 +38,8 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.doesNotMatch(jobDefinition(workflow, "pr-static"), /\n\s+token:/u);
   assert.match(jobDefinition(workflow, "release-contract-fixture"), /check-public-contract-fixture\.mjs Documentation\/public\/openapi\/server\.openapi\.json/u);
   assert.match(jobDefinition(workflow, "release-version-availability"), /--check-availability --package @terrascale\/sdk/u);
+  assert.doesNotMatch(jobDefinition(workflow, "release-version-availability"), /secrets\.[A-Z0-9_]+/u);
+  assert.doesNotMatch(jobDefinition(workflow, "release-version-availability"), /CANDIDATE_STORE_TOKEN/u);
   assert.match(jobDefinition(workflow, "candidate"), /release-contract-fixture/u);
   assert.match(jobDefinition(workflow, "candidate"), /release-version-availability/u);
   assert.doesNotMatch(jobDefinition(workflow, "candidate"), /NPM_TOKEN/u);
@@ -163,7 +165,7 @@ async function verifyLifecycleSafePublish(
     artifacts: [{ name: path.basename(lifecycleTarball), sha256: `sha256:${await sha256(lifecycleTarball)}` }],
   }));
   await writeFile(fakeNpm, `#!/usr/bin/env node
-const { readFileSync, writeFileSync } = require('node:fs');
+const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const [command, ...arguments_] = process.argv.slice(2);
 if (command === 'view') {
   writeFileSync(${JSON.stringify(availabilityRecord)}, JSON.stringify({
@@ -173,6 +175,7 @@ if (command === 'view') {
     globalConfig: process.env.NPM_CONFIG_GLOBALCONFIG,
     globalConfigHasAuth: /_authToken=/.test(readFileSync(process.env.NPM_CONFIG_GLOBALCONFIG, 'utf8')),
   }));
+  if (existsSync(${JSON.stringify(path.join(workspace, "npm-view-exists"))})) { process.stdout.write('"already-exists"\\n'); process.exit(0); }
   process.stderr.write('npm error code E404\\n'); process.exit(1);
 }
 if (command !== 'publish') process.exit(2);
@@ -232,6 +235,27 @@ writeFileSync(${JSON.stringify(publishRecord)}, JSON.stringify({
   assert.equal(record.globalConfigHasAuth, false);
   assert.equal(record.arguments_.includes("--ignore-scripts"), true);
   await assert.rejects(readFile(lifecycleMarker));
+
+  await rm(publishRecord);
+  await writeFile(path.join(workspace, "npm-view-exists"), "");
+  await assert.rejects(
+    run(
+      "node",
+      [path.join(checkout, "scripts", "promote-npm-candidate.mjs"), "--manifest", manifestPath, "--artifacts", packages, "--registry", "https://registry.npmjs.org/"],
+      {
+        cwd: checkout,
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
+          NPM_TOKEN: "test-token",
+          NPM_CONFIG_USERCONFIG: userConfig,
+          NPM_CONFIG_GLOBALCONFIG: globalConfig,
+        },
+      },
+    ),
+    /already exists/u,
+  );
+  await assert.rejects(readFile(publishRecord));
 }
 
 function jobDefinition(workflow: string, job: string): string {
