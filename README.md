@@ -75,7 +75,7 @@ npm run cf:login
 npm run cf:project:create
 ```
 
-That reads the Pages project name and compatibility date from `wrangler.toml`. The production branch defaults to `main`; set `CLOUDFLARE_PAGES_PRODUCTION_BRANCH` to use another branch consistently for project creation and production deploys.
+That reads the Pages project name and compatibility date from `wrangler.toml`. The production branch defaults to `main`; set `CLOUDFLARE_PAGES_PRODUCTION_BRANCH` to use another branch consistently for project creation and production deploys. If the project already exists, its remote production branch must match exactly.
 
 4. Deploy to production:
 
@@ -89,7 +89,7 @@ npm run cf:deploy
 npm run cf:deploy:preview
 ```
 
-The preview deploy script uses the current git branch by default and refuses the configured production branch. Override it only with a non-production branch when needed:
+Both deploy scripts first read the Pages project metadata and fail closed unless its remote production branch exactly matches `CLOUDFLARE_PAGES_PRODUCTION_BRANCH`; this prevents a preview from deploying to the real production branch under environment drift. The preview deploy script then uses the current git branch by default and refuses that verified production branch. Override it only with a non-production branch when needed:
 
 ```bash
 export CLOUDFLARE_PAGES_BRANCH=staging
@@ -112,6 +112,8 @@ For CI or any non-interactive environment, provide:
 
 - `CLOUDFLARE_API_TOKEN`: Cloudflare API token with `Account / Cloudflare Pages / Edit`.
 - `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account ID for the target Pages account.
+
+Both values are also required for `cf:deploy` and `cf:deploy:preview`, because they perform the read-only production-branch verification before invoking Wrangler.
 
 Optional deploy metadata overrides:
 
