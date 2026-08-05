@@ -20,14 +20,7 @@
     "./admin": {
       "types": "./dist/admin.d.ts",
       "import": "./dist/admin.js"
-    },
-    "./mcp": {
-      "types": "./dist/mcp/index.d.ts",
-      "import": "./dist/mcp/index.js"
     }
-  },
-  "bin": {
-    "terrascale-mcp": "./dist/mcp/stdio.js"
   },
   "files": [
     "dist",
@@ -45,9 +38,9 @@
     "check:route-manifest": "node scripts/generate-client-route-manifest.mjs --check",
     "generate:route-manifest": "npm run build && node scripts/generate-client-route-manifest.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test dist/*.test.js dist/mcp/*.test.js dist/integration/*.test.js",
+    "test": "node --test dist/*.test.js dist/integration/*.test.js",
     "test:integration": "node --test dist/integration/*.test.js",
-    "test:unit": "node --test dist/*.test.js dist/mcp/*.test.js"
+    "test:unit": "node --test dist/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",
@@ -57,9 +50,5 @@
     "node": ">=22.0.0",
     "npm": ">=11.0.0"
   },
-  "packageManager": "npm@11.18.0",
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "zod": "^4.4.3"
-  }
+  "packageManager": "npm@11.18.0"
 }

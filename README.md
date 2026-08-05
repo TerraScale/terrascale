@@ -144,37 +144,6 @@ npm run test:integration
 When those URLs are not set, integration tests skip instead of substituting
 mocked HTTP.
 
-## MCP server
-
-`@terrascale/sdk/mcp` provides a stdio MCP server for an external TerraScale
-user. It is deliberately read-only and composes only the typed public SDK:
-project, database, repository, schema, document, bounded read-only TQL,
-backup/restore status, and usage discovery. It does not expose generic HTTP,
-private routes, Dashboard behavior, TerraBase, internal RPC, or mutations.
-
-Install the package and configure its executable with an MCP client:
-
-```json
-{
-  "command": "npx",
-  "args": ["-y", "@terrascale/sdk@latest"],
-  "env": {
-    "TERRASCALE_API_BASE_URL": "https://api.example.com",
-    "TERRASCALE_ACCESS_TOKEN": "<access token>",
-    "TERRASCALE_PROJECT_ID": "<optional project ULID>"
-  }
-}
-```
-
-`TERRASCALE_API_BASE_URL` and `TERRASCALE_ACCESS_TOKEN` are required.
-`TERRASCALE_AUTH_API_BASE_URL` is optional when Auth uses a different public
-base URL. The server validates URL and ULID configuration without writing or
-logging token values. Its static resources document API boundaries, safe
-mutation practice, and TQL guidance; its prompts plan exploration,
-investigation, schema work, backup/restore, and safe data changes. For actual
-changes, use an approved typed SDK workflow with appropriate authorization,
-idempotency, validation, and rollback planning.
-
 ## Releases
 
 Main pushes publish `@terrascale/sdk` to the public npm registry through
