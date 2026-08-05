@@ -94,6 +94,7 @@ public sealed class TerraScaleSavedQueriesClientTests
         await Assert.That(response).IsNotNull();
         await Assert.That(response!.RepositoryId).IsNull();
         await Assert.That(response.UpdatedAt).IsEqualTo(DateTimeOffset.Parse("2026-08-05T13:00:00+00:00"));
+        await Assert.That(JsonSerializer.Serialize(response, new JsonSerializerOptions(JsonSerializerDefaults.Web)).Contains("revision", StringComparison.OrdinalIgnoreCase)).IsFalse();
     }
 
     [Test]
