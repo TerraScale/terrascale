@@ -40,6 +40,18 @@ internal static class TerraScaleApiRoutes
     public static string ProjectDatabaseDelete(string projectId, string databaseId) =>
         ProjectDatabaseGet(projectId, databaseId);
 
+    public static string ProjectSavedQueriesList(string projectId, int skip, int take) =>
+        WithQuery($"/api/v1/projects/{Escape(projectId)}/saved-queries", ("skip", Number(skip)), ("take", Number(take)));
+
+    public static string ProjectSavedQueriesCreate(string projectId) =>
+        $"/api/v1/projects/{Escape(projectId)}/saved-queries";
+
+    public static string ProjectSavedQueryUpdate(string projectId, string savedQueryId) =>
+        $"{ProjectSavedQueriesCreate(projectId)}/{Escape(savedQueryId)}";
+
+    public static string ProjectSavedQueryDelete(string projectId, string savedQueryId) =>
+        ProjectSavedQueryUpdate(projectId, savedQueryId);
+
     public static string ProjectQueuesList(string projectId) =>
         $"/api/v1/projects/{Escape(projectId)}/queues";
 

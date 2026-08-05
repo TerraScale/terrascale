@@ -58,6 +58,7 @@ public sealed class TerraScaleClient
         Projects = new TerraScaleProjectsClient(this);
         Regions = new TerraScaleRegionsClient(this);
         ProjectDatabases = new TerraScaleProjectDatabasesClient(this);
+        SavedQueries = new TerraScaleSavedQueriesClient(this);
         Queues = new TerraScaleQueuesClient(this);
         Environments = new TerraScaleEnvironmentsClient(this);
         ProjectUsage = new TerraScaleProjectUsageClient(this);
@@ -122,6 +123,11 @@ public sealed class TerraScaleClient
     /// Project-scoped logical database operations.
     /// </summary>
     public TerraScaleProjectDatabasesClient ProjectDatabases { get; }
+
+    /// <summary>
+    /// Project saved-query operations.
+    /// </summary>
+    public TerraScaleSavedQueriesClient SavedQueries { get; }
 
     /// <summary>
     /// Project-scoped queue and topic operations.
