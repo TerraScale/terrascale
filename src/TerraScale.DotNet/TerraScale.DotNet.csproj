@@ -6,11 +6,13 @@
     <PackageProjectUrl>https://git.terrascale.tech/TerraScale/TerraScale.DotNet</PackageProjectUrl>
     <RepositoryUrl>https://git.terrascale.tech/TerraScale/TerraScale.DotNet</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>terrascale;database;documents;projects;queues;messaging;auth;notifications;backups;billing;stripe;sdk</PackageTags>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.9" />
     <PackageReference Include="ZString" Version="2.6.0" />
   </ItemGroup>
