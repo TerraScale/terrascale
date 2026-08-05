@@ -134,6 +134,7 @@ public sealed class TerraScaleApiE2ETests
         var userId = TerraScaleApiE2E.AdminDeleteUserId;
         var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
             ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
+        await RequireNonOwnerAdminDeniedAsync(standardBearer);
         var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
             standardBearer.Administration.DeleteUserAsync(userId));
         await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
@@ -222,11 +223,11 @@ public sealed class TerraScaleApiE2ETests
     public async Task Administration_PolarPlanLifecycleUsesDedicatedProviderValuesAndCleansUp()
     {
         var owner = TerraScaleApiE2E.CreateAdminClient();
-        var planId = string.Empty;
+        var planKey = $"sdk-e2e-polar-{Guid.NewGuid():N}";
         try
         {
             var created = await owner.Administration.CreatePricingPlanAsync(new TerraScaleAdminPricingPlanRequest(
-                Key: $"sdk-e2e-polar-{Guid.NewGuid():N}",
+                Key: planKey,
                 Name: "SDK E2E Polar disposable plan",
                 Currency: "USD",
                 MonthlyBaseCents: 100,
@@ -236,7 +237,6 @@ public sealed class TerraScaleApiE2ETests
                 AnnualPolarProductId: TerraScaleApiE2E.AdminPolarAnnualProductId,
                 AnnualPolarProductPriceId: TerraScaleApiE2E.AdminPolarAnnualPriceId,
                 Visible: false));
-            planId = created.PlanId;
 
             await Assert.That(created.Provider).IsEqualTo("polar");
             await Assert.That(created.MonthlyPolarProductId).IsEqualTo(TerraScaleApiE2E.AdminPolarMonthlyProductId);
@@ -246,9 +246,10 @@ public sealed class TerraScaleApiE2ETests
         }
         finally
         {
-            if (!string.IsNullOrWhiteSpace(planId))
+            var createdPlans = await owner.Administration.ListPricingPlansAsync();
+            foreach (var createdPlan in createdPlans.Where(plan => string.Equals(plan.Key, planKey, StringComparison.Ordinal)))
             {
-                await owner.Administration.DeletePricingPlanAsync(planId);
+                await owner.Administration.DeletePricingPlanAsync(createdPlan.PlanId);
             }
         }
     }
