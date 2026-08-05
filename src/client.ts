@@ -1195,12 +1195,13 @@ export class DatabasesClient {
 
   delete(
     databaseId: Ulid,
-    projectId?: Ulid,
+    options: Models.DeleteProjectDatabaseOptions,
   ): Promise<TerraScaleResult<Models.DeletedProjectDatabaseResponse>> {
     return this.#http.request({
       method: "DELETE",
-      path: databaseRoot(this.#http, { projectId, databaseId }),
+      path: databaseRoot(this.#http, { projectId: options.projectId, databaseId }),
       routeName: "databases.delete",
+      headers: { "x-terrascale-delete-confirmation": databaseId },
     });
   }
 

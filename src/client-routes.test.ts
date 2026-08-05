@@ -302,7 +302,7 @@ describe("TerraScaleClient route contracts", () => {
     assert.deepEqual(requests[3]?.body, { enabled: true, schema: '{"type":"object"}' });
   });
 
-  test("uses project database routes and deletion/environment DTOs", async () => {
+  test("uses project database routes, requires explicit deletion confirmation, and scopes its header", async () => {
     const deletedDatabase = {
       databaseId,
       projectId,
@@ -319,12 +319,18 @@ describe("TerraScaleClient route contracts", () => {
     assert.equal(requests[0]?.url.searchParams.get("skip"), "0");
     assert.equal(requests[0]?.url.searchParams.get("take"), "100");
 
-    const deleteResult = await client.databases.delete(databaseId);
+    if (false) {
+      // @ts-expect-error Database deletion requires explicit confirmation.
+      void client.databases.delete(databaseId);
+    }
+
+    const deleteResult = await client.databases.delete(databaseId, { confirm: true });
     assert.equal(deleteResult.ok, true);
     if (deleteResult.ok) {
       assert.deepEqual(deleteResult.value, deletedDatabase);
     }
     assertRequest(requests[1], "DELETE", `/api/v1/projects/${projectId}/databases/${databaseId}`);
+    assert.equal(requests[1]?.headers.get("x-terrascale-delete-confirmation"), databaseId);
 
     await client.databases.createEnvironment(databaseId, { name: "Preview", kind: "Preview" });
     assertRequest(
@@ -340,6 +346,7 @@ describe("TerraScaleClient route contracts", () => {
       "DELETE",
       `/api/v1/projects/${projectId}/databases/${databaseId}/environments/${environmentId}`,
     );
+    assert.equal(requests[3]?.headers.has("x-terrascale-delete-confirmation"), false);
   });
 
   test("uses typed project saved-query CRUD routes, DTOs, pagination, and idempotency", async () => {

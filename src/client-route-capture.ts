@@ -776,7 +776,7 @@ const captureOperations: readonly CaptureOperation[] = [
     client: "databases",
     operation: "delete",
     defaultProject: true,
-    invoke: (client) => client.databases.delete(sampleIds.databaseId),
+    invoke: (client) => client.databases.delete(sampleIds.databaseId, { confirm: true }),
   },
   {
     client: "queues",

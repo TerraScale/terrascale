@@ -591,6 +591,11 @@ export type CreateDatabaseRequest = {
   readonly name: string;
 };
 
+export type DeleteProjectDatabaseOptions = {
+  readonly confirm: true;
+  readonly projectId?: ProjectId | undefined;
+};
+
 export type ProjectSavedQueryRequest = {
   readonly name: string;
   readonly query: string;
