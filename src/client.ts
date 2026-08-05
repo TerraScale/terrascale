@@ -125,10 +125,14 @@ export class TerraScaleClient {
 }
 
 export class OnboardingClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   getState(): Promise<TerraScaleResult<Models.OnboardingState>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: sdkRouteManifest.onboarding.state,
       routeName: "onboarding.getState",
@@ -138,7 +142,7 @@ export class OnboardingClient {
   updateAccountInformation(
     request: Models.UpdateOnboardingAccountRequest,
   ): Promise<TerraScaleResult<Models.OnboardingState>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PATCH",
       path: sdkRouteManifest.onboarding.accountInformation,
       routeName: "onboarding.accountInformation.update",
@@ -149,7 +153,7 @@ export class OnboardingClient {
   createPaymentSession(
     request: Models.CreateOnboardingPaymentSessionRequest,
   ): Promise<TerraScaleResult<Models.OnboardingPaymentSession>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: sdkRouteManifest.onboarding.paymentSession,
       routeName: "onboarding.paymentMethod.createSession",
@@ -160,7 +164,7 @@ export class OnboardingClient {
   validatePaymentMethod(
     request: Models.ValidateOnboardingPaymentRequest,
   ): Promise<TerraScaleResult<Models.OnboardingState>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: sdkRouteManifest.onboarding.paymentValidation,
       routeName: "onboarding.paymentMethod.validate",
@@ -171,7 +175,7 @@ export class OnboardingClient {
   updateMfaDecision(
     request: Models.UpdateOnboardingMfaRequest,
   ): Promise<TerraScaleResult<Models.OnboardingState>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PUT",
       path: sdkRouteManifest.onboarding.mfaDecision,
       routeName: "onboarding.mfaDecision.update",
@@ -182,7 +186,7 @@ export class OnboardingClient {
   createOrganization(
     request: Models.CreateOnboardingOrganizationRequest,
   ): Promise<TerraScaleResult<Models.OnboardingState>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: sdkRouteManifest.onboarding.organization,
       routeName: "onboarding.organization.create",
@@ -193,7 +197,7 @@ export class OnboardingClient {
   createProject(
     request: Models.CreateOnboardingProjectRequest,
   ): Promise<TerraScaleResult<Models.OnboardingState>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: sdkRouteManifest.onboarding.project,
       routeName: "onboarding.project.create",
@@ -207,10 +211,14 @@ export class OnboardingClient {
 }
 
 export class RegionsClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   list(): Promise<TerraScaleResult<Models.RegionsResponse>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/regions`,
       routeName: "regions.list",
@@ -218,7 +226,7 @@ export class RegionsClient {
   }
 
   get(regionCode: string): Promise<TerraScaleResult<Models.RegionDetails>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/regions/${encodeURIComponent(regionCode.trim().toLowerCase())}`,
       routeName: "regions.get",
@@ -227,10 +235,14 @@ export class RegionsClient {
 }
 
 export class AuthClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   getSession(): Promise<TerraScaleResult<Models.AuthMeResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "GET",
       path: sdkRouteManifest.auth.me,
@@ -239,7 +251,7 @@ export class AuthClient {
   }
 
   getCurrentBilling(): Promise<TerraScaleResult<Models.CurrentOrganizationBilling>> {
-    return this.http.request({
+    return this.#http.request({
       base: "api",
       method: "GET",
       path: sdkRouteManifest.auth.billing,
@@ -250,7 +262,7 @@ export class AuthClient {
   evaluateBillingGuard(
     request: Models.BillingGuardRequest,
   ): Promise<TerraScaleResult<Models.BillingGuardResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "api",
       method: "POST",
       path: sdkRouteManifest.auth.billingGuard,
@@ -263,11 +275,11 @@ export class AuthClient {
     request: Models.RegisterRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.SignupResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: authRoute(
-        this.http,
+        this.#http,
         projectId,
         sdkRouteManifest.auth.register,
         sdkRouteManifest.auth.project.register,
@@ -282,11 +294,11 @@ export class AuthClient {
     request: Models.VerifyEmailRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.SignupResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: authRoute(
-        this.http,
+        this.#http,
         projectId,
         sdkRouteManifest.auth.verifyEmail,
         sdkRouteManifest.auth.project.verifyEmail,
@@ -302,11 +314,11 @@ export class AuthClient {
     verifyUrl = "",
     projectId?: Ulid,
   ): Promise<TerraScaleResult<void>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: authRoute(
-        this.http,
+        this.#http,
         projectId,
         sdkRouteManifest.auth.resendVerification,
         sdkRouteManifest.auth.project.resendVerification,
@@ -321,11 +333,11 @@ export class AuthClient {
     request: Models.SignInRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: authRoute(
-        this.http,
+        this.#http,
         projectId,
         sdkRouteManifest.auth.signIn,
         sdkRouteManifest.auth.project.signIn,
@@ -344,11 +356,11 @@ export class AuthClient {
     request: Models.PasswordMfaVerifyRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: authRoute(
-        this.http,
+        this.#http,
         projectId,
         sdkRouteManifest.auth.verifyPasswordMfa,
         sdkRouteManifest.auth.project.verifyPasswordMfa,
@@ -363,11 +375,11 @@ export class AuthClient {
     request: Models.PasswordResetRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<void>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: authRoute(
-        this.http,
+        this.#http,
         projectId,
         sdkRouteManifest.auth.forgotPassword,
         sdkRouteManifest.auth.project.forgotPassword,
@@ -382,11 +394,11 @@ export class AuthClient {
     request: Models.CompletePasswordResetRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<void>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: authRoute(
-        this.http,
+        this.#http,
         projectId,
         sdkRouteManifest.auth.resetPassword,
         sdkRouteManifest.auth.project.resetPassword,
@@ -401,11 +413,11 @@ export class AuthClient {
     request: Models.MagicLinkRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<void>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: authRoute(
-        this.http,
+        this.#http,
         projectId,
         sdkRouteManifest.auth.magicLinkRequest,
         sdkRouteManifest.auth.project.magicLinkRequest,
@@ -420,11 +432,11 @@ export class AuthClient {
     request: Models.CompleteMagicLinkRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: authRoute(
-        this.http,
+        this.#http,
         projectId,
         sdkRouteManifest.auth.magicLinkComplete,
         sdkRouteManifest.auth.project.magicLinkComplete,
@@ -439,11 +451,11 @@ export class AuthClient {
     refreshToken: string,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: authRoute(
-        this.http,
+        this.#http,
         projectId,
         sdkRouteManifest.auth.refresh,
         sdkRouteManifest.auth.project.refresh,
@@ -455,11 +467,11 @@ export class AuthClient {
   }
 
   signOut(projectId?: Ulid): Promise<TerraScaleResult<void>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: authRoute(
-        this.http,
+        this.#http,
         projectId,
         sdkRouteManifest.auth.signOut,
         sdkRouteManifest.auth.project.signOut,
@@ -473,7 +485,7 @@ export class AuthClient {
     readonly cursor?: string;
     readonly limit?: number;
   }): Promise<TerraScaleResult<Models.ListAccountSessionsResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "GET",
       path: sdkRouteManifest.auth.accountSessions,
@@ -483,7 +495,7 @@ export class AuthClient {
   }
 
   revokeSession(sessionId: Ulid): Promise<TerraScaleResult<void>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "DELETE",
       path: sdkRouteManifest.auth.accountSession(sessionId),
@@ -492,7 +504,7 @@ export class AuthClient {
   }
 
   revokeOtherSessions(): Promise<TerraScaleResult<void>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "DELETE",
       path: sdkRouteManifest.auth.accountSessions,
@@ -503,7 +515,7 @@ export class AuthClient {
   updateProfile(
     request: Models.UpdateProfileRequest,
   ): Promise<TerraScaleResult<Models.UpdateProfileResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "PATCH",
       path: sdkRouteManifest.auth.updateProfile,
@@ -515,7 +527,7 @@ export class AuthClient {
   changePassword(
     request: Models.ChangePasswordRequest,
   ): Promise<TerraScaleResult<Models.ChangePasswordResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: sdkRouteManifest.auth.changePassword,
@@ -525,7 +537,7 @@ export class AuthClient {
   }
 
   listMfaFactors(): Promise<TerraScaleResult<Models.ListMfaFactorsResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "GET",
       path: sdkRouteManifest.auth.mfaFactors,
@@ -534,7 +546,7 @@ export class AuthClient {
   }
 
   enrollTotp(): Promise<TerraScaleResult<Models.EnrollTotpResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: sdkRouteManifest.auth.enrollTotp,
@@ -546,7 +558,7 @@ export class AuthClient {
   verifyTotpEnrollment(
     request: Models.VerifyTotpEnrollmentRequest,
   ): Promise<TerraScaleResult<Models.VerifyTotpEnrollmentResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: sdkRouteManifest.auth.verifyTotpEnrollment,
@@ -559,7 +571,7 @@ export class AuthClient {
     factorId: Ulid,
     request: Models.DeleteMfaFactorRequest,
   ): Promise<TerraScaleResult<Models.VerifyTotpEnrollmentResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "DELETE",
       path: sdkRouteManifest.auth.mfaFactor(factorId),
@@ -569,7 +581,7 @@ export class AuthClient {
   }
 
   generateRecoveryCodes(): Promise<TerraScaleResult<Models.GenerateRecoveryCodesResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: sdkRouteManifest.auth.generateRecoveryCodes,
@@ -578,7 +590,7 @@ export class AuthClient {
   }
 
   getRecoveryCodeCount(): Promise<TerraScaleResult<Models.RecoveryCodeCountResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "GET",
       path: sdkRouteManifest.auth.recoveryCodeCount,
@@ -590,11 +602,11 @@ export class AuthClient {
     request: Models.VerifyRecoveryCodeRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.VerifyRecoveryCodeResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: authRoute(
-        this.http,
+        this.#http,
         projectId,
         sdkRouteManifest.auth.verifyRecoveryCode,
         sdkRouteManifest.auth.project.verifyRecoveryCode,
@@ -608,7 +620,7 @@ export class AuthClient {
   switchOrganization(
     request: Models.SwitchOrganizationRequest,
   ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: sdkRouteManifest.auth.switchOrganization,
@@ -620,7 +632,7 @@ export class AuthClient {
   beginExternalLogin(
     request: Models.ExternalLoginBeginRequest,
   ): Promise<TerraScaleResult<Models.ExternalLoginBeginResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: sdkRouteManifest.auth.externalLoginBegin,
@@ -633,7 +645,7 @@ export class AuthClient {
   completeExternalLogin(
     request: Models.ExternalLoginCompleteRequest,
   ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: sdkRouteManifest.auth.externalLoginComplete,
@@ -647,10 +659,10 @@ export class AuthClient {
     projectId?: Ulid,
     query?: Models.ListProjectAuthProvidersRequest,
   ): Promise<TerraScaleResult<Models.ListProjectAuthProvidersResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "GET",
-      path: sdkRouteManifest.auth.project.providers(projectRootId(this.http, projectId)),
+      path: sdkRouteManifest.auth.project.providers(projectRootId(this.#http, projectId)),
       routeName: "auth.project.providers.list",
       query,
     });
@@ -659,7 +671,7 @@ export class AuthClient {
   initiateEmailChange(
     request: Models.InitiateEmailChangeRequest,
   ): Promise<TerraScaleResult<Models.InitiateEmailChangeResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: sdkRouteManifest.auth.initiateEmailChange,
@@ -671,7 +683,7 @@ export class AuthClient {
   verifyEmailChange(
     request: Models.VerifyEmailChangeRequest,
   ): Promise<TerraScaleResult<Models.VerifyEmailChangeResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: sdkRouteManifest.auth.verifyEmailChange,
@@ -682,10 +694,14 @@ export class AuthClient {
 }
 
 export class OrganizationsClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   list(query?: Models.PageRequest): Promise<TerraScaleResult<readonly Models.Organization[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/organizations`,
       routeName: "organizations.list",
@@ -696,7 +712,7 @@ export class OrganizationsClient {
   create(
     request: Models.CreateOrganizationRequest,
   ): Promise<TerraScaleResult<Models.Organization>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations`,
       routeName: "organizations.create",
@@ -705,7 +721,7 @@ export class OrganizationsClient {
   }
 
   get(organizationId: Ulid): Promise<TerraScaleResult<Models.Organization>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}`,
       routeName: "organizations.get",
@@ -716,7 +732,7 @@ export class OrganizationsClient {
     organizationId: Ulid,
     request: Models.UpdateOrganizationRequest,
   ): Promise<TerraScaleResult<Models.Organization>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PATCH",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}`,
       routeName: "organizations.update",
@@ -728,7 +744,7 @@ export class OrganizationsClient {
     organizationId: Ulid,
     request: Models.RequestOrganizationDeletionRequest,
   ): Promise<TerraScaleResult<Models.Organization>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}:request-deletion`,
       routeName: "organizations.deletion.request",
@@ -737,7 +753,7 @@ export class OrganizationsClient {
   }
 
   leave(organizationId: Ulid): Promise<TerraScaleResult<void>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}:leave`,
       routeName: "organizations.leave",
@@ -748,7 +764,7 @@ export class OrganizationsClient {
     organizationId: Ulid,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<readonly Models.Project[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/projects`,
       routeName: "organizations.projects.list",
@@ -760,7 +776,7 @@ export class OrganizationsClient {
     organizationId: Ulid,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<readonly Models.OrganizationMember[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/members`,
       routeName: "organizations.members.list",
@@ -773,7 +789,7 @@ export class OrganizationsClient {
     userId: Ulid,
     request: Models.UpdateOrganizationMemberRoleRequest,
   ): Promise<TerraScaleResult<Models.OrganizationMember>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PATCH",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/members/${ulidPathSegment(userId)}`,
       routeName: "organizations.members.updateRole",
@@ -786,7 +802,7 @@ export class OrganizationsClient {
     userId: Ulid,
     request: Models.RemoveOrganizationMemberRequest = { confirm: true },
   ): Promise<TerraScaleResult<void>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/members/${ulidPathSegment(userId)}:remove`,
       routeName: "organizations.members.remove",
@@ -798,7 +814,7 @@ export class OrganizationsClient {
     organizationId: Ulid,
     request: Models.CreateProjectRequest,
   ): Promise<TerraScaleResult<Models.Project>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/projects`,
       routeName: "organizations.projects.create",
@@ -811,9 +827,9 @@ export class OrganizationsClient {
   }
 
   getProject(projectId?: Ulid): Promise<TerraScaleResult<Models.Project>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: projectRoot(this.http, projectId),
+      path: projectRoot(this.#http, projectId),
       routeName: "organizations.projects.get",
     });
   }
@@ -821,9 +837,9 @@ export class OrganizationsClient {
   listProjectRegionPlacements(
     projectId?: Ulid,
   ): Promise<TerraScaleResult<readonly Models.ProjectRegionPlacement[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.http, projectId)}/regions`,
+      path: `${projectRoot(this.#http, projectId)}/regions`,
       routeName: "organizations.projects.regions.list",
     });
   }
@@ -832,9 +848,9 @@ export class OrganizationsClient {
     projectId: Ulid,
     request: Models.UpdateProjectRequest,
   ): Promise<TerraScaleResult<Models.Project>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PATCH",
-      path: projectRoot(this.http, projectId),
+      path: projectRoot(this.#http, projectId),
       routeName: "organizations.projects.update",
       body: {
         ...request,
@@ -851,9 +867,9 @@ export class OrganizationsClient {
     projectId: Ulid,
     request: Models.DeleteProjectRequest,
   ): Promise<TerraScaleResult<Models.DeletedProject>> {
-    return this.http.request({
+    return this.#http.request({
       method: "DELETE",
-      path: projectRoot(this.http, projectId),
+      path: projectRoot(this.#http, projectId),
       routeName: "organizations.projects.delete",
       body: request,
     });
@@ -863,7 +879,7 @@ export class OrganizationsClient {
     organizationId: Ulid,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<readonly Models.Invitation[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations`,
       routeName: "organizations.invitations.list",
@@ -875,7 +891,7 @@ export class OrganizationsClient {
     organizationId: Ulid,
     request: Models.CreateInvitationRequest,
   ): Promise<TerraScaleResult<Models.Invitation>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations`,
       routeName: "organizations.invitations.create",
@@ -887,7 +903,7 @@ export class OrganizationsClient {
     organizationId: Ulid,
     invitationId: Ulid,
   ): Promise<TerraScaleResult<Models.Invitation>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:accept`,
       routeName: "organizations.invitations.accept",
@@ -898,7 +914,7 @@ export class OrganizationsClient {
     organizationId: Ulid,
     invitationId: Ulid,
   ): Promise<TerraScaleResult<Models.Invitation>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:decline`,
       routeName: "organizations.invitations.decline",
@@ -909,7 +925,7 @@ export class OrganizationsClient {
     organizationId: Ulid,
     invitationId: Ulid,
   ): Promise<TerraScaleResult<Models.Invitation>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:resend`,
       routeName: "organizations.invitations.resend",
@@ -920,7 +936,7 @@ export class OrganizationsClient {
     organizationId: Ulid,
     invitationId: Ulid,
   ): Promise<TerraScaleResult<Models.Invitation>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:cancel`,
       routeName: "organizations.invitations.cancel",
@@ -929,12 +945,16 @@ export class OrganizationsClient {
 }
 
 export class QueuesClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   list(projectId?: Ulid): Promise<TerraScaleResult<readonly Models.ProjectQueue[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.http, projectId)}/queues`,
+      path: `${projectRoot(this.#http, projectId)}/queues`,
       routeName: "queues.list",
     });
   }
@@ -943,26 +963,26 @@ export class QueuesClient {
     request: Models.CreateProjectQueueRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.ProjectQueue>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${projectRoot(this.http, projectId)}/queues`,
+      path: `${projectRoot(this.#http, projectId)}/queues`,
       routeName: "queues.create",
       body: request,
     });
   }
 
   get(queueId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.ProjectQueue>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: queueRoot(this.http, queueId, projectId),
+      path: queueRoot(this.#http, queueId, projectId),
       routeName: "queues.get",
     });
   }
 
   delete(queueId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<boolean>> {
-    return this.http.request({
+    return this.#http.request({
       method: "DELETE",
-      path: queueRoot(this.http, queueId, projectId),
+      path: queueRoot(this.#http, queueId, projectId),
       routeName: "queues.delete",
     });
   }
@@ -971,9 +991,9 @@ export class QueuesClient {
     queueId: Ulid,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<{ readonly queueName: string; readonly purgedMessages: number }>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${queueRoot(this.http, queueId, projectId)}:purge`,
+      path: `${queueRoot(this.#http, queueId, projectId)}:purge`,
       routeName: "queues.purge",
     });
   }
@@ -983,9 +1003,9 @@ export class QueuesClient {
     request: Models.PublishProjectQueueMessageRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.ProjectQueuePublishResult>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${queueRoot(this.http, queueId, projectId)}:publish`,
+      path: `${queueRoot(this.#http, queueId, projectId)}:publish`,
       routeName: "queues.publish",
       body: request,
     });
@@ -996,9 +1016,9 @@ export class QueuesClient {
     maxMessages = 10,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<readonly Models.ProjectQueuePeekMessage[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${queueRoot(this.http, queueId, projectId)}:peek`,
+      path: `${queueRoot(this.#http, queueId, projectId)}:peek`,
       routeName: "queues.peek",
       query: { maxMessages },
     });
@@ -1009,9 +1029,9 @@ export class QueuesClient {
     request: Models.ReceiveProjectQueueMessagesRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<readonly Models.ProjectQueueReceivedMessage[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${queueRoot(this.http, queueId, projectId)}:receive`,
+      path: `${queueRoot(this.#http, queueId, projectId)}:receive`,
       routeName: "queues.receive",
       body: request,
     });
@@ -1022,9 +1042,9 @@ export class QueuesClient {
     receipt: Models.ProjectQueueReceipt,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.ProjectQueueReceiptActionResult>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${queueRoot(this.http, queueId, projectId)}:complete`,
+      path: `${queueRoot(this.#http, queueId, projectId)}:complete`,
       routeName: "queues.complete",
       body: { receipt: receipt.receipt },
       headers: preferredRegionHeaders(receipt.region),
@@ -1037,9 +1057,9 @@ export class QueuesClient {
     delaySeconds?: number,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.ProjectQueueReceiptActionResult>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${queueRoot(this.http, queueId, projectId)}:abandon`,
+      path: `${queueRoot(this.#http, queueId, projectId)}:abandon`,
       routeName: "queues.abandon",
       body: { receipt: receipt.receipt, delaySeconds },
       headers: preferredRegionHeaders(receipt.region),
@@ -1051,9 +1071,9 @@ export class QueuesClient {
     receipt: Models.ProjectQueueReceipt,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.ProjectQueueReceiptActionResult>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${queueRoot(this.http, queueId, projectId)}:dead-letter`,
+      path: `${queueRoot(this.#http, queueId, projectId)}:dead-letter`,
       routeName: "queues.deadLetter",
       body: { receipt: receipt.receipt },
       headers: preferredRegionHeaders(receipt.region),
@@ -1065,9 +1085,9 @@ export class QueuesClient {
     receipt: Models.ProjectQueueReceipt,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.ProjectQueueRenewLockResult>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${queueRoot(this.http, queueId, projectId)}:renew-lock`,
+      path: `${queueRoot(this.#http, queueId, projectId)}:renew-lock`,
       routeName: "queues.renewLock",
       body: { receipt: receipt.receipt },
       headers: preferredRegionHeaders(receipt.region),
@@ -1077,15 +1097,19 @@ export class QueuesClient {
 }
 
 export class DatabasesClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   list(
     projectId?: Ulid,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<readonly Models.ProjectDatabase[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.http, projectId)}/databases`,
+      path: `${projectRoot(this.#http, projectId)}/databases`,
       routeName: "databases.list",
       query: query ?? { skip: 0, take: 100 },
     });
@@ -1095,18 +1119,18 @@ export class DatabasesClient {
     request: Models.CreateDatabaseRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.ProjectDatabase>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${projectRoot(this.http, projectId)}/databases`,
+      path: `${projectRoot(this.#http, projectId)}/databases`,
       routeName: "databases.create",
       body: request,
     });
   }
 
   get(databaseId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.ProjectDatabase>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: databaseRoot(this.http, { projectId, databaseId }),
+      path: databaseRoot(this.#http, { projectId, databaseId }),
       routeName: "databases.get",
     });
   }
@@ -1115,9 +1139,9 @@ export class DatabasesClient {
     databaseId: Ulid,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.DeletedProjectDatabaseResponse>> {
-    return this.http.request({
+    return this.#http.request({
       method: "DELETE",
-      path: databaseRoot(this.http, { projectId, databaseId }),
+      path: databaseRoot(this.#http, { projectId, databaseId }),
       routeName: "databases.delete",
     });
   }
@@ -1126,9 +1150,9 @@ export class DatabasesClient {
     databaseId: Ulid,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<readonly Models.DatabaseEnvironment[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${databaseRoot(this.http, { projectId, databaseId })}/environments`,
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/environments`,
       routeName: "databases.environments.list",
       query: { skip: 0, take: 100 },
     });
@@ -1139,9 +1163,9 @@ export class DatabasesClient {
     request: Models.CreateDatabaseEnvironmentRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.DatabaseEnvironment>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${databaseRoot(this.http, { projectId, databaseId })}/environments`,
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/environments`,
       routeName: "databases.environments.create",
       body: request,
     });
@@ -1152,9 +1176,9 @@ export class DatabasesClient {
     environmentId: Ulid,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.DatabaseEnvironment>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${environmentRoot(this.http, { projectId, databaseId, environmentId })}`,
+      path: `${environmentRoot(this.#http, { projectId, databaseId, environmentId })}`,
       routeName: "databases.environments.get",
     });
   }
@@ -1164,19 +1188,23 @@ export class DatabasesClient {
     environmentId: Ulid,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.DeletedProjectDatabaseEnvironmentResponse>> {
-    return this.http.request({
+    return this.#http.request({
       method: "DELETE",
-      path: environmentRoot(this.http, { projectId, databaseId, environmentId }),
+      path: environmentRoot(this.#http, { projectId, databaseId, environmentId }),
       routeName: "databases.environments.delete",
     });
   }
 }
 
 export class RepositoriesClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   list(): Promise<TerraScaleResult<readonly Models.RepositoryDefinition[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/repositories`,
       routeName: "repositories.list",
@@ -1186,7 +1214,7 @@ export class RepositoriesClient {
   create(
     request: Models.CreateRepositoryRequest,
   ): Promise<TerraScaleResult<Models.RepositoryDefinition>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/repositories`,
       routeName: "repositories.create",
@@ -1195,7 +1223,7 @@ export class RepositoriesClient {
   }
 
   get(scope: Models.RepositoryScoped): Promise<TerraScaleResult<Models.RepositoryDefinition>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: repositoryRoot(scope),
       routeName: "repositories.get",
@@ -1206,7 +1234,7 @@ export class RepositoriesClient {
     scope: Models.RepositoryScoped,
     query?: { readonly deleteDocuments?: boolean },
   ): Promise<TerraScaleResult<Models.DeletedRepositoryResponse>> {
-    return this.http.request({
+    return this.#http.request({
       method: "DELETE",
       path: repositoryRoot(scope),
       routeName: "repositories.delete",
@@ -1216,16 +1244,20 @@ export class RepositoriesClient {
 }
 
 export class BackupsClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   configurePolicy(
     databaseId: Ulid,
     request: Models.ConfigureBackupPolicyRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.BackupPolicyResponse>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PUT",
-      path: `${databaseRoot(this.http, { projectId, databaseId })}/backups/policy`,
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/backups/policy`,
       routeName: "backups.policy.configure",
       body: request,
     });
@@ -1236,9 +1268,9 @@ export class BackupsClient {
     request?: Models.TriggerBackupRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.BackupJobResponse>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${databaseRoot(this.http, { projectId, databaseId })}/backups`,
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/backups`,
       routeName: "backups.trigger",
       body: request,
     });
@@ -1249,9 +1281,9 @@ export class BackupsClient {
     query?: Models.BackupListQuery,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<readonly Models.BackupJobResponse[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${databaseRoot(this.http, { projectId, databaseId })}/backups`,
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/backups`,
       routeName: "backups.list",
       query: query ?? { skip: 0, take: 100 },
     });
@@ -1262,9 +1294,9 @@ export class BackupsClient {
     backupId: Ulid,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.BackupJobResponse>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${databaseRoot(this.http, { projectId, databaseId })}/backups/${ulidPathSegment(backupId)}`,
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/backups/${ulidPathSegment(backupId)}`,
       routeName: "backups.get",
     });
   }
@@ -1273,9 +1305,9 @@ export class BackupsClient {
     databaseId: Ulid,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<readonly Models.RestorePointResponse[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${databaseRoot(this.http, { projectId, databaseId })}/restore-points`,
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/restore-points`,
       routeName: "backups.restorePoints.list",
     });
   }
@@ -1285,9 +1317,9 @@ export class BackupsClient {
     request: Models.StartRestoreRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.RestoreJobResponse>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${databaseRoot(this.http, { projectId, databaseId })}/restores`,
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/restores`,
       routeName: "backups.restores.start",
       body: request,
     });
@@ -1298,9 +1330,9 @@ export class BackupsClient {
     restoreId: Ulid,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.RestoreJobResponse>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${databaseRoot(this.http, { projectId, databaseId })}/restores/${ulidPathSegment(restoreId)}`,
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/restores/${ulidPathSegment(restoreId)}`,
       routeName: "backups.restores.get",
     });
   }
@@ -1310,9 +1342,9 @@ export class BackupsClient {
     query?: Models.RestoreListQuery,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<readonly Models.RestoreJobResponse[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${databaseRoot(this.http, { projectId, databaseId })}/restores`,
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/restores`,
       routeName: "backups.restores.list",
       query: query ?? { skip: 0, take: 100 },
     });
@@ -1320,13 +1352,17 @@ export class BackupsClient {
 }
 
 export class DocumentsClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   list<TDocument extends Models.JsonValue = Models.JsonObject>(
     scope: Models.RepositoryScoped,
     query?: Models.DocumentListQuery,
   ): Promise<TerraScaleResult<Models.DocumentPageResponse<TDocument>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${repositoryRoot(scope)}/documents`,
       routeName: "documents.list",
@@ -1338,7 +1374,7 @@ export class DocumentsClient {
     scope: Models.RepositoryScoped,
     data: TDocument,
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${repositoryRoot(scope)}/documents`,
       routeName: "documents.create",
@@ -1350,7 +1386,7 @@ export class DocumentsClient {
     scope: Models.RepositoryScoped,
     documentId: Ulid,
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.get",
@@ -1362,7 +1398,7 @@ export class DocumentsClient {
     documentId: Ulid,
     data: TDocument,
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PUT",
       path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.put",
@@ -1375,7 +1411,7 @@ export class DocumentsClient {
     documentId: Ulid,
     data: TDocument,
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PATCH",
       path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.patch",
@@ -1387,7 +1423,7 @@ export class DocumentsClient {
     scope: Models.RepositoryScoped,
     request: Models.DocumentBatchRequest<TDocument>,
   ): Promise<TerraScaleResult<Models.DocumentBatchResponse<TDocument>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${repositoryRoot(scope)}/documents/batch`,
       routeName: "documents.batch",
@@ -1399,7 +1435,7 @@ export class DocumentsClient {
     scope: Models.RepositoryScoped,
     documentId: Ulid,
   ): Promise<TerraScaleResult<Models.DeletedDocumentResponse>> {
-    return this.http.request({
+    return this.#http.request({
       method: "DELETE",
       path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.delete",
@@ -1408,13 +1444,17 @@ export class DocumentsClient {
 }
 
 export class QueryClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   execute<TDocument extends Models.JsonValue = Models.JsonObject>(
     scope: Models.RepositoryScoped,
     request: Models.QueryRequest,
   ): Promise<TerraScaleResult<Models.DocumentPageResponse<TDocument>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${repositoryRoot(scope)}/tql`,
       routeName: "query.execute",
@@ -1424,10 +1464,14 @@ export class QueryClient {
 }
 
 export class SchemaClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   get(scope: Models.RepositoryScoped): Promise<TerraScaleResult<Models.RepositorySchema>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${repositoryRoot(scope)}/schema`,
       routeName: "schema.get",
@@ -1438,7 +1482,7 @@ export class SchemaClient {
     scope: Models.RepositoryScoped,
     request: Models.ValidateRepositorySchemaRequest = {},
   ): Promise<TerraScaleResult<Models.RepositorySchemaValidationResponse>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${repositoryRoot(scope)}/schema/validate`,
       routeName: "schema.validate",
@@ -1450,7 +1494,7 @@ export class SchemaClient {
     scope: Models.RepositoryScoped,
     request: Models.ConfigureRepositorySchemaRequest,
   ): Promise<TerraScaleResult<Models.RepositorySchema>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PUT",
       path: `${repositoryRoot(scope)}/schema`,
       routeName: "schema.configure",
@@ -1460,16 +1504,20 @@ export class SchemaClient {
 }
 
 export class ApiKeysClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   list(
     projectId?: Ulid,
     query?: Models.ListApiKeysRequest,
   ): Promise<TerraScaleResult<Models.ListApiKeysResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "GET",
-      path: `${projectAuthRoot(projectRootId(this.http, projectId))}/api-keys`,
+      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/api-keys`,
       routeName: "apiKeys.list",
       query,
     });
@@ -1479,45 +1527,49 @@ export class ApiKeysClient {
     request: Models.CreateApiKeyRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.CreatedApiKey>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
-      path: `${projectAuthRoot(projectRootId(this.http, projectId))}/api-keys`,
+      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/api-keys`,
       routeName: "apiKeys.create",
       body: request,
     });
   }
 
   rotate(apiKeyId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.RotatedApiKey>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
-      path: `${projectAuthRoot(projectRootId(this.http, projectId))}/api-keys/${ulidPathSegment(apiKeyId)}/rotate`,
+      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/api-keys/${ulidPathSegment(apiKeyId)}/rotate`,
       routeName: "apiKeys.rotate",
     });
   }
 
   revoke(apiKeyId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.RevokedApiKey>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "DELETE",
-      path: `${projectAuthRoot(projectRootId(this.http, projectId))}/api-keys/${ulidPathSegment(apiKeyId)}`,
+      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/api-keys/${ulidPathSegment(apiKeyId)}`,
       routeName: "apiKeys.revoke",
     });
   }
 }
 
 export class M2MApplicationsClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   list(
     projectId?: Ulid,
     query?: Models.ListM2MApplicationsRequest,
   ): Promise<TerraScaleResult<Models.ListM2MApplicationsResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "GET",
-      path: `${projectAuthRoot(projectRootId(this.http, projectId))}/m2m-applications`,
+      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/m2m-applications`,
       routeName: "m2m.list",
       query,
     });
@@ -1527,10 +1579,10 @@ export class M2MApplicationsClient {
     request: Models.CreateM2MApplicationRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.CreatedM2MApplication>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
-      path: `${projectAuthRoot(projectRootId(this.http, projectId))}/m2m-applications`,
+      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/m2m-applications`,
       routeName: "m2m.create",
       body: request,
     });
@@ -1540,19 +1592,19 @@ export class M2MApplicationsClient {
     clientId: Ulid,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.RotatedM2MApplicationSecret>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
-      path: `${projectAuthRoot(projectRootId(this.http, projectId))}/m2m-applications/${ulidPathSegment(clientId)}/rotate`,
+      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/m2m-applications/${ulidPathSegment(clientId)}/rotate`,
       routeName: "m2m.rotate",
     });
   }
 
   revoke(clientId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.RevokedM2MApplication>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "DELETE",
-      path: `${projectAuthRoot(projectRootId(this.http, projectId))}/m2m-applications/${ulidPathSegment(clientId)}`,
+      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/m2m-applications/${ulidPathSegment(clientId)}`,
       routeName: "m2m.revoke",
     });
   }
@@ -1561,7 +1613,7 @@ export class M2MApplicationsClient {
     projectId: Ulid,
     request: Models.M2MTokenRequest,
   ): Promise<TerraScaleResult<Models.M2MTokenResponse>> {
-    return this.http.request({
+    return this.#http.request({
       base: "auth",
       method: "POST",
       path: `${projectAuthRoot(projectId)}/m2m/token`,
@@ -1578,15 +1630,19 @@ export class M2MApplicationsClient {
 }
 
 export class AccessClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   listTeamMembers(
     projectId?: Ulid,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<Models.Page<Models.TeamMember>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.http, projectId)}/access/team-members`,
+      path: `${projectRoot(this.#http, projectId)}/access/team-members`,
       routeName: "access.teamMembers.list",
       query,
     });
@@ -1596,9 +1652,9 @@ export class AccessClient {
     request: Models.AddTeamMemberRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.TeamMember>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
-      path: `${projectRoot(this.http, projectId)}/access/team-members`,
+      path: `${projectRoot(this.#http, projectId)}/access/team-members`,
       routeName: "access.teamMembers.add",
       body: request,
     });
@@ -1609,30 +1665,34 @@ export class AccessClient {
     request: Models.UpdateTeamMemberRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.TeamMember>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PATCH",
-      path: `${projectRoot(this.http, projectId)}/access/team-members/${ulidPathSegment(userId)}`,
+      path: `${projectRoot(this.#http, projectId)}/access/team-members/${ulidPathSegment(userId)}`,
       routeName: "access.teamMembers.update",
       body: request,
     });
   }
 
   removeTeamMember(userId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<void>> {
-    return this.http.request({
+    return this.#http.request({
       method: "DELETE",
-      path: `${projectRoot(this.http, projectId)}/access/team-members/${ulidPathSegment(userId)}`,
+      path: `${projectRoot(this.#http, projectId)}/access/team-members/${ulidPathSegment(userId)}`,
       routeName: "access.teamMembers.remove",
     });
   }
 }
 
 export class UsageClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   getProjectUsage(projectId?: Ulid): Promise<TerraScaleResult<Models.UsageSummary>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.http, projectId)}/usage`,
+      path: `${projectRoot(this.#http, projectId)}/usage`,
       routeName: "usage.project.get",
     });
   }
@@ -1640,7 +1700,7 @@ export class UsageClient {
   getOrganizationUsage(
     organizationId: Ulid,
   ): Promise<TerraScaleResult<Models.OrganizationUsage>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/usage`,
       routeName: "usage.organization.get",
@@ -1651,9 +1711,9 @@ export class UsageClient {
     range: Models.UsageWorkloadRange,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.UsageWorkload>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.http, projectId)}/usage/workload`,
+      path: `${projectRoot(this.#http, projectId)}/usage/workload`,
       routeName: "usage.project.workload",
       query: { range },
     });
@@ -1663,9 +1723,9 @@ export class UsageClient {
     projectId?: Ulid,
     query?: Models.ProjectLatencyRequest,
   ): Promise<TerraScaleResult<Models.ProjectLatency>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.http, projectId)}/latency`,
+      path: `${projectRoot(this.#http, projectId)}/latency`,
       routeName: "usage.project.latency",
       query,
     });
@@ -1675,9 +1735,9 @@ export class UsageClient {
     range: Models.UsageHistoryRange,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.ProjectUsageHistory>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.http, projectId)}/usage/history`,
+      path: `${projectRoot(this.#http, projectId)}/usage/history`,
       routeName: "usage.project.history",
       query: { range },
     });
@@ -1685,10 +1745,14 @@ export class UsageClient {
 }
 
 export class BillingClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   getAccount(organizationId: Ulid): Promise<TerraScaleResult<Models.BillingAccount>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing`,
       routeName: "billing.account.get",
@@ -1699,7 +1763,7 @@ export class BillingClient {
     organizationId: Ulid,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<Models.Page<Models.Invoice>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/invoices`,
       routeName: "billing.invoices.list",
@@ -1710,7 +1774,7 @@ export class BillingClient {
   listAccess(
     organizationId: Ulid,
   ): Promise<TerraScaleResult<readonly Models.BillingAccessMember[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/access`,
       routeName: "billing.access.list",
@@ -1722,7 +1786,7 @@ export class BillingClient {
     userId: Ulid,
     enabled: boolean,
   ): Promise<TerraScaleResult<Models.BillingAccessMember>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PUT",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/access/${ulidPathSegment(userId)}`,
       routeName: "billing.access.set",
@@ -1734,7 +1798,7 @@ export class BillingClient {
     organizationId: Ulid,
     request: Models.CreateCheckoutSessionRequest,
   ): Promise<TerraScaleResult<Models.CheckoutSession>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/checkout-sessions`,
       routeName: "billing.checkoutSessions.create",
@@ -1746,7 +1810,7 @@ export class BillingClient {
     organizationId: Ulid,
     returnUrl: string,
   ): Promise<TerraScaleResult<{ readonly url: string }>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/portal-sessions`,
       routeName: "billing.portalSessions.create",
@@ -1756,10 +1820,14 @@ export class BillingClient {
 }
 
 export class PricingClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   listPlans(): Promise<TerraScaleResult<readonly Models.PricingPlan[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/pricing/plans`,
       routeName: "pricing.plans.list",
@@ -1768,31 +1836,39 @@ export class PricingClient {
 }
 
 export class AuditClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   list(
     projectId?: Ulid,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<Models.Page<Models.AuditEvent>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.http, projectId)}/audit`,
+      path: `${projectRoot(this.#http, projectId)}/audit`,
       routeName: "audit.list",
       query,
     });
   }
 
   get(auditEventId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.AuditEvent>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.http, projectId)}/audit/${ulidPathSegment(auditEventId)}`,
+      path: `${projectRoot(this.#http, projectId)}/audit/${ulidPathSegment(auditEventId)}`,
       routeName: "audit.get",
     });
   }
 }
 
 export class NotificationsClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   list(
     query?: Models.PageRequest & {
@@ -1802,7 +1878,7 @@ export class NotificationsClient {
       readonly includeOrganizationNotifications?: boolean;
     },
   ): Promise<TerraScaleResult<readonly Models.Notification[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/users/me/notifications`,
       routeName: "notifications.list",
@@ -1811,7 +1887,7 @@ export class NotificationsClient {
   }
 
   markRead(notificationId: Ulid): Promise<TerraScaleResult<Models.Notification>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/users/me/notifications/${ulidPathSegment(notificationId)}:mark-read`,
       routeName: "notifications.markRead",
@@ -1821,7 +1897,7 @@ export class NotificationsClient {
   markAllRead(query?: {
     readonly organizationId?: Ulid;
   }): Promise<TerraScaleResult<Models.MarkAllNotificationsReadResponse>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/users/me/notifications:mark-all-read`,
       routeName: "notifications.markAllRead",
@@ -1831,12 +1907,16 @@ export class NotificationsClient {
 }
 
 export class SecurityClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   getSettings(projectId?: Ulid): Promise<TerraScaleResult<Models.SecuritySettings>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.http, projectId)}/security/settings`,
+      path: `${projectRoot(this.#http, projectId)}/security/settings`,
       routeName: "security.settings.get",
     });
   }
@@ -1845,9 +1925,9 @@ export class SecurityClient {
     request: Models.UpdateSecuritySettingsRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.SecuritySettings>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PUT",
-      path: `${projectRoot(this.http, projectId)}/security/settings`,
+      path: `${projectRoot(this.#http, projectId)}/security/settings`,
       routeName: "security.settings.update",
       body: request,
     });
@@ -1855,10 +1935,14 @@ export class SecurityClient {
 }
 
 export class AdminClient {
-  constructor(private readonly http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
 
   overview(): Promise<TerraScaleResult<Models.AdminPlatformUsage>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/admin`,
       routeName: "admin.overview",
@@ -1868,7 +1952,7 @@ export class AdminClient {
   listUsers(
     query?: Models.PageRequest & { readonly search?: string },
   ): Promise<TerraScaleResult<Models.Page<Models.AdminUser>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/admin/users`,
       routeName: "admin.users.list",
@@ -1877,7 +1961,7 @@ export class AdminClient {
   }
 
   getUser(userId: Ulid): Promise<TerraScaleResult<Models.AdminUser>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/admin/users/${ulidPathSegment(userId)}`,
       routeName: "admin.users.get",
@@ -1885,7 +1969,7 @@ export class AdminClient {
   }
 
   setUserEnabled(userId: Ulid, enabled: boolean): Promise<TerraScaleResult<Models.AdminUser>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/admin/users/${ulidPathSegment(userId)}:${enabled ? "enable" : "disable"}`,
       routeName: enabled ? "admin.users.enable" : "admin.users.disable",
@@ -1893,7 +1977,7 @@ export class AdminClient {
   }
 
   deleteUser(userId: Ulid): Promise<TerraScaleResult<void>> {
-    return this.http.request({
+    return this.#http.request({
       method: "DELETE",
       path: `${apiRoot}/admin/users/${ulidPathSegment(userId)}`,
       routeName: "admin.users.delete",
@@ -1903,7 +1987,7 @@ export class AdminClient {
   createSupportNote(
     request: Models.AdminCreateSupportNoteRequest,
   ): Promise<TerraScaleResult<Models.AdminSupportNote>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/admin/support-notes`,
       routeName: "admin.supportNotes.create",
@@ -1914,7 +1998,7 @@ export class AdminClient {
   listOrganizations(
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<Models.Page<Models.Organization>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/admin/organizations`,
       routeName: "admin.organizations.list",
@@ -1923,7 +2007,7 @@ export class AdminClient {
   }
 
   listProjects(query?: Models.PageRequest): Promise<TerraScaleResult<Models.Page<Models.Project>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/admin/projects`,
       routeName: "admin.projects.list",
@@ -1934,7 +2018,7 @@ export class AdminClient {
   listDatabases(
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<Models.Page<Models.ProjectDatabase>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/admin/databases`,
       routeName: "admin.databases.list",
@@ -1943,7 +2027,7 @@ export class AdminClient {
   }
 
   getUsage(): Promise<TerraScaleResult<Models.AdminPlatformUsage>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/admin/usage`,
       routeName: "admin.usage.get",
@@ -1951,7 +2035,7 @@ export class AdminClient {
   }
 
   listPricingPlans(): Promise<TerraScaleResult<readonly Models.PricingPlan[]>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/admin/plans`,
       routeName: "admin.pricing.list",
@@ -1961,7 +2045,7 @@ export class AdminClient {
   createPricingPlan(
     request: Models.AdminPricingPlanRequest,
   ): Promise<TerraScaleResult<Models.PricingPlan>> {
-    return this.http.request({
+    return this.#http.request({
       method: "POST",
       path: `${apiRoot}/admin/plans`,
       routeName: "admin.pricing.create",
@@ -1973,7 +2057,7 @@ export class AdminClient {
     planId: Ulid,
     request: Models.AdminPricingPlanRequest,
   ): Promise<TerraScaleResult<Models.PricingPlan>> {
-    return this.http.request({
+    return this.#http.request({
       method: "PATCH",
       path: `${apiRoot}/admin/plans/${ulidPathSegment(planId)}`,
       routeName: "admin.pricing.update",
@@ -1982,7 +2066,7 @@ export class AdminClient {
   }
 
   deletePricingPlan(planId: Ulid): Promise<TerraScaleResult<boolean>> {
-    return this.http.request({
+    return this.#http.request({
       method: "DELETE",
       path: `${apiRoot}/admin/plans/${ulidPathSegment(planId)}`,
       routeName: "admin.pricing.delete",
@@ -1990,7 +2074,7 @@ export class AdminClient {
   }
 
   listAudit(query?: Models.PageRequest): Promise<TerraScaleResult<Models.Page<Models.AuditEvent>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/admin/audit`,
       routeName: "admin.audit.list",
@@ -2001,7 +2085,7 @@ export class AdminClient {
   listNotifications(
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<Models.Page<Models.Notification>>> {
-    return this.http.request({
+    return this.#http.request({
       method: "GET",
       path: `${apiRoot}/admin/notifications`,
       routeName: "admin.notifications.list",
