@@ -117,6 +117,12 @@ CI needs `CLOUDFLARE_API_TOKEN` (`Account / Cloudflare Pages / Edit`) and `CLOUD
 
 For parallel work, the writer assigned a Cloudflare preview or deploy target owns that target exclusively until handoff. Do not deploy, preview, or retarget it concurrently.
 
+### Deployment admission
+
+- Routine local development and verification commands (`npm run dev`, `npm run check`, `npm run lint`, `npm run build`, and `npm run preview`) are safe to run without deployment authorization; they must not create projects, retarget deployments, or alter external production state.
+- Any external production deploy, production retarget, or Cloudflare Pages project creation requires all of: explicit user authorization for that specific action, an exclusive named target lease recorded for the writer until handoff, and redacted artifact/build provenance (commit SHA, command, timestamp, and artifact identifier or checksum). Never include tokens, account IDs, or other credentials in that record.
+- `cf:project:create` and `cf:deploy` are therefore admission-controlled commands. Treat a target change in `wrangler.toml` as a production retarget and require the same admission.
+
 ## Conventions
 
 - Prefer editing existing components/utilities over introducing new ones.
