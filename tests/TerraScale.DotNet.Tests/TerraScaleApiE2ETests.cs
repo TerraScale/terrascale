@@ -154,6 +154,7 @@ public sealed class TerraScaleApiE2ETests
         var planId = TerraScaleApiE2E.AdminNonOwnerPlanId;
         var provider = TerraScaleApiE2E.AdminWebhookProvider;
         var eventId = TerraScaleApiE2E.AdminWebhookEventId;
+        var forbiddenPlanKey = $"forbidden-{Guid.NewGuid():N}";
         var planBefore = (await owner.Administration.ListPricingPlansAsync())
             .SingleOrDefault(plan => plan.PlanId == planId)
             ?? throw new SkipTestException("The configured non-owner plan fixture must exist.");
@@ -163,7 +164,7 @@ public sealed class TerraScaleApiE2ETests
 
         var createPlan = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
             standardBearer.Administration.CreatePricingPlanAsync(new TerraScaleAdminPricingPlanRequest(
-                Key: $"forbidden-{Guid.NewGuid():N}",
+                Key: forbiddenPlanKey,
                 Name: "must not be created",
                 Currency: "USD",
                 MonthlyBaseCents: 100,
@@ -183,13 +184,15 @@ public sealed class TerraScaleApiE2ETests
         await Assert.That(supportNote!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(replay!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
 
-        var planAfter = (await owner.Administration.ListPricingPlansAsync())
+        var plansAfter = await owner.Administration.ListPricingPlansAsync();
+        var planAfter = plansAfter
             .Single(plan => plan.PlanId == planId);
         var webhookAfter = await owner.Administration.GetPaymentWebhookAsync(provider, eventId);
         await Assert.That(planAfter.Name).IsEqualTo(planBefore.Name);
         await Assert.That(planAfter.Key).IsEqualTo(planBefore.Key);
         await Assert.That(planAfter.MonthlyPriceId).IsEqualTo(planBefore.MonthlyPriceId);
         await Assert.That(planAfter.AnnualPriceId).IsEqualTo(planBefore.AnnualPriceId);
+        await Assert.That(plansAfter.Any(plan => string.Equals(plan.Key, forbiddenPlanKey, StringComparison.Ordinal))).IsFalse();
         await Assert.That(webhookAfter.State).IsEqualTo(webhookBefore.State);
         await Assert.That(webhookAfter.ReplayRequestCount).IsEqualTo(webhookBefore.ReplayRequestCount);
         await Assert.That(webhookAfter.LastReplayRequestedAt).IsEqualTo(webhookBefore.LastReplayRequestedAt);
