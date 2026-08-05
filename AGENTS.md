@@ -25,6 +25,9 @@
   generated-file change, and do not overwrite or reformat another agent's work.
 - Concurrent writers use explicit file ownership and explicit `git add` paths;
   the integration owner alone resolves shared export or generated-file conflicts.
+- DevHost integration work requires an exclusive fixture lease covering its
+  tenant, project, database, and credentials; record only redacted fixture
+  identifiers in coordination and handoff notes.
 - Implement public capabilities contract-first: land the Platform public REST
   contract, route manifest, and OpenAPI surface first; then add the matching
   typed SDK DTOs and operation; finally update consumers, docs, and adapters.
@@ -57,3 +60,7 @@ Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies in full:
 - **Do not** create feature branches or worktrees unless the user explicitly asks; when used, branch and worktree are always paired, and finished work lands back on `develop`.
 - Pushes to `develop` intentionally run no Forgejo automation.
 - `main` is for release/promotion only. Only the `develop` → `main` promotion path may build and publish the immutable major-version release candidate.
+- Before handoff, inspect the exact owned-path diff and `git status`; run the
+  relevant checks, then `git fetch origin`. If `origin/develop` moved, stop and
+  coordinate before any push. Report the commit, validation, owned paths, and
+  only redacted fixture/credential details.
