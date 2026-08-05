@@ -56,7 +56,8 @@ const inferCommitMessage = () =>
 
 const args = ['pages', 'deploy']
 
-const branchName = productionFlag ? 'main' : previewFlag ? inferBranchName() : null
+const productionBranch = readEnv('CLOUDFLARE_PAGES_PRODUCTION_BRANCH') ?? 'main'
+const branchName = productionFlag ? productionBranch : previewFlag ? inferBranchName() : null
 
 if (branchName) {
   args.push('--branch', branchName)
@@ -65,6 +66,13 @@ if (branchName) {
 if (previewFlag && !branchName) {
   console.error(
     'Preview deploys need a branch name. Set CLOUDFLARE_PAGES_BRANCH or run from a git branch.',
+  )
+  process.exit(1)
+}
+
+if (previewFlag && branchName === productionBranch) {
+  console.error(
+    `Preview deploys cannot target the production branch "${productionBranch}". Choose another branch.`,
   )
   process.exit(1)
 }

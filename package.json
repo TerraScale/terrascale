@@ -17,6 +17,7 @@
     "icons:sync": "node ./scripts/icons-sync.mjs",
     "world-map:sync": "node ./scripts/world-map-sync.mjs",
     "lint": "eslint .",
+    "test:deploy": "node --test scripts/cloudflare-pages-deploy.test.mjs",
     "preview": "vite preview",
     "test:e2e": "playwright test"
   },
