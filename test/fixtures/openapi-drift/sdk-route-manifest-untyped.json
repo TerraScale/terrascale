@@ -1,0 +1,9 @@
+{
+  "routes": [{
+    "method": "POST",
+    "pathTemplate": "/api/v1/widgets",
+    "routeName": "widgets.create",
+    "requestType": "CreateWidgetRequest",
+    "responseType": "Widget"
+  }]
+}

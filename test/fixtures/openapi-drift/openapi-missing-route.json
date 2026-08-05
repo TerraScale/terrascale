@@ -7,9 +7,11 @@
   "paths": {
     "/api/v1/widgets": {
       "post": {
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object" } } } },
         "responses": {
           "200": {
-            "description": "Created"
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
           }
         }
       }

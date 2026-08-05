@@ -1,0 +1,11 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Fixture API", "version": "1.0.0" },
+  "paths": {
+    "/api/v1/widgets": {
+      "post": {
+        "responses": { "200": { "description": "Untyped" } }
+      }
+    }
+  }
+}

@@ -10,19 +10,35 @@ const fixtureManifest = path.join(fixtureDirectory, "sdk-route-manifest.json");
 const checkerModule = import(pathToFileURL(checkerScript).href) as Promise<OpenApiDriftModule>;
 
 describe("OpenAPI drift checker", () => {
-  test("rejects typed SDK declarations when OpenAPI publishes no typed body", async () => {
+  test("fails checker and formatter for untyped request and every 2xx typed response", async () => {
     const checker = await checkerModule;
-    const responseOnly = checker.typedContractViolation(
-      { method: "GET", pathTemplate: "/api/v1/account/export", responseType: "AccountExportData" },
-      { responses: { 200: { content: { "application/json": { schema: { $ref: "#/components/schemas/JsonElement" } } } } } },
-    );
-    const requestOnly = checker.typedContractViolation(
-      { method: "POST", pathTemplate: "/api/v1/users/me/delete", requestType: "InitiateAccountDeletionRequest" },
-      { responses: { 200: { content: { "application/json": { schema: { $ref: "#/components/schemas/JsonElement" } } } } } },
-    );
+    for (const operation of [
+      { requestBody: undefined, responses: { 200: typedSchema() } },
+      { requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/JsonElement" } } } }, responses: { 200: typedSchema() } },
+      { requestBody: { content: { "application/json": { schema: { type: "object" } } } }, responses: { 200: {} } },
+      { requestBody: { content: { "application/json": { schema: { type: "object" } } } }, responses: { 201: jsonElementSchema() } },
+      { requestBody: { content: { "application/json": { schema: { type: "object" } } } }, responses: { 202: {} } },
+    ]) {
+      const result = checker.compareOpenApiDrift(manifestFor(operation), specFor(operation));
+      const formatted = checker.formatOpenApiDriftResult(result, "fixture", "fixture");
+      assert.equal(checker.exitCodeForOpenApiDriftResult(result), 1, formatted.stderr);
+      assert.match(formatted.stderr, /missing published typed contracts/u);
+    }
 
-    assert.match(responseOnly ?? "", /only publishes JsonElement/u);
-    assert.match(requestOnly ?? "", /without a published JSON request schema/u);
+    const valid = checker.compareOpenApiDrift(manifestFor({ requestBody: { content: { "application/json": { schema: { type: "object" } } } }, responses: { 200: typedSchema(), 201: typedSchema(), 202: typedSchema() } }), specFor({ requestBody: { content: { "application/json": { schema: { type: "object" } } } }, responses: { 200: typedSchema(), 201: typedSchema(), 202: typedSchema() } }));
+    assert.equal(checker.exitCodeForOpenApiDriftResult(valid), 0);
+  });
+
+  test("CLI fails closed for an untyped matching route", async () => {
+    const checker = await checkerModule;
+    const lines: string[] = [];
+    const status = await checker.runOpenApiDriftCli([
+      path.join(fixtureDirectory, "openapi-untyped.json"),
+      path.join(fixtureDirectory, "sdk-route-manifest-untyped.json"),
+    ], { log: (line: string) => lines.push(line), error: (line: string) => lines.push(line) });
+
+    assert.equal(status, 1);
+    assert.match(lines.join("\n"), /missing published typed contracts/u);
   });
 
   test("exits nonzero and reports drift when an SDK route is missing", async () => {
@@ -60,6 +76,7 @@ describe("OpenAPI drift checker", () => {
 
 type OpenApiDriftResult = {
   readonly missingSdkRoutes: readonly unknown[];
+  readonly typedContractViolations: readonly unknown[];
 };
 
 type FormattedOpenApiDriftResult = {
@@ -68,6 +85,8 @@ type FormattedOpenApiDriftResult = {
 };
 
 type OpenApiDriftModule = {
+  readonly runOpenApiDriftCli: (args: readonly string[], output: { readonly log: (line: string) => void; readonly error: (line: string) => void }) => Promise<number>;
+  readonly compareOpenApiDrift: (manifest: unknown, spec: unknown) => OpenApiDriftResult;
   readonly typedContractViolation: (
     route: { readonly method: string; readonly pathTemplate: string; readonly requestType?: string; readonly responseType?: string },
     operation: { readonly requestBody?: unknown; readonly responses?: unknown },
@@ -83,3 +102,19 @@ type OpenApiDriftModule = {
     manifestReference: string,
   ) => FormattedOpenApiDriftResult;
 };
+
+function manifestFor(operation: unknown) {
+  return { routes: [{ method: "POST", pathTemplate: "/api/v1/widgets", routeName: "widgets.create", requestType: "CreateWidgetRequest", responseType: "Widget", operation }] };
+}
+
+function specFor(operation: unknown) {
+  return { paths: { "/api/v1/widgets": { post: operation } } };
+}
+
+function typedSchema() {
+  return { content: { "application/json": { schema: { type: "object" } } } };
+}
+
+function jsonElementSchema() {
+  return { content: { "application/json": { schema: { $ref: "#/components/schemas/JsonElement" } } } };
+}

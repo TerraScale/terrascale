@@ -79,30 +79,56 @@ export function compareOpenApiDrift(manifest, spec) {
     sdkRouteCount: sdkRoutes.length,
     specRouteCount: specRoutes.length,
     uncoveredSpecRoutes,
+    typedContractViolations: sdkRoutes.flatMap((route) => {
+      const operation = operationForRoute(spec, route);
+      const violation = operation === undefined ? undefined : typedContractViolation(route, operation);
+      return violation === undefined ? [] : [{ route, violation }];
+    }),
   };
+}
+
+function operationForRoute(spec, route) {
+  for (const [pathTemplate, pathItem] of Object.entries(spec.paths ?? {})) {
+    if (comparablePath(pathTemplate) === comparablePath(route.pathTemplate)) {
+      return pathItem?.[route.method.toLowerCase()];
+    }
+  }
+  return undefined;
 }
 
 export function typedContractViolation(route, operation) {
   const jsonRequest = operation.requestBody?.content?.["application/json"]?.schema;
-  const jsonResponse = operation.responses?.["200"]?.content?.["application/json"]?.schema;
 
-  if (route.requestType !== undefined && jsonRequest === undefined) {
+  if (route.requestType !== undefined && (jsonRequest === undefined || isJsonElement(jsonRequest))) {
     return `${route.method} ${route.pathTemplate} declares ${route.requestType} without a published JSON request schema.`;
   }
 
-  if (route.responseType !== undefined && route.responseType !== "void" && jsonResponse?.$ref === "#/components/schemas/JsonElement") {
-    return `${route.method} ${route.pathTemplate} declares ${route.responseType} but OpenAPI only publishes JsonElement.`;
+  if (route.responseType !== undefined && route.responseType !== "void" && route.responseType !== "never") {
+    const successes = Object.entries(operation.responses ?? {}).filter(([status]) => /^2\d\d$/u.test(status));
+    if (successes.length === 0) {
+      return `${route.method} ${route.pathTemplate} declares ${route.responseType} without a published 2xx JSON response schema.`;
+    }
+    for (const [status, response] of successes) {
+      const schema = response.content?.["application/json"]?.schema;
+      if (schema === undefined || isJsonElement(schema)) {
+        return `${route.method} ${route.pathTemplate} declares ${route.responseType} but ${status} has no published typed JSON response schema.`;
+      }
+    }
   }
 
   return undefined;
 }
 
+function isJsonElement(schema) {
+  return schema?.$ref === "#/components/schemas/JsonElement";
+}
+
 export function exitCodeForOpenApiDriftResult(result) {
-  return result.missingSdkRoutes.length === 0 ? 0 : 1;
+  return result.missingSdkRoutes.length === 0 && result.typedContractViolations.length === 0 ? 0 : 1;
 }
 
 export function formatOpenApiDriftResult(result, specReference, manifestReference) {
-  const status = result.missingSdkRoutes.length === 0 ? "passed" : "failed";
+  const status = result.missingSdkRoutes.length === 0 && result.typedContractViolations.length === 0 ? "passed" : "failed";
   const specSnapshotLines = formatSpecSnapshotLines(result.specSnapshot);
   const stdout = [
     `OpenAPI drift check ${status}: ${result.coveredSdkRouteCount}/${result.sdkRouteCount} SDK routes covered by ${specReference}.`,
@@ -132,6 +158,14 @@ export function formatOpenApiDriftResult(result, specReference, manifestReferenc
     stderr.push(
       "Triage: SDK route not in spec - either the SDK is wrong OR the snapshot lags the API; refresh via Documentation openapi-sync and re-run.",
     );
+  }
+
+  if (result.typedContractViolations.length > 0) {
+    stderr.push("");
+    stderr.push(`SDK routes missing published typed contracts: ${result.typedContractViolations.length}`);
+    for (const { route, violation } of result.typedContractViolations) {
+      stderr.push(`  - ${formatSdkRoute(route)}: ${violation}`);
+    }
   }
 
   if (result.missingSdkRoutes.length === 0 && specSnapshotLines.length > 0) {
