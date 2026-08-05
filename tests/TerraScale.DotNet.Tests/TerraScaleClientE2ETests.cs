@@ -22,7 +22,15 @@ public sealed class TerraScaleClientE2ETests
     [RequiresTerraScaleApi]
     public async Task Databases_CreateGetAndDelete_RoundTripsAgainstRealApi()
     {
-        var client = TerraScaleApiE2E.CreateClient();
+        using var httpClient = new HttpClient();
+        var client = new TerraScaleClient(
+            httpClient,
+            new TerraScaleClientOptions
+            {
+                BaseAddress = TerraScaleApiE2E.BaseAddress!,
+                ApiKey = TerraScaleApiE2E.ApiKey,
+                ProjectId = TerraScaleApiE2E.ProjectId
+            });
         var databaseName = $"sdk-e2e-db-{Guid.NewGuid():N}"[..32];
         TerraScaleDatabaseDetails? created = null;
 
@@ -36,7 +44,10 @@ public sealed class TerraScaleClientE2ETests
             await Assert.That(loaded.DatabaseId).IsEqualTo(created.DatabaseId);
             await Assert.That(loaded.Name).IsEqualTo(databaseName);
 
-            var deleted = await client.Databases.DeleteAsync(created.DatabaseId);
+            var deleted = await client.Databases.DeleteAsync(
+                created.DatabaseId,
+                new TerraScaleDeleteDatabaseOptions(created.DatabaseId));
+            await Assert.That(httpClient.DefaultRequestHeaders.Contains("X-TerraScale-Delete-Confirmation")).IsFalse();
             await Assert.That(deleted.DatabaseId).IsEqualTo(created.DatabaseId);
             await Assert.That(deleted.Name).IsEqualTo(databaseName);
             await Assert.That(deleted.Deleted).IsTrue();
@@ -54,6 +65,22 @@ public sealed class TerraScaleClientE2ETests
                 await DeleteDatabaseIfPresentAsync(client, created.DatabaseId);
             }
         }
+    }
+
+    [Test]
+    public async Task Databases_DeleteAsync_WithMismatchedConfirmation_ThrowsBeforeSending()
+    {
+        using var httpClient = new HttpClient();
+        var client = new TerraScaleClient(
+            httpClient,
+            new TerraScaleClientOptions { BaseAddress = new Uri("https://api.example.invalid/") });
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.Databases.DeleteAsync(
+                "database-a",
+                new TerraScaleDeleteDatabaseOptions("database-b")));
+
+        await Assert.That(exception!.ParamName).IsEqualTo("options");
     }
 
     [Test]
@@ -445,7 +472,9 @@ public sealed class TerraScaleClientE2ETests
     {
         try
         {
-            await client.Databases.DeleteAsync(databaseId);
+            await client.Databases.DeleteAsync(
+                databaseId,
+                new TerraScaleDeleteDatabaseOptions(databaseId));
         }
         catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {

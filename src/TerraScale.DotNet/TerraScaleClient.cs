@@ -212,13 +212,30 @@ public sealed class TerraScaleClient
         string requestUri,
         object? body,
         CancellationToken cancellationToken) =>
-        SendAsync<TResponse>(method, requestUri, body, preferredRegion: null, cancellationToken);
+        SendAsync<TResponse>(method, requestUri, body, configureRequest: null, cancellationToken);
+
+    internal Task<TResponse> SendAsync<TResponse>(
+        HttpMethod method,
+        string requestUri,
+        object? body,
+        Action<HttpRequestMessage>? configureRequest,
+        CancellationToken cancellationToken) =>
+        SendAsync<TResponse>(method, requestUri, body, preferredRegion: null, configureRequest, cancellationToken);
+
+    internal Task<TResponse> SendAsync<TResponse>(
+        HttpMethod method,
+        string requestUri,
+        object? body,
+        string? preferredRegion,
+        CancellationToken cancellationToken) =>
+        SendAsync<TResponse>(method, requestUri, body, preferredRegion, configureRequest: null, cancellationToken);
 
     internal async Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
         string requestUri,
         object? body,
         string? preferredRegion,
+        Action<HttpRequestMessage>? configureRequest,
         CancellationToken cancellationToken)
     {
         using var activity = StartActivity(method, requestUri);
@@ -227,9 +244,15 @@ public sealed class TerraScaleClient
             requestUri,
             CreateJsonContentFactory(body),
             RequestAuthenticationMode.Authenticated,
-            configureRequest: preferredRegion is null
-                ? null
-                : request => ApplyPreferredRegion(request, preferredRegion),
+            configureRequest: request =>
+            {
+                if (preferredRegion is not null)
+                {
+                    ApplyPreferredRegion(request, preferredRegion);
+                }
+
+                configureRequest?.Invoke(request);
+            },
             activity,
             cancellationToken).ConfigureAwait(false);
 

@@ -58,18 +58,29 @@ public sealed class TerraScaleDatabasesClient
     }
 
     /// <summary>
-    /// Deletes a TerraScale database by id.
+    /// Deletes a TerraScale database after explicit acknowledgement of its id.
     /// </summary>
     public Task<TerraScaleDeletedDatabase> DeleteAsync(
         string databaseId,
-        bool hardDelete = false,
+        TerraScaleDeleteDatabaseOptions options,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!string.Equals(databaseId.Trim(), options.Confirmation, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "The deletion confirmation must exactly match the target database id.",
+                nameof(options));
+        }
+
         return client.SendAsync<TerraScaleDeletedDatabase>(
             HttpMethod.Delete,
-            $"/api/v1/databases/{Escape(databaseId)}?hardDelete={hardDelete.ToString().ToLowerInvariant()}",
+            $"/api/v1/databases/{Escape(databaseId)}?hardDelete={options.HardDelete.ToString().ToLowerInvariant()}",
             body: null,
+            request => request.Headers.TryAddWithoutValidation(
+                "X-TerraScale-Delete-Confirmation",
+                options.Confirmation),
             cancellationToken);
     }
 

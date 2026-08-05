@@ -19,6 +19,11 @@ public sealed record TerraScaleCreateDatabaseRequest(
     IReadOnlyDictionary<string, string>? Settings = null);
 
 /// <summary>
+/// Explicit acknowledgement required to delete a database. <see cref="Confirmation"/> must equal the target database id.
+/// </summary>
+public sealed record TerraScaleDeleteDatabaseOptions(string Confirmation, bool HardDelete = false);
+
+/// <summary>
 /// Canonical TerraScale region codes accepted by project database placement APIs.
 /// </summary>
 public static class TerraScaleRegions
