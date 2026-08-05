@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process'
+import { readPagesConfig, verifyRemoteProductionBranch } from './cloudflare-pages-project.mjs'
 
 const previewFlag = process.argv.includes('--preview')
 const productionFlag = process.argv.includes('--production')
@@ -58,6 +59,7 @@ const args = ['pages', 'deploy']
 
 const productionBranch = readEnv('CLOUDFLARE_PAGES_PRODUCTION_BRANCH') ?? 'main'
 const branchName = productionFlag ? productionBranch : previewFlag ? inferBranchName() : null
+const { projectName } = readPagesConfig()
 
 if (branchName) {
   args.push('--branch', branchName)
@@ -74,6 +76,24 @@ if (previewFlag && branchName === productionBranch) {
   console.error(
     `Preview deploys cannot target the production branch "${productionBranch}". Choose another branch.`,
   )
+  process.exit(1)
+}
+
+if (!projectName) {
+  console.error('Missing "name" in wrangler.toml.')
+  process.exit(1)
+}
+
+try {
+  await verifyRemoteProductionBranch({
+    accountId: readEnv('CLOUDFLARE_ACCOUNT_ID'),
+    apiBaseUrl: readEnv('CLOUDFLARE_PAGES_API_BASE_URL'),
+    apiToken: readEnv('CLOUDFLARE_API_TOKEN'),
+    productionBranch,
+    projectName,
+  })
+} catch (error) {
+  console.error(error.message)
   process.exit(1)
 }
 

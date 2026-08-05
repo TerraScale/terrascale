@@ -1,18 +1,15 @@
-import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
+import {
+  readPagesConfig,
+  readRemotePagesProject,
+  verifyProductionBranch,
+} from './cloudflare-pages-project.mjs'
 
-const config = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8')
-
-const readTomlString = (key) => {
-  const pattern = new RegExp(`^${key}\\s*=\\s*"([^"]+)"\\s*$`, 'm')
-  return config.match(pattern)?.[1] ?? null
-}
-
-const projectName = readTomlString('name')
-const compatibilityDate = readTomlString('compatibility_date')
+const { compatibilityDate, projectName } = readPagesConfig()
 const productionBranch = process.env.CLOUDFLARE_PAGES_PRODUCTION_BRANCH?.trim() || 'main'
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim()
 const apiToken = process.env.CLOUDFLARE_API_TOKEN?.trim()
+const apiBaseUrl = process.env.CLOUDFLARE_PAGES_API_BASE_URL?.trim()
 
 if (!projectName) {
   console.error('Missing "name" in wrangler.toml.')
@@ -29,29 +26,19 @@ const projectExists = async () => {
     return false
   }
 
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`,
-    {
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
-      },
-    },
-  )
+  try {
+    const project = await readRemotePagesProject({ accountId, apiBaseUrl, apiToken, projectName })
+    if (!project) {
+      return false
+    }
 
-  if (response.ok) {
+    verifyProductionBranch(project, { productionBranch, projectName })
     console.log(`Cloudflare Pages project "${projectName}" already exists.`)
     return true
+  } catch (error) {
+    console.error(error.message)
+    process.exit(1)
   }
-
-  if (response.status === 404) {
-    return false
-  }
-
-  const body = await response.text()
-  console.error(`Failed to check Cloudflare Pages project: ${response.status}`)
-  console.error(body)
-  process.exit(1)
 }
 
 if (await projectExists()) {
