@@ -28,5 +28,6 @@ export type {
   RepositoriesClient,
   SchemaClient,
   SecurityClient,
+  SavedQueriesClient,
   UsageClient,
 } from "./client.js";

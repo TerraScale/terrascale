@@ -591,6 +591,28 @@ export type CreateDatabaseRequest = {
   readonly name: string;
 };
 
+export type ProjectSavedQueryRequest = {
+  readonly name: string;
+  readonly query: string;
+  readonly repositoryId?: RepositoryId | null;
+};
+
+export type ProjectSavedQueryResponse = {
+  readonly savedQueryId: Ulid;
+  readonly projectId: ProjectId;
+  readonly name: string;
+  readonly query: string;
+  readonly repositoryId?: RepositoryId | null;
+  readonly createdAt: Timestamp;
+  readonly updatedAt: Timestamp;
+};
+
+export type DeletedProjectSavedQueryResponse = {
+  readonly savedQueryId: Ulid;
+  readonly projectId: ProjectId;
+  readonly deleted: boolean;
+};
+
 export type DeletedProjectDatabaseResponse = {
   readonly databaseId: DatabaseId;
   readonly projectId: ProjectId;

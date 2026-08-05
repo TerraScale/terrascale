@@ -77,6 +77,7 @@ export class TerraScaleClient {
   readonly onboarding: OnboardingClient;
   readonly organizations: OrganizationsClient;
   readonly regions: RegionsClient;
+  readonly savedQueries: SavedQueriesClient;
   readonly databases: DatabasesClient;
   readonly queues: QueuesClient;
   readonly repositories: RepositoriesClient;
@@ -100,6 +101,7 @@ export class TerraScaleClient {
     this.onboarding = new OnboardingClient(this.#http);
     this.organizations = new OrganizationsClient(this.#http);
     this.regions = new RegionsClient(this.#http);
+    this.savedQueries = new SavedQueriesClient(this.#http);
     this.databases = new DatabasesClient(this.#http);
     this.queues = new QueuesClient(this.#http);
     this.repositories = new RepositoriesClient(this.#http);
@@ -1094,6 +1096,62 @@ export class QueuesClient {
     });
   }
 
+}
+
+export class SavedQueriesClient {
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
+
+  list(
+    query?: Models.PageRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<readonly Models.ProjectSavedQueryResponse[]>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${projectRoot(this.#http, projectId)}/saved-queries`,
+      routeName: "savedQueries.list",
+      query: query ?? { skip: 0, take: 100 },
+    });
+  }
+
+  create(
+    request: Models.ProjectSavedQueryRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectSavedQueryResponse>> {
+    return this.#http.request({
+      method: "POST",
+      path: `${projectRoot(this.#http, projectId)}/saved-queries`,
+      routeName: "savedQueries.create",
+      body: request,
+    });
+  }
+
+  update(
+    savedQueryId: Ulid,
+    request: Models.ProjectSavedQueryRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectSavedQueryResponse>> {
+    return this.#http.request({
+      method: "PUT",
+      path: `${projectRoot(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
+      routeName: "savedQueries.update",
+      body: request,
+    });
+  }
+
+  delete(
+    savedQueryId: Ulid,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.DeletedProjectSavedQueryResponse>> {
+    return this.#http.request({
+      method: "DELETE",
+      path: `${projectRoot(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
+      routeName: "savedQueries.delete",
+    });
+  }
 }
 
 export class DatabasesClient {

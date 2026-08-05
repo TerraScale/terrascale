@@ -21,6 +21,7 @@ const backupPolicyId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAW");
 const backupId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAV");
 const restoreId = toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV");
 const restoredDatabaseId = toUlid("01QRZ3NDEKTSV4RRFFQ69G5FAV");
+const savedQueryId = toUlid("01SRZ3NDEKTSV4RRFFQ69G5FAV");
 
 type CapturedRequest = {
   readonly method: string;
@@ -325,6 +326,77 @@ describe("TerraScaleClient route contracts", () => {
       "DELETE",
       `/api/v1/projects/${projectId}/databases/${databaseId}/environments/${environmentId}`,
     );
+  });
+
+  test("uses typed project saved-query CRUD routes, DTOs, pagination, and idempotency", async () => {
+    const savedQuery = {
+      savedQueryId,
+      projectId,
+      name: "Active users",
+      query: "SELECT * FROM users WHERE active = true",
+      repositoryId,
+      createdAt: "2026-08-05T00:00:00Z",
+      updatedAt: "2026-08-05T00:00:00Z",
+    };
+    const { client, requests } = createCapturingClientWithResponses([
+      [savedQuery],
+      savedQuery,
+      savedQuery,
+      { savedQueryId, projectId, deleted: true },
+    ], { idempotencyKeyFactory: () => "saved-query-replay-key" });
+
+    const listResult = await client.savedQueries.list({ skip: 10, take: 20 });
+    assert.equal(listResult.ok, true);
+    if (listResult.ok) {
+      assert.deepEqual(listResult.value, [savedQuery]);
+    }
+    assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/saved-queries`);
+    assert.equal(requests[0]?.url.searchParams.get("skip"), "10");
+    assert.equal(requests[0]?.url.searchParams.get("take"), "20");
+
+    const createResult = await client.savedQueries.create({
+      name: savedQuery.name,
+      query: savedQuery.query,
+      repositoryId,
+    });
+    assert.equal(createResult.ok, true);
+    if (createResult.ok) {
+      assert.deepEqual(createResult.value, savedQuery);
+    }
+    assertRequest(requests[1], "POST", `/api/v1/projects/${projectId}/saved-queries`);
+    assert.deepEqual(requests[1]?.body, {
+      name: savedQuery.name,
+      query: savedQuery.query,
+      repositoryId,
+    });
+    assert.equal(requests[1]?.headers.get("idempotency-key"), "saved-query-replay-key");
+
+    await client.savedQueries.update(savedQueryId, {
+      name: "Active users v2",
+      query: savedQuery.query,
+    });
+    assertRequest(
+      requests[2],
+      "PUT",
+      `/api/v1/projects/${projectId}/saved-queries/${savedQueryId}`,
+    );
+    assert.deepEqual(requests[2]?.body, {
+      name: "Active users v2",
+      query: savedQuery.query,
+    });
+    assert.equal(requests[2]?.headers.get("idempotency-key"), "saved-query-replay-key");
+
+    const deleteResult = await client.savedQueries.delete(savedQueryId);
+    assert.equal(deleteResult.ok, true);
+    if (deleteResult.ok) {
+      assert.deepEqual(deleteResult.value, { savedQueryId, projectId, deleted: true });
+    }
+    assertRequest(
+      requests[3],
+      "DELETE",
+      `/api/v1/projects/${projectId}/saved-queries/${savedQueryId}`,
+    );
+    assert.equal(requests[3]?.headers.get("idempotency-key"), "saved-query-replay-key");
   });
 
   test("uses backed database backup and restore routes with public DTO shapes", async () => {
@@ -712,7 +784,10 @@ function createCapturingClient(responseBody: JsonValue): {
   return createCapturingClientWithResponses([responseBody]);
 }
 
-function createCapturingClientWithResponses(responseBodies: readonly JsonValue[]): {
+function createCapturingClientWithResponses(
+  responseBodies: readonly JsonValue[],
+  options: { readonly idempotencyKeyFactory?: () => string } = {},
+): {
   readonly client: TerraScaleClient;
   readonly requests: readonly CapturedRequest[];
 } {
@@ -723,6 +798,7 @@ function createCapturingClientWithResponses(responseBodies: readonly JsonValue[]
     apiBaseUrl: "https://api.terrascale.test",
     authBaseUrl: "https://auth.terrascale.test",
     projectId,
+    ...options,
     fetch: async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const rawBody = await request.clone().text();

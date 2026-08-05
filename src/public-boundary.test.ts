@@ -22,7 +22,12 @@ test("built package keeps all public clients on typed operations without a runti
   assert.equal("TerraScaleRequestOptions" in sdk, false);
   assert.equal("request" in client, false);
   assert.equal(typeof client.regions.list, "function");
-  assert.equal(Object.values(client).length, 20);
+  assert.equal(typeof client.savedQueries.list, "function");
+  assert.equal(Object.values(client).length, 21);
+  const savedQueries: sdk.SavedQueriesClient = client.savedQueries;
+  const savedQuery: sdk.ProjectSavedQueryResponse | undefined = undefined;
+  assert.equal(savedQueries, client.savedQueries);
+  assert.equal(savedQuery, undefined);
 
   for (const subclient of Object.values(client)) {
     assertRuntimePrivateTransport(subclient);

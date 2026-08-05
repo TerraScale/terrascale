@@ -23,6 +23,7 @@ const sampleIds = {
   queueId: toUlid("01PRZ3NDEKTSV4RRFFQ69G5FAV"),
   repositoryId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAY"),
   restoreId: toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV"),
+  savedQueryId: toUlid("01SRZ3NDEKTSV4RRFFQ69G5FAV"),
   sessionId: toUlid("01JRZ3NDEKTSV4RRFFQ69G5FAV"),
   userId: toUlid("01KRZ3NDEKTSV4RRFFQ69G5FAV"),
 } as const;
@@ -719,6 +720,39 @@ const captureOperations: readonly CaptureOperation[] = [
     client: "regions",
     operation: "get",
     invoke: (client) => client.regions.get("sfo"),
+  },
+  {
+    client: "savedQueries",
+    operation: "list",
+    defaultProject: true,
+    invoke: (client) => client.savedQueries.list({ skip: 0, take: 25 }),
+  },
+  {
+    client: "savedQueries",
+    operation: "create",
+    defaultProject: true,
+    invoke: (client) =>
+      client.savedQueries.create({
+        name: "Active users",
+        query: "SELECT * FROM users WHERE active = true",
+        repositoryId: sampleIds.repositoryId,
+      }),
+  },
+  {
+    client: "savedQueries",
+    operation: "update",
+    defaultProject: true,
+    invoke: (client) =>
+      client.savedQueries.update(sampleIds.savedQueryId, {
+        name: "Active users",
+        query: "SELECT * FROM users WHERE active = true",
+      }),
+  },
+  {
+    client: "savedQueries",
+    operation: "delete",
+    defaultProject: true,
+    invoke: (client) => client.savedQueries.delete(sampleIds.savedQueryId),
   },
   {
     client: "databases",
