@@ -38,8 +38,11 @@ packages the candidate, and uploads it to the candidate store. This is an
 availability preflight, not a reservation. The promotion job depends on that
 same trusted candidate job and verifies the candidate manifest, tarball digest,
 package name, and version, repeats the public availability check, then publishes
-that exact tarball to npm. Pull-request jobs never receive candidate-store,
-publish, or signing credentials and cannot create candidate artifacts. npm
+that exact tarball to npm. Pull-request jobs targeting either `develop` or
+`main` run the unprivileged static, build, and contract checks. They never
+receive candidate-store, publish, or signing credentials and cannot create
+candidate artifacts. The required `promotion/admission` status accepts only a
+`develop` to `main` pull request. npm
 rejects an existing name/version rather than overwriting a published package if
 another publisher wins the race.
 
