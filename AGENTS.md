@@ -15,6 +15,14 @@
 
 - Applies the workspace root-cause rule; for this repo, "contract" means the SDK/API contract, DTO shape, and client options.
 
+## Parallel Delivery and Contract Order
+
+- Claim a file or cohesive feature slice before editing it. Parallel agents must use disjoint write ownership; do not overwrite, reformat, or fold in another agent's uncommitted work without coordinating with its owner.
+- For a new or changed public capability, establish the public `TerraScale.Platform` REST contract first, then implement the SDK's typed client and source-generated JSON contracts against that contract. Do not invent SDK-only routes, DTO fields, headers, or server behavior.
+- A public SDK change is not evidenced by compilation alone: verify the typed client call, source-generated request/response metadata, and real public API E2E success and failure paths. Record the Platform/API dependency and the exact cross-repository commits or outstanding dependency in the handoff.
+- Keep live-service tests environment-gated when an endpoint or credentials are unavailable locally. A skipped, correctly gated real-API test is acceptable; a mock, fake, direct server reference, or weakened assertion is not a substitute.
+- Treat credentials, one-time secrets, tokens, connection strings, and raw sensitive response bodies as secrets: use local environment configuration, never commit them, and redact them from fixtures, test output, logs, commit messages, and cross-repo reports.
+
 ## API Boundary
 
 - The SDK must interact only with public HTTP endpoints implemented by `/workspaces/TerraScale/TerraScale.Internals/src/Platform/TerraScale.Platform`.
