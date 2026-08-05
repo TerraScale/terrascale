@@ -13,7 +13,16 @@
       "routeName": "onboarding.getState",
       "method": "GET",
       "pathTemplate": "/api/v1/onboarding",
-      "responseType": "OnboardingState"
+      "responseType": "OnboardingState",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -23,7 +32,21 @@
       "method": "PATCH",
       "pathTemplate": "/api/v1/onboarding/account-information",
       "requestType": "UpdateOnboardingAccountRequest",
-      "responseType": "OnboardingState"
+      "responseType": "OnboardingState",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "displayName": "Ada Lovelace",
+            "phoneNumber": "+14155552671"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -33,7 +56,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/onboarding/payment-method/checkout-session",
       "requestType": "CreateOnboardingPaymentSessionRequest",
-      "responseType": "OnboardingPaymentSession"
+      "responseType": "OnboardingPaymentSession",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "successUrl": "https://app.example.test/onboarding?payment=success",
+            "cancelUrl": "https://app.example.test/onboarding?payment=cancelled"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -43,7 +80,20 @@
       "method": "POST",
       "pathTemplate": "/api/v1/onboarding/payment-method/validate",
       "requestType": "ValidateOnboardingPaymentRequest",
-      "responseType": "OnboardingState"
+      "responseType": "OnboardingState",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "sessionId": "cs_test_onboarding"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -53,7 +103,20 @@
       "method": "PUT",
       "pathTemplate": "/api/v1/onboarding/mfa-decision",
       "requestType": "UpdateOnboardingMfaRequest",
-      "responseType": "OnboardingState"
+      "responseType": "OnboardingState",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "configureLater": true
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -63,7 +126,20 @@
       "method": "POST",
       "pathTemplate": "/api/v1/onboarding/organization",
       "requestType": "CreateOnboardingOrganizationRequest",
-      "responseType": "OnboardingState"
+      "responseType": "OnboardingState",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "Analytical Engines"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -73,7 +149,24 @@
       "method": "POST",
       "pathTemplate": "/api/v1/onboarding/project",
       "requestType": "CreateOnboardingProjectRequest",
-      "responseType": "OnboardingState"
+      "responseType": "OnboardingState",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "Primary",
+            "regions": [
+              "gru"
+            ],
+            "backupRegion": "gru"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -82,7 +175,16 @@
       "routeName": "auth.session.get",
       "method": "GET",
       "pathTemplate": "/api/v1/auth/me",
-      "responseType": "AuthMeResponse"
+      "responseType": "AuthMeResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -91,7 +193,16 @@
       "routeName": "auth.billing.get",
       "method": "GET",
       "pathTemplate": "/api/v1/auth/me/billing",
-      "responseType": "CurrentOrganizationBilling"
+      "responseType": "CurrentOrganizationBilling",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -101,7 +212,20 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/me/billing/guard",
       "requestType": "BillingGuardRequest",
-      "responseType": "BillingGuardResponse"
+      "responseType": "BillingGuardResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "requireActiveSubscription": true
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -111,7 +235,24 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/password/signup",
       "requestType": "RegisterRequest",
-      "responseType": "SignupResponse"
+      "responseType": "SignupResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "password": "correct horse battery staple",
+            "firstName": "Ada",
+            "lastName": "Lovelace",
+            "verifyUrl": "https://app.example.test/verify"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -121,7 +262,24 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/signup",
       "requestType": "RegisterRequest",
-      "responseType": "SignupResponse"
+      "responseType": "SignupResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "password": "correct horse battery staple",
+            "firstName": "Ada",
+            "lastName": "Lovelace",
+            "verifyUrl": "https://app.example.test/verify"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -131,7 +289,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/password/verify-email",
       "requestType": "VerifyEmailRequest",
-      "responseType": "SignupResponse"
+      "responseType": "SignupResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "pendingAuthenticationToken": "pending-token",
+            "code": "123456"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -141,7 +313,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/verify-email",
       "requestType": "VerifyEmailRequest",
-      "responseType": "SignupResponse"
+      "responseType": "SignupResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "pendingAuthenticationToken": "pending-token",
+            "code": "123456"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -150,7 +336,22 @@
       "routeName": "auth.resendVerification",
       "method": "POST",
       "pathTemplate": "/api/v1/auth/password/resend-verification",
-      "responseType": "void"
+      "requestType": "json",
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "pendingAuthenticationToken": "pending-token",
+            "verifyUrl": "https://app.example.test/verify"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -159,7 +360,22 @@
       "routeName": "auth.resendVerification",
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/resend-verification",
-      "responseType": "void"
+      "requestType": "json",
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "pendingAuthenticationToken": "pending-token",
+            "verifyUrl": "https://app.example.test/verify"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -169,7 +385,22 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/password/login",
       "requestType": "SignInRequest",
-      "responseType": "PasswordLoginResponse"
+      "responseType": "PasswordLoginResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "password": "correct horse battery staple",
+            "deviceFingerprint": ""
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -179,7 +410,22 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/password/mfa/verify",
       "requestType": "PasswordMfaVerifyRequest",
-      "responseType": "PasswordLoginResponse"
+      "responseType": "PasswordLoginResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "pendingAuthenticationToken": "pending-token",
+            "challengeId": "01JRZ3NDEKTSV4RRFFQ69G5FAV",
+            "code": "123456"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -189,7 +435,22 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/password/mfa/verify",
       "requestType": "PasswordMfaVerifyRequest",
-      "responseType": "PasswordLoginResponse"
+      "responseType": "PasswordLoginResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "pendingAuthenticationToken": "pending-token",
+            "challengeId": "01JRZ3NDEKTSV4RRFFQ69G5FAV",
+            "code": "123456"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -199,7 +460,22 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/login",
       "requestType": "SignInRequest",
-      "responseType": "PasswordLoginResponse"
+      "responseType": "PasswordLoginResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "password": "correct horse battery staple",
+            "deviceFingerprint": ""
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -209,7 +485,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/password/forgot-password",
       "requestType": "PasswordResetRequest",
-      "responseType": "void"
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "resetUrl": "https://app.example.test/reset"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -219,7 +509,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/forgot-password",
       "requestType": "PasswordResetRequest",
-      "responseType": "void"
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "resetUrl": "https://app.example.test/reset"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -229,7 +533,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/password/reset-password",
       "requestType": "CompletePasswordResetRequest",
-      "responseType": "void"
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "token": "reset-token",
+            "newPassword": "correct horse battery staple"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -239,7 +557,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/reset-password",
       "requestType": "CompletePasswordResetRequest",
-      "responseType": "void"
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "token": "reset-token",
+            "newPassword": "correct horse battery staple"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -249,7 +581,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/passwordless/magic-link",
       "requestType": "MagicLinkRequest",
-      "responseType": "void"
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "loginUrl": "https://app.example.test/login"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -259,7 +605,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/passwordless/magic-link",
       "requestType": "MagicLinkRequest",
-      "responseType": "void"
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "loginUrl": "https://app.example.test/login"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -269,7 +629,20 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/passwordless/magic-link/complete",
       "requestType": "CompleteMagicLinkRequest",
-      "responseType": "AuthTokenResponse"
+      "responseType": "AuthTokenResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "token": "magic-token"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -279,7 +652,20 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/passwordless/magic-link/complete",
       "requestType": "CompleteMagicLinkRequest",
-      "responseType": "AuthTokenResponse"
+      "responseType": "AuthTokenResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "token": "magic-token"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -288,7 +674,21 @@
       "routeName": "auth.token.refresh",
       "method": "POST",
       "pathTemplate": "/api/v1/auth/refresh",
-      "responseType": "AuthTokenResponse"
+      "requestType": "json",
+      "responseType": "AuthTokenResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "refreshToken": "refresh-token"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -297,7 +697,21 @@
       "routeName": "auth.token.refresh",
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/refresh",
-      "responseType": "AuthTokenResponse"
+      "requestType": "json",
+      "responseType": "AuthTokenResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "refreshToken": "refresh-token"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -306,7 +720,21 @@
       "routeName": "auth.signOut",
       "method": "POST",
       "pathTemplate": "/api/v1/auth/logout",
-      "responseType": "void"
+      "requestType": "json",
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "revokeAll": true
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -315,7 +743,22 @@
       "routeName": "auth.signOut",
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/logout",
-      "responseType": "void"
+      "requestType": "json",
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "revokeAll": true
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -324,7 +767,19 @@
       "routeName": "auth.sessions.list",
       "method": "GET",
       "pathTemplate": "/api/v1/account/sessions",
-      "responseType": "ListAccountSessionsResponse"
+      "responseType": "ListAccountSessionsResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": [
+          "cursor",
+          "limit"
+        ]
+      }
     },
     {
       "base": "auth",
@@ -333,7 +788,16 @@
       "routeName": "auth.sessions.revoke",
       "method": "DELETE",
       "pathTemplate": "/api/v1/account/sessions/{sessionId}",
-      "responseType": "void"
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -342,7 +806,16 @@
       "routeName": "auth.sessions.revokeOther",
       "method": "DELETE",
       "pathTemplate": "/api/v1/account/sessions",
-      "responseType": "void"
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -352,7 +825,21 @@
       "method": "PATCH",
       "pathTemplate": "/api/v1/users/me/profile",
       "requestType": "UpdateProfileRequest",
-      "responseType": "UpdateProfileResponse"
+      "responseType": "UpdateProfileResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "displayName": "Ada Lovelace",
+            "phoneNumber": "+14155552671"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -362,7 +849,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/password/change-password",
       "requestType": "ChangePasswordRequest",
-      "responseType": "ChangePasswordResponse"
+      "responseType": "ChangePasswordResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "currentPassword": "old-secret",
+            "newPassword": "new-secret"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -371,7 +872,16 @@
       "routeName": "auth.mfa.factors.list",
       "method": "GET",
       "pathTemplate": "/api/v1/auth/mfa/factors",
-      "responseType": "ListMfaFactorsResponse"
+      "responseType": "ListMfaFactorsResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -380,7 +890,21 @@
       "routeName": "auth.mfa.totp.enroll",
       "method": "POST",
       "pathTemplate": "/api/v1/auth/mfa/totp/enroll",
-      "responseType": "EnrollTotpResponse"
+      "requestType": "json",
+      "responseType": "EnrollTotpResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "type": "totp"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -390,7 +914,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/mfa/totp/enroll/verify",
       "requestType": "VerifyTotpEnrollmentRequest",
-      "responseType": "VerifyTotpEnrollmentResponse"
+      "responseType": "VerifyTotpEnrollmentResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "challengeId": "01JRZ3NDEKTSV4RRFFQ69G5FAV",
+            "code": "123456"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -400,7 +938,20 @@
       "method": "DELETE",
       "pathTemplate": "/api/v1/auth/mfa/factors/{sessionId}",
       "requestType": "DeleteMfaFactorRequest",
-      "responseType": "VerifyTotpEnrollmentResponse"
+      "responseType": "VerifyTotpEnrollmentResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "code": "123456"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -409,7 +960,16 @@
       "routeName": "auth.mfa.recoveryCodes.generate",
       "method": "POST",
       "pathTemplate": "/api/v1/auth/mfa/recovery-codes/generate",
-      "responseType": "GenerateRecoveryCodesResponse"
+      "responseType": "GenerateRecoveryCodesResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -418,7 +978,16 @@
       "routeName": "auth.mfa.recoveryCodes.count",
       "method": "GET",
       "pathTemplate": "/api/v1/auth/mfa/recovery-codes/count",
-      "responseType": "RecoveryCodeCountResponse"
+      "responseType": "RecoveryCodeCountResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -428,7 +997,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/mfa/recovery-codes/verify",
       "requestType": "VerifyRecoveryCodeRequest",
-      "responseType": "VerifyRecoveryCodeResponse"
+      "responseType": "VerifyRecoveryCodeResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "code": "abcd-1234"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -438,7 +1021,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/mfa/recovery-codes/verify",
       "requestType": "VerifyRecoveryCodeRequest",
-      "responseType": "VerifyRecoveryCodeResponse"
+      "responseType": "VerifyRecoveryCodeResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "code": "abcd-1234"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -448,7 +1045,20 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/switch-organization",
       "requestType": "SwitchOrganizationRequest",
-      "responseType": "AuthTokenResponse"
+      "responseType": "AuthTokenResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "organizationId": "01ERZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -458,7 +1068,22 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/external-login/begin",
       "requestType": "ExternalLoginBeginRequest",
-      "responseType": "ExternalLoginBeginResponse"
+      "responseType": "ExternalLoginBeginResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "provider": "google",
+            "redirectUri": "https://app.example.test/api/auth/external-callback",
+            "state": "oauth-state"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -468,7 +1093,22 @@
       "method": "POST",
       "pathTemplate": "/api/v1/auth/external-login/complete",
       "requestType": "ExternalLoginCompleteRequest",
-      "responseType": "PasswordLoginResponse"
+      "responseType": "PasswordLoginResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "provider": "github",
+            "code": "oauth-code",
+            "redirectUri": "https://app.example.test/api/auth/external-callback"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -477,7 +1117,20 @@
       "routeName": "auth.project.providers.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/providers",
-      "responseType": "ListProjectAuthProvidersResponse"
+      "responseType": "ListProjectAuthProvidersResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "cursor",
+          "limit"
+        ]
+      }
     },
     {
       "base": "auth",
@@ -487,7 +1140,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/users/me/email/change",
       "requestType": "InitiateEmailChangeRequest",
-      "responseType": "InitiateEmailChangeResponse"
+      "responseType": "InitiateEmailChangeResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "newEmail": "augusta@example.test",
+            "password": "correct horse battery staple"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -497,7 +1164,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/users/me/email/verify",
       "requestType": "VerifyEmailChangeRequest",
-      "responseType": "VerifyEmailChangeResponse"
+      "responseType": "VerifyEmailChangeResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "newEmail": "augusta@example.test",
+            "otpCode": "123456"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -506,7 +1187,19 @@
       "routeName": "organizations.list",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations",
-      "responseType": "readonly Organization[]"
+      "responseType": "readonly Organization[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -516,7 +1209,20 @@
       "method": "POST",
       "pathTemplate": "/api/v1/organizations",
       "requestType": "CreateOrganizationRequest",
-      "responseType": "Organization"
+      "responseType": "Organization",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "Analytical Engines"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -525,7 +1231,16 @@
       "routeName": "organizations.get",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations/{organizationId}",
-      "responseType": "Organization"
+      "responseType": "Organization",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -535,7 +1250,20 @@
       "method": "PATCH",
       "pathTemplate": "/api/v1/organizations/{organizationId}",
       "requestType": "UpdateOrganizationRequest",
-      "responseType": "Organization"
+      "responseType": "Organization",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "Analytical Engines"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -545,7 +1273,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/organizations/{organizationId}:request-deletion",
       "requestType": "RequestOrganizationDeletionRequest",
-      "responseType": "Organization"
+      "responseType": "Organization",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "confirm": true,
+            "organizationName": "Analytical Engines"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -554,7 +1296,16 @@
       "routeName": "organizations.leave",
       "method": "POST",
       "pathTemplate": "/api/v1/organizations/{organizationId}:leave",
-      "responseType": "void"
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -563,7 +1314,19 @@
       "routeName": "organizations.projects.list",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations/{organizationId}/projects",
-      "responseType": "readonly Project[]"
+      "responseType": "readonly Project[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -572,7 +1335,19 @@
       "routeName": "organizations.members.list",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations/{organizationId}/members",
-      "responseType": "readonly OrganizationMember[]"
+      "responseType": "readonly OrganizationMember[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -582,7 +1357,20 @@
       "method": "PATCH",
       "pathTemplate": "/api/v1/organizations/{organizationId}/members/{userId}",
       "requestType": "UpdateOrganizationMemberRoleRequest",
-      "responseType": "OrganizationMember"
+      "responseType": "OrganizationMember",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "role": "OrganizationOwner"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -592,7 +1380,20 @@
       "method": "POST",
       "pathTemplate": "/api/v1/organizations/{organizationId}/members/{userId}:remove",
       "requestType": "RemoveOrganizationMemberRequest",
-      "responseType": "void"
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "confirm": true
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -602,7 +1403,24 @@
       "method": "POST",
       "pathTemplate": "/api/v1/organizations/{organizationId}/projects",
       "requestType": "CreateProjectRequest",
-      "responseType": "Project"
+      "responseType": "Project",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "Primary",
+            "regions": [
+              "gru"
+            ],
+            "backupRegion": "gru"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -611,7 +1429,17 @@
       "routeName": "organizations.projects.get",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}",
-      "responseType": "Project"
+      "responseType": "Project",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -620,7 +1448,17 @@
       "routeName": "organizations.projects.regions.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/regions",
-      "responseType": "readonly ProjectRegionPlacement[]"
+      "responseType": "readonly ProjectRegionPlacement[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -630,7 +1468,21 @@
       "method": "PATCH",
       "pathTemplate": "/api/v1/projects/{projectId}",
       "requestType": "UpdateProjectRequest",
-      "responseType": "Project"
+      "responseType": "Project",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "Core",
+            "backupRegion": "gru"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -640,7 +1492,21 @@
       "method": "DELETE",
       "pathTemplate": "/api/v1/projects/{projectId}",
       "requestType": "DeleteProjectRequest",
-      "responseType": "DeletedProject"
+      "responseType": "DeletedProject",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "confirm": true,
+            "projectName": "Core"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -649,7 +1515,19 @@
       "routeName": "organizations.invitations.list",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations/{organizationId}/invitations",
-      "responseType": "readonly Invitation[]"
+      "responseType": "readonly Invitation[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -659,7 +1537,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/organizations/{organizationId}/invitations",
       "requestType": "CreateInvitationRequest",
-      "responseType": "Invitation"
+      "responseType": "Invitation",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "grace@example.test",
+            "responseUrlTemplate": "https://app.example.test/invitations/{invitationId}?organizationId={organizationId}"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -668,7 +1560,16 @@
       "routeName": "organizations.invitations.accept",
       "method": "POST",
       "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:accept",
-      "responseType": "Invitation"
+      "responseType": "Invitation",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -677,7 +1578,16 @@
       "routeName": "organizations.invitations.decline",
       "method": "POST",
       "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:decline",
-      "responseType": "Invitation"
+      "responseType": "Invitation",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -686,7 +1596,16 @@
       "routeName": "organizations.invitations.resend",
       "method": "POST",
       "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:resend",
-      "responseType": "Invitation"
+      "responseType": "Invitation",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -695,7 +1614,16 @@
       "routeName": "organizations.invitations.cancel",
       "method": "POST",
       "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:cancel",
-      "responseType": "Invitation"
+      "responseType": "Invitation",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -704,7 +1632,16 @@
       "routeName": "regions.list",
       "method": "GET",
       "pathTemplate": "/api/v1/regions",
-      "responseType": "RegionsResponse"
+      "responseType": "RegionsResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -713,7 +1650,16 @@
       "routeName": "regions.get",
       "method": "GET",
       "pathTemplate": "/api/v1/regions/{regionCode}",
-      "responseType": "RegionDetails"
+      "responseType": "RegionDetails",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -722,7 +1668,20 @@
       "routeName": "savedQueries.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/saved-queries",
-      "responseType": "readonly ProjectSavedQueryResponse[]"
+      "responseType": "readonly ProjectSavedQueryResponse[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -732,7 +1691,23 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/saved-queries",
       "requestType": "ProjectSavedQueryRequest",
-      "responseType": "ProjectSavedQueryResponse"
+      "responseType": "ProjectSavedQueryResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "Active users",
+            "query": "SELECT * FROM users WHERE active = true",
+            "repositoryId": "01ARZ3NDEKTSV4RRFFQ69G5FAY"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -742,7 +1717,22 @@
       "method": "PUT",
       "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
       "requestType": "ProjectSavedQueryRequest",
-      "responseType": "ProjectSavedQueryResponse"
+      "responseType": "ProjectSavedQueryResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "Active users",
+            "query": "SELECT * FROM users WHERE active = true"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -751,7 +1741,17 @@
       "routeName": "savedQueries.delete",
       "method": "DELETE",
       "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
-      "responseType": "DeletedProjectSavedQueryResponse"
+      "responseType": "DeletedProjectSavedQueryResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -760,7 +1760,20 @@
       "routeName": "savedQueries.v2.list",
       "method": "GET",
       "pathTemplate": "/api/v2/projects/{projectId}/saved-queries",
-      "responseType": "readonly ProjectSavedQueryV2Response[]"
+      "responseType": "readonly ProjectSavedQueryV2Response[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -769,7 +1782,17 @@
       "routeName": "savedQueries.v2.get",
       "method": "GET",
       "pathTemplate": "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}",
-      "responseType": "ProjectSavedQueryV2Response"
+      "responseType": "ProjectSavedQueryV2Response",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -779,7 +1802,23 @@
       "method": "PUT",
       "pathTemplate": "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}",
       "requestType": "UpdateProjectSavedQueryV2Request",
-      "responseType": "ProjectSavedQueryV2Response"
+      "responseType": "ProjectSavedQueryV2Response",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "Active users",
+            "query": "SELECT * FROM users WHERE active = true",
+            "revision": "opaque-revision"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -788,7 +1827,20 @@
       "routeName": "savedQueries.v3.list",
       "method": "GET",
       "pathTemplate": "/api/v3/projects/{projectId}/saved-queries",
-      "responseType": "ProjectSavedQuerySnapshotPageResponse"
+      "responseType": "ProjectSavedQuerySnapshotPageResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "cursor",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -797,7 +1849,20 @@
       "routeName": "databases.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/databases",
-      "responseType": "readonly ProjectDatabase[]"
+      "responseType": "readonly ProjectDatabase[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -807,7 +1872,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/databases",
       "requestType": "CreateDatabaseRequest",
-      "responseType": "ProjectDatabase"
+      "responseType": "ProjectDatabase",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "primary"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -816,7 +1895,17 @@
       "routeName": "databases.get",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}",
-      "responseType": "ProjectDatabase"
+      "responseType": "ProjectDatabase",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -825,7 +1914,18 @@
       "routeName": "databases.delete",
       "method": "DELETE",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}",
-      "responseType": "DeletedProjectDatabaseResponse"
+      "responseType": "DeletedProjectDatabaseResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-delete-confirmation",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -834,7 +1934,17 @@
       "routeName": "databaseBranches.getCapability",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/database-branches/capability",
-      "responseType": "DatabaseBranchCapabilityResponse"
+      "responseType": "DatabaseBranchCapabilityResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -844,7 +1954,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/database-branches",
       "requestType": "CreateDatabaseBranchRequest",
-      "responseType": "never"
+      "responseType": "never",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "sourceDatabaseId": "01ARZ3NDEKTSV4RRFFQ69G5FAW"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -853,7 +1977,17 @@
       "routeName": "queues.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/queues",
-      "responseType": "readonly ProjectQueue[]"
+      "responseType": "readonly ProjectQueue[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -863,7 +1997,22 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/queues",
       "requestType": "CreateProjectQueueRequest",
-      "responseType": "ProjectQueue"
+      "responseType": "ProjectQueue",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "jobs",
+            "kind": "queue"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -872,7 +2021,17 @@
       "routeName": "queues.get",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}",
-      "responseType": "ProjectQueue"
+      "responseType": "ProjectQueue",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -881,7 +2040,17 @@
       "routeName": "queues.delete",
       "method": "DELETE",
       "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}",
-      "responseType": "boolean"
+      "responseType": "boolean",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -890,7 +2059,17 @@
       "routeName": "queues.purge",
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:purge",
-      "responseType": "{ readonly queueName: string; readonly purgedMessages: number }"
+      "responseType": "{ readonly queueName: string; readonly purgedMessages: number }",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -900,7 +2079,23 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:publish",
       "requestType": "PublishProjectQueueMessageRequest",
-      "responseType": "ProjectQueuePublishResult"
+      "responseType": "ProjectQueuePublishResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "data": {
+              "task": "index"
+            }
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -909,7 +2104,19 @@
       "routeName": "queues.peek",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:peek",
-      "responseType": "readonly ProjectQueuePeekMessage[]"
+      "responseType": "readonly ProjectQueuePeekMessage[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "maxMessages"
+        ]
+      }
     },
     {
       "base": "api",
@@ -919,7 +2126,22 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:receive",
       "requestType": "ReceiveProjectQueueMessagesRequest",
-      "responseType": "readonly ProjectQueueReceivedMessage[]"
+      "responseType": "readonly ProjectQueueReceivedMessage[]",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "consumerName": "worker",
+            "maxMessages": 1
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -928,7 +2150,23 @@
       "routeName": "queues.complete",
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:complete",
-      "responseType": "ProjectQueueReceiptActionResult"
+      "requestType": "json",
+      "responseType": "ProjectQueueReceiptActionResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "receipt": "opaque"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-preferred-region",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -937,7 +2175,24 @@
       "routeName": "queues.abandon",
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:abandon",
-      "responseType": "ProjectQueueReceiptActionResult"
+      "requestType": "json",
+      "responseType": "ProjectQueueReceiptActionResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "receipt": "opaque",
+            "delaySeconds": 1
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-preferred-region",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -946,7 +2201,23 @@
       "routeName": "queues.deadLetter",
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:dead-letter",
-      "responseType": "ProjectQueueReceiptActionResult"
+      "requestType": "json",
+      "responseType": "ProjectQueueReceiptActionResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "receipt": "opaque"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-preferred-region",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -955,7 +2226,23 @@
       "routeName": "queues.renewLock",
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:renew-lock",
-      "responseType": "ProjectQueueRenewLockResult"
+      "requestType": "json",
+      "responseType": "ProjectQueueRenewLockResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "receipt": "opaque"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-preferred-region",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -964,7 +2251,20 @@
       "routeName": "databases.environments.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments",
-      "responseType": "readonly DatabaseEnvironment[]"
+      "responseType": "readonly DatabaseEnvironment[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -974,7 +2274,22 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments",
       "requestType": "CreateDatabaseEnvironmentRequest",
-      "responseType": "DatabaseEnvironment"
+      "responseType": "DatabaseEnvironment",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "Preview",
+            "kind": "Preview"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -983,7 +2298,17 @@
       "routeName": "databases.environments.get",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments/{environmentId}",
-      "responseType": "DatabaseEnvironment"
+      "responseType": "DatabaseEnvironment",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -992,7 +2317,17 @@
       "routeName": "databases.environments.delete",
       "method": "DELETE",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments/{environmentId}",
-      "responseType": "DeletedProjectDatabaseEnvironmentResponse"
+      "responseType": "DeletedProjectDatabaseEnvironmentResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1001,7 +2336,16 @@
       "routeName": "repositories.list",
       "method": "GET",
       "pathTemplate": "/api/v1/repositories",
-      "responseType": "readonly RepositoryDefinition[]"
+      "responseType": "readonly RepositoryDefinition[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1011,7 +2355,23 @@
       "method": "POST",
       "pathTemplate": "/api/v1/repositories",
       "requestType": "CreateRepositoryRequest",
-      "responseType": "RepositoryDefinition"
+      "responseType": "RepositoryDefinition",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "users",
+            "databaseId": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "environmentId": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+            "collection": "Users"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1020,7 +2380,16 @@
       "routeName": "repositories.get",
       "method": "GET",
       "pathTemplate": "/api/v1/repositories/{repositoryId}",
-      "responseType": "RepositoryDefinition"
+      "responseType": "RepositoryDefinition",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1029,7 +2398,18 @@
       "routeName": "repositories.delete",
       "method": "DELETE",
       "pathTemplate": "/api/v1/repositories/{repositoryId}",
-      "responseType": "DeletedRepositoryResponse"
+      "responseType": "DeletedRepositoryResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": [
+          "deleteDocuments"
+        ]
+      }
     },
     {
       "base": "api",
@@ -1039,7 +2419,24 @@
       "method": "PUT",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups/policy",
       "requestType": "ConfigureBackupPolicyRequest",
-      "responseType": "BackupPolicyResponse"
+      "responseType": "BackupPolicyResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "fullBackupCron": "0 2 * * *",
+            "incrementalBackupCron": "0 */6 * * *",
+            "retentionDays": 30,
+            "disabled": false
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1049,7 +2446,21 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups:plan",
       "requestType": "DatabaseBackupConfirmationPlanRequest",
-      "responseType": "DatabaseBackupConfirmationPlanResponse"
+      "responseType": "DatabaseBackupConfirmationPlanResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "operationSessionId": "backup-operation-session"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1059,7 +2470,23 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups:execute",
       "requestType": "DatabaseBackupConfirmationExecuteRequest",
-      "responseType": "BackupJobResponse"
+      "responseType": "BackupJobResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "operationSessionId": "backup-operation-session",
+            "confirmationToken": "backup-confirmation-token"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "idempotency-key",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1068,7 +2495,20 @@
       "routeName": "backups.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups",
-      "responseType": "readonly BackupJobResponse[]"
+      "responseType": "readonly BackupJobResponse[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -1077,7 +2517,17 @@
       "routeName": "backups.get",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups/{backupId}",
-      "responseType": "BackupJobResponse"
+      "responseType": "BackupJobResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1086,7 +2536,17 @@
       "routeName": "backups.restorePoints.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restore-points",
-      "responseType": "readonly RestorePointResponse[]"
+      "responseType": "readonly RestorePointResponse[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1096,7 +2556,22 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restores",
       "requestType": "StartRestoreRequest",
-      "responseType": "RestoreJobResponse"
+      "responseType": "RestoreJobResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "backupId": "01NRZ3NDEKTSV4RRFFQ69G5FAV",
+            "idempotencyKey": "restore-1"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1105,7 +2580,17 @@
       "routeName": "backups.restores.get",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restores/{restoreId}",
-      "responseType": "RestoreJobResponse"
+      "responseType": "RestoreJobResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1114,7 +2599,20 @@
       "routeName": "backups.restores.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restores",
-      "responseType": "readonly RestoreJobResponse[]"
+      "responseType": "readonly RestoreJobResponse[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -1123,7 +2621,19 @@
       "routeName": "documents.list",
       "method": "GET",
       "pathTemplate": "/api/v1/repositories/{repositoryId}/documents",
-      "responseType": "DocumentPageResponse<TDocument>"
+      "responseType": "DocumentPageResponse<TDocument>",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -1132,7 +2642,23 @@
       "routeName": "documents.create",
       "method": "POST",
       "pathTemplate": "/api/v1/repositories/{repositoryId}/documents",
-      "responseType": "DocumentResponse<TDocument>"
+      "requestType": "json",
+      "responseType": "DocumentResponse<TDocument>",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "data": {
+              "name": "Ada"
+            }
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1141,7 +2667,16 @@
       "routeName": "documents.get",
       "method": "GET",
       "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/{documentId}",
-      "responseType": "DocumentResponse<TDocument>"
+      "responseType": "DocumentResponse<TDocument>",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1150,7 +2685,23 @@
       "routeName": "documents.put",
       "method": "PUT",
       "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/{documentId}",
-      "responseType": "DocumentResponse<TDocument>"
+      "requestType": "json",
+      "responseType": "DocumentResponse<TDocument>",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "data": {
+              "name": "Grace"
+            }
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1159,7 +2710,23 @@
       "routeName": "documents.patch",
       "method": "PATCH",
       "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/{documentId}",
-      "responseType": "DocumentResponse<TDocument>"
+      "requestType": "json",
+      "responseType": "DocumentResponse<TDocument>",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "data": {
+              "title": "Engineer"
+            }
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1169,7 +2736,27 @@
       "method": "POST",
       "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/batch",
       "requestType": "DocumentBatchRequest<TDocument>",
-      "responseType": "DocumentBatchResponse<TDocument>"
+      "responseType": "DocumentBatchResponse<TDocument>",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "operations": [
+              {
+                "operation": "create",
+                "data": {
+                  "name": "Katherine"
+                }
+              }
+            ]
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1178,7 +2765,16 @@
       "routeName": "documents.delete",
       "method": "DELETE",
       "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/{documentId}",
-      "responseType": "DeletedDocumentResponse"
+      "responseType": "DeletedDocumentResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1188,7 +2784,20 @@
       "method": "POST",
       "pathTemplate": "/api/v1/repositories/{repositoryId}/tql",
       "requestType": "QueryRequest",
-      "responseType": "DocumentPageResponse<TDocument>"
+      "responseType": "DocumentPageResponse<TDocument>",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "query": "from Users"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1197,7 +2806,16 @@
       "routeName": "schema.get",
       "method": "GET",
       "pathTemplate": "/api/v1/repositories/{repositoryId}/schema",
-      "responseType": "RepositorySchema"
+      "responseType": "RepositorySchema",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1207,7 +2825,20 @@
       "method": "POST",
       "pathTemplate": "/api/v1/repositories/{repositoryId}/schema/validate",
       "requestType": "ValidateRepositorySchemaRequest",
-      "responseType": "RepositorySchemaValidationResponse"
+      "responseType": "RepositorySchemaValidationResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "maxErrorMessages": 5
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1217,7 +2848,21 @@
       "method": "PUT",
       "pathTemplate": "/api/v1/repositories/{repositoryId}/schema",
       "requestType": "ConfigureRepositorySchemaRequest",
-      "responseType": "RepositorySchema"
+      "responseType": "RepositorySchema",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "enabled": true,
+            "schema": "{\"type\":\"object\"}"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -1226,7 +2871,20 @@
       "routeName": "apiKeys.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/api-keys",
-      "responseType": "ListApiKeysResponse"
+      "responseType": "ListApiKeysResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "cursor",
+          "limit"
+        ]
+      }
     },
     {
       "base": "auth",
@@ -1236,7 +2894,26 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/api-keys",
       "requestType": "CreateApiKeyRequest",
-      "responseType": "CreatedApiKey"
+      "responseType": "CreatedApiKey",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "ci",
+            "scopes": [
+              "repositories:read"
+            ],
+            "databaseId": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "environmentId": "01ARZ3NDEKTSV4RRFFQ69G5FAX"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -1245,7 +2922,17 @@
       "routeName": "apiKeys.rotate",
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/api-keys/{apiKeyId}/rotate",
-      "responseType": "RotatedApiKey"
+      "responseType": "RotatedApiKey",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -1254,7 +2941,17 @@
       "routeName": "apiKeys.revoke",
       "method": "DELETE",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/api-keys/{apiKeyId}",
-      "responseType": "RevokedApiKey"
+      "responseType": "RevokedApiKey",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -1263,7 +2960,20 @@
       "routeName": "m2m.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m-applications",
-      "responseType": "ListM2MApplicationsResponse"
+      "responseType": "ListM2MApplicationsResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "cursor",
+          "limit"
+        ]
+      }
     },
     {
       "base": "auth",
@@ -1273,7 +2983,26 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m-applications",
       "requestType": "CreateM2MApplicationRequest",
-      "responseType": "CreatedM2MApplication"
+      "responseType": "CreatedM2MApplication",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "worker",
+            "scopes": [
+              "documents:write"
+            ],
+            "databaseId": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "environmentId": "01ARZ3NDEKTSV4RRFFQ69G5FAX"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -1282,7 +3011,17 @@
       "routeName": "m2m.rotate",
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m-applications/{clientId}/rotate",
-      "responseType": "RotatedM2MApplicationSecret"
+      "responseType": "RotatedM2MApplicationSecret",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -1291,7 +3030,17 @@
       "routeName": "m2m.revoke",
       "method": "DELETE",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m-applications/{clientId}",
-      "responseType": "RevokedM2MApplication"
+      "responseType": "RevokedM2MApplication",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "auth",
@@ -1301,7 +3050,23 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m/token",
       "requestType": "M2MTokenRequest",
-      "responseType": "M2MTokenResponse"
+      "responseType": "M2MTokenResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "grant_type": "client_credentials",
+            "client_id": "01CRZ3NDEKTSV4RRFFQ69G5FAV",
+            "client_secret": "client-secret",
+            "scope": "documents:write"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1310,7 +3075,20 @@
       "routeName": "access.teamMembers.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/access/team-members",
-      "responseType": "Page<TeamMember>"
+      "responseType": "Page<TeamMember>",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -1320,7 +3098,22 @@
       "method": "POST",
       "pathTemplate": "/api/v1/projects/{projectId}/access/team-members",
       "requestType": "AddTeamMemberRequest",
-      "responseType": "TeamMember"
+      "responseType": "TeamMember",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "userId": "01KRZ3NDEKTSV4RRFFQ69G5FAV",
+            "role": "owner"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1330,7 +3123,21 @@
       "method": "PATCH",
       "pathTemplate": "/api/v1/projects/{projectId}/access/team-members/{userId}",
       "requestType": "UpdateTeamMemberRequest",
-      "responseType": "TeamMember"
+      "responseType": "TeamMember",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "role": "member"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1339,7 +3146,17 @@
       "routeName": "access.teamMembers.remove",
       "method": "DELETE",
       "pathTemplate": "/api/v1/projects/{projectId}/access/team-members/{userId}",
-      "responseType": "void"
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1348,7 +3165,17 @@
       "routeName": "usage.project.get",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/usage",
-      "responseType": "UsageSummary"
+      "responseType": "UsageSummary",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1357,7 +3184,16 @@
       "routeName": "usage.organization.get",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations/{organizationId}/usage",
-      "responseType": "OrganizationUsage"
+      "responseType": "OrganizationUsage",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1366,7 +3202,19 @@
       "routeName": "usage.project.workload",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/usage/workload",
-      "responseType": "UsageWorkload"
+      "responseType": "UsageWorkload",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "range"
+        ]
+      }
     },
     {
       "base": "api",
@@ -1375,7 +3223,20 @@
       "routeName": "usage.project.latency",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/latency",
-      "responseType": "ProjectLatency"
+      "responseType": "ProjectLatency",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "latitude",
+          "longitude"
+        ]
+      }
     },
     {
       "base": "api",
@@ -1384,7 +3245,19 @@
       "routeName": "usage.project.history",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/usage/history",
-      "responseType": "ProjectUsageHistory"
+      "responseType": "ProjectUsageHistory",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "range"
+        ]
+      }
     },
     {
       "base": "api",
@@ -1393,7 +3266,16 @@
       "routeName": "billing.account.get",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations/{organizationId}/billing",
-      "responseType": "BillingAccount"
+      "responseType": "BillingAccount",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1402,7 +3284,19 @@
       "routeName": "billing.invoices.list",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations/{organizationId}/billing/invoices",
-      "responseType": "Page<Invoice>"
+      "responseType": "Page<Invoice>",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -1411,7 +3305,16 @@
       "routeName": "billing.access.list",
       "method": "GET",
       "pathTemplate": "/api/v1/organizations/{organizationId}/billing/access",
-      "responseType": "readonly BillingAccessMember[]"
+      "responseType": "readonly BillingAccessMember[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1420,7 +3323,21 @@
       "routeName": "billing.access.set",
       "method": "PUT",
       "pathTemplate": "/api/v1/organizations/{organizationId}/billing/access/{userId}",
-      "responseType": "BillingAccessMember"
+      "requestType": "json",
+      "responseType": "BillingAccessMember",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "enabled": true
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1430,7 +3347,23 @@
       "method": "POST",
       "pathTemplate": "/api/v1/organizations/{organizationId}/billing/checkout-sessions",
       "requestType": "CreateCheckoutSessionRequest",
-      "responseType": "CheckoutSession"
+      "responseType": "CheckoutSession",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "planId": "01HRZ3NDEKTSV4RRFFQ69G5FAV",
+            "billingInterval": "monthly",
+            "provider": "polar",
+            "quantity": 1
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1439,7 +3372,21 @@
       "routeName": "billing.portalSessions.create",
       "method": "POST",
       "pathTemplate": "/api/v1/organizations/{organizationId}/billing/portal-sessions",
-      "responseType": "{ readonly url: string }"
+      "requestType": "json",
+      "responseType": "{ readonly url: string }",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "returnUrl": "https://app.example.test/billing"
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1448,7 +3395,16 @@
       "routeName": "pricing.plans.list",
       "method": "GET",
       "pathTemplate": "/api/v1/pricing/plans",
-      "responseType": "readonly PricingPlan[]"
+      "responseType": "readonly PricingPlan[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1457,7 +3413,20 @@
       "routeName": "audit.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/audit",
-      "responseType": "Page<AuditEvent>"
+      "responseType": "Page<AuditEvent>",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": [
+          "skip",
+          "take"
+        ]
+      }
     },
     {
       "base": "api",
@@ -1466,7 +3435,17 @@
       "routeName": "audit.get",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/audit/{auditEventId}",
-      "responseType": "AuditEvent"
+      "responseType": "AuditEvent",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1475,7 +3454,21 @@
       "routeName": "notifications.list",
       "method": "GET",
       "pathTemplate": "/api/v1/users/me/notifications",
-      "responseType": "readonly Notification[]"
+      "responseType": "readonly Notification[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": [
+          "organizationId",
+          "skip",
+          "take",
+          "unreadOnly"
+        ]
+      }
     },
     {
       "base": "api",
@@ -1484,7 +3477,16 @@
       "routeName": "notifications.markRead",
       "method": "POST",
       "pathTemplate": "/api/v1/users/me/notifications/{notificationId}:mark-read",
-      "responseType": "Notification"
+      "responseType": "Notification",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1493,7 +3495,18 @@
       "routeName": "notifications.markAllRead",
       "method": "POST",
       "pathTemplate": "/api/v1/users/me/notifications:mark-all-read",
-      "responseType": "MarkAllNotificationsReadResponse"
+      "responseType": "MarkAllNotificationsReadResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept"
+        ],
+        "query": [
+          "organizationId"
+        ]
+      }
     },
     {
       "base": "api",
@@ -1502,7 +3515,17 @@
       "routeName": "security.settings.get",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/security/settings",
-      "responseType": "SecuritySettings"
+      "responseType": "SecuritySettings",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          "accept",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     },
     {
       "base": "api",
@@ -1512,7 +3535,26 @@
       "method": "PUT",
       "pathTemplate": "/api/v1/projects/{projectId}/security/settings",
       "requestType": "UpdateSecuritySettingsRequest",
-      "responseType": "SecuritySettings"
+      "responseType": "SecuritySettings",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "mfaPolicy": "Required",
+            "ipAllowlist": "10.0.0.0/8",
+            "allowedEmailDomains": "terrascale.tech",
+            "dataResidency": "gru",
+            "authenticationEnabled": false,
+            "confirmDisableAuthentication": true
+          }
+        },
+        "headers": [
+          "accept",
+          "content-type",
+          "x-terrascale-project-id"
+        ],
+        "query": []
+      }
     }
   ]
 }

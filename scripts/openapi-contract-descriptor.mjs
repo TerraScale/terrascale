@@ -16,6 +16,9 @@ export async function generateOpenApiContractDescriptor({ manifestPath, specPath
       throw new Error(`OpenAPI operation has no operationId: ${route.method} ${route.pathTemplate}.`);
     }
     const pathItem = findPathItem(spec, route);
+    const request = requestDescriptor(operation, spec);
+    const responses = successfulResponses(operation, spec);
+    assertSdkContract(route, request, responses);
     return canonicalize({
       base: route.base,
       client: route.client,
@@ -24,18 +27,34 @@ export async function generateOpenApiContractDescriptor({ manifestPath, specPath
       operationId: operation.operationId,
       parameters: [...(pathItem.parameters ?? []), ...(operation.parameters ?? [])]
         .map((parameter) => resolveSchema(parameter, spec))
-        .map((parameter) => ({ in: parameter.in, name: parameter.name, required: parameter.required === true, schema: parameter.schema }))
+        .map((parameter) => ({ in: parameter.in, name: parameter.name, required: parameter.required === true, schema: schemaDescriptor(parameter.schema, spec) }))
         .sort(compareParameter),
       pathTemplate: route.pathTemplate,
-      request: requestDescriptor(operation, spec),
-      responses: successfulResponses(operation, spec),
+      request,
+      responses,
       routeName: route.routeName,
       sdkRequestType: route.requestType ?? "void",
       sdkResponseType: route.responseType ?? "void",
+      sourceContract: route.sourceContract,
     }, spec);
   }).sort((left, right) => `${left.method} ${left.pathTemplate} ${left.routeName}`.localeCompare(`${right.method} ${right.pathTemplate} ${right.routeName}`));
 
   return canonicalize({ descriptorVersion: 1, routeCount: routes.length, routes }, spec);
+}
+
+function assertSdkContract(route, request, responses) {
+  const requestType = route.requestType ?? "void";
+  const sourceBody = route.sourceContract?.body?.kind ?? "void";
+  if (requestType !== "void" && requestType !== "never" && sourceBody === "void") {
+    throw new Error(`SDK request metadata drift: ${route.method} ${route.pathTemplate} declares ${requestType} but captures no request body.`);
+  }
+  if ((requestType === "void" || requestType === "never") && sourceBody !== "void") {
+    throw new Error(`SDK request metadata drift: ${route.method} ${route.pathTemplate} declares ${requestType} but captures a request body.`);
+  }
+  const responseType = route.responseType ?? "void";
+  if (responseType === "never" && responses.length !== 0) {
+    throw new Error(`SDK/OpenAPI response never mismatch: ${route.method} ${route.pathTemplate} publishes successful responses.`);
+  }
 }
 
 export async function writeOpenApiContractDescriptor({ manifestPath, outputPath, specPath }) {
@@ -47,7 +66,7 @@ export async function writeOpenApiContractDescriptor({ manifestPath, outputPath,
 function requestDescriptor(operation, spec) {
   const body = operation.requestBody === undefined ? undefined : resolveSchema(operation.requestBody, spec);
   if (body === undefined) return { kind: "void" };
-  return { required: body.required === true, content: contentSchemas(body.content, spec) };
+  return { ref: typeof operation.requestBody?.$ref === "string" ? operation.requestBody.$ref : undefined, required: body.required === true, content: contentSchemas(body.content, spec) };
 }
 
 function successfulResponses(operation, spec) {
@@ -59,8 +78,13 @@ function successfulResponses(operation, spec) {
 }
 
 function contentSchemas(content, spec) {
-  return Object.entries(content ?? {}).map(([mediaType, media]) => ({ mediaType, schema: media.schema === undefined ? { kind: "void" } : resolveSchema(media.schema, spec) }))
+  return Object.entries(content ?? {}).map(([mediaType, media]) => ({ mediaType, schema: schemaDescriptor(media.schema, spec) }))
     .sort((left, right) => left.mediaType.localeCompare(right.mediaType));
+}
+
+function schemaDescriptor(schema, spec) {
+  if (schema === undefined) return { kind: "void" };
+  return { ref: typeof schema.$ref === "string" ? schema.$ref : undefined, schema: resolveSchema(schema, spec) };
 }
 
 function findPathItem(spec, route) {

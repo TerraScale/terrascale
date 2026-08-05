@@ -13,13 +13,38 @@ test("descriptor pins operation identity, parameter contract, and complete JSON 
   try {
     const manifestPath = path.join(directory, "manifest.json");
     const specPath = path.join(directory, "openapi.json");
-    await writeFile(manifestPath, JSON.stringify({ routes: [{ base: "api", client: "widgets", method: "POST", operation: "create", pathTemplate: "/api/v1/widgets/{widgetId}", routeName: "widgets.create", requestType: "CreateWidget", responseType: "Widget" }] }));
+    await writeFile(manifestPath, JSON.stringify({ routes: [{ base: "api", client: "widgets", method: "POST", operation: "create", pathTemplate: "/api/v1/widgets/{widgetId}", routeName: "widgets.create", requestType: "CreateWidget", responseType: "Widget", sourceContract: { body: { kind: "json", shape: { label: "Ada" } }, headers: ["content-type"], query: [] } }] }));
     const descriptor = await descriptorFor(specPath, { operationId: "CreateWidget", parameterName: "widgetId", required: true, type: "string", nullable: true, fields: { label: { type: "string", nullable: true } } });
     for (const mutation of [
       { operationId: "CreateWidgetV2" }, { parameterName: "id" }, { required: false }, { type: "integer" }, { nullable: false }, { fields: { label: { type: "string", nullable: true }, count: { type: "integer" } } },
     ]) assert.notDeepEqual(await descriptorFor(specPath, { operationId: "CreateWidget", parameterName: "widgetId", required: true, type: "string", nullable: true, fields: { label: { type: "string", nullable: true } }, ...mutation }), descriptor);
     await writeFile(specPath, JSON.stringify(spec({ operationId: "CreateWidget", parameterName: "widgetId", required: true, type: "string", nullable: true, fields: { label: { type: "string", nullable: true } } })));
     assert.deepEqual(await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }), descriptor);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("descriptor fails closed for stale source body metadata and preserves reference identity", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "terrascale-openapi-descriptor-"));
+  try {
+    const manifestPath = path.join(directory, "manifest.json");
+    const specPath = path.join(directory, "openapi.json");
+    const route = { base: "api", client: "widgets", method: "POST", operation: "create", pathTemplate: "/api/v1/widgets", routeName: "widgets.create", requestType: "void", responseType: "never", sourceContract: { body: { kind: "json", shape: { name: "Ada" } }, headers: ["content-type"], query: ["limit"] } };
+    await writeFile(manifestPath, JSON.stringify({ routes: [route] }));
+    const openApi = { openapi: "3.1.0", paths: { "/api/v1/widgets": { post: {
+      operationId: "Create",
+      parameters: ["path", "query", "header", "cookie"].map((inLocation, index) => ({ in: inLocation, name: `p${index}`, required: inLocation === "path", schema: { type: "string", minLength: index + 1 } })),
+      requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/First" } } } },
+      responses: { 200: { content: { "application/json": { schema: { $ref: "#/components/schemas/First" } } } }, 201: { content: { "application/json": { schema: { $ref: "#/components/schemas/Second" } } } } },
+    } } }, components: { schemas: { First: { type: "object", properties: { name: { type: "string" } } }, Second: { type: "object", properties: { name: { type: "string" } } } } } };
+    await writeFile(specPath, JSON.stringify(openApi));
+    await assert.rejects((await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }), /declares void but captures a request body/u);
+    const updatedRoute = { ...route, requestType: "json", responseType: "Widget" };
+    await writeFile(manifestPath, JSON.stringify({ routes: [updatedRoute] }));
+    const first = await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath });
+    const swapped = JSON.parse(await (await import("node:fs/promises")).readFile(specPath, "utf8"));
+    swapped.paths["/api/v1/widgets"].post.responses[200].content["application/json"].schema.$ref = "#/components/schemas/Second";
+    await writeFile(specPath, JSON.stringify(swapped));
+    assert.notDeepEqual(await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }), first);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

@@ -60,8 +60,9 @@ function routeWithMetadata(route, metadata) {
     routeName: route.routeName,
     method: route.method,
     pathTemplate: route.pathTemplate,
-    requestType: metadata?.requestType,
+    requestType: metadata?.requestType ?? (route.sourceContract.body.kind === "json" ? "json" : undefined),
     responseType: metadata?.responseType,
+    sourceContract: route.sourceContract,
   });
 }
 

@@ -158,6 +158,10 @@ every captured SDK route: OpenAPI operation ID, parameters, request schema, and
 each successful response schema. `void` and `never` SDK types are explicit in
 the descriptor; any OpenAPI identity, parameter, nullability, field-shape, or
 schema-constraint drift fails the descriptor check.
+The route manifest also records the actual captured JSON body shape, query keys,
+and headers, so a source request that starts or stops sending a body cannot be
+silently represented as `void`. Schema entries retain both their OpenAPI `$ref`
+identity and canonical resolved shape.
 
 The drift checker accepts any OpenAPI JSON file path or live spec URL, including
 a DevHost-served `/openapi/v1.json`. Refresh the Documentation snapshot from

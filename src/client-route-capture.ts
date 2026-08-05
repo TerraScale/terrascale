@@ -40,6 +40,11 @@ export type CapturedSdkRoute = {
   readonly operation: string;
   readonly pathTemplate: string;
   readonly routeName: TerraScaleRouteName;
+  readonly sourceContract: {
+    readonly body: { readonly kind: "void" } | { readonly kind: "json"; readonly shape: unknown };
+    readonly headers: readonly string[];
+    readonly query: readonly string[];
+  };
 };
 
 type CaptureOperation = {
@@ -104,6 +109,16 @@ async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRou
         : `${operation.operation}:${operation.variant}`,
     pathTemplate: pathToTemplate(new URL(capturedRequest.url).pathname),
     routeName: capturedMetric.routeName,
+    sourceContract: await capturedSourceContract(capturedRequest),
+  };
+}
+
+async function capturedSourceContract(request: Request): Promise<CapturedSdkRoute["sourceContract"]> {
+  const text = await request.clone().text();
+  return {
+    body: text.length === 0 ? { kind: "void" } : { kind: "json", shape: JSON.parse(text) },
+    headers: [...request.headers.keys()].sort(),
+    query: [...new URL(request.url).searchParams.keys()].sort(),
   };
 }
 
