@@ -109,6 +109,7 @@ public sealed class TerraScaleApiE2ETests
 
             var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
                 ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
+            await RequireNonOwnerAdminDeniedAsync(standardBearer);
             var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
                 standardBearer.Administration.DisableUserAsync(userId, "must not be persisted"));
             await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
