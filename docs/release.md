@@ -16,10 +16,13 @@ npm run test:integration
 npm pack --pack-destination artifacts/candidate
 ```
 
-`test:integration` must use real `TERRASCALE_API_BASE_URL` and
-`TERRASCALE_AUTH_API_BASE_URL` values when validating a release candidate. The
-publish workflow fails closed when those variables are absent instead of using
-mocked HTTP.
+The release E2E profile fails before tests run unless real
+`TERRASCALE_API_BASE_URL`, `TERRASCALE_AUTH_API_BASE_URL`,
+`TERRASCALE_E2E_ACCESS_TOKEN`, `TERRASCALE_E2E_PROJECT_ID`,
+`TERRASCALE_E2E_ORGANIZATION_ID`, and
+`TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID` are all configured. These values are
+scoped only to the canonical `develop` to `main` release E2E job; fork and
+ordinary PR jobs do not receive them.
 
 Each release-candidate test and package job performs its own clean install and
 build before testing or packing; do not rely on artifacts from another job.

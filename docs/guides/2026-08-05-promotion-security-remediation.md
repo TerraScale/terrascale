@@ -23,5 +23,9 @@ Fork-reachable SDK checkouts disable persisted action credentials. The public
 Documentation fixture is cloned without a credential helper rather than using
 an action credential.
 
+Release E2E runs in its own canonical-head-gated job. A preflight rejects
+missing endpoints, access token, or test resource identifiers before the
+otherwise skip-capable live integration tests execute.
+
 The promotion workflow verifies its candidate and publishes it to npm; it does
 not create, finalize, or recover Forgejo Releases.

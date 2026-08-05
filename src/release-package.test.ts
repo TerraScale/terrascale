@@ -31,9 +31,13 @@ test("release paths clean-install, build, test, and pack the SDK independently",
     deployment.buildTargets[0]?.commands.map((command) => command.description),
     ["Clean install", "Build SDK", "Unit and contract regression", "Pack npm candidate"],
   );
+  assert.deepEqual(
+    deployment.releaseProfiles.find((profile) => profile.name === "release-e2e")?.commands.map((command) => command.description),
+    ["Clean install", "Build SDK", "Require live integration configuration", "Authenticated live API integration"],
+  );
   assert.doesNotMatch(workflow, /^  (?:REGISTRY_TOKEN|FORGEJO_TOKEN|NPM_TOKEN):/mu);
   const canonicalHead = /forgejo\.event\.pull_request\.head\.repo\.full_name == forgejo\.repository/u;
-  for (const job of ["bootstrap", "pr-policy", "release-policy", "plan", "release-tests", "release-artifacts", "release-contract-fixture", "release-version-availability", "candidate"]) {
+  for (const job of ["bootstrap", "pr-policy", "release-policy", "plan", "release-tests", "release-e2e", "release-artifacts", "release-contract-fixture", "release-version-availability", "candidate"]) {
     assert.match(jobDefinition(workflow, job), canonicalHead);
   }
   assert.match(jobDefinition(workflow, "bootstrap"), /forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main'/u);
@@ -54,11 +58,43 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "pr-build"), /npm run build/u);
   assert.match(jobDefinition(workflow, "release-contract-fixture"), /check-public-contract-fixture\.mjs Documentation\/public\/openapi\/server\.openapi\.json/u);
   assert.match(jobDefinition(workflow, "release-version-availability"), /--check-availability --package @terrascale\/sdk/u);
+  assert.match(jobDefinition(workflow, "release-e2e"), /secrets\.TERRASCALE_E2E_ACCESS_TOKEN/u);
+  assert.match(jobDefinition(workflow, "release-e2e"), /--profile release-e2e/u);
+  assert.match(jobDefinition(workflow, "release-tests"), /--profile regression/u);
+  for (const name of [
+    "TERRASCALE_API_BASE_URL",
+    "TERRASCALE_AUTH_API_BASE_URL",
+    "TERRASCALE_E2E_PROJECT_ID",
+    "TERRASCALE_E2E_ORGANIZATION_ID",
+    "TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID",
+  ]) {
+    assert.match(jobDefinition(workflow, "release-e2e"), new RegExp(`${name}: \\$\\{\\{ vars\\.${name} \\}\\}`, "u"));
+  }
+  for (const job of ["pr-static", "pr-build", "release-tests"]) {
+    assert.doesNotMatch(jobDefinition(workflow, job), /TERRASCALE_E2E_ACCESS_TOKEN/u);
+  }
   assert.match(jobDefinition(workflow, "candidate"), /release-contract-fixture/u);
+  assert.match(jobDefinition(workflow, "candidate"), /release-e2e/u);
   assert.match(jobDefinition(workflow, "candidate"), /release-version-availability/u);
   assert.doesNotMatch(jobDefinition(workflow, "candidate"), /NPM_TOKEN/u);
   assert.match(jobDefinition(workflow, "promote"), /promote-npm-candidate\.mjs/u);
   assert.match(jobDefinition(workflow, "promote"), /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
+});
+
+test("release E2E configuration guard fails closed before skip-capable tests", async () => {
+  const guard = path.join(repositoryRoot, "scripts", "require-release-e2e-config.mjs");
+  const environment = {
+    PATH: process.env.PATH ?? "",
+    TERRASCALE_API_BASE_URL: "https://api.example.test",
+    TERRASCALE_AUTH_API_BASE_URL: "https://auth.example.test",
+    TERRASCALE_E2E_ACCESS_TOKEN: "test-token",
+    TERRASCALE_E2E_PROJECT_ID: "01J00000000000000000000000",
+    TERRASCALE_E2E_ORGANIZATION_ID: "01J00000000000000000000001",
+    TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID: "01J00000000000000000000002",
+  };
+
+  await assert.rejects(run("node", [guard], { env: { PATH: environment.PATH } }), /Release E2E configuration is missing/u);
+  await run("node", [guard], { env: environment });
 });
 
 test("a clean SDK-only checkout runs fixture tests and installs a usable npm pack", async () => {
@@ -275,7 +311,7 @@ function jobDefinition(workflow: string, job: string): string {
   const start = workflow.indexOf(`  ${job}:\n`);
   assert.notEqual(start, -1, `Workflow job ${job} is missing.`);
   const remaining = workflow.slice(start);
-  const next = remaining.slice(1).search(/\n  [a-z][a-z-]+:\n/u);
+  const next = remaining.slice(1).search(/\n  [a-z][a-z0-9-]+:\n/u);
   return next === -1 ? remaining : remaining.slice(0, next + 1);
 }
 
@@ -288,6 +324,6 @@ type DeployCommand = {
 };
 
 type DeployConfiguration = {
-  readonly releaseProfiles: readonly { readonly commands: readonly DeployCommand[] }[];
+  readonly releaseProfiles: readonly { readonly name: string; readonly commands: readonly DeployCommand[] }[];
   readonly buildTargets: readonly { readonly commands: readonly DeployCommand[] }[];
 };

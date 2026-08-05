@@ -13,8 +13,6 @@ concurrency:
 env:
   TERRASCALE_TOOLBOX_REVISION: "2026.07.1"
   TERRASCALE_DEPLOY_CLI_VERSION: ${{ needs.bootstrap.outputs.version }}
-  TERRASCALE_API_BASE_URL: ${{ vars.TERRASCALE_API_BASE_URL }}
-  TERRASCALE_AUTH_API_BASE_URL: ${{ vars.TERRASCALE_AUTH_API_BASE_URL }}
 
 jobs:
   bootstrap:
@@ -110,12 +108,9 @@ jobs:
       - run: npm run build
 
   release-tests:
-    name: release/tests (${{ matrix.profile }})
+    name: release/tests
     if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository }}
     needs: [bootstrap, release-policy, plan]
-    strategy:
-      fail-fast: true
-      matrix: { include: "${{ fromJSON(needs.plan.outputs.test_matrix) }}" }
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     steps:
@@ -123,7 +118,27 @@ jobs:
         with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
       - uses: https://data.forgejo.org/actions/download-artifact@v3
         with: { name: deploy-cli, path: .tools }
-      - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci release-test --repository-root . --profile "${{ matrix.profile }}"
+      - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci release-test --repository-root . --profile regression
+
+  release-e2e:
+    name: release/e2e
+    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository }}
+    needs: [bootstrap, release-policy, plan]
+    runs-on: terrascale-builder
+    container: { image: "terrascale-builder:2026.07.1" }
+    env:
+      TERRASCALE_API_BASE_URL: ${{ vars.TERRASCALE_API_BASE_URL }}
+      TERRASCALE_AUTH_API_BASE_URL: ${{ vars.TERRASCALE_AUTH_API_BASE_URL }}
+      TERRASCALE_E2E_ACCESS_TOKEN: ${{ secrets.TERRASCALE_E2E_ACCESS_TOKEN }}
+      TERRASCALE_E2E_PROJECT_ID: ${{ vars.TERRASCALE_E2E_PROJECT_ID }}
+      TERRASCALE_E2E_ORGANIZATION_ID: ${{ vars.TERRASCALE_E2E_ORGANIZATION_ID }}
+      TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID: ${{ vars.TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+        with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
+      - uses: https://data.forgejo.org/actions/download-artifact@v3
+        with: { name: deploy-cli, path: .tools }
+      - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci release-test --repository-root . --profile release-e2e
 
   release-artifacts:
     name: release/artifacts (${{ matrix.profile }})
@@ -175,7 +190,7 @@ jobs:
 
   candidate:
     if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository }}
-    needs: [bootstrap, plan, release-tests, release-artifacts, release-contract-fixture, release-version-availability]
+    needs: [bootstrap, plan, release-tests, release-e2e, release-artifacts, release-contract-fixture, release-version-availability]
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     env:
