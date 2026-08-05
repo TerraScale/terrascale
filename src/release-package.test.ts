@@ -42,10 +42,12 @@ test("release paths clean-install, build, test, and pack the SDK independently",
     assert.doesNotMatch(jobDefinition(workflow, job), /secrets\.[A-Z0-9_]+/u);
     assert.doesNotMatch(jobDefinition(workflow, job), /(?:CANDIDATE_STORE_TOKEN|DEPLOY_CLI_READ_TOKEN)/u);
   }
-  assert.doesNotMatch(jobDefinition(workflow, "pr-static"), /\n\s+token:/u);
   for (const job of ["pr-static", "pr-build"]) {
     assert.doesNotMatch(jobDefinition(workflow, job), /(?:needs:|download-artifact|terrascale-deploy)/u);
+    assert.doesNotMatch(jobDefinition(workflow, job), /secrets\.[A-Z0-9_]+/u);
+    assert.equal((jobDefinition(workflow, job).match(/persist-credentials: false/gu) ?? []).length, 1);
   }
+  assert.match(jobDefinition(workflow, "pr-static"), /git -c credential\.helper= clone --depth 1 --branch develop https:\/\/git\.terrascale\.tech\/TerraScale\/TerraScale\.Documentation\.git Documentation/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm ci/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm run typecheck/u);
   assert.match(jobDefinition(workflow, "pr-build"), /npm ci/u);

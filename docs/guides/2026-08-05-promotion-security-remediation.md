@@ -19,5 +19,9 @@ private Deploy CLI artifact. Private-feed bootstrap, planning, and release
 jobs require a canonical Forgejo pull-request head repository; the main push
 promotion path remains trusted.
 
+Fork-reachable SDK checkouts disable persisted action credentials. The public
+Documentation fixture is cloned without a credential helper rather than using
+an action credential.
+
 The promotion workflow verifies its candidate and publishes it to npm; it does
 not create, finalize, or recover Forgejo Releases.

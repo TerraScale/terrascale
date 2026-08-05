@@ -86,13 +86,10 @@ jobs:
     container: { image: "terrascale-builder:2026.07.1" }
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
-        with: { github-server-url: "https://git.terrascale.tech" }
-      - uses: https://data.forgejo.org/actions/checkout@v6
         with:
           github-server-url: "https://git.terrascale.tech"
-          repository: TerraScale/TerraScale.Documentation
-          ref: develop
-          path: Documentation
+          persist-credentials: false
+      - run: git -c credential.helper= clone --depth 1 --branch develop https://git.terrascale.tech/TerraScale/TerraScale.Documentation.git Documentation
       - run: node scripts/check-public-contract-fixture.mjs Documentation/public/openapi/server.openapi.json
       - run: npm ci
       - run: npm run typecheck
@@ -106,7 +103,9 @@ jobs:
     container: { image: "terrascale-builder:2026.07.1" }
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
-        with: { github-server-url: "https://git.terrascale.tech" }
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          persist-credentials: false
       - run: npm ci
       - run: npm run build
 
