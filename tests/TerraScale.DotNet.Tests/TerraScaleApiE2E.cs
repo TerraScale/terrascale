@@ -22,6 +22,8 @@ internal static class TerraScaleApiE2E
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingAccessLifecycleLocks = new(StringComparer.Ordinal);
 
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingCheckoutLocks = new(StringComparer.Ordinal);
+
     public static bool IsConfigured =>
         BaseAddress is not null &&
         !string.IsNullOrWhiteSpace(ApiKey) &&
@@ -106,6 +108,20 @@ internal static class TerraScaleApiE2E
         return new BillingAccessLifecycleLease(gate);
     }
 
+    public static async ValueTask<IDisposable> AcquireBillingCheckoutLockAsync(
+        string organizationId,
+        string planId,
+        string provider,
+        CancellationToken cancellationToken = default)
+    {
+        // CI must assign this dedicated organization/plan/provider fixture to one checkout lane at a time.
+        var gate = BillingCheckoutLocks.GetOrAdd(
+            $"{organizationId.Trim()}:{planId.Trim()}:{provider.Trim()}",
+            static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return new BillingCheckoutLease(gate);
+    }
+
     public static IReadOnlyList<(string Name, string Value)> ConfigurationVariables =>
     [
         ("TERRASCALE_E2E_BASE_URL", BaseAddress?.ToString() ?? string.Empty),
@@ -156,6 +172,11 @@ internal static class TerraScaleApiE2E
         Environment.GetEnvironmentVariable(name)?.Trim() ?? string.Empty;
 
     private sealed class BillingAccessLifecycleLease(SemaphoreSlim gate) : IDisposable
+    {
+        public void Dispose() => gate.Release();
+    }
+
+    private sealed class BillingCheckoutLease(SemaphoreSlim gate) : IDisposable
     {
         public void Dispose() => gate.Release();
     }

@@ -92,8 +92,13 @@ public sealed class TerraScaleApiE2ETests
 
     [Test]
     [RequiresTerraScaleBillingCheckout]
+    [NotInParallel("billing-checkout")]
     public async Task Billing_CreateCheckoutSessionAsync_UsesDedicatedProviderNeutralFixtureAndRejectsInvalidPlan()
     {
+        using var checkoutLock = await TerraScaleApiE2E.AcquireBillingCheckoutLockAsync(
+            TerraScaleApiE2E.BillingCheckoutOrganizationId,
+            TerraScaleApiE2E.BillingCheckoutPlanId,
+            TerraScaleApiE2E.BillingCheckoutProvider);
         var anonymousClient = TerraScaleApiE2E.CreateAnonymousClient();
         var plans = await anonymousClient.Billing.GetPricingPlansAsync();
         var plan = plans.SingleOrDefault(candidate => candidate.PlanId == TerraScaleApiE2E.BillingCheckoutPlanId);
