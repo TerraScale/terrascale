@@ -784,6 +784,13 @@ const captureOperations: readonly CaptureOperation[] = [
       }),
   },
   {
+    client: "savedQueries.v3",
+    operation: "list",
+    defaultProject: true,
+    invoke: (client) =>
+      client.savedQueries.v3.list(undefined, { cursor: "opaque-snapshot-cursor", take: 100 }),
+  },
+  {
     client: "databases",
     operation: "list",
     defaultProject: true,

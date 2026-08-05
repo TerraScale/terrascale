@@ -623,6 +623,20 @@ export type UpdateProjectSavedQueryV2Request = ProjectSavedQueryRequest & {
   readonly revision: string;
 };
 
+/** Cursor parameters for a mutation-safe v3 saved-query snapshot. */
+export type ProjectSavedQuerySnapshotPageRequest = {
+  /** Opaque, project-bound cursor returned by the preceding v3 page. */
+  readonly cursor?: string;
+  /** Number of results to return, from 1 through 500. */
+  readonly take?: number;
+};
+
+/** A v3 snapshot page. Reload the collection if its opaque cursor expires with a conflict. */
+export type ProjectSavedQuerySnapshotPageResponse = {
+  readonly items: readonly ProjectSavedQueryV2Response[];
+  readonly nextCursor?: string | null;
+};
+
 export type DeletedProjectSavedQueryResponse = {
   readonly savedQueryId: Ulid;
   readonly projectId: ProjectId;
@@ -1425,13 +1439,13 @@ export type PricingPlan = {
   readonly annualBaseCents: number;
   readonly includedUsage: readonly UsageMetric[];
   readonly key: string;
-  readonly provider: "polar" | "stripe";
-  readonly monthlyPriceId?: string | null;
-  readonly annualPriceId?: string | null;
-  readonly monthlyPolarProductId?: string | null;
-  readonly annualPolarProductId?: string | null;
-  readonly monthlyStripePriceId?: string | null;
-  readonly annualStripePriceId?: string | null;
+  readonly provider: string;
+  readonly monthlyPriceId: string | null;
+  readonly annualPriceId: string | null;
+  readonly monthlyPolarProductId: string | null;
+  readonly annualPolarProductId: string | null;
+  readonly monthlyStripePriceId: string | null;
+  readonly annualStripePriceId: string | null;
   readonly monthlyTrialDays: number;
   readonly annualTrialDays: number;
   readonly visible: boolean;

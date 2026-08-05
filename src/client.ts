@@ -1101,10 +1101,12 @@ export class QueuesClient {
 export class SavedQueriesClient {
   readonly #http: TerraScaleHttp;
   readonly v2: SavedQueriesV2Client;
+  readonly v3: SavedQueriesV3Client;
 
   constructor(http: TerraScaleHttp) {
     this.#http = http;
     this.v2 = new SavedQueriesV2Client(http);
+    this.v3 = new SavedQueriesV3Client(http);
   }
 
   list(
@@ -1196,6 +1198,26 @@ export class SavedQueriesV2Client {
       path: `${projectV2Root(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
       routeName: "savedQueries.v2.update",
       body: request,
+    });
+  }
+}
+
+export class SavedQueriesV3Client {
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
+
+  list(
+    projectId?: Ulid,
+    query?: Models.ProjectSavedQuerySnapshotPageRequest,
+  ): Promise<TerraScaleResult<Models.ProjectSavedQuerySnapshotPageResponse>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${projectV3Root(this.#http, projectId)}/saved-queries`,
+      routeName: "savedQueries.v3.list",
+      query: { cursor: query?.cursor, take: query?.take ?? 100 },
     });
   }
 }
@@ -2272,6 +2294,10 @@ function projectRoot(http: TerraScaleHttp, projectId: Ulid | undefined): string 
 
 function projectV2Root(http: TerraScaleHttp, projectId: Ulid | undefined): string {
   return `/api/v2/projects/${ulidPathSegment(projectRootId(http, projectId))}`;
+}
+
+function projectV3Root(http: TerraScaleHttp, projectId: Ulid | undefined): string {
+  return `/api/v3/projects/${ulidPathSegment(projectRootId(http, projectId))}`;
 }
 
 function projectAuthRoot(projectId: Ulid): string {

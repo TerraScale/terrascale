@@ -24,12 +24,15 @@ test("built package keeps all public clients on typed operations without a runti
   assert.equal(typeof client.regions.list, "function");
   assert.equal(typeof client.savedQueries.list, "function");
   assert.equal(typeof client.savedQueries.v2.update, "function");
+  assert.equal(typeof client.savedQueries.v3.list, "function");
   assert.equal(Object.values(client).length, 21);
   const savedQueries: sdk.SavedQueriesClient = client.savedQueries;
   const savedQueriesV2: sdk.SavedQueriesV2Client = client.savedQueries.v2;
+  const savedQueriesV3: sdk.SavedQueriesV3Client = client.savedQueries.v3;
   const savedQuery: sdk.ProjectSavedQueryResponse | undefined = undefined;
   assert.equal(savedQueries, client.savedQueries);
   assert.equal(savedQueriesV2, client.savedQueries.v2);
+  assert.equal(savedQueriesV3, client.savedQueries.v3);
   assert.equal(savedQuery, undefined);
 
   for (const subclient of Object.values(client)) {

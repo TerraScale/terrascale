@@ -36,9 +36,10 @@ instead of bumping past that package version.
 
 Use the next patch version only for backward-compatible changes. Before `1.0`,
 a source-breaking exported TypeScript type change requires the next minor
-version. This release is `0.2.0`: `PricingPlan.key` and `PricingPlan.visible`
-are now required to match the public API, so callers that construct a
-`PricingPlan` must provide both fields.
+version. This release is `0.2.0`: `PricingPlan.key`, `PricingPlan.visible`, and
+all provider price/product identifier fields are now required (nullable where
+the public API permits `null`); `PricingPlan.provider` is the public string
+value. Callers that construct a `PricingPlan` must provide every required field.
 
 The workflow executes `npm publish --access public --registry=https://registry.npmjs.org/`
 with `NPM_TOKEN`.

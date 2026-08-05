@@ -30,5 +30,6 @@ export type {
   SecurityClient,
   SavedQueriesClient,
   SavedQueriesV2Client,
+  SavedQueriesV3Client,
   UsageClient,
 } from "./client.js";

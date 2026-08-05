@@ -12,6 +12,7 @@ import type {
   JsonValue,
   PricingPlan,
   ProjectSavedQueryResponse,
+  ProjectSavedQuerySnapshotPageResponse,
   ProjectSavedQueryV2Response,
   UpdateProjectSavedQueryV2Request,
 } from "./models.js";
@@ -50,6 +51,12 @@ const pricingPlan = {
   includedUsage: [],
   key: "developer",
   provider: "polar",
+  monthlyPriceId: null,
+  annualPriceId: null,
+  monthlyPolarProductId: null,
+  annualPolarProductId: null,
+  monthlyStripePriceId: null,
+  annualStripePriceId: null,
   monthlyTrialDays: 14,
   annualTrialDays: 14,
   visible: true,
@@ -67,6 +74,11 @@ const pricingPlanWithoutVisible: Omit<PricingPlan, "visible"> = pricingPlan;
 // @ts-expect-error Pricing responses always include visible.
 const invalidPricingPlanWithoutVisible: PricingPlan = pricingPlanWithoutVisible;
 void invalidPricingPlanWithoutVisible;
+
+const pricingPlanWithoutStripePriceId: Omit<PricingPlan, "monthlyStripePriceId"> = pricingPlan;
+// @ts-expect-error Pricing responses always include nullable provider identifier fields.
+const invalidPricingPlanWithoutStripePriceId: PricingPlan = pricingPlanWithoutStripePriceId;
+void invalidPricingPlanWithoutStripePriceId;
 
 // @ts-expect-error Saved-query responses always include repositoryId, which may be null.
 const invalidSavedQueryResponse: ProjectSavedQueryResponse = savedQueryWithoutRepository;
@@ -124,7 +136,7 @@ describe("TerraScaleClient route contracts", () => {
       manifest.routes.map(routeManifestCore),
       capturedRoutes.map(routeManifestCore),
     );
-    assert.equal(manifest.routeCount, 157);
+    assert.equal(manifest.routeCount, 158);
     assert.equal(manifest.routeCount, capturedRoutes.length);
     assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
     assert.deepEqual(
@@ -653,6 +665,84 @@ describe("TerraScaleClient route contracts", () => {
       revision: savedQuery.revision,
     });
     assert.equal(requests[3]?.headers.get("idempotency-key"), "saved-query-v2-replay-key");
+  });
+
+  test("uses a typed v3 mutation-safe snapshot cursor without exposing change vectors", async () => {
+    const savedQuery = {
+      savedQueryId,
+      projectId,
+      name: "Active users",
+      query: "SELECT * FROM users WHERE active = true",
+      repositoryId: null,
+      createdAt: "2026-08-05T00:00:00Z",
+      updatedAt: "2026-08-05T00:00:00Z",
+      revision: "opaque-resource-revision",
+    } satisfies ProjectSavedQueryV2Response;
+    const page = {
+      items: [savedQuery],
+      nextCursor: null,
+    } satisfies ProjectSavedQuerySnapshotPageResponse;
+    const { client, requests } = createCapturingClientWithResponses([page]);
+
+    const result = await client.savedQueries.v3.list(otherProjectId, {
+      cursor: "opaque-project-bound-cursor",
+      take: 500,
+    });
+
+    assert.equal(result.ok, true);
+    if (result.ok) assert.deepEqual(result.value, page);
+    assertRequest(requests[0], "GET", `/api/v3/projects/${otherProjectId}/saved-queries`);
+    assert.equal(requests[0]?.url.search, "?cursor=opaque-project-bound-cursor&take=500");
+  });
+
+  test("maps expired v3 snapshot cursors to the public conflict result", async () => {
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      projectId,
+      fetch: async () =>
+        Response.json(
+          { code: "TERRASCALE-1401", message: "The snapshot cursor expired." },
+          { status: 409 },
+        ),
+    });
+
+    const result = await client.savedQueries.v3.list(undefined, { cursor: "expired-cursor" });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.status, 409);
+      assert.equal(result.error.kind, "conflict");
+    }
+  });
+
+  test("preserves typed public errors for invalid or tampered v3 cursors", async () => {
+    const expected = new Map([
+      [400, "domain"],
+      [401, "authentication"],
+      [403, "authorization"],
+      [404, "not-found"],
+      [409, "conflict"],
+      [503, "server"],
+    ]);
+
+    for (const [status, kind] of expected) {
+      const client = createTerraScaleClient({
+        apiBaseUrl: "https://api.terrascale.test",
+        projectId,
+        fetch: async () =>
+          Response.json(
+            { code: "TERRASCALE-1401", message: "The opaque snapshot cursor was rejected." },
+            { status },
+          ),
+      });
+
+      const result = await client.savedQueries.v3.list(undefined, { cursor: "tampered-cursor" });
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.status, status);
+        assert.equal(result.error.kind, kind);
+      }
+    }
   });
 
   test("maps v2 revision conflicts to the public conflict result", async () => {

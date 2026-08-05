@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 157,
+  "routeCount": 158,
   "routes": [
     {
       "base": "api",
@@ -780,6 +780,15 @@
       "pathTemplate": "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}",
       "requestType": "UpdateProjectSavedQueryV2Request",
       "responseType": "ProjectSavedQueryV2Response"
+    },
+    {
+      "base": "api",
+      "client": "savedQueries.v3",
+      "operation": "list",
+      "routeName": "savedQueries.v3.list",
+      "method": "GET",
+      "pathTemplate": "/api/v3/projects/{projectId}/saved-queries",
+      "responseType": "ProjectSavedQuerySnapshotPageResponse"
     },
     {
       "base": "api",

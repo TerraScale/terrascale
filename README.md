@@ -115,9 +115,10 @@ The public client follows the backed `TerraScale.Platform` REST surface:
 - Security settings: backed get and upsert routes at
   `/api/v1/projects/{projectId}/security/settings`.
 - Saved queries: typed v1 list/create/update/delete operations under
-  `/api/v1/projects/{projectId}/saved-queries`, plus revision-aware v2
-  `client.savedQueries.v2.list/get/update` under `/api/v2/projects/{projectId}/saved-queries`.
-  V2 revisions are opaque values returned by v2 reads and required unchanged for updates.
+  `/api/v1/projects/{projectId}/saved-queries`, revision-aware v2
+  `client.savedQueries.v2.list/get/update`, and mutation-safe snapshot pagination with
+  `client.savedQueries.v3.list` under `/api/v3/projects/{projectId}/saved-queries`.
+  V2 revisions and v3 cursors are opaque; reload a v3 collection after a cursor conflict.
 
 Unbacked public SDK methods are intentionally omitted until matching API
 endpoints exist. This currently excludes repository update, database
