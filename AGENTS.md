@@ -78,6 +78,7 @@ When the handoff README disagrees with the reference JSX files under `docs/desig
 - Checked-in individual SVG files live in `static/icons/` (served at `/icons/...`). Do not use sprite sheets.
 - Render every icon through `src/components/Icon.svelte` and the registry in `src/lib/icons.ts`. Do not import icon packages directly in components.
 - When adding or changing icons, update `scripts/icons-manifest.mjs` and run `npm run icons:sync`.
+- The writer changing the icon manifest exclusively owns the resulting `static/icons/` sync output; do not regenerate or edit another writer's generated icon output. Apply the same ownership rule to content-derived generated artifacts.
 - Prefer `lucide` for generic UI glyphs and `simple-icons` for brand/social logos.
 - Keep SVGs monochrome and `currentColor`-driven so Tailwind text-color classes control appearance.
 - Do not add or prefer React, runtime Lucide, or build-time icon packages for new work here.
@@ -114,6 +115,8 @@ Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies: pull lates
 
 CI needs `CLOUDFLARE_API_TOKEN` (`Account / Cloudflare Pages / Edit`) and `CLOUDFLARE_ACCOUNT_ID`. See `README.md` for the full non-interactive deploy env var list.
 
+For parallel work, the writer assigned a Cloudflare preview or deploy target owns that target exclusively until handoff. Do not deploy, preview, or retarget it concurrently.
+
 ## Conventions
 
 - Prefer editing existing components/utilities over introducing new ones.
@@ -124,3 +127,10 @@ CI needs `CLOUDFLARE_API_TOKEN` (`Account / Cloudflare Pages / Edit`) and `CLOUD
 - Keep scoped component styles scoped; promote shared patterns to `src/index.css` utilities when they recur.
 - Do not create markdown or README files unless explicitly requested.
 - Never add an AI agent (Claude, Copilot, GPT, etc.) as a co-author on commits. No `Co-Authored-By:` trailers for AI tools, no agent-generated signatures in commit messages, no "Generated with <tool>" footers.
+
+## Concurrent Changes and Handoff
+
+- Before editing, staging, or committing, check `git status --short`, agree named-path ownership, and preserve other writers' changes. Generated output belongs exclusively to the writer who owns its source input.
+- Never place secrets or credentials in source, documentation, generated output, or staging. Redact them from tests, validation output, and handoff reports.
+- Stage named owned files only. Before pushing, fetch `origin` and stop if `develop` moved.
+- Before handoff, report final `git status --short`, the owned diff, the final fetch result, files, checks, and commit.
