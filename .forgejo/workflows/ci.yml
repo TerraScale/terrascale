@@ -18,6 +18,7 @@ env:
 
 jobs:
   bootstrap:
+    if: ${{ (forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main') || (forgejo.event_name == 'pull_request' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository) }}
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     outputs:
@@ -41,7 +42,7 @@ jobs:
 
   pr-policy:
     name: pr/policy
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'develop' }}
+    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'develop' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository }}
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     needs: bootstrap
@@ -52,7 +53,7 @@ jobs:
 
   release-policy:
     name: release/policy
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' }}
+    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository }}
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     needs: bootstrap
@@ -62,6 +63,7 @@ jobs:
       - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci policy
 
   plan:
+    if: ${{ (forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main') || (forgejo.event_name == 'pull_request' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository) }}
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     needs: bootstrap
@@ -80,7 +82,6 @@ jobs:
   pr-static:
     name: pr/static
     if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'develop' }}
-    needs: [bootstrap, pr-policy, plan]
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     steps:
@@ -93,26 +94,25 @@ jobs:
           ref: develop
           path: Documentation
       - run: node scripts/check-public-contract-fixture.mjs Documentation/public/openapi/server.openapi.json
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
-        with: { name: deploy-cli, path: .tools }
-      - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci pr --repository-root . --profile static
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run check:openapi-drift -- Documentation/public/openapi/server.openapi.json
+      - run: npm run check:route-manifest
 
   pr-build:
     name: pr/build
     if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'develop' }}
-    needs: [bootstrap, pr-policy, plan]
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
         with: { github-server-url: "https://git.terrascale.tech" }
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
-        with: { name: deploy-cli, path: .tools }
-      - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci pr --repository-root . --profile build
+      - run: npm ci
+      - run: npm run build
 
   release-tests:
     name: release/tests (${{ matrix.profile }})
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' }}
+    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository }}
     needs: [bootstrap, release-policy, plan]
     strategy:
       fail-fast: true
@@ -128,7 +128,7 @@ jobs:
 
   release-artifacts:
     name: release/artifacts (${{ matrix.profile }})
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' }}
+    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository }}
     needs: [bootstrap, release-policy, plan]
     strategy:
       fail-fast: true
@@ -146,7 +146,7 @@ jobs:
 
   release-contract-fixture:
     name: release/contract-fixture
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' }}
+    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository }}
     needs: [bootstrap, release-policy, plan]
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
@@ -163,7 +163,7 @@ jobs:
 
   release-version-availability:
     name: release/version-availability
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' }}
+    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository }}
     needs: [bootstrap, release-policy, plan]
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }

@@ -32,18 +32,29 @@ test("release paths clean-install, build, test, and pack the SDK independently",
     ["Clean install", "Build SDK", "Unit and contract regression", "Pack npm candidate"],
   );
   assert.doesNotMatch(workflow, /^  (?:REGISTRY_TOKEN|FORGEJO_TOKEN|NPM_TOKEN):/mu);
-  for (const job of ["bootstrap", "pr-policy", "release-policy", "plan", "pr-static", "pr-build", "release-tests", "release-artifacts", "release-contract-fixture", "candidate"]) {
-    assert.doesNotMatch(jobDefinition(workflow, job), /secrets\.(?:REGISTRY_TOKEN|NPM_TOKEN|PUBLISH)/u);
+  const canonicalHead = /forgejo\.event\.pull_request\.head\.repo\.full_name == forgejo\.repository/u;
+  for (const job of ["bootstrap", "pr-policy", "release-policy", "plan", "release-tests", "release-artifacts", "release-contract-fixture", "release-version-availability", "candidate"]) {
+    assert.match(jobDefinition(workflow, job), canonicalHead);
+  }
+  assert.match(jobDefinition(workflow, "bootstrap"), /forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main'/u);
+  assert.match(jobDefinition(workflow, "bootstrap"), /secrets\.DEPLOY_CLI_READ_TOKEN/u);
+  for (const job of ["pr-static", "pr-build", "release-version-availability"]) {
+    assert.doesNotMatch(jobDefinition(workflow, job), /secrets\.[A-Z0-9_]+/u);
+    assert.doesNotMatch(jobDefinition(workflow, job), /(?:CANDIDATE_STORE_TOKEN|DEPLOY_CLI_READ_TOKEN)/u);
   }
   assert.doesNotMatch(jobDefinition(workflow, "pr-static"), /\n\s+token:/u);
+  for (const job of ["pr-static", "pr-build"]) {
+    assert.doesNotMatch(jobDefinition(workflow, job), /(?:needs:|download-artifact|terrascale-deploy)/u);
+  }
+  assert.match(jobDefinition(workflow, "pr-static"), /npm ci/u);
+  assert.match(jobDefinition(workflow, "pr-static"), /npm run typecheck/u);
+  assert.match(jobDefinition(workflow, "pr-build"), /npm ci/u);
+  assert.match(jobDefinition(workflow, "pr-build"), /npm run build/u);
   assert.match(jobDefinition(workflow, "release-contract-fixture"), /check-public-contract-fixture\.mjs Documentation\/public\/openapi\/server\.openapi\.json/u);
   assert.match(jobDefinition(workflow, "release-version-availability"), /--check-availability --package @terrascale\/sdk/u);
-  assert.doesNotMatch(jobDefinition(workflow, "release-version-availability"), /secrets\.[A-Z0-9_]+/u);
-  assert.doesNotMatch(jobDefinition(workflow, "release-version-availability"), /CANDIDATE_STORE_TOKEN/u);
   assert.match(jobDefinition(workflow, "candidate"), /release-contract-fixture/u);
   assert.match(jobDefinition(workflow, "candidate"), /release-version-availability/u);
   assert.doesNotMatch(jobDefinition(workflow, "candidate"), /NPM_TOKEN/u);
-  assert.match(jobDefinition(workflow, "candidate"), /forgejo\.event\.pull_request\.head\.repo\.full_name == forgejo\.repository/u);
   assert.match(jobDefinition(workflow, "promote"), /promote-npm-candidate\.mjs/u);
   assert.match(jobDefinition(workflow, "promote"), /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
 });
