@@ -54,13 +54,54 @@ public sealed class TerraScaleBillingClientTests
         var request = new TerraScaleUpdateBillingAccessRequest(true);
         var json = JsonSerializer.Serialize(request, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         var plan = JsonSerializer.Deserialize<TerraScalePricingPlan>("""
-            {"planId":"plan-a","name":"Pro","currency":"USD","monthlyBaseCents":1000,"annualBaseCents":10000,"includedUsage":[{"name":"operations","quantity":1000000,"unit":"requests"}],"key":"pro","monthlyStripePriceId":null,"annualStripePriceId":"price-year","visible":true,"maxRegions":3,"operationOverageCentsPerMillion":100,"storageOverageCentsPerGbRegion":20}
+            {"planId":"plan-a","name":"Pro","currency":"USD","monthlyBaseCents":1000,"annualBaseCents":10000,"includedUsage":[{"name":"operations","quantity":1000000,"unit":"requests"}],"key":"pro","provider":"polar","monthlyPriceId":"polar-month","annualPriceId":"polar-year","monthlyPolarProductId":"product-month","annualPolarProductId":"product-year","monthlyStripePriceId":null,"annualStripePriceId":"price-year","monthlyTrialDays":14,"annualTrialDays":30,"visible":true,"maxRegions":3,"operationOverageCentsPerMillion":100,"storageOverageCentsPerGbRegion":20}
             """, new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
         await Assert.That(json).IsEqualTo("{\"enabled\":true}");
         await Assert.That(plan).IsNotNull();
         await Assert.That(plan!.AnnualStripePriceId).IsEqualTo("price-year");
         await Assert.That(plan.IncludedUsage[0].Unit).IsEqualTo("requests");
+        await Assert.That(plan.Provider).IsEqualTo("polar");
+        await Assert.That(plan.MonthlyPriceId).IsEqualTo("polar-month");
+        await Assert.That(plan.AnnualPolarProductId).IsEqualTo("product-year");
+        await Assert.That(plan.MonthlyTrialDays).IsEqualTo(14);
+        await Assert.That(plan.AnnualTrialDays).IsEqualTo(30);
+    }
+
+    [Test]
+    public async Task CreateCheckoutSessionAsync_SendsProviderNeutralPlanSelectionAndRejectsIllegalCombinations()
+    {
+        using var handler = new BillingRecordingHandler();
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleClient(httpClient, new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri("https://api.example.invalid/"),
+            BearerTokenProvider = static _ => ValueTask.FromResult("test-token")
+        });
+
+        var checkout = await client.Billing.CreateCheckoutSessionAsync(
+            "organization-a",
+            new TerraScaleCreateCheckoutSessionRequest() { PlanId = "plan-a", BillingInterval = "annual", Provider = "polar" });
+        var bothPlanAndPrice = await Assert.ThrowsAsync<ArgumentException>(() => client.Billing.CreateCheckoutSessionAsync(
+            "organization-a",
+            new TerraScaleCreateCheckoutSessionRequest("legacy-price") { PlanId = "plan-a" }));
+        var invalidInterval = await Assert.ThrowsAsync<ArgumentException>(() => client.Billing.CreateCheckoutSessionAsync(
+            "organization-a",
+            new TerraScaleCreateCheckoutSessionRequest() { BillingInterval = "weekly" }));
+        var invalidProvider = await Assert.ThrowsAsync<ArgumentException>(() => client.Billing.CreateCheckoutSessionAsync(
+            "organization-a",
+            new TerraScaleCreateCheckoutSessionRequest() { Provider = "other" }));
+        var invalidQuantity = await Assert.ThrowsAsync<ArgumentException>(() => client.Billing.CreateCheckoutSessionAsync(
+            "organization-a",
+            new TerraScaleCreateCheckoutSessionRequest(Quantity: 0)));
+
+        await Assert.That(checkout.SessionId).IsEqualTo("checkout-a");
+        await Assert.That(handler.Requests).Count().IsEqualTo(1);
+        await Assert.That(handler.Requests[0].Body).IsEqualTo("{\"priceId\":null,\"successUrl\":null,\"cancelUrl\":null,\"customerEmail\":null,\"quantity\":null,\"planId\":\"plan-a\",\"billingInterval\":\"annual\",\"provider\":\"polar\"}");
+        await Assert.That(bothPlanAndPrice).IsNotNull();
+        await Assert.That(invalidInterval).IsNotNull();
+        await Assert.That(invalidProvider).IsNotNull();
+        await Assert.That(invalidQuantity).IsNotNull();
     }
 
     [Test]
@@ -128,6 +169,29 @@ public sealed class TerraScaleBillingClientTests
         await Assert.That(handler.IdempotencyKeys.All(key => key == "explicit-retry-key")).IsTrue();
     }
 
+    [Test]
+    public async Task UpdateAccessAsync_DoesNotRetryTransientFailureWithoutReplayKey()
+    {
+        using var handler = new TransientBillingAccessHandler();
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleClient(httpClient, new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri("https://api.example.invalid/"),
+            BearerTokenProvider = static _ => ValueTask.FromResult("test-token"),
+            MaxRetryAttempts = 1,
+            RetryDelay = TimeSpan.Zero
+        });
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() => client.Billing.UpdateAccessAsync(
+            "organization-a",
+            "user-a",
+            new TerraScaleUpdateBillingAccessRequest(true)));
+
+        await Assert.That(exception).IsNotNull();
+        await Assert.That(handler.IdempotencyKeys).Count().IsEqualTo(1);
+        await Assert.That(handler.IdempotencyKeys[0]).IsNull();
+    }
+
     private sealed class BillingRecordingHandler(bool forbidden = false) : HttpMessageHandler
     {
         public List<BillingRecordedRequest> Requests { get; } = [];
@@ -160,7 +224,8 @@ public sealed class TerraScaleBillingClientTests
 
             var body = request.RequestUri!.AbsolutePath switch
             {
-                "/api/v1/pricing/plans" => "[{\"planId\":\"plan-a\",\"name\":\"Pro\",\"currency\":\"USD\",\"monthlyBaseCents\":1000,\"annualBaseCents\":10000,\"includedUsage\":[{\"name\":\"operations\",\"quantity\":1000000,\"unit\":\"requests\"}],\"key\":\"pro\",\"monthlyStripePriceId\":null,\"annualStripePriceId\":\"price-year\",\"visible\":true,\"maxRegions\":3,\"operationOverageCentsPerMillion\":100,\"storageOverageCentsPerGbRegion\":20}]",
+                "/api/v1/pricing/plans" => "[{\"planId\":\"plan-a\",\"name\":\"Pro\",\"currency\":\"USD\",\"monthlyBaseCents\":1000,\"annualBaseCents\":10000,\"includedUsage\":[{\"name\":\"operations\",\"quantity\":1000000,\"unit\":\"requests\"}],\"key\":\"pro\",\"provider\":\"polar\",\"monthlyPriceId\":\"polar-month\",\"annualPriceId\":\"polar-year\",\"monthlyPolarProductId\":\"product-month\",\"annualPolarProductId\":\"product-year\",\"monthlyStripePriceId\":null,\"annualStripePriceId\":\"price-year\",\"monthlyTrialDays\":14,\"annualTrialDays\":30,\"visible\":true,\"maxRegions\":3,\"operationOverageCentsPerMillion\":100,\"storageOverageCentsPerGbRegion\":20}]",
+                "/api/v1/organizations/organization-a/billing/checkout-sessions" => "{\"sessionId\":\"checkout-a\",\"url\":\"https://checkout.example.test/session\"}",
                 "/api/v1/organizations/organization%20%2F%20a/billing" => "{\"billingAccountId\":\"account-a\",\"organizationId\":\"organization-a\",\"planId\":\"plan-a\",\"status\":\"active\",\"billingInterval\":\"month\"}",
                 "/api/v1/organizations/organization%20%2F%20a/billing/invoices" => "{\"items\":[{\"invoiceId\":\"invoice-a\",\"billingAccountId\":\"account-a\",\"amountCents\":1000,\"currency\":\"USD\",\"status\":\"paid\",\"issuedAt\":\"2026-08-05T12:00:00+00:00\",\"periodStart\":null,\"periodEnd\":null,\"hostedInvoiceUrl\":null,\"invoicePdf\":null}],\"totalCount\":1,\"nextCursor\":null}",
                 _ when request.Method == HttpMethod.Put => "{\"userId\":\"user-a\",\"email\":\"user@example.test\",\"displayName\":\"User A\",\"role\":\"member\",\"enabled\":true,\"grantedAt\":\"2026-08-05T12:00:00+00:00\",\"grantedByUserId\":\"owner-a\"}",

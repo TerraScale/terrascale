@@ -268,6 +268,22 @@ public sealed class TerraScaleClient
             cancellationToken,
             idempotencyKey);
 
+    internal Task<TResponse> SendNonRetryableMutationAsync<TResponse>(
+        HttpMethod method,
+        string requestUri,
+        object? body,
+        CancellationToken cancellationToken) =>
+        SendAsync<TResponse, TResponse>(
+            method,
+            requestUri,
+            body,
+            preferredRegion: null,
+            configureRequest: null,
+            responseFactory: static (response, _) => response,
+            cancellationToken,
+            idempotencyKeyOverride: null,
+            allowUnkeyedPutRetry: false);
+
     internal Task<TResult> SendAsync<TResponse, TResult>(
         HttpMethod method,
         string requestUri,
@@ -284,7 +300,8 @@ public sealed class TerraScaleClient
             configureRequest,
             responseFactory,
             cancellationToken,
-            idempotencyKeyOverride: null);
+            idempotencyKeyOverride: null,
+            allowUnkeyedPutRetry: true);
 
     private async Task<TResult> SendAsync<TResponse, TResult>(
         HttpMethod method,
@@ -294,7 +311,8 @@ public sealed class TerraScaleClient
         Action<HttpRequestMessage>? configureRequest,
         Func<TResponse, HttpResponseMessage, TResult> responseFactory,
         CancellationToken cancellationToken,
-        string? idempotencyKeyOverride)
+        string? idempotencyKeyOverride,
+        bool allowUnkeyedPutRetry = true)
     {
         ArgumentNullException.ThrowIfNull(responseFactory);
         using var activity = StartActivity(method, requestUri);
@@ -314,7 +332,8 @@ public sealed class TerraScaleClient
             },
             activity,
             cancellationToken,
-            idempotencyKeyOverride).ConfigureAwait(false);
+            idempotencyKeyOverride,
+            allowUnkeyedPutRetry).ConfigureAwait(false);
 
         SetResponseTags(activity, response);
         var payload = await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken).ConfigureAwait(false);
@@ -547,7 +566,8 @@ public sealed class TerraScaleClient
         Action<HttpRequestMessage>? configureRequest,
         Activity? activity,
         CancellationToken cancellationToken,
-        string? idempotencyKeyOverride = null)
+        string? idempotencyKeyOverride = null,
+        bool allowUnkeyedPutRetry = true)
     {
         var requestId = CreateRequestId();
         var idempotencyKey = idempotencyKeyOverride ?? CreateIdempotencyKey(method);
@@ -572,7 +592,7 @@ public sealed class TerraScaleClient
                     HttpCompletionOption.ResponseHeadersRead,
                     cancellationToken).ConfigureAwait(false);
 
-                if (!ShouldRetryResponse(response, method, idempotencyKey, attempt))
+                if (!ShouldRetryResponse(response, method, idempotencyKey, attempt, allowUnkeyedPutRetry))
                 {
                     return response;
                 }
@@ -582,7 +602,7 @@ public sealed class TerraScaleClient
                 response.Dispose();
                 await DelayRetryAsync(delay, cancellationToken).ConfigureAwait(false);
             }
-            catch (HttpRequestException exception) when (CanRetry(method, idempotencyKey, attempt))
+            catch (HttpRequestException exception) when (CanRetry(method, idempotencyKey, attempt, allowUnkeyedPutRetry))
             {
                 var delay = GetRetryDelay(response: null, attempt);
                 AddRetryEvent(activity, attempt + 1, delay, exception.GetType().Name);
@@ -837,13 +857,15 @@ public sealed class TerraScaleClient
         HttpResponseMessage response,
         HttpMethod method,
         string? idempotencyKey,
-        int attempt) =>
-        CanRetry(method, idempotencyKey, attempt) &&
+        int attempt,
+        bool allowUnkeyedPutRetry) =>
+        CanRetry(method, idempotencyKey, attempt, allowUnkeyedPutRetry) &&
         IsRetryableStatus(response.StatusCode);
 
-    private bool CanRetry(HttpMethod method, string? idempotencyKey, int attempt) =>
+    private bool CanRetry(HttpMethod method, string? idempotencyKey, int attempt, bool allowUnkeyedPutRetry) =>
         attempt < options.MaxRetryAttempts &&
-        (IsSafeRetryMethod(method) || !string.IsNullOrWhiteSpace(idempotencyKey));
+        ((IsSafeRetryMethod(method) && (method != HttpMethod.Put || allowUnkeyedPutRetry)) ||
+         !string.IsNullOrWhiteSpace(idempotencyKey));
 
     private TimeSpan GetRetryDelay(HttpResponseMessage? response, int attempt)
     {

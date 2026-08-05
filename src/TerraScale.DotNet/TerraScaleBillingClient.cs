@@ -103,7 +103,7 @@ public sealed class TerraScaleBillingClient
         }
 
         return idempotencyKey is null
-            ? client.SendAsync<TerraScaleBillingAccessMember>(
+            ? client.SendNonRetryableMutationAsync<TerraScaleBillingAccessMember>(
                 HttpMethod.Put,
                 TerraScaleApiRoutes.BillingAccessUpdate(organizationId, userId),
                 request,
@@ -126,11 +126,39 @@ public sealed class TerraScaleBillingClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(organizationId);
         ArgumentNullException.ThrowIfNull(request);
+        ValidateCheckoutRequest(request);
         return client.SendAsync<TerraScaleCheckoutSession>(
             HttpMethod.Post,
             TerraScaleApiRoutes.BillingCheckoutSessionsCreate(organizationId),
             request,
             cancellationToken);
+    }
+
+    private static void ValidateCheckoutRequest(TerraScaleCreateCheckoutSessionRequest request)
+    {
+        if (!string.IsNullOrWhiteSpace(request.PlanId) && !string.IsNullOrWhiteSpace(request.PriceId))
+        {
+            throw new ArgumentException("Provide PlanId or the legacy PriceId, not both.", nameof(request));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.BillingInterval) &&
+            !request.BillingInterval.Trim().Equals("monthly", StringComparison.OrdinalIgnoreCase) &&
+            !request.BillingInterval.Trim().Equals("annual", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("BillingInterval must be 'monthly' or 'annual'.", nameof(request));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Provider) &&
+            !request.Provider.Trim().Equals("polar", StringComparison.OrdinalIgnoreCase) &&
+            !request.Provider.Trim().Equals("stripe", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("Provider must be 'polar' or 'stripe'.", nameof(request));
+        }
+
+        if (request.Quantity is <= 0 or > 1_000)
+        {
+            throw new ArgumentException("Quantity must be between 1 and 1000.", nameof(request));
+        }
     }
 
     /// <summary>
@@ -203,7 +231,43 @@ public sealed record TerraScalePricingPlan(
     bool Visible,
     int MaxRegions,
     int OperationOverageCentsPerMillion,
-    int StorageOverageCentsPerGbRegion);
+    int StorageOverageCentsPerGbRegion)
+{
+    /// <summary>
+    /// Provider that owns the plan's generic price identifiers.
+    /// </summary>
+    public string Provider { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Provider-selected monthly price identifier.
+    /// </summary>
+    public string? MonthlyPriceId { get; init; }
+
+    /// <summary>
+    /// Provider-selected annual price identifier.
+    /// </summary>
+    public string? AnnualPriceId { get; init; }
+
+    /// <summary>
+    /// Polar product identifier for the monthly interval.
+    /// </summary>
+    public string? MonthlyPolarProductId { get; init; }
+
+    /// <summary>
+    /// Polar product identifier for the annual interval.
+    /// </summary>
+    public string? AnnualPolarProductId { get; init; }
+
+    /// <summary>
+    /// Trial duration in days for monthly subscriptions.
+    /// </summary>
+    public int MonthlyTrialDays { get; init; }
+
+    /// <summary>
+    /// Trial duration in days for annual subscriptions.
+    /// </summary>
+    public int AnnualTrialDays { get; init; }
+}
 
 /// <summary>
 /// Included usage allowance for a public pricing plan.
@@ -235,7 +299,23 @@ public sealed record TerraScaleCreateCheckoutSessionRequest(
     string? SuccessUrl = null,
     string? CancelUrl = null,
     string? CustomerEmail = null,
-    int? Quantity = null);
+    int? Quantity = null)
+{
+    /// <summary>
+    /// Provider-neutral TerraScale plan identifier. Mutually exclusive with legacy <see cref="PriceId"/>.
+    /// </summary>
+    public string? PlanId { get; init; }
+
+    /// <summary>
+    /// Requested plan interval: <c>monthly</c> or <c>annual</c>.
+    /// </summary>
+    public string? BillingInterval { get; init; }
+
+    /// <summary>
+    /// Optional payment provider: <c>polar</c> or <c>stripe</c>.
+    /// </summary>
+    public string? Provider { get; init; }
+}
 
 /// <summary>
 /// Payment-provider checkout session returned by TerraScale billing.
