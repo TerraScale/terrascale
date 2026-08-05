@@ -55,6 +55,7 @@ test('read-only diagnostic refuses a write token without a separate read token b
 test('PR static CI runs retirement guards through the approved check command', () => {
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   const deployConfig = JSON.parse(readFileSync(new URL('../.terrascale/deploy.json', import.meta.url), 'utf8'))
+  const workflow = readFileSync(new URL('../.forgejo/workflows/ci.yml', import.meta.url), 'utf8')
   const staticProfile = deployConfig.prProfiles.find((profile) => profile.name === 'static')
   const releaseProfile = deployConfig.releaseProfiles.find((profile) => profile.name === 'release-e2e')
 
@@ -62,4 +63,12 @@ test('PR static CI runs retirement guards through the approved check command', (
   assert.ok(staticProfile.commands.some((command) => command.arguments.join(' ') === 'run check'))
   assert.ok(!staticProfile.commands.some((command) => command.arguments.join(' ') === 'test'))
   assert.ok(releaseProfile.commands.some((command) => command.arguments.join(' ') === 'test'))
+  assert.ok(releaseProfile.commands.some((command) => command.arguments.join(' ') === 'run check'))
+  assert.ok(releaseProfile.commands.some((command) => command.arguments.join(' ') === 'run test:e2e'))
+  assert.match(workflow, /ci release-test --repository-root \. --profile "\$\{\{ matrix\.profile \}\}" --result artifacts\/test-results\/release-e2e\.json/)
+  assert.match(workflow, /name: release-test-results-release-e2e, path: artifacts\/test-results\/release-e2e\.json/)
+  assert.match(workflow, /name: release-test-results-release-e2e, path: artifacts\/test-results/)
+  assert.match(workflow, /test -f "\$\{test_results\}"/)
+  assert.match(workflow, /find artifacts\/test-results -type f \| wc -l\)" -eq 1/)
+  assert.match(workflow, /candidate-manifest .*--test-results "\$\{test_results\}"/)
 })
