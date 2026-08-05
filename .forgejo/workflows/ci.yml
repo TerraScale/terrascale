@@ -165,6 +165,7 @@ jobs:
           ref: develop
           path: Documentation
       - run: node scripts/check-public-contract-fixture.mjs Documentation/public/openapi/server.openapi.json
+      - run: npm ci && npm run check:openapi-drift -- --strict Documentation/public/openapi/server.openapi.json
 
   release-version-availability:
     name: release/version-availability

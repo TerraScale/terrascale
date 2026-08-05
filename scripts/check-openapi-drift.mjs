@@ -29,7 +29,7 @@ export async function runOpenApiDriftCli(args, output = console) {
   }
 
   try {
-    const result = await checkOpenApiDrift(specReference, manifestReference, strict ? undefined : defaultBaseline, strict);
+    const result = await checkOpenApiDrift(specReference, manifestReference, defaultBaseline, strict);
     const formatted = formatOpenApiDriftResult(result, specReference, manifestReference);
     writeFormattedResult(formatted, output);
     return exitCodeForOpenApiDriftResult(result);
