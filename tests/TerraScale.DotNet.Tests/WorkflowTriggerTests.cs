@@ -13,14 +13,15 @@ public sealed class WorkflowTriggerTests
     public async Task PullRequestsToDevelopAndMainRunOnlyIsolatedSecretlessValidation()
     {
         var workflow = await ReadWorkflowAsync();
-        var jobs = ParseJobs(workflow);
+        var parsedWorkflow = ParseWorkflow(workflow);
+        var jobs = parsedWorkflow.Jobs;
         var unexpectedJobs = jobs.Keys
             .Except(["pr-validation", "trusted-candidate-required"], StringComparer.Ordinal)
             .ToArray();
 
         await Assert.That(workflow).Contains("  pull_request:\n    branches: [develop, main]");
         await Assert.That(unexpectedJobs.Length).IsEqualTo(0);
-        await Assert.That(FindPullRequestPolicyViolations(jobs).Length).IsEqualTo(0);
+        await Assert.That(FindWorkflowPolicyViolations(parsedWorkflow).Length).IsEqualTo(0);
     }
 
     [Test]
@@ -94,6 +95,50 @@ public sealed class WorkflowTriggerTests
                 $"{name}: action must be the approved pinned checkout action.",
                 StringComparison.Ordinal))).IsTrue();
         }
+    }
+
+    [Test]
+    public async Task DuplicateIfKeysAreRejectedBeforeReachabilityEvaluation()
+    {
+        var duplicateIf = """
+            jobs:
+              pr-validation:
+                if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
+                if: ${{ forgejo.event_name == 'pull_request' }}
+                runs-on: terrascale-builder
+                permissions: {}
+                steps:
+                  - uses: https://data.forgejo.org/actions/checkout@v6
+            """;
+
+        await Assert.That(RejectWorkflow(duplicateIf)).Contains("duplicate mapping key 'if'");
+    }
+
+    [Test]
+    public async Task RootEnvironmentAndDefaultsAreRejectedForPullRequestReachableJobs()
+    {
+        var parsedWorkflow = ParseWorkflow("""
+            env:
+              REGISTRY_TOKEN: not-a-secret
+            defaults:
+              run:
+                shell: bash
+            jobs:
+              pr-validation:
+                if: ${{ forgejo.event_name == 'pull_request' }}
+                runs-on: terrascale-untrusted
+                permissions:
+                  contents: read
+                steps:
+                  - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+                    with:
+                      persist-credentials: false
+            """);
+
+        var violations = FindWorkflowPolicyViolations(parsedWorkflow);
+
+        await Assert.That(violations.Any(violation => violation == "root: PR-reachable jobs must not inherit env.")).IsTrue();
+        await Assert.That(violations.Any(violation => violation == "root: PR-reachable jobs must not inherit defaults.")).IsTrue();
     }
 
     [Test]
@@ -219,6 +264,25 @@ public sealed class WorkflowTriggerTests
         return [.. violations];
     }
 
+    private static string[] FindWorkflowPolicyViolations(ParsedWorkflow workflow)
+    {
+        var violations = new List<string>();
+
+        if (workflow.Jobs.Values.Any(IsPullRequestReachable))
+        {
+            foreach (var inheritedSetting in new[] { "env", "defaults" })
+            {
+                if (GetValue(workflow.Root, inheritedSetting) is not null)
+                {
+                    violations.Add($"root: PR-reachable jobs must not inherit {inheritedSetting}.");
+                }
+            }
+        }
+
+        violations.AddRange(FindPullRequestPolicyViolations(workflow.Jobs));
+        return [.. violations];
+    }
+
     private static bool IsPullRequestReachable(YamlMappingNode job)
     {
         return GetScalar(job, "if") != TrustedMainCondition;
@@ -309,9 +373,12 @@ public sealed class WorkflowTriggerTests
         return null;
     }
 
-    private static IReadOnlyDictionary<string, YamlMappingNode> ParseJobs(string workflow)
+    private static IReadOnlyDictionary<string, YamlMappingNode> ParseJobs(string workflow) =>
+        ParseWorkflow(workflow).Jobs;
+
+    private static ParsedWorkflow ParseWorkflow(string workflow)
     {
-        RejectAliases(workflow);
+        RejectAliasesAndDuplicateMappingKeys(workflow);
 
         var yaml = new YamlStream();
         yaml.Load(new StringReader(workflow));
@@ -329,10 +396,12 @@ public sealed class WorkflowTriggerTests
         }
 
         var jobs = GetMapping(root, "jobs") ?? throw new InvalidDataException("Workflow must define jobs.");
-        return jobs.Children.ToDictionary(
+        return new ParsedWorkflow(
+            root,
+            jobs.Children.ToDictionary(
             pair => (pair.Key as YamlScalarNode)?.Value ?? throw new InvalidDataException("Workflow job names must be scalars."),
             pair => pair.Value as YamlMappingNode ?? throw new InvalidDataException("Workflow jobs must be mappings."),
-            StringComparer.Ordinal);
+            StringComparer.Ordinal));
     }
 
     private static string RejectWorkflow(string workflow)
@@ -348,17 +417,81 @@ public sealed class WorkflowTriggerTests
         }
     }
 
-    private static void RejectAliases(string workflow)
+    private static void RejectAliasesAndDuplicateMappingKeys(string workflow)
     {
-        // YamlStream resolves aliases while loading its representation model.
+        // YamlStream resolves aliases and duplicate keys while loading its representation model.
         var parser = new Parser(new StringReader(workflow));
         while (parser.MoveNext())
         {
-            if (parser.Current is AnchorAlias)
+            if (parser.Current is StreamStart or DocumentStart or DocumentEnd or StreamEnd)
             {
-                throw new InvalidDataException("Workflow YAML aliases and merge keys are not allowed.");
+                continue;
             }
+
+            RejectYamlNode(parser);
         }
+    }
+
+    private static string? RejectYamlNode(IParser parser)
+    {
+        switch (parser.Current)
+        {
+            case AnchorAlias:
+                throw new InvalidDataException("Workflow YAML aliases and merge keys are not allowed.");
+            case Scalar scalar:
+                return scalar.Value;
+            case MappingStart:
+                RejectDuplicateMappingKeys(parser);
+                return null;
+            case SequenceStart:
+                RejectDuplicateMappingKeysInSequence(parser);
+                return null;
+            default:
+                throw new InvalidDataException("Workflow YAML contains an unsupported parsing event.");
+        }
+    }
+
+    private static void RejectDuplicateMappingKeys(IParser parser)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+
+        while (parser.MoveNext())
+        {
+            if (parser.Current is MappingEnd)
+            {
+                return;
+            }
+
+            var key = RejectYamlNode(parser) ?? throw new InvalidDataException("Workflow YAML mapping keys must be scalars.");
+            if (!keys.Add(key))
+            {
+                throw new InvalidDataException($"Workflow YAML contains duplicate mapping key '{key}'.");
+            }
+
+            if (!parser.MoveNext() || parser.Current is MappingEnd)
+            {
+                throw new InvalidDataException("Workflow YAML mapping keys must have values.");
+            }
+
+            _ = RejectYamlNode(parser);
+        }
+
+        throw new InvalidDataException("Workflow YAML contains an unterminated mapping.");
+    }
+
+    private static void RejectDuplicateMappingKeysInSequence(IParser parser)
+    {
+        while (parser.MoveNext())
+        {
+            if (parser.Current is SequenceEnd)
+            {
+                return;
+            }
+
+            _ = RejectYamlNode(parser);
+        }
+
+        throw new InvalidDataException("Workflow YAML contains an unterminated sequence.");
     }
 
     private static void RejectMergeKeys(YamlNode node)
@@ -397,4 +530,8 @@ public sealed class WorkflowTriggerTests
         return (await File.ReadAllTextAsync(
             Path.Combine(root!.FullName, ".forgejo", "workflows", "ci.yml"))).ReplaceLineEndings("\n");
     }
+
+    private sealed record ParsedWorkflow(
+        YamlMappingNode Root,
+        IReadOnlyDictionary<string, YamlMappingNode> Jobs);
 }
