@@ -7,6 +7,7 @@ namespace TerraScale.DotNet.Tests;
 public sealed class WorkflowTriggerTests
 {
     private const string PinnedCheckout = "https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803";
+    private const string TrustedMainCondition = "${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}";
 
     [Test]
     public async Task PullRequestsToDevelopAndMainRunOnlyIsolatedSecretlessValidation()
@@ -58,6 +59,41 @@ public sealed class WorkflowTriggerTests
         await Assert.That(violations.Any(violation => violation.Contains(
             "pr-validation: runs-on must be terrascale-untrusted.",
             StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    public async Task CompositeAndNegatedConditionsAreRestrictedAsPullRequestReachable()
+    {
+        foreach (var (name, condition) in new[]
+                 {
+                     ("combined-events", "${{ forgejo.event_name == 'pull_request' || forgejo.event_name == 'push' }}"),
+                     ("negated-pull-request", "${{ !(forgejo.event_name != 'pull_request') }}")
+                 })
+        {
+            var jobs = ParseJobs($$"""
+                jobs:
+                  {{name}}:
+                    if: {{condition}}
+                    runs-on: terrascale-builder
+                    permissions: {}
+                    env:
+                      REGISTRY_TOKEN: not-a-secret
+                    steps:
+                      - uses: https://data.forgejo.org/actions/checkout@v6
+                """);
+
+            var violations = FindPullRequestPolicyViolations(jobs);
+
+            await Assert.That(violations.Any(violation => violation.Contains(
+                $"{name}: runs-on must be terrascale-untrusted.",
+                StringComparison.Ordinal))).IsTrue();
+            await Assert.That(violations.Any(violation => violation.Contains(
+                $"{name}: must not define env.",
+                StringComparison.Ordinal))).IsTrue();
+            await Assert.That(violations.Any(violation => violation.Contains(
+                $"{name}: action must be the approved pinned checkout action.",
+                StringComparison.Ordinal))).IsTrue();
+        }
     }
 
     [Test]
@@ -116,7 +152,7 @@ public sealed class WorkflowTriggerTests
         }
 
         var protectedJob = jobs["trusted-candidate-required"];
-        await Assert.That(GetScalar(protectedJob, "if")).IsEqualTo("${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}");
+        await Assert.That(GetScalar(protectedJob, "if")).IsEqualTo(TrustedMainCondition);
         await Assert.That(GetMapping(protectedJob, "permissions")?.Children.Count).IsEqualTo(0);
         await Assert.That(ScalarTexts(protectedJob).Any(text => text.Contains(
             "TerraScale.Orchestrator must provide a trusted post-merge candidate with verified provenance.",
@@ -185,10 +221,7 @@ public sealed class WorkflowTriggerTests
 
     private static bool IsPullRequestReachable(YamlMappingNode job)
     {
-        var condition = GetScalar(job, "if");
-        return condition is null ||
-               (!condition.Contains("forgejo.event_name == 'push'", StringComparison.Ordinal) &&
-                !condition.Contains("forgejo.event_name != 'pull_request'", StringComparison.Ordinal));
+        return GetScalar(job, "if") != TrustedMainCondition;
     }
 
     private static string[] ActionReferences(YamlNode node) =>
