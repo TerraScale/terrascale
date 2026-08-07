@@ -119,8 +119,8 @@ The public client follows the backed `TerraScale.Platform` REST surface:
   `/api/v1/users/me/notifications:mark-all-read` returns `{ markedRead }`.
 - Security settings: backed get and upsert routes at
   `/api/v1/projects/{projectId}/security/settings`.
-- Saved queries: typed v1 list/create/update/delete operations under
-  `/api/v1/projects/{projectId}/saved-queries`, revision-aware v2
+- Saved queries: `client.savedQueries.list/create/update/delete` provides typed
+  v1 CRUD under `/api/v1/projects/{projectId}/saved-queries`, with revision-aware v2
   `client.savedQueries.v2.list/get/update`, and mutation-safe snapshot pagination with
   `client.savedQueries.v3.list` under `/api/v3/projects/{projectId}/saved-queries`.
   V2 revisions and v3 cursors are opaque; reload a v3 collection after a cursor conflict.
