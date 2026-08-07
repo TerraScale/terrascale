@@ -2,6 +2,8 @@
 
 ## Project Scope
 
+- Workspace local-development invariant: in DevHost `quick` and `regional` profiles, Authentication and the product Dashboard keep fixed tailnet HTTPS URLs on ports `18445` and `18446` from startup. SDK examples and tests must not replace those URLs with loopback-only or floating endpoints.
+
 - This repository is the official C#/.NET client SDK for TerraScale.
 - Optimize for excellent developer experience: discoverable APIs, predictable names, strong typing, minimal setup, clear errors, and good IntelliSense documentation.
 - The SDK must be safe for library consumers: no process-wide mutable state, no hidden background work unless explicitly configured, no console output, and no ambient service discovery.
