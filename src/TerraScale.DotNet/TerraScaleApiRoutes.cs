@@ -28,6 +28,18 @@ internal static class TerraScaleApiRoutes
     public static string ProjectRegionPlacementsList(string projectId) =>
         $"{ProjectGet(projectId)}/regions";
 
+    public static string ProjectTeamMembersList(string projectId, int skip, int take) =>
+        WithQuery($"/api/v1/projects/{Escape(projectId)}/access/team-members", ("skip", Number(skip)), ("take", Number(take)));
+
+    public static string ProjectTeamMembersCreate(string projectId) =>
+        $"/api/v1/projects/{Escape(projectId)}/access/team-members";
+
+    public static string ProjectTeamMemberUpdate(string projectId, string userId) =>
+        $"{ProjectTeamMembersCreate(projectId)}/{Escape(userId)}";
+
+    public static string ProjectTeamMemberDelete(string projectId, string userId) =>
+        ProjectTeamMemberUpdate(projectId, userId);
+
     public static string ProjectDatabasesList(string projectId, int skip, int take) =>
         WithQuery($"/api/v1/projects/{Escape(projectId)}/databases", ("skip", Number(skip)), ("take", Number(take)));
 

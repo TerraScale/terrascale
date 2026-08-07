@@ -68,6 +68,7 @@ public sealed class TerraScaleClient
         ProjectUsage = new TerraScaleProjectUsageClient(this);
         ApiKeys = new TerraScaleApiKeysClient(this);
         M2MApplications = new TerraScaleM2MApplicationsClient(this);
+        Access = new TerraScaleProjectAccessClient(this);
         Notifications = new TerraScaleNotificationsClient(this);
         Administration = new TerraScaleAdministrationClient(this);
         Backups = new TerraScaleBackupsClient(this);
@@ -173,6 +174,11 @@ public sealed class TerraScaleClient
     /// Project machine-to-machine application operations.
     /// </summary>
     public TerraScaleM2MApplicationsClient M2MApplications { get; }
+
+    /// <summary>
+    /// Project team-member access operations.
+    /// </summary>
+    public TerraScaleProjectAccessClient Access { get; }
 
     /// <summary>
     /// Dashboard notification operations for the signed-in user.
@@ -295,6 +301,23 @@ public sealed class TerraScaleClient
         string? idempotencyKey = null) =>
         SendTypedJsonAsync(method, requestUri, body, requestTypeInfo, responseTypeInfo, cancellationToken, idempotencyKey);
 
+    internal Task<TResponse> SendNonRetryableJsonAsync<TRequest, TResponse>(
+        HttpMethod method,
+        string requestUri,
+        TRequest body,
+        JsonTypeInfo<TRequest> requestTypeInfo,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        CancellationToken cancellationToken) =>
+        SendTypedJsonAsync(
+            method,
+            requestUri,
+            body,
+            requestTypeInfo,
+            responseTypeInfo,
+            cancellationToken,
+            idempotencyKeyOverride: string.Empty,
+            allowUnkeyedPutRetry: false);
+
     private async Task<TResponse> SendTypedJsonAsync<TRequest, TResponse>(
         HttpMethod method,
         string requestUri,
@@ -302,7 +325,8 @@ public sealed class TerraScaleClient
         JsonTypeInfo<TRequest>? requestTypeInfo,
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken,
-        string? idempotencyKey = null)
+        string? idempotencyKeyOverride = null,
+        bool allowUnkeyedPutRetry = true)
     {
         using var activity = StartActivity(method, requestUri);
         using var response = await SendWithRetriesAsync(
@@ -313,7 +337,8 @@ public sealed class TerraScaleClient
             configureRequest: null,
             activity,
             cancellationToken,
-            idempotencyKey).ConfigureAwait(false);
+            idempotencyKeyOverride,
+            allowUnkeyedPutRetry).ConfigureAwait(false);
 
         SetResponseTags(activity, response);
         return await ReadJsonResponseAsync(response, responseTypeInfo, activity, cancellationToken).ConfigureAwait(false);
@@ -348,8 +373,31 @@ public sealed class TerraScaleClient
             configureRequest: null,
             responseFactory: static (response, _) => response,
             cancellationToken,
-            idempotencyKeyOverride: null,
+            idempotencyKeyOverride: string.Empty,
             allowUnkeyedPutRetry: false);
+
+    internal Task SendNonRetryableMutationAsync(
+        HttpMethod method,
+        string requestUri,
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            method,
+            requestUri,
+            cancellationToken,
+            idempotencyKeyOverride: string.Empty,
+            allowUnkeyedPutRetry: false);
+
+    internal Task SendNonRetryableNoContentAsync(
+        HttpMethod method,
+        string requestUri,
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            method,
+            requestUri,
+            cancellationToken,
+            idempotencyKeyOverride: string.Empty,
+            allowUnkeyedPutRetry: false,
+            expectedStatusCode: HttpStatusCode.NoContent);
 
     internal Task<TResult> SendAsync<TResponse, TResult>(
         HttpMethod method,
@@ -513,7 +561,10 @@ public sealed class TerraScaleClient
     internal async Task SendAsync(
         HttpMethod method,
         string requestUri,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? idempotencyKeyOverride = null,
+        bool allowUnkeyedPutRetry = true,
+        HttpStatusCode? expectedStatusCode = null)
     {
         using var activity = StartActivity(method, requestUri);
         using var response = await SendWithRetriesAsync(
@@ -523,7 +574,9 @@ public sealed class TerraScaleClient
             RequestAuthenticationMode.Authenticated,
             configureRequest: null,
             activity,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            idempotencyKeyOverride,
+            allowUnkeyedPutRetry).ConfigureAwait(false);
 
         SetResponseTags(activity, response);
 
@@ -531,6 +584,18 @@ public sealed class TerraScaleClient
         {
             activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
             throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (expectedStatusCode is { } expected && response.StatusCode != expected)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
+            throw new TerraScaleApiException(
+                response.StatusCode,
+                $"TerraScale returned HTTP {(int)response.StatusCode}, but HTTP {(int)expected} was required.",
+                errorCode: null,
+                requestId: ReadRequestId(response),
+                responseBody: null,
+                retryAfter: response.Headers.RetryAfter?.Delta);
         }
     }
 
@@ -886,6 +951,19 @@ public sealed class TerraScaleClient
         !string.IsNullOrWhiteSpace(options.ApiKey) ||
         !string.IsNullOrWhiteSpace(options.BearerToken) ||
         options.BearerTokenProvider is not null;
+
+    internal void ValidateConfiguredProjectId(string projectId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
+
+        if (!string.IsNullOrWhiteSpace(options.ProjectId) &&
+            !string.Equals(options.ProjectId.Trim(), projectId.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "The request projectId conflicts with the configured TerraScaleClientOptions.ProjectId.",
+                nameof(projectId));
+        }
+    }
 
     internal Uri SyncEndpoint
     {
