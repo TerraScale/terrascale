@@ -1,11 +1,15 @@
 using System.Net;
 using TerraScale.DotNet;
+using TUnit.Core;
 using TUnit.Core.Exceptions;
 
 namespace TerraScale.DotNet.Tests;
 
 public sealed class TerraScaleApiE2ETests
 {
+    private const string ProjectTeamMembershipSkipReason =
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_PROJECT_ACCESS_PROJECT_ID, TERRASCALE_E2E_PROJECT_ACCESS_OWNER_BEARER_TOKEN, TERRASCALE_E2E_PROJECT_ACCESS_LOW_PRIVILEGE_BEARER_TOKEN, TERRASCALE_E2E_PROJECT_ACCESS_MEMBER_USER_ID, TERRASCALE_E2E_PROJECT_ACCESS_ADD_ROLE, TERRASCALE_E2E_PROJECT_ACCESS_UPDATE_ROLE, TERRASCALE_E2E_PROJECT_ACCESS_CONFIRMED_DISPOSABLE=true, and TERRASCALE_E2E_ENABLE_PROJECT_ACCESS_LIFECYCLE=true to run the disposable project team-membership lifecycle E2E test.";
+
     [Test]
     [RequiresTerraScaleAdministrationAuthorization]
     [NotInParallel("administration-authorization")]
@@ -406,6 +410,59 @@ public sealed class TerraScaleApiE2ETests
                     userId,
                     new TerraScaleUpdateBillingAccessRequest(true),
                     $"sdk-e2e-billing-restore-{Guid.NewGuid():N}");
+            }
+        }
+    }
+
+    [Test]
+    [RequiresTerraScaleProjectTeamMembership]
+    [NotInParallel("project-team-membership-lifecycle")]
+    public async Task ProjectTeamMembership_OwnerManagesDedicatedMemberAndLowerPrivilegeBearerIsDenied()
+    {
+        var projectId = RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_PROJECT_ID");
+        var memberUserId = RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_MEMBER_USER_ID");
+        var addRole = RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_ADD_ROLE");
+        var updateRole = RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_UPDATE_ROLE");
+        using var ownerHttpClient = new HttpClient();
+        using var lowerPrivilegeHttpClient = new HttpClient();
+        var owner = CreateProjectTeamMembershipClient(
+            ownerHttpClient,
+            RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_OWNER_BEARER_TOKEN"));
+        var lowerPrivilege = CreateProjectTeamMembershipClient(
+            lowerPrivilegeHttpClient,
+            RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_LOW_PRIVILEGE_BEARER_TOKEN"));
+        var existing = await owner.Access.ListTeamMembersAsync(projectId, take: 100);
+        if (existing.Items.Any(member => string.Equals(member.UserId, memberUserId, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new SkipTestException("The configured project access member must not already be a team member.");
+        }
+
+        var ownerMutationStarted = false;
+        try
+        {
+            ownerMutationStarted = true;
+            var added = await owner.Access.AddTeamMemberAsync(projectId, new TerraScaleAddProjectTeamMemberRequest(memberUserId, addRole));
+            var updated = await owner.Access.UpdateTeamMemberAsync(projectId, memberUserId, new TerraScaleUpdateProjectTeamMemberRequest(updateRole));
+            var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                lowerPrivilege.Access.AddTeamMemberAsync(projectId, new TerraScaleAddProjectTeamMemberRequest(memberUserId, addRole)));
+
+            await Assert.That(added.UserId).IsEqualTo(memberUserId);
+            await Assert.That(added.Role).IsEqualTo(addRole);
+            await Assert.That(updated.UserId).IsEqualTo(memberUserId);
+            await Assert.That(updated.Role).IsEqualTo(updateRole);
+            await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        }
+        finally
+        {
+            if (ownerMutationStarted)
+            {
+                try
+                {
+                    await owner.Access.RemoveTeamMemberAsync(projectId, memberUserId);
+                }
+                catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+                {
+                }
             }
         }
     }
@@ -1261,5 +1318,33 @@ public sealed class TerraScaleApiE2ETests
         catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {
         }
+    }
+
+    private static bool IsProjectTeamMembershipConfigured =>
+        Uri.TryCreate(Environment.GetEnvironmentVariable("TERRASCALE_E2E_BASE_URL"), UriKind.Absolute, out _) &&
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_PROJECT_ID")) &&
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_OWNER_BEARER_TOKEN")) &&
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_LOW_PRIVILEGE_BEARER_TOKEN")) &&
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_MEMBER_USER_ID")) &&
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_ADD_ROLE")) &&
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_UPDATE_ROLE")) &&
+        string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_CONFIRMED_DISPOSABLE"), "true", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_PROJECT_ACCESS_LIFECYCLE"), "true", StringComparison.OrdinalIgnoreCase);
+
+    private static TerraScaleClient CreateProjectTeamMembershipClient(HttpClient httpClient, string bearerToken) =>
+        new(httpClient, new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri(RequiredEnvironment("TERRASCALE_E2E_BASE_URL")),
+            BearerToken = bearerToken
+        });
+
+    private static string RequiredEnvironment(string name) =>
+        Environment.GetEnvironmentVariable(name)?.Trim() ?? string.Empty;
+
+    public sealed class RequiresTerraScaleProjectTeamMembershipAttribute()
+        : SkipAttribute(ProjectTeamMembershipSkipReason)
+    {
+        public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+            Task.FromResult(!IsProjectTeamMembershipConfigured);
     }
 }

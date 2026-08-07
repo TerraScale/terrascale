@@ -99,20 +99,54 @@ public sealed class TerraScaleProjectAccessClient
 /// <summary>
 /// A page of project team members.
 /// </summary>
-public sealed record TerraScaleProjectTeamMemberPage(
-    IReadOnlyList<TerraScaleProjectTeamMember> Items,
-    int TotalCount,
-    string? NextCursor);
+public sealed record TerraScaleProjectTeamMemberPage
+{
+    /// <summary>
+    /// Team members in this page.
+    /// </summary>
+    public required IReadOnlyList<TerraScaleProjectTeamMember> Items { get; init; }
+
+    /// <summary>
+    /// Total number of team members available.
+    /// </summary>
+    public required int TotalCount { get; init; }
+
+    /// <summary>
+    /// Cursor for the next page, when available.
+    /// </summary>
+    public required string? NextCursor { get; init; }
+}
 
 /// <summary>
 /// A member of a project's team.
 /// </summary>
-public sealed record TerraScaleProjectTeamMember(
-    string UserId,
-    string Email,
-    string DisplayName,
-    string Role,
-    DateTimeOffset? JoinedAt);
+public sealed record TerraScaleProjectTeamMember
+{
+    /// <summary>
+    /// Team member user identifier.
+    /// </summary>
+    public required string UserId { get; init; }
+
+    /// <summary>
+    /// Team member email address.
+    /// </summary>
+    public required string Email { get; init; }
+
+    /// <summary>
+    /// Team member display name.
+    /// </summary>
+    public required string DisplayName { get; init; }
+
+    /// <summary>
+    /// Team member role supplied by the public API.
+    /// </summary>
+    public required string Role { get; init; }
+
+    /// <summary>
+    /// Time the user joined the project, or null when the API explicitly provides null.
+    /// </summary>
+    public required DateTimeOffset? JoinedAt { get; init; }
+}
 
 /// <summary>
 /// Request to add a user to a project's team.
