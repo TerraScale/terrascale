@@ -2,6 +2,8 @@
 
 ## Repository Role
 
+- Workspace local-development invariant: in DevHost `quick` and `regional` profiles, Authentication and the product Dashboard keep fixed tailnet HTTPS URLs on ports `18445` and `18446` from startup. Integration tests consume those stable public base URLs and must not replace them with loopback-only or floating endpoints.
+
 - This repository owns the public TerraScale TypeScript SDK package,
   `@terrascale/sdk`.
 - Keep it npm-only. Commit `package.json` and `package-lock.json`; do not add
