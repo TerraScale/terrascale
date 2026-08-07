@@ -2,6 +2,8 @@
 
 Operational guide for AI agents working in this repo. Read before making changes.
 
+- Workspace local-development invariant: in DevHost `quick` and `regional` profiles, Authentication and the product Dashboard keep fixed tailnet HTTPS URLs on ports `18445` and `18446` from startup. Landing-page work must not introduce a competing or loopback-only development endpoint contract.
+
 ## Public URL
 
 The production public site is **https://terrascale.tech**.
