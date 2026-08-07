@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, test } from "node:test";
 
 import type {
+  AccessRole,
   CreateCheckoutSessionRequest,
   CreateDatabaseBranchRequest,
   DatabaseBranchCapabilityResponse,
@@ -10,6 +11,8 @@ import type {
   ProjectSavedQuerySnapshotPageRequest,
   ProjectSavedQuerySnapshotPageResponse,
   ProjectSavedQueryV2Response,
+  TeamMember,
+  Timestamp,
   UsageMetric,
 } from "./models.js";
 import type { DatabaseBranchesClient, SavedQueriesClient, SavedQueriesV3Client } from "./client.js";
@@ -77,6 +80,14 @@ type ExpectedDatabaseBranchCapability = {
   readonly detail: string;
 };
 
+type ExpectedProjectTeamMember = {
+  readonly userId: Ulid;
+  readonly email: string;
+  readonly displayName: string;
+  readonly role: AccessRole;
+  readonly joinedAt: Timestamp | null;
+};
+
 type ExpectedCreateDatabaseBranchRequest = {
   readonly sourceDatabaseId?: Ulid;
 };
@@ -96,7 +107,8 @@ const staticSdkParity: readonly [
   Assert<Equal<DatabaseBranchCapabilityResponse, ExpectedDatabaseBranchCapability>>,
   Assert<Equal<CreateDatabaseBranchRequest, ExpectedCreateDatabaseBranchRequest>>,
   Assert<Equal<DatabaseBranchesClient["requestClone"], (request: ExpectedCreateDatabaseBranchRequest, projectId?: Ulid) => Promise<TerraScaleResult<never>>>>,
-] = [true, true, true, true, true, true, true, true, true];
+  Assert<Equal<TeamMember, ExpectedProjectTeamMember>>,
+] = [true, true, true, true, true, true, true, true, true, true];
 void staticSdkParity;
 
 type PublicContractFixture = {
@@ -218,6 +230,36 @@ describe("public contract fixture parity", () => {
       hasSuccessResponse: false,
       errorStatuses: [400, 401, 403, 404, 409, 429, 500, 503],
     });
+  });
+
+  test("keeps project team member display name and nullable join time required", async () => {
+    const descriptor = JSON.parse(
+      await readFile(new URL("../sdk-openapi-contract-descriptor.json", import.meta.url), "utf8"),
+    ) as {
+      readonly routes: readonly {
+        readonly operationId: string;
+        readonly responses: readonly {
+          readonly response: {
+            readonly content: {
+              readonly "application/json": {
+                readonly schema: {
+                  readonly resolved: {
+                    readonly properties: Readonly<Record<string, { readonly type?: readonly string[] | string }>>;
+                    readonly required: readonly string[];
+                  };
+                };
+              };
+            };
+          };
+        }[];
+      }[];
+    };
+    const addMember = descriptor.routes.find(({ operationId }) => operationId === "AddProjectTeamMember");
+    const teamMember = addMember?.responses[0]?.response.content["application/json"].schema.resolved;
+
+    assert.deepEqual(teamMember?.required, ["userId", "email", "displayName", "role", "joinedAt"]);
+    assert.equal(teamMember?.properties.displayName?.type, "string");
+    assert.deepEqual(teamMember?.properties.joinedAt?.type, ["null", "string"]);
   });
 });
 

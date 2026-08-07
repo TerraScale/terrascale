@@ -1154,9 +1154,9 @@ export type AccessRole = "member" | "owner" | "viewer";
 export type TeamMember = {
   readonly userId: UserId;
   readonly email: string;
-  readonly displayName?: string;
+  readonly displayName: string;
   readonly role: AccessRole;
-  readonly joinedAt?: Timestamp;
+  readonly joinedAt: Timestamp | null;
 };
 
 export type AddTeamMemberRequest = {
