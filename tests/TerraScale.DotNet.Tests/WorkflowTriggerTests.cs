@@ -115,6 +115,47 @@ public sealed class WorkflowTriggerTests
     }
 
     [Test]
+    public async Task DuplicateKeysInStepWithMappingAreRejectedBeforePolicyEvaluation()
+    {
+        var duplicatePersistCredentials = """
+            jobs:
+              pr-validation:
+                if: ${{ forgejo.event_name == 'pull_request' }}
+                runs-on: terrascale-untrusted
+                permissions:
+                  contents: read
+                steps:
+                  - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+                    with:
+                      persist-credentials: false
+                      persist-credentials: true
+            """;
+
+        await Assert.That(RejectWorkflow(duplicatePersistCredentials)).Contains("duplicate mapping key 'persist-credentials'");
+    }
+
+    [Test]
+    public async Task DuplicateKeysInSequenceItemMappingAreRejectedBeforePolicyEvaluation()
+    {
+        var duplicateStepEnvironment = """
+            jobs:
+              pr-validation:
+                if: ${{ forgejo.event_name == 'pull_request' }}
+                runs-on: terrascale-untrusted
+                permissions:
+                  contents: read
+                steps:
+                  - name: build
+                    env:
+                      CONFIGURATION: Release
+                      CONFIGURATION: Debug
+                    run: dotnet build
+            """;
+
+        await Assert.That(RejectWorkflow(duplicateStepEnvironment)).Contains("duplicate mapping key 'CONFIGURATION'");
+    }
+
+    [Test]
     public async Task RootEnvironmentAndDefaultsAreRejectedForPullRequestReachableJobs()
     {
         var parsedWorkflow = ParseWorkflow("""
