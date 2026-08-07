@@ -132,6 +132,58 @@ public sealed class TerraScaleProjectAccessClientTests
         }
     }
 
+    [Test]
+    public async Task TeamMemberResponses_RejectExplicitNullForRequiredStringsAndItems()
+    {
+        foreach (var requiredField in new[] { "userId", "email", "displayName", "role" })
+        {
+            foreach (var method in new[] { HttpMethod.Get, HttpMethod.Post, HttpMethod.Patch })
+            {
+                using var handler = new MalformedMemberResponseHandler(method, excludedField: null, nullField: requiredField);
+                using var httpClient = new HttpClient(handler);
+                var client = CreateClient(httpClient, "project-a");
+
+                var exception = method == HttpMethod.Get
+                    ? await Assert.ThrowsAsync<JsonException>(() => client.Access.ListTeamMembersAsync("project-a"))
+                    : method == HttpMethod.Post
+                        ? await Assert.ThrowsAsync<JsonException>(() => client.Access.AddTeamMemberAsync("project-a", new("user-a", "member")))
+                        : await Assert.ThrowsAsync<JsonException>(() => client.Access.UpdateTeamMemberAsync("project-a", "user-a", new("member")));
+
+                await Assert.That(exception).IsNotNull();
+            }
+        }
+
+        using var itemsHandler = new NullItemsPageResponseHandler();
+        using var itemsHttpClient = new HttpClient(itemsHandler);
+        var itemsClient = CreateClient(itemsHttpClient, "project-a");
+        var itemsException = await Assert.ThrowsAsync<JsonException>(() => itemsClient.Access.ListTeamMembersAsync("project-a"));
+
+        await Assert.That(itemsException).IsNotNull();
+    }
+
+    [Test]
+    public async Task TeamMemberModels_PreservePositionalConstructorsAndDeconstruction()
+    {
+        var member = new TerraScaleProjectTeamMember(
+            "user-a",
+            "user@example.test",
+            "User A",
+            "member",
+            DateTimeOffset.UnixEpoch);
+        var page = new TerraScaleProjectTeamMemberPage([member], 1, null);
+        var (userId, email, displayName, role, joinedAt) = member;
+        var (items, totalCount, nextCursor) = page;
+
+        await Assert.That(userId).IsEqualTo("user-a");
+        await Assert.That(email).IsEqualTo("user@example.test");
+        await Assert.That(displayName).IsEqualTo("User A");
+        await Assert.That(role).IsEqualTo("member");
+        await Assert.That(joinedAt).IsEqualTo(DateTimeOffset.UnixEpoch);
+        await Assert.That(items[0]).IsEqualTo(member);
+        await Assert.That(totalCount).IsEqualTo(1);
+        await Assert.That(nextCursor).IsNull();
+    }
+
     private static TerraScaleClient CreateClient(HttpClient httpClient, string projectId, int maxRetryAttempts = 0) => new(httpClient, new TerraScaleClientOptions
     {
         BaseAddress = new Uri("https://api.example.invalid/"),
@@ -185,7 +237,11 @@ public sealed class TerraScaleProjectAccessClientTests
         }
     }
 
-    private sealed class MalformedMemberResponseHandler(HttpMethod expectedMethod, string? excludedField, bool joinedAtIsNull = false) : HttpMessageHandler
+    private sealed class MalformedMemberResponseHandler(
+        HttpMethod expectedMethod,
+        string? excludedField,
+        bool joinedAtIsNull = false,
+        string? nullField = null) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -194,7 +250,7 @@ public sealed class TerraScaleProjectAccessClientTests
                 throw new InvalidOperationException("Unexpected request method.");
             }
 
-            var member = MemberJson(excludedField, joinedAtIsNull);
+            var member = MemberJson(excludedField, joinedAtIsNull, nullField);
             var response = request.Method == HttpMethod.Get
                 ? $"{{\"items\":[{member}],\"totalCount\":1,\"nextCursor\":null}}"
                 : member;
@@ -224,16 +280,25 @@ public sealed class TerraScaleProjectAccessClientTests
         }
     }
 
+    private sealed class NullItemsPageResponseHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"items\":null,\"totalCount\":1,\"nextCursor\":null}", Encoding.UTF8, "application/json")
+            });
+    }
+
     private static string? Header(HttpRequestMessage request, string name) =>
         request.Headers.TryGetValues(name, out var values) ? values.Single() : null;
 
-    private static string MemberJson(string? excludedField, bool joinedAtIsNull) =>
+    private static string MemberJson(string? excludedField, bool joinedAtIsNull, string? nullField = null) =>
         $"{{{string.Join(',', new[]
         {
-            ("userId", "\"userId\":\"user-a\""),
-            ("email", "\"email\":\"user@example.test\""),
-            ("displayName", "\"displayName\":\"User A\""),
-            ("role", "\"role\":\"member\""),
+            ("userId", nullField == "userId" ? "\"userId\":null" : "\"userId\":\"user-a\""),
+            ("email", nullField == "email" ? "\"email\":null" : "\"email\":\"user@example.test\""),
+            ("displayName", nullField == "displayName" ? "\"displayName\":null" : "\"displayName\":\"User A\""),
+            ("role", nullField == "role" ? "\"role\":null" : "\"role\":\"member\""),
             ("joinedAt", joinedAtIsNull ? "\"joinedAt\":null" : "\"joinedAt\":\"2026-08-07T12:00:00+00:00\"")
         }.Where(field => field.Item1 != excludedField).Select(field => field.Item2))}}}";
 

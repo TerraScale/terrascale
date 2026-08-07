@@ -431,17 +431,17 @@ public sealed class TerraScaleApiE2ETests
         var lowerPrivilege = CreateProjectTeamMembershipClient(
             lowerPrivilegeHttpClient,
             RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_LOW_PRIVILEGE_BEARER_TOKEN"));
-        var existing = await owner.Access.ListTeamMembersAsync(projectId, take: 100);
-        if (existing.Items.Any(member => string.Equals(member.UserId, memberUserId, StringComparison.OrdinalIgnoreCase)))
+        var existing = await ListAllProjectTeamMembersAsync(owner, projectId);
+        if (existing.Any(member => string.Equals(member.UserId, memberUserId, StringComparison.OrdinalIgnoreCase)))
         {
             throw new SkipTestException("The configured project access member must not already be a team member.");
         }
 
-        var ownerMutationStarted = false;
+        var fixtureMembershipCreated = false;
         try
         {
-            ownerMutationStarted = true;
             var added = await owner.Access.AddTeamMemberAsync(projectId, new TerraScaleAddProjectTeamMemberRequest(memberUserId, addRole));
+            fixtureMembershipCreated = true;
             var updated = await owner.Access.UpdateTeamMemberAsync(projectId, memberUserId, new TerraScaleUpdateProjectTeamMemberRequest(updateRole));
             var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
                 lowerPrivilege.Access.AddTeamMemberAsync(projectId, new TerraScaleAddProjectTeamMemberRequest(memberUserId, addRole)));
@@ -454,7 +454,7 @@ public sealed class TerraScaleApiE2ETests
         }
         finally
         {
-            if (ownerMutationStarted)
+            if (fixtureMembershipCreated)
             {
                 try
                 {
@@ -462,6 +462,12 @@ public sealed class TerraScaleApiE2ETests
                 }
                 catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
                 {
+                }
+
+                var remaining = await ListAllProjectTeamMembersAsync(owner, projectId);
+                if (remaining.Any(member => string.Equals(member.UserId, memberUserId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    throw new InvalidOperationException("The disposable project access fixture membership was not removed during cleanup.");
                 }
             }
         }
@@ -1337,6 +1343,39 @@ public sealed class TerraScaleApiE2ETests
             BaseAddress = new Uri(RequiredEnvironment("TERRASCALE_E2E_BASE_URL")),
             BearerToken = bearerToken
         });
+
+    private static async Task<IReadOnlyList<TerraScaleProjectTeamMember>> ListAllProjectTeamMembersAsync(
+        TerraScaleClient client,
+        string projectId)
+    {
+        const int Take = 100;
+        var members = new List<TerraScaleProjectTeamMember>();
+        var skip = 0;
+        int? totalCount = null;
+
+        while (true)
+        {
+            var page = await client.Access.ListTeamMembersAsync(projectId, skip, Take);
+            if (totalCount is not null && page.TotalCount != totalCount)
+            {
+                throw new SkipTestException("The project team-member list changed while the disposable fixture was being checked.");
+            }
+
+            totalCount = page.TotalCount;
+            members.AddRange(page.Items);
+            if (members.Count >= totalCount.Value)
+            {
+                return members;
+            }
+
+            if (page.Items.Count == 0)
+            {
+                throw new SkipTestException("The project team-member list could not be exhaustively paged for the disposable fixture check.");
+            }
+
+            skip += page.Items.Count;
+        }
+    }
 
     private static string RequiredEnvironment(string name) =>
         Environment.GetEnvironmentVariable(name)?.Trim() ?? string.Empty;

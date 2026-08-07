@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -99,53 +100,141 @@ public sealed class TerraScaleProjectAccessClient
 /// <summary>
 /// A page of project team members.
 /// </summary>
-public sealed record TerraScaleProjectTeamMemberPage
+public sealed record TerraScaleProjectTeamMemberPage : IJsonOnDeserialized
 {
+    /// <summary>
+    /// Creates a page of project team members.
+    /// </summary>
+    [JsonConstructor]
+    [SetsRequiredMembers]
+    public TerraScaleProjectTeamMemberPage(
+        IReadOnlyList<TerraScaleProjectTeamMember> items,
+        int totalCount,
+        string? nextCursor)
+    {
+        Items = items;
+        TotalCount = totalCount;
+        NextCursor = nextCursor;
+    }
+
     /// <summary>
     /// Team members in this page.
     /// </summary>
+    [JsonRequired]
     public required IReadOnlyList<TerraScaleProjectTeamMember> Items { get; init; }
 
     /// <summary>
     /// Total number of team members available.
     /// </summary>
+    [JsonRequired]
     public required int TotalCount { get; init; }
 
     /// <summary>
     /// Cursor for the next page, when available.
     /// </summary>
+    [JsonRequired]
     public required string? NextCursor { get; init; }
+
+    /// <summary>
+    /// Deconstructs this page into its positional record fields.
+    /// </summary>
+    public void Deconstruct(
+        out IReadOnlyList<TerraScaleProjectTeamMember> items,
+        out int totalCount,
+        out string? nextCursor)
+    {
+        items = Items;
+        totalCount = TotalCount;
+        nextCursor = NextCursor;
+    }
+
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        if (Items is null)
+        {
+            throw new JsonException("TerraScale team-member page response requires a non-null items field.");
+        }
+    }
 }
 
 /// <summary>
 /// A member of a project's team.
 /// </summary>
-public sealed record TerraScaleProjectTeamMember
+public sealed record TerraScaleProjectTeamMember : IJsonOnDeserialized
 {
+    /// <summary>
+    /// Creates a project team member.
+    /// </summary>
+    [JsonConstructor]
+    [SetsRequiredMembers]
+    public TerraScaleProjectTeamMember(
+        string userId,
+        string email,
+        string displayName,
+        string role,
+        DateTimeOffset? joinedAt)
+    {
+        UserId = userId;
+        Email = email;
+        DisplayName = displayName;
+        Role = role;
+        JoinedAt = joinedAt;
+    }
+
     /// <summary>
     /// Team member user identifier.
     /// </summary>
+    [JsonRequired]
     public required string UserId { get; init; }
 
     /// <summary>
     /// Team member email address.
     /// </summary>
+    [JsonRequired]
     public required string Email { get; init; }
 
     /// <summary>
     /// Team member display name.
     /// </summary>
+    [JsonRequired]
     public required string DisplayName { get; init; }
 
     /// <summary>
     /// Team member role supplied by the public API.
     /// </summary>
+    [JsonRequired]
     public required string Role { get; init; }
 
     /// <summary>
     /// Time the user joined the project, or null when the API explicitly provides null.
     /// </summary>
+    [JsonRequired]
     public required DateTimeOffset? JoinedAt { get; init; }
+
+    /// <summary>
+    /// Deconstructs this member into its positional record fields.
+    /// </summary>
+    public void Deconstruct(
+        out string userId,
+        out string email,
+        out string displayName,
+        out string role,
+        out DateTimeOffset? joinedAt)
+    {
+        userId = UserId;
+        email = Email;
+        displayName = DisplayName;
+        role = Role;
+        joinedAt = JoinedAt;
+    }
+
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        if (UserId is null || Email is null || DisplayName is null || Role is null)
+        {
+            throw new JsonException("TerraScale team-member response requires non-null userId, email, displayName, and role fields.");
+        }
+    }
 }
 
 /// <summary>
