@@ -103,6 +103,13 @@ public sealed class TerraScaleProjectAccessClient
 public sealed record TerraScaleProjectTeamMemberPage : IJsonOnDeserialized
 {
     /// <summary>
+    /// Creates a page for required-property object initialization.
+    /// </summary>
+    public TerraScaleProjectTeamMemberPage()
+    {
+    }
+
+    /// <summary>
     /// Creates a page of project team members.
     /// </summary>
     [JsonConstructor]
@@ -162,6 +169,13 @@ public sealed record TerraScaleProjectTeamMemberPage : IJsonOnDeserialized
 /// </summary>
 public sealed record TerraScaleProjectTeamMember : IJsonOnDeserialized
 {
+    /// <summary>
+    /// Creates a member for required-property object initialization.
+    /// </summary>
+    public TerraScaleProjectTeamMember()
+    {
+    }
+
     /// <summary>
     /// Creates a project team member.
     /// </summary>

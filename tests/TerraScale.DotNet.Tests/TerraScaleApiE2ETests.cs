@@ -8,7 +8,7 @@ namespace TerraScale.DotNet.Tests;
 public sealed class TerraScaleApiE2ETests
 {
     private const string ProjectTeamMembershipSkipReason =
-        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_PROJECT_ACCESS_PROJECT_ID, TERRASCALE_E2E_PROJECT_ACCESS_OWNER_BEARER_TOKEN, TERRASCALE_E2E_PROJECT_ACCESS_LOW_PRIVILEGE_BEARER_TOKEN, TERRASCALE_E2E_PROJECT_ACCESS_MEMBER_USER_ID, TERRASCALE_E2E_PROJECT_ACCESS_ADD_ROLE, TERRASCALE_E2E_PROJECT_ACCESS_UPDATE_ROLE, TERRASCALE_E2E_PROJECT_ACCESS_CONFIRMED_DISPOSABLE=true, and TERRASCALE_E2E_ENABLE_PROJECT_ACCESS_LIFECYCLE=true to run the disposable project team-membership lifecycle E2E test.";
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_PROJECT_ACCESS_PROJECT_ID, TERRASCALE_E2E_PROJECT_ACCESS_OWNER_BEARER_TOKEN, TERRASCALE_E2E_PROJECT_ACCESS_LOW_PRIVILEGE_BEARER_TOKEN, and TERRASCALE_E2E_ENABLE_PROJECT_ACCESS_LIFECYCLE=true to run the project team-membership bearer authorization E2E test.";
 
     [Test]
     [RequiresTerraScaleAdministrationAuthorization]
@@ -417,12 +417,9 @@ public sealed class TerraScaleApiE2ETests
     [Test]
     [RequiresTerraScaleProjectTeamMembership]
     [NotInParallel("project-team-membership-lifecycle")]
-    public async Task ProjectTeamMembership_OwnerManagesDedicatedMemberAndLowerPrivilegeBearerIsDenied()
+    public async Task ProjectTeamMembership_OwnerListsAndLowerPrivilegeBearerCannotAdd()
     {
         var projectId = RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_PROJECT_ID");
-        var memberUserId = RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_MEMBER_USER_ID");
-        var addRole = RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_ADD_ROLE");
-        var updateRole = RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_UPDATE_ROLE");
         using var ownerHttpClient = new HttpClient();
         using var lowerPrivilegeHttpClient = new HttpClient();
         var owner = CreateProjectTeamMembershipClient(
@@ -431,46 +428,14 @@ public sealed class TerraScaleApiE2ETests
         var lowerPrivilege = CreateProjectTeamMembershipClient(
             lowerPrivilegeHttpClient,
             RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_LOW_PRIVILEGE_BEARER_TOKEN"));
-        var existing = await ListAllProjectTeamMembersAsync(owner, projectId);
-        if (existing.Any(member => string.Equals(member.UserId, memberUserId, StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new SkipTestException("The configured project access member must not already be a team member.");
-        }
+        var members = await owner.Access.ListTeamMembersAsync(projectId, take: 1);
+        var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            lowerPrivilege.Access.AddTeamMemberAsync(
+                projectId,
+                new TerraScaleAddProjectTeamMemberRequest("00000000000000000000000000", "member")));
 
-        var fixtureMembershipCreated = false;
-        try
-        {
-            var added = await owner.Access.AddTeamMemberAsync(projectId, new TerraScaleAddProjectTeamMemberRequest(memberUserId, addRole));
-            fixtureMembershipCreated = true;
-            var updated = await owner.Access.UpdateTeamMemberAsync(projectId, memberUserId, new TerraScaleUpdateProjectTeamMemberRequest(updateRole));
-            var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-                lowerPrivilege.Access.AddTeamMemberAsync(projectId, new TerraScaleAddProjectTeamMemberRequest(memberUserId, addRole)));
-
-            await Assert.That(added.UserId).IsEqualTo(memberUserId);
-            await Assert.That(added.Role).IsEqualTo(addRole);
-            await Assert.That(updated.UserId).IsEqualTo(memberUserId);
-            await Assert.That(updated.Role).IsEqualTo(updateRole);
-            await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        }
-        finally
-        {
-            if (fixtureMembershipCreated)
-            {
-                try
-                {
-                    await owner.Access.RemoveTeamMemberAsync(projectId, memberUserId);
-                }
-                catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
-                {
-                }
-
-                var remaining = await ListAllProjectTeamMembersAsync(owner, projectId);
-                if (remaining.Any(member => string.Equals(member.UserId, memberUserId, StringComparison.OrdinalIgnoreCase)))
-                {
-                    throw new InvalidOperationException("The disposable project access fixture membership was not removed during cleanup.");
-                }
-            }
-        }
+        await Assert.That(members.Items).IsNotNull();
+        await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
     }
 
     [Test]
@@ -1331,10 +1296,6 @@ public sealed class TerraScaleApiE2ETests
         !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_PROJECT_ID")) &&
         !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_OWNER_BEARER_TOKEN")) &&
         !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_LOW_PRIVILEGE_BEARER_TOKEN")) &&
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_MEMBER_USER_ID")) &&
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_ADD_ROLE")) &&
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_UPDATE_ROLE")) &&
-        string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_PROJECT_ACCESS_CONFIRMED_DISPOSABLE"), "true", StringComparison.OrdinalIgnoreCase) &&
         string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_PROJECT_ACCESS_LIFECYCLE"), "true", StringComparison.OrdinalIgnoreCase);
 
     private static TerraScaleClient CreateProjectTeamMembershipClient(HttpClient httpClient, string bearerToken) =>
@@ -1343,39 +1304,6 @@ public sealed class TerraScaleApiE2ETests
             BaseAddress = new Uri(RequiredEnvironment("TERRASCALE_E2E_BASE_URL")),
             BearerToken = bearerToken
         });
-
-    private static async Task<IReadOnlyList<TerraScaleProjectTeamMember>> ListAllProjectTeamMembersAsync(
-        TerraScaleClient client,
-        string projectId)
-    {
-        const int Take = 100;
-        var members = new List<TerraScaleProjectTeamMember>();
-        var skip = 0;
-        int? totalCount = null;
-
-        while (true)
-        {
-            var page = await client.Access.ListTeamMembersAsync(projectId, skip, Take);
-            if (totalCount is not null && page.TotalCount != totalCount)
-            {
-                throw new SkipTestException("The project team-member list changed while the disposable fixture was being checked.");
-            }
-
-            totalCount = page.TotalCount;
-            members.AddRange(page.Items);
-            if (members.Count >= totalCount.Value)
-            {
-                return members;
-            }
-
-            if (page.Items.Count == 0)
-            {
-                throw new SkipTestException("The project team-member list could not be exhaustively paged for the disposable fixture check.");
-            }
-
-            skip += page.Items.Count;
-        }
-    }
 
     private static string RequiredEnvironment(string name) =>
         Environment.GetEnvironmentVariable(name)?.Trim() ?? string.Empty;

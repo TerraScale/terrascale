@@ -184,6 +184,29 @@ public sealed class TerraScaleProjectAccessClientTests
         await Assert.That(nextCursor).IsNull();
     }
 
+    [Test]
+    public async Task TeamMemberModels_PreserveRequiredPropertyObjectInitializerConstruction()
+    {
+        var member = new TerraScaleProjectTeamMember
+        {
+            UserId = "user-a",
+            Email = "user@example.test",
+            DisplayName = "User A",
+            Role = "member",
+            JoinedAt = null
+        };
+        var page = new TerraScaleProjectTeamMemberPage
+        {
+            Items = [member],
+            TotalCount = 1,
+            NextCursor = null
+        };
+
+        await Assert.That(page.Items[0]).IsEqualTo(member);
+        await Assert.That(page.TotalCount).IsEqualTo(1);
+        await Assert.That(member.JoinedAt).IsNull();
+    }
+
     private static TerraScaleClient CreateClient(HttpClient httpClient, string projectId, int maxRetryAttempts = 0) => new(httpClient, new TerraScaleClientOptions
     {
         BaseAddress = new Uri("https://api.example.invalid/"),
