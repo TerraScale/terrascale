@@ -417,7 +417,7 @@ public sealed class TerraScaleApiE2ETests
     [Test]
     [RequiresTerraScaleProjectTeamMembership]
     [NotInParallel("project-team-membership-lifecycle")]
-    public async Task ProjectTeamMembership_OwnerListsAndLowerPrivilegeBearerCannotAdd()
+    public async Task ProjectTeamMembership_OwnerListsAndLowerPrivilegeBearerIsDenied()
     {
         var projectId = RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_PROJECT_ID");
         using var ownerHttpClient = new HttpClient();
@@ -430,9 +430,7 @@ public sealed class TerraScaleApiE2ETests
             RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_LOW_PRIVILEGE_BEARER_TOKEN"));
         var members = await owner.Access.ListTeamMembersAsync(projectId, take: 1);
         var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            lowerPrivilege.Access.AddTeamMemberAsync(
-                projectId,
-                new TerraScaleAddProjectTeamMemberRequest("00000000000000000000000000", "member")));
+            lowerPrivilege.Access.ListTeamMembersAsync(projectId, take: 1));
 
         await Assert.That(members.Items).IsNotNull();
         await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
