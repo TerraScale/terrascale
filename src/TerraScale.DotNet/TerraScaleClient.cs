@@ -2,9 +2,9 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.ServerSentEvents;
 using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -615,7 +615,6 @@ public sealed class TerraScaleClient
         HttpRequestMessage? request = null;
         HttpResponseMessage? response = null;
         Stream? stream = null;
-        StreamReader? reader = null;
 
         try
         {
@@ -641,71 +640,19 @@ public sealed class TerraScaleClient
             }
 
             stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            reader = new StreamReader(
-                stream,
-                Encoding.UTF8,
-                detectEncodingFromByteOrderMarks: true,
-                bufferSize: 1024,
-                leaveOpen: true);
-            var currentEvent = string.Empty;
-            using var data = ZString.CreateStringBuilder();
+            var parser = SseParser.Create(stream);
 
-            while (!cancellationToken.IsCancellationRequested)
+            await foreach (var item in parser.EnumerateAsync(cancellationToken).ConfigureAwait(false))
             {
-                string? line;
-                try
+                if (string.Equals(item.EventType, eventName, StringComparison.Ordinal))
                 {
-                    line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    yield break;
-                }
-                catch (NotSupportedException) when (cancellationToken.IsCancellationRequested)
-                {
-                    yield break;
-                }
-
-                if (line is null)
-                {
-                    yield break;
-                }
-
-                if (line.Length == 0)
-                {
-                    if (string.Equals(currentEvent, eventName, StringComparison.Ordinal) &&
-                        data.Length > 0)
-                    {
-                        var payload = JsonSerializer.Deserialize<TEvent>(data.ToString(), jsonOptions)
-                            ?? throw new InvalidOperationException($"TerraScale SSE event '{eventName}' contained an empty payload.");
-                        yield return payload;
-                    }
-
-                    currentEvent = string.Empty;
-                    data.Clear();
-                    continue;
-                }
-
-                if (line.StartsWith("event: ", StringComparison.Ordinal))
-                {
-                    currentEvent = line["event: ".Length..].Trim();
-                    continue;
-                }
-
-                if (line.StartsWith("data: ", StringComparison.Ordinal))
-                {
-                    if (data.Length > 0)
-                    {
-                        data.Append('\n');
-                    }
-
-                    data.Append(line["data: ".Length..]);
+                    yield return JsonSerializer.Deserialize<TEvent>(item.Data, jsonOptions)
+                        ?? throw new InvalidOperationException($"TerraScale SSE event '{eventName}' contained an empty payload.");
                 }
             }
         }
         finally
         {
-            DisposeIgnoringNotSupported(reader);
             DisposeIgnoringNotSupported(stream);
             DisposeIgnoringNotSupported(response);
             DisposeIgnoringNotSupported(request);
