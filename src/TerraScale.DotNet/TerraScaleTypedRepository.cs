@@ -8,7 +8,7 @@ namespace TerraScale.DotNet;
 /// <typeparam name="TEntity">Application model stored in the repository document data.</typeparam>
 public sealed class TerraScaleTypedRepository<TEntity>
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = JsonSerializerOptions.Web;
     private readonly TerraScaleClient client;
 
     internal TerraScaleTypedRepository(TerraScaleClient client, string repository)
