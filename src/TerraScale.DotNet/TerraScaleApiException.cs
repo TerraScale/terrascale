@@ -73,8 +73,7 @@ public sealed class TerraScaleApiException : HttpRequestException
 
         try
         {
-            using var document = JsonDocument.Parse(body);
-            var root = document.RootElement;
+            var root = JsonElement.Parse(body);
             if (root.TryGetProperty("error", out var error) &&
                 error.ValueKind == JsonValueKind.Object)
             {
