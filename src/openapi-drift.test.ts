@@ -64,12 +64,17 @@ describe("OpenAPI drift checker", () => {
     ]), /duplicate/u);
   });
 
-  test("strict CLI validates the baseline before evaluating debt", async () => {
+  test("strict CLI succeeds with an empty reviewed baseline and covered typed fixture", async () => {
     const checker = await checkerModule;
     const lines: string[] = [];
-    const status = await checker.runOpenApiDriftCli(["--strict", path.join(fixtureDirectory, "openapi-covered-with-extra.json")], { log: line => lines.push(line), error: line => lines.push(line) });
-    assert.equal(status, 1);
-    assert.match(lines.join("\n"), /baseline changed/u);
+    const status = await checker.runOpenApiDriftCli([
+      path.join(fixtureDirectory, "openapi-covered-with-extra.json"),
+      fixtureManifest,
+      "--strict",
+    ], { log: line => lines.push(line), error: line => lines.push(line) });
+    assert.equal(status, 0);
+    assert.match(lines.join("\n"), /OpenAPI drift check passed: 2\/2 SDK routes covered/u);
+    assert.match(lines.join("\n"), /Typed contract debt baseline: 0 entries/u);
   });
 
   test("exits nonzero and reports drift when an SDK route is missing", async () => {

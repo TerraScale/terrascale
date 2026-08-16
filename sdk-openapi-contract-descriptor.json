@@ -147,7 +147,177 @@
       ],
       "pathTemplate": "/api/v1/auth/mfa/factors/{sessionId}",
       "request": {
-        "kind": "void"
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/DeleteMfaFactorRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "currentPassword": {
+                      "type": "string"
+                    },
+                    "factorId": {
+                      "$ref": "#/components/schemas/Ulid",
+                      "siblings": {
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      },
+                      "resolved": {
+                        "format": "ulid",
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "code": {
+                        "type": "string"
+                      },
+                      "currentPassword": {
+                        "type": "string"
+                      },
+                      "factorId": {
+                        "$ref": "#/components/schemas/Ulid",
+                        "siblings": {
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          },
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "currentPassword": {
+                    "type": "string"
+                  },
+                  "factorId": {
+                    "$ref": "#/components/schemas/Ulid",
+                    "resolved": {
+                      "format": "ulid",
+                      "type": "string"
+                    }
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteMfaFactorRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "code": {
+                        "type": "string"
+                      },
+                      "currentPassword": {
+                        "type": "string"
+                      },
+                      "factorId": {
+                        "$ref": "#/components/schemas/Ulid",
+                        "siblings": {
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        },
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "currentPassword": {
+                          "type": "string"
+                        },
+                        "factorId": {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            },
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "currentPassword": {
+                      "type": "string"
+                    },
+                    "factorId": {
+                      "$ref": "#/components/schemas/Ulid",
+                      "resolved": {
+                        "format": "ulid",
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
       },
       "responses": [
         {
@@ -28920,7 +29090,135 @@
       "parameters": [],
       "pathTemplate": "/api/v1/users/me/profile",
       "request": {
-        "kind": "void"
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/UpdateProfileRouteRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "displayName": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "phoneNumber": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "displayName": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "phoneNumber": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "displayName": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "phoneNumber": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRouteRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "displayName": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "phoneNumber": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "displayName": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "phoneNumber": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "displayName": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "phoneNumber": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
       },
       "responses": [
         {
@@ -29028,7 +29326,117 @@
       "parameters": [],
       "pathTemplate": "/api/v1/auth/external-login/begin",
       "request": {
-        "kind": "void"
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/ExternalLoginBeginRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "provider": {
+                      "type": "string"
+                    },
+                    "redirectUri": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "provider": {
+                        "type": "string"
+                      },
+                      "redirectUri": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "redirectUri": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalLoginBeginRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "provider": {
+                        "type": "string"
+                      },
+                      "redirectUri": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "provider": {
+                          "type": "string"
+                        },
+                        "redirectUri": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "provider": {
+                      "type": "string"
+                    },
+                    "redirectUri": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
       },
       "responses": [
         {
@@ -29107,7 +29515,135 @@
       "parameters": [],
       "pathTemplate": "/api/v1/auth/external-login/complete",
       "request": {
-        "kind": "void"
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/ExternalLoginCompleteRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "idToken": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "type": "string"
+                    },
+                    "redirectUri": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "code": {
+                        "type": "string"
+                      },
+                      "idToken": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string"
+                      },
+                      "redirectUri": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "idToken": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "redirectUri": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalLoginCompleteRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "code": {
+                        "type": "string"
+                      },
+                      "idToken": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string"
+                      },
+                      "redirectUri": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "idToken": {
+                          "type": "string"
+                        },
+                        "provider": {
+                          "type": "string"
+                        },
+                        "redirectUri": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "idToken": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "type": "string"
+                    },
+                    "redirectUri": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
       },
       "responses": [
         {
@@ -47520,7 +48056,399 @@
       ],
       "pathTemplate": "/api/v1/projects/{projectId}/auth/api-keys",
       "request": {
-        "kind": "void"
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/CreateProjectAuthApiKeyRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "databaseId": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "environmentId": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "expiresAt": {
+                      "format": "date-time",
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "scopes": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "databaseId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "environmentId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "expiresAt": {
+                        "format": "date-time",
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "scopes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "databaseId": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/Ulid",
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "environmentId": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/Ulid",
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "expiresAt": {
+                    "format": "date-time",
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "scopes": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectAuthApiKeyRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "databaseId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "environmentId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "expiresAt": {
+                        "format": "date-time",
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "scopes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "databaseId": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/components/schemas/Ulid",
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                },
+                                "siblings": {
+                                  "resolved": {
+                                    "format": "ulid",
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "environmentId": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/components/schemas/Ulid",
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                },
+                                "siblings": {
+                                  "resolved": {
+                                    "format": "ulid",
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "expiresAt": {
+                          "format": "date-time",
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "scopes": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "databaseId": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/Ulid",
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "environmentId": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/Ulid",
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "expiresAt": {
+                      "format": "date-time",
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "scopes": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
       },
       "responses": [
         {
@@ -51610,7 +52538,399 @@
       ],
       "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m-applications",
       "request": {
-        "kind": "void"
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/CreateProjectM2MApplicationRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "databaseId": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "environmentId": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "expiresAt": {
+                      "format": "date-time",
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "scopes": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "databaseId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "environmentId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "expiresAt": {
+                        "format": "date-time",
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "scopes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "databaseId": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/Ulid",
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "environmentId": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/Ulid",
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "expiresAt": {
+                    "format": "date-time",
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "scopes": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectM2MApplicationRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "databaseId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "environmentId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "expiresAt": {
+                        "format": "date-time",
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "scopes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "databaseId": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/components/schemas/Ulid",
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                },
+                                "siblings": {
+                                  "resolved": {
+                                    "format": "ulid",
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "environmentId": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/components/schemas/Ulid",
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                },
+                                "siblings": {
+                                  "resolved": {
+                                    "format": "ulid",
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "expiresAt": {
+                          "format": "date-time",
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "scopes": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "databaseId": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/Ulid",
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "environmentId": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/Ulid",
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "expiresAt": {
+                      "format": "date-time",
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "scopes": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
       },
       "responses": [
         {
@@ -53389,7 +54709,256 @@
       ],
       "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m/token",
       "request": {
-        "kind": "void"
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/ProjectM2MTokenRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "client_id": {
+                      "type": "string"
+                    },
+                    "client_secret": {
+                      "type": "string"
+                    },
+                    "grant_type": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "client_id": {
+                        "type": "string"
+                      },
+                      "client_secret": {
+                        "type": "string"
+                      },
+                      "grant_type": {
+                        "type": "string"
+                      },
+                      "scope": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "client_id": {
+                    "type": "string"
+                  },
+                  "client_secret": {
+                    "type": "string"
+                  },
+                  "grant_type": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          {
+            "mediaType": "application/x-www-form-urlencoded",
+            "schema": {
+              "$ref": "#/components/schemas/ProjectM2MTokenRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "client_id": {
+                      "type": "string"
+                    },
+                    "client_secret": {
+                      "type": "string"
+                    },
+                    "grant_type": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "client_id": {
+                        "type": "string"
+                      },
+                      "client_secret": {
+                        "type": "string"
+                      },
+                      "grant_type": {
+                        "type": "string"
+                      },
+                      "scope": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "client_id": {
+                    "type": "string"
+                  },
+                  "client_secret": {
+                    "type": "string"
+                  },
+                  "grant_type": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectM2MTokenRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "client_id": {
+                        "type": "string"
+                      },
+                      "client_secret": {
+                        "type": "string"
+                      },
+                      "grant_type": {
+                        "type": "string"
+                      },
+                      "scope": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "client_id": {
+                          "type": "string"
+                        },
+                        "client_secret": {
+                          "type": "string"
+                        },
+                        "grant_type": {
+                          "type": "string"
+                        },
+                        "scope": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "client_id": {
+                      "type": "string"
+                    },
+                    "client_secret": {
+                      "type": "string"
+                    },
+                    "grant_type": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectM2MTokenRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "client_id": {
+                        "type": "string"
+                      },
+                      "client_secret": {
+                        "type": "string"
+                      },
+                      "grant_type": {
+                        "type": "string"
+                      },
+                      "scope": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "client_id": {
+                          "type": "string"
+                        },
+                        "client_secret": {
+                          "type": "string"
+                        },
+                        "grant_type": {
+                          "type": "string"
+                        },
+                        "scope": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "client_id": {
+                      "type": "string"
+                    },
+                    "client_secret": {
+                      "type": "string"
+                    },
+                    "grant_type": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
       },
       "responses": [
         {
@@ -68689,7 +70258,135 @@
       "parameters": [],
       "pathTemplate": "/api/v1/users/me/email/change",
       "request": {
-        "kind": "void"
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/InitiateEmailChangeRouteRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "newEmail": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "password": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "newEmail": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "password": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "newEmail": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "password": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InitiateEmailChangeRouteRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "newEmail": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "password": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "newEmail": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "password": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "newEmail": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "password": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
       },
       "responses": [
         {
@@ -68797,7 +70494,135 @@
       "parameters": [],
       "pathTemplate": "/api/v1/users/me/email/verify",
       "request": {
-        "kind": "void"
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/VerifyEmailChangeRouteRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "newEmail": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "otpCode": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "newEmail": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "otpCode": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "newEmail": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "otpCode": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailChangeRouteRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "newEmail": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "otpCode": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "newEmail": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "otpCode": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "newEmail": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "otpCode": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
       },
       "responses": [
         {

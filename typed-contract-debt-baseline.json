@@ -1,11 +1,1 @@
-[
-  { "method": "PATCH", "pathTemplate": "/api/v1/users/me/profile", "missingSide": "request" },
-  { "method": "DELETE", "pathTemplate": "/api/v1/auth/mfa/factors/{sessionId}", "missingSide": "request" },
-  { "method": "POST", "pathTemplate": "/api/v1/auth/external-login/begin", "missingSide": "request" },
-  { "method": "POST", "pathTemplate": "/api/v1/auth/external-login/complete", "missingSide": "request" },
-  { "method": "POST", "pathTemplate": "/api/v1/users/me/email/change", "missingSide": "request" },
-  { "method": "POST", "pathTemplate": "/api/v1/users/me/email/verify", "missingSide": "request" },
-  { "method": "POST", "pathTemplate": "/api/v1/projects/{projectId}/auth/api-keys", "missingSide": "request" },
-  { "method": "POST", "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m-applications", "missingSide": "request" },
-  { "method": "POST", "pathTemplate": "/api/v1/projects/{projectId}/auth/m2m/token", "missingSide": "request" }
-]
+[]
