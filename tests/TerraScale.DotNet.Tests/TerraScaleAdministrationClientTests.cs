@@ -78,6 +78,64 @@ public sealed class TerraScaleAdministrationClientTests
         await Assert.That(exception.ErrorCode).IsEqualTo("TERRASCALE-ADMIN-OWNER-REQUIRED");
     }
 
+    [Test]
+    public async Task BillingReconciliation_UsesTypedRoutesReplayHeaderAndLifecycleResponse()
+    {
+        using var handler = new ReconciliationHandler();
+        using var httpClient = new HttpClient(handler);
+        var administration = CreateClient(httpClient).Administration;
+
+        var triggered = await administration.TriggerBillingReconciliationAsync("organization / a", "reconciliation-key");
+        var status = await administration.GetBillingReconciliationAsync("organization / a", "attempt / a");
+
+        await Assert.That(handler.Requests).IsEquivalentTo([
+            new ReconciliationRecordedRequest(
+                HttpMethod.Post,
+                "https://api.example.invalid/api/v1/admin/billing/reconciliation/organization %2F a:trigger",
+                null,
+                "reconciliation-key"),
+            new ReconciliationRecordedRequest(
+                HttpMethod.Get,
+                "https://api.example.invalid/api/v1/admin/billing/reconciliation/organization %2F a/attempt %2F a",
+                null,
+                null)
+        ]);
+        await Assert.That(triggered.AttemptId).IsEqualTo("attempt-a");
+        await Assert.That(triggered.Provider).IsEqualTo("polar");
+        await Assert.That(triggered.EnqueuedAt).IsNotNull();
+        await Assert.That(triggered.StartedAt).IsNull();
+        await Assert.That(status.State).IsEqualTo("completed");
+        await Assert.That(status.ReconciledAt).IsNotNull();
+        await Assert.That(status.ErrorCode).IsNull();
+    }
+
+    [Test]
+    public async Task BillingReconciliation_RejectsInvalidArgumentsAndMapsOwnerAuthorizationFailure()
+    {
+        using var validationClient = new HttpClient(new AdministrationHandler(HttpStatusCode.OK));
+        var validation = CreateClient(validationClient).Administration;
+        var blankOrganization = await Assert.ThrowsAsync<ArgumentException>(() =>
+            validation.TriggerBillingReconciliationAsync(" ", "reconciliation-key"));
+        var blankKey = await Assert.ThrowsAsync<ArgumentException>(() =>
+            validation.TriggerBillingReconciliationAsync("organization-a", " "));
+        var oversizedKey = await Assert.ThrowsAsync<ArgumentException>(() =>
+            validation.TriggerBillingReconciliationAsync("organization-a", new string('x', 129)));
+        var blankAttempt = await Assert.ThrowsAsync<ArgumentException>(() =>
+            validation.GetBillingReconciliationAsync("organization-a", " "));
+
+        using var forbiddenHandler = new AdministrationHandler(HttpStatusCode.Forbidden);
+        using var forbiddenClient = new HttpClient(forbiddenHandler);
+        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            CreateClient(forbiddenClient).Administration.TriggerBillingReconciliationAsync("organization-a", "reconciliation-key"));
+
+        await Assert.That(blankOrganization).IsNotNull();
+        await Assert.That(blankKey).IsNotNull();
+        await Assert.That(oversizedKey).IsNotNull();
+        await Assert.That(blankAttempt).IsNotNull();
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(exception.ErrorCode).IsEqualTo("TERRASCALE-ADMIN-OWNER-REQUIRED");
+    }
+
     private static TerraScaleClient CreateClient(HttpClient httpClient) => new(httpClient, new TerraScaleClientOptions
     {
         BaseAddress = new Uri("https://api.example.invalid/"),
@@ -100,5 +158,29 @@ public sealed class TerraScaleAdministrationClientTests
         }
     }
 
+    private sealed class ReconciliationHandler : HttpMessageHandler
+    {
+        public List<ReconciliationRecordedRequest> Requests { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(new ReconciliationRecordedRequest(
+                request.Method,
+                request.RequestUri!.ToString(),
+                request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken),
+                request.Headers.TryGetValues("Idempotency-Key", out var idempotencyKeys) ? idempotencyKeys.SingleOrDefault() : null));
+
+            var body = request.Method == HttpMethod.Post
+                ? "{\"attemptId\":\"attempt-a\",\"organizationId\":\"organization-a\",\"provider\":\"polar\",\"state\":\"enqueued\",\"requestedAt\":\"2026-08-16T06:00:00+00:00\",\"enqueuedAt\":\"2026-08-16T06:00:01+00:00\",\"startedAt\":null,\"finishedAt\":null,\"reconciledAt\":null,\"errorCode\":null}"
+                : "{\"attemptId\":\"attempt-a\",\"organizationId\":\"organization-a\",\"provider\":\"polar\",\"state\":\"completed\",\"requestedAt\":\"2026-08-16T06:00:00+00:00\",\"enqueuedAt\":\"2026-08-16T06:00:01+00:00\",\"startedAt\":\"2026-08-16T06:00:02+00:00\",\"finishedAt\":\"2026-08-16T06:00:03+00:00\",\"reconciledAt\":\"2026-08-16T06:00:03+00:00\",\"errorCode\":null}";
+
+            return new HttpResponseMessage(request.Method == HttpMethod.Post ? HttpStatusCode.Accepted : HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+        }
+    }
+
     private sealed record RecordedRequest(string Uri, string? Body, string? IdempotencyKey);
+    private sealed record ReconciliationRecordedRequest(HttpMethod Method, string Uri, string? Body, string? IdempotencyKey);
 }

@@ -271,6 +271,12 @@ internal static class TerraScaleApiRoutes
     public static string AdminPaymentWebhookReplay(string provider, string eventId) =>
         $"{AdminPaymentWebhookGet(provider, eventId)}:replay";
 
+    public static string AdminBillingReconciliationTrigger(string organizationId) =>
+        $"/api/v1/admin/billing/reconciliation/{Escape(organizationId)}:trigger";
+
+    public static string AdminBillingReconciliationGet(string organizationId, string attemptId) =>
+        $"/api/v1/admin/billing/reconciliation/{Escape(organizationId)}/{Escape(attemptId)}";
+
     public static string BackupPolicyConfigure(string projectId, string databaseId) =>
         $"/api/v1/projects/{Escape(projectId)}/databases/{Escape(databaseId)}/backups/policy";
 

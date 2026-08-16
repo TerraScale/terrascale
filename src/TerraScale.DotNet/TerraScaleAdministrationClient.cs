@@ -118,6 +118,46 @@ public sealed class TerraScaleAdministrationClient
             idempotencyKey.Trim());
     }
 
+    /// <summary>
+    /// Starts a durable billing reconciliation attempt for an organization.
+    /// Reuse <paramref name="idempotencyKey"/> only when retrying the same trigger request.
+    /// </summary>
+    public Task<TerraScaleAdminBillingReconciliationAttempt> TriggerBillingReconciliationAsync(
+        string organizationId,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(organizationId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
+        if (idempotencyKey.Trim().Length > 128)
+        {
+            throw new ArgumentException("Idempotency key must not exceed 128 characters.", nameof(idempotencyKey));
+        }
+
+        return client.SendJsonAsync(
+            HttpMethod.Post,
+            TerraScaleApiRoutes.AdminBillingReconciliationTrigger(organizationId),
+            TypeInfo<TerraScaleAdminBillingReconciliationAttempt>(),
+            cancellationToken,
+            idempotencyKey.Trim());
+    }
+
+    /// <summary>
+    /// Gets the status of a durable billing reconciliation attempt.
+    /// </summary>
+    public Task<TerraScaleAdminBillingReconciliationAttempt> GetBillingReconciliationAsync(
+        string organizationId,
+        string attemptId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(organizationId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(attemptId);
+        return GetAsync<TerraScaleAdminBillingReconciliationAttempt>(
+            HttpMethod.Get,
+            TerraScaleApiRoutes.AdminBillingReconciliationGet(organizationId, attemptId),
+            cancellationToken);
+    }
+
     private Task<T> SendForIdAsync<T>(HttpMethod method, Func<string, string> route, string id, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
@@ -189,6 +229,18 @@ public sealed record TerraScaleAdminNotification(string NotificationId, string? 
 public sealed record TerraScaleAdminPaymentWebhookEvent(string Provider, string EventId, string EventType, string State, long DeliveryCount, long ProjectionAttemptCount, long ConflictCount, long ReplayRequestCount, DateTimeOffset FirstReceivedAt, DateTimeOffset LastReceivedAt, DateTimeOffset? LastAttemptAt, DateTimeOffset? ProjectedAt, DateTimeOffset? DeadLetteredAt, DateTimeOffset? LastReplayRequestedAt, string? LastReplayRequestedByUserId, string? LastError, bool ReplayAvailable);
 /// <summary>Result of replaying a dead-lettered payment-provider webhook event.</summary>
 public sealed record TerraScaleAdminPaymentWebhookReplay(string Provider, string EventId, string EventType, string MessageId, DateTimeOffset RequestedAt, string RequestedByUserId);
+/// <summary>Provider-neutral state for an administrator-requested billing reconciliation attempt.</summary>
+public sealed record TerraScaleAdminBillingReconciliationAttempt(
+    string AttemptId,
+    string OrganizationId,
+    string Provider,
+    string State,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset? EnqueuedAt,
+    DateTimeOffset? StartedAt,
+    DateTimeOffset? FinishedAt,
+    DateTimeOffset? ReconciledAt,
+    string? ErrorCode);
 /// <summary>Optional reason recorded when disabling a platform user.</summary>
 public sealed record TerraScaleAdminDisableUserRequest(string? Reason);
 
@@ -243,5 +295,6 @@ public sealed record TerraScaleAdminPricingPlanRequest(
 [JsonSerializable(typeof(TerraScaleAdminPage<TerraScaleAdminPaymentWebhookEvent>))]
 [JsonSerializable(typeof(TerraScaleAdminPaymentWebhookEvent))]
 [JsonSerializable(typeof(TerraScaleAdminPaymentWebhookReplay))]
+[JsonSerializable(typeof(TerraScaleAdminBillingReconciliationAttempt))]
 [JsonSerializable(typeof(TerraScaleAdminDisableUserRequest))]
 internal partial class TerraScaleAdminJsonContext : JsonSerializerContext;
