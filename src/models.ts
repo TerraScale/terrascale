@@ -1571,6 +1571,19 @@ export type AdminSupportNote = {
 
 export type AdminCreateSupportNoteRequest = Omit<AdminSupportNote, "createdAt" | "supportNoteId">;
 
+export type BillingReconciliationAttempt = {
+  readonly attemptId: Ulid;
+  readonly organizationId: OrganizationId;
+  readonly provider: string;
+  readonly state: string;
+  readonly requestedAt: Timestamp;
+  readonly enqueuedAt: Timestamp | null;
+  readonly startedAt: Timestamp | null;
+  readonly finishedAt: Timestamp | null;
+  readonly reconciledAt: Timestamp | null;
+  readonly errorCode: string | null;
+};
+
 export type AdminPlatformUsage = {
   readonly organizations: number;
   readonly projects: number;

@@ -2288,6 +2288,31 @@ export class AdminClient {
       query,
     });
   }
+
+  triggerBillingReconciliation(
+    organizationId: Ulid,
+    idempotencyKey: string,
+  ): Promise<TerraScaleResult<Models.BillingReconciliationAttempt>> {
+    validateBackupConfirmationValue(idempotencyKey, "idempotencyKey", 128);
+
+    return this.#http.request({
+      method: "POST",
+      path: `${apiRoot}/admin/billing/reconciliation/${ulidPathSegment(organizationId)}:trigger`,
+      routeName: "admin.billingReconciliation.trigger",
+      idempotencyKey,
+    });
+  }
+
+  getBillingReconciliation(
+    organizationId: Ulid,
+    attemptId: Ulid,
+  ): Promise<TerraScaleResult<Models.BillingReconciliationAttempt>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${apiRoot}/admin/billing/reconciliation/${ulidPathSegment(organizationId)}/${ulidPathSegment(attemptId)}`,
+      routeName: "admin.billingReconciliation.get",
+    });
+  }
 }
 
 function toSignupRequest(request: Models.RegisterRequest) {
