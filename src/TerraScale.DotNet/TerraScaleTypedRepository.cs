@@ -47,6 +47,19 @@ public sealed class TerraScaleTypedRepository<TEntity>
     }
 
     /// <summary>
+    /// Gets a typed document with explicit stale-read behavior.
+    /// </summary>
+    public async Task<TerraScaleTypedDocument<TEntity>> GetAsync(
+        string documentId,
+        TerraScaleDocumentReadOptions? options,
+        CancellationToken cancellationToken = default)
+    {
+        var document = await client.Documents.GetAsync(Repository, documentId, options, cancellationToken)
+            .ConfigureAwait(false);
+        return Materialize(document);
+    }
+
+    /// <summary>
     /// Upserts a typed document by id.
     /// </summary>
     public async Task<TerraScaleTypedDocument<TEntity>> UpsertAsync(
@@ -60,6 +73,25 @@ public sealed class TerraScaleTypedRepository<TEntity>
     }
 
     /// <summary>
+    /// Upserts a typed document and optionally requires the current change token.
+    /// </summary>
+    public async Task<TerraScaleTypedDocument<TEntity>> UpsertAsync(
+        string documentId,
+        TEntity entity,
+        TerraScaleDocumentMutationOptions? options,
+        CancellationToken cancellationToken = default)
+    {
+        var document = await client.Documents.UpsertAsync(
+                Repository,
+                documentId,
+                entity,
+                options,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return Materialize(document);
+    }
+
+    /// <summary>
     /// Applies a partial patch and materializes the updated document as <typeparamref name="TEntity" />.
     /// </summary>
     public async Task<TerraScaleTypedDocument<TEntity>> PatchAsync<TPatch>(
@@ -68,6 +100,25 @@ public sealed class TerraScaleTypedRepository<TEntity>
         CancellationToken cancellationToken = default)
     {
         var document = await client.Documents.PatchAsync(Repository, documentId, patch, cancellationToken)
+            .ConfigureAwait(false);
+        return Materialize(document);
+    }
+
+    /// <summary>
+    /// Patches a typed document and optionally requires the current change token.
+    /// </summary>
+    public async Task<TerraScaleTypedDocument<TEntity>> PatchAsync<TPatch>(
+        string documentId,
+        TPatch patch,
+        TerraScaleDocumentMutationOptions? options,
+        CancellationToken cancellationToken = default)
+    {
+        var document = await client.Documents.PatchAsync(
+                Repository,
+                documentId,
+                patch,
+                options,
+                cancellationToken)
             .ConfigureAwait(false);
         return Materialize(document);
     }
@@ -137,6 +188,15 @@ public sealed class TerraScaleTypedRepository<TEntity>
         CancellationToken cancellationToken = default) =>
         client.Documents.DeleteAsync(Repository, documentId, cancellationToken);
 
+    /// <summary>
+    /// Deletes a typed document and optionally requires the current change token.
+    /// </summary>
+    public Task<TerraScaleDeletedDocument> DeleteAsync(
+        string documentId,
+        TerraScaleDocumentMutationOptions? options,
+        CancellationToken cancellationToken = default) =>
+        client.Documents.DeleteAsync(Repository, documentId, options, cancellationToken);
+
     private static TerraScaleTypedDocumentPage<TEntity> Materialize(TerraScaleDocumentPage page) =>
         new(
             page.RepositoryId,
@@ -144,13 +204,15 @@ public sealed class TerraScaleTypedRepository<TEntity>
             page.Skip,
             page.Take,
             page.Total,
-            page.Items.Select(Materialize).ToArray());
+            page.Items.Select(Materialize).ToArray(),
+            page.Routing);
 
     private static TerraScaleTypedDocumentBatch<TEntity> Materialize(TerraScaleDocumentBatch batch) =>
         new(
             batch.RepositoryId,
             batch.Repository,
-            batch.Results.Select(Materialize).ToArray());
+            batch.Results.Select(Materialize).ToArray(),
+            batch.Routing);
 
     private static TerraScaleTypedDocumentBatchResult<TEntity> Materialize(TerraScaleDocumentBatchResult result) =>
         new(
@@ -167,7 +229,9 @@ public sealed class TerraScaleTypedRepository<TEntity>
             document.Id,
             ReadEntity(document),
             document.LastModified,
-            document.ChangeToken);
+            document.ChangeToken,
+            document.SessionConsistencyToken,
+            document.Routing);
 
     private static TEntity ReadEntity(TerraScaleDocument document)
     {
@@ -194,7 +258,9 @@ public sealed record TerraScaleTypedDocument<TEntity>(
     string Id,
     TEntity Data,
     DateTimeOffset? LastModified,
-    string? ChangeToken);
+    string? ChangeToken,
+    string? SessionConsistencyToken = null,
+    TerraScaleRoutingObservation? Routing = null);
 
 /// <summary>
 /// Page of typed TerraScale repository documents.
@@ -205,7 +271,8 @@ public sealed record TerraScaleTypedDocumentPage<TEntity>(
     int Skip,
     int Take,
     long Total,
-    IReadOnlyList<TerraScaleTypedDocument<TEntity>> Items);
+    IReadOnlyList<TerraScaleTypedDocument<TEntity>> Items,
+    TerraScaleRoutingObservation? Routing = null);
 
 /// <summary>
 /// A typed create, upsert, patch, or delete operation in a document batch.
@@ -262,7 +329,8 @@ public sealed record TerraScaleTypedDocumentBatchOperation(
 public sealed record TerraScaleTypedDocumentBatch<TEntity>(
     string RepositoryId,
     string Repository,
-    IReadOnlyList<TerraScaleTypedDocumentBatchResult<TEntity>> Results);
+    IReadOnlyList<TerraScaleTypedDocumentBatchResult<TEntity>> Results,
+    TerraScaleRoutingObservation? Routing = null);
 
 /// <summary>
 /// Result item for a single typed batch operation.

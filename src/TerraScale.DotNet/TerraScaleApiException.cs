@@ -19,13 +19,22 @@ public sealed class TerraScaleApiException : HttpRequestException
         string? errorCode,
         string? requestId,
         string? responseBody,
-        TimeSpan? retryAfter)
+        TimeSpan? retryAfter,
+        string? edgeRegion = null,
+        string? servingRegion = null,
+        string? routeMode = null,
+        string? failoverFromRegion = null)
         : base(message, inner: null, statusCode)
     {
         ErrorCode = errorCode;
         RequestId = requestId;
         ResponseBody = responseBody;
         RetryAfter = retryAfter;
+        Routing = TerraScaleRoutingObservation.Create(
+            edgeRegion,
+            servingRegion,
+            routeMode,
+            failoverFromRegion);
     }
 
     /// <summary>
@@ -48,6 +57,18 @@ public sealed class TerraScaleApiException : HttpRequestException
     /// </summary>
     public TimeSpan? RetryAfter { get; }
 
+    /// <summary>
+    /// Public regional routing metadata returned with the failure.
+    /// </summary>
+    public TerraScaleRoutingObservation? Routing { get; }
+
+    /// <summary>
+    /// Whether the API reported that no selected region could serve the request.
+    /// </summary>
+    public bool IsRegionalUnavailable =>
+        StatusCode == HttpStatusCode.ServiceUnavailable &&
+        string.Equals(ErrorCode, "project_region_unavailable", StringComparison.Ordinal);
+
     internal static async Task<TerraScaleApiException> CreateAsync(
         HttpResponseMessage response,
         CancellationToken cancellationToken)
@@ -61,7 +82,11 @@ public sealed class TerraScaleApiException : HttpRequestException
             code,
             ReadHeader(response, "X-Request-Id"),
             body,
-            response.Headers.RetryAfter?.Delta);
+            response.Headers.RetryAfter?.Delta,
+            ReadHeader(response, "X-TerraScale-Edge-Region"),
+            ReadHeader(response, "X-TerraScale-Serving-Region"),
+            ReadHeader(response, "X-TerraScale-Route-Mode"),
+            ReadHeader(response, "X-TerraScale-Failover-From-Region"));
     }
 
     private static (string? Code, string? Message) ReadError(string? body)

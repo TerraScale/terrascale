@@ -7,7 +7,8 @@
   ],
   "releaseProfiles": [
     { "name": "base-sdk-release-e2e", "resourceWeight": "heavy", "commands": [{ "description": "Base SDK external HTTP E2E", "command": "dotnet", "arguments": ["test", "tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj", "--configuration", "Release"] }] },
-    { "name": "ef-core-release-e2e", "resourceWeight": "heavy", "commands": [{ "description": "EF Core external HTTP E2E", "command": "dotnet", "arguments": ["test", "tests/TerraScale.EntityFrameworkCore.Tests/TerraScale.EntityFrameworkCore.Tests.csproj", "--configuration", "Release"] }] }
+    { "name": "ef-core-release-e2e", "resourceWeight": "heavy", "commands": [{ "description": "EF Core external HTTP E2E", "command": "dotnet", "arguments": ["test", "tests/TerraScale.EntityFrameworkCore.Tests/TerraScale.EntityFrameworkCore.Tests.csproj", "--configuration", "Release"] }] },
+    { "name": "exact-sdk-package", "resourceWeight": "medium", "commands": [{ "description": "Verify exact SDK package in clean .NET 10 consumer", "command": "bash", "arguments": ["scripts/verify-package-candidate.sh", "--package", "artifacts/candidate/TerraScale.DotNet.0.1.0.nupkg"] }] }
   ],
   "buildTargets": [
     { "name": "sdk-nuget", "resourceWeight": "medium", "commands": [{ "description": "Pack base SDK", "command": "dotnet", "arguments": ["pack", "src/TerraScale.DotNet/TerraScale.DotNet.csproj", "--configuration", "Release", "--output", "artifacts/candidate"] }] },

@@ -2,6 +2,12 @@
 
 Official C# SDK for TerraScale Platform API families.
 
+## Support policy
+
+TerraScale.DotNet 0.1.x targets stable .NET 10 LTS and TerraScale public API `/api/v1`. Customers do not need a preview runtime, preview package feed, or runtime feature flag. A breaking API contract requires a new API version and an aligned SDK release.
+
+The repository pins the .NET 10 SDK in `global.json`. Package references used by the public SDK and Entity Framework Core integration are stable 10.x releases.
+
 ## Idempotent mutations
 
 Public clients opt in by configuring `TerraScaleClientOptions.IdempotencyKeyFactory`. The SDK creates one key per logical mutation, reuses it across retries, and never retries an unsafe mutation without a key. Keys must be nonblank and no longer than 128 characters. Replayable API results expire after 24 hours; replays include `Idempotency-Replayed: true`, while reuse with different input returns `409 idempotency_key_reused`.
@@ -31,6 +37,10 @@ The repo also contains the EF Core source integration package:
 ```bash
 dotnet add package TerraScale.EntityFrameworkCore
 ```
+
+Release qualification uses one immutable package archive. `scripts/verify-package-candidate.sh` packs the SDK once, checks its metadata and archive contents, restores those exact bytes into a clean `net10.0` consumer, builds the consumer, and prints the SHA-256 digest. Orchestrator can pass an existing candidate with `--package` so verification never rebuilds a different archive.
+
+Live customer-journey, tenant-isolation, intended-feed download, and publication evidence remain release admission checks. Source compilation and the local package-consumer build do not replace them.
 
 ## Configure
 
@@ -93,6 +103,42 @@ var token = await tokenBootstrapClient.M2MApplications.CreateTokenAsync(
 ```
 
 The same token exchange is also available as OAuth form-encoded and HTTP Basic client-credential requests through `CreateTokenFormAsync` and `CreateTokenWithBasicCredentialsAsync`.
+
+## Regional and session consistency
+
+`TerraScaleClientOptions.BaseAddress` defaults to
+`https://api.terrascale.tech`. A preferred region with `Failover` affinity
+uses the global endpoint and sends the public routing hint. `Strict` affinity
+uses the selected region's hostname and never silently falls back:
+
+```csharp
+var session = new TerraScaleClient(
+    new HttpClient(),
+    new TerraScaleClientOptions
+    {
+        ProjectId = projectId,
+        BearerToken = accessToken,
+        PreferredRegion = "fra",
+        RegionAffinity = TerraScaleRegionAffinity.Strict,
+        SessionConsistency = TerraScaleSessionConsistency.Automatic
+    });
+
+var current = await session.Documents.GetAsync(repositoryId, documentId, cancellationToken);
+var updated = await session.Documents.UpsertAsync(
+    repositoryId,
+    documentId,
+    new { Status = "approved" },
+    new TerraScaleDocumentMutationOptions(current.ChangeToken),
+    cancellationToken);
+```
+
+The automatic session mode keeps each document's latest opaque write token inside the
+client instance and sends it on later reads of that document. Pass
+`new TerraScaleDocumentReadOptions(AllowStale: true)` to opt one read out of
+the server wait. A mismatched `ExpectedChangeToken` throws a typed
+`TerraScaleApiException` with HTTP 409 and the public error code. Document
+results and failures expose only the public routing observation. A 503
+`project_region_unavailable` failure sets `IsRegionalUnavailable`.
 
 ## Database And Environment Selection
 

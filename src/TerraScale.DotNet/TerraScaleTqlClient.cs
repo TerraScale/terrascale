@@ -24,10 +24,13 @@ public sealed class TerraScaleTqlClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(query);
         TerraScalePagination.ValidateOptional(skip, take);
-        return client.SendAsync<TerraScaleDocumentPage>(
+        return client.SendAsync<TerraScaleDocumentPage, TerraScaleDocumentPage>(
             HttpMethod.Post,
             $"/api/v1/repositories/{Escape(repository)}/tql",
             new TerraScaleTqlQuery(query, skip, take),
+            preferredRegion: null,
+            configureRequest: null,
+            client.ObserveDocumentPage,
             cancellationToken);
     }
 

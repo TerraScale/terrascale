@@ -25,6 +25,8 @@ public sealed class TerraScaleClient
     private readonly HttpClient httpClient;
     private readonly TerraScaleClientOptions options;
     private readonly JsonSerializerOptions jsonOptions;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> sessionConsistencyTokens =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Creates a TerraScale client over a caller-owned <see cref="HttpClient"/>.
@@ -459,6 +461,7 @@ public sealed class TerraScaleClient
     {
         if (!string.IsNullOrWhiteSpace(preferredRegion))
         {
+            request.Headers.Remove("X-TerraScale-Preferred-Region");
             request.Headers.TryAddWithoutValidation(
                 "X-TerraScale-Preferred-Region",
                 preferredRegion.Trim().ToLowerInvariant());
@@ -731,6 +734,11 @@ public sealed class TerraScaleClient
             if (authenticationMode == RequestAuthenticationMode.Authenticated)
             {
                 await ApplyAuthenticationAsync(request, cancellationToken).ConfigureAwait(false);
+                if (options.RegionAffinity == TerraScaleRegionAffinity.Failover &&
+                    options.PreferredRegion is { } preferredRegion)
+                {
+                    ApplyPreferredRegion(request, preferredRegion);
+                }
             }
 
             ApplyRequestHeaders(request, requestId, idempotencyKey);
@@ -944,6 +952,142 @@ public sealed class TerraScaleClient
 
         return bearerToken;
     }
+
+    internal void ApplyDocumentReadHeaders(
+        HttpRequestMessage request,
+        string repository,
+        string? documentId,
+        TerraScaleDocumentReadOptions? readOptions)
+    {
+        if (readOptions?.AllowStale == true)
+        {
+            request.Headers.TryAddWithoutValidation("X-TerraScale-Allow-Stale", "true");
+        }
+
+        if (documentId is null || options.SessionConsistency != TerraScaleSessionConsistency.Automatic)
+        {
+            return;
+        }
+
+        var scope = DocumentConsistencyScope(repository, documentId);
+        if (sessionConsistencyTokens.TryGetValue(scope, out var token))
+        {
+            request.Headers.TryAddWithoutValidation("X-TerraScale-Session-Consistency-Token", token);
+        }
+    }
+
+    internal void ApplyDocumentMutationHeaders(
+        HttpRequestMessage request,
+        TerraScaleDocumentMutationOptions? mutationOptions)
+    {
+        var token = mutationOptions?.ExpectedChangeToken?.Trim();
+        if (token is null)
+        {
+            return;
+        }
+
+        if (token.Length is 0 or > 4096)
+        {
+            throw new ArgumentException(
+                "ExpectedChangeToken must be nonblank and no longer than 4096 characters.",
+                nameof(mutationOptions));
+        }
+
+        request.Headers.TryAddWithoutValidation("If-Match", token);
+    }
+
+    internal TerraScaleDocument ObserveDocumentWrite(
+        TerraScaleDocument document,
+        HttpResponseMessage response,
+        string requestRepository)
+    {
+        RememberSessionConsistencyToken(
+            document.SessionConsistencyToken,
+            document.RepositoryId,
+            document.Id);
+        RememberSessionConsistencyToken(
+            document.SessionConsistencyToken,
+            requestRepository,
+            document.Id);
+        return document with { Routing = TerraScaleRoutingObservation.From(response) };
+    }
+
+    internal TerraScaleDeletedDocument ObserveDocumentDelete(
+        TerraScaleDeletedDocument document,
+        HttpResponseMessage response,
+        string requestRepository)
+    {
+        RememberSessionConsistencyToken(
+            document.SessionConsistencyToken,
+            document.RepositoryId,
+            document.Id);
+        RememberSessionConsistencyToken(
+            document.SessionConsistencyToken,
+            requestRepository,
+            document.Id);
+        return document with { Routing = TerraScaleRoutingObservation.From(response) };
+    }
+
+    internal TerraScaleDocument ObserveDocumentRead(
+        TerraScaleDocument document,
+        HttpResponseMessage response) =>
+        document with { Routing = TerraScaleRoutingObservation.From(response) };
+
+    internal TerraScaleDocumentPage ObserveDocumentPage(
+        TerraScaleDocumentPage page,
+        HttpResponseMessage response) =>
+        page with { Routing = TerraScaleRoutingObservation.From(response) };
+
+    internal TerraScaleDocumentBatch ObserveDocumentBatch(
+        TerraScaleDocumentBatch batch,
+        HttpResponseMessage response,
+        string requestRepository)
+    {
+        foreach (var result in batch.Results)
+        {
+            if (result.Document is { } document)
+            {
+                RememberSessionConsistencyToken(
+                    document.SessionConsistencyToken,
+                    batch.RepositoryId,
+                    document.Id);
+                RememberSessionConsistencyToken(
+                    document.SessionConsistencyToken,
+                    requestRepository,
+                    document.Id);
+            }
+
+            if (result.Deleted is { } deleted)
+            {
+                RememberSessionConsistencyToken(
+                    deleted.SessionConsistencyToken,
+                    batch.RepositoryId,
+                    deleted.Id);
+                RememberSessionConsistencyToken(
+                    deleted.SessionConsistencyToken,
+                    requestRepository,
+                    deleted.Id);
+            }
+        }
+
+        return batch with { Routing = TerraScaleRoutingObservation.From(response) };
+    }
+
+    private void RememberSessionConsistencyToken(
+        string? token,
+        string repository,
+        string? documentId)
+    {
+        if (documentId is not null &&
+            options.SessionConsistency == TerraScaleSessionConsistency.Automatic &&
+            token is { Length: > 0 and <= 4096 })
+        {
+            sessionConsistencyTokens[DocumentConsistencyScope(repository, documentId)] = token;
+        }
+    }
+
+    private static string DocumentConsistencyScope(string repository, string documentId) =>
+        $"{repository.Trim()}\n{documentId.Trim()}";
 
     private static void ApplyRequestHeaders(
         HttpRequestMessage request,

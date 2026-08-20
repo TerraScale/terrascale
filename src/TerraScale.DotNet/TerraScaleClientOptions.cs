@@ -8,7 +8,22 @@ public sealed record TerraScaleClientOptions
     /// <summary>
     /// TerraScale API base address, for example <c>https://api.terrascale.tech</c>.
     /// </summary>
-    public Uri BaseAddress { get; set; } = new("http://localhost:5294", UriKind.Absolute);
+    public Uri BaseAddress { get; set; } = new("https://api.terrascale.tech", UriKind.Absolute);
+
+    /// <summary>
+    /// Optional selected region. Failover affinity sends it as a routing hint.
+    /// </summary>
+    public string? PreferredRegion { get; set; }
+
+    /// <summary>
+    /// Controls whether a preferred region may fail over or must use its regional hostname.
+    /// </summary>
+    public TerraScaleRegionAffinity RegionAffinity { get; set; } = TerraScaleRegionAffinity.Failover;
+
+    /// <summary>
+    /// Controls automatic propagation of opaque write tokens to later document reads.
+    /// </summary>
+    public TerraScaleSessionConsistency SessionConsistency { get; set; } = TerraScaleSessionConsistency.None;
 
     /// <summary>
     /// Caller-provided TerraScale project API key used to authenticate SDK requests.
@@ -68,6 +83,18 @@ public sealed record TerraScaleClientOptions
             throw new ArgumentException("TerraScale base address must be absolute.", nameof(BaseAddress));
         }
 
+        var normalizedRegion = NormalizeRegion(PreferredRegion);
+        if (RegionAffinity == TerraScaleRegionAffinity.Strict && normalizedRegion is null)
+        {
+            throw new ArgumentException("Strict regional affinity requires PreferredRegion.", nameof(PreferredRegion));
+        }
+
+        PreferredRegion = normalizedRegion;
+        if (RegionAffinity == TerraScaleRegionAffinity.Strict)
+        {
+            BaseAddress = ResolveStrictRegionalBaseAddress(BaseAddress, normalizedRegion!);
+        }
+
         var hasApiKey = !string.IsNullOrWhiteSpace(ApiKey);
         var hasStaticBearerToken = !string.IsNullOrWhiteSpace(BearerToken);
         var hasBearerTokenProvider = BearerTokenProvider is not null;
@@ -102,4 +129,74 @@ public sealed record TerraScaleClientOptions
             throw new ArgumentOutOfRangeException(nameof(RetryDelay), "Retry delay must be greater than or equal to zero.");
         }
     }
+
+    private static string? NormalizeRegion(string? region)
+    {
+        if (region is null)
+        {
+            return null;
+        }
+
+        var normalized = region.Trim().ToLowerInvariant();
+        if (normalized.Length is < 2 or > 32 ||
+            !IsAsciiLetterOrDigit(normalized[0]) ||
+            normalized.Any(character => !IsAsciiLetterOrDigit(character) && character != '-'))
+        {
+            throw new ArgumentException("PreferredRegion must be a valid TerraScale region code.", nameof(PreferredRegion));
+        }
+
+        return normalized;
+    }
+
+    private static bool IsAsciiLetterOrDigit(char character) =>
+        character is (>= 'a' and <= 'z') or (>= '0' and <= '9');
+
+    private static Uri ResolveStrictRegionalBaseAddress(Uri baseAddress, string region)
+    {
+        var builder = new UriBuilder(baseAddress);
+        if (string.Equals(builder.Host, "api.terrascale.tech", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Host = $"{region}.api.terrascale.tech";
+        }
+        else if (!string.Equals(builder.Host, $"{region}.api.terrascale.tech", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "Strict regional affinity requires the global TerraScale API URL or the selected regional URL.",
+                nameof(BaseAddress));
+        }
+
+        return builder.Uri;
+    }
+}
+
+/// <summary>
+/// Regional routing behavior for a preferred TerraScale region.
+/// </summary>
+public enum TerraScaleRegionAffinity
+{
+    /// <summary>
+    /// Prefer the selected region but allow the public global route to fail over.
+    /// </summary>
+    Failover,
+
+    /// <summary>
+    /// Use the selected region's hostname and do not silently fail over.
+    /// </summary>
+    Strict
+}
+
+/// <summary>
+/// Document session consistency behavior for a client instance.
+/// </summary>
+public enum TerraScaleSessionConsistency
+{
+    /// <summary>
+    /// Do not retain or forward session consistency tokens.
+    /// </summary>
+    None,
+
+    /// <summary>
+    /// Retain the latest successful write token and forward it to later reads.
+    /// </summary>
+    Automatic
 }
