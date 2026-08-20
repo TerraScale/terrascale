@@ -2,6 +2,40 @@ import { expect, test } from 'playwright/test'
 
 const registrationUrl = 'https://dash.terrascale.tech/register'
 
+const publishedRoutes = [
+  { path: '/', canonical: 'https://terrascale.tech/' },
+  { path: '/about', canonical: 'https://terrascale.tech/about' },
+  { path: '/contact', canonical: 'https://terrascale.tech/contact' },
+  { path: '/pricing', canonical: 'https://terrascale.tech/pricing' },
+]
+
+test('published routes expose canonical metadata and basic accessible structure', async ({ page }) => {
+  for (const route of publishedRoutes) {
+    await page.goto(route.path)
+
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', route.canonical)
+    await expect(page.locator('meta[property="og:url"]')).toHaveAttribute('content', route.canonical)
+    await expect(page.locator('meta[property="og:type"]')).toHaveAttribute('content', 'website')
+    await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', /\S+/)
+    await expect(page.locator('meta[property="og:title"]')).toHaveAttribute('content', /\S+/)
+    await expect(page.locator('meta[property="og:description"]')).toHaveAttribute('content', /\S+/)
+    await expect(page.locator('h1')).toHaveCount(1)
+
+    const inaccessibleImages = await page.locator('img').evaluateAll((images) =>
+      images.filter((image) => !image.hasAttribute('alt')).length,
+    )
+    expect(inaccessibleImages).toBe(0)
+
+    const inaccessibleLinks = await page.locator('a:visible').evaluateAll((links) =>
+      links.filter((link) => {
+        const label = link.getAttribute('aria-label') ?? link.textContent ?? ''
+        return !link.getAttribute('href') || !label.trim()
+      }).length,
+    )
+    expect(inaccessibleLinks).toBe(0)
+  }
+})
+
 test('pricing matches the Public Alpha plan catalog', async ({ page }) => {
   await page.goto('/pricing')
 
