@@ -2,6 +2,7 @@
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { dict } from '@/lib/i18n'
+  import { registrationUrl } from '@/lib/site'
 
   $: perks = $dict.cta.perks
 </script>
@@ -17,7 +18,7 @@
       </p>
 
       <div class="cta__actions">
-        <RouteLink href="https://dash.terrascale.tech/signup" class="ts-btn ts-btn-primary cta-shine cta__primary">
+        <RouteLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine cta__primary">
           {$dict.cta.ctaPrimary}
           <Icon name="arrowRight" className="cta__icon" />
         </RouteLink>

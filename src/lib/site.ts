@@ -27,8 +27,13 @@ export const docsLink = {
   icon: 'bookOpen' as AppIconName,
 }
 
+export const registrationUrl = 'https://dash.terrascale.tech/register'
+
+export const launchPhase =
+  import.meta.env.PUBLIC_TERRASCALE_LAUNCH_PHASE === 'public-alpha' ? 'public-alpha' : 'prelaunch'
+
 export const getStartedLink = {
-  href: 'https://dash.terrascale.tech/signup',
+  href: registrationUrl,
   icon: 'arrowRight' as AppIconName,
 }
 
@@ -64,13 +69,17 @@ export const footerColumns: FooterColumn[] = [
       { key: 'apiReference', href: 'https://docs.terrascale.tech/en/reference/api/' },
       { key: 'status', href: 'https://status.terrascale.tech' },
       { key: 'community', href: 'https://discord.gg/8Zr2Nw9g' },
-      { key: 'support', href: '/contact' },
+      { key: 'security', href: 'https://docs.terrascale.tech/en/security/' },
+      { key: 'support', href: 'https://docs.terrascale.tech/en/support/' },
     ],
   },
   {
     key: 'legal',
     links: [
-      { key: 'support', href: '/contact' },
+      { key: 'terms', href: 'https://docs.terrascale.tech/en/legal/terms/' },
+      { key: 'privacy', href: 'https://docs.terrascale.tech/en/legal/privacy/' },
+      { key: 'acceptableUse', href: 'https://docs.terrascale.tech/en/legal/acceptable-use/' },
+      { key: 'support', href: 'https://docs.terrascale.tech/en/support/' },
     ],
   },
 ]

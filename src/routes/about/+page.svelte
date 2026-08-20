@@ -6,7 +6,7 @@
   <title>About TerraScale</title>
   <meta
     name="description"
-    content="Learn about TerraScale's mission to provide globally distributed DBaaS built on TerraBase with unified database, auth, payments, and usage-based billing."
+    content="Learn how TerraScale Public Alpha provides a regional document database with asynchronous replication across selected launch regions."
   />
 </svelte:head>
 

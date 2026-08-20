@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-  <title>TerraScale | Developer Infrastructure For Data Workflows</title>
+  <title>TerraScale Public Alpha | Regional Document Database</title>
 </svelte:head>
 
 <Home />

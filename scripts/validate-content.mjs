@@ -10,7 +10,10 @@ const forbidden = [
   [/discord\.gg\/(?:terrascale|your-|placeholder|invite-link)/i, 'Use the configured Discord invite.'],
   [/\b(?:thousands of|miles de|milhares de)\b/i, 'Unverified customer-count claims are prohibited.'],
   [/\b(?:99\.9+%|support SLA|SLA de soporte|SLA de suporte)\b/i, 'Unapproved availability or support SLA claims are prohibited.'],
-  [/\b(?:Save|Ahorra|Economize)\s*20\s*%/i, 'Annual pricing must say two months free.'],
+  [/dash\.terrascale\.tech\/(?:signup|usage)\b/i, 'Use the canonical dashboard registration URL.'],
+  [/\b(?:Frankfurt|Guarulhos)\b/i, 'Use the Public Alpha launch regions.'],
+  [/\b(?:Stripe|NATS JetStream)\b/i, 'Do not advertise deferred products or providers.'],
+  [/\b(?:zero[- ]latency|instant replication|bounded lag|majority write|serve from any region)\b/i, 'Unsupported consistency or latency claims are prohibited.'],
   [/href=["']\/terms["']/i, 'The terms route must remain unpublished until approved.'],
 ]
 
@@ -33,11 +36,45 @@ for (const file of walk(path.join(root, 'src'))) {
 }
 
 const pricing = fs.readFileSync(path.join(root, 'src/components/sections/PricingSection.svelte'), 'utf8')
-for (const match of pricing.matchAll(/name:\s*'([^']+)'[\s\S]*?price:\s*\{\s*monthly:\s*(\d+),\s*annual:\s*(\d+)\s*\}/g)) {
-  const [, plan, monthlyText, annualText] = match
-  if (Number(annualText) !== Number(monthlyText) * 10) {
-    failures.push(`PricingSection.svelte: ${plan} annual price must be ten monthly payments (two months free).`)
+const expectedPlans = new Map([
+  ['Developer', 0],
+  ['Starter', 5],
+  ['Pro', 25],
+  ['Enterprise', 500],
+])
+const planMatches = [...pricing.matchAll(/name:\s*'([^']+)'[\s\S]*?price:\s*(\d+)/g)]
+if (planMatches.length !== expectedPlans.size) {
+  failures.push('PricingSection.svelte: Public Alpha catalog must contain exactly four plans.')
+}
+for (const [, plan, priceText] of planMatches) {
+  if (expectedPlans.get(plan) !== Number(priceText)) {
+    failures.push(`PricingSection.svelte: unexpected ${plan} monthly price ${priceText}.`)
   }
+  expectedPlans.delete(plan)
+}
+for (const plan of expectedPlans.keys()) {
+  failures.push(`PricingSection.svelte: missing Public Alpha plan ${plan}.`)
+}
+if (/annual|Stripe|name:\s*'(?:Scale|Business)'/i.test(pricing)) {
+  failures.push('PricingSection.svelte: annual, Stripe, Scale, and Business pricing must stay removed.')
+}
+
+const site = fs.readFileSync(path.join(root, 'src/lib/site.ts'), 'utf8')
+for (const url of [
+  'https://dash.terrascale.tech/register',
+  'https://status.terrascale.tech',
+  'https://docs.terrascale.tech/en/security/',
+  'https://docs.terrascale.tech/en/legal/terms/',
+  'https://docs.terrascale.tech/en/legal/privacy/',
+  'https://docs.terrascale.tech/en/legal/acceptable-use/',
+  'https://docs.terrascale.tech/en/support/',
+]) {
+  if (!site.includes(url)) failures.push(`site.ts: missing customer link ${url}`)
+}
+
+const redirects = fs.readFileSync(path.join(root, 'static/_redirects'), 'utf8')
+if (!redirects.includes('/signup https://dash.terrascale.tech/register 308')) {
+  failures.push('static/_redirects: /signup must redirect permanently to the canonical registration URL.')
 }
 
 const expectedRoutes = ['/', '/about', '/contact', '/pricing']
