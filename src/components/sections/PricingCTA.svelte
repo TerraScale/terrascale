@@ -1,8 +1,8 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
-  import RouteLink from '@/components/RouteLink.svelte'
+  import ExternalLink from '@/components/ExternalLink.svelte'
   import { dict } from '@/lib/i18n'
-  import { registrationUrl } from '@/lib/site'
+  import { launchPhase, registrationUrl } from '@/lib/site'
 </script>
 
 <section class="pricing-cta">
@@ -11,10 +11,10 @@
     <p class="pricing-cta__text">
       {$dict.pricing.finalCta.text}
     </p>
-    <RouteLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine">
-      {$dict.pricing.finalCta.cta}
+    <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine">
+      {launchPhase === 'public-alpha' ? $dict.pricing.finalCta.cta : $dict.hero.ctaPrelaunch}
       <Icon name="arrowRight" className="pricing-cta__icon" />
-    </RouteLink>
+    </ExternalLink>
   </div>
 </section>
 

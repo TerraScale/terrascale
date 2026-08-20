@@ -13,6 +13,7 @@ const forbidden = [
   [/dash\.terrascale\.tech\/(?:signup|usage)\b/i, 'Use the canonical dashboard registration URL.'],
   [/\b(?:Frankfurt|Guarulhos)\b/i, 'Use the Public Alpha launch regions.'],
   [/\b(?:Stripe|NATS JetStream)\b/i, 'Do not advertise deferred products or providers.'],
+  [/\b(?:queue|queued|colas?|enfileir(?:ada|ado|ar))\b/i, 'Do not advertise deferred queue products.'],
   [/\b(?:zero[- ]latency|instant replication|bounded lag|majority write|serve from any region)\b/i, 'Unsupported consistency or latency claims are prohibited.'],
   [/href=["']\/terms["']/i, 'The terms route must remain unpublished until approved.'],
 ]
@@ -36,13 +37,14 @@ for (const file of walk(path.join(root, 'src'))) {
 }
 
 const pricing = fs.readFileSync(path.join(root, 'src/components/sections/PricingSection.svelte'), 'utf8')
+const site = fs.readFileSync(path.join(root, 'src/lib/site.ts'), 'utf8')
 const expectedPlans = new Map([
   ['Developer', 0],
   ['Starter', 5],
   ['Pro', 25],
   ['Enterprise', 500],
 ])
-const planMatches = [...pricing.matchAll(/name:\s*'([^']+)'[\s\S]*?price:\s*(\d+)/g)]
+const planMatches = [...site.matchAll(/name:\s*'([^']+)'[\s\S]*?price:\s*(\d+)/g)]
 if (planMatches.length !== expectedPlans.size) {
   failures.push('PricingSection.svelte: Public Alpha catalog must contain exactly four plans.')
 }
@@ -55,18 +57,44 @@ for (const [, plan, priceText] of planMatches) {
 for (const plan of expectedPlans.keys()) {
   failures.push(`PricingSection.svelte: missing Public Alpha plan ${plan}.`)
 }
-if (/annual|Stripe|name:\s*'(?:Scale|Business)'/i.test(pricing)) {
+const expectedLimits = {
+  Developer: [1, 3, 3, 1, 10_000],
+  Starter: [5, 10, 5, 5, 1_000_000],
+  Pro: [25, 50, 25, 50, 10_000_000],
+  Enterprise: [null, null, null, null, null],
+}
+for (const [plan, limits] of Object.entries(expectedLimits)) {
+  const block = site.match(new RegExp(`name:\\s*'${plan}'([\\s\\S]*?)(?=\\n\\s*},)`))?.[1] ?? ''
+  const actual = [...block.matchAll(/(?:projects|databases|members|storageGb|operationUnits):\s*(\d[\d_]*|null)/g)].map(
+    ([, value]) => (value === 'null' ? null : Number(value.replaceAll('_', ''))),
+  )
+  if (actual.length !== limits.length || actual.some((value, i) => value !== limits[i])) {
+    failures.push(`site.ts: ${plan} limits do not match the Public Alpha catalog.`)
+  }
+}
+const englishMessages = fs.readFileSync(path.join(root, 'src/lib/i18n/messages/en.ts'), 'utf8')
+for (const phrase of [
+  'Non-expiring',
+  '30-day trial',
+  'Monthly support base plus metered usage',
+  'Unavailable during Public Alpha',
+  'Storage adds bytes in every selected region',
+]) {
+  if (!englishMessages.includes(phrase)) failures.push(`messages/en.ts: missing catalog wording ${phrase}.`)
+}
+if (/annual|Stripe|name:\s*'(?:Scale|Business)'/i.test(`${pricing}\n${site}`)) {
   failures.push('PricingSection.svelte: annual, Stripe, Scale, and Business pricing must stay removed.')
 }
 
-const site = fs.readFileSync(path.join(root, 'src/lib/site.ts'), 'utf8')
 for (const url of [
   'https://dash.terrascale.tech/register',
+  'https://dash.terrascale.tech/login',
   'https://status.terrascale.tech',
   'https://docs.terrascale.tech/en/security/',
   'https://docs.terrascale.tech/en/legal/terms/',
   'https://docs.terrascale.tech/en/legal/privacy/',
   'https://docs.terrascale.tech/en/legal/acceptable-use/',
+  'https://docs.terrascale.tech/en/legal/data-processing-terms/',
   'https://docs.terrascale.tech/en/support/',
 ]) {
   if (!site.includes(url)) failures.push(`site.ts: missing customer link ${url}`)
