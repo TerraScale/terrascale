@@ -21,6 +21,44 @@ Next composes these typed public product clients inside its own full-stack route
 handlers as an ordinary external user and never receives special headers,
 authorization, tenant access, direct database access, or private API access.
 
+## Regional and session consistency
+
+The default client targets `https://api.terrascale.tech`. A preferred region on
+the global endpoint is a failover-capable hint. Strict affinity uses the
+selected regional hostname and does not silently fall back:
+
+```ts
+const session = createTerraScaleClient({
+  accessToken,
+  projectId,
+  preferredRegion: "fra",
+  regionAffinity: "strict",
+  sessionConsistency: "automatic",
+});
+
+const current = await session.documents.get({ repositoryId }, documentId);
+if (current.ok) {
+  await session.documents.put(
+    { repositoryId },
+    documentId,
+    { ...current.value.data, status: "approved" },
+    { expectedChangeToken: current.value.changeToken ?? undefined },
+  );
+}
+```
+
+Automatic session consistency keeps the latest opaque write token inside that
+client instance and sends it on later single-document reads. Set
+`allowStale: true` on an individual read to opt out of the server wait. A
+conditional mismatch returns a normal `TerraScaleResult` conflict and changes
+no document. `result.routing` reports the public edge and serving regions when
+the API supplies them; it marks a cross-region response as degraded without
+exposing operator details.
+
+Transient retries are disabled by default. Set `maxRetryAttempts` and, when
+needed, `retryDelayMs` to enable bounded retries for reads. Mutations retry only
+when they carry an idempotency key, and the same key is reused for each attempt.
+
 ## Sync
 
 `TerraScaleSyncSession` is the framework-neutral live-query client. Browser
@@ -76,7 +114,10 @@ The public client follows the backed `TerraScale.Platform` REST surface:
 - Documents: list/create/get/put/patch/delete/batch under
   `/api/v1/repositories/{repositoryId}/documents`; document write bodies are
   wrapped as `{ data }`, and document responses use `id`, `data`,
-  `lastModified`, and `changeToken`.
+  `lastModified`, `changeToken`, and write-only `sessionConsistencyToken`.
+  Put, patch, and delete accept `expectedChangeToken`; single-document reads accept
+  `allowStale`. A client configured with `sessionConsistency: "automatic"`
+  forwards the last successful write token on later reads.
 - TQL and schema: `/api/v1/repositories/{repositoryId}/tql`,
   `/api/v1/repositories/{repositoryId}/schema`, and
   `/api/v1/repositories/{repositoryId}/schema/validate`.
@@ -142,7 +183,19 @@ npm install
 npm run typecheck
 npm run build
 npm test
+npm run test:browser
 ```
+
+Node.js 22 and 24 are the supported server runtimes. The package supports the
+current stable major versions of Chrome, Firefox, Safari, and Edge. CI runs
+the public contract suite on both Node versions and the browser build against
+the current Playwright Chromium, Firefox, and WebKit engines. Branded-browser
+and live API evidence still belongs to the protected release qualification;
+local engine results do not stand in for evidence that was not run.
+
+The supported public API `/api/v1` contract applies to both package entry
+points. Release qualification installs the exact packed tarball into clean
+Node and browser consumers. It does not rebuild the package for those checks.
 
 The SDK route manifest is generated from the route-capture tests:
 

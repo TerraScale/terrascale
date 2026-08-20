@@ -13,8 +13,16 @@ npm run typecheck
 npm run build
 npm run test:unit
 npm run test:integration
+npm run test:browser
 npm pack --pack-destination artifacts/candidate
 ```
+
+The workflow also runs the unit and contract suite on Node.js 22 and 24 and
+the browser contract suite on the current pinned Playwright Chromium, Firefox,
+and WebKit engines. Update Playwright at qualification time so its engine
+revisions match the release record. Record branded Chrome, Safari, and Edge
+results separately when the protected browser lane runs them. Missing evidence
+does not become a passing result.
 
 The release E2E profile fails before tests run unless real
 `TERRASCALE_API_BASE_URL`, `TERRASCALE_AUTH_API_BASE_URL`,

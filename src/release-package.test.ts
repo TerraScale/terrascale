@@ -77,6 +77,12 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.ok(jobDefinition(workflow, "pr-static").indexOf("npm run build") < jobDefinition(workflow, "pr-static").indexOf("npm run check:route-manifest"));
   assert.match(jobDefinition(workflow, "pr-build"), /npm ci/u);
   assert.match(jobDefinition(workflow, "pr-build"), /npm run build/u);
+  assert.match(jobDefinition(workflow, "runtime-matrix"), /node: \["22", "24"\]/u);
+  assert.match(jobDefinition(workflow, "runtime-matrix"), /runs-on: terrascale-untrusted/u);
+  assert.match(jobDefinition(workflow, "runtime-matrix"), /npm run test:unit/u);
+  assert.match(jobDefinition(workflow, "browser-matrix"), /runs-on: terrascale-untrusted/u);
+  assert.match(jobDefinition(workflow, "browser-matrix"), /playwright:v1\.62\.1-noble/u);
+  assert.match(jobDefinition(workflow, "browser-matrix"), /npm run test:browser/u);
   assert.match(jobDefinition(workflow, "release-contract-fixture"), /check-public-contract-fixture\.mjs Documentation\/public\/openapi\/server\.openapi\.json/u);
   assert.match(jobDefinition(workflow, "release-contract-fixture"), /check:openapi-contract-descriptor -- Documentation\/public\/openapi\/server\.openapi\.json/u);
   assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("npm run build") < jobDefinition(workflow, "release-contract-fixture").indexOf("npm run check:route-manifest"));
@@ -103,6 +109,8 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "candidate"), /release-contract-fixture/u);
   assert.match(jobDefinition(workflow, "candidate"), /release-e2e/u);
   assert.match(jobDefinition(workflow, "candidate"), /release-version-availability/u);
+  assert.match(jobDefinition(workflow, "candidate"), /runtime-matrix/u);
+  assert.match(jobDefinition(workflow, "candidate"), /browser-matrix/u);
   assert.doesNotMatch(jobDefinition(workflow, "candidate"), /NPM_TOKEN/u);
   assert.match(jobDefinition(workflow, "candidate"), /candidate-store upload/u);
   assert.doesNotMatch(jobDefinition(workflow, "candidate"), /^    env:/mu);

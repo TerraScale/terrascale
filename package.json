@@ -43,15 +43,25 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/*.test.js dist/integration/*.test.js",
     "test:integration": "node --test dist/integration/*.test.js",
-    "test:unit": "node --test dist/*.test.js"
+    "test:unit": "node --test dist/*.test.js",
+    "test:browser": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^26.0.0",
     "typescript": "^5.9.3"
   },
   "engines": {
-    "node": ">=22.0.0",
+    "node": "22.x || 24.x",
     "npm": ">=11.0.0"
+  },
+  "browserslist": {
+    "production": [
+      "last 1 Chrome major version",
+      "last 1 Firefox major version",
+      "last 1 Safari major version",
+      "last 1 Edge major version"
+    ]
   },
   "packageManager": "npm@11.18.0"
 }

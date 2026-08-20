@@ -915,6 +915,17 @@ export type DocumentResponse<TDocument extends JsonValue = JsonObject> = {
   readonly data: TDocument;
   readonly lastModified?: Timestamp | null;
   readonly changeToken?: string | null;
+  readonly sessionConsistencyToken?: string | null;
+};
+
+export type DocumentReadOptions = {
+  readonly allowStale?: boolean;
+  readonly signal?: AbortSignal;
+};
+
+export type DocumentMutationOptions = {
+  readonly expectedChangeToken?: string;
+  readonly signal?: AbortSignal;
 };
 
 export type DocumentPageResponse<TDocument extends JsonValue = JsonObject> = {
@@ -951,6 +962,7 @@ export type DeletedDocumentResponse = {
   readonly repository: string;
   readonly id: DocumentId;
   readonly deleted: boolean;
+  readonly sessionConsistencyToken?: string | null;
 };
 
 export type DocumentBatchResponse<TDocument extends JsonValue = JsonObject> = {

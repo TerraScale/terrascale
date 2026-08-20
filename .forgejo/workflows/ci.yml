@@ -89,6 +89,40 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+  runtime-matrix:
+    name: runtime/node-${{ matrix.node }}
+    if: ${{ forgejo.event_name == 'pull_request' || (forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main') }}
+    strategy:
+      fail-fast: true
+      matrix:
+        node: ["22", "24"]
+    runs-on: terrascale-untrusted
+    container: { image: "node:${{ matrix.node }}-bookworm-slim" }
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          persist-credentials: false
+      - run: npm install --global npm@11.18.0
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run test:unit
+
+  browser-matrix:
+    name: runtime/current-browser-engines
+    if: ${{ forgejo.event_name == 'pull_request' || (forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main') }}
+    runs-on: terrascale-untrusted
+    container: { image: "mcr.microsoft.com/playwright:v1.62.1-noble" }
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          persist-credentials: false
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:browser
+
   promotion-admission:
     name: promotion/admission
     if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' }}
@@ -185,7 +219,7 @@ jobs:
 
   candidate:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
-    needs: [bootstrap, plan, release-tests, release-e2e, release-artifacts, release-contract-fixture, release-version-availability]
+    needs: [bootstrap, plan, runtime-matrix, browser-matrix, release-tests, release-e2e, release-artifacts, release-contract-fixture, release-version-availability]
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     steps:

@@ -217,7 +217,7 @@ describe("public contract fixture parity", () => {
       operationId: "GetDatabaseBranchCapability",
       required: ["projectId", "admissionState", "physicalCloneAvailable", "promotionAvailable", "mergeAvailable", "detail"],
       propertyTypes: {
-        projectId: [null], admissionState: ["string"], physicalCloneAvailable: ["boolean"],
+        projectId: ["string"], admissionState: ["string"], physicalCloneAvailable: ["boolean"],
         promotionAvailable: ["boolean"], mergeAvailable: ["boolean"], detail: ["string"],
       },
       errorStatuses: [400, 401, 403, 404, 409, 429, 500, 503],

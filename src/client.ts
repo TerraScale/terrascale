@@ -1557,6 +1557,7 @@ export class DocumentsClient {
       path: `${repositoryRoot(scope)}/documents`,
       routeName: "documents.list",
       query,
+      consistency: "read",
     });
   }
 
@@ -1569,17 +1570,22 @@ export class DocumentsClient {
       path: `${repositoryRoot(scope)}/documents`,
       routeName: "documents.create",
       body: { data },
+      consistency: "write",
     });
   }
 
   get<TDocument extends Models.JsonValue = Models.JsonObject>(
     scope: Models.RepositoryScoped,
     documentId: Ulid,
+    options?: Models.DocumentReadOptions,
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
     return this.#http.request({
       method: "GET",
       path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.get",
+      headers: documentReadHeaders(options),
+      signal: options?.signal,
+      consistency: "read",
     });
   }
 
@@ -1587,12 +1593,16 @@ export class DocumentsClient {
     scope: Models.RepositoryScoped,
     documentId: Ulid,
     data: TDocument,
+    options?: Models.DocumentMutationOptions,
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
     return this.#http.request({
       method: "PUT",
       path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.put",
       body: { data },
+      headers: documentMutationHeaders(options),
+      signal: options?.signal,
+      consistency: "write",
     });
   }
 
@@ -1600,12 +1610,16 @@ export class DocumentsClient {
     scope: Models.RepositoryScoped,
     documentId: Ulid,
     data: TDocument,
+    options?: Models.DocumentMutationOptions,
   ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
     return this.#http.request({
       method: "PATCH",
       path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.patch",
       body: { data },
+      headers: documentMutationHeaders(options),
+      signal: options?.signal,
+      consistency: "write",
     });
   }
 
@@ -1618,17 +1632,22 @@ export class DocumentsClient {
       path: `${repositoryRoot(scope)}/documents/batch`,
       routeName: "documents.batch",
       body: request,
+      consistency: "write",
     });
   }
 
   delete(
     scope: Models.RepositoryScoped,
     documentId: Ulid,
+    options?: Models.DocumentMutationOptions,
   ): Promise<TerraScaleResult<Models.DeletedDocumentResponse>> {
     return this.#http.request({
       method: "DELETE",
       path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
       routeName: "documents.delete",
+      headers: documentMutationHeaders(options),
+      signal: options?.signal,
+      consistency: "write",
     });
   }
 }
@@ -1649,6 +1668,7 @@ export class QueryClient {
       path: `${repositoryRoot(scope)}/tql`,
       routeName: "query.execute",
       body: request,
+      consistency: "read",
     });
   }
 }
@@ -2387,6 +2407,25 @@ function queueRoot(http: TerraScaleHttp, queueId: Ulid, projectId?: Ulid): strin
 
 function preferredRegionHeaders(region: string): HeadersInit {
   return { "x-terrascale-preferred-region": region.trim().toLowerCase() };
+}
+
+function documentReadHeaders(options: Models.DocumentReadOptions | undefined): HeadersInit | undefined {
+  return options?.allowStale === true ? { "x-terrascale-allow-stale": "true" } : undefined;
+}
+
+function documentMutationHeaders(
+  options: Models.DocumentMutationOptions | undefined,
+): HeadersInit | undefined {
+  const token = options?.expectedChangeToken?.trim();
+  if (token === undefined) {
+    return undefined;
+  }
+
+  if (token.length === 0 || token.length > 4096) {
+    throw new TypeError("expectedChangeToken must be nonblank and contain at most 4096 characters.");
+  }
+
+  return { "if-match": token };
 }
 
 function environmentRoot(http: TerraScaleHttp, scope: Models.EnvironmentScoped): string {

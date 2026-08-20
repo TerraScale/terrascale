@@ -56,6 +56,8 @@ export type TerraScaleRequestOptions<TBody = unknown> = {
   readonly headerPolicy?: "authenticated" | "anonymous" | undefined;
   /** Overrides automatic generation. Set to false to explicitly opt out. */
   readonly idempotencyKey?: string | false | undefined;
+  /** Internal public-contract classification for document session token handling. */
+  readonly consistency?: "read" | "write" | undefined;
 };
 
 export type TerraScaleRequestMetric = {
@@ -69,6 +71,7 @@ export type TerraScaleRequestMetricRecorder = (metric: TerraScaleRequestMetric) 
 
 export class TerraScaleHttp {
   readonly config: ResolvedTerraScaleRuntimeConfig;
+  readonly #sessionConsistencyTokens = new Map<string, string>();
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.config = resolveRuntimeConfig(config);
@@ -79,55 +82,85 @@ export class TerraScaleHttp {
   ): Promise<TerraScaleResult<TResponse>> {
     const base = options.base ?? "api";
     const startedAt = performance.now();
+    let idempotencyKey: string | undefined;
 
     try {
-      const url = buildUrl(this.baseUrl(base), options.path, options.query);
-      const headers = await this.buildHeaders(options);
-      const requestInit: RequestInit = {
-        method: options.method,
-        headers,
-      };
-      if (options.signal !== undefined) {
-        requestInit.signal = options.signal;
-      }
+      idempotencyKey = this.resolveIdempotencyKey(options);
+      let attempt = 0;
+      while (true) {
+        let responseReceived = false;
+        let fetchStarted = false;
+        try {
+          const url = buildUrl(this.baseUrl(base), options.path, options.query);
+          const headers = await this.buildHeaders(options, base, idempotencyKey);
+          const requestInit: RequestInit = {
+            method: options.method,
+            headers,
+          };
+          if (options.signal !== undefined) {
+            requestInit.signal = options.signal;
+          }
 
-      if (options.body !== undefined) {
-        headers.set("content-type", headers.get("content-type") ?? "application/json");
-        requestInit.body = JSON.stringify(options.body);
-      }
+          if (options.body !== undefined) {
+            headers.set("content-type", headers.get("content-type") ?? "application/json");
+            requestInit.body = JSON.stringify(options.body);
+          }
 
-      const request = new Request(url, requestInit);
-      const response = await this.config.fetch(request);
-      const body = await readResponseBody(response);
-      this.recordRequestMetric(base, options.routeName, response.status, performance.now() - startedAt);
+          const request = new Request(url, requestInit);
+          fetchStarted = true;
+          const response = await this.config.fetch(request);
+          responseReceived = true;
+          const body = await readResponseBody(response);
+          this.recordRequestMetric(base, options.routeName, response.status, performance.now() - startedAt);
 
-      if (response.ok) {
-        if (!body.ok) {
+          if (response.ok) {
+            if (!body.ok) {
+              return err(
+                options.routeName,
+                {
+                  kind: "invalid-response",
+                  code: "invalid_response",
+                  message: body.errorMessage,
+                  status: response.status,
+                  requestId: requestIdFrom(response.headers),
+                },
+                response.status,
+                response.headers,
+                body.raw,
+              );
+            }
+
+            if (options.consistency === "write" && this.config.sessionConsistency === "automatic") {
+              this.captureSessionConsistencyTokens(options.path, body.value);
+            }
+
+            return ok(options.routeName, response.status, response.headers, body.value as TResponse);
+          }
+
+          const error = errorFromResponse(response, body.ok ? body.value : body.raw);
+          if (this.canRetry(options, idempotencyKey, attempt, response.status)) {
+            await delayForRetry(retryDelay(response, this.config.retryDelayMs, attempt), options.signal);
+            attempt++;
+            continue;
+          }
+
           return err(
             options.routeName,
-            {
-              kind: "invalid-response",
-              code: "invalid_response",
-              message: body.errorMessage,
-              status: response.status,
-              requestId: requestIdFrom(response.headers),
-            },
+            error,
             response.status,
             response.headers,
-            body.raw,
+            body.ok ? body.value : body.raw,
           );
+        } catch (error) {
+          if (fetchStarted && !responseReceived && this.canRetry(options, idempotencyKey, attempt)) {
+            await delayForRetry(retryDelay(undefined, this.config.retryDelayMs, attempt), options.signal);
+            attempt++;
+            continue;
+          }
+
+          throw error;
         }
-
-        return ok(options.routeName, response.status, response.headers, body.value as TResponse);
       }
-
-      return err(
-        options.routeName,
-        errorFromResponse(response, body.ok ? body.value : body.raw),
-        response.status,
-        response.headers,
-        body.ok ? body.value : body.raw,
-      );
     } catch (error) {
       this.recordRequestMetric(base, options.routeName, undefined, performance.now() - startedAt);
       return err(options.routeName, {
@@ -146,7 +179,11 @@ export class TerraScaleHttp {
     return base === "auth" ? this.config.authBaseUrl : this.config.apiBaseUrl;
   }
 
-  private async buildHeaders<TBody>(options: TerraScaleRequestOptions<TBody>): Promise<Headers> {
+  private async buildHeaders<TBody>(
+    options: TerraScaleRequestOptions<TBody>,
+    base: TerraScaleBase,
+    idempotencyKey: string | undefined,
+  ): Promise<Headers> {
     const anonymous = options.headerPolicy === "anonymous";
     const headers = new Headers(anonymous ? undefined : this.config.defaultHeaders);
 
@@ -154,6 +191,25 @@ export class TerraScaleHttp {
     if (!anonymous) {
       if (this.config.projectId !== undefined) {
         headers.set("x-terrascale-project-id", this.config.projectId);
+      }
+
+      if (
+        base === "api" &&
+        this.config.regionAffinity === "failover" &&
+        this.config.preferredRegion !== undefined
+      ) {
+        headers.set("x-terrascale-preferred-region", this.config.preferredRegion);
+      }
+
+      if (
+        options.consistency === "read" &&
+        this.config.sessionConsistency === "automatic" &&
+        this.#sessionConsistencyTokens.has(options.path)
+      ) {
+        headers.set(
+          "x-terrascale-session-consistency-token",
+          this.#sessionConsistencyTokens.get(options.path)!,
+        );
       }
 
       const token = await resolveAccessToken(this.config.accessToken);
@@ -174,18 +230,77 @@ export class TerraScaleHttp {
       headers.delete("x-terrascale-project-id");
     }
 
-    if (isMutation(options.method) && options.idempotencyKey !== false) {
-      const key = options.idempotencyKey ?? this.config.idempotencyKeyFactory?.();
-      if (key !== undefined) {
-        const normalized = key.trim();
-        if (normalized.length === 0 || normalized.length > 128) {
-          throw new TypeError("Idempotency keys must be nonblank and contain at most 128 characters.");
-        }
-        headers.set("idempotency-key", normalized);
-      }
+    if (idempotencyKey !== undefined) {
+      headers.set("idempotency-key", idempotencyKey);
     }
 
     return headers;
+  }
+
+  private resolveIdempotencyKey<TBody>(options: TerraScaleRequestOptions<TBody>): string | undefined {
+    if (!isMutation(options.method) || options.idempotencyKey === false) {
+      return undefined;
+    }
+
+    const key = options.idempotencyKey ?? this.config.idempotencyKeyFactory?.();
+    if (key === undefined) {
+      return undefined;
+    }
+
+    const normalized = key.trim();
+    if (normalized.length === 0 || normalized.length > 128) {
+      throw new TypeError("Idempotency keys must be nonblank and contain at most 128 characters.");
+    }
+    return normalized;
+  }
+
+  private canRetry<TBody>(
+    options: TerraScaleRequestOptions<TBody>,
+    idempotencyKey: string | undefined,
+    attempt: number,
+    status?: number,
+  ): boolean {
+    if (attempt >= this.config.maxRetryAttempts || options.signal?.aborted) {
+      return false;
+    }
+
+    const retryableOperation = options.consistency === "read" || idempotencyKey !== undefined;
+    if (!retryableOperation) {
+      return false;
+    }
+
+    return status === undefined || retryableStatuses.has(status);
+  }
+
+  private captureSessionConsistencyTokens(requestPath: string, value: unknown): void {
+    if (!isRecord(value)) {
+      return;
+    }
+
+    const values = Array.isArray(value.results)
+      ? value.results.flatMap(result => {
+        if (!isRecord(result)) {
+          return [];
+        }
+
+        const document = isRecord(result.document) ? result.document : undefined;
+        const deleted = isRecord(result.deleted) ? result.deleted : undefined;
+        return [document, deleted].filter((item): item is Record<string, unknown> => item !== undefined);
+      })
+      : [value];
+
+    for (const result of values) {
+      const token = result.sessionConsistencyToken;
+      const scope = sessionConsistencyScope(requestPath, result);
+      if (
+        scope !== undefined &&
+        typeof token === "string" &&
+        token.length > 0 &&
+        token.length <= 4096
+      ) {
+        this.#sessionConsistencyTokens.set(scope, token);
+      }
+    }
   }
 
   private recordRequestMetric(
@@ -202,8 +317,73 @@ export class TerraScaleHttp {
   }
 }
 
+function sessionConsistencyScope(requestPath: string, value: Record<string, unknown>): string | undefined {
+  const batchPath = requestPath.endsWith("/documents/batch")
+    ? requestPath.slice(0, -"/batch".length)
+    : requestPath;
+  if (batchPath !== requestPath) {
+    const documentId = value.id;
+    return typeof documentId === "string" && documentId.length > 0
+      ? `${batchPath}/${encodeURIComponent(documentId)}`
+      : undefined;
+  }
+
+  if (/\/documents\/[^/]+$/u.test(requestPath)) {
+    return requestPath;
+  }
+
+  if (!batchPath.endsWith("/documents")) {
+    return undefined;
+  }
+
+  const documentId = value.id;
+  return typeof documentId === "string" && documentId.length > 0
+    ? `${batchPath}/${encodeURIComponent(documentId)}`
+    : undefined;
+}
+
 function isMutation(method: TerraScaleHttpMethod): boolean {
   return method === "DELETE" || method === "PATCH" || method === "POST" || method === "PUT";
+}
+
+const retryableStatuses = new Set([408, 429, 500, 502, 503, 504]);
+
+function retryDelay(response: Response | undefined, baseDelayMs: number, attempt: number): number {
+  const retryAfter = response?.headers.get("retry-after");
+  if (retryAfter !== null && retryAfter !== undefined) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1_000, 30_000);
+    }
+
+    const date = Date.parse(retryAfter);
+    if (Number.isFinite(date)) {
+      return Math.min(Math.max(0, date - Date.now()), 30_000);
+    }
+  }
+
+  return Math.min(baseDelayMs * (2 ** attempt), 30_000);
+}
+
+async function delayForRetry(delayMs: number, signal: AbortSignal | undefined): Promise<void> {
+  signal?.throwIfAborted();
+  if (delayMs === 0) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const abort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      reject(signal?.reason ?? new DOMException("The request was aborted.", "AbortError"));
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 type ParsedBody =
@@ -282,7 +462,7 @@ function errorFromResponse(response: Response, body: unknown): TerraScaleError {
   const validation = validationIssues(source);
 
   return {
-    kind: kindFromStatus(response.status, validation),
+    kind: kindFromStatus(response.status, validation, code),
     code,
     message:
       stringProperty(source, "message") ??
@@ -360,6 +540,7 @@ function validationIssues(
 function kindFromStatus(
   status: number,
   validation: readonly TerraScaleValidationIssue[] | undefined,
+  code: string,
 ) {
   if (validation !== undefined && validation.length > 0) {
     return "validation";
@@ -383,6 +564,10 @@ function kindFromStatus(
 
   if (status === 429) {
     return "rate-limit";
+  }
+
+  if (status === 503 && code === "project_region_unavailable") {
+    return "unavailable";
   }
 
   if (status >= 500) {
