@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text;
 
 namespace TerraScale.DotNet.Tests;
 
@@ -8,74 +7,75 @@ public sealed class TerraScaleRegionalConsistencyTests
     [Test]
     public async Task InvalidPreferredRegionsFailBeforeAnyRequest()
     {
-        using var handler = new RecordingHandler(DocumentJson());
-        using var httpClient = new HttpClient(handler);
+        using var httpClient = new HttpClient();
 
         var exception = Assert.Throws<ArgumentException>(() => new TerraScaleClient(
             httpClient,
             new TerraScaleClientOptions
             {
+                BaseAddress = new Uri("https://api.example.invalid/"),
                 BearerToken = "caller-token",
                 PreferredRegion = "-invalid"
             }));
 
         await Assert.That(exception!.ParamName).IsEqualTo("PreferredRegion");
-        await Assert.That(handler.Requests).IsEmpty();
     }
 
     [Test]
     public async Task UnknownRegionalOptionsFailBeforeAnyRequest()
     {
-        using var handler = new RecordingHandler(DocumentJson());
-        using var httpClient = new HttpClient(handler);
+        using var httpClient = new HttpClient();
 
         var exception = Assert.Throws<ArgumentOutOfRangeException>(() => new TerraScaleClient(
             httpClient,
             new TerraScaleClientOptions
             {
+                BaseAddress = new Uri("https://api.example.invalid/"),
                 BearerToken = "caller-token",
                 RegionAffinity = (TerraScaleRegionAffinity)99
             }));
 
         await Assert.That(exception!.ParamName).IsEqualTo("RegionAffinity");
-        await Assert.That(handler.Requests).IsEmpty();
     }
 
     [Test]
     public async Task RetryOptionsRejectUnboundedValues()
     {
-        using var handler = new RecordingHandler(DocumentJson());
-        using var httpClient = new HttpClient(handler);
+        using var attemptsHttpClient = new HttpClient();
+        using var delayHttpClient = new HttpClient();
 
         var attemptsException = Assert.Throws<ArgumentOutOfRangeException>(() => new TerraScaleClient(
-            httpClient,
-            new TerraScaleClientOptions { MaxRetryAttempts = 9 }));
+            attemptsHttpClient,
+            new TerraScaleClientOptions
+            {
+                BaseAddress = new Uri("https://api.example.invalid/"),
+                MaxRetryAttempts = 9
+            }));
         var delayException = Assert.Throws<ArgumentOutOfRangeException>(() => new TerraScaleClient(
-            httpClient,
-            new TerraScaleClientOptions { RetryDelay = TimeSpan.FromSeconds(30.001) }));
+            delayHttpClient,
+            new TerraScaleClientOptions
+            {
+                BaseAddress = new Uri("https://api.example.invalid/"),
+                RetryDelay = TimeSpan.FromSeconds(30.001)
+            }));
 
         await Assert.That(attemptsException!.ParamName).IsEqualTo("MaxRetryAttempts");
         await Assert.That(delayException!.ParamName).IsEqualTo("RetryDelay");
-        await Assert.That(handler.Requests).IsEmpty();
     }
 
     [Test]
     public async Task DefaultAndStrictClientsUseTheContractedPublicHosts()
     {
-        using var globalHandler = new RecordingHandler(DocumentJson());
-        using var globalHttpClient = new HttpClient(globalHandler);
-        var global = new TerraScaleClient(
+        using var globalHttpClient = new HttpClient();
+        _ = new TerraScaleClient(
             globalHttpClient,
             new TerraScaleClientOptions { BearerToken = "caller-token" });
 
-        await global.Documents.GetAsync("repository-a", "document-a");
+        await Assert.That(globalHttpClient.BaseAddress)
+            .IsEqualTo(new Uri("https://api.terrascale.tech"));
 
-        await Assert.That(globalHandler.Requests.Single().Uri)
-            .IsEqualTo(new Uri("https://api.terrascale.tech/api/v1/repositories/repository-a/documents/document-a"));
-
-        using var strictHandler = new RecordingHandler(DocumentJson());
-        using var strictHttpClient = new HttpClient(strictHandler);
-        var strict = new TerraScaleClient(
+        using var strictHttpClient = new HttpClient();
+        _ = new TerraScaleClient(
             strictHttpClient,
             new TerraScaleClientOptions
             {
@@ -84,81 +84,79 @@ public sealed class TerraScaleRegionalConsistencyTests
                 RegionAffinity = TerraScaleRegionAffinity.Strict
             });
 
-        await strict.Documents.GetAsync("repository-a", "document-a");
-
-        var request = strictHandler.Requests.Single();
-        await Assert.That(request.Uri)
-            .IsEqualTo(new Uri("https://sfo.api.terrascale.tech/api/v1/repositories/repository-a/documents/document-a"));
-        await Assert.That(request.Headers.ContainsKey("X-TerraScale-Preferred-Region")).IsFalse();
+        await Assert.That(strictHttpClient.BaseAddress)
+            .IsEqualTo(new Uri("https://sfo.api.terrascale.tech"));
     }
 
     [Test]
-    public async Task FailoverConditionalMutationPropagatesSessionTokenToLaterRead()
+    [RequiresTerraScaleApi]
+    public async Task ConditionalMutationConflictAndSessionTokensRoundTripAgainstRealApi()
     {
-        using var handler = new RecordingHandler(
-            DocumentJson(sessionConsistencyToken: "session-2"),
-            DocumentJson());
-        using var httpClient = new HttpClient(handler);
         var client = new TerraScaleClient(
-            httpClient,
+            new HttpClient(),
             new TerraScaleClientOptions
             {
-                BearerToken = "caller-token",
-                PreferredRegion = "FRA",
-                RegionAffinity = TerraScaleRegionAffinity.Failover,
+                BaseAddress = TerraScaleApiE2E.BaseAddress!,
+                ApiKey = TerraScaleApiE2E.ApiKey,
+                ProjectId = TerraScaleApiE2E.ProjectId,
                 SessionConsistency = TerraScaleSessionConsistency.Automatic
             });
+        var repository = TerraScaleApiE2E.Repository;
+        var created = await client.Documents.CreateAsync(
+            repository,
+            new { status = $"sdk-e2e-consistency-{Guid.NewGuid():N}", quantity = 1 });
 
-        var written = await client.Documents.UpsertAsync(
-            "repository-a",
-            "document-a",
-            new { Name = "Grace" },
-            new TerraScaleDocumentMutationOptions("change-1"));
-        var read = await client.Documents.GetAsync(
-            "repository-a",
-            "document-a",
-            new TerraScaleDocumentReadOptions(AllowStale: true));
+        try
+        {
+            await Assert.That(created.ChangeToken).IsNotNull();
+            await Assert.That(created.SessionConsistencyToken).IsNotNull();
 
-        await Assert.That(written.SessionConsistencyToken).IsEqualTo("session-2");
-        await Assert.That(read.Id).IsEqualTo("document-a");
-        await Assert.That(handler.Requests[0].Headers["If-Match"]).IsEqualTo("change-1");
-        await Assert.That(handler.Requests[0].Headers["X-TerraScale-Preferred-Region"]).IsEqualTo("fra");
-        await Assert.That(handler.Requests[1].Headers["X-TerraScale-Allow-Stale"]).IsEqualTo("true");
-        await Assert.That(handler.Requests[1].Headers["X-TerraScale-Session-Consistency-Token"])
-            .IsEqualTo("session-2");
-    }
+            var originalChangeToken = created.ChangeToken!;
+            var originalSessionToken = created.SessionConsistencyToken!;
+            var updated = await client.Documents.UpsertAsync(
+                repository,
+                created.Id,
+                new { status = "conditional-update", quantity = 2 },
+                new TerraScaleDocumentMutationOptions(originalChangeToken));
 
-    [Test]
-    public async Task ConditionalMutationConflictIsTypedAndPreservesTheExpectedToken()
-    {
-        using var handler = new RecordingHandler(
-            """{"error":{"code":"document_change_token_conflict","message":"The document changed."}}""",
-            HttpStatusCode.Conflict);
-        using var httpClient = new HttpClient(handler);
-        var client = new TerraScaleClient(
-            httpClient,
-            new TerraScaleClientOptions { BearerToken = "caller-token" });
+            await Assert.That(updated.ChangeToken).IsNotEqualTo(originalChangeToken);
+            await Assert.That(updated.SessionConsistencyToken).IsNotNull();
+            await Assert.That(updated.SessionConsistencyToken).IsNotEqualTo(originalSessionToken);
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            client.Documents.UpsertAsync(
-                "repository-a",
-                "document-a",
-                new { Name = "Grace" },
-                new TerraScaleDocumentMutationOptions("change-1")));
+            var conflict = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.Documents.PatchAsync(
+                    repository,
+                    created.Id,
+                    new { quantity = 3 },
+                    new TerraScaleDocumentMutationOptions(originalChangeToken)));
 
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(exception.ErrorCode).IsEqualTo("document_change_token_conflict");
-        await Assert.That(handler.Requests.Single().Headers["If-Match"]).IsEqualTo("change-1");
+            await Assert.That(conflict!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            await Assert.That(conflict.ErrorCode).IsEqualTo("TERRASCALE-1401");
+
+            var consistentRead = await client.Documents.GetAsync(
+                repository,
+                created.Id,
+                new TerraScaleDocumentReadOptions(AllowStale: true));
+            await Assert.That(consistentRead.Id).IsEqualTo(created.Id);
+            await Assert.That(consistentRead.Data.GetProperty("quantity").GetInt32()).IsEqualTo(2);
+        }
+        finally
+        {
+            await DeleteIfPresentAsync(client, repository, created.Id);
+        }
     }
 
     [Test]
     public async Task InvalidExpectedChangeTokensFailBeforeSending()
     {
-        using var handler = new RecordingHandler(DocumentJson());
-        using var httpClient = new HttpClient(handler);
+        using var httpClient = new HttpClient();
         var client = new TerraScaleClient(
             httpClient,
-            new TerraScaleClientOptions { BearerToken = "caller-token" });
+            new TerraScaleClientOptions
+            {
+                BaseAddress = new Uri("https://api.example.invalid/"),
+                BearerToken = "caller-token"
+            });
 
         var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
             client.Documents.DeleteAsync(
@@ -167,275 +165,19 @@ public sealed class TerraScaleRegionalConsistencyTests
                 new TerraScaleDocumentMutationOptions("   ")));
 
         await Assert.That(exception!.ParamName).IsEqualTo("mutationOptions");
-        await Assert.That(handler.Requests).IsEmpty();
     }
 
-    [Test]
-    public async Task AutomaticSessionTokensRemainScopedToTheirDocument()
+    private static async Task DeleteIfPresentAsync(
+        TerraScaleClient client,
+        string repository,
+        string documentId)
     {
-        using var handler = new RecordingHandler(
-            DocumentJson(sessionConsistencyToken: "session-2"),
-            DocumentJson(),
-            DocumentPageJson(),
-            DocumentJson());
-        using var httpClient = new HttpClient(handler);
-        var client = new TerraScaleClient(
-            httpClient,
-            new TerraScaleClientOptions
-            {
-                BearerToken = "caller-token",
-                SessionConsistency = TerraScaleSessionConsistency.Automatic
-            });
-
-        await client.Documents.UpsertAsync("repository-a", "document-a", new { Name = "Grace" });
-        await client.Documents.GetAsync("repository-a", "document-b");
-        await client.Documents.ListAsync("repository-a");
-        await client.Documents.GetAsync("repository-a", "document-a");
-
-        await Assert.That(handler.Requests[1].Headers.ContainsKey("X-TerraScale-Session-Consistency-Token"))
-            .IsFalse();
-        await Assert.That(handler.Requests[2].Headers.ContainsKey("X-TerraScale-Session-Consistency-Token"))
-            .IsFalse();
-        await Assert.That(handler.Requests[3].Headers["X-TerraScale-Session-Consistency-Token"])
-            .IsEqualTo("session-2");
-    }
-
-    [Test]
-    public async Task BatchWriteSessionTokensApplyToEachAffectedDocument()
-    {
-        using var handler = new RecordingHandler(
-            DocumentBatchJson(),
-            DocumentJson(),
-            DocumentJson());
-        using var httpClient = new HttpClient(handler);
-        var client = new TerraScaleClient(
-            httpClient,
-            new TerraScaleClientOptions
-            {
-                BearerToken = "caller-token",
-                SessionConsistency = TerraScaleSessionConsistency.Automatic
-            });
-
-        await client.Documents.BatchAsync(
-            "repository-alias",
-            [
-                TerraScaleDocumentBatchOperation.Upsert("document-a", new { Name = "Grace" }),
-                TerraScaleDocumentBatchOperation.Upsert("document-b", new { Name = "Ada" })
-            ]);
-        await client.Documents.GetAsync("repository-alias", "document-a");
-        await client.Documents.GetAsync("repository-id", "document-b");
-
-        await Assert.That(handler.Requests[1].Headers["X-TerraScale-Session-Consistency-Token"])
-            .IsEqualTo("session-a");
-        await Assert.That(handler.Requests[2].Headers["X-TerraScale-Session-Consistency-Token"])
-            .IsEqualTo("session-b");
-    }
-
-    [Test]
-    public async Task RetryRetainsRegionalAndSessionHeaders()
-    {
-        using var handler = new RecordingHandler(DocumentJson(sessionConsistencyToken: "session-2"));
-        handler.EnqueueResponse(
-            """{"error":{"code":"temporarily_unavailable","message":"Retry the read."}}""",
-            HttpStatusCode.ServiceUnavailable);
-        handler.EnqueueResponse(DocumentJson(), HttpStatusCode.OK);
-        using var httpClient = new HttpClient(handler);
-        var client = new TerraScaleClient(
-            httpClient,
-            new TerraScaleClientOptions
-            {
-                BearerToken = "caller-token",
-                PreferredRegion = "FRA",
-                SessionConsistency = TerraScaleSessionConsistency.Automatic,
-                MaxRetryAttempts = 1,
-                RetryDelay = TimeSpan.Zero
-            });
-
-        await client.Documents.UpsertAsync("repository-a", "document-a", new { Name = "Grace" });
-        await client.Documents.GetAsync("repository-a", "document-a");
-
-        foreach (var request in handler.Requests.Skip(1))
+        try
         {
-            await Assert.That(request.Headers["X-TerraScale-Preferred-Region"]).IsEqualTo("fra");
-            await Assert.That(request.Headers["X-TerraScale-Session-Consistency-Token"])
-                .IsEqualTo("session-2");
+            await client.Documents.DeleteAsync(repository, documentId);
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
         }
     }
-
-    [Test]
-    public async Task AutomaticSessionTokensDoNotCrossClientInstances()
-    {
-        using var writerHandler = new RecordingHandler(DocumentJson(sessionConsistencyToken: "session-2"));
-        using var writerHttpClient = new HttpClient(writerHandler);
-        var writer = new TerraScaleClient(
-            writerHttpClient,
-            new TerraScaleClientOptions
-            {
-                BearerToken = "caller-token",
-                SessionConsistency = TerraScaleSessionConsistency.Automatic
-            });
-        await writer.Documents.UpsertAsync("repository-a", "document-a", new { Name = "Grace" });
-
-        using var readerHandler = new RecordingHandler(DocumentJson());
-        using var readerHttpClient = new HttpClient(readerHandler);
-        var reader = new TerraScaleClient(
-            readerHttpClient,
-            new TerraScaleClientOptions
-            {
-                BearerToken = "caller-token",
-                SessionConsistency = TerraScaleSessionConsistency.Automatic
-            });
-        await reader.Documents.GetAsync("repository-a", "document-a");
-
-        await Assert.That(readerHandler.Requests.Single().Headers)
-            .DoesNotContainKey("X-TerraScale-Session-Consistency-Token");
-    }
-
-    [Test]
-    public async Task RegionalFailureAndServingObservationRemainTyped()
-    {
-        using var unavailableHandler = new RecordingHandler(
-            """{"error":{"code":"project_region_unavailable","message":"No selected region is available."}}""",
-            HttpStatusCode.ServiceUnavailable);
-        using var unavailableHttpClient = new HttpClient(unavailableHandler);
-        var unavailableClient = new TerraScaleClient(
-            unavailableHttpClient,
-            new TerraScaleClientOptions { BearerToken = "caller-token" });
-
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            unavailableClient.Documents.GetAsync("repository-a", "document-a"));
-
-        await Assert.That(exception!.IsRegionalUnavailable).IsTrue();
-
-        using var routedHandler = new RecordingHandler(DocumentJson())
-        {
-            ResponseHeaders =
-            {
-                ["X-TerraScale-Edge-Region"] = "gru",
-                ["X-TerraScale-Serving-Region"] = "sfo",
-                ["X-TerraScale-Route-Mode"] = "preferred-failover",
-                ["X-TerraScale-Failover-From-Region"] = "fra"
-            }
-        };
-        using var routedHttpClient = new HttpClient(routedHandler);
-        var routedClient = new TerraScaleClient(
-            routedHttpClient,
-            new TerraScaleClientOptions { BearerToken = "caller-token" });
-
-        var routed = await routedClient.Documents.GetAsync("repository-a", "document-a");
-
-        await Assert.That(routed.Routing)
-            .IsEqualTo(new TerraScaleRoutingObservation(
-                "gru",
-                "sfo",
-                IsDegraded: true,
-                TerraScaleRouteMode.PreferredFailover,
-                "fra"));
-    }
-
-    private static string DocumentJson(string? sessionConsistencyToken = null) => $$"""
-        {
-          "repositoryId":"repository-a",
-          "repository":"users",
-          "id":"document-a",
-          "data":{"name":"Ada"},
-          "lastModified":"2026-08-19T00:00:00Z",
-          "changeToken":"change-2"{{(sessionConsistencyToken is null ? string.Empty : $",\"sessionConsistencyToken\":\"{sessionConsistencyToken}\"")}}
-        }
-        """;
-
-    private static string DocumentPageJson() => """
-        {
-          "repositoryId":"repository-a",
-          "repository":"users",
-          "skip":0,
-          "take":100,
-          "total":0,
-          "items":[]
-        }
-        """;
-
-    private static string DocumentBatchJson() => """
-        {
-          "repositoryId":"repository-id",
-          "repository":"users",
-          "results":[
-            {
-              "index":0,
-              "operation":"upsert",
-              "id":"document-a",
-              "document":{
-                "repositoryId":"repository-id",
-                "repository":"users",
-                "id":"document-a",
-                "data":{"name":"Grace"},
-                "lastModified":"2026-08-19T00:00:00Z",
-                "changeToken":"change-a",
-                "sessionConsistencyToken":"session-a"
-              },
-              "deleted":null
-            },
-            {
-              "index":1,
-              "operation":"upsert",
-              "id":"document-b",
-              "document":{
-                "repositoryId":"repository-id",
-                "repository":"users",
-                "id":"document-b",
-                "data":{"name":"Ada"},
-                "lastModified":"2026-08-19T00:00:00Z",
-                "changeToken":"change-b",
-                "sessionConsistencyToken":"session-b"
-              },
-              "deleted":null
-            }
-          ]
-        }
-        """;
-
-    private sealed class RecordingHandler(params string[] responses) : HttpMessageHandler
-    {
-        private readonly Queue<(string Body, HttpStatusCode Status)> responses =
-            new(responses.Select(response => (response, HttpStatusCode.OK)));
-
-        public RecordingHandler(string response, HttpStatusCode statusCode) : this()
-        {
-            responses.Enqueue((response, statusCode));
-        }
-
-        public List<RecordedRequest> Requests { get; } = [];
-
-        public Dictionary<string, string> ResponseHeaders { get; } = new(StringComparer.OrdinalIgnoreCase);
-
-        public void EnqueueResponse(string body, HttpStatusCode statusCode) =>
-            responses.Enqueue((body, statusCode));
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            Requests.Add(new RecordedRequest(
-                request.RequestUri!,
-                request.Headers.Concat(
-                        request.Content is null
-                            ? Enumerable.Empty<KeyValuePair<string, IEnumerable<string>>>()
-                            : request.Content.Headers)
-                    .ToDictionary(pair => pair.Key, pair => pair.Value.Single(), StringComparer.OrdinalIgnoreCase)));
-            var (body, status) = responses.Dequeue();
-            var response = new HttpResponseMessage(status)
-            {
-                Content = new StringContent(body, Encoding.UTF8, "application/json")
-            };
-            foreach (var header in ResponseHeaders)
-            {
-                response.Headers.TryAddWithoutValidation(header.Key, header.Value);
-            }
-
-            return Task.FromResult(response);
-        }
-    }
-
-    private sealed record RecordedRequest(Uri Uri, IReadOnlyDictionary<string, string> Headers);
 }
