@@ -179,28 +179,28 @@ export const en = {
     subtitle: 'Four monthly plans for Public Alpha. Enterprise remains unavailable.',
     badge: 'Most Popular',
     suffixMonthly: '/month',
-    plans: [
-      {
+    plans: {
+      developer: {
         description: 'Non-expiring free plan with a verified payment method',
         features: ['1 project', '3 databases', '3 members', '1 GB across regions', '10,000 operation units/month'],
         cta: 'Choose Developer',
       },
-      {
+      starter: {
         description: 'Monthly plan with one eligible 30-day trial',
         features: ['5 projects', '10 databases', '5 members', '5 GB across regions', '1,000,000 operation units/month'],
         cta: 'Choose Starter',
       },
-      {
+      pro: {
         description: 'Monthly plan with one eligible 30-day trial',
         features: ['25 projects', '50 databases', '25 members', '50 GB across regions', '10,000,000 operation units/month'],
         cta: 'Choose Pro',
       },
-      {
+      enterprise: {
         description: 'Future contract plan',
         features: ['Monthly support base plus metered usage', 'Unavailable during Public Alpha'],
         cta: 'Contact for future access',
       },
-    ],
+    },
     triad: [
       { title: 'Storage Across Regions', text: 'Stored bytes count once in every selected region' },
       { title: 'Operation Units', text: 'Each started 4 KiB of document data counts as one unit' },

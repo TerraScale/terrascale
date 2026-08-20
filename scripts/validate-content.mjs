@@ -46,16 +46,16 @@ const expectedPlans = new Map([
 ])
 const planMatches = [...site.matchAll(/name:\s*'([^']+)'[\s\S]*?price:\s*(\d+)/g)]
 if (planMatches.length !== expectedPlans.size) {
-  failures.push('PricingSection.svelte: Public Alpha catalog must contain exactly four plans.')
+  failures.push('site.ts: Public Alpha catalog must contain exactly four plans.')
 }
 for (const [, plan, priceText] of planMatches) {
   if (expectedPlans.get(plan) !== Number(priceText)) {
-    failures.push(`PricingSection.svelte: unexpected ${plan} monthly price ${priceText}.`)
+    failures.push(`site.ts: unexpected ${plan} monthly price ${priceText}.`)
   }
   expectedPlans.delete(plan)
 }
 for (const plan of expectedPlans.keys()) {
-  failures.push(`PricingSection.svelte: missing Public Alpha plan ${plan}.`)
+  failures.push(`site.ts: missing Public Alpha plan ${plan}.`)
 }
 const expectedLimits = {
   Developer: [1, 3, 3, 1, 10_000],
@@ -83,7 +83,7 @@ for (const phrase of [
   if (!englishMessages.includes(phrase)) failures.push(`messages/en.ts: missing catalog wording ${phrase}.`)
 }
 if (/annual|Stripe|name:\s*'(?:Scale|Business)'/i.test(`${pricing}\n${site}`)) {
-  failures.push('PricingSection.svelte: annual, Stripe, Scale, and Business pricing must stay removed.')
+  failures.push('Public Alpha pricing: annual, Stripe, Scale, and Business pricing must stay removed.')
 }
 
 for (const url of [

@@ -35,6 +35,10 @@ export const publicAlphaCatalog = [
   {
     name: 'Developer',
     slug: 'developer',
+    icon: 'zap' as AppIconName,
+    accent: 'var(--ts-secondary)',
+    accentRgb: 'var(--ts-secondary-rgb)',
+    popular: false,
     price: 0,
     projects: 1,
     databases: 3,
@@ -45,6 +49,10 @@ export const publicAlphaCatalog = [
   {
     name: 'Starter',
     slug: 'starter',
+    icon: 'star' as AppIconName,
+    accent: 'var(--ts-secondary)',
+    accentRgb: 'var(--ts-secondary-rgb)',
+    popular: false,
     price: 5,
     projects: 5,
     databases: 10,
@@ -55,6 +63,10 @@ export const publicAlphaCatalog = [
   {
     name: 'Pro',
     slug: 'pro',
+    icon: 'trendingUp' as AppIconName,
+    accent: 'var(--ts-primary)',
+    accentRgb: 'var(--ts-primary-rgb)',
+    popular: true,
     price: 25,
     projects: 25,
     databases: 50,
@@ -65,6 +77,10 @@ export const publicAlphaCatalog = [
   {
     name: 'Enterprise',
     slug: 'enterprise',
+    icon: 'shieldCheck' as AppIconName,
+    accent: 'var(--ts-tertiary)',
+    accentRgb: 'var(--ts-tertiary-rgb)',
+    popular: false,
     price: 500,
     projects: null,
     databases: null,
@@ -73,6 +89,8 @@ export const publicAlphaCatalog = [
     operationUnits: null,
   },
 ] as const
+
+export type PublicAlphaPlanSlug = (typeof publicAlphaCatalog)[number]['slug']
 
 // The Dashboard owns acceptance and version recording. The landing page owns
 // the public policy links shown before payment-method verification.
