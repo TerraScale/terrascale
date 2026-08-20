@@ -38,9 +38,9 @@ The repo also contains the EF Core source integration package:
 dotnet add package TerraScale.EntityFrameworkCore
 ```
 
-Release qualification uses one immutable package archive. `scripts/verify-package-candidate.sh` packs the SDK once, checks its metadata and archive contents, restores those exact bytes into a clean `net10.0` consumer, builds the consumer, and prints the SHA-256 digest. Orchestrator can pass an existing candidate with `--package` so verification never rebuilds a different archive.
+Release qualification uses one immutable package archive. `scripts/verify-package-candidate.sh` packs the SDK once, checks its metadata and archive contents, restores those exact bytes into a clean `net10.0` consumer, builds the consumer, and prints the SHA-256 digest. Orchestrator can pass an existing candidate with `--package` and its expected `--sha256` digest so verification never rebuilds or silently substitutes a different archive.
 
-Live customer-journey, tenant-isolation, intended-feed download, and publication evidence remain release admission checks. Source compilation and the local package-consumer build do not replace them.
+Live customer-journey, tenant-isolation, intended-feed download, and publication evidence remain release admission checks. Source compilation and the local package-consumer build do not replace them. Compatibility with the Public Alpha API candidate is recorded by the release admission process once that candidate and its digest are available; this package does not claim live qualification on its own.
 
 ## Configure
 
@@ -488,9 +488,9 @@ var orders = await source.Set<Order>().ListAsync(take: 25);
 The sample app uses the real TerraScale Platform API and is environment-gated:
 
 ```bash
-export TERRASCALE_API_BASE_ADDRESS=http://localhost:5294
+export TERRASCALE_API_BASE_ADDRESS=https://api.terrascale.tech
 export TERRASCALE_PROJECT_ID=01J00000000000000000000000
-export TERRASCALE_API_KEY=tsauth_...
+export TERRASCALE_API_KEY=replace-with-project-api-key
 export TERRASCALE_DATABASE_ID=01J00000000000000000000001
 export TERRASCALE_ENVIRONMENT_ID=01J00000000000000000000002
 
@@ -522,7 +522,7 @@ query, batch, telemetry, and EF Core success-path E2E tests:
 
 ```bash
 export TERRASCALE_E2E_BASE_URL=https://api.terrascale.tech
-export TERRASCALE_E2E_API_KEY=tsauth_...
+export TERRASCALE_E2E_API_KEY=replace-with-project-api-key
 export TERRASCALE_E2E_PROJECT_ID=01J00000000000000000000000
 export TERRASCALE_E2E_REPOSITORY=01J00000000000000000000001
 dotnet test TerraScale.DotNet.slnx --configuration Release --no-progress

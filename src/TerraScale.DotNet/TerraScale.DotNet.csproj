@@ -10,7 +10,7 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>terrascale;database;documents;projects;queues;messaging;auth;notifications;backups;billing;sdk</PackageTags>
-    <PackageReleaseNotes>Supports TerraScale public API /api/v1 on stable .NET 10 LTS. Exact launch-candidate qualification is recorded outside the immutable package.</PackageReleaseNotes>
+    <PackageReleaseNotes>Supports TerraScale public API /api/v1 on stable .NET 10 LTS. Public Alpha API candidate qualification is an external release gate recorded outside the immutable package.</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Deterministic>true</Deterministic>
     <IncludeSymbols>false</IncludeSymbols>

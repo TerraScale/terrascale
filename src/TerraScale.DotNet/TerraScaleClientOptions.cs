@@ -5,6 +5,9 @@ namespace TerraScale.DotNet;
 /// </summary>
 public sealed record TerraScaleClientOptions
 {
+    private const int MaxRetryAttemptsLimit = 8;
+    private static readonly TimeSpan MaximumRetryDelay = TimeSpan.FromSeconds(30);
+
     /// <summary>
     /// TerraScale API base address, for example <c>https://api.terrascale.tech</c>.
     /// </summary>
@@ -57,12 +60,12 @@ public sealed record TerraScaleClientOptions
     public string? EnvironmentId { get; set; }
 
     /// <summary>
-    /// Number of transient retry attempts after the initial request. The default is zero.
+    /// Number of transient retry attempts after the initial request. The default is zero and the maximum is eight.
     /// </summary>
     public int MaxRetryAttempts { get; set; }
 
     /// <summary>
-    /// Base delay between retry attempts when the API does not return a Retry-After header.
+    /// Base delay between retry attempts when the API does not return a Retry-After header. The maximum is 30 seconds.
     /// </summary>
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromMilliseconds(250);
 
@@ -134,9 +137,23 @@ public sealed record TerraScaleClientOptions
             throw new ArgumentOutOfRangeException(nameof(MaxRetryAttempts), "Retry attempts must be greater than or equal to zero.");
         }
 
+        if (MaxRetryAttempts > MaxRetryAttemptsLimit)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxRetryAttempts),
+                $"Retry attempts must be less than or equal to {MaxRetryAttemptsLimit}.");
+        }
+
         if (RetryDelay < TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(RetryDelay), "Retry delay must be greater than or equal to zero.");
+        }
+
+        if (RetryDelay > MaximumRetryDelay)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(RetryDelay),
+                $"Retry delay must be less than or equal to {MaximumRetryDelay.TotalSeconds:0} seconds.");
         }
     }
 

@@ -9,7 +9,7 @@
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>terrascale;database;documents;entity-framework-core;efcore</PackageTags>
-    <PackageReleaseNotes>Supports TerraScale public API /api/v1 on stable .NET 10 LTS.</PackageReleaseNotes>
+    <PackageReleaseNotes>Supports TerraScale public API /api/v1 on stable .NET 10 LTS. Public Alpha API candidate qualification is an external release gate recorded outside the immutable package.</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Deterministic>true</Deterministic>
     <IncludeSymbols>false</IncludeSymbols>

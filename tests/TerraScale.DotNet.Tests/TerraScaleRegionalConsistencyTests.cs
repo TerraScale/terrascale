@@ -42,6 +42,24 @@ public sealed class TerraScaleRegionalConsistencyTests
     }
 
     [Test]
+    public async Task RetryOptionsRejectUnboundedValues()
+    {
+        using var handler = new RecordingHandler(DocumentJson());
+        using var httpClient = new HttpClient(handler);
+
+        var attemptsException = Assert.Throws<ArgumentOutOfRangeException>(() => new TerraScaleClient(
+            httpClient,
+            new TerraScaleClientOptions { MaxRetryAttempts = 9 }));
+        var delayException = Assert.Throws<ArgumentOutOfRangeException>(() => new TerraScaleClient(
+            httpClient,
+            new TerraScaleClientOptions { RetryDelay = TimeSpan.FromSeconds(30.001) }));
+
+        await Assert.That(attemptsException!.ParamName).IsEqualTo("MaxRetryAttempts");
+        await Assert.That(delayException!.ParamName).IsEqualTo("RetryDelay");
+        await Assert.That(handler.Requests).IsEmpty();
+    }
+
+    [Test]
     public async Task DefaultAndStrictClientsUseTheContractedPublicHosts()
     {
         using var globalHandler = new RecordingHandler(DocumentJson());
@@ -108,6 +126,48 @@ public sealed class TerraScaleRegionalConsistencyTests
         await Assert.That(handler.Requests[1].Headers["X-TerraScale-Allow-Stale"]).IsEqualTo("true");
         await Assert.That(handler.Requests[1].Headers["X-TerraScale-Session-Consistency-Token"])
             .IsEqualTo("session-2");
+    }
+
+    [Test]
+    public async Task ConditionalMutationConflictIsTypedAndPreservesTheExpectedToken()
+    {
+        using var handler = new RecordingHandler(
+            """{"error":{"code":"document_change_token_conflict","message":"The document changed."}}""",
+            HttpStatusCode.Conflict);
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleClient(
+            httpClient,
+            new TerraScaleClientOptions { BearerToken = "caller-token" });
+
+        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Documents.UpsertAsync(
+                "repository-a",
+                "document-a",
+                new { Name = "Grace" },
+                new TerraScaleDocumentMutationOptions("change-1")));
+
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(exception.ErrorCode).IsEqualTo("document_change_token_conflict");
+        await Assert.That(handler.Requests.Single().Headers["If-Match"]).IsEqualTo("change-1");
+    }
+
+    [Test]
+    public async Task InvalidExpectedChangeTokensFailBeforeSending()
+    {
+        using var handler = new RecordingHandler(DocumentJson());
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleClient(
+            httpClient,
+            new TerraScaleClientOptions { BearerToken = "caller-token" });
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.Documents.DeleteAsync(
+                "repository-a",
+                "document-a",
+                new TerraScaleDocumentMutationOptions("   ")));
+
+        await Assert.That(exception!.ParamName).IsEqualTo("mutationOptions");
+        await Assert.That(handler.Requests).IsEmpty();
     }
 
     [Test]
