@@ -166,28 +166,28 @@ export const es: Messages = {
     subtitle: 'Cuatro planes mensuales para Public Alpha. Enterprise sigue sin estar disponible.',
     badge: 'Más popular',
     suffixMonthly: '/mes',
-    plans: [
-      {
+    plans: {
+      developer: {
         description: 'Plan gratuito sin vencimiento con método de pago verificado',
         features: ['1 proyecto', '3 bases de datos', '3 miembros', '1 GB entre regiones', '10.000 unidades de operación/mes'],
         cta: 'Elegir Developer',
       },
-      {
+      starter: {
         description: 'Plan mensual con una prueba elegible de 30 días',
         features: ['5 proyectos', '10 bases de datos', '5 miembros', '5 GB entre regiones', '1.000.000 unidades de operación/mes'],
         cta: 'Elegir Starter',
       },
-      {
+      pro: {
         description: 'Plan mensual con una prueba elegible de 30 días',
         features: ['25 proyectos', '50 bases de datos', '25 miembros', '50 GB entre regiones', '10.000.000 unidades de operación/mes'],
         cta: 'Elegir Pro',
       },
-      {
+      enterprise: {
         description: 'Plan contractual futuro',
         features: ['Base mensual de soporte más uso medido', 'No disponible durante Public Alpha'],
         cta: 'Contacto para acceso futuro',
       },
-    ],
+    },
     triad: [
       { title: 'Almacenamiento entre regiones', text: 'Los bytes cuentan una vez en cada región seleccionada' },
       { title: 'Unidades de operación', text: 'Cada 4 KiB iniciados de documento cuentan como una unidad' },

@@ -68,35 +68,35 @@ test('pricing matches the Public Alpha plan catalog', async ({ page }) => {
   const cards = page.locator('.pricing-card')
   await expect(cards).toHaveCount(4)
 
-  const expectedPlans = [
-    {
+  const expectedPlans = {
+    developer: {
       name: 'Developer',
       price: '$0',
       limits: ['1 project', '3 databases', '3 members', '1 GB across regions', '10,000 operation units/month'],
       href: `${registrationUrl}?plan=developer`,
     },
-    {
+    starter: {
       name: 'Starter',
       price: '$5',
       limits: ['5 projects', '10 databases', '5 members', '5 GB across regions', '1,000,000 operation units/month'],
       href: `${registrationUrl}?plan=starter`,
     },
-    {
+    pro: {
       name: 'Pro',
       price: '$25',
       limits: ['25 projects', '50 databases', '25 members', '50 GB across regions', '10,000,000 operation units/month'],
       href: `${registrationUrl}?plan=pro`,
     },
-    {
+    enterprise: {
       name: 'Enterprise',
       price: '$500',
       limits: ['Monthly support base plus metered usage', 'Unavailable during Public Alpha'],
       href: '/contact',
     },
-  ]
+  }
 
-  for (const [index, expectedPlan] of expectedPlans.entries()) {
-    const card = cards.nth(index)
+  for (const [slug, expectedPlan] of Object.entries(expectedPlans)) {
+    const card = page.locator(`.pricing-card[data-plan="${slug}"]`)
     await expect(card.getByText(expectedPlan.name, { exact: true })).toBeVisible()
     await expect(card.getByText(expectedPlan.price, { exact: true })).toBeVisible()
     for (const limit of expectedPlan.limits) {
@@ -122,10 +122,26 @@ test('pricing keeps every plan state usable on mobile', async ({ page }) => {
 
   const cards = page.locator('.pricing-card')
   await expect(cards).toHaveCount(4)
-  await expect(cards.nth(0).locator('a')).toHaveAttribute('href', `${registrationUrl}?plan=developer`)
-  await expect(cards.nth(1).locator('a')).toHaveAttribute('href', `${registrationUrl}?plan=starter`)
-  await expect(cards.nth(2).locator('a')).toHaveAttribute('href', `${registrationUrl}?plan=pro`)
-  await expect(cards.nth(3).locator('a')).toHaveAttribute('href', '/contact')
+  await expect(page.locator('.pricing-card[data-plan="developer"] a')).toHaveAttribute('href', `${registrationUrl}?plan=developer`)
+  await expect(page.locator('.pricing-card[data-plan="starter"] a')).toHaveAttribute('href', `${registrationUrl}?plan=starter`)
+  await expect(page.locator('.pricing-card[data-plan="pro"] a')).toHaveAttribute('href', `${registrationUrl}?plan=pro`)
+  await expect(page.locator('.pricing-card[data-plan="enterprise"] a')).toHaveAttribute('href', '/contact')
+})
+
+test('pricing presentation metadata stays keyed to each plan slug', async ({ page }) => {
+  await page.goto('/pricing')
+
+  const metadata = {
+    developer: { icon: 'zap', popular: 'false' },
+    starter: { icon: 'star', popular: 'false' },
+    pro: { icon: 'trendingUp', popular: 'true' },
+    enterprise: { icon: 'shieldCheck', popular: 'false' },
+  }
+  for (const [slug, expected] of Object.entries(metadata)) {
+    const card = page.locator(`.pricing-card[data-plan="${slug}"]`)
+    await expect(card).toHaveAttribute('data-plan-icon', expected.icon)
+    await expect(card).toHaveAttribute('data-popular', expected.popular)
+  }
 })
 
 test('Public Alpha claims and customer links stay within the launch contract', async ({ page }) => {

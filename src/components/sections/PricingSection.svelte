@@ -6,13 +6,18 @@
   import AnimatedPrice from '@/components/AnimatedPrice.svelte'
   import type { AppIconName } from '@/lib/icons'
   import { dict } from '@/lib/i18n'
-  import { launchPhase, publicAlphaCatalog, registrationUrl } from '@/lib/site'
+  import {
+    launchPhase,
+    publicAlphaCatalog,
+    registrationUrl,
+    type PublicAlphaPlanSlug,
+  } from '@/lib/site'
 
   export let headingLevel: 1 | 2 = 2
 
   type Plan = {
     name: string
-    slug: string
+    slug: PublicAlphaPlanSlug
     icon: AppIconName
     accent: string
     accentRgb: string
@@ -25,25 +30,25 @@
   }
 
   const planMeta: Array<Omit<Plan, 'description' | 'features' | 'cta' | 'href'>> = publicAlphaCatalog.map(
-    (catalogPlan, i) => ({
+    (catalogPlan) => ({
       name: catalogPlan.name,
       slug: catalogPlan.slug,
-      accent: i === 2 ? 'var(--ts-primary)' : i === 3 ? 'var(--ts-tertiary)' : 'var(--ts-secondary)',
-      accentRgb: i === 2 ? 'var(--ts-primary-rgb)' : i === 3 ? 'var(--ts-tertiary-rgb)' : 'var(--ts-secondary-rgb)',
+      accent: catalogPlan.accent,
+      accentRgb: catalogPlan.accentRgb,
       price: catalogPlan.price,
-      popular: i === 2,
-      icon: (['zap', 'star', 'trendingUp', 'shieldCheck'][i] ?? 'zap') as AppIconName,
+      popular: catalogPlan.popular,
+      icon: catalogPlan.icon,
     }),
   )
 
-  $: plans = planMeta.map((meta, i) => {
-    const copy = $dict.pricing.plans[i]
+  $: plans = planMeta.map((meta) => {
+    const copy = $dict.pricing.plans[meta.slug]
     return {
       ...meta,
       description: copy.description,
       features: copy.features,
-      cta: meta.name === 'Enterprise' || launchPhase === 'public-alpha' ? copy.cta : $dict.hero.ctaPrelaunch,
-      href: meta.name === 'Enterprise' ? '/contact' : `${registrationUrl}?plan=${meta.slug}`,
+      cta: meta.slug === 'enterprise' || launchPhase === 'public-alpha' ? copy.cta : $dict.hero.ctaPrelaunch,
+      href: meta.slug === 'enterprise' ? '/contact' : `${registrationUrl}?plan=${meta.slug}`,
     }
   })
 </script>
@@ -65,6 +70,9 @@
       {#each plans as plan (plan.name)}
         <div
           class="pricing-card"
+          data-plan={plan.slug}
+          data-plan-icon={plan.icon}
+          data-popular={plan.popular}
           class:is-popular={plan.popular}
           style={`--plan-accent: ${plan.accent}; --plan-accent-rgb: ${plan.accentRgb};`}
         >

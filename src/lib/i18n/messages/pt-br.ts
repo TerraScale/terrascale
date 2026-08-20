@@ -166,28 +166,28 @@ export const ptBr: Messages = {
     subtitle: 'Quatro planos mensais para o Public Alpha. Enterprise continua indisponível.',
     badge: 'Mais popular',
     suffixMonthly: '/mês',
-    plans: [
-      {
+    plans: {
+      developer: {
         description: 'Plano gratuito sem prazo com método de pagamento verificado',
         features: ['1 projeto', '3 bancos de dados', '3 membros', '1 GB entre regiões', '10.000 unidades de operação/mês'],
         cta: 'Escolher Developer',
       },
-      {
+      starter: {
         description: 'Plano mensal com um teste elegível de 30 dias',
         features: ['5 projetos', '10 bancos de dados', '5 membros', '5 GB entre regiões', '1.000.000 unidades de operação/mês'],
         cta: 'Escolher Starter',
       },
-      {
+      pro: {
         description: 'Plano mensal com um teste elegível de 30 dias',
         features: ['25 projetos', '50 bancos de dados', '25 membros', '50 GB entre regiões', '10.000.000 unidades de operação/mês'],
         cta: 'Escolher Pro',
       },
-      {
+      enterprise: {
         description: 'Plano de contrato futuro',
         features: ['Base mensal de suporte mais uso medido', 'Indisponível durante o Public Alpha'],
         cta: 'Contato para acesso futuro',
       },
-    ],
+    },
     triad: [
       { title: 'Armazenamento entre regiões', text: 'Os bytes contam uma vez em cada região selecionada' },
       { title: 'Unidades de operação', text: 'Cada 4 KiB iniciados de documento contam como uma unidade' },
