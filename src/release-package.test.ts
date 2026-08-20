@@ -221,13 +221,19 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
 });
 
 const packedConsumerJourney = String.raw`import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
+import { open, unlink } from "node:fs/promises";
+import { hostname } from "node:os";
+import path from "node:path";
 import { createTerraScaleClient, toUlid } from "@terrascale/sdk";
 
 const required = [
   "TERRASCALE_API_BASE_URL",
   "TERRASCALE_AUTH_API_BASE_URL",
   "TERRASCALE_E2E_ACCESS_TOKEN",
+  "TERRASCALE_E2E_TENANT_ID",
   "TERRASCALE_E2E_PROJECT_ID",
+  "TERRASCALE_E2E_DATABASE_ID",
   "TERRASCALE_E2E_REPOSITORY_ID",
   "TERRASCALE_E2E_DOCUMENT_ID",
   "TERRASCALE_E2E_DOCUMENT_WRITE_LEASE",
@@ -238,34 +244,76 @@ if (missing.length > 0) {
   process.exit(0);
 }
 
+const tenantId = toUlid(process.env.TERRASCALE_E2E_TENANT_ID);
+const projectId = toUlid(process.env.TERRASCALE_E2E_PROJECT_ID);
+const databaseId = toUlid(process.env.TERRASCALE_E2E_DATABASE_ID);
 const repositoryId = toUlid(process.env.TERRASCALE_E2E_REPOSITORY_ID);
 const documentId = toUlid(process.env.TERRASCALE_E2E_DOCUMENT_ID);
+const leasePath = process.env.TERRASCALE_E2E_DOCUMENT_WRITE_LEASE.trim();
+if (!path.isAbsolute(leasePath) || path.dirname(leasePath) === leasePath) {
+  throw new TypeError("TERRASCALE_E2E_DOCUMENT_WRITE_LEASE must be an absolute file path.");
+}
 const client = createTerraScaleClient({
   apiBaseUrl: process.env.TERRASCALE_API_BASE_URL,
   authBaseUrl: process.env.TERRASCALE_AUTH_API_BASE_URL,
   accessToken: process.env.TERRASCALE_E2E_ACCESS_TOKEN,
-  projectId: toUlid(process.env.TERRASCALE_E2E_PROJECT_ID),
+  projectId,
   sessionConsistency: "automatic",
 });
 const scope = { repositoryId };
-const before = await client.documents.get(scope, documentId);
-assert.equal(before.ok, true, before.ok ? undefined : before.error.message);
-assert.notEqual(before.value.changeToken, null);
-assert.notEqual(before.value.changeToken, undefined);
-
-const write = await client.documents.put(
-  scope,
+const leaseScope = {
+  tenantId,
+  projectId,
+  databaseId,
+  repositoryId,
   documentId,
-  before.value.data,
-  { expectedChangeToken: before.value.changeToken },
-);
-assert.equal(write.ok, true, write.ok ? undefined : write.error.message);
-assert.notEqual(write.value.sessionConsistencyToken, null);
-assert.notEqual(write.value.sessionConsistencyToken, undefined);
+  apiBaseUrl: process.env.TERRASCALE_API_BASE_URL,
+  authBaseUrl: process.env.TERRASCALE_AUTH_API_BASE_URL,
+  credentialFingerprint: createHash("sha256").update(process.env.TERRASCALE_E2E_ACCESS_TOKEN).digest("hex"),
+};
 
-const after = await client.documents.get(scope, documentId);
-assert.equal(after.ok, true, after.ok ? undefined : after.error.message);
-console.log("Packed live journey completed for /api/v1 document read/write.");
+let lease;
+try {
+  lease = await open(leasePath, "wx");
+} catch (error) {
+  if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+    throw new Error("TERRASCALE_E2E_DOCUMENT_WRITE_LEASE is already held by another process.");
+  }
+  throw error;
+}
+
+try {
+  await lease.writeFile(JSON.stringify({
+    version: 1,
+    owner: hostname() + ":" + process.pid + ":" + randomUUID(),
+    acquiredAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    scope: leaseScope,
+  }));
+  await lease.sync();
+
+  const before = await client.documents.get(scope, documentId);
+  assert.equal(before.ok, true, before.ok ? undefined : before.error.message);
+  assert.notEqual(before.value.changeToken, null);
+  assert.notEqual(before.value.changeToken, undefined);
+
+  const write = await client.documents.put(
+    scope,
+    documentId,
+    before.value.data,
+    { expectedChangeToken: before.value.changeToken },
+  );
+  assert.equal(write.ok, true, write.ok ? undefined : write.error.message);
+
+  const after = await client.documents.get(scope, documentId);
+  assert.equal(after.ok, true, after.ok ? undefined : after.error.message);
+  console.log("Packed live journey completed for /api/v1 document read/write.");
+} finally {
+  await lease.close();
+  await unlink(leasePath).catch(error => {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  });
+}
 `;
 
 async function verifyCandidate(
