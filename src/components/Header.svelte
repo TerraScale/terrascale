@@ -5,7 +5,7 @@
   import Icon from '@/components/Icon.svelte'
   import LanguageSelector from '@/components/LanguageSelector.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
-  import { docsLink, getStartedLink, navigation } from '@/lib/site'
+  import { docsLink, getStartedLink, launchPhase, navigation } from '@/lib/site'
   import { dict } from '@/lib/i18n'
 
   let scrolled = false
@@ -75,7 +75,7 @@
       </ExternalLink>
 
       <ExternalLink href={getStartedLink.href} class="ts-cta cta-shine">
-        {$dict.chrome.getStarted}
+        {launchPhase === 'public-alpha' ? $dict.chrome.getStarted : $dict.chrome.prelaunch}
         <Icon name={getStartedLink.icon} className="ts-cta__icon" />
       </ExternalLink>
 
@@ -133,7 +133,7 @@
           {$dict.chrome.status}
         </ExternalLink>
         <ExternalLink href={getStartedLink.href} class="ts-cta cta-shine ts-cta--mobile">
-          {$dict.chrome.getStarted}
+          {launchPhase === 'public-alpha' ? $dict.chrome.getStarted : $dict.chrome.prelaunch}
           <Icon name={getStartedLink.icon} className="ts-cta__icon" />
         </ExternalLink>
         <div class="ts-header__mobile-lang">

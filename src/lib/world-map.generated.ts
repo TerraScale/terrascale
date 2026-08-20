@@ -33,11 +33,11 @@ export const REGIONS: readonly Region[] = [
     "y": 45.033320996790806
   },
   {
-    "id": "frankfurt",
-    "city": "Frankfurt",
-    "lat": 50.11,
-    "lng": 8.68,
-    "x": 62.5,
+    "id": "falkenstein",
+    "city": "Falkenstein",
+    "lat": 50.48,
+    "lng": 12.37,
+    "x": 63.5,
     "y": 15.588457268119894
   }
 ] as const

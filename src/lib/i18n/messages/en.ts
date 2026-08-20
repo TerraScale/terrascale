@@ -7,18 +7,18 @@
 // easy to mirror across locales.
 //
 // Deliberately NOT translated:
-//   - brand/product names (TerraScale, TerraBase, JetStream, NATS, Stripe),
-//   - plan names (Developer / Starter / Pro / Scale / Business),
+//   - brand/product names (TerraScale, TerraBase),
+//   - plan names (Developer / Starter / Pro / Enterprise),
 //   - code samples in src/lib/highlight.ts (real source code),
-//   - city / region proper nouns (San Francisco, Frankfurt, Guarulhos),
+//   - city / region proper nouns (São Paulo, San Francisco, Falkenstein),
 //   - currency amounts and API field identifiers.
 // Those stay identical across locales; only natural-language copy moves here.
 
 export const en = {
   meta: {
-    title: 'TerraScale | Developer Infrastructure For Data Workflows',
+    title: 'TerraScale Public Alpha | Regional Document Database',
     description:
-      'TerraScale is developer-first infrastructure for typed database, auth, queue, and payment workflows across the current launch-region model.',
+      'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo, San Francisco, and Falkenstein.',
   },
 
   chrome: {
@@ -33,6 +33,7 @@ export const en = {
     docs: 'Docs',
     status: 'Status',
     getStarted: 'Get Started',
+    prelaunch: 'Public Alpha Sep 7',
     toggleNav: 'Toggle navigation menu',
     language: {
       // `current` is the screen-reader label for the selector trigger,
@@ -45,7 +46,7 @@ export const en = {
 
   footer: {
     tagline:
-      'Empowering teams with secure, scalable database infrastructure. Scale your tech, effortlessly.',
+      'TerraScale Public Alpha offers a regional document database without an uptime percentage or SLA.',
     rightsReserved: 'All rights reserved.',
     columns: {
       product: {
@@ -73,6 +74,7 @@ export const en = {
           apiReference: 'API Reference',
           status: 'Status',
           community: 'Community',
+          security: 'Security',
           support: 'Support',
         },
       },
@@ -80,7 +82,9 @@ export const en = {
         title: 'Legal',
         links: {
           terms: 'Terms',
-          support: 'Contact',
+          privacy: 'Privacy',
+          acceptableUse: 'Acceptable Use',
+          support: 'Support',
         },
       },
     },
@@ -96,22 +100,23 @@ export const en = {
 
   hero: {
     brandAlt: 'TerraScale',
-    headlineLead: 'Scale your data,',
-    headlineAccent: 'effortlessly.',
+    headlineLead: 'TerraScale',
+    headlineAccent: 'Public Alpha',
     subtitle:
-      'Typed database, auth, queue, and payment infrastructure for teams building on the TerraScale API.',
-    ctaPrimary: 'Start Free',
+      'A typed document database with asynchronous replication across São Paulo, San Francisco, and Falkenstein. The global endpoint routes to the nearest healthy region selected by your project. Public Alpha has no uptime percentage or SLA.',
+    ctaPrimary: 'Register for Public Alpha',
+    ctaPrelaunch: 'Public Alpha opens Sep 7',
     ctaSecondary: 'View Docs',
     highlightsAria: 'Key capabilities',
-    highlights: ['TQL Queries', 'Project Queues', 'Launch Regions'],
+    highlights: ['Selected-region routing', 'Asynchronous replication', 'Typed SDKs'],
   },
 
   features: {
     eyebrow: 'Platform',
-    titleLead: 'Built for scale,',
-    titleAccent: 'designed for developers',
+    titleLead: 'Public Alpha,',
+    titleAccent: 'with explicit boundaries',
     subtitle:
-      'The implemented surface spans data, auth, queues, payments, SDKs, and dashboard workflows.',
+      'The launch contract covers document data, three selectable regions, typed clients, and customer-visible health without an uptime commitment.',
     items: [
       {
         title: 'Typed Data API',
@@ -119,19 +124,19 @@ export const en = {
         bullets: ['Repositories', 'TQL', 'SDK clients'],
       },
       {
-        title: 'Auth And Access',
-        text: 'Account, session, passkey, MFA, organization, invitation, and scoped API-key flows share the same platform surface.',
-        bullets: ['Passkeys', 'MFA', 'Scoped keys'],
+        title: 'Regional Routing',
+        text: 'The global endpoint chooses the nearest healthy selected region. Strict regional endpoints never serve from an unselected region.',
+        bullets: ['Global endpoint', 'Strict regional endpoints', 'Selected regions'],
       },
       {
         title: 'Launch Regions',
-        text: 'Use the product launch regions San Francisco, Frankfurt, and Guarulhos through dashboard and SDK flows.',
+        text: 'Choose São Paulo, San Francisco, or Falkenstein during Public Alpha.',
         bullets: ['sfo', 'fra', 'gru'],
       },
       {
-        title: 'Queue And Payments',
-        text: 'Queue workflows run on JetStream, and Stripe billing flows are processed through TerraScale Payments.',
-        bullets: ['NATS JetStream', 'Stripe', 'Webhooks'],
+        title: 'Measured Signals',
+        text: 'Replication health, convergence, conflicts, API latency, and geographic latency estimates remain separate values. Customer content stays in selected regions. Customer traffic requires TLS 1.2 or newer, data at rest uses qualified encryption, and every request still requires authorization.',
+        bullets: ['Observation time', 'Evidence labels', 'No bounded-lag promise'],
       },
     ],
   },
@@ -145,7 +150,7 @@ export const en = {
       'Generated OpenAPI contract catalog',
       'Typed C# and TypeScript clients',
       'Dashboard uses the public SDK boundary',
-      'Launch-region inputs for sfo, fra, gru',
+      'Launch-region inputs for gru, sfo, fra',
     ],
     copy: 'Copy',
     copied: 'Copied',
@@ -154,85 +159,72 @@ export const en = {
   },
 
   cta: {
-    headlineLead: 'Try TerraScale',
-    headlineAccent: 'on the free Developer plan.',
-    text: 'Set it up in minutes on the free Developer plan and grow into Starter, Pro, Scale, or Business when you need more capacity. You will not be charged until you choose a paid plan.',
-    ctaPrimary: 'Start free',
+    headlineLead: 'Register for the',
+    headlineAccent: 'TerraScale Public Alpha.',
+    text: 'Developer is non-expiring. Starter and Pro have one eligible 30-day trial per verified payment method and organization.',
+    ctaPrimary: 'Register for Public Alpha',
     ctaSecondary: 'Talk to Sales',
     perksAria: 'Plan details',
-    perks: ['Free Developer tier', 'Upgrade anytime', 'No lock-in'],
+    perks: ['Non-expiring Developer plan', 'Monthly paid plans', 'No paid overages'],
   },
 
   pricing: {
     eyebrow: 'Pricing',
     titleLead: 'Simple pricing',
     titleAccent: 'That scales with YOU',
-    subtitle: 'Start free, scale on demand. No hidden fees, no surprises.',
-    toggleLabel: 'Billing cycle',
-    monthly: 'Monthly',
-    annual: 'Annual',
-    save: 'Two months free',
+    subtitle: 'Four monthly plans for Public Alpha. Enterprise remains unavailable.',
     badge: 'Most Popular',
-    custom: 'Custom',
     suffixMonthly: '/month',
-    suffixAnnual: '/year',
-    baseNoteLead: 'starts at',
-    baseNoteTrail: '/mo + usage',
     plans: [
       {
-        description: 'Free tier for prototypes and early evaluation',
-        features: ['3 databases', '100K operations/month', '10 GB-region storage', '3 team members', 'Auth APIs'],
-        cta: 'Start free',
+        description: 'Non-expiring free plan with a verified payment method',
+        features: ['1 project', '3 databases', '3 members', '1 GB across regions', '10,000 operation units/month'],
+        cta: 'Choose Developer',
       },
       {
-        description: 'Small production workloads with Stripe billing',
-        features: ['10 databases', '2M operations/month', '1 GB-region storage', '5 team members', 'Stripe billing'],
+        description: 'Monthly plan with one eligible 30-day trial',
+        features: ['5 projects', '10 databases', '5 members', '5 GB across regions', '1,000,000 operation units/month'],
         cta: 'Choose Starter',
       },
       {
-        description: 'More databases and team capacity',
-        features: ['50 databases', '20M operations/month', '5 GB-region storage', '25 team members', '10 regions'],
+        description: 'Monthly plan with one eligible 30-day trial',
+        features: ['25 projects', '50 databases', '25 members', '50 GB across regions', '10,000,000 operation units/month'],
         cta: 'Choose Pro',
       },
       {
-        description: 'Default checkout plan with storage headroom',
-        features: ['25 databases', '5M operations/month', '500 GB-region storage', '25 team members', '10 regions'],
-        cta: 'Choose Scale',
-      },
-      {
-        description: 'Highest seeded limits for larger organizations',
-        features: ['100 databases', '50M operations/month', '5 TB-region storage', '100 team members', '10 regions'],
-        cta: 'Choose Business',
+        description: 'Future contract plan',
+        features: ['Monthly support base plus metered usage', 'Unavailable during Public Alpha'],
+        cta: 'Contact for future access',
       },
     ],
     triad: [
-      { title: 'Launch Region Controls', text: 'Create databases in sfo, fra, or gru' },
-      { title: 'Observable By Default', text: 'OpenTelemetry traces and logs across core workflows' },
-      { title: 'Usage Guardrails', text: 'Metered plans with platform-level billing controls' },
+      { title: 'Storage Across Regions', text: 'Stored bytes count once in every selected region' },
+      { title: 'Operation Units', text: 'Each started 4 KiB of document data counts as one unit' },
+      { title: 'Hard Allowances', text: 'Reads, exports, deletion, and usage reduction remain available' },
     ],
     detailed: {
       eyebrow: 'Detailed Pricing',
-      titleLead: 'Clear pricing for custom',
-      titleAccent: 'deployments',
-      text: 'Usage-based costs, support scopes, and deployment requirements are broken out below so enterprise teams can estimate spend before talking to sales.',
+      titleLead: 'Public Alpha',
+      titleAccent: 'billing rules',
+      text: 'Storage adds bytes in every selected region. Operation units round each document separately. Public Alpha does not offer paid overages.',
       headItem: 'Item',
       headPricing: 'Pricing',
       headDetails: 'Details',
       rows: [
         {
-          item: 'Business plan base',
-          unit: '/month',
-          details: 'Seeded Business plan starts at $99/month ($990/year) before usage overage.',
+          item: 'Plan allowances',
+          unit: '',
+          details: 'Each plan includes its listed storage-across-regions and monthly operation-unit allowances.',
         },
         {
-          item: 'Storage overage',
-          unit: '/GB-region',
-          details: 'Paid plans use seed storage overage ($0.70 per GB-region by default).',
+          item: 'Allowance behavior',
+          unit: '',
+          details: 'New billable work stops at the allowance. Reads, exports, deletion, and usage reduction remain available.',
         },
         {
-          item: 'Operation overage',
-          unit: '/ 1M ops',
-          details: 'Paid plans use seed operation overage ($1.00 per million operation units).',
+          item: 'Enterprise support base',
+          unit: '/month + usage',
+          details: 'Enterprise is unavailable during Public Alpha and has no purchase action.',
         },
       ],
       docsLink: 'Full Pricing Docs',
@@ -248,11 +240,11 @@ export const en = {
         },
         {
           q: 'What if I need more operations or storage?',
-          a: 'Paid plans support overage at seed rates ($0.70 per GB-region of storage and $1.00 per million operation units). Prefer upgrading when you consistently approach included limits.',
+          a: 'Public Alpha uses hard allowances rather than paid overages. Reads, exports, deletion, and usage reduction remain available after new billable work stops.',
         },
         {
           q: 'When can I change my subscription?',
-          a: 'Anytime through Stripe checkout and billing portal sessions on the organization billing routes. Upgrades take effect immediately with Stripe-prorated billing; downgrades follow Stripe period rules.',
+          a: 'Organization Owners can change monthly plans through the Dashboard. Paid plans renew monthly. Cancellation moves excess usage into a 30-day read-only grace period.',
         },
         {
           q: 'Can I export my data and leave anytime?',
@@ -260,23 +252,23 @@ export const en = {
         },
         {
           q: 'Do you offer larger custom deployments?',
-          a: 'Contact sales when you need limits beyond the seeded Business plan, dedicated support, or custom commercial terms.',
+          a: 'Enterprise has a $500 monthly support base plus metered usage, but it is unavailable during Public Alpha.',
         },
         {
-          q: 'Do I need a credit card for the free Developer plan?',
-          a: 'No. The Developer plan is free. Add a payment method only when you upgrade to a paid plan through Stripe checkout.',
+          q: 'Does the Developer plan expire?',
+          a: 'No. Developer is non-expiring and requires a verified payment method without creating a paid subscription.',
         },
       ],
       footerTitle: 'Still have questions?',
-      footerText: 'Our team is here to help you find the perfect plan for your needs.',
+      footerText: 'Developer has best-effort email support. Starter targets two business days. Pro targets one business day.',
       contactSales: 'Contact Sales',
       readDocs: 'Read Documentation',
     },
     finalCta: {
       titleLead: 'Ready to',
       titleAccent: 'get started?',
-      text: 'Build your next data workflow with TerraScale.',
-      cta: 'Start Building Today',
+      text: 'Register through the canonical TerraScale Dashboard flow.',
+      cta: 'Register for Public Alpha',
     },
   },
 
@@ -309,7 +301,7 @@ export const en = {
     success: 'Thanks! Your message has been securely queued for our team.',
     errorNoForm: 'The form could not be submitted. Please email us directly.',
     errorSend: 'Something went wrong sending your message. Please try again, or email us directly.',
-    note: 'Submissions are encrypted and retained for 30 days.',
+    note: 'Customer traffic requires TLS 1.2 or newer. Data at rest uses service-qualified encryption.',
     channelsTitle: 'Other ways to reach us',
     channels: [
       { value: 'support@terrascale.tech' },
@@ -323,32 +315,32 @@ export const en = {
     titleLead: 'Globally distributed',
     titleAccent: 'database infrastructure.',
     subtitle:
-      'TerraScale exists to make globally distributed DBaaS feel like one coherent product: database, auth, and payments built together on TerraBase with usage-based billing and flat pricing across regions.',
+      'TerraScale Public Alpha provides a document database across São Paulo, San Francisco, and Falkenstein with asynchronous replication.',
     ctaPricing: 'View Pricing',
     ctaContact: 'Talk to Us',
     missionEyebrow: 'Mission',
     missionTitle: 'One platform surface for teams that ship across regions.',
     missionText:
-      'Teams should not have to stitch together a database, identity layer, billing system, and regional deployment plan before they can serve customers. TerraScale brings those concerns into a single developer-facing platform so product teams can start small, pick the regions that matter, and scale without changing their application model.',
+      'Projects select their regions. The global endpoint uses the nearest healthy selected region, while strict regional endpoints never serve from another region.',
     pillars: [
       {
         title: 'TerraBase foundation',
         text: 'TerraScale is built on TerraBase so teams can run durable document, query, and operational data workflows behind one public platform surface.',
       },
       {
-        title: 'Auth included',
-        text: 'Database access, users, sessions, invitations, and machine credentials are planned as one product boundary instead of separate glue code.',
+        title: 'Asynchronous replication',
+        text: 'A successful write confirms local acceptance. Replication to other selected regions happens later.',
       },
       {
         title: 'Usage-aware billing',
-        text: 'Plans stay predictable while metered usage lets teams grow by workload, not by negotiating region-by-region pricing.',
+        text: 'Plans use explicit storage-across-regions and operation-unit allowances without paid overages during Public Alpha.',
       },
     ],
     pricingPrincipleEyebrow: 'Pricing principle',
     bandTitle: 'Flat regional pricing, metered by real use.',
     bandText:
-      'Region choice should be an architecture decision, not a surprise line item. TerraScale’s public pricing is designed around the same plan prices across launch regions, with storage, operations, and transfer growing with workload.',
-    regions: ['San Francisco', 'Frankfurt', 'Guarulhos'],
+      'Storage usage adds the bytes stored in every selected region. Estimated network distance, measured API latency, and replication health remain separate values.',
+    regions: ['São Paulo', 'San Francisco', 'Falkenstein'],
   },
 
   notFound: {

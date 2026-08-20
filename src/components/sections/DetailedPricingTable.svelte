@@ -3,8 +3,7 @@
   import ExternalLink from '@/components/ExternalLink.svelte'
   import { dict } from '@/lib/i18n'
 
-  // Amounts match BillingPlanSeedData (Business base, storage overage, ops overage).
-  const rowPrices = ['$99', '$0.70', '$1.00']
+  const rowPrices = ['Included', 'Hard limit', '$500']
   $: rows = $dict.pricing.detailed.rows.map((row, i) => ({
     ...row,
     price: rowPrices[i] ?? '',

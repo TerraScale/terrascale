@@ -7,6 +7,7 @@
     WORLD_MAP_VIEWBOX,
     type Region,
   } from '@/lib/world-map.generated'
+  import { launchPhase, registrationUrl } from '@/lib/site'
   import { dict } from '@/lib/i18n'
 
   // Capability badges shown under the CTAs. Labels come from the active
@@ -101,8 +102,8 @@
     </p>
 
     <div class="hero__ctas">
-      <RouteLink href="https://dash.terrascale.tech/signup" class="ts-btn ts-btn-primary cta-shine">
-        {$dict.hero.ctaPrimary}
+      <RouteLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine">
+        {launchPhase === 'public-alpha' ? $dict.hero.ctaPrimary : $dict.hero.ctaPrelaunch}
         <Icon name="arrowRight" className="hero__cta-icon" />
       </RouteLink>
       <ExternalLink

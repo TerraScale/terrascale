@@ -1,4 +1,4 @@
-import { expect, test } from 'playwright/test'
+import { expect, test, type Page } from 'playwright/test'
 
 // Regression coverage for the landing-page language selector (TER-80).
 //
@@ -14,34 +14,45 @@ import { expect, test } from 'playwright/test'
 // this selector is stable regardless of the active language's label.
 const trigger = 'button[aria-haspopup="listbox"]'
 
+async function selectLanguage(page: Page, language: string) {
+  const desktopTrigger = page.locator(trigger)
+
+  if (await desktopTrigger.isVisible()) {
+    await desktopTrigger.click()
+    await page.getByRole('option', { name: language }).click()
+    return
+  }
+
+  await page.getByRole('button', { name: 'Toggle navigation menu' }).click()
+  await page.locator('#mobile-navigation').getByRole('button', { name: language }).click()
+}
+
 test('selecting a language swaps the page copy and updates <html lang>', async ({ page }) => {
   await page.goto('/')
 
   // Prerendered default is English.
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Scale your data')
+  await expect(page.getByText(/A typed document database with asynchronous replication/)).toBeVisible()
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')
 
   // Switch to Spanish via the header dropdown.
-  await page.locator(trigger).click()
-  await page.getByRole('option', { name: 'Español' }).click()
+  await selectLanguage(page, 'Español')
 
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Escala tus datos')
+  await expect(page.getByText(/Una base de documentos tipada con replicación asíncrona/)).toBeVisible()
   await expect(page.locator('html')).toHaveAttribute('lang', 'es')
 })
 
 test('the chosen language persists across reloads', async ({ page }) => {
   await page.goto('/')
 
-  await page.locator(trigger).click()
-  await page.getByRole('option', { name: 'Português (Brasil)' }).click()
+  await selectLanguage(page, 'Português (Brasil)')
 
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Escale seus dados')
+  await expect(page.getByText(/Um banco de documentos tipado com replicação assíncrona/)).toBeVisible()
   await expect(page.locator('html')).toHaveAttribute('lang', 'pt-BR')
 
   // The inline pre-paint script + onMount init read the stored choice, so the
   // Portuguese copy reappears after a full reload with no further interaction.
   await page.reload()
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Escale seus dados')
+  await expect(page.getByText(/Um banco de documentos tipado com replicação assíncrona/)).toBeVisible()
   await expect(page.locator('html')).toHaveAttribute('lang', 'pt-BR')
 })
 
@@ -52,6 +63,6 @@ test('the footer inline selector also switches the language', async ({ page }) =
   // to Spanish and confirm the header trigger reflects the new short code.
   await page.getByRole('group', { name: /idioma|language|selecciona/i }).getByRole('button', { name: 'Español' }).click()
 
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Escala tus datos')
+  await expect(page.getByText(/Una base de documentos tipada con replicación asíncrona/)).toBeVisible()
   await expect(page.locator(trigger)).toContainText('ES')
 })

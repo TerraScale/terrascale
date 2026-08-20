@@ -5,14 +5,14 @@
   import AnimatedPrice from '@/components/AnimatedPrice.svelte'
   import type { AppIconName } from '@/lib/icons'
   import { dict } from '@/lib/i18n'
+  import { registrationUrl } from '@/lib/site'
 
   type Plan = {
     name: string
     icon: AppIconName
     accent: string
     accentRgb: string
-    price: { monthly: number; annual: number } | null
-    basePrice?: number
+    price: number
     description: string
     features: string[]
     cta: string
@@ -20,18 +20,14 @@
     popular: boolean
   }
 
-  let billing: 'monthly' | 'annual' = 'monthly'
-
-  // Plan names, prices, and accents are locale-independent; copy (description,
-  // features, CTA) is pulled from the active dictionary by index.
-  // Prices and names match BillingPlanSeedData (USD cents / 100). Keep in catalog order.
+  // Prices, names, and registration choices match the Public Alpha catalog.
   const planMeta: Array<Omit<Plan, 'description' | 'features' | 'cta' | 'href'>> = [
     {
       name: 'Developer',
       icon: 'zap',
       accent: 'var(--ts-secondary)',
       accentRgb: 'var(--ts-secondary-rgb)',
-      price: { monthly: 0, annual: 0 },
+      price: 0,
       popular: false,
     },
     {
@@ -39,7 +35,7 @@
       icon: 'star',
       accent: 'var(--ts-secondary)',
       accentRgb: 'var(--ts-secondary-rgb)',
-      price: { monthly: 5, annual: 50 },
+      price: 5,
       popular: false,
     },
     {
@@ -47,23 +43,15 @@
       icon: 'trendingUp',
       accent: 'var(--ts-primary)',
       accentRgb: 'var(--ts-primary-rgb)',
-      price: { monthly: 20, annual: 200 },
-      popular: false,
-    },
-    {
-      name: 'Scale',
-      icon: 'globe',
-      accent: 'var(--ts-primary)',
-      accentRgb: 'var(--ts-primary-rgb)',
-      price: { monthly: 29, annual: 290 },
+      price: 25,
       popular: true,
     },
     {
-      name: 'Business',
+      name: 'Enterprise',
       icon: 'shieldCheck',
       accent: 'var(--ts-tertiary)',
       accentRgb: 'var(--ts-tertiary-rgb)',
-      price: { monthly: 99, annual: 990 },
+      price: 500,
       popular: false,
     },
   ]
@@ -75,16 +63,9 @@
       description: copy.description,
       features: copy.features,
       cta: copy.cta,
-      href:
-        meta.name === 'Developer'
-          ? 'https://dash.terrascale.tech/signup'
-          : meta.name === 'Business'
-            ? '/contact'
-            : `https://dash.terrascale.tech/usage?checkout=${meta.name.toLowerCase()}`,
+      href: meta.name === 'Enterprise' ? '/contact' : `${registrationUrl}?plan=${meta.name.toLowerCase()}`,
     }
   })
-
-  $: suffix = billing === 'annual' ? $dict.pricing.suffixAnnual : $dict.pricing.suffixMonthly
 </script>
 
 <section class="pricing-section" id="pricing">
@@ -98,49 +79,6 @@
         <span class="ts-text-gradient">{$dict.pricing.titleAccent}</span>
       </svelte:fragment>
     </SectionHeader>
-
-    <div class="pricing-toggle-wrap">
-      <div class="pricing-toggle" role="tablist" aria-label={$dict.pricing.toggleLabel}>
-        <div
-          class="pricing-toggle__thumb"
-          class:is-annual={billing === 'annual'}
-          aria-hidden="true"
-        ></div>
-        <button
-          type="button"
-          class="pricing-toggle__btn"
-          class:is-active={billing === 'monthly'}
-          role="tab"
-          aria-selected={billing === 'monthly'}
-          on:click={() => (billing = 'monthly')}
-        >
-          {$dict.pricing.monthly}
-        </button>
-        <button
-          type="button"
-          class="pricing-toggle__btn"
-          class:is-active={billing === 'annual'}
-          role="tab"
-          aria-selected={billing === 'annual'}
-          on:click={() => (billing = 'annual')}
-        >
-          {$dict.pricing.annual}
-        </button>
-        <span class="pricing-toggle__save" class:is-active={billing === 'annual'}>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M5 12l5 5L20 7"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="3"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-          {$dict.pricing.save}
-        </span>
-      </div>
-    </div>
 
     <div class="pricing-grid">
       {#each plans as plan (plan.name)}
@@ -165,20 +103,11 @@
           <p class="pricing-card__desc">{plan.description}</p>
 
           <div class="pricing-card__price-row">
-            {#if plan.price}
-              <div class="pricing-card__price">
-                <AnimatedPrice value={plan.price[billing]} />
-              </div>
-              <div class="pricing-card__suffix">{suffix}</div>
-            {:else}
-              <div class="pricing-card__price">{$dict.pricing.custom}</div>
-            {/if}
-          </div>
-          {#if !plan.price && plan.basePrice}
-            <div class="pricing-card__note">
-              {$dict.pricing.baseNoteLead} ${plan.basePrice}{$dict.pricing.baseNoteTrail}
+            <div class="pricing-card__price">
+              <AnimatedPrice value={plan.price} />
             </div>
-          {/if}
+            <div class="pricing-card__suffix">{$dict.pricing.suffixMonthly}</div>
+          </div>
 
           <div class="pricing-card__divider"></div>
 
@@ -216,96 +145,11 @@
     padding: 0 40px;
   }
 
-  .pricing-toggle-wrap {
-    display: flex;
-    justify-content: center;
-    margin: 40px 0 64px;
-  }
-
-  .pricing-toggle {
-    position: relative;
-    display: inline-flex;
-    background: var(--ts-glass-bg);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid var(--ts-glass-border);
-    border-radius: 999px;
-    padding: 5px;
-  }
-
-  .pricing-toggle__thumb {
-    position: absolute;
-    top: 5px;
-    bottom: 5px;
-    left: 5px;
-    width: calc(50% - 5px);
-    background: var(--ts-gradient-primary);
-    border-radius: 999px;
-    box-shadow: 0 4px 14px rgba(var(--ts-primary-rgb), 0.35);
-    transition: transform 240ms cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .pricing-toggle__thumb.is-annual {
-    transform: translateX(100%);
-  }
-
-  .pricing-toggle__btn {
-    position: relative;
-    z-index: 1;
-    padding: 11px 30px;
-    border: none;
-    background: transparent;
-    color: var(--ts-text-muted);
-    font-family: var(--ts-font-accent);
-    font-size: 12px;
-    font-weight: 700;
-    cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    transition: color 180ms ease;
-    border-radius: 999px;
-  }
-
-  .pricing-toggle__btn.is-active {
-    color: #fff;
-  }
-
-  .pricing-toggle__save {
-    position: absolute;
-    top: -11px;
-    right: -14px;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 9px;
-    border-radius: 999px;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    color: #fff;
-    font-family: var(--ts-font-accent);
-    font-size: 10px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-    border: 1.5px solid var(--ts-bg-base);
-    white-space: nowrap;
-    transform: scale(1);
-    transition: transform 200ms ease;
-  }
-
-  .pricing-toggle__save.is-active {
-    transform: scale(1.05);
-  }
-
-  .pricing-toggle__save svg {
-    width: 9px;
-    height: 9px;
-  }
-
   .pricing-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
     gap: 20px;
+    margin-top: 48px;
   }
 
   .pricing-card {
@@ -425,13 +269,6 @@
     font-size: 13px;
     color: var(--ts-text-muted);
     font-weight: 500;
-  }
-
-  .pricing-card__note {
-    font-size: 12px;
-    color: var(--ts-text-muted);
-    margin-bottom: 8px;
-    font-family: var(--ts-font-mono);
   }
 
   .pricing-card__divider {
