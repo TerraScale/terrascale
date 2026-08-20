@@ -372,17 +372,35 @@ async function delayForRetry(delayMs: number, signal: AbortSignal | undefined): 
   }
 
   await new Promise<void>((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout>;
-    const abort = () => {
-      clearTimeout(timer);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const cleanup = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
       signal?.removeEventListener("abort", abort);
+    };
+    const abort = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
       reject(signal?.reason ?? new DOMException("The request was aborted.", "AbortError"));
     };
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
     timer = setTimeout(() => {
-      signal?.removeEventListener("abort", abort);
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
       resolve();
     }, delayMs);
-    signal?.addEventListener("abort", abort, { once: true });
   });
 }
 

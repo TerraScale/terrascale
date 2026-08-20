@@ -203,15 +203,82 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
     );
     await verifyLifecycleSafePublish(checkout, workspace, packages, packageJson);
     await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], { cwd: consumer });
+    const journey = path.join(consumer, "packed-journey.mjs");
+    await writeFile(journey, packedConsumerJourney);
+    await run("node", [journey], { cwd: consumer });
     await run(
       "node",
-      ["--input-type=module", "--eval", "import { createTerraScaleClient } from '@terrascale/sdk'; createTerraScaleClient({ apiBaseUrl: 'https://api.example.test' });"],
+      [
+        "--input-type=module",
+        "--eval",
+        "import { createTerraScaleClient } from '@terrascale/sdk'; import { createTerraScaleAdminClient } from '@terrascale/sdk/admin'; createTerraScaleClient({ apiBaseUrl: 'https://api.example.test' }); createTerraScaleAdminClient({ apiBaseUrl: 'https://api.example.test' });",
+      ],
       { cwd: consumer },
     );
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
 });
+
+const packedConsumerJourney = String.raw`import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { createTerraScaleClient, toUlid } from "@terrascale/sdk";
+
+const repositoryId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+const documentId = toUlid("01BX5ZZKBKACTAV9WEVGEMMVRZ");
+const requests = [];
+const server = createServer(async (request, response) => {
+  const body = request.method === "PUT" ? await readBody(request) : undefined;
+  requests.push({
+    method: request.method,
+    path: request.url,
+    authorization: request.headers.authorization,
+    project: request.headers["x-terrascale-project-id"],
+    expectedChangeToken: request.headers["if-match"],
+    sessionToken: request.headers["x-terrascale-session-consistency-token"],
+  });
+  response.setHeader("content-type", "application/json");
+  response.end(JSON.stringify({
+    repositoryId,
+    repository: "users",
+    id: documentId,
+    data: body === undefined ? { name: "Ada" } : JSON.parse(body).data,
+    changeToken: "change-2",
+    ...(request.method === "PUT" ? { sessionConsistencyToken: "session-2" } : {}),
+  }));
+});
+
+await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+try {
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  const client = createTerraScaleClient({
+    apiBaseUrl: "http://127.0.0.1:" + address.port,
+    accessToken: "packed-journey-token",
+    projectId: toUlid("01J00000000000000000000000"),
+    sessionConsistency: "automatic",
+  });
+  const scope = { repositoryId };
+  const write = await client.documents.put(scope, documentId, { name: "Ada" }, { expectedChangeToken: "change-1" });
+  const read = await client.documents.get(scope, documentId);
+  assert.equal(write.ok, true);
+  assert.equal(read.ok, true);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].path, "/api/v1/repositories/" + repositoryId + "/documents/" + documentId);
+  assert.equal(requests[0].authorization, "Bearer packed-journey-token");
+  assert.equal(requests[0].project, "01J00000000000000000000000");
+  assert.equal(requests[0].expectedChangeToken, "change-1");
+  assert.equal(requests[1].sessionToken, "session-2");
+} finally {
+  await new Promise(resolve => server.close(resolve));
+}
+
+async function readBody(request) {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  return Buffer.concat(chunks).toString("utf8");
+}
+`;
 
 async function verifyCandidate(
   checkout: string,

@@ -139,6 +139,39 @@ describe("regional document consistency", () => {
     assert.equal(requests[2]?.headers.get("x-terrascale-session-consistency-token"), "session-2");
   });
 
+  test("keeps session tokens inside their client and tenant boundary", async () => {
+    const requests: Request[] = [];
+    const fetch = async (input: RequestInfo | URL) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      return Response.json({
+        repositoryId,
+        repository: "users",
+        id: documentId,
+        data: { name: "Grace" },
+        changeToken: "change-2",
+        ...(requests.length === 1 ? { sessionConsistencyToken: "tenant-a-session" } : {}),
+      });
+    };
+    const clientA = createTerraScaleClient({
+      projectId: toUlid("01J00000000000000000000000"),
+      sessionConsistency: "automatic",
+      fetch,
+    });
+    const clientB = createTerraScaleClient({
+      projectId: toUlid("01J00000000000000000000001"),
+      sessionConsistency: "automatic",
+      fetch,
+    });
+
+    await clientA.documents.put({ repositoryId }, documentId, { name: "Grace" });
+    await clientB.documents.get({ repositoryId }, documentId);
+
+    assert.equal(requests[0]?.headers.get("x-terrascale-project-id"), "01J00000000000000000000000");
+    assert.equal(requests[1]?.headers.get("x-terrascale-project-id"), "01J00000000000000000000001");
+    assert.equal(requests[1]?.headers.get("x-terrascale-session-consistency-token"), null);
+  });
+
   test("propagates session tokens from batch writes to the matching document reads", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleClient({
@@ -307,6 +340,54 @@ describe("regional document consistency", () => {
         degraded: true,
       });
     }
+  });
+
+  test("drops malformed routing metadata instead of exposing operator values", async () => {
+    const client = createTerraScaleClient({
+      fetch: async () => Response.json({}, {
+        headers: {
+          "x-terrascale-edge-region": "operator-node-17.internal",
+          "x-terrascale-serving-region": "sfo",
+          "x-terrascale-route-mode": "preferred",
+        },
+      }),
+    });
+
+    const result = await client.documents.get({ repositoryId }, documentId);
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.deepEqual(result.routing, {
+        servingRegion: "sfo",
+        routeMode: "preferred",
+        degraded: false,
+      });
+    }
+  });
+
+  test("aborts a transient retry during its backoff", async () => {
+    const controller = new AbortController();
+    let attempts = 0;
+    const client = createTerraScaleClient({
+      maxRetryAttempts: 1,
+      retryDelayMs: 5_000,
+      fetch: async () => {
+        attempts++;
+        return Response.json({ error: { code: "temporarily_unavailable" } }, { status: 503 });
+      },
+    });
+
+    const pending = client.documents.get(
+      { repositoryId },
+      documentId,
+      { signal: controller.signal },
+    );
+    setTimeout(() => controller.abort(), 0);
+    const result = await pending;
+
+    assert.equal(attempts, 1);
+    assert.equal(result.ok, false);
+    assert.equal(result.ok ? undefined : result.error.kind, "transport");
   });
 
   test("types a strict regional outage as unavailable", async () => {
