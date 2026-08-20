@@ -1,5 +1,5 @@
 import { createTerraScaleClient, type TerraScaleClient } from "./factory.js";
-import type { FetchLike } from "./config.js";
+import type { FetchLike, TerraScaleRuntimeConfig } from "./config.js";
 import {
   type TerraScaleBase,
   type TerraScaleRequestMetric,
@@ -46,6 +46,46 @@ export type CapturedSdkRoute = {
     readonly query: readonly { readonly name: string; readonly value: string }[];
   };
 };
+
+export type CapturedPublicRequest<TValue> = {
+  readonly result: TValue;
+  readonly requests: readonly Request[];
+};
+
+/**
+ * Runs a public client operation through the repository's deterministic
+ * boundary recorder. Tests use this process-level harness instead of
+ * installing request-specific transport doubles in each test case.
+ */
+export async function capturePublicRequest<TValue>(
+  invoke: (client: TerraScaleClient) => Promise<TValue>,
+  options: {
+    readonly config?: Omit<TerraScaleRuntimeConfig, "fetch">;
+    readonly respond?: (request: Request, attempt: number) => Response | Promise<Response>;
+  } = {},
+): Promise<CapturedPublicRequest<TValue>> {
+  const requests: Request[] = [];
+  let attempt = 0;
+  const baseConfig: TerraScaleRuntimeConfig = {
+    apiBaseUrl: "https://api.terrascale.tech",
+    authBaseUrl: "https://auth.terrascale.tech",
+    ...options.config,
+    fetch: async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const response = options.respond?.(request, attempt);
+      attempt++;
+      return response instanceof Promise
+        ? await response
+        : response ?? new Response("{}", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+    },
+  };
+
+  return { result: await invoke(createTerraScaleClient(baseConfig)), requests };
+}
 
 type CaptureOperation = {
   readonly client: string;
