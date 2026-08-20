@@ -72,6 +72,7 @@ export const ptBr: Messages = {
           terms: 'Termos',
           privacy: 'Privacidade',
           acceptableUse: 'Uso aceitável',
+          dataProcessingTerms: 'Termos de tratamento de dados',
           support: 'Suporte',
         },
       },
@@ -153,6 +154,7 @@ export const ptBr: Messages = {
     ctaSecondary: 'Fale com vendas',
     perksAria: 'Detalhes dos planos',
     perks: ['Developer não expira', 'Planos pagos mensais', 'Sem excedentes pagos'],
+    policyLead: 'Revise antes da verificação do pagamento:',
   },
 
   pricing: {

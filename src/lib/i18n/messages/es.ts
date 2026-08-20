@@ -72,6 +72,7 @@ export const es: Messages = {
           terms: 'Términos',
           privacy: 'Privacidad',
           acceptableUse: 'Uso aceptable',
+          dataProcessingTerms: 'Términos de tratamiento de datos',
           support: 'Soporte',
         },
       },
@@ -153,6 +154,7 @@ export const es: Messages = {
     ctaSecondary: 'Hablar con ventas',
     perksAria: 'Detalles de planes',
     perks: ['Developer no caduca', 'Planes pagados mensuales', 'Sin excedentes pagados'],
+    policyLead: 'Revisa antes de verificar el pago:',
   },
 
   pricing: {

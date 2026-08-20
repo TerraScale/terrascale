@@ -1,8 +1,9 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
+  import ExternalLink from '@/components/ExternalLink.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { dict } from '@/lib/i18n'
-  import { registrationUrl } from '@/lib/site'
+  import { registrationPolicyLinks, registrationUrl } from '@/lib/site'
 
   $: perks = $dict.cta.perks
 </script>
@@ -27,6 +28,15 @@
           {$dict.cta.ctaSecondary}
         </RouteLink>
       </div>
+
+      <nav class="cta__policies" aria-label="Registration policies">
+        <span>{$dict.cta.policyLead}</span>
+        {#each registrationPolicyLinks as policy (policy.key)}
+          <ExternalLink href={policy.href} target="_blank" rel="noopener noreferrer" class="link-wipe">
+            {($dict.footer.columns.legal.links as Record<string, string>)[policy.key]}
+          </ExternalLink>
+        {/each}
+      </nav>
 
       <ul class="cta__perks" aria-label={$dict.cta.perksAria}>
         {#each perks as p (p)}
@@ -124,6 +134,22 @@
     font-family: var(--ts-font-accent);
     font-size: 12px;
     color: var(--ts-text-muted);
+  }
+
+  .cta__policies {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 16px;
+    color: var(--ts-text-muted);
+    font-family: var(--ts-font-accent);
+    font-size: 12px;
+  }
+
+  :global(.cta__policies a) {
+    color: var(--ts-primary-light);
   }
 
   .cta__perks li {

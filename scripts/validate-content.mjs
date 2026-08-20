@@ -76,6 +76,9 @@ const redirects = fs.readFileSync(path.join(root, 'static/_redirects'), 'utf8')
 if (!redirects.includes('/signup https://dash.terrascale.tech/register 308')) {
   failures.push('static/_redirects: /signup must redirect permanently to the canonical registration URL.')
 }
+if (!redirects.includes('https://dashboard.terrascale.tech/* https://dash.terrascale.tech/:splat 308')) {
+  failures.push('static/_redirects: dashboard host must redirect to dash while preserving the safe path.')
+}
 
 const expectedRoutes = ['/', '/about', '/contact', '/pricing']
 const sitemap = fs.readFileSync(path.join(root, 'src/routes/sitemap.xml/+server.ts'), 'utf8')

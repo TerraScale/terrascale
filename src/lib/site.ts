@@ -29,6 +29,14 @@ export const docsLink = {
 
 export const registrationUrl = 'https://dash.terrascale.tech/register'
 
+// The Dashboard owns acceptance and version recording. The landing page owns
+// the public policy links shown before payment-method verification.
+export const registrationPolicyLinks = [
+  { key: 'terms', href: 'https://docs.terrascale.tech/en/legal/terms/' },
+  { key: 'privacy', href: 'https://docs.terrascale.tech/en/legal/privacy/' },
+  { key: 'acceptableUse', href: 'https://docs.terrascale.tech/en/legal/acceptable-use/' },
+] as const
+
 export const launchPhase =
   import.meta.env.PUBLIC_TERRASCALE_LAUNCH_PHASE === 'public-alpha' ? 'public-alpha' : 'prelaunch'
 
@@ -79,6 +87,7 @@ export const footerColumns: FooterColumn[] = [
       { key: 'terms', href: 'https://docs.terrascale.tech/en/legal/terms/' },
       { key: 'privacy', href: 'https://docs.terrascale.tech/en/legal/privacy/' },
       { key: 'acceptableUse', href: 'https://docs.terrascale.tech/en/legal/acceptable-use/' },
+      { key: 'dataProcessingTerms', href: 'https://docs.terrascale.tech/en/legal/data-processing-terms/' },
       { key: 'support', href: 'https://docs.terrascale.tech/en/support/' },
     ],
   },
