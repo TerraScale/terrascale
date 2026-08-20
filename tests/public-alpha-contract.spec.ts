@@ -36,6 +36,32 @@ test('published routes expose canonical metadata and basic accessible structure'
   }
 })
 
+test('published routes keep registration, login, status, and policy links canonical', async ({ page }) => {
+  const requiredLinks = [
+    registrationUrl,
+    'https://dash.terrascale.tech/login',
+    'https://status.terrascale.tech',
+    'https://docs.terrascale.tech/en/security/',
+    'https://docs.terrascale.tech/en/legal/terms/',
+    'https://docs.terrascale.tech/en/legal/privacy/',
+    'https://docs.terrascale.tech/en/legal/acceptable-use/',
+    'https://docs.terrascale.tech/en/legal/data-processing-terms/',
+    'https://docs.terrascale.tech/en/support/',
+  ]
+
+  for (const route of publishedRoutes) {
+    await page.goto(route.path)
+    for (const href of requiredLinks) await expect(page.locator(`a[href="${href}"]`).first()).toBeAttached()
+
+    const registrationLinks = page.locator(`a[href^="${registrationUrl}"]`)
+    if ((await registrationLinks.count()) === 0) {
+      await page.getByRole('button', { name: /toggle navigation/i }).click()
+    }
+    await expect(page.locator(`a[href^="${registrationUrl}"]`).first()).toBeAttached()
+    await expect(page.locator('a[href*="dash.terrascale.tech/signup"]')).toHaveCount(0)
+  }
+})
+
 test('pricing matches the Public Alpha plan catalog', async ({ page }) => {
   await page.goto('/pricing')
 
@@ -120,13 +146,19 @@ test('Public Alpha claims and customer links stay within the launch contract', a
   expect(body).not.toMatch(/\b(?:queue|queues|authentication product|backup|backups|annual billing)\b/i)
   expect(body).not.toMatch(/paid overages? (?:are|remain|supported|available)/i)
 
+  if ((await page.locator('a[href="https://dash.terrascale.tech/login"]:visible').count()) === 0) {
+    await page.getByRole('button', { name: /toggle navigation/i }).click()
+  }
+
   const expectedLinks = [
     registrationUrl,
+    'https://dash.terrascale.tech/login',
     'https://status.terrascale.tech',
     'https://docs.terrascale.tech/en/security/',
     'https://docs.terrascale.tech/en/legal/terms/',
     'https://docs.terrascale.tech/en/legal/privacy/',
     'https://docs.terrascale.tech/en/legal/acceptable-use/',
+    'https://docs.terrascale.tech/en/legal/data-processing-terms/',
     'https://docs.terrascale.tech/en/support/',
   ]
 
@@ -138,6 +170,7 @@ test('Public Alpha claims and customer links stay within the launch contract', a
     'https://docs.terrascale.tech/en/legal/terms/',
     'https://docs.terrascale.tech/en/legal/privacy/',
     'https://docs.terrascale.tech/en/legal/acceptable-use/',
+    'https://docs.terrascale.tech/en/legal/data-processing-terms/',
   ]) {
     await expect(page.locator(`nav[aria-label="Registration policies"] a[href="${href}"]`)).toBeVisible()
   }

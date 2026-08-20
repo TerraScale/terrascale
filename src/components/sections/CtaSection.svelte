@@ -3,7 +3,7 @@
   import ExternalLink from '@/components/ExternalLink.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { dict } from '@/lib/i18n'
-  import { registrationPolicyLinks, registrationUrl } from '@/lib/site'
+  import { launchPhase, registrationPolicyLinks, registrationUrl } from '@/lib/site'
 
   $: perks = $dict.cta.perks
 </script>
@@ -19,10 +19,10 @@
       </p>
 
       <div class="cta__actions">
-        <RouteLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine cta__primary">
-          {$dict.cta.ctaPrimary}
+        <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine cta__primary">
+          {launchPhase === 'public-alpha' ? $dict.cta.ctaPrimary : $dict.cta.ctaPrelaunch}
           <Icon name="arrowRight" className="cta__icon" />
-        </RouteLink>
+        </ExternalLink>
         <RouteLink href="/contact" class="ts-btn ts-btn-glass cta__secondary">
           <Icon name="messageSquare" className="cta__icon" />
           {$dict.cta.ctaSecondary}

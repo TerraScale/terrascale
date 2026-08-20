@@ -29,12 +29,58 @@ export const docsLink = {
 
 export const registrationUrl = 'https://dash.terrascale.tech/register'
 
+export const loginUrl = 'https://dash.terrascale.tech/login'
+
+export const publicAlphaCatalog = [
+  {
+    name: 'Developer',
+    slug: 'developer',
+    price: 0,
+    projects: 1,
+    databases: 3,
+    members: 3,
+    storageGb: 1,
+    operationUnits: 10_000,
+  },
+  {
+    name: 'Starter',
+    slug: 'starter',
+    price: 5,
+    projects: 5,
+    databases: 10,
+    members: 5,
+    storageGb: 5,
+    operationUnits: 1_000_000,
+  },
+  {
+    name: 'Pro',
+    slug: 'pro',
+    price: 25,
+    projects: 25,
+    databases: 50,
+    members: 25,
+    storageGb: 50,
+    operationUnits: 10_000_000,
+  },
+  {
+    name: 'Enterprise',
+    slug: 'enterprise',
+    price: 500,
+    projects: null,
+    databases: null,
+    members: null,
+    storageGb: null,
+    operationUnits: null,
+  },
+] as const
+
 // The Dashboard owns acceptance and version recording. The landing page owns
 // the public policy links shown before payment-method verification.
 export const registrationPolicyLinks = [
   { key: 'terms', href: 'https://docs.terrascale.tech/en/legal/terms/' },
   { key: 'privacy', href: 'https://docs.terrascale.tech/en/legal/privacy/' },
   { key: 'acceptableUse', href: 'https://docs.terrascale.tech/en/legal/acceptable-use/' },
+  { key: 'dataProcessingTerms', href: 'https://docs.terrascale.tech/en/legal/data-processing-terms/' },
 ] as const
 
 export const launchPhase =

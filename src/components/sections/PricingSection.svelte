@@ -1,16 +1,18 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
+  import ExternalLink from '@/components/ExternalLink.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import SectionHeader from '@/components/sections/SectionHeader.svelte'
   import AnimatedPrice from '@/components/AnimatedPrice.svelte'
   import type { AppIconName } from '@/lib/icons'
   import { dict } from '@/lib/i18n'
-  import { registrationUrl } from '@/lib/site'
+  import { launchPhase, publicAlphaCatalog, registrationUrl } from '@/lib/site'
 
   export let headingLevel: 1 | 2 = 2
 
   type Plan = {
     name: string
+    slug: string
     icon: AppIconName
     accent: string
     accentRgb: string
@@ -22,41 +24,17 @@
     popular: boolean
   }
 
-  // Prices, names, and registration choices match the Public Alpha catalog.
-  const planMeta: Array<Omit<Plan, 'description' | 'features' | 'cta' | 'href'>> = [
-    {
-      name: 'Developer',
-      icon: 'zap',
-      accent: 'var(--ts-secondary)',
-      accentRgb: 'var(--ts-secondary-rgb)',
-      price: 0,
-      popular: false,
-    },
-    {
-      name: 'Starter',
-      icon: 'star',
-      accent: 'var(--ts-secondary)',
-      accentRgb: 'var(--ts-secondary-rgb)',
-      price: 5,
-      popular: false,
-    },
-    {
-      name: 'Pro',
-      icon: 'trendingUp',
-      accent: 'var(--ts-primary)',
-      accentRgb: 'var(--ts-primary-rgb)',
-      price: 25,
-      popular: true,
-    },
-    {
-      name: 'Enterprise',
-      icon: 'shieldCheck',
-      accent: 'var(--ts-tertiary)',
-      accentRgb: 'var(--ts-tertiary-rgb)',
-      price: 500,
-      popular: false,
-    },
-  ]
+  const planMeta: Array<Omit<Plan, 'description' | 'features' | 'cta' | 'href'>> = publicAlphaCatalog.map(
+    (catalogPlan, i) => ({
+      name: catalogPlan.name,
+      slug: catalogPlan.slug,
+      accent: i === 2 ? 'var(--ts-primary)' : i === 3 ? 'var(--ts-tertiary)' : 'var(--ts-secondary)',
+      accentRgb: i === 2 ? 'var(--ts-primary-rgb)' : i === 3 ? 'var(--ts-tertiary-rgb)' : 'var(--ts-secondary-rgb)',
+      price: catalogPlan.price,
+      popular: i === 2,
+      icon: (['zap', 'star', 'trendingUp', 'shieldCheck'][i] ?? 'zap') as AppIconName,
+    }),
+  )
 
   $: plans = planMeta.map((meta, i) => {
     const copy = $dict.pricing.plans[i]
@@ -64,8 +42,8 @@
       ...meta,
       description: copy.description,
       features: copy.features,
-      cta: copy.cta,
-      href: meta.name === 'Enterprise' ? '/contact' : `${registrationUrl}?plan=${meta.name.toLowerCase()}`,
+      cta: meta.name === 'Enterprise' || launchPhase === 'public-alpha' ? copy.cta : $dict.hero.ctaPrelaunch,
+      href: meta.name === 'Enterprise' ? '/contact' : `${registrationUrl}?plan=${meta.slug}`,
     }
   })
 </script>
@@ -125,10 +103,17 @@
             {/each}
           </ul>
 
-          <RouteLink href={plan.href} class="pricing-card__cta">
-            {plan.cta}
-            <Icon name="arrowRight" className="pricing-card__cta-icon" />
-          </RouteLink>
+          {#if plan.href.startsWith('https://')}
+            <ExternalLink href={plan.href} class="pricing-card__cta">
+              {plan.cta}
+              <Icon name="arrowRight" className="pricing-card__cta-icon" />
+            </ExternalLink>
+          {:else}
+            <RouteLink href={plan.href} class="pricing-card__cta">
+              {plan.cta}
+              <Icon name="arrowRight" className="pricing-card__cta-icon" />
+            </RouteLink>
+          {/if}
         </div>
       {/each}
     </div>
