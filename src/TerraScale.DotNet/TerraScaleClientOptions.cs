@@ -83,6 +83,16 @@ public sealed record TerraScaleClientOptions
             throw new ArgumentException("TerraScale base address must be absolute.", nameof(BaseAddress));
         }
 
+        if (!Enum.IsDefined(RegionAffinity))
+        {
+            throw new ArgumentOutOfRangeException(nameof(RegionAffinity), "Unknown regional affinity mode.");
+        }
+
+        if (!Enum.IsDefined(SessionConsistency))
+        {
+            throw new ArgumentOutOfRangeException(nameof(SessionConsistency), "Unknown session consistency mode.");
+        }
+
         var normalizedRegion = NormalizeRegion(PreferredRegion);
         if (RegionAffinity == TerraScaleRegionAffinity.Strict && normalizedRegion is null)
         {

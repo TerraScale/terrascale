@@ -24,6 +24,24 @@ public sealed class TerraScaleRegionalConsistencyTests
     }
 
     [Test]
+    public async Task UnknownRegionalOptionsFailBeforeAnyRequest()
+    {
+        using var handler = new RecordingHandler(DocumentJson());
+        using var httpClient = new HttpClient(handler);
+
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(() => new TerraScaleClient(
+            httpClient,
+            new TerraScaleClientOptions
+            {
+                BearerToken = "caller-token",
+                RegionAffinity = (TerraScaleRegionAffinity)99
+            }));
+
+        await Assert.That(exception!.ParamName).IsEqualTo("RegionAffinity");
+        await Assert.That(handler.Requests).IsEmpty();
+    }
+
+    [Test]
     public async Task DefaultAndStrictClientsUseTheContractedPublicHosts()
     {
         using var globalHandler = new RecordingHandler(DocumentJson());
