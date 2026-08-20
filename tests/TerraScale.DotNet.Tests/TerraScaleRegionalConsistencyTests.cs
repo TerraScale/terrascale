@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 
 namespace TerraScale.DotNet.Tests;
@@ -92,8 +93,9 @@ public sealed class TerraScaleRegionalConsistencyTests
     [RequiresTerraScaleApi]
     public async Task ConditionalMutationConflictAndSessionTokensRoundTripAgainstRealApi()
     {
+        using var httpClient = new HttpClient();
         var client = new TerraScaleClient(
-            new HttpClient(),
+            httpClient,
             new TerraScaleClientOptions
             {
                 BaseAddress = TerraScaleApiE2E.BaseAddress!,
@@ -144,6 +146,183 @@ public sealed class TerraScaleRegionalConsistencyTests
         {
             await DeleteIfPresentAsync(client, repository, created.Id);
         }
+    }
+
+    [Test]
+    [RequiresTerraScaleApi]
+    public async Task BatchSessionTokensRemainScopedToEachDocumentAgainstRealApi()
+    {
+        using var httpClient = new HttpClient();
+        var client = new TerraScaleClient(
+            httpClient,
+            new TerraScaleClientOptions
+            {
+                BaseAddress = TerraScaleApiE2E.BaseAddress!,
+                ApiKey = TerraScaleApiE2E.ApiKey,
+                ProjectId = TerraScaleApiE2E.ProjectId,
+                SessionConsistency = TerraScaleSessionConsistency.Automatic
+            });
+        var repository = TerraScaleApiE2E.Repository;
+        TerraScaleDocument? first = null;
+        TerraScaleDocument? second = null;
+
+        try
+        {
+            first = await client.Documents.CreateAsync(
+                repository,
+                new { status = $"sdk-e2e-batch-consistency-a-{Guid.NewGuid():N}", quantity = 1 });
+            second = await client.Documents.CreateAsync(
+                repository,
+                new { status = $"sdk-e2e-batch-consistency-b-{Guid.NewGuid():N}", quantity = 2 });
+
+            var batch = await client.Documents.BatchAsync(
+                repository,
+                [
+                    TerraScaleDocumentBatchOperation.Upsert(
+                        first.Id,
+                        new { status = "batch-consistency-a", quantity = 11 }),
+                    TerraScaleDocumentBatchOperation.Upsert(
+                        second.Id,
+                        new { status = "batch-consistency-b", quantity = 22 })
+                ]);
+
+            var firstResult = batch.Results.Single(result => result.Id == first.Id).Document;
+            var secondResult = batch.Results.Single(result => result.Id == second.Id).Document;
+            await Assert.That(firstResult?.SessionConsistencyToken).IsNotNull();
+            await Assert.That(secondResult?.SessionConsistencyToken).IsNotNull();
+            await Assert.That(firstResult?.SessionConsistencyToken)
+                .IsNotEqualTo(secondResult?.SessionConsistencyToken);
+
+            var firstRead = await client.Documents.GetAsync(repository, first.Id);
+            var secondRead = await client.Documents.GetAsync(repository, second.Id);
+            await Assert.That(firstRead.Data.GetProperty("quantity").GetInt32()).IsEqualTo(11);
+            await Assert.That(secondRead.Data.GetProperty("quantity").GetInt32()).IsEqualTo(22);
+        }
+        finally
+        {
+            if (first is not null)
+            {
+                await DeleteIfPresentAsync(client, repository, first.Id);
+            }
+
+            if (second is not null)
+            {
+                await DeleteIfPresentAsync(client, repository, second.Id);
+            }
+        }
+    }
+
+    [Test]
+    public async Task RetryInvokesBearerProviderForEachNetworkAttempt()
+    {
+        using var httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(5)
+        };
+        var providerCalls = 0;
+        var client = new TerraScaleClient(
+            httpClient,
+            new TerraScaleClientOptions
+            {
+                BaseAddress = new Uri("https://api.example.invalid/"),
+                BearerTokenProvider = _ =>
+                {
+                    Interlocked.Increment(ref providerCalls);
+                    return ValueTask.FromResult("caller-token");
+                },
+                MaxRetryAttempts = 1,
+                RetryDelay = TimeSpan.Zero
+            });
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.Documents.GetAsync("repository-a", "document-a"));
+
+        await Assert.That(providerCalls).IsEqualTo(2);
+    }
+
+    [Test]
+    [RequiresTerraScaleRegionalRouting]
+    public async Task RoutingMetadataIsTypedOnARealPublicApiFailure()
+    {
+        using var httpClient = new HttpClient();
+        var client = new TerraScaleClient(
+            httpClient,
+            new TerraScaleClientOptions
+            {
+                BaseAddress = TerraScaleApiE2E.BaseAddress!,
+                ApiKey = TerraScaleApiE2E.ApiKey,
+                ProjectId = TerraScaleApiE2E.ProjectId,
+                PreferredRegion = TerraScaleApiE2E.RegionalRoutingRegion,
+                RegionAffinity = TerraScaleRegionAffinity.Failover
+            });
+
+        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Documents.GetAsync(
+                TerraScaleApiE2E.Repository,
+                $"sdk-e2e-routing-missing/{Guid.NewGuid():N}"));
+
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(exception.Routing).IsNotNull();
+        await Assert.That(exception.Routing!.EdgeRegion).IsNotNull();
+        await Assert.That(exception.Routing.ServingRegion).IsNotNull();
+        await Assert.That(exception.Routing.RouteMode).IsNotNull();
+    }
+
+    [Test]
+    [RequiresTerraScaleRegionalFailure]
+    [NotInParallel("regional-failure")]
+    public async Task StrictUnavailableRegionIsReportedAsTypedRegionalFailure()
+    {
+        var activities = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => string.Equals(
+                source.Name,
+                TerraScaleTelemetry.ActivitySourceName,
+                StringComparison.Ordinal),
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                lock (activities)
+                {
+                    activities.Add(activity);
+                }
+            }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        using var httpClient = new HttpClient();
+        var client = new TerraScaleClient(
+            httpClient,
+            new TerraScaleClientOptions
+            {
+                BaseAddress = TerraScaleApiE2E.BaseAddress!,
+                ApiKey = TerraScaleApiE2E.ApiKey,
+                ProjectId = TerraScaleApiE2E.ProjectId,
+                PreferredRegion = TerraScaleApiE2E.RegionalUnavailableRegion,
+                RegionAffinity = TerraScaleRegionAffinity.Strict,
+                MaxRetryAttempts = 1,
+                RetryDelay = TimeSpan.Zero
+            });
+
+        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Documents.GetAsync(
+                TerraScaleApiE2E.Repository,
+                $"sdk-e2e-unavailable-region/{Guid.NewGuid():N}"));
+
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(exception.IsRegionalUnavailable).IsTrue();
+
+        Activity[] capturedActivities;
+        lock (activities)
+        {
+            capturedActivities = [.. activities];
+        }
+
+        await Assert.That(capturedActivities.SelectMany(activity => activity.Events)
+                .Count(activityEvent => string.Equals(activityEvent.Name, "terrascale.retry", StringComparison.Ordinal)))
+            .IsEqualTo(1);
     }
 
     [Test]

@@ -14,6 +14,12 @@ internal static class TerraScaleApiE2E
     private const string MissingBaseAddressConfigurationReason =
         "Set TERRASCALE_E2E_BASE_URL to run TerraScale SDK authentication-failure E2E tests.";
 
+    private const string MissingRegionalRoutingConfigurationReason =
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_API_KEY, TERRASCALE_E2E_PROJECT_ID, TERRASCALE_E2E_REPOSITORY, and TERRASCALE_E2E_ROUTING_REGION to run regional routing metadata E2E tests.";
+
+    private const string MissingRegionalFailureConfigurationReason =
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_API_KEY, TERRASCALE_E2E_PROJECT_ID, TERRASCALE_E2E_REPOSITORY, and TERRASCALE_E2E_UNAVAILABLE_REGION to run regional failure E2E tests.";
+
     private const string MissingBillingAccessLifecycleConfigurationReason =
         "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_BEARER_TOKEN, TERRASCALE_E2E_BILLING_ORGANIZATION_ID, TERRASCALE_E2E_BILLING_ACCESS_TEST_USER_ID, TERRASCALE_E2E_BILLING_FORBIDDEN_ORGANIZATION_ID, and TERRASCALE_E2E_ENABLE_BILLING_ACCESS_LIFECYCLE=true to run the isolated billing-access lifecycle E2E test.";
 
@@ -60,6 +66,14 @@ internal static class TerraScaleApiE2E
         !string.IsNullOrWhiteSpace(Repository);
 
     public static bool IsBaseAddressConfigured => BaseAddress is not null;
+
+    public static bool IsRegionalRoutingConfigured =>
+        IsConfigured &&
+        !string.IsNullOrWhiteSpace(RegionalRoutingRegion);
+
+    public static bool IsRegionalFailureConfigured =>
+        IsConfigured &&
+        !string.IsNullOrWhiteSpace(RegionalUnavailableRegion);
 
     public static bool IsBillingAccessLifecycleConfigured =>
         BaseAddress is not null &&
@@ -151,6 +165,10 @@ internal static class TerraScaleApiE2E
 
     public static string BaseAddressSkipReason => MissingBaseAddressConfigurationReason;
 
+    public static string RegionalRoutingSkipReason => MissingRegionalRoutingConfigurationReason;
+
+    public static string RegionalFailureSkipReason => MissingRegionalFailureConfigurationReason;
+
     public static string BillingAccessLifecycleSkipReason => MissingBillingAccessLifecycleConfigurationReason;
 
     public static string BillingCheckoutSkipReason => MissingBillingCheckoutConfigurationReason;
@@ -209,6 +227,10 @@ internal static class TerraScaleApiE2E
     public static string ProjectId => Required("TERRASCALE_E2E_PROJECT_ID");
 
     public static string Repository => Required("TERRASCALE_E2E_REPOSITORY");
+
+    public static string RegionalRoutingRegion => Required("TERRASCALE_E2E_ROUTING_REGION");
+
+    public static string RegionalUnavailableRegion => Required("TERRASCALE_E2E_UNAVAILABLE_REGION");
 
     public static string BillingOrganizationId => Required("TERRASCALE_E2E_BILLING_ORGANIZATION_ID");
 
@@ -349,6 +371,20 @@ internal sealed class RequiresTerraScaleBaseAddressAttribute()
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
         Task.FromResult(!TerraScaleApiE2E.IsBaseAddressConfigured);
+}
+
+internal sealed class RequiresTerraScaleRegionalRoutingAttribute()
+    : SkipAttribute(TerraScaleApiE2E.RegionalRoutingSkipReason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(!TerraScaleApiE2E.IsRegionalRoutingConfigured);
+}
+
+internal sealed class RequiresTerraScaleRegionalFailureAttribute()
+    : SkipAttribute(TerraScaleApiE2E.RegionalFailureSkipReason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(!TerraScaleApiE2E.IsRegionalFailureConfigured);
 }
 
 internal sealed class RequiresTerraScaleBillingAccessLifecycleAttribute()
