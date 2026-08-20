@@ -128,3 +128,17 @@ Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies in full:
   results, live evidence status, and known gaps. The reviewer/root validator
   must be able to confirm the public contract without secrets or access to
   unredacted tenant data.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in this repository's Forgejo project. Prefer the configured Forgejo MCP server and fall back to `fj`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The tracker uses the five default triage labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses the single-context domain-doc layout. See `docs/agents/domain.md`.
