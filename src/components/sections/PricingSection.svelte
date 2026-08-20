@@ -7,6 +7,8 @@
   import { dict } from '@/lib/i18n'
   import { registrationUrl } from '@/lib/site'
 
+  export let headingLevel: 1 | 2 = 2
+
   type Plan = {
     name: string
     icon: AppIconName
@@ -73,6 +75,7 @@
     <SectionHeader
       eyebrow={$dict.pricing.eyebrow}
       subtitle={$dict.pricing.subtitle}
+      {headingLevel}
     >
       <svelte:fragment slot="title">
         {$dict.pricing.titleLead}<br />

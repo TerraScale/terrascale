@@ -6,7 +6,7 @@
   import PricingCTA from '@/components/sections/PricingCTA.svelte'
 </script>
 
-<PricingSection />
+<PricingSection headingLevel={1} />
 <PricingFeatureTriad />
 <DetailedPricingTable />
 <PricingFAQ />

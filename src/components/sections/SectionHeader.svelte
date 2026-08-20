@@ -2,6 +2,9 @@
   export let eyebrow: string
   export let title = ''
   export let subtitle = ''
+  export let headingLevel: 1 | 2 = 2
+
+  $: headingTag = headingLevel === 1 ? 'h1' : 'h2'
 </script>
 
 <div class="section-header">
@@ -9,9 +12,9 @@
     <span class="section-header__eyebrow-dot" aria-hidden="true"></span>
     {eyebrow}
   </div>
-  <h2 class="section-header__title">
+  <svelte:element this={headingTag} class="section-header__title">
     <slot name="title">{title}</slot>
-  </h2>
+  </svelte:element>
   {#if subtitle}
     <p class="section-header__subtitle">{subtitle}</p>
   {/if}
