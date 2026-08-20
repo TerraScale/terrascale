@@ -79,7 +79,7 @@ public sealed class TerraScaleBillingClientTests
             BearerTokenProvider = static _ => ValueTask.FromResult("test-token")
         });
 
-        #pragma warning disable CS0618 // Compatibility members must be proven absent from the wire contract.
+#pragma warning disable CS0618 // Compatibility members must be proven absent from the wire contract.
         var checkoutRequest = new TerraScaleCreateCheckoutSessionRequest
         {
             PlanId = "plan-a",
@@ -89,7 +89,7 @@ public sealed class TerraScaleBillingClientTests
             CancelUrl = "https://app.example.test/checkout/cancel",
             CustomerEmail = "customer@example.test"
         };
-        #pragma warning restore CS0618
+#pragma warning restore CS0618
 
         var checkout = await client.Billing.CreateCheckoutSessionAsync(
             "organization-a",
