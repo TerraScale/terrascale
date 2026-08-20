@@ -20,6 +20,7 @@
     "world-map:sync": "node ./scripts/world-map-sync.mjs",
     "lint": "eslint .",
     "test:deploy": "node --test scripts/cloudflare-pages-deploy.test.mjs",
+    "test:redirect-contract": "node scripts/validate-redirect-contract.mjs",
     "preview": "vite preview",
     "test": "npm run test:deploy",
     "test:e2e": "playwright test"

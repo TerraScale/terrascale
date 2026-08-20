@@ -84,6 +84,7 @@ export const en = {
           terms: 'Terms',
           privacy: 'Privacy',
           acceptableUse: 'Acceptable Use',
+          dataProcessingTerms: 'Data Processing Terms',
           support: 'Support',
         },
       },
@@ -166,6 +167,7 @@ export const en = {
     ctaSecondary: 'Talk to Sales',
     perksAria: 'Plan details',
     perks: ['Non-expiring Developer plan', 'Monthly paid plans', 'No paid overages'],
+    policyLead: 'Review before payment verification:',
   },
 
   pricing: {

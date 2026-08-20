@@ -84,6 +84,22 @@ test('pricing matches the Public Alpha plan catalog', async ({ page }) => {
   await expect(page.getByText(/does not offer paid overages|without paid overages/i)).toBeVisible()
   await expect(page.getByText(/non-expiring/i).first()).toBeVisible()
   await expect(page.getByText(/30-day trial/i).first()).toBeVisible()
+
+  const enterprise = cards.filter({ hasText: 'Enterprise' })
+  await expect(enterprise.getByText(/unavailable during Public Alpha/i)).toBeVisible()
+  await expect(enterprise.getByText(/contact for future access/i)).toBeVisible()
+})
+
+test('pricing keeps every plan state usable on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/pricing')
+
+  const cards = page.locator('.pricing-card')
+  await expect(cards).toHaveCount(4)
+  await expect(cards.nth(0).locator('a')).toHaveAttribute('href', `${registrationUrl}?plan=developer`)
+  await expect(cards.nth(1).locator('a')).toHaveAttribute('href', `${registrationUrl}?plan=starter`)
+  await expect(cards.nth(2).locator('a')).toHaveAttribute('href', `${registrationUrl}?plan=pro`)
+  await expect(cards.nth(3).locator('a')).toHaveAttribute('href', '/contact')
 })
 
 test('Public Alpha claims and customer links stay within the launch contract', async ({ page }) => {
@@ -116,5 +132,13 @@ test('Public Alpha claims and customer links stay within the launch contract', a
 
   for (const href of expectedLinks) {
     await expect(page.locator(`a[href="${href}"]:visible`).first()).toBeVisible()
+  }
+
+  for (const href of [
+    'https://docs.terrascale.tech/en/legal/terms/',
+    'https://docs.terrascale.tech/en/legal/privacy/',
+    'https://docs.terrascale.tech/en/legal/acceptable-use/',
+  ]) {
+    await expect(page.locator(`nav[aria-label="Registration policies"] a[href="${href}"]`)).toBeVisible()
   }
 })
