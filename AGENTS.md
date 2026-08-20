@@ -141,3 +141,17 @@ Normal CI must not receive `CLOUDFLARE_API_TOKEN` or any Pages Write credential.
 - Never place secrets or credentials in source, documentation, generated output, or staging. Redact them from tests, validation output, and handoff reports.
 - Stage named owned files only. Before pushing, fetch `origin` and stop if `develop` moved.
 - Before handoff, report final `git status --short`, the owned diff, the final fetch result, files, checks, and commit.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in this repository's Forgejo project. Prefer the configured Forgejo MCP server and fall back to `fj`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The tracker uses the five default triage labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses the single-context domain-doc layout. See `docs/agents/domain.md`.
