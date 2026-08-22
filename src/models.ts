@@ -374,7 +374,7 @@ export type OrganizationMember = {
 
 export type CreateOrganizationRequest = {
   readonly name: string;
-  readonly billingAccountId?: string;
+  readonly plan: OnboardingPlan;
 };
 
 export type UpdateOrganizationRequest = {
@@ -436,13 +436,18 @@ export type CreateProjectRequest = {
 };
 
 export type OnboardingStep =
-  | "account-information"
-  | "payment-method"
-  | "payment-validation"
-  | "mfa"
+  | "user"
   | "organization"
+  | "billing"
   | "project"
+  | "invitation"
   | "complete";
+
+export type OnboardingJourneyType = "developer" | "paid" | "invitation";
+
+export type OnboardingPlan = "developer" | "starter" | "pro";
+
+export type OnboardingRetryState = "none" | "pending" | "retryable" | "unavailable" | "expired";
 
 export type OnboardingMfaDecision = "pending" | "configured" | "later";
 
@@ -457,6 +462,8 @@ export type OnboardingStatus =
   | "in-progress"
   | "awaiting-validation"
   | "blocked"
+  | "unavailable"
+  | "expired"
   | "ready-for-project"
   | "completed";
 
@@ -470,6 +477,14 @@ export type OnboardingState = {
   readonly email: string;
   readonly displayName: string;
   readonly phoneNumber: string;
+  readonly journeyType: OnboardingJourneyType;
+  readonly selectedPlan: OnboardingPlan;
+  readonly locale: string;
+  readonly invitationId?: Ulid | null;
+  readonly invitationOrganizationId?: OrganizationId | null;
+  readonly invitationProjectId?: ProjectId | null;
+  readonly invitationAccepted: boolean;
+  readonly retryState: OnboardingRetryState;
   readonly accountInformationCompleted: boolean;
   readonly paymentMethodRegistered: boolean;
   readonly paymentMethodValidated: boolean;
@@ -516,6 +531,7 @@ export type UpdateOnboardingMfaRequest = {
 
 export type CreateOnboardingOrganizationRequest = {
   readonly name: string;
+  readonly plan: OnboardingPlan;
 };
 
 export type CreateOnboardingProjectRequest = {

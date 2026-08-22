@@ -256,7 +256,10 @@ const captureOperations: readonly CaptureOperation[] = [
   {
     client: "onboarding",
     operation: "createOrganization",
-    invoke: (client) => client.onboarding.createOrganization({ name: "Analytical Engines" }),
+    invoke: (client) => client.onboarding.createOrganization({
+      name: "Analytical Engines",
+      plan: "developer",
+    }),
   },
   {
     client: "onboarding",
@@ -615,7 +618,10 @@ const captureOperations: readonly CaptureOperation[] = [
   {
     client: "organizations",
     operation: "create",
-    invoke: (client) => client.organizations.create({ name: "Analytical Engines" }),
+    invoke: (client) => client.organizations.create({
+      name: "Analytical Engines",
+      plan: "developer",
+    }),
   },
   {
     client: "organizations",
