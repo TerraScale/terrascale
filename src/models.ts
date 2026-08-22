@@ -355,12 +355,20 @@ export type Organization = {
   readonly createdByUserId?: UserId | null;
   readonly billingAccountId: string;
   readonly status: OrganizationStatus;
+  readonly activePlan: OnboardingPlan;
+  readonly pendingPlan?: OnboardingPlan | null;
+  readonly billingActivityAt?: Timestamp | null;
+  readonly billingWarningSentAt?: Timestamp | null;
   readonly deletionRequestedAt?: Timestamp | null;
   readonly deletionRequestedByUserId?: UserId | null;
   readonly createdAt: Timestamp;
 };
 
-export type OrganizationStatus = "Active" | "DeletionPending";
+export type OrganizationStatus =
+  | "Active"
+  | "BillingPending"
+  | "BillingCleanupClaimed"
+  | "DeletionPending";
 
 export type OrganizationMemberRole = "Member" | "OrganizationOwner";
 
@@ -562,6 +570,7 @@ export type DeletedProject = {
 export type Invitation = {
   readonly invitationId: InvitationId;
   readonly organizationId: OrganizationId;
+  readonly projectId?: ProjectId | null;
   readonly email: string;
   readonly role: "Member";
   readonly status: InvitationStatus;
@@ -580,6 +589,7 @@ export type InvitationStatus = "Accepted" | "Canceled" | "Declined" | "Expired" 
 
 export type CreateInvitationRequest = {
   readonly email: string;
+  readonly projectId: ProjectId;
   readonly responseUrlTemplate: string;
 };
 

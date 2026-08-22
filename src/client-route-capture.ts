@@ -726,6 +726,7 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.organizations.createInvitation(sampleIds.organizationId, {
         email: "grace@example.test",
+        projectId: sampleIds.projectId,
         responseUrlTemplate:
           "https://app.example.test/invitations/{invitationId}?organizationId={organizationId}",
       }),

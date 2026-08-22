@@ -297,6 +297,7 @@ describe("TerraScaleClient route contracts", () => {
 
     await client.organizations.createInvitation(organizationId, {
       email: "grace@example.test",
+      projectId,
       responseUrlTemplate,
     });
 
