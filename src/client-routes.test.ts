@@ -308,6 +308,7 @@ describe("TerraScaleClient route contracts", () => {
     );
     assert.deepEqual(requests[0]?.body, {
       email: "grace@example.test",
+      projectId,
       responseUrlTemplate,
     });
   });

@@ -382,7 +382,7 @@ export type OrganizationMember = {
 
 export type CreateOrganizationRequest = {
   readonly name: string;
-  readonly plan: OnboardingPlan;
+  readonly plan?: OnboardingPlan;
 };
 
 export type UpdateOrganizationRequest = {
@@ -444,6 +444,10 @@ export type CreateProjectRequest = {
 };
 
 export type OnboardingStep =
+  | "account-information"
+  | "payment-method"
+  | "payment-validation"
+  | "mfa"
   | "user"
   | "organization"
   | "billing"
@@ -589,7 +593,7 @@ export type InvitationStatus = "Accepted" | "Canceled" | "Declined" | "Expired" 
 
 export type CreateInvitationRequest = {
   readonly email: string;
-  readonly projectId: ProjectId;
+  readonly projectId?: ProjectId;
   readonly responseUrlTemplate: string;
 };
 
