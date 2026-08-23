@@ -28,6 +28,34 @@ that any TerraBaseV2 behavior exists.
 
 The six fragments contain 258 rows. No row was dropped or merged.
 
+## Correction pass after independent review
+
+The independent contract review returned NO-GO `A-REV-CONTRACT-001` because
+the first integration had pathless query and replication scopes, stale V1
+paths/symbols, and a secret scanner that assumed a `tests/` directory existed.
+This branch is the bounded correction assignment
+`A-INT-CONTRACT-FIX-001`; it does not mark W2 verified.
+
+The correction adds an explicit, reproducible citation to all 258 scopes. The
+audit resolves 251 citations against the exact V1 checkout and treats seven
+rows (PB-5042 through PB-5048) as charter-backed V2 additions with an explicit
+`No claim that V1` non-claim. Citation syntax is:
+
+```text
+[v1:src/path/file.cs::Symbol]
+[v1:test/path/file.cs::TestName]
+[charter:specs/2026-08-23-terrabase-v2-goal.md::Section heading]
+```
+
+The validator checks path containment, file existence, symbol presence, test
+glob unambiguity, and the pinned V1 commit. The corrected representative rows
+are PB-1014, PB-1031, PB-1032, PB-2003, PB-3007, PB-3015, PB-3020, PB-3040,
+PB-3045, PB-6000, and PB-6034. The pathless ranges PB-4000 through PB-4062
+and PB-5000 through PB-5048 now have source anchors; PB-5042 through PB-5048
+remain charter non-claims rather than V1 parity claims. The citations are
+evidence anchors only; they do not imply that V2 behavior has been built or
+qualified.
+
 ## Canonical ranges and classification counts
 
 IDs are assigned by domain and source-array order. The ranges are stable and
@@ -139,16 +167,31 @@ The following commands ran in this worktree:
 - Parity check: `uv run --no-project --python 3.14.7 python3
   scripts/validate_parity.py --check`, passed with 258 rows.
 - Determinism: two inventory hashes matched at
-  `fe0fd9929f3b126db8fb97ba95155aa2a6684af9d1aab6fd64d01aec351c45b7`.
+  `91cae0275d847bc7270b2c6a59aea54ebbc01bde3e1c2a4211f0dacbd3c0163f`.
 - Tooling tests: `uv run --no-project --python 3.14.7 python3
   scripts/test_parity_tooling.py`, 9 tests passed.
+- Citation black-box tests: `uv run --no-project --python 3.14.7 python3
+  scripts/test_v1_citations.py`, 4 tests passed.
+- Citation audit: `uv run --no-project --python 3.14.7 python3
+  scripts/validate_v1_citations.py --v1-root
+  "$TERRASCALE_WORKSPACE_ROOT/TerraBase" --workspace-root
+  "$TERRASCALE_WORKSPACE_ROOT"`, passed with 258 rows (251 V1-backed, 7
+  charter-backed). `TERRASCALE_WORKSPACE_ROOT` names the local workspace root
+  and is intentionally not recorded here.
+- Secret-scan black-box tests: `uv run --no-project --python 3.14.7 python3
+  scripts/test_secret_scan.py`, 4 tests passed. `./scripts/check_secrets.sh`
+  passed and honestly reported that this repository has no `tests/` root; the
+  scanner now accepts `--root`, scans only existing declared roots, and
+  distinguishes no-match, match, and scanner-error exit codes.
 - Direct Draft 2020-12 validation through the optional `jsonschema` package:
   unrun because the package is unavailable.
-- Full repository check: `./scripts/check.sh`, failed at the first command
-  because the pinned Rust toolchain is unavailable in this environment
-  (`cargo: command not found`). Rust checks remain unrun.
+- Full repository check: `./scripts/check.sh`, passed. Rust format, check,
+  release tests, clippy, documentation, parity, citation, secret, and license
+  checks passed. The optional `cargo-deny` advisory check was unavailable and
+  recorded as unrun.
 - No push, merge, issue, pull request, sibling-repository edit, or database
   implementation was performed.
 
-The next gate is independent contract review, followed by the W3 behavior
-builders. This record does not mark W2 as independently verified.
+The next gate is independent correction re-review of `A-INT-CONTRACT-FIX-001`,
+followed by the W3 behavior builders if that gate passes. This record does not
+mark W2 as independently verified.

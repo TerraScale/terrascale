@@ -11,6 +11,8 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo doc --workspace --no-deps --locked
 python3 scripts/validate_parity.py --check
 python3 scripts/test_parity_tooling.py
+python3 scripts/test_v1_citations.py
+python3 scripts/test_secret_scan.py
 python3 scripts/check_license.py
 ./scripts/check_secrets.sh
 

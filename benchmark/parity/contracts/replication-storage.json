@@ -10,7 +10,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 asynchronous internal, external, pull, and family replication behavior and compatibility obligations"
+        "scope": "V1 asynchronous internal, external, pull, and family replication behavior and compatibility obligations [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -33,7 +33,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 durable storage environment, journals, transactions, backup, restart, corruption handling, and recovery obligations"
+        "scope": "V1 durable storage environment, journals, transactions, backup, restart, corruption handling, and recovery obligations [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
       "public_contract": {
@@ -55,7 +55,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 storage environment open, configure, restart, stop, dispose, and persistent-path behavior"
+        "scope": "V1 storage environment open, configure, restart, stop, dispose, and persistent-path behavior [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
       "public_contract": {
@@ -76,7 +76,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 file headers, root metadata, journal metadata, backup pointers, magic markers, page size, and format version"
+        "scope": "V1 file headers, root metadata, journal metadata, backup pointers, magic markers, page size, and format version [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
       "public_contract": {
@@ -97,7 +97,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 write-ahead journal ordering, commit markers, flush-to-data-file, sync state, and uncommitted visibility"
+        "scope": "V1 write-ahead journal ordering, commit markers, flush-to-data-file, sync state, and uncommitted visibility [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
       "public_contract": {
@@ -118,7 +118,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 low-level transactions, MVCC snapshots, reader and writer concurrency, persistence modes, and lock behavior"
+        "scope": "V1 low-level transactions, MVCC snapshots, reader and writer concurrency, persistence modes, and lock behavior [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
       "public_contract": {
@@ -139,7 +139,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 B-trees, compact trees, fixed-size trees, tables, raw data, pages, allocation, iteration, and compression"
+        "scope": "V1 B-trees, compact trees, fixed-size trees, tables, raw data, pages, allocation, iteration, and compression [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
       "public_contract": {
@@ -160,7 +160,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 scratch buffer files, page ownership, active-byte accounting, and forced flush behavior"
+        "scope": "V1 scratch buffer files, page ownership, active-byte accounting, and forced flush behavior [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
       "public_contract": {
@@ -181,7 +181,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 storage compaction, journal handling, table preservation, progress reporting, and backup interaction"
+        "scope": "V1 storage compaction, journal handling, table preservation, progress reporting, and backup interaction [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
       "public_contract": {
@@ -202,7 +202,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 startup journal replay, restart persistence, committed and uncommitted transaction recovery, and logical data recovery"
+        "scope": "V1 startup journal replay, restart persistence, committed and uncommitted transaction recovery, and logical data recovery [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
       "public_contract": {
@@ -224,7 +224,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 journal corruption, partial recovery, missing journals, unrecoverable errors, quota exhaustion, and recovery limits"
+        "scope": "V1 journal corruption, partial recovery, missing journals, unrecoverable errors, quota exhaustion, and recovery limits [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
       "public_contract": {
@@ -246,7 +246,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 encrypted pager and temporary-stream behavior, encrypted journal recovery, and encrypted backup restore"
+        "scope": "V1 encrypted pager and temporary-stream behavior, encrypted journal recovery, and encrypted backup restore [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
       "public_contract": {
@@ -268,7 +268,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 Voron and database schema upgrade steps, version checks, and upgrade recovery behavior"
+        "scope": "V1 Voron and database schema upgrade steps, version checks, and upgrade recovery behavior [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
       "public_contract": {
@@ -289,7 +289,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 full backup, snapshot, archive contents, compression, flush ordering, restore, and post-restore visibility"
+        "scope": "V1 full backup, snapshot, archive contents, compression, flush ordering, restore, and post-restore visibility [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -311,7 +311,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 incremental journal backup cursor, archive ordering, restart behavior, missing archive detection, and restore chain"
+        "scope": "V1 incremental journal backup cursor, archive ordering, restart behavior, missing archive detection, and restore chain [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -333,7 +333,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 recovery-point archive selection, checksum and length validation, path binding, ordering, staging, and restore rejection"
+        "scope": "V1 recovery-point archive selection, checksum and length validation, path binding, ordering, staging, and restore rejection [v1:src/TerraBase.Voron/StorageEnvironment.cs::StorageEnvironment]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -355,7 +355,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 Rachis consensus log append, quorum commit, state-machine apply, and cluster transaction wait behavior"
+        "scope": "V1 Rachis consensus log append, quorum commit, state-machine apply, and cluster transaction wait behavior [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "consensus/membership"},
       "public_contract": {
@@ -376,7 +376,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 Rachis leader election, terms, votes, state transitions, step-down, and single-member startup"
+        "scope": "V1 Rachis leader election, terms, votes, state transitions, step-down, and single-member startup [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "consensus/membership"},
       "public_contract": {
@@ -397,7 +397,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 Rachis append repair, divergent-log rollback, late-member snapshot installation, and snapshot reader behavior"
+        "scope": "V1 Rachis append repair, divergent-log rollback, late-member snapshot installation, and snapshot reader behavior [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "consensus/membership"},
       "public_contract": {
@@ -418,7 +418,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 cluster membership roles, topology changes, node add/remove, promotable and rehabilitating states, and topology concurrency"
+        "scope": "V1 cluster membership roles, topology changes, node add/remove, promotable and rehabilitating states, and topology concurrency [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "consensus/membership"},
       "public_contract": {
@@ -439,7 +439,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 leader loss, member loss, network disconnection, failover, re-election, and survivor state behavior"
+        "scope": "V1 leader loss, member loss, network disconnection, failover, re-election, and survivor state behavior [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "consensus/membership"},
       "public_contract": {
@@ -461,7 +461,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 change-vector parsing, comparison, ordering, replication identity, conditional mutations, and progress cursors"
+        "scope": "V1 change-vector parsing, comparison, ordering, replication identity, conditional mutations, and progress cursors [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -482,7 +482,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 document conflicts, conflict visibility, automatic and scripted resolution, tombstone winners, and revision preservation"
+        "scope": "V1 document conflicts, conflict visibility, automatic and scripted resolution, tombstone winners, and revision preservation [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -504,7 +504,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 document, attachment, revision, counter, and time-series tombstone creation, replication, retention, and cleanup"
+        "scope": "V1 document, attachment, revision, counter, and time-series tombstone creation, replication, retention, and cleanup [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -526,7 +526,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 replication progress, reconnect queues, catch-up batches, change-vector waits, and convergence observations"
+        "scope": "V1 replication progress, reconnect queues, catch-up batches, change-vector waits, and convergence observations [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -548,7 +548,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 external replication configuration, delayed links, destination failure, reconnection, forwarding, and progress statistics"
+        "scope": "V1 external replication configuration, delayed links, destination failure, reconnection, forwarding, and progress statistics [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -570,7 +570,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 local save acknowledgement, WaitForReplicationAfterSaveChanges, WaitForReplicas, Majority, timeout, and replica visibility"
+        "scope": "V1 local save acknowledgement, WaitForReplicationAfterSaveChanges, WaitForReplicas, Majority, timeout, and replica visibility [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -592,7 +592,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 pull replication hub and sink roles, bidirectional modes, access registration, authentication, idle state, and deletion policy"
+        "scope": "V1 pull replication hub and sink roles, bidirectional modes, access registration, authentication, idle state, and deletion policy [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -614,7 +614,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 attachment replication items, metadata, streams, tombstones, failover, and conflict resolution"
+        "scope": "V1 attachment replication items, metadata, streams, tombstones, failover, and conflict resolution [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -635,7 +635,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 counter and time-series replication items, ordering, conflict behavior, tombstones, and backup interaction"
+        "scope": "V1 counter and time-series replication items, ordering, conflict behavior, tombstones, and backup interaction [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -656,7 +656,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 revision replication, revision tombstones, conflict resolution, rejoin, and retention behavior"
+        "scope": "V1 revision replication, revision tombstones, conflict resolution, rejoin, and retention behavior [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -678,7 +678,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 node-local change-vector progress checks, malformed and future vector errors, conditional mutation races, restart, failover, and compaction"
+        "scope": "V1 node-local change-vector progress checks, malformed and future vector errors, conditional mutation races, restart, failover, and compaction [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -700,7 +700,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 content-safe replication health, heartbeat, pending-count, convergence, conflict-history, and observation limitations"
+        "scope": "V1 content-safe replication health, heartbeat, pending-count, convergence, conflict-history, and observation limitations [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -722,7 +722,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 replication handler restart, destination reconnection, late member snapshot catch-up, and local progress after leader loss"
+        "scope": "V1 replication handler restart, destination reconnection, late member snapshot catch-up, and local progress after leader loss [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -744,7 +744,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 process-local asynchronous active-active observations, disconnected writers, deterministic conflict outcome, and stated qualification limits"
+        "scope": "V1 process-local asynchronous active-active observations, disconnected writers, deterministic conflict outcome, and stated qualification limits [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -766,7 +766,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 typed replication progress, conflict, tombstone, connection, failure, and Rachis snapshot command observations"
+        "scope": "V1 typed replication progress, conflict, tombstone, connection, failure, and Rachis snapshot command observations [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -787,7 +787,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 sharded database topology, shard member lists, replication factors, request executor topology, and client routing"
+        "scope": "V1 sharded database topology, shard member lists, replication factors, request executor topology, and client routing [v1:src/TerraBase.Server/Documents/Sharding/ShardedDatabaseContext.cs::ShardedDatabaseContext]"
       },
       "v2": {"owner": "engine/sharding", "public_seam": "sharding"},
       "public_contract": {
@@ -808,7 +808,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 bucket identity, bucket-to-shard mapping, bucket statistics, and bucket-scoped storage accounting"
+        "scope": "V1 bucket identity, bucket-to-shard mapping, bucket statistics, and bucket-scoped storage accounting [v1:src/TerraBase.Server/Documents/Sharding/ShardedDatabaseContext.cs::ShardedDatabaseContext]"
       },
       "v2": {"owner": "engine/sharding", "public_seam": "sharding"},
       "public_contract": {
@@ -829,7 +829,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 bucket migration, resharding orchestration, source and destination completion, idempotence, and optimistic concurrency after movement"
+        "scope": "V1 bucket migration, resharding orchestration, source and destination completion, idempotence, and optimistic concurrency after movement [v1:src/TerraBase.Server/Documents/Sharding/ShardedDatabaseContext.cs::ShardedDatabaseContext]"
       },
       "v2": {"owner": "engine/sharding", "public_seam": "sharding"},
       "public_contract": {
@@ -851,7 +851,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 sharded orchestrator topology, dynamic distribution, observer decisions, shard lifecycle, and topology concurrency"
+        "scope": "V1 sharded orchestrator topology, dynamic distribution, observer decisions, shard lifecycle, and topology concurrency [v1:src/TerraBase.Server/Documents/Sharding/ShardedDatabaseContext.cs::ShardedDatabaseContext]"
       },
       "v2": {"owner": "engine/sharding", "public_seam": "sharding"},
       "public_contract": {
@@ -872,7 +872,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 sharded external replication, per-shard backup and restore, shard member rejoin, and tombstone or backup progress coordination"
+        "scope": "V1 sharded external replication, per-shard backup and restore, shard member rejoin, and tombstone or backup progress coordination [v1:src/TerraBase.Server/Documents/Sharding/ShardedDatabaseContext.cs::ShardedDatabaseContext]"
       },
       "v2": {"owner": "engine/sharding", "public_seam": "sharding"},
       "public_contract": {
@@ -894,7 +894,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 sharded cluster transaction routing, shard member failover, subscriptions during resharding, and cross-shard state visibility"
+        "scope": "V1 sharded cluster transaction routing, shard member failover, subscriptions during resharding, and cross-shard state visibility [v1:src/TerraBase.Server/Documents/Sharding/ShardedDatabaseContext.cs::ShardedDatabaseContext]"
       },
       "v2": {"owner": "engine/sharding", "public_seam": "sharding"},
       "public_contract": {
@@ -915,7 +915,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. No claim that V1 defined Region-level acknowledgement levels; V1 local and replica wait observations are input only."
+        "scope": "V2 charter addition. No claim that V1 defined Region-level acknowledgement levels; V1 local and replica wait observations are input only. [charter:specs/2026-08-23-terrabase-v2-goal.md::Multi-region qualification contract]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -937,7 +937,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. No claim that V1's process-local health or convergence observations were a multi-Region contract."
+        "scope": "V2 charter addition. No claim that V1's process-local health or convergence observations were a multi-Region contract. [charter:specs/2026-08-23-terrabase-v2-goal.md::Multi-region qualification contract]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -959,7 +959,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. No claim that V1's cluster member loss was equivalent to Region or failure-domain loss."
+        "scope": "V2 charter addition. No claim that V1's cluster member loss was equivalent to Region or failure-domain loss. [charter:specs/2026-08-23-terrabase-v2-goal.md::Multi-region qualification contract]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -981,7 +981,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. V1 disconnected-writer conflict tests are process-local evidence and do not define the V2 partition policy."
+        "scope": "V2 charter addition. V1 disconnected-writer conflict tests are process-local evidence and do not define the V2 partition policy. No claim that V1 defines the V2 partition policy. [charter:specs/2026-08-23-terrabase-v2-goal.md::Claim discipline]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -1003,7 +1003,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. V1 replication retry and reconnect behavior does not prove exactly-once customer or metering effects."
+        "scope": "V2 charter addition. V1 replication retry and reconnect behavior does not prove exactly-once customer or metering effects. No claim that V1 proves exactly-once customer or metering effects. [charter:specs/2026-08-23-terrabase-v2-goal.md::Recovery and durability contract]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -1025,7 +1025,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. V1 late-member snapshots, local progress, and restart tests are inputs but not a complete multi-Region rejoin contract."
+        "scope": "V2 charter addition. V1 late-member snapshots, local progress, and restart tests are inputs but not a complete multi-Region rejoin contract. No claim that V1 defines a complete multi-Region rejoin contract. [charter:specs/2026-08-23-terrabase-v2-goal.md::Recovery and durability contract]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -1047,7 +1047,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. V1 sharding and orchestrator tests do not define a multi-Region placement, failover, or resharding policy."
+        "scope": "V2 charter addition. V1 sharding and orchestrator tests do not define a multi-Region placement, failover, or resharding policy. No claim that V1 defines a multi-Region placement, failover, or resharding policy. [charter:specs/2026-08-23-terrabase-v2-goal.md::Multi-region qualification contract]"
       },
       "v2": {"owner": "engine/sharding", "public_seam": "sharding"},
       "public_contract": {
