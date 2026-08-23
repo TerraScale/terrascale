@@ -166,6 +166,23 @@ The public client follows the backed `TerraScale.Platform` REST surface:
   `client.savedQueries.v3.list` under `/api/v3/projects/{projectId}/saved-queries`.
   V2 revisions and v3 cursors are opaque; reload a v3 collection after a cursor conflict.
 
+### Onboarding target contract
+
+The onboarding entry above describes the currently released typed surface. The
+target self-registration contract will begin with identity and email verification
+already counted as one completed step, then cover the first Organization, Project,
+and logical Database plus card verification for signup abuse control. It will let
+the User explicitly continue with no paid plan and no automatic renewal, retaining
+the Developer allowance, or select Starter or Pro with monthly automatic renewal
+and an eligible first 30 days at no charge. Invited-user onboarding remains
+separate and requires neither signup card verification nor a plan choice. The
+missing typed operations are tracked in
+[issue 6](https://git.terrascale.tech/TerraScale/TerraScale.TypeScript/issues/6),
+with the product implementation tracked in
+[TerraScale.Internals issue 30](https://git.terrascale.tech/TerraScale/TerraScale.Internals/issues/30).
+Do not invent routes or present this target flow as released until both contracts
+ship.
+
 Unbacked public SDK methods are intentionally omitted until matching versioned
 OpenAPI request and response schemas are published. This currently excludes account-security
 extensions, repository update, database
