@@ -8,8 +8,11 @@ production release.
 
 The workspace goal and acceptance criteria live at
 `../specs/2026-08-23-terrabase-v2-goal.md`. The glossary is in `CONTEXT.md`.
-The parity inventory is `parity/inventory.json`, validated against
-`parity/parity.schema.json`.
+Contract facts live in the domain-owned fragments under `parity/contracts/`.
+Mutable V2 status and Proof IDs live in the disjoint state overlays under
+`parity/overlays/`. The canonical `parity/inventory.json` is generated output.
+Workers update fragments or overlays, then the generator owns the inventory
+write.
 
 ## Local checks
 
@@ -28,7 +31,8 @@ cargo check --workspace --locked
 cargo test --workspace --locked --release
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo doc --workspace --no-deps --locked
-python3 scripts/validate_parity.py
+python3 scripts/validate_parity.py --check
+python3 scripts/test_parity_tooling.py
 python3 scripts/check_license.py
 ./scripts/check_secrets.sh
 ```
@@ -36,6 +40,17 @@ python3 scripts/check_license.py
 Optional dependency and vulnerability checks use `cargo-deny` when it is
 installed. The CI workflow records the check as unavailable when it is not.
 No global tools or credentials are required for the foundation checks.
+
+The parity command applies the repository's supported Draft 2020-12 schema
+rules, checks pinned V1 source identity, duplicate IDs, overlay references and
+status transitions, and compares generated output byte-for-byte. If the
+optional Python `jsonschema` package is unavailable, direct Draft 2020-12
+validation is reported as unrun; the local checks still require the supported
+rules. Regenerate the canonical file only with:
+
+```bash
+python3 scripts/validate_parity.py --generate
+```
 
 ## Development status
 

@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "domain": "replication-storage",
+  "items": [
+    {
+      "id": "PB-0010",
+      "name": "replication",
+      "classification": "core",
+      "v1_evidence": {"evidence_ids": ["E-011", "E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 replication-visible behavior and compatibility obligations"},
+      "v2": {"owner": "engine/replication", "public_seam": "replication"},
+      "public_contract": {"parity_required": true, "semantics": ["Multi-region acknowledgement and convergence must be scenario-qualified"], "compatibility": "algorithm and consistency defaults remain unresolved"},
+      "downstream_impact": ["regions and members", "transactions", "recovery", "Platform Adapter"],
+      "risk": {"level": "critical", "description": "Replication claims need failure-domain evidence and a resolved consistency contract."}
+    },
+    {
+      "id": "PB-0011",
+      "name": "storage-wal-and-recovery",
+      "classification": "core",
+      "v1_evidence": {"evidence_ids": ["E-006", "E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 durability, storage, and recovery obligations"},
+      "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery"},
+      "public_contract": {"parity_required": true, "semantics": ["Durability and recovery limits must be reported by Recovery Receipt"], "compatibility": "new V2 format; no direct V1 file compatibility"},
+      "downstream_impact": ["transactions", "backup/import", "replication", "benchmarks"],
+      "risk": {"level": "critical", "description": "A storage bug can invalidate every higher-level proof."}
+    }
+  ]
+}

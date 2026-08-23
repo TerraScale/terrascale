@@ -26,7 +26,9 @@ jobs:
       - name: Documentation
         run: cargo doc --workspace --no-deps --locked
       - name: Parity schema
-        run: python3 scripts/validate_parity.py
+        run: python3 scripts/validate_parity.py --check
+      - name: Parity tooling tests
+        run: python3 scripts/test_parity_tooling.py
       - name: License metadata
         run: python3 scripts/check_license.py
       - name: Secret scan

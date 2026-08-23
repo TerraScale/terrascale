@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "domain": "families",
+  "items": [
+    {
+      "id": "PB-0005",
+      "name": "attachments",
+      "classification": "optional",
+      "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 binary or attachment data family"},
+      "v2": {"owner": "engine/data-families", "public_seam": "data families"},
+      "public_contract": {"parity_required": true, "semantics": ["Optional V1 capability remains an obligation until disposition is evidenced"], "compatibility": "contract and logical migration rules to be defined"},
+      "downstream_impact": ["documents", "backup/import", "Platform Adapter"],
+      "risk": {"level": "high", "description": "Large values stress storage, streaming, and recovery paths."}
+    },
+    {
+      "id": "PB-0006",
+      "name": "counters-and-time-series",
+      "classification": "optional",
+      "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 auxiliary data families"},
+      "v2": {"owner": "engine/data-families", "public_seam": "data families"},
+      "public_contract": {"parity_required": true, "semantics": ["Each V1 auxiliary family needs independent contract and proof"], "compatibility": "contract and logical migration rules to be defined"},
+      "downstream_impact": ["queries", "streaming", "replication"],
+      "risk": {"level": "high", "description": "Family-specific ordering and retention rules are not yet captured."}
+    }
+  ]
+}

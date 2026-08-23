@@ -6,9 +6,23 @@ acceptance criteria. Keep this repository's documents short enough to use:
 - `CONTEXT.md` defines project language and avoided synonyms.
 - `docs/adr/` records accepted decisions that are hard to reverse.
 - `parity/parity.schema.json` defines the machine-readable inventory shape.
-- `parity/inventory.json` records V1 obligations. Empty `proof_ids` and
-  `unresolved` status are honest foundation state.
+- `parity/contracts/*.json` contains one domain-owned fragment of V1 contract
+  facts. `parity/contracts/manifest.json` pins the V1 source identity.
+- `parity/overlays/PB-NNNN.json` contains the disjoint mutable status,
+  disposition, and Proof IDs for one item. WS-CONTRACT owns fragments;
+  WS-PARITY owns overlays and later receipts.
+- `parity/inventory.json` is generated output. Workers do not edit it. Empty
+  `proof_ids` and `unresolved` status are honest foundation state.
 - `README.md` and `.forgejo/workflows/ci.yml` define the repeatable checks.
+
+Run `python3 scripts/validate_parity.py --check` to validate every fragment,
+overlay, source pin, status transition, and generated-output byte. Use
+`--generate` only when intentionally regenerating `parity/inventory.json`.
+`python3 scripts/test_parity_tooling.py` exercises the same public CLI for
+duplicate IDs, malformed fragments, drift, unknown overlays, and invalid
+state transitions. Draft 2020-12 direct validation is optional. The command
+reports it as unrun when `jsonschema` is unavailable and never requires a
+global install.
 
 Feature work starts with an inventory row and a public seam. A test must cross
 the same seam that a caller uses. A row changes status only when the required

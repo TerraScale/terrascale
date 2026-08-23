@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "domain": "query",
+  "items": [
+    {
+      "id": "PB-0003",
+      "name": "queries",
+      "classification": "core",
+      "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "query language, result shape, ordering, and error behavior"},
+      "v2": {"owner": "engine/query", "public_seam": "query and index"},
+      "public_contract": {"parity_required": true, "semantics": ["V1 query results and errors require executable parity cases"], "compatibility": "typed query contract to be defined"},
+      "downstream_impact": ["official .NET SDK", "official TypeScript SDK", "benchmark adapter"],
+      "risk": {"level": "high", "description": "Query differences may pass basic tests while changing application results."}
+    },
+    {
+      "id": "PB-0004",
+      "name": "indexes",
+      "classification": "core",
+      "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "index definitions, maintenance, and query planning behavior"},
+      "v2": {"owner": "engine/index", "public_seam": "query and index"},
+      "public_contract": {"parity_required": true, "semantics": ["V1 index-visible behavior requires evidence"], "compatibility": "typed index contract to be defined"},
+      "downstream_impact": ["queries", "recovery", "benchmarks"],
+      "risk": {"level": "high", "description": "Index state and query planning affect both correctness and measured throughput."}
+    }
+  ]
+}

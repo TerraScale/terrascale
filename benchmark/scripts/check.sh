@@ -9,7 +9,8 @@ cargo check --workspace --locked
 cargo test --workspace --locked --release
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo doc --workspace --no-deps --locked
-python3 scripts/validate_parity.py
+python3 scripts/validate_parity.py --check
+python3 scripts/test_parity_tooling.py
 python3 scripts/check_license.py
 ./scripts/check_secrets.sh
 

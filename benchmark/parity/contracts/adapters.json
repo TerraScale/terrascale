@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "domain": "adapters",
+  "items": [
+    {
+      "id": "PB-0012",
+      "name": "protocol-adapter",
+      "classification": "protocol",
+      "v1_evidence": {"evidence_ids": ["E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "typed public protocol behavior"},
+      "v2": {"owner": "adapter/protocol", "public_seam": "approved protocol adapter"},
+      "public_contract": {"parity_required": true, "semantics": ["Only approved typed public operations may be exposed"], "compatibility": "adapter contract to be defined with authorization and audit rules"},
+      "downstream_impact": ["official .NET SDK", "official TypeScript SDK", "MCP typed operations"],
+      "risk": {"level": "critical", "description": "A broad or generic adapter could bypass Platform controls."}
+    },
+    {
+      "id": "PB-0013",
+      "name": "platform-adapter",
+      "classification": "protocol",
+      "v1_evidence": {"evidence_ids": ["E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "Platform-owned typed customer access"},
+      "v2": {"owner": "adapter/platform", "public_seam": "Platform adapter"},
+      "public_contract": {"parity_required": true, "semantics": ["Authorization, tenant isolation, confirmation, audit, and secret handling are mandatory"], "compatibility": "Platform-only clients; no direct engine access"},
+      "downstream_impact": ["TerraScale.MCP", "TerraScale.DotNet", "TerraScale.TypeScript", "control plane"],
+      "risk": {"level": "critical", "description": "Client compatibility cannot weaken tenant or authorization boundaries."}
+    },
+    {
+      "id": "PB-0014",
+      "name": "admin-and-control-plane-capabilities",
+      "classification": "admin",
+      "v1_evidence": {"evidence_ids": ["E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 optional or admin-visible capabilities requiring disposition"},
+      "v2": {"owner": "unresolved", "public_seam": "control-plane separation"},
+      "public_contract": {"parity_required": true, "semantics": ["Admin and legacy obligations stay visible until an evidence-backed disposition exists"], "compatibility": "private control-plane operations are outside the engine contract"},
+      "downstream_impact": ["Platform", "MCP authorization", "release scope"],
+      "risk": {"level": "critical", "description": "Accidental exposure would violate engine and control-plane separation."}
+    }
+  ]
+}

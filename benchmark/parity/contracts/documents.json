@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "domain": "documents",
+  "items": [
+    {
+      "id": "PB-0001",
+      "name": "documents",
+      "classification": "core",
+      "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "document database behavior and public document contract"},
+      "v2": {"owner": "engine/document", "public_seam": "document engine and transactions"},
+      "public_contract": {"parity_required": true, "semantics": ["V1 observable document operations require exact contract evidence"], "compatibility": "logical migration and typed protocol contract to be defined"},
+      "downstream_impact": ["Platform Adapter", "official .NET SDK", "official TypeScript SDK"],
+      "risk": {"level": "critical", "description": "A document contract mismatch breaks the primary data path."}
+    },
+    {
+      "id": "PB-0002",
+      "name": "transactions",
+      "classification": "core",
+      "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "transaction boundaries, conflict behavior, and commit outcomes"},
+      "v2": {"owner": "engine/transactions", "public_seam": "document engine and transactions"},
+      "public_contract": {"parity_required": true, "semantics": ["V1 transaction outcomes and failure modes require evidence"], "compatibility": "typed transaction contract to be defined"},
+      "downstream_impact": ["document workloads", "replication", "recovery"],
+      "risk": {"level": "critical", "description": "Transaction divergence can create silent data loss or conflicts."}
+    },
+    {
+      "id": "PB-0007",
+      "name": "revisions-and-conflicts",
+      "classification": "legacy",
+      "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 revision and conflict-related behavior"},
+      "v2": {"owner": "engine/document", "public_seam": "document engine and transactions"},
+      "public_contract": {"parity_required": true, "semantics": ["Legacy behavior must be classified with evidence before omission"], "compatibility": "migration and conflict contract to be defined"},
+      "downstream_impact": ["transactions", "replication", "logical migration"],
+      "risk": {"level": "high", "description": "Legacy conflict rules may be required by existing data."}
+    }
+  ]
+}

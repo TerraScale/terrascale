@@ -3,163 +3,502 @@
   "source": {
     "product": "TerraBase V1",
     "commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-    "evidence_ids": ["E-006", "E-010", "E-011", "E-029"]
+    "evidence_ids": [
+      "E-006",
+      "E-010",
+      "E-011",
+      "E-029"
+    ]
   },
-  "status_values": ["unresolved", "in-progress", "implemented", "qualified", "accepted-exclusion"],
+  "status_values": [
+    "unresolved",
+    "in-progress",
+    "implemented",
+    "qualified",
+    "accepted-exclusion"
+  ],
   "items": [
     {
       "id": "PB-0001",
       "name": "documents",
       "classification": "core",
-      "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "document database behavior and public document contract"},
-      "v2": {"owner": "engine/document", "public_seam": "document engine and transactions", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["V1 observable document operations require exact contract evidence"], "compatibility": "logical migration and typed protocol contract to be defined"},
-      "proof_ids": [],
-      "downstream_impact": ["Platform Adapter", "official .NET SDK", "official TypeScript SDK"],
-      "risk": {"level": "critical", "description": "A document contract mismatch breaks the primary data path."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-006"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "document database behavior and public document contract"
+      },
+      "v2": {
+        "owner": "engine/document",
+        "public_seam": "document engine and transactions",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "V1 observable document operations require exact contract evidence"
+        ],
+        "compatibility": "logical migration and typed protocol contract to be defined"
+      },
+      "downstream_impact": [
+        "Platform Adapter",
+        "official .NET SDK",
+        "official TypeScript SDK"
+      ],
+      "risk": {
+        "level": "critical",
+        "description": "A document contract mismatch breaks the primary data path."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0002",
       "name": "transactions",
       "classification": "core",
-      "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "transaction boundaries, conflict behavior, and commit outcomes"},
-      "v2": {"owner": "engine/transactions", "public_seam": "document engine and transactions", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["V1 transaction outcomes and failure modes require evidence"], "compatibility": "typed transaction contract to be defined"},
-      "proof_ids": [],
-      "downstream_impact": ["document workloads", "replication", "recovery"],
-      "risk": {"level": "critical", "description": "Transaction divergence can create silent data loss or conflicts."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-006"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "transaction boundaries, conflict behavior, and commit outcomes"
+      },
+      "v2": {
+        "owner": "engine/transactions",
+        "public_seam": "document engine and transactions",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "V1 transaction outcomes and failure modes require evidence"
+        ],
+        "compatibility": "typed transaction contract to be defined"
+      },
+      "downstream_impact": [
+        "document workloads",
+        "replication",
+        "recovery"
+      ],
+      "risk": {
+        "level": "critical",
+        "description": "Transaction divergence can create silent data loss or conflicts."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0003",
       "name": "queries",
       "classification": "core",
-      "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "query language, result shape, ordering, and error behavior"},
-      "v2": {"owner": "engine/query", "public_seam": "query and index", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["V1 query results and errors require executable parity cases"], "compatibility": "typed query contract to be defined"},
-      "proof_ids": [],
-      "downstream_impact": ["official .NET SDK", "official TypeScript SDK", "benchmark adapter"],
-      "risk": {"level": "high", "description": "Query differences may pass basic tests while changing application results."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-006"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "query language, result shape, ordering, and error behavior"
+      },
+      "v2": {
+        "owner": "engine/query",
+        "public_seam": "query and index",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "V1 query results and errors require executable parity cases"
+        ],
+        "compatibility": "typed query contract to be defined"
+      },
+      "downstream_impact": [
+        "official .NET SDK",
+        "official TypeScript SDK",
+        "benchmark adapter"
+      ],
+      "risk": {
+        "level": "high",
+        "description": "Query differences may pass basic tests while changing application results."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0004",
       "name": "indexes",
       "classification": "core",
-      "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "index definitions, maintenance, and query planning behavior"},
-      "v2": {"owner": "engine/index", "public_seam": "query and index", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["V1 index-visible behavior requires evidence"], "compatibility": "typed index contract to be defined"},
-      "proof_ids": [],
-      "downstream_impact": ["queries", "recovery", "benchmarks"],
-      "risk": {"level": "high", "description": "Index state and query planning affect both correctness and measured throughput."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-006"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "index definitions, maintenance, and query planning behavior"
+      },
+      "v2": {
+        "owner": "engine/index",
+        "public_seam": "query and index",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "V1 index-visible behavior requires evidence"
+        ],
+        "compatibility": "typed index contract to be defined"
+      },
+      "downstream_impact": [
+        "queries",
+        "recovery",
+        "benchmarks"
+      ],
+      "risk": {
+        "level": "high",
+        "description": "Index state and query planning affect both correctness and measured throughput."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0005",
       "name": "attachments",
       "classification": "optional",
-      "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 binary or attachment data family"},
-      "v2": {"owner": "engine/data-families", "public_seam": "data families", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["Optional V1 capability remains an obligation until disposition is evidenced"], "compatibility": "contract and logical migration rules to be defined"},
-      "proof_ids": [],
-      "downstream_impact": ["documents", "backup/import", "Platform Adapter"],
-      "risk": {"level": "high", "description": "Large values stress storage, streaming, and recovery paths."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-010"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "V1 binary or attachment data family"
+      },
+      "v2": {
+        "owner": "engine/data-families",
+        "public_seam": "data families",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Optional V1 capability remains an obligation until disposition is evidenced"
+        ],
+        "compatibility": "contract and logical migration rules to be defined"
+      },
+      "downstream_impact": [
+        "documents",
+        "backup/import",
+        "Platform Adapter"
+      ],
+      "risk": {
+        "level": "high",
+        "description": "Large values stress storage, streaming, and recovery paths."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0006",
       "name": "counters-and-time-series",
       "classification": "optional",
-      "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 auxiliary data families"},
-      "v2": {"owner": "engine/data-families", "public_seam": "data families", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["Each V1 auxiliary family needs independent contract and proof"], "compatibility": "contract and logical migration rules to be defined"},
-      "proof_ids": [],
-      "downstream_impact": ["queries", "streaming", "replication"],
-      "risk": {"level": "high", "description": "Family-specific ordering and retention rules are not yet captured."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-010"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "V1 auxiliary data families"
+      },
+      "v2": {
+        "owner": "engine/data-families",
+        "public_seam": "data families",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Each V1 auxiliary family needs independent contract and proof"
+        ],
+        "compatibility": "contract and logical migration rules to be defined"
+      },
+      "downstream_impact": [
+        "queries",
+        "streaming",
+        "replication"
+      ],
+      "risk": {
+        "level": "high",
+        "description": "Family-specific ordering and retention rules are not yet captured."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0007",
       "name": "revisions-and-conflicts",
       "classification": "legacy",
-      "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 revision and conflict-related behavior"},
-      "v2": {"owner": "engine/document", "public_seam": "document engine and transactions", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["Legacy behavior must be classified with evidence before omission"], "compatibility": "migration and conflict contract to be defined"},
-      "proof_ids": [],
-      "downstream_impact": ["transactions", "replication", "logical migration"],
-      "risk": {"level": "high", "description": "Legacy conflict rules may be required by existing data."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-010"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "V1 revision and conflict-related behavior"
+      },
+      "v2": {
+        "owner": "engine/document",
+        "public_seam": "document engine and transactions",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Legacy behavior must be classified with evidence before omission"
+        ],
+        "compatibility": "migration and conflict contract to be defined"
+      },
+      "downstream_impact": [
+        "transactions",
+        "replication",
+        "logical migration"
+      ],
+      "risk": {
+        "level": "high",
+        "description": "Legacy conflict rules may be required by existing data."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0008",
       "name": "streaming",
       "classification": "core",
-      "v1_evidence": {"evidence_ids": ["E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 streaming or bulk transfer contracts"},
-      "v2": {"owner": "engine/streaming", "public_seam": "streaming", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["Streaming backpressure, ordering, and completion need executable evidence"], "compatibility": "typed streaming contract to be defined"},
-      "proof_ids": [],
-      "downstream_impact": ["protocol adapter", "backup/import", "benchmarks"],
-      "risk": {"level": "high", "description": "Unbounded buffering would threaten efficiency and recovery safety."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-011"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "V1 streaming or bulk transfer contracts"
+      },
+      "v2": {
+        "owner": "engine/streaming",
+        "public_seam": "streaming",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Streaming backpressure, ordering, and completion need executable evidence"
+        ],
+        "compatibility": "typed streaming contract to be defined"
+      },
+      "downstream_impact": [
+        "protocol adapter",
+        "backup/import",
+        "benchmarks"
+      ],
+      "risk": {
+        "level": "high",
+        "description": "Unbounded buffering would threaten efficiency and recovery safety."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0009",
       "name": "backup-and-import",
       "classification": "core",
-      "v1_evidence": {"evidence_ids": ["E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 backup, restore, and import capabilities"},
-      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["Recovery and import outcomes require a manifest and receipt"], "compatibility": "new V2 storage format with logical migration"},
-      "proof_ids": [],
-      "downstream_impact": ["storage/WAL/recovery", "Platform Adapter", "release evidence"],
-      "risk": {"level": "critical", "description": "Incorrect recovery evidence can hide permanent data loss."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-011"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "V1 backup, restore, and import capabilities"
+      },
+      "v2": {
+        "owner": "engine/backup-import",
+        "public_seam": "backup and import",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Recovery and import outcomes require a manifest and receipt"
+        ],
+        "compatibility": "new V2 storage format with logical migration"
+      },
+      "downstream_impact": [
+        "storage/WAL/recovery",
+        "Platform Adapter",
+        "release evidence"
+      ],
+      "risk": {
+        "level": "critical",
+        "description": "Incorrect recovery evidence can hide permanent data loss."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0010",
       "name": "replication",
       "classification": "core",
-      "v1_evidence": {"evidence_ids": ["E-011", "E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 replication-visible behavior and compatibility obligations"},
-      "v2": {"owner": "engine/replication", "public_seam": "replication", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["Multi-region acknowledgement and convergence must be scenario-qualified"], "compatibility": "algorithm and consistency defaults remain unresolved"},
-      "proof_ids": [],
-      "downstream_impact": ["regions and members", "transactions", "recovery", "Platform Adapter"],
-      "risk": {"level": "critical", "description": "Replication claims need failure-domain evidence and a resolved consistency contract."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-011",
+          "E-029"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "V1 replication-visible behavior and compatibility obligations"
+      },
+      "v2": {
+        "owner": "engine/replication",
+        "public_seam": "replication",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Multi-region acknowledgement and convergence must be scenario-qualified"
+        ],
+        "compatibility": "algorithm and consistency defaults remain unresolved"
+      },
+      "downstream_impact": [
+        "regions and members",
+        "transactions",
+        "recovery",
+        "Platform Adapter"
+      ],
+      "risk": {
+        "level": "critical",
+        "description": "Replication claims need failure-domain evidence and a resolved consistency contract."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0011",
       "name": "storage-wal-and-recovery",
       "classification": "core",
-      "v1_evidence": {"evidence_ids": ["E-006", "E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 durability, storage, and recovery obligations"},
-      "v2": {"owner": "engine/storage", "public_seam": "storage/WAL/recovery", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["Durability and recovery limits must be reported by Recovery Receipt"], "compatibility": "new V2 format; no direct V1 file compatibility"},
-      "proof_ids": [],
-      "downstream_impact": ["transactions", "backup/import", "replication", "benchmarks"],
-      "risk": {"level": "critical", "description": "A storage bug can invalidate every higher-level proof."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-006",
+          "E-029"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "V1 durability, storage, and recovery obligations"
+      },
+      "v2": {
+        "owner": "engine/storage",
+        "public_seam": "storage/WAL/recovery",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Durability and recovery limits must be reported by Recovery Receipt"
+        ],
+        "compatibility": "new V2 format; no direct V1 file compatibility"
+      },
+      "downstream_impact": [
+        "transactions",
+        "backup/import",
+        "replication",
+        "benchmarks"
+      ],
+      "risk": {
+        "level": "critical",
+        "description": "A storage bug can invalidate every higher-level proof."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0012",
       "name": "protocol-adapter",
       "classification": "protocol",
-      "v1_evidence": {"evidence_ids": ["E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "typed public protocol behavior"},
-      "v2": {"owner": "adapter/protocol", "public_seam": "approved protocol adapter", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["Only approved typed public operations may be exposed"], "compatibility": "adapter contract to be defined with authorization and audit rules"},
-      "proof_ids": [],
-      "downstream_impact": ["official .NET SDK", "official TypeScript SDK", "MCP typed operations"],
-      "risk": {"level": "critical", "description": "A broad or generic adapter could bypass Platform controls."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-029"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "typed public protocol behavior"
+      },
+      "v2": {
+        "owner": "adapter/protocol",
+        "public_seam": "approved protocol adapter",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Only approved typed public operations may be exposed"
+        ],
+        "compatibility": "adapter contract to be defined with authorization and audit rules"
+      },
+      "downstream_impact": [
+        "official .NET SDK",
+        "official TypeScript SDK",
+        "MCP typed operations"
+      ],
+      "risk": {
+        "level": "critical",
+        "description": "A broad or generic adapter could bypass Platform controls."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0013",
       "name": "platform-adapter",
       "classification": "protocol",
-      "v1_evidence": {"evidence_ids": ["E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "Platform-owned typed customer access"},
-      "v2": {"owner": "adapter/platform", "public_seam": "Platform adapter", "status": "unresolved"},
-      "public_contract": {"parity_required": true, "semantics": ["Authorization, tenant isolation, confirmation, audit, and secret handling are mandatory"], "compatibility": "Platform-only clients; no direct engine access"},
-      "proof_ids": [],
-      "downstream_impact": ["TerraScale.MCP", "TerraScale.DotNet", "TerraScale.TypeScript", "control plane"],
-      "risk": {"level": "critical", "description": "Client compatibility cannot weaken tenant or authorization boundaries."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-029"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "Platform-owned typed customer access"
+      },
+      "v2": {
+        "owner": "adapter/platform",
+        "public_seam": "Platform adapter",
+        "status": "unresolved"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Authorization, tenant isolation, confirmation, audit, and secret handling are mandatory"
+        ],
+        "compatibility": "Platform-only clients; no direct engine access"
+      },
+      "downstream_impact": [
+        "TerraScale.MCP",
+        "TerraScale.DotNet",
+        "TerraScale.TypeScript",
+        "control plane"
+      ],
+      "risk": {
+        "level": "critical",
+        "description": "Client compatibility cannot weaken tenant or authorization boundaries."
+      },
+      "proof_ids": []
     },
     {
       "id": "PB-0014",
       "name": "admin-and-control-plane-capabilities",
       "classification": "admin",
-      "v1_evidence": {"evidence_ids": ["E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 optional or admin-visible capabilities requiring disposition"},
-      "v2": {"owner": "unresolved", "public_seam": "control-plane separation", "status": "unresolved", "disposition": "pending explicit evidence and authorization decision"},
-      "public_contract": {"parity_required": true, "semantics": ["Admin and legacy obligations stay visible until an evidence-backed disposition exists"], "compatibility": "private control-plane operations are outside the engine contract"},
-      "proof_ids": [],
-      "downstream_impact": ["Platform", "MCP authorization", "release scope"],
-      "risk": {"level": "critical", "description": "Accidental exposure would violate engine and control-plane separation."}
+      "v1_evidence": {
+        "evidence_ids": [
+          "E-029"
+        ],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "V1 optional or admin-visible capabilities requiring disposition"
+      },
+      "v2": {
+        "owner": "unresolved",
+        "public_seam": "control-plane separation",
+        "status": "unresolved",
+        "disposition": "pending explicit evidence and authorization decision"
+      },
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Admin and legacy obligations stay visible until an evidence-backed disposition exists"
+        ],
+        "compatibility": "private control-plane operations are outside the engine contract"
+      },
+      "downstream_impact": [
+        "Platform",
+        "MCP authorization",
+        "release scope"
+      ],
+      "risk": {
+        "level": "critical",
+        "description": "Accidental exposure would violate engine and control-plane separation."
+      },
+      "proof_ids": []
     }
   ]
 }

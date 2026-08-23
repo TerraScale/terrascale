@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "domain": "transfer",
+  "items": [
+    {
+      "id": "PB-0008",
+      "name": "streaming",
+      "classification": "core",
+      "v1_evidence": {"evidence_ids": ["E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 streaming or bulk transfer contracts"},
+      "v2": {"owner": "engine/streaming", "public_seam": "streaming"},
+      "public_contract": {"parity_required": true, "semantics": ["Streaming backpressure, ordering, and completion need executable evidence"], "compatibility": "typed streaming contract to be defined"},
+      "downstream_impact": ["protocol adapter", "backup/import", "benchmarks"],
+      "risk": {"level": "high", "description": "Unbounded buffering would threaten efficiency and recovery safety."}
+    },
+    {
+      "id": "PB-0009",
+      "name": "backup-and-import",
+      "classification": "core",
+      "v1_evidence": {"evidence_ids": ["E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 backup, restore, and import capabilities"},
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {"parity_required": true, "semantics": ["Recovery and import outcomes require a manifest and receipt"], "compatibility": "new V2 storage format with logical migration"},
+      "downstream_impact": ["storage/WAL/recovery", "Platform Adapter", "release evidence"],
+      "risk": {"level": "critical", "description": "Incorrect recovery evidence can hide permanent data loss."}
+    }
+  ]
+}
