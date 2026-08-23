@@ -11,13 +11,49 @@ import {
 } from '../scripts/validate-redirect-contract.mjs'
 import { probeExternalLinks } from '../scripts/validate-links.mjs'
 import { validateRenderedLinks } from '../scripts/validate-links.mjs'
-import { scanProhibitedClaims, walk as walkClaimFiles } from '../scripts/validate-claims.mjs'
+import { findProhibitedClaims, scanProhibitedClaims, walk as walkClaimFiles } from '../scripts/validate-claims.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const claimsValidator = path.join(root, 'scripts/validate-claims.mjs')
 const claimsFixtureRoot = path.join(root, 'tests/fixtures/claims-prohibited')
 const linksFixture = path.join(root, 'tests/fixtures/links-prohibited.html')
 const localizedClaimsFixtureRoot = path.join(root, 'tests/fixtures/claims-localized')
+
+const localizedClaimCategories = [
+  { id: 'unsupported-availability', label: 'availability/SLA', samples: ['Disponibilidad garantizada', 'Disponibilidade garantida'] },
+  { id: 'unsupported-consistency-or-latency', label: 'zero latency', samples: ['latencia cero', 'latência zero'] },
+  { id: 'unsupported-consistency-or-latency', label: 'instant replication', samples: ['Replicación instantánea', 'Replicação instantânea'] },
+  { id: 'unsupported-consistency-or-latency', label: 'bounded lag', samples: ['lag acotado', 'atraso limitado'] },
+  { id: 'unsupported-consistency-or-latency', label: 'majority/quorum writes', samples: ['Escrituras de mayoría', 'Escritas majoritárias', 'Escrituras de quórum', 'Escritas de quórum'] },
+  { id: 'unsupported-consistency-or-latency', label: 'serve-any-region', samples: ['sirve desde cualquier región', 'atender de qualquer região'] },
+  { id: 'deferred-backup-product', label: 'backups', samples: ['copias de seguridad automáticas', 'backups automáticos'] },
+  { id: 'deferred-queue-product', label: 'queues', samples: ['colas', 'filas'] },
+  { id: 'deferred-authentication-product', label: 'authentication product', samples: ['producto de autenticación', 'produto de autenticação'] },
+  { id: 'obsolete-annual-pricing', label: 'annual billing', samples: ['Facturación anual', 'faturamento anual'] },
+  { id: 'positive-paid-overages', label: 'paid overages', samples: ['Excedentes pagados disponibles', 'Excedentes pagos disponíveis'] },
+  { id: 'positive-enterprise-availability', label: 'Enterprise available', samples: ['Enterprise está disponible', 'Enterprise está disponível'] },
+  { id: 'obsolete-plan', label: 'Scale', samples: ['plan Scale'] },
+  { id: 'obsolete-plan', label: 'Business', samples: ['plano Business'] },
+]
+
+function assertLocalizedClaimCategories(files, fixtureRoot, label) {
+  const corpus = files.map((file) => readFileSync(file, 'utf8')).join('\n')
+  const normalizedCorpus = corpus.toLocaleLowerCase()
+  const failures = scanProhibitedClaims(files, fixtureRoot)
+  for (const category of localizedClaimCategories) {
+    assert.ok(
+      failures.some((failure) => failure.includes(`: ${category.id}:`)),
+      `${label} scan did not report ${category.label}`,
+    )
+    for (const sample of category.samples) {
+      assert.ok(normalizedCorpus.includes(sample.toLocaleLowerCase()), `${label} fixture is missing ${sample}`)
+      assert.ok(
+        findProhibitedClaims(sample).some(({ id }) => id === category.id),
+        `${label} validator did not reject ${sample}`,
+      )
+    }
+  }
+}
 
 test('redirect rules reject insecure or non-permanent migrations', () => {
   const failures = validateRedirectRules(`
@@ -133,13 +169,9 @@ test('deployed checks detect a canonical-host redirect loop', async () => {
   assert.match(failures.join('\n'), /loop/i)
 })
 
-test('localized source scans reject translated uptime and obsolete plan claims', () => {
+test('localized source scans reject every translated prohibited claim category', () => {
   const files = walkClaimFiles(path.join(localizedClaimsFixtureRoot, 'src'), new Set(['.ts']))
-  const failures = scanProhibitedClaims(files, localizedClaimsFixtureRoot)
-
-  assert.match(failures.join('\n'), /availability|uptime/i)
-  assert.match(failures.join('\n'), /annual|Scale|Business/i)
-  assert.match(failures.join('\n'), /backup|queue/i)
+  assertLocalizedClaimCategories(files, localizedClaimsFixtureRoot, 'source')
 })
 
 test('rendered claim scans inspect metadata and structured data', () => {
@@ -208,14 +240,9 @@ test('release link probes stop before fetching a redirect loop', async () => {
   assert.match(failures.join('\n'), /loop/i)
 })
 
-test('localized rendered scans inspect metadata and JSON-LD consistency and product claims', () => {
+test('localized rendered scans inspect every metadata and JSON-LD prohibited claim category', () => {
   const files = walkClaimFiles(path.join(localizedClaimsFixtureRoot, 'build'), new Set(['.html']))
-  const failures = scanProhibitedClaims(files, localizedClaimsFixtureRoot)
-  const output = failures.join('\n')
-
-  assert.match(output, /consistency|latency/i)
-  assert.match(output, /backup|queue/i)
-  assert.match(output, /annual|Scale|Business/i)
+  assertLocalizedClaimCategories(files, localizedClaimsFixtureRoot, 'rendered')
 })
 
 test('rendered link scans inspect metadata and structured-data URLs', () => {
