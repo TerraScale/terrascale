@@ -1,5 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
+delete process.env.NO_COLOR;
+delete process.env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS;
+
 const localChromium = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 const localChromiumLaunch = localChromium === undefined
   ? {}

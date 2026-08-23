@@ -4,9 +4,6 @@ test("the browser entrypoint keeps regional and conditional document behavior", 
   await page.goto("/browser-tests/fixture.html");
 
   const observation = await page.evaluate(async () => {
-    // The browser consumes the package extracted from the exact tarball that
-    // the web server prepared for this run. It must not silently fall back to
-    // the checkout's build output.
     const sdk = await import("/candidate/dist/index.js");
     const requests: { url: string; headers: Record<string, string> }[] = [];
     const responses = [
