@@ -188,9 +188,14 @@ test('localized Enterprise questions are not availability claims', () => {
   for (const question of [
     '¿Enterprise está disponible?',
     'O Enterprise está disponível?',
+    'Enterprise está disponível?',
+    'Enterprise is available?',
+    'Enterprise remains available?',
     'Enterprise está disponible ?',
     'O Enterprise está disponível ?',
     "label: 'Enterprise está disponible ?',",
+    '<p>¿Enterprise está disponible?</p>',
+    '<span>O Enterprise está disponível ?</span>',
   ]) {
     assert.equal(findProhibitedClaims(question).some(({ id }) => id === 'positive-enterprise-availability'), false)
   }
@@ -202,6 +207,12 @@ test('localized Enterprise questions are not availability claims', () => {
     'O Enterprise está disponível, mas não deveria?',
     'Enterprise está disponible <strong>ahora</strong>?',
     'Enterprise está disponível [agora](./pricing)?',
+    "const faq = 'Enterprise está disponible?' + ' Contacta ventas.'",
+    'const faq = "O Enterprise está disponível?" + " Fale com vendas."',
+    "const faq = 'Enterprise está disponible?' ' Contacta ventas.'",
+    "const faq = getFaq('Enterprise está disponible?')",
+    'const faq = `Enterprise está disponível? ${salesCopy}`',
+    "const faq = 'Enterprise está disponible?'; emit('Contacta ventas.')",
   ]) {
     assert.equal(findProhibitedClaims(declaration).some(({ id }) => id === 'positive-enterprise-availability'), true)
   }

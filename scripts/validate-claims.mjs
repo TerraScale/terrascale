@@ -63,10 +63,34 @@ export const prohibitedClaims = [
   { id: 'unpublished-terms-route', pattern: /href=["']\/terms["']/i, reason: 'The terms route must remain unpublished until approved.' },
 ]
 
-const enterpriseAvailabilityQuestionPattern = /^(?:(?:¿\s*)?Enterprise\s+est[aá]\s+disponible|O\s+Enterprise\s+est[aá]\s+dispon[ií]ve(?:l|is))\s*\?$/i
+const enterpriseAvailabilityQuestionPattern = /^(?:¿\s*)?(?:Enterprise\s+(?:(?:est[aá]\s+)(?:disponibles?|dispon[ií]ve(?:l|is))|(?:is|remains)\s+available)|O\s+Enterprise\s+est[aá]\s+dispon[ií]ve(?:l|is))\s*\?$/i
+const outerHtmlTagPattern = /^<([a-z][\w:-]*)(?:\s[^<>]*)?>([\s\S]*)<\/\1>$/i
 const sourceStringPattern = /(['"])((?:\\.|(?!\1)[\s\S])*)\1/g
 
-const isWholeEnterpriseAvailabilityQuestion = (value) => enterpriseAvailabilityQuestionPattern.test(value.trim())
+const stripOuterHtmlTags = (value) => {
+  let normalized = value.trim()
+  let match
+  while ((match = normalized.match(outerHtmlTagPattern))) normalized = match[2].trim()
+  return normalized
+}
+
+const isWholeEnterpriseAvailabilityQuestion = (value) =>
+  enterpriseAvailabilityQuestionPattern.test(stripOuterHtmlTags(value))
+
+const isCompleteSourceStringLiteral = (corpus, literal) => {
+  if (!isWholeEnterpriseAvailabilityQuestion(literal[2]) || literal[2].includes('\n')) return false
+
+  const lineStart = corpus.lastIndexOf('\n', literal.index) + 1
+  const lineEnd = corpus.indexOf('\n', literal.index)
+  const line = corpus.slice(lineStart, lineEnd < 0 ? corpus.length : lineEnd)
+  const valueStart = literal.index - lineStart
+  const valueEnd = valueStart + literal[2].length + 2
+  const prefix = line.slice(0, valueStart).trimEnd()
+  const suffix = line.slice(valueEnd).trim()
+  const isValuePrefix = !prefix || /(?:^|[=:])\s*$/.test(prefix) || /\breturn\s*$/.test(prefix)
+  if (!isValuePrefix || suffix && !/^[,;}\]]*$/.test(suffix)) return false
+  return true
+}
 
 const isEnterpriseQuestionValue = (corpus, matchIndex) => {
   if (isWholeEnterpriseAvailabilityQuestion(corpus)) return true
@@ -78,7 +102,7 @@ const isEnterpriseQuestionValue = (corpus, matchIndex) => {
   for (const literal of corpus.matchAll(sourceStringPattern)) {
     const valueStart = literal.index + 1
     const valueEnd = valueStart + literal[2].length
-    if (matchIndex >= valueStart && matchIndex < valueEnd && isWholeEnterpriseAvailabilityQuestion(literal[2])) return true
+    if (matchIndex >= valueStart && matchIndex < valueEnd && isCompleteSourceStringLiteral(corpus, literal)) return true
   }
   return false
 }
