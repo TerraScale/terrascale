@@ -161,6 +161,63 @@ test('release link probes fail closed on an unavailable required endpoint', asyn
   assert.match(failures.join('\n'), /returned 503/)
 })
 
+test('release link probes reject malformed statuses and unsafe locations before fetching again', async () => {
+  const unsafeLocations = [
+    'http://127.0.0.1:4173/loop',
+    'https://127.0.0.1/private',
+    'https://user:pass@status.terrascale.tech/private',
+    'https://evil.example/redirect',
+    '//127.0.0.1/redirect',
+  ]
+
+  for (const location of unsafeLocations) {
+    const requests = []
+    const failures = await probeExternalLinks(['https://status.terrascale.tech'], {
+      fetchImpl: async (url) => {
+        requests.push(url)
+        return new Response(null, { status: 302, headers: { location } })
+      },
+    })
+
+    assert.deepEqual(requests, ['https://status.terrascale.tech'])
+    assert.match(failures.join('\n'), /HTTPS|private|credential|approved|host/i)
+  }
+
+  const requests = []
+  const malformedFailures = await probeExternalLinks(['https://status.terrascale.tech'], {
+    fetchImpl: async (url) => {
+      requests.push(url)
+      return { status: '302oops', headers: { location: 'https://evil.example/redirect' } }
+    },
+  })
+
+  assert.deepEqual(requests, ['https://status.terrascale.tech'])
+  assert.match(malformedFailures.join('\n'), /status|numeric|malformed/i)
+})
+
+test('release link probes stop before fetching a redirect loop', async () => {
+  const requests = []
+  const failures = await probeExternalLinks(['https://status.terrascale.tech'], {
+    fetchImpl: async (url) => {
+      requests.push(url)
+      return new Response(null, { status: 302, headers: { location: 'https://status.terrascale.tech' } })
+    },
+  })
+
+  assert.deepEqual(requests, ['https://status.terrascale.tech'])
+  assert.match(failures.join('\n'), /loop/i)
+})
+
+test('localized rendered scans inspect metadata and JSON-LD consistency and product claims', () => {
+  const files = walkClaimFiles(path.join(localizedClaimsFixtureRoot, 'build'), new Set(['.html']))
+  const failures = scanProhibitedClaims(files, localizedClaimsFixtureRoot)
+  const output = failures.join('\n')
+
+  assert.match(output, /consistency|latency/i)
+  assert.match(output, /backup|queue/i)
+  assert.match(output, /annual|Scale|Business/i)
+})
+
 test('rendered link scans inspect metadata and structured-data URLs', () => {
   const result = validateRenderedLinks({ buildRoot: root, files: [linksFixture] })
 
