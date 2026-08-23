@@ -218,6 +218,40 @@ test('localized Enterprise questions are not availability claims', () => {
   }
 })
 
+test('malformed HTML never earns an Enterprise question exemption', () => {
+  for (const malformed of [
+    '<p class="x>Enterprise is available?</p>',
+    "<p title='x>Enterprise está disponible?</p>",
+    '<p data-label="Enterprise is available?',
+    '<p data-label="Enterprise is available?"',
+    '<p>Enterprise está disponível?</div>',
+    '<p>Enterprise is available?',
+    '<p>Enterprise is available?</p',
+  ]) {
+    assert.equal(findProhibitedClaims(malformed).some(({ id }) => id === 'positive-enterprise-availability'), true)
+  }
+})
+
+test('normal rendered HTML exempts exact Enterprise FAQ nodes but not nearby claims', () => {
+  const questions = ['Enterprise is available?', '¿Enterprise está disponible?', 'O Enterprise está disponível?']
+  for (const document of [
+    ...questions.map((question) => `<!doctype html><html><head><title>${question}</title></head><body></body></html>`),
+    ...questions.map((question) => `<!doctype html><html><head></head><body><p>${question}</p></body></html>`),
+    ...questions.map((question) => `<!doctype html><html><head><meta name="description" content="${question}"></head><body></body></html>`),
+  ]) {
+    assert.equal(findProhibitedClaims(document).some(({ id }) => id === 'positive-enterprise-availability'), false)
+  }
+
+  for (const document of [
+    ...questions.map((question) => `<!doctype html><html><body><p>${question}</p><p>${question} for everyone.</p></body></html>`),
+    ...questions.map((question) => `<!doctype html><html><body><p>${question} Contact sales.</p></body></html>`),
+    ...questions.map((question) => `<!doctype html><html><head><meta name="description" content="${question} Contact sales."></head><body></body></html>`),
+    ...questions.map((question) => `<!doctype html><html><head><meta name="description" content="${question} now"></head><body><p>${question}</p></body></html>`),
+  ]) {
+    assert.equal(findProhibitedClaims(document).some(({ id }) => id === 'positive-enterprise-availability'), true)
+  }
+})
+
 test('rendered claim scans inspect metadata and structured data', () => {
   const result = spawnSync(process.execPath, [claimsValidator, '--rendered'], {
     cwd: root,

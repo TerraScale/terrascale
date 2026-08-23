@@ -64,18 +64,129 @@ export const prohibitedClaims = [
 ]
 
 const enterpriseAvailabilityQuestionPattern = /^(?:¿\s*)?(?:Enterprise\s+(?:(?:est[aá]\s+)(?:disponibles?|dispon[ií]ve(?:l|is))|(?:is|remains)\s+available)|O\s+Enterprise\s+est[aá]\s+dispon[ií]ve(?:l|is))\s*\?$/i
-const outerHtmlTagPattern = /^<([a-z][\w:-]*)(?:\s[^<>]*)?>([\s\S]*)<\/\1>$/i
+const htmlVoidElements = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
+const htmlRawElements = new Set(['script', 'style'])
 const sourceStringPattern = /(['"])((?:\\.|(?!\1)[\s\S])*)\1/g
 
-const stripOuterHtmlTags = (value) => {
-  let normalized = value.trim()
-  let match
-  while ((match = normalized.match(outerHtmlTagPattern))) normalized = match[2].trim()
-  return normalized
+const isWholeEnterpriseAvailabilityQuestion = (value) => enterpriseAvailabilityQuestionPattern.test(value.trim())
+
+const findHtmlTagEnd = (corpus, start) => {
+  let quote = null
+  for (let index = start; index < corpus.length; index += 1) {
+    const character = corpus[index]
+    if (quote) {
+      if (character === quote) quote = null
+    } else if (character === '"' || character === "'") {
+      quote = character
+    } else if (character === '>') {
+      return index
+    }
+  }
+  return -1
 }
 
-const isWholeEnterpriseAvailabilityQuestion = (value) =>
-  enterpriseAvailabilityQuestionPattern.test(stripOuterHtmlTags(value))
+const parseHtmlAttributes = (corpus, start, end) => {
+  const ranges = []
+  let index = start
+  while (index < end) {
+    while (index < end && /\s/.test(corpus[index])) index += 1
+    if (index >= end) break
+    if (corpus[index] === '/') return null
+
+    const nameStart = index
+    while (index < end && !/[\s=]/.test(corpus[index])) index += 1
+    if (index === nameStart) return null
+    while (index < end && /\s/.test(corpus[index])) index += 1
+    if (corpus[index] !== '=') continue
+    index += 1
+    while (index < end && /\s/.test(corpus[index])) index += 1
+    if (index >= end) return null
+
+    const quote = corpus[index] === '"' || corpus[index] === "'" ? corpus[index] : null
+    const valueStart = quote ? index + 1 : index
+    if (quote) {
+      index += 1
+      while (index < end && corpus[index] !== quote) index += 1
+      if (index >= end) return null
+      if (isWholeEnterpriseAvailabilityQuestion(corpus.slice(valueStart, index))) ranges.push([valueStart, index])
+      index += 1
+      continue
+    }
+
+    while (index < end && !/\s/.test(corpus[index])) {
+      if (/[<>"'`=]/.test(corpus[index])) return null
+      index += 1
+    }
+    if (index === valueStart) return null
+    if (isWholeEnterpriseAvailabilityQuestion(corpus.slice(valueStart, index))) ranges.push([valueStart, index])
+  }
+  return ranges
+}
+
+const findHtmlQuestionRanges = (corpus) => {
+  const ranges = []
+  const stack = []
+  let index = 0
+  let sawTag = false
+
+  while (index < corpus.length) {
+    if (corpus[index] !== '<') {
+      const nextTag = corpus.indexOf('<', index)
+      const end = nextTag < 0 ? corpus.length : nextTag
+      if (stack.length === 0 && corpus.slice(index, end).trim()) return null
+      if (stack.length > 0 && isWholeEnterpriseAvailabilityQuestion(corpus.slice(index, end))) ranges.push([index, end])
+      index = end
+      continue
+    }
+
+    sawTag = true
+    if (corpus.startsWith('<!--', index)) {
+      const commentEnd = corpus.indexOf('-->', index + 4)
+      if (commentEnd < 0) return null
+      index = commentEnd + 3
+      continue
+    }
+    if (/^<!doctype\b/i.test(corpus.slice(index))) {
+      const doctypeEnd = findHtmlTagEnd(corpus, index + 2)
+      if (doctypeEnd < 0) return null
+      index = doctypeEnd + 1
+      continue
+    }
+
+    const closing = corpus.slice(index).match(/^<\/([a-z][\w:-]*)\s*>/i)
+    if (closing) {
+      if (stack.pop() !== closing[1].toLowerCase()) return null
+      index += closing[0].length
+      continue
+    }
+
+    const opening = corpus.slice(index).match(/^<([a-z][\w:-]*)/i)
+    if (!opening) return null
+    const tagName = opening[1].toLowerCase()
+    const tagEnd = findHtmlTagEnd(corpus, index + opening[0].length)
+    if (tagEnd < 0) return null
+    let attributesEnd = tagEnd
+    while (attributesEnd > index && /\s/.test(corpus[attributesEnd - 1])) attributesEnd -= 1
+    const selfClosing = corpus[attributesEnd - 1] === '/'
+    if (selfClosing) attributesEnd -= 1
+    const attributeRanges = parseHtmlAttributes(corpus, index + opening[0].length, attributesEnd)
+    if (!attributeRanges) return null
+    ranges.push(...attributeRanges)
+    index = tagEnd + 1
+
+    if (selfClosing || htmlVoidElements.has(tagName)) continue
+    if (htmlRawElements.has(tagName)) {
+      const rawClose = corpus.slice(index).match(new RegExp(`</${tagName}\\s*>`, 'i'))
+      if (!rawClose) return null
+      index += rawClose.index + rawClose[0].length
+      continue
+    }
+    stack.push(tagName)
+  }
+
+  if (!sawTag || stack.length > 0) return null
+  return ranges
+}
 
 const isCompleteSourceStringLiteral = (corpus, literal) => {
   if (!isWholeEnterpriseAvailabilityQuestion(literal[2]) || literal[2].includes('\n')) return false
@@ -92,7 +203,8 @@ const isCompleteSourceStringLiteral = (corpus, literal) => {
   return true
 }
 
-const isEnterpriseQuestionValue = (corpus, matchIndex) => {
+const isEnterpriseQuestionValue = (corpus, matchIndex, htmlQuestionRanges, htmlCandidate) => {
+  if (htmlCandidate && !htmlQuestionRanges) return false
   if (isWholeEnterpriseAvailabilityQuestion(corpus)) return true
 
   const lineStart = corpus.lastIndexOf('\n', matchIndex) + 1
@@ -104,14 +216,17 @@ const isEnterpriseQuestionValue = (corpus, matchIndex) => {
     const valueEnd = valueStart + literal[2].length
     if (matchIndex >= valueStart && matchIndex < valueEnd && isCompleteSourceStringLiteral(corpus, literal)) return true
   }
+  if (htmlQuestionRanges?.some(([valueStart, valueEnd]) => matchIndex >= valueStart && matchIndex < valueEnd)) return true
   return false
 }
 
 const findClaimMatch = (corpus, claim) => {
   if (claim.id !== 'positive-enterprise-availability') return corpus.match(claim.pattern)
   const pattern = claim.pattern.flags.includes('g') ? claim.pattern : new RegExp(claim.pattern.source, `${claim.pattern.flags}g`)
+  const htmlQuestionRanges = findHtmlQuestionRanges(corpus)
+  const htmlCandidate = /^\s*</.test(corpus)
   for (const match of corpus.matchAll(pattern)) {
-    if (!isEnterpriseQuestionValue(corpus, match.index)) return match
+    if (!isEnterpriseQuestionValue(corpus, match.index, htmlQuestionRanges, htmlCandidate)) return match
   }
   return null
 }
