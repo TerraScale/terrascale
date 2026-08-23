@@ -266,7 +266,6 @@ internal static class TerraScaleApiE2E
         string provider,
         CancellationToken cancellationToken = default)
     {
-        // CI must assign this dedicated organization/plan/provider fixture to one checkout lane at a time.
         var gate = BillingCheckoutLocks.GetOrAdd(
             $"{organizationId.Trim()}:{planId.Trim()}:{provider.Trim()}",
             static _ => new SemaphoreSlim(1, 1));

@@ -1514,7 +1514,6 @@ public sealed class TerraScaleSyncSession : IAsyncDisposable
             }
             catch
             {
-                // Application event handlers cannot terminate the transport.
             }
         }
     }

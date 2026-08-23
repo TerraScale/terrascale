@@ -460,7 +460,6 @@ public sealed class WorkflowTriggerTests
 
     private static void RejectAliasesAndDuplicateMappingKeys(string workflow)
     {
-        // YamlStream resolves aliases and duplicate keys while loading its representation model.
         var parser = new Parser(new StringReader(workflow));
         while (parser.MoveNext())
         {
