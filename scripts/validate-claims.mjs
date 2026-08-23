@@ -46,7 +46,7 @@ export const prohibitedClaims = [
   { id: 'non-canonical-domain', pattern: /terrascale\.(?:com|io)\b/i, reason: 'Use the canonical terrascale.tech domain.' },
   { id: 'placeholder-community-link', pattern: /discord\.gg\/(?:terrascale|your-|placeholder|invite-link)/i, reason: 'Use the configured Discord invite.' },
   { id: 'unverified-customer-count', pattern: /\b(?:thousands of|miles de|milhares de)\b/i, reason: 'Unverified customer-count claims are prohibited.' },
-  { id: 'unsupported-availability', pattern: /\b(?:99\.9+\s*%|(?:uptime|availability)\s+(?:guarantee|SLA)|support SLA|SLA de soporte|SLA de suporte)\b/i, reason: 'Unapproved availability or support SLA claims are prohibited.' },
+  { id: 'unsupported-availability', pattern: /\b(?:99[.,]9+\s*%|(?:uptime|availability|disponibilidad|disponibilidade|tiempo de actividad|tempo de atividade|SLA)\s+(?:guarantee|guaranteed|SLA|garantía|garantizado|garantizada|garantia|garantido|garantida)|(?:guaranteed|garantizado|garantizada|garantido|garantida)\s+(?:uptime|availability|disponibilidad|disponibilidade|tiempo de actividad|tempo de atividade)|support SLA|SLA de soporte|SLA de suporte)\b/i, reason: 'Unapproved availability or support SLA claims are prohibited.' },
   { id: 'retired-dashboard-path', pattern: /dash\.terrascale\.tech\/(?:signup|usage)\b/i, reason: 'Use the canonical dashboard registration URL.' },
   { id: 'unsupported-region', pattern: /\b(?:Frankfurt|Guarulhos)\b/i, reason: 'Use the Public Alpha launch regions.' },
   { id: 'deferred-provider', pattern: /\b(?:Stripe|NATS JetStream)\b/i, reason: 'Do not advertise deferred products or providers.' },
@@ -54,6 +54,9 @@ export const prohibitedClaims = [
   { id: 'unsupported-consistency-or-latency', pattern: /\b(?:zero[- ]latency|instant replication|bounded lag|majority write|serve from any region)\b/i, reason: 'Unsupported consistency or latency claims are prohibited.' },
   { id: 'deferred-authentication-product', pattern: /\bauthentication product\b/i, reason: 'Do not advertise deferred authentication products.' },
   { id: 'deferred-backup-product', pattern: /\bbackups?\b/i, reason: 'Do not advertise deferred backup products.' },
+  { id: 'obsolete-annual-pricing', pattern: /\b(?:annual billing|annual plan|facturaci[oó]n anual|faturamento anual|cobran[cç]a anual|precios? anuales?|pre[cç]os anuais?)\b/i, reason: 'Annual pricing is not part of the Public Alpha catalog.' },
+  { id: 'obsolete-plan', pattern: /\b(?:Scale|Business)\s+(?:plan|pricing|tier|subscription)|\b(?:plan|plano|pricing|precios?|pre[cç]os?)\s+(?:Scale|Business)\b/i, reason: 'Scale and Business plans are retired from the Public Alpha catalog.' },
+  { id: 'deferred-queue-product-localized', pattern: /\b(?:filas?|fila)\b/i, reason: 'Do not advertise deferred queue products.' },
   { id: 'positive-paid-overages', pattern: /\b(?:paid\s+overages?|overages?)\s+(?:are|remain|supported|available|included|offered)\b/i, reason: 'Paid overages are not available during Public Alpha.' },
   { id: 'unpublished-terms-route', pattern: /href=["']\/terms["']/i, reason: 'The terms route must remain unpublished until approved.' },
 ]

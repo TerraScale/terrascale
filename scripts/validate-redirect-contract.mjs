@@ -126,16 +126,24 @@ export function validateRedirectVectors() {
   return failures
 }
 
-const deployedVectors = [
+export const deployedVectors = [
   {
     label: '/signup',
     input: 'https://terrascale.tech/signup?plan=pro&return=%2Fpricing',
     destination: 'https://dash.terrascale.tech/register?plan=pro&return=%2Fpricing',
+    initialStatus: 308,
   },
   {
     label: 'dashboard host',
     input: 'https://dashboard.terrascale.tech/login?next=%2Fprojects',
     destination: 'https://dash.terrascale.tech/login?next=%2Fprojects',
+    initialStatus: 308,
+  },
+  {
+    label: 'registration CTA',
+    input: 'https://dash.terrascale.tech/register?plan=pro',
+    destination: null,
+    initialStatus: 200,
   },
 ]
 
@@ -149,14 +157,45 @@ export async function checkDeployedRedirects({
   fetchImpl = globalThis.fetch,
   timeoutMs = Number(process.env.TERRASCALE_VALIDATOR_TIMEOUT_MS ?? 10_000),
   maxHops = 5,
+  vectors = deployedVectors,
 } = {}) {
   const failures = []
   if (typeof fetchImpl !== 'function') return ['release redirect check requires a fetch implementation']
 
-  for (const vector of deployedVectors) {
+  for (const vector of vectors) {
     let current = vector.input
     const seen = new Set()
     let completed = false
+    const expectedInitialStatus = vector.initialStatus ?? 308
+    const expected = vector.destination ?? vector.input
+
+    const expectedUrl = new URL(expected)
+    const validateFinalState = (candidate, prefix) => {
+      const candidateUrl = new URL(candidate)
+      const stateFailures = []
+      if (candidateUrl.protocol !== 'https:') stateFailures.push(`${prefix}: deployed URL must use HTTPS: ${candidate}`)
+      if (candidateUrl.hostname !== 'dash.terrascale.tech' || candidateUrl.port) {
+        stateFailures.push(`${prefix}: deployed URL must use the canonical dashboard host: ${candidate}`)
+      }
+      if (candidateUrl.username || candidateUrl.password) stateFailures.push(`${prefix}: deployed URL must not contain credentials`)
+      if (candidateUrl.pathname !== expectedUrl.pathname || candidateUrl.search !== expectedUrl.search) {
+        stateFailures.push(`${prefix}: deployed redirect must preserve path/query state, expected ${expectedUrl.pathname}${expectedUrl.search}, received ${candidateUrl.pathname}${candidateUrl.search}`)
+      }
+      if (candidateUrl.hash !== expectedUrl.hash) stateFailures.push(`${prefix}: deployed redirect must preserve fragment state`)
+      return stateFailures
+    }
+
+    const inputUrl = new URL(vector.input)
+    if (
+      inputUrl.protocol !== 'https:' ||
+      inputUrl.port ||
+      inputUrl.username ||
+      inputUrl.password ||
+      !['terrascale.tech', 'dashboard.terrascale.tech', 'dash.terrascale.tech'].includes(inputUrl.hostname)
+    ) {
+      failures.push(`${vector.label}: deployed probe input must use an approved credential-free HTTPS host`)
+      continue
+    }
 
     for (let hop = 0; hop <= maxHops; hop += 1) {
       if (seen.has(current)) {
@@ -181,22 +220,28 @@ export async function checkDeployedRedirects({
         break
       }
 
-      const status = Number(response?.status)
+      const status = response?.status
       const location = responseLocation(response)
-      if (!Number.isInteger(status) || status < 100 || status > 599) {
-        failures.push(`${vector.label}: deployed response has an invalid status for ${current}`)
+      if (typeof status !== 'number' || !Number.isInteger(status) || status < 100 || status > 599) {
+        failures.push(`${vector.label}: deployed response has a malformed or non-numeric status for ${current}`)
         completed = true
         break
       }
 
       if (hop === 0) {
-        if (status !== 308) failures.push(`${vector.label}: deployed first hop must return 308, received ${status}`)
-        if (location !== vector.destination) {
-          failures.push(`${vector.label}: deployed destination must be ${vector.destination}, received ${location ?? 'no Location header'}`)
+        if (status !== expectedInitialStatus) {
+          failures.push(`${vector.label}: deployed first hop must return ${expectedInitialStatus}, received ${status}`)
+          completed = true
+          break
         }
       }
 
       if (status >= 300 && status < 400) {
+        if (status !== 308) {
+          failures.push(`${vector.label}: deployed redirect hops must return 308, received ${status}`)
+          completed = true
+          break
+        }
         if (!location) {
           failures.push(`${vector.label}: deployed ${status} response has no Location header`)
           completed = true
@@ -210,13 +255,11 @@ export async function checkDeployedRedirects({
           completed = true
           break
         }
-        if (next.protocol !== 'https:') failures.push(`${vector.label}: deployed Location must use HTTPS: ${next.href}`)
-        if (next.username || next.password) failures.push(`${vector.label}: deployed Location must not contain credentials`)
-        if (next.hostname === 'dashboard.terrascale.tech') {
-          failures.push(`${vector.label}: deployed chain returned to the retired dashboard host`)
-        }
-        if (next.hostname !== 'dash.terrascale.tech') {
-          failures.push(`${vector.label}: deployed chain must stay on the canonical dashboard host: ${next.href}`)
+        const targetFailures = validateFinalState(next.href, `${vector.label}: deployed Location`)
+        if (targetFailures.length) {
+          failures.push(...targetFailures)
+          completed = true
+          break
         }
         current = next.href
         if (hop === maxHops) failures.push(`${vector.label}: deployed redirect chain exceeded ${maxHops} hops`)
@@ -224,9 +267,7 @@ export async function checkDeployedRedirects({
       }
 
       if (status < 200 || status >= 300) failures.push(`${vector.label}: deployed chain ended with HTTP ${status} at ${current}`)
-      if (new URL(current).hostname !== 'dash.terrascale.tech') {
-        failures.push(`${vector.label}: deployed chain ended outside the canonical dashboard host: ${current}`)
-      }
+      failures.push(...validateFinalState(current, `${vector.label}: deployed final URL`))
       completed = true
       break
     }
