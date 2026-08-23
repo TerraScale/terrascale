@@ -238,6 +238,8 @@ test('normal rendered HTML exempts exact Enterprise FAQ nodes but not nearby cla
     ...questions.map((question) => `<!doctype html><html><head><title>${question}</title></head><body></body></html>`),
     ...questions.map((question) => `<!doctype html><html><head></head><body><p>${question}</p></body></html>`),
     ...questions.map((question) => `<!doctype html><html><head><meta name="description" content="${question}"></head><body></body></html>`),
+    '<!doctype html><html><head><meta name="description" content="x &quot; y"></head><body><p>Enterprise is available?</p></body></html>',
+    '<!doctype html><html><head></head><body><p><span>Enterprise is <strong>available?</strong></span></p></body></html>',
   ]) {
     assert.equal(findProhibitedClaims(document).some(({ id }) => id === 'positive-enterprise-availability'), false)
   }
@@ -247,6 +249,8 @@ test('normal rendered HTML exempts exact Enterprise FAQ nodes but not nearby cla
     ...questions.map((question) => `<!doctype html><html><body><p>${question} Contact sales.</p></body></html>`),
     ...questions.map((question) => `<!doctype html><html><head><meta name="description" content="${question} Contact sales."></head><body></body></html>`),
     ...questions.map((question) => `<!doctype html><html><head><meta name="description" content="${question} now"></head><body><p>${question}</p></body></html>`),
+    ...questions.map((question) => `<!doctype html><html><body><p>${question}<span> for everyone.</span></p></body></html>`),
+    '<!doctype html><html><body><!-- Enterprise is available? --><script type="application/ld+json">{"description":"Enterprise is available?"}</script><style>.faq::after { content: "Enterprise is available?"; }</style></body></html>',
   ]) {
     assert.equal(findProhibitedClaims(document).some(({ id }) => id === 'positive-enterprise-availability'), true)
   }
