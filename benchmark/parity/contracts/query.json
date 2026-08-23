@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
   "domain": "query",
+  "owner": "WS-CONTRACT/query",
   "items": [
     {
       "id": "PB-0003",

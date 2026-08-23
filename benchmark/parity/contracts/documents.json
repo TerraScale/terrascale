@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
   "domain": "documents",
+  "owner": "WS-CONTRACT/documents",
   "items": [
     {
       "id": "PB-0001",

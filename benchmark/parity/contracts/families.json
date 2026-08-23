@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
   "domain": "families",
+  "owner": "WS-CONTRACT/families",
   "items": [
     {
       "id": "PB-0005",

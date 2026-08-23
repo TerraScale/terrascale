@@ -157,14 +157,16 @@ def load_contracts(parity: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     for fragment_path in fragment_paths:
         fragment = require_keys(
             read_json(fragment_path, f"contract fragment {fragment_path.name}"),
-            {"schema_version", "domain", "items"},
-            {"schema_version", "domain", "items"},
+            {"schema_version", "domain", "owner", "items"},
+            {"schema_version", "domain", "owner", "items"},
             f"contract fragment {fragment_path.name}",
         )
         if fragment.get("schema_version") != SCHEMA_VERSION:
             fail(f"contract fragment {fragment_path.name} schema_version must be 1.0")
         if not isinstance(fragment.get("domain"), str) or fragment.get("domain") != fragment_path.stem:
             fail(f"contract fragment {fragment_path.name} domain must match its filename")
+        if fragment.get("owner") != f"WS-CONTRACT/{fragment['domain']}":
+            fail(f"contract fragment {fragment_path.name} owner must be WS-CONTRACT/{fragment['domain']}")
         fragment_items = fragment.get("items")
         if not isinstance(fragment_items, list) or not fragment_items:
             fail(f"contract fragment {fragment_path.name}.items must be non-empty")

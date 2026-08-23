@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
   "domain": "adapters",
+  "owner": "WS-CONTRACT/adapters",
   "items": [
     {
       "id": "PB-0012",

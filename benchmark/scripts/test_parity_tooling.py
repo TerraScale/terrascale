@@ -57,6 +57,7 @@ class ParityToolingTests(unittest.TestCase):
             duplicate_path = root / "parity" / "contracts" / "duplicate.json"
             duplicate = self.read_json(root / "parity" / "contracts" / "documents.json")
             duplicate["domain"] = "duplicate"
+            duplicate["owner"] = "WS-CONTRACT/duplicate"
             self.write_json(duplicate_path, duplicate)
             result = self.run_cli(root, "--check")
             self.assertNotEqual(result.returncode, 0)

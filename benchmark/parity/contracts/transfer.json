@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
   "domain": "transfer",
+  "owner": "WS-CONTRACT/transfer",
   "items": [
     {
       "id": "PB-0008",

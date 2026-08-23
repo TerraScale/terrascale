@@ -7,7 +7,8 @@ acceptance criteria. Keep this repository's documents short enough to use:
 - `docs/adr/` records accepted decisions that are hard to reverse.
 - `parity/parity.schema.json` defines the machine-readable inventory shape.
 - `parity/contracts/*.json` contains one domain-owned fragment of V1 contract
-  facts. `parity/contracts/manifest.json` pins the V1 source identity.
+  facts. Each fragment declares its exact `WS-CONTRACT/<domain>` owner.
+  `parity/contracts/manifest.json` pins the V1 source identity.
 - `parity/overlays/PB-NNNN.json` contains the disjoint mutable status,
   disposition, and Proof IDs for one item. WS-CONTRACT owns fragments;
   WS-PARITY owns overlays and later receipts.

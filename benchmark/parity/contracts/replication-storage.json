@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
   "domain": "replication-storage",
+  "owner": "WS-CONTRACT/replication-storage",
   "items": [
     {
       "id": "PB-0010",
