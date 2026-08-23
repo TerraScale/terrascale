@@ -47,7 +47,7 @@ export const parseRedirectRules = (text) =>
 const isCanonicalDestination = (destination) => {
   try {
     const url = new URL(destination)
-    return url.protocol === 'https:' && url.hostname === 'dash.terrascale.tech' && !url.username && !url.password
+    return url.protocol === 'https:' && url.hostname === 'dash.terrascale.tech' && !url.port && !url.username && !url.password
   } catch {
     return false
   }
