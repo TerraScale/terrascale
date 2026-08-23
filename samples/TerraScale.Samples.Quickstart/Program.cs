@@ -1,22 +1,23 @@
 using TerraScale.DotNet;
 
 var configuration = TerraScaleSampleConfiguration.FromEnvironment();
-if (!configuration.IsConfigured)
+if (!configuration.IsConfigured || configuration.BaseAddress is null)
 {
     Console.Error.WriteLine(TerraScaleSampleConfiguration.MissingConfigurationMessage);
     return 2;
 }
 
+var baseAddress = configuration.BaseAddress;
 using var httpClient = new HttpClient
 {
-    BaseAddress = configuration.BaseAddress
+    BaseAddress = baseAddress
 };
 
 var client = new TerraScaleClient(
     httpClient,
     new TerraScaleClientOptions
     {
-        BaseAddress = configuration.BaseAddress,
+        BaseAddress = baseAddress,
         BearerToken = configuration.BearerToken,
         ApiKey = configuration.BearerToken is null ? configuration.ApiKey : null,
         ProjectId = configuration.BearerToken is null ? configuration.ProjectId : null,
@@ -141,7 +142,7 @@ static async Task<TerraScaleRepositoryChange> ReadFirstChangeAsync(
 }
 
 internal sealed record TerraScaleSampleConfiguration(
-    Uri BaseAddress,
+    Uri? BaseAddress,
     string? ApiKey,
     string? BearerToken,
     string? ProjectId,
@@ -149,7 +150,7 @@ internal sealed record TerraScaleSampleConfiguration(
     string? EnvironmentId)
 {
     public bool IsConfigured =>
-        BaseAddress.IsAbsoluteUri &&
+        BaseAddress is { IsAbsoluteUri: true } &&
         (!string.IsNullOrWhiteSpace(BearerToken) ||
             (!string.IsNullOrWhiteSpace(ApiKey) && !string.IsNullOrWhiteSpace(ProjectId)));
 
@@ -161,7 +162,7 @@ internal sealed record TerraScaleSampleConfiguration(
         var baseAddress = Environment.GetEnvironmentVariable("TERRASCALE_API_BASE_ADDRESS");
         return new TerraScaleSampleConfiguration(
             string.IsNullOrWhiteSpace(baseAddress)
-                ? new Uri("http://localhost:5294", UriKind.Absolute)
+                ? null
                 : new Uri(baseAddress, UriKind.Absolute),
             Normalize(Environment.GetEnvironmentVariable("TERRASCALE_API_KEY")),
             Normalize(Environment.GetEnvironmentVariable("TERRASCALE_BEARER_TOKEN")),
