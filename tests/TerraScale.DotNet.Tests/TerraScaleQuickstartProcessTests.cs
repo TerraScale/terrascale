@@ -7,6 +7,16 @@ public sealed class TerraScaleQuickstartProcessTests
     private const string MissingConfigurationMessage =
         "Set TERRASCALE_API_BASE_ADDRESS plus either TERRASCALE_BEARER_TOKEN or both TERRASCALE_API_KEY and TERRASCALE_PROJECT_ID.";
 
+    private static readonly string[] QuickstartEnvironmentNames =
+    [
+        "TERRASCALE_API_BASE_ADDRESS",
+        "TERRASCALE_API_KEY",
+        "TERRASCALE_BEARER_TOKEN",
+        "TERRASCALE_PROJECT_ID",
+        "TERRASCALE_DATABASE_ID",
+        "TERRASCALE_ENVIRONMENT_ID"
+    ];
+
     [Test]
     public async Task MissingApiBaseAddress_WithCredentials_ExitsBeforeNetwork()
     {
@@ -36,8 +46,21 @@ public sealed class TerraScaleQuickstartProcessTests
         await Assert.That(result.StandardError.Contains("Unhandled exception", StringComparison.Ordinal)).IsFalse();
     }
 
+    [Test]
+    [RequiresTerraScaleQuickstartApi]
+    public async Task ConfiguredQuickstart_CompletesPublicApiJourneyAndCleansUp()
+    {
+        var result = await RunQuickstartAsync(
+            QuickstartEnvironment(),
+            TimeSpan.FromMinutes(2));
+
+        await Assert.That(result.TimedOut).IsFalse();
+        await Assert.That(result.ExitCode).IsEqualTo(0);
+    }
+
     private static async Task<QuickstartProcessResult> RunQuickstartAsync(
-        IReadOnlyDictionary<string, string?> environment)
+        IReadOnlyDictionary<string, string?> environment,
+        TimeSpan? timeout = null)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -75,12 +98,12 @@ public sealed class TerraScaleQuickstartProcessTests
             ?? throw new InvalidOperationException("The quickstart process could not be started.");
         var standardOutput = process.StandardOutput.ReadToEndAsync();
         var standardError = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeoutSource = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(5));
         var timedOut = false;
 
         try
         {
-            await process.WaitForExitAsync(timeout.Token);
+            await process.WaitForExitAsync(timeoutSource.Token);
         }
         catch (OperationCanceledException)
         {
@@ -100,6 +123,11 @@ public sealed class TerraScaleQuickstartProcessTests
             standardError.Result,
             timedOut);
     }
+
+    private static IReadOnlyDictionary<string, string?> QuickstartEnvironment() =>
+        QuickstartEnvironmentNames.ToDictionary(
+            static name => name,
+            static name => Environment.GetEnvironmentVariable(name));
 
     private static string FindDotnetHost()
     {
@@ -153,4 +181,31 @@ public sealed class TerraScaleQuickstartProcessTests
         string StandardOutput,
         string StandardError,
         bool TimedOut);
+}
+
+internal sealed class RequiresTerraScaleQuickstartApiAttribute()
+    : SkipAttribute(QuickstartEnvironmentConfiguration.SkipReason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(!QuickstartEnvironmentConfiguration.IsConfigured);
+}
+
+internal static class QuickstartEnvironmentConfiguration
+{
+    public const string SkipReason =
+        "Set TERRASCALE_API_BASE_ADDRESS, TERRASCALE_DATABASE_ID, TERRASCALE_ENVIRONMENT_ID, and either TERRASCALE_BEARER_TOKEN or TERRASCALE_API_KEY plus TERRASCALE_PROJECT_ID to run the quickstart public-API process test.";
+
+    public static bool IsConfigured =>
+        IsAbsoluteBaseAddress() &&
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_DATABASE_ID")) &&
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_ENVIRONMENT_ID")) &&
+        (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_BEARER_TOKEN")) ||
+            (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_API_KEY")) &&
+                !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_PROJECT_ID"))));
+
+    private static bool IsAbsoluteBaseAddress() =>
+        Uri.TryCreate(
+            Environment.GetEnvironmentVariable("TERRASCALE_API_BASE_ADDRESS"),
+            UriKind.Absolute,
+            out _);
 }
