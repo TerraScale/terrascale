@@ -48,11 +48,6 @@ test("built package keeps all public clients on typed operations without a runti
   assert.equal(result.ok, true);
   assert.equal(requests[0]?.pathname, "/api/v1/regions");
 
-  // @ts-expect-error Generic arbitrary requests are intentionally not public SDK API.
-  void client.request;
-  // @ts-expect-error The raw HTTP helper is intentionally not exported by the root package.
-  void sdk.TerraScaleHttp;
-
   const internalHttpEntrypoint = "@terrascale/sdk/http";
   await assert.rejects(import(internalHttpEntrypoint), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
 });

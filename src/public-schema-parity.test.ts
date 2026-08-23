@@ -7,15 +7,27 @@ import type {
   CreateCheckoutSessionRequest,
   CreateDatabaseBranchRequest,
   DatabaseBranchCapabilityResponse,
+  DeleteProjectDatabaseOptions,
   PricingPlan,
+  ProjectSavedQueryResponse,
   ProjectSavedQuerySnapshotPageRequest,
   ProjectSavedQuerySnapshotPageResponse,
   ProjectSavedQueryV2Response,
   TeamMember,
   Timestamp,
+  UpdateProjectSavedQueryV2Request,
   UsageMetric,
 } from "./models.js";
-import type { DatabaseBranchesClient, SavedQueriesClient, SavedQueriesV3Client } from "./client.js";
+import type {
+  BackupsClient,
+  DatabaseBranchesClient,
+  DatabasesClient,
+  DocumentsClient,
+  QueryClient,
+  SavedQueriesClient,
+  SavedQueriesV3Client,
+} from "./client.js";
+import type { TerraScaleClient } from "./factory.js";
 import type { Ulid } from "./ids.js";
 import type { TerraScaleResult } from "./result.js";
 
@@ -26,6 +38,10 @@ type Equal<Left, Right> =
       : false
     : false;
 type Assert<Condition extends true> = Condition;
+type MissingKey<Container, Key extends PropertyKey> = Extract<keyof Container, Key> extends never
+  ? true
+  : false;
+type PublicSdk = typeof import("./index.js");
 
 type ExpectedPricingPlan = {
   readonly planId: Ulid;
@@ -53,6 +69,16 @@ type ExpectedPricingPlan = {
 type ExpectedSnapshotRequest = {
   readonly cursor?: string;
   readonly take?: number;
+};
+
+type ExpectedSavedQueryResponse = {
+  readonly savedQueryId: Ulid;
+  readonly projectId: Ulid;
+  readonly name: string;
+  readonly query: string;
+  readonly repositoryId: Ulid | null;
+  readonly createdAt: Timestamp;
+  readonly updatedAt: Timestamp;
 };
 
 type ExpectedCheckoutRequest = {
@@ -108,7 +134,36 @@ const staticSdkParity: readonly [
   Assert<Equal<CreateDatabaseBranchRequest, ExpectedCreateDatabaseBranchRequest>>,
   Assert<Equal<DatabaseBranchesClient["requestClone"], (request: ExpectedCreateDatabaseBranchRequest, projectId?: Ulid) => Promise<TerraScaleResult<never>>>>,
   Assert<Equal<TeamMember, ExpectedProjectTeamMember>>,
-] = [true, true, true, true, true, true, true, true, true, true];
+  Assert<MissingKey<TerraScaleClient, "request">>,
+  Assert<MissingKey<PublicSdk, "TerraScaleHttp">>,
+  Assert<Equal<Parameters<DocumentsClient["list"]>["length"], 1 | 2>>,
+  Assert<Equal<Parameters<QueryClient["execute"]>["length"], 2>>,
+  Assert<Equal<ProjectSavedQueryResponse, ExpectedSavedQueryResponse>>,
+  Assert<Equal<Pick<UpdateProjectSavedQueryV2Request, "revision">, { readonly revision: string }>>,
+  Assert<MissingKey<BackupsClient, "triggerBackup">>,
+  Assert<Equal<Parameters<DatabasesClient["delete"]>["length"], 2>>,
+  Assert<Equal<Parameters<DatabasesClient["delete"]>[1], DeleteProjectDatabaseOptions>>,
+] = [
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+];
 void staticSdkParity;
 
 type PublicContractFixture = {

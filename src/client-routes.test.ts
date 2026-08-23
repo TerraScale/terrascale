@@ -16,7 +16,6 @@ import type {
   ProjectSavedQueryResponse,
   ProjectSavedQuerySnapshotPageResponse,
   ProjectSavedQueryV2Response,
-  UpdateProjectSavedQueryV2Request,
 } from "./models.js";
 
 const projectId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
@@ -34,15 +33,6 @@ const restoreId = toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV");
 const restoredDatabaseId = toUlid("01QRZ3NDEKTSV4RRFFQ69G5FAV");
 const savedQueryId = toUlid("01SRZ3NDEKTSV4RRFFQ69G5FAV");
 const otherProjectId = toUlid("01TRZ3NDEKTSV4RRFFQ69G5FAV");
-
-const savedQueryWithoutRepository = {
-  savedQueryId,
-  projectId,
-  name: "Missing repository field",
-  query: "SELECT 1",
-  createdAt: "2026-08-05T00:00:00Z",
-  updatedAt: "2026-08-05T00:00:00Z",
-};
 
 const pricingPlan = {
   planId: toUlid("01HRZ3NDEKTSV4RRFFQ69G5FAV"),
@@ -66,32 +56,6 @@ const pricingPlan = {
   operationOverageCentsPerMillion: 100,
   storageOverageCentsPerGbRegion: 25,
 } satisfies PricingPlan;
-
-const pricingPlanWithoutKey: Omit<PricingPlan, "key"> = pricingPlan;
-// @ts-expect-error Pricing responses always include key.
-const invalidPricingPlanWithoutKey: PricingPlan = pricingPlanWithoutKey;
-void invalidPricingPlanWithoutKey;
-
-const pricingPlanWithoutVisible: Omit<PricingPlan, "visible"> = pricingPlan;
-// @ts-expect-error Pricing responses always include visible.
-const invalidPricingPlanWithoutVisible: PricingPlan = pricingPlanWithoutVisible;
-void invalidPricingPlanWithoutVisible;
-
-const pricingPlanWithoutStripePriceId: Omit<PricingPlan, "monthlyStripePriceId"> = pricingPlan;
-// @ts-expect-error Pricing responses always include nullable provider identifier fields.
-const invalidPricingPlanWithoutStripePriceId: PricingPlan = pricingPlanWithoutStripePriceId;
-void invalidPricingPlanWithoutStripePriceId;
-
-// @ts-expect-error Saved-query responses always include repositoryId, which may be null.
-const invalidSavedQueryResponse: ProjectSavedQueryResponse = savedQueryWithoutRepository;
-void invalidSavedQueryResponse;
-
-// @ts-expect-error V2 updates require an opaque revision returned by a v2 read or list.
-const invalidV2SavedQueryUpdate: UpdateProjectSavedQueryV2Request = {
-  name: "Missing revision",
-  query: "SELECT 1",
-};
-void invalidV2SavedQueryUpdate;
 
 const deletingEnvironment = {
   environmentId,
@@ -120,10 +84,6 @@ type ManifestRoute = {
   readonly pathTemplate: string;
   readonly routeName: string;
 };
-
-// @ts-expect-error Unconfirmed backup triggers are intentionally not part of the public SDK.
-type LegacyTriggerBackup = TerraScaleClient["backups"]["triggerBackup"];
-void (undefined as unknown as LegacyTriggerBackup);
 
 describe("TerraScaleClient route contracts", () => {
   test("keeps the generated SDK route manifest aligned with captured public routes", async () => {
@@ -476,11 +436,6 @@ describe("TerraScaleClient route contracts", () => {
     assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/databases`);
     assert.equal(requests[0]?.url.searchParams.get("skip"), "0");
     assert.equal(requests[0]?.url.searchParams.get("take"), "100");
-
-    if (false) {
-      // @ts-expect-error Database deletion requires explicit confirmation.
-      void client.databases.delete(databaseId);
-    }
 
     for (const options of [
       {},

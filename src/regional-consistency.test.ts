@@ -64,18 +64,6 @@ describe("regional document consistency", () => {
     assert.equal(configured.retryDelayMs, 0);
   });
 
-  test("keeps stale-read controls on single-document reads only", () => {
-    const client = createTerraScaleClient({ fetch: globalThis.fetch });
-
-    if (false) {
-      // @ts-expect-error list does not support the single-document stale-read contract
-      void client.documents.list({ repositoryId }, undefined, { allowStale: true });
-      // @ts-expect-error TQL does not support the single-document stale-read contract
-      void client.query.execute({ repositoryId }, { query: "from users" }, { allowStale: true });
-      void client.documents.get({ repositoryId }, documentId, { allowStale: true });
-    }
-  });
-
   test("constructs preferred failover headers and strict regional hosts", async () => {
     const requests: Request[] = [];
     const fetch = async (input: RequestInfo | URL): Promise<Response> => {
