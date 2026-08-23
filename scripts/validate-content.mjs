@@ -8,9 +8,9 @@ const root = path.resolve(process.env.TERRASCALE_VALIDATOR_ROOT ?? defaultRoot)
 const failures = []
 
 const sourceFiles = walk(path.join(root, 'src'), new Set(['.svelte', '.ts']))
-failures.push(...scanProhibitedClaims(sourceFiles, root))
+failures.push(...scanProhibitedClaims(sourceFiles, root, { mode: 'source' }))
 const renderedFiles = walk(path.join(root, 'build'), new Set(['.html']))
-if (renderedFiles.length) failures.push(...scanProhibitedClaims(renderedFiles, root))
+if (renderedFiles.length) failures.push(...scanProhibitedClaims(renderedFiles, root, { mode: 'rendered' }))
 
 const pricing = fs.readFileSync(path.join(root, 'src/components/sections/PricingSection.svelte'), 'utf8')
 const site = fs.readFileSync(path.join(root, 'src/lib/site.ts'), 'utf8')

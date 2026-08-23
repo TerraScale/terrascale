@@ -76,40 +76,30 @@ const isElement = (node) => Boolean(node?.tagName)
 
 const isRangeInside = (range, offset) => range && offset >= range.startOffset && offset < range.endOffset
 
-const rawAttributeValueRange = (corpus, location) => {
-  const raw = corpus.slice(location.startOffset, location.endOffset)
-  const equals = raw.indexOf('=')
-  if (equals < 0) return null
-  let start = location.startOffset + equals + 1
-  while (/\s/.test(corpus[start] ?? '')) start += 1
-  const quote = corpus[start] === '"' || corpus[start] === "'" ? corpus[start] : null
-  if (quote) {
-    start += 1
-    const end = corpus.indexOf(quote, start)
-    return end < 0 ? null : { startOffset: start, endOffset: end }
-  }
-  let end = start
-  while (end < location.endOffset && !/\s/.test(corpus[end])) end += 1
-  return { startOffset: start, endOffset: end }
-}
-
 const descendantText = (node) => {
   if (node.nodeName === '#text') return node.value
   if (node.nodeName === '#comment' || (isElement(node) && htmlIgnoredElements.has(node.tagName))) return ''
   return (node.childNodes ?? []).map(descendantText).join('')
 }
 
-const parseHtmlQuestionRanges = (corpus) => {
-  if (!/^\s*</.test(corpus)) return null
+const rawDescendantText = (node) => {
+  if (node.nodeName === '#text') return node.value
+  return (node.childNodes ?? []).map(rawDescendantText).join('')
+}
+
+const parseRenderedValues = (corpus) => {
+  if (!/^\s*</.test(corpus)) {
+    const tree = parseFragment(corpus)
+    return [{ text: descendantText(tree), allowEnterpriseQuestion: false }]
+  }
 
   const parseErrors = []
   const isDocument = /<html(?:\s|>)/i.test(corpus) || /^\s*<!doctype\b/i.test(corpus)
   const tree = isDocument
     ? parseHtml(corpus, { sourceCodeLocationInfo: true, onParseError: (error) => parseErrors.push(error) })
     : parseFragment(corpus, { sourceCodeLocationInfo: true, onParseError: (error) => parseErrors.push(error) })
-  if (parseErrors.length) return null
 
-  const ranges = []
+  const values = []
   const explicitEndTags = new Set()
   const opaqueRanges = []
   let structurallyValid = true
@@ -133,27 +123,31 @@ const parseHtmlQuestionRanges = (corpus) => {
     const isIgnored = htmlIgnoredElements.has(node.tagName)
     const isBlock = !htmlInlineElements.has(node.tagName) && !htmlVoidElements.has(node.tagName) && !isIgnored
     const currentBlock = isIgnored ? null : isBlock || !blockAncestor ? node : blockAncestor
-    if (!isIgnored && currentBlock === node && isWholeEnterpriseAvailabilityQuestion(descendantText(node))) {
-      const addTextRanges = (child) => {
-        if (child.nodeName === '#text' && child.sourceCodeLocation) ranges.push([child.sourceCodeLocation.startOffset, child.sourceCodeLocation.endOffset])
-        for (const descendant of child.childNodes ?? []) addTextRanges(descendant)
-      }
-      addTextRanges(node)
-    }
+    if (isIgnored) values.push({ text: rawDescendantText(node), allowEnterpriseQuestion: false })
+    else if (currentBlock === node) values.push({ text: descendantText(node), allowEnterpriseQuestion: true })
     for (const attribute of node.attrs) {
-      const location = node.sourceCodeLocation?.attrs?.[attribute.name]
-      const valueRange = location && rawAttributeValueRange(corpus, location)
-      if (valueRange && isWholeEnterpriseAvailabilityQuestion(attribute.value)) ranges.push([valueRange.startOffset, valueRange.endOffset])
+      values.push({ text: attribute.value, allowEnterpriseQuestion: true })
     }
-    for (const child of node.childNodes ?? []) walk(child, currentBlock)
+    if (!isIgnored) for (const child of node.childNodes ?? []) walk(child, currentBlock)
   }
   walk(tree)
+
+  const addIgnoredValue = (node) => {
+    if (node.nodeName === '#comment') values.push({ text: node.data, allowEnterpriseQuestion: false })
+    for (const child of node.childNodes ?? []) addIgnoredValue(child)
+  }
+  addIgnoredValue(tree)
 
   for (const match of corpus.matchAll(/<\/\s*[a-z][\w:-]*\s*>/gi)) {
     if (opaqueRanges.some((range) => isRangeInside(range, match.index))) continue
     if (!explicitEndTags.has(match.index)) structurallyValid = false
   }
-  return structurallyValid ? ranges : null
+  if (parseErrors.length || !structurallyValid) {
+    values.push({ text: corpus, allowEnterpriseQuestion: false })
+    values.push({ text: decodeHtmlEntities(corpus), allowEnterpriseQuestion: false })
+    for (const value of values) value.allowEnterpriseQuestion = false
+  }
+  return values
 }
 
 const isCompleteSourceStringLiteral = (corpus, literal) => {
@@ -171,8 +165,7 @@ const isCompleteSourceStringLiteral = (corpus, literal) => {
   return true
 }
 
-const isEnterpriseQuestionValue = (corpus, matchIndex, htmlQuestionRanges, htmlCandidate) => {
-  if (htmlCandidate && !htmlQuestionRanges) return false
+const isSourceEnterpriseQuestionValue = (corpus, matchIndex) => {
   if (isWholeEnterpriseAvailabilityQuestion(corpus)) return true
 
   const lineStart = corpus.lastIndexOf('\n', matchIndex) + 1
@@ -184,17 +177,22 @@ const isEnterpriseQuestionValue = (corpus, matchIndex, htmlQuestionRanges, htmlC
     const valueEnd = valueStart + literal[2].length
     if (matchIndex >= valueStart && matchIndex < valueEnd && isCompleteSourceStringLiteral(corpus, literal)) return true
   }
-  if (htmlQuestionRanges?.some(([valueStart, valueEnd]) => matchIndex >= valueStart && matchIndex < valueEnd)) return true
   return false
 }
 
-const findClaimMatch = (corpus, claim) => {
+const findSourceClaimMatch = (corpus, claim) => {
   if (claim.id !== 'positive-enterprise-availability') return corpus.match(claim.pattern)
   const pattern = claim.pattern.flags.includes('g') ? claim.pattern : new RegExp(claim.pattern.source, `${claim.pattern.flags}g`)
-  const htmlQuestionRanges = parseHtmlQuestionRanges(corpus)
-  const htmlCandidate = /^\s*</.test(corpus)
   for (const match of corpus.matchAll(pattern)) {
-    if (!isEnterpriseQuestionValue(corpus, match.index, htmlQuestionRanges, htmlCandidate)) return match
+    if (!isSourceEnterpriseQuestionValue(corpus, match.index)) return match
+  }
+  return null
+}
+
+const findRenderedClaimMatch = (values, claim) => {
+  for (const value of values) {
+    const match = value.text.match(claim.pattern)
+    if (match && !(claim.id === 'positive-enterprise-availability' && value.allowEnterpriseQuestion && isWholeEnterpriseAvailabilityQuestion(value.text))) return match
   }
   return null
 }
@@ -218,21 +216,24 @@ const decodeHtmlEntities = (text) =>
     .replaceAll('&lt;', '<')
     .replaceAll('&gt;', '>')
 
-export function findProhibitedClaims(text) {
-  const corpus = decodeHtmlEntities(text)
+export function findProhibitedClaims(text, { mode = 'source' } = {}) {
+  const rendered = mode === 'rendered'
+  const corpus = rendered ? parseRenderedValues(text) : decodeHtmlEntities(text)
   return prohibitedClaims
     .map((claim) => {
-      const match = findClaimMatch(claim.id === 'positive-enterprise-availability' ? text : corpus, claim)
+      const match = rendered
+        ? findRenderedClaimMatch(corpus, claim)
+        : findSourceClaimMatch(claim.id === 'positive-enterprise-availability' ? text : corpus, claim)
       return { id: claim.id, reason: claim.reason, match: match?.[0] }
     })
     .filter(({ match }) => match)
 }
 
-export function scanProhibitedClaims(files, root) {
+export function scanProhibitedClaims(files, root, { mode = 'source' } = {}) {
   const failures = []
   for (const file of files) {
     const relative = path.relative(root, file)
-    for (const { id, reason, match } of findProhibitedClaims(fs.readFileSync(file, 'utf8'))) {
+    for (const { id, reason, match } of findProhibitedClaims(fs.readFileSync(file, 'utf8'), { mode })) {
       failures.push(`${relative}: ${id}: ${reason} (${match})`)
     }
   }
@@ -256,7 +257,7 @@ export function validateClaims({ root = defaultRoot, rendered = false } = {}) {
   const files = rendered ? walk(renderedRoot, new Set(['.html'])) : walk(sourceRoot, new Set(['.svelte', '.ts']))
   if (!files.length) failures.push(`${rendered ? 'build' : 'src'}: no files available for claim inventory.`)
 
-  failures.push(...scanProhibitedClaims(files, root))
+  failures.push(...scanProhibitedClaims(files, root, { mode: rendered ? 'rendered' : 'source' }))
   const corpus = files.map((file) => fs.readFileSync(file, 'utf8')).join('\n')
   for (const claim of claimInventory) {
     for (const pattern of claim.patterns) {
