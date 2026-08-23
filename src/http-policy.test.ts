@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
+import { createTerraScaleClient } from "./index.js";
 import { TerraScaleHttp } from "./http.js";
+import { toUlid } from "./ids.js";
+
+const repositoryId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+const documentId = toUlid("01BX5ZZKBKACTAV9WEVGEMMVRZ");
 
 describe("TerraScaleHttp request policy", () => {
   test("attaches idempotency keys to all requested mutation methods only", async () => {
@@ -159,5 +164,93 @@ describe("TerraScaleHttp request policy", () => {
       result.ok ? undefined : result.error.message,
       "The TerraScale API request failed.",
     );
+  });
+
+  test("retries transient document reads in order and stops on deterministic responses", async () => {
+    const statuses = [503, 429, 400];
+    const requests: Request[] = [];
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      maxRetryAttempts: 2,
+      retryDelayMs: 0,
+      fetch: async input => {
+        requests.push(input instanceof Request ? input : new Request(input));
+        const status = statuses[requests.length - 1];
+        if (status === undefined) {
+          throw new Error("The retry test received more requests than expected.");
+        }
+        return Response.json(
+          { code: `status_${status}`, message: `Response ${status}` },
+          { status },
+        );
+      },
+    });
+
+    const result = await client.documents.get({ repositoryId }, documentId);
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.status, 400);
+      assert.equal(result.error.kind, "domain");
+      assert.equal(result.error.code, "status_400");
+    }
+    assert.deepEqual(requests.map(request => request.method), ["GET", "GET", "GET"]);
+  });
+
+  test("does not retry a non-idempotent document create after a transient failure", async () => {
+    let fetchCount = 0;
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      maxRetryAttempts: 2,
+      retryDelayMs: 0,
+      fetch: async () => {
+        fetchCount++;
+        return Response.json(
+          { code: "temporary_failure", message: "Try again later." },
+          { status: 503 },
+        );
+      },
+    });
+
+    const result = await client.documents.create({ repositoryId }, { name: "Ada" });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.status, 503);
+      assert.equal(result.error.kind, "server");
+    }
+    assert.equal(fetchCount, 1);
+  });
+
+  test("returns a transport cancellation when aborting during retry backoff", async () => {
+    const controller = new AbortController();
+    const abortReason = new Error("caller cancelled the retry");
+    let fetchCount = 0;
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      maxRetryAttempts: 1,
+      retryDelayMs: 1_000,
+      fetch: async () => {
+        fetchCount++;
+        setTimeout(() => controller.abort(abortReason), 5);
+        return Response.json(
+          { code: "temporary_failure", message: "Try again later." },
+          { status: 503 },
+        );
+      },
+    });
+
+    const result = await client.documents.get(
+      { repositoryId },
+      documentId,
+      { signal: controller.signal },
+    );
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.kind, "transport");
+      assert.equal(result.error.message, abortReason.message);
+    }
+    assert.equal(fetchCount, 1);
   });
 });

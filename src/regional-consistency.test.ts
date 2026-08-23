@@ -5,6 +5,7 @@ import { createTerraScaleClient, resolveRuntimeConfig } from "./index.js";
 import { toUlid } from "./ids.js";
 
 const repositoryId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+const otherRepositoryId = toUlid("01CZ5ZZKBKACTAV9WEVGEMMVRZ");
 const documentId = toUlid("01BX5ZZKBKACTAV9WEVGEMMVRZ");
 
 describe("regional document consistency", () => {
@@ -72,6 +73,167 @@ describe("regional document consistency", () => {
       // @ts-expect-error TQL does not support the single-document stale-read contract
       void client.query.execute({ repositoryId }, { query: "from users" }, { allowStale: true });
       void client.documents.get({ repositoryId }, documentId, { allowStale: true });
+    }
+  });
+
+  test("constructs preferred failover headers and strict regional hosts", async () => {
+    const requests: Request[] = [];
+    const fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      requests.push(input instanceof Request ? input : new Request(input));
+      return Response.json({});
+    };
+
+    const failover = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.tech",
+      preferredRegion: "FRA",
+      regionAffinity: "failover",
+      fetch,
+    });
+    await failover.documents.get({ repositoryId }, documentId);
+
+    const strict = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.tech",
+      preferredRegion: "SFO",
+      regionAffinity: "strict",
+      fetch,
+    });
+    await strict.documents.get({ repositoryId }, documentId);
+
+    assert.equal(new URL(requests[0]!.url).hostname, "api.terrascale.tech");
+    assert.equal(requests[0]!.headers.get("x-terrascale-preferred-region"), "fra");
+    assert.equal(new URL(requests[1]!.url).hostname, "sfo.api.terrascale.tech");
+    assert.equal(requests[1]!.headers.has("x-terrascale-preferred-region"), false);
+  });
+
+  test("propagates write session tokens only to the matching document scope", async () => {
+    const requests: Request[] = [];
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      sessionConsistency: "automatic",
+      fetch: async input => {
+        requests.push(input instanceof Request ? input : new Request(input));
+        return Response.json({
+          repositoryId,
+          repository: "users",
+          id: documentId,
+          data: { name: "Ada" },
+          sessionConsistencyToken: "session-document-a",
+        });
+      },
+    });
+
+    await client.documents.create({ repositoryId }, { name: "Ada" });
+    await client.documents.get({ repositoryId }, documentId);
+    await client.documents.get({ repositoryId: otherRepositoryId }, documentId);
+
+    assert.equal(requests[0]!.headers.has("x-terrascale-session-consistency-token"), false);
+    assert.equal(
+      requests[1]!.headers.get("x-terrascale-session-consistency-token"),
+      "session-document-a",
+    );
+    assert.equal(requests[2]!.headers.has("x-terrascale-session-consistency-token"), false);
+  });
+
+  test("sends AllowStale only for an opted-in single-document read", async () => {
+    const requests: Request[] = [];
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async input => {
+        requests.push(input instanceof Request ? input : new Request(input));
+        return Response.json({});
+      },
+    });
+
+    await client.documents.get({ repositoryId }, documentId, { allowStale: true });
+    await client.documents.get({ repositoryId }, documentId, { allowStale: false });
+    await client.documents.list({ repositoryId });
+
+    assert.equal(requests[0]!.headers.get("x-terrascale-allow-stale"), "true");
+    assert.equal(requests[1]!.headers.has("x-terrascale-allow-stale"), false);
+    assert.equal(requests[2]!.headers.has("x-terrascale-allow-stale"), false);
+  });
+
+  test("preserves typed document conflicts and public degraded routing metadata", async () => {
+    const requests: Request[] = [];
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async input => {
+        requests.push(input instanceof Request ? input : new Request(input));
+        return Response.json(
+          {
+            code: "document_change_conflict",
+            message: "The document changed before this write.",
+            target: "document",
+          },
+          {
+            status: 409,
+            headers: {
+              "x-request-id": "request-123",
+              "x-terrascale-edge-region": "FRA",
+              "x-terrascale-serving-region": "SFO",
+              "x-terrascale-route-mode": "preferred-failover",
+              "x-terrascale-failover-from-region": "FRA",
+              "x-terrascale-operator-node": "operator.internal",
+            },
+          },
+        );
+      },
+    });
+
+    const result = await client.documents.put(
+      { repositoryId },
+      documentId,
+      { name: "Ada" },
+      { expectedChangeToken: "stale-change-token" },
+    );
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.status, 409);
+      assert.equal(result.error.kind, "conflict");
+      assert.equal(result.error.code, "document_change_conflict");
+      assert.equal(result.error.target, "document");
+      assert.equal(result.error.requestId, "request-123");
+      assert.deepEqual(result.routing, {
+        edgeRegion: "fra",
+        servingRegion: "sfo",
+        routeMode: "preferred-failover",
+        failoverFromRegion: "fra",
+        degraded: true,
+      });
+      assert.equal("operatorNode" in result.routing!, false);
+    }
+    assert.equal(requests[0]!.headers.get("if-match"), "stale-change-token");
+  });
+
+  test("exposes only normalized public serving metadata on successful reads", async () => {
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async () =>
+        Response.json(
+          { repositoryId, repository: "users", id: documentId, data: { name: "Ada" } },
+          {
+            headers: {
+              "x-terrascale-edge-region": "GRU",
+              "x-terrascale-serving-region": "GRU",
+              "x-terrascale-route-mode": "regional-strict",
+              "x-terrascale-operator-host": "node-17.internal",
+            },
+          },
+        ),
+    });
+
+    const result = await client.documents.get({ repositoryId }, documentId);
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.deepEqual(result.routing, {
+        edgeRegion: "gru",
+        servingRegion: "gru",
+        routeMode: "regional-strict",
+        degraded: false,
+      });
+      assert.equal("operatorHost" in result.routing!, false);
     }
   });
 });
