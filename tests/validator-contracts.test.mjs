@@ -278,6 +278,38 @@ test('rendered scans use complete decoded blocks and keep source exemptions out'
   assert.equal(findProhibitedClaims("const faq = 'Enterprise is available?'", { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability'), true)
 })
 
+test('rendered claim streams preserve document order and raw structural claims', () => {
+  for (const rendered of [
+    '<span>Enterprise is available?</span><span> for everyone.</span>',
+    '<span>Enterprise is</span><span> available?</span>',
+    '<div>Enterprise is available?</div><div> for everyone.</div>',
+    '<p>Enterprise is</p><p> available?</p>',
+    '<p>Excedentes pagados</p><p> disponibles</p>',
+  ]) {
+    assert.equal(findProhibitedClaims(rendered, { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability' || id === 'positive-paid-overages'), true, rendered)
+  }
+
+  assert.equal(
+    findProhibitedClaims('<h1>Pricing</h1><p>Enterprise is available?</p>', { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability'),
+    false,
+  )
+  assert.equal(
+    findProhibitedClaims('<a href="/terms">Terms</a>', { mode: 'rendered' }).some(({ id }) => id === 'unpublished-terms-route'),
+    true,
+  )
+})
+
+test('source Enterprise exemptions require a complete corpus or narrow quoted value', () => {
+  assert.equal(
+    findProhibitedClaims('Enterprise is available?\nContact sales.', { mode: 'source' }).some(({ id }) => id === 'positive-enterprise-availability'),
+    true,
+  )
+  assert.equal(
+    findProhibitedClaims("const faq = 'Enterprise is available?'\nconst sales = 'Contact sales.'", { mode: 'source' }).some(({ id }) => id === 'positive-enterprise-availability'),
+    false,
+  )
+})
+
 test('rendered claim scans inspect metadata and structured data', () => {
   const result = spawnSync(process.execPath, [claimsValidator, '--rendered'], {
     cwd: root,

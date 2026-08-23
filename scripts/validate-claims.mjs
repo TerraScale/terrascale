@@ -76,6 +76,25 @@ const isElement = (node) => Boolean(node?.tagName)
 
 const isRangeInside = (range, offset) => range && offset >= range.startOffset && offset < range.endOffset
 
+const decodeCodePoint = (value, radix = 10) => {
+  const codePoint = Number.parseInt(value, radix)
+  return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : ''
+}
+
+const decodeHtmlEntities = (text) =>
+  text
+    .replace(/&#x([0-9a-f]+);?/gi, (_, value) => decodeCodePoint(value, 16))
+    .replace(/&#(\d+);?/g, (_, value) => decodeCodePoint(value))
+    .replace(/&(amp|quot|apos|#39|lt|gt|nbsp);/gi, (_, entity) => ({
+      amp: '&',
+      quot: '"',
+      apos: "'",
+      '#39': "'",
+      lt: '<',
+      gt: '>',
+      nbsp: '\u00a0',
+    })[entity.toLowerCase()])
+
 const descendantText = (node) => {
   if (node.nodeName === '#text') return node.value
   if (node.nodeName === '#comment' || (isElement(node) && htmlIgnoredElements.has(node.tagName))) return ''
@@ -87,10 +106,17 @@ const rawDescendantText = (node) => {
   return (node.childNodes ?? []).map(rawDescendantText).join('')
 }
 
-const parseRenderedValues = (corpus) => {
-  if (!/^\s*</.test(corpus)) {
+const parseRenderedDocument = (corpus) => {
+  if (!corpus.includes('<')) {
     const tree = parseFragment(corpus)
-    return [{ text: descendantText(tree), allowEnterpriseQuestion: false }]
+    const text = descendantText(tree)
+    return {
+      raw: corpus,
+      text,
+      segments: [{ start: 0, end: text.length, text, owner: null, boundaryBefore: null }],
+      ignored: [],
+      fallback: '',
+    }
   }
 
   const parseErrors = []
@@ -99,55 +125,94 @@ const parseRenderedValues = (corpus) => {
     ? parseHtml(corpus, { sourceCodeLocationInfo: true, onParseError: (error) => parseErrors.push(error) })
     : parseFragment(corpus, { sourceCodeLocationInfo: true, onParseError: (error) => parseErrors.push(error) })
 
-  const values = []
+  const segments = []
+  const ignored = []
+  const owners = []
   const explicitEndTags = new Set()
   const opaqueRanges = []
-  let structurallyValid = true
+  let structuralError = false
+  let text = ''
+  let previousSegment = null
 
-  const walk = (node, blockAncestor = null) => {
+  const newOwner = ({ kind, node = null, textParts = [], allow = false }) => {
+    const owner = { kind, node, textParts, allow, text: '' }
+    owners.push(owner)
+    return owner
+  }
+
+  const appendSegment = (value, owner, boundaryBefore = null) => {
+    if (!value) return
+    let boundary = boundaryBefore
+    if (previousSegment && previousSegment.owner !== owner && boundary === null) {
+      if (previousSegment.owner?.kind === 'attribute' || owner?.kind === 'attribute') boundary = 'value'
+      else if (previousSegment.owner?.kind === 'block' || owner?.kind === 'block') boundary = 'block'
+      else boundary = 'inline'
+    }
+    if (boundary === 'block') text += ' '
+    if (boundary === 'value') text += '\u0000'
+    const start = text.length
+    text += value
+    const segment = { start, end: text.length, text: value, owner, boundaryBefore: boundary }
+    segments.push(segment)
+    previousSegment = segment
+  }
+
+  const appendText = (value, owner) => {
+    if (!value) return
+    if (owner) owner.textParts.push(value)
+    appendSegment(value, owner)
+  }
+
+  const walk = (node, blockAncestor = null, flowAncestor = null) => {
     if (node.sourceCodeLocation && node.nodeName === '#text') opaqueRanges.push(node.sourceCodeLocation)
     if (node.sourceCodeLocation && node.nodeName === '#comment') opaqueRanges.push(node.sourceCodeLocation)
     if (node.sourceCodeLocation && node.nodeName === '#documentType') opaqueRanges.push(node.sourceCodeLocation)
     if (!isElement(node)) {
-      for (const child of node.childNodes ?? []) walk(child, blockAncestor)
+      if (node.nodeName === '#text') appendText(node.value, blockAncestor ?? flowAncestor)
+      for (const child of node.childNodes ?? []) walk(child, blockAncestor, flowAncestor)
       return
     }
 
     const location = node.sourceCodeLocation
     if (location?.endTag) explicitEndTags.add(location.endTag.startOffset)
-    if (location && !htmlVoidElements.has(node.tagName) && !location.endTag) structurallyValid = false
     for (const attribute of Object.values(location?.attrs ?? {})) {
       opaqueRanges.push(attribute)
     }
 
     const isIgnored = htmlIgnoredElements.has(node.tagName)
     const isBlock = !htmlInlineElements.has(node.tagName) && !htmlVoidElements.has(node.tagName) && !isIgnored
-    const currentBlock = isIgnored ? null : isBlock || !blockAncestor ? node : blockAncestor
-    if (isIgnored) values.push({ text: rawDescendantText(node), allowEnterpriseQuestion: false })
-    else if (currentBlock === node) values.push({ text: descendantText(node), allowEnterpriseQuestion: true })
-    for (const attribute of node.attrs) {
-      values.push({ text: attribute.value, allowEnterpriseQuestion: true })
+    if (isIgnored) {
+      for (const attribute of node.attrs) ignored.push({ raw: attribute.value, text: decodeHtmlEntities(attribute.value) })
+      const raw = rawDescendantText(node)
+      ignored.push({ raw, text: decodeHtmlEntities(raw) })
+      return
     }
-    if (!isIgnored) for (const child of node.childNodes ?? []) walk(child, currentBlock)
+
+    const currentBlock = isBlock ? newOwner({ kind: 'block', node, allow: Boolean(location?.endTag) }) : blockAncestor
+    const currentFlow = !currentBlock && !flowAncestor ? newOwner({ kind: 'inline', node, allow: Boolean(location?.endTag) }) : flowAncestor
+    for (const attribute of node.attrs) {
+      const owner = newOwner({ kind: 'attribute', node, textParts: [attribute.value], allow: true })
+      appendSegment(attribute.value, owner, 'value')
+    }
+    for (const child of node.childNodes ?? []) walk(child, currentBlock, currentFlow)
   }
   walk(tree)
 
   const addIgnoredValue = (node) => {
-    if (node.nodeName === '#comment') values.push({ text: node.data, allowEnterpriseQuestion: false })
+    if (node.nodeName === '#comment') ignored.push({ raw: node.data, text: decodeHtmlEntities(node.data) })
     for (const child of node.childNodes ?? []) addIgnoredValue(child)
   }
   addIgnoredValue(tree)
 
   for (const match of corpus.matchAll(/<\/\s*[a-z][\w:-]*\s*>/gi)) {
-    if (opaqueRanges.some((range) => isRangeInside(range, match.index))) continue
-    if (!explicitEndTags.has(match.index)) structurallyValid = false
+    if (!opaqueRanges.some((range) => isRangeInside(range, match.index)) && !explicitEndTags.has(match.index)) structuralError = true
   }
-  if (parseErrors.length || !structurallyValid) {
-    values.push({ text: corpus, allowEnterpriseQuestion: false })
-    values.push({ text: decodeHtmlEntities(corpus), allowEnterpriseQuestion: false })
-    for (const value of values) value.allowEnterpriseQuestion = false
+  structuralError ||= parseErrors.length > 0
+  for (const owner of owners) {
+    owner.text = owner.textParts.join('')
+    if (structuralError) owner.allow = false
   }
-  return values
+  return { raw: corpus, text, segments, ignored, fallback: structuralError ? decodeHtmlEntities(corpus) : '' }
 }
 
 const isCompleteSourceStringLiteral = (corpus, literal) => {
@@ -168,10 +233,6 @@ const isCompleteSourceStringLiteral = (corpus, literal) => {
 const isSourceEnterpriseQuestionValue = (corpus, matchIndex) => {
   if (isWholeEnterpriseAvailabilityQuestion(corpus)) return true
 
-  const lineStart = corpus.lastIndexOf('\n', matchIndex) + 1
-  const lineEnd = corpus.indexOf('\n', matchIndex)
-  if (isWholeEnterpriseAvailabilityQuestion(corpus.slice(lineStart, lineEnd < 0 ? corpus.length : lineEnd))) return true
-
   for (const literal of corpus.matchAll(sourceStringPattern)) {
     const valueStart = literal.index + 1
     const valueEnd = valueStart + literal[2].length
@@ -189,10 +250,43 @@ const findSourceClaimMatch = (corpus, claim) => {
   return null
 }
 
-const findRenderedClaimMatch = (values, claim) => {
-  for (const value of values) {
-    const match = value.text.match(claim.pattern)
-    if (match && !(claim.id === 'positive-enterprise-availability' && value.allowEnterpriseQuestion && isWholeEnterpriseAvailabilityQuestion(value.text))) return match
+const isRenderedEnterpriseQuestion = (rendered, match) => {
+  const matchEnd = match.index + match[0].length
+  const matchingSegments = rendered.segments.filter(({ start, end }) => end > match.index && start < matchEnd)
+  const owners = [...new Set(matchingSegments.map(({ owner }) => owner))]
+  if (owners.length !== 1 || !owners[0]?.allow || !isWholeEnterpriseAvailabilityQuestion(owners[0].text)) return false
+
+  const suffix = rendered.segments.find(({ start, text: value }) => start >= matchEnd && value.trim())
+  if (!suffix) return true
+  if (suffix.boundaryBefore === 'value') return true
+  if (suffix.boundaryBefore === 'inline') return false
+  const suffixText = rendered.text.slice(suffix.start).trimStart()
+  return !/^[^\p{L}]*\p{Ll}/u.test(suffixText)
+}
+
+const findRenderedClaimMatch = (rendered, claim) => {
+  if (claim.id === 'unpublished-terms-route') return rendered.raw.match(claim.pattern)
+
+  // Raw markup catches structural claims, while the decoded stream catches
+  // visible text and attribute values that parse5 normalizes. Ignored nodes
+  // stay separate so a claim cannot be assembled across hidden content.
+  if (claim.id === 'positive-enterprise-availability') {
+    const pattern = claim.pattern.flags.includes('g') ? claim.pattern : new RegExp(claim.pattern.source, `${claim.pattern.flags}g`)
+    for (const match of rendered.text.matchAll(pattern)) {
+      if (!isRenderedEnterpriseQuestion(rendered, match)) return match
+    }
+    for (const value of [...rendered.ignored, ...(rendered.fallback ? [{ raw: rendered.fallback, text: rendered.fallback }] : [])]) {
+      for (const source of [value.raw, value.text]) {
+        const match = source.match(claim.pattern)
+        if (match) return match
+      }
+    }
+    return null
+  }
+
+  for (const value of [rendered.raw, rendered.text, ...rendered.ignored.flatMap(({ raw, text }) => [raw, text]), rendered.fallback]) {
+    const match = value.match(claim.pattern)
+    if (match) return match
   }
   return null
 }
@@ -208,17 +302,9 @@ export function walk(directory, extensions) {
   return files.sort()
 }
 
-const decodeHtmlEntities = (text) =>
-  text
-    .replaceAll('&amp;', '&')
-    .replaceAll('&quot;', '"')
-    .replaceAll('&#39;', "'")
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-
 export function findProhibitedClaims(text, { mode = 'source' } = {}) {
   const rendered = mode === 'rendered'
-  const corpus = rendered ? parseRenderedValues(text) : decodeHtmlEntities(text)
+  const corpus = rendered ? parseRenderedDocument(text) : decodeHtmlEntities(text)
   return prohibitedClaims
     .map((claim) => {
       const match = rendered
