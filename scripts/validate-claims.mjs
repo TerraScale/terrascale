@@ -2,6 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse as parseHtml, parseFragment } from 'parse5'
 
 const scriptPath = fileURLToPath(import.meta.url)
 const defaultRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -65,127 +66,94 @@ export const prohibitedClaims = [
 
 const enterpriseAvailabilityQuestionPattern = /^(?:¿\s*)?(?:Enterprise\s+(?:(?:est[aá]\s+)(?:disponibles?|dispon[ií]ve(?:l|is))|(?:is|remains)\s+available)|O\s+Enterprise\s+est[aá]\s+dispon[ií]ve(?:l|is))\s*\?$/i
 const htmlVoidElements = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
-const htmlRawElements = new Set(['script', 'style'])
+const htmlIgnoredElements = new Set(['script', 'style'])
+const htmlInlineElements = new Set(['a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'button', 'cite', 'code', 'data', 'del', 'dfn', 'em', 'i', 'img', 'ins', 'kbd', 'label', 'mark', 'q', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u', 'var', 'wbr'])
 const sourceStringPattern = /(['"])((?:\\.|(?!\1)[\s\S])*)\1/g
 
 const isWholeEnterpriseAvailabilityQuestion = (value) => enterpriseAvailabilityQuestionPattern.test(value.trim())
 
-const findHtmlTagEnd = (corpus, start) => {
-  let quote = null
-  for (let index = start; index < corpus.length; index += 1) {
-    const character = corpus[index]
-    if (quote) {
-      if (character === quote) quote = null
-    } else if (character === '"' || character === "'") {
-      quote = character
-    } else if (character === '>') {
-      return index
-    }
+const isElement = (node) => Boolean(node?.tagName)
+
+const isRangeInside = (range, offset) => range && offset >= range.startOffset && offset < range.endOffset
+
+const rawAttributeValueRange = (corpus, location) => {
+  const raw = corpus.slice(location.startOffset, location.endOffset)
+  const equals = raw.indexOf('=')
+  if (equals < 0) return null
+  let start = location.startOffset + equals + 1
+  while (/\s/.test(corpus[start] ?? '')) start += 1
+  const quote = corpus[start] === '"' || corpus[start] === "'" ? corpus[start] : null
+  if (quote) {
+    start += 1
+    const end = corpus.indexOf(quote, start)
+    return end < 0 ? null : { startOffset: start, endOffset: end }
   }
-  return -1
+  let end = start
+  while (end < location.endOffset && !/\s/.test(corpus[end])) end += 1
+  return { startOffset: start, endOffset: end }
 }
 
-const parseHtmlAttributes = (corpus, start, end) => {
-  const ranges = []
-  let index = start
-  while (index < end) {
-    while (index < end && /\s/.test(corpus[index])) index += 1
-    if (index >= end) break
-    if (corpus[index] === '/') return null
-
-    const nameStart = index
-    while (index < end && !/[\s=]/.test(corpus[index])) index += 1
-    if (index === nameStart) return null
-    while (index < end && /\s/.test(corpus[index])) index += 1
-    if (corpus[index] !== '=') continue
-    index += 1
-    while (index < end && /\s/.test(corpus[index])) index += 1
-    if (index >= end) return null
-
-    const quote = corpus[index] === '"' || corpus[index] === "'" ? corpus[index] : null
-    const valueStart = quote ? index + 1 : index
-    if (quote) {
-      index += 1
-      while (index < end && corpus[index] !== quote) index += 1
-      if (index >= end) return null
-      if (isWholeEnterpriseAvailabilityQuestion(corpus.slice(valueStart, index))) ranges.push([valueStart, index])
-      index += 1
-      continue
-    }
-
-    while (index < end && !/\s/.test(corpus[index])) {
-      if (/[<>"'`=]/.test(corpus[index])) return null
-      index += 1
-    }
-    if (index === valueStart) return null
-    if (isWholeEnterpriseAvailabilityQuestion(corpus.slice(valueStart, index))) ranges.push([valueStart, index])
-  }
-  return ranges
+const descendantText = (node) => {
+  if (node.nodeName === '#text') return node.value
+  if (node.nodeName === '#comment' || (isElement(node) && htmlIgnoredElements.has(node.tagName))) return ''
+  return (node.childNodes ?? []).map(descendantText).join('')
 }
 
-const findHtmlQuestionRanges = (corpus) => {
+const parseHtmlQuestionRanges = (corpus) => {
+  if (!/^\s*</.test(corpus)) return null
+
+  const parseErrors = []
+  const isDocument = /<html(?:\s|>)/i.test(corpus) || /^\s*<!doctype\b/i.test(corpus)
+  const tree = isDocument
+    ? parseHtml(corpus, { sourceCodeLocationInfo: true, onParseError: (error) => parseErrors.push(error) })
+    : parseFragment(corpus, { sourceCodeLocationInfo: true, onParseError: (error) => parseErrors.push(error) })
+  if (parseErrors.length) return null
+
   const ranges = []
-  const stack = []
-  let index = 0
-  let sawTag = false
+  const explicitEndTags = new Set()
+  const opaqueRanges = []
+  let structurallyValid = true
 
-  while (index < corpus.length) {
-    if (corpus[index] !== '<') {
-      const nextTag = corpus.indexOf('<', index)
-      const end = nextTag < 0 ? corpus.length : nextTag
-      if (stack.length === 0 && corpus.slice(index, end).trim()) return null
-      if (stack.length > 0 && isWholeEnterpriseAvailabilityQuestion(corpus.slice(index, end))) ranges.push([index, end])
-      index = end
-      continue
+  const walk = (node, blockAncestor = null) => {
+    if (node.sourceCodeLocation && node.nodeName === '#text') opaqueRanges.push(node.sourceCodeLocation)
+    if (node.sourceCodeLocation && node.nodeName === '#comment') opaqueRanges.push(node.sourceCodeLocation)
+    if (node.sourceCodeLocation && node.nodeName === '#documentType') opaqueRanges.push(node.sourceCodeLocation)
+    if (!isElement(node)) {
+      for (const child of node.childNodes ?? []) walk(child, blockAncestor)
+      return
     }
 
-    sawTag = true
-    if (corpus.startsWith('<!--', index)) {
-      const commentEnd = corpus.indexOf('-->', index + 4)
-      if (commentEnd < 0) return null
-      index = commentEnd + 3
-      continue
-    }
-    if (/^<!doctype\b/i.test(corpus.slice(index))) {
-      const doctypeEnd = findHtmlTagEnd(corpus, index + 2)
-      if (doctypeEnd < 0) return null
-      index = doctypeEnd + 1
-      continue
+    const location = node.sourceCodeLocation
+    if (location?.endTag) explicitEndTags.add(location.endTag.startOffset)
+    if (location && !htmlVoidElements.has(node.tagName) && !location.endTag) structurallyValid = false
+    for (const attribute of Object.values(location?.attrs ?? {})) {
+      opaqueRanges.push(attribute)
     }
 
-    const closing = corpus.slice(index).match(/^<\/([a-z][\w:-]*)\s*>/i)
-    if (closing) {
-      if (stack.pop() !== closing[1].toLowerCase()) return null
-      index += closing[0].length
-      continue
+    const isIgnored = htmlIgnoredElements.has(node.tagName)
+    const isBlock = !htmlInlineElements.has(node.tagName) && !htmlVoidElements.has(node.tagName) && !isIgnored
+    const currentBlock = isIgnored ? null : isBlock || !blockAncestor ? node : blockAncestor
+    if (!isIgnored && currentBlock === node && isWholeEnterpriseAvailabilityQuestion(descendantText(node))) {
+      const addTextRanges = (child) => {
+        if (child.nodeName === '#text' && child.sourceCodeLocation) ranges.push([child.sourceCodeLocation.startOffset, child.sourceCodeLocation.endOffset])
+        for (const descendant of child.childNodes ?? []) addTextRanges(descendant)
+      }
+      addTextRanges(node)
     }
-
-    const opening = corpus.slice(index).match(/^<([a-z][\w:-]*)/i)
-    if (!opening) return null
-    const tagName = opening[1].toLowerCase()
-    const tagEnd = findHtmlTagEnd(corpus, index + opening[0].length)
-    if (tagEnd < 0) return null
-    let attributesEnd = tagEnd
-    while (attributesEnd > index && /\s/.test(corpus[attributesEnd - 1])) attributesEnd -= 1
-    const selfClosing = corpus[attributesEnd - 1] === '/'
-    if (selfClosing) attributesEnd -= 1
-    const attributeRanges = parseHtmlAttributes(corpus, index + opening[0].length, attributesEnd)
-    if (!attributeRanges) return null
-    ranges.push(...attributeRanges)
-    index = tagEnd + 1
-
-    if (selfClosing || htmlVoidElements.has(tagName)) continue
-    if (htmlRawElements.has(tagName)) {
-      const rawClose = corpus.slice(index).match(new RegExp(`</${tagName}\\s*>`, 'i'))
-      if (!rawClose) return null
-      index += rawClose.index + rawClose[0].length
-      continue
+    for (const attribute of node.attrs) {
+      const location = node.sourceCodeLocation?.attrs?.[attribute.name]
+      const valueRange = location && rawAttributeValueRange(corpus, location)
+      if (valueRange && isWholeEnterpriseAvailabilityQuestion(attribute.value)) ranges.push([valueRange.startOffset, valueRange.endOffset])
     }
-    stack.push(tagName)
+    for (const child of node.childNodes ?? []) walk(child, currentBlock)
   }
+  walk(tree)
 
-  if (!sawTag || stack.length > 0) return null
-  return ranges
+  for (const match of corpus.matchAll(/<\/\s*[a-z][\w:-]*\s*>/gi)) {
+    if (opaqueRanges.some((range) => isRangeInside(range, match.index))) continue
+    if (!explicitEndTags.has(match.index)) structurallyValid = false
+  }
+  return structurallyValid ? ranges : null
 }
 
 const isCompleteSourceStringLiteral = (corpus, literal) => {
@@ -223,7 +191,7 @@ const isEnterpriseQuestionValue = (corpus, matchIndex, htmlQuestionRanges, htmlC
 const findClaimMatch = (corpus, claim) => {
   if (claim.id !== 'positive-enterprise-availability') return corpus.match(claim.pattern)
   const pattern = claim.pattern.flags.includes('g') ? claim.pattern : new RegExp(claim.pattern.source, `${claim.pattern.flags}g`)
-  const htmlQuestionRanges = findHtmlQuestionRanges(corpus)
+  const htmlQuestionRanges = parseHtmlQuestionRanges(corpus)
   const htmlCandidate = /^\s*</.test(corpus)
   for (const match of corpus.matchAll(pattern)) {
     if (!isEnterpriseQuestionValue(corpus, match.index, htmlQuestionRanges, htmlCandidate)) return match
@@ -254,7 +222,7 @@ export function findProhibitedClaims(text) {
   const corpus = decodeHtmlEntities(text)
   return prohibitedClaims
     .map((claim) => {
-      const match = findClaimMatch(corpus, claim)
+      const match = findClaimMatch(claim.id === 'positive-enterprise-availability' ? text : corpus, claim)
       return { id: claim.id, reason: claim.reason, match: match?.[0] }
     })
     .filter(({ match }) => match)
