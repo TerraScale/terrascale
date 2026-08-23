@@ -59,9 +59,38 @@ export const prohibitedClaims = [
   { id: 'obsolete-plan', pattern: /\b(?:Scale|Business)\s+(?:plan|pricing|tier|subscription)|\b(?:plan|plano|pricing|precios?|pre[cç]os?)\s+(?:Scale|Business)\b/i, reason: 'Scale and Business plans are retired from the Public Alpha catalog.' },
   { id: 'deferred-queue-product-localized', pattern: /\b(?:filas?|fila)\b/i, reason: 'Do not advertise deferred queue products.' },
   { id: 'positive-paid-overages', pattern: /\b(?:(?:paid\s+overages?|overages?)\s+(?:are|remain|supported|available|included|offered)|excedentes?\s+(?:pagados?|pagos?)\s+(?:est[aá]\s+)?(?:disponibles?|dispon[ií]ve(?:l|is)))\b/i, reason: 'Paid overages are not available during Public Alpha.' },
-  { id: 'positive-enterprise-availability', pattern: /(?:(?<!¿)(?<!\bO )|(?<=\bO ))\bEnterprise\s+(?:(?:is|remains)\s+available|(?:est[aá]\s+)?(?:disponibles?|dispon[ií]ve(?:l|is)))\b(?!\?)/i, reason: 'Enterprise is not available during Public Alpha.' },
+  { id: 'positive-enterprise-availability', pattern: /\bEnterprise\s+(?:(?:is|remains)\s+available|(?:est[aá]\s+)?(?:disponibles?|dispon[ií]ve(?:l|is)))\b/i, reason: 'Enterprise is not available during Public Alpha.' },
   { id: 'unpublished-terms-route', pattern: /href=["']\/terms["']/i, reason: 'The terms route must remain unpublished until approved.' },
 ]
+
+const enterpriseAvailabilityQuestionPattern = /^(?:(?:¿\s*)?Enterprise\s+est[aá]\s+disponible|O\s+Enterprise\s+est[aá]\s+dispon[ií]ve(?:l|is))\s*\?$/i
+const sourceStringPattern = /(['"])((?:\\.|(?!\1)[\s\S])*)\1/g
+
+const isWholeEnterpriseAvailabilityQuestion = (value) => enterpriseAvailabilityQuestionPattern.test(value.trim())
+
+const isEnterpriseQuestionValue = (corpus, matchIndex) => {
+  if (isWholeEnterpriseAvailabilityQuestion(corpus)) return true
+
+  const lineStart = corpus.lastIndexOf('\n', matchIndex) + 1
+  const lineEnd = corpus.indexOf('\n', matchIndex)
+  if (isWholeEnterpriseAvailabilityQuestion(corpus.slice(lineStart, lineEnd < 0 ? corpus.length : lineEnd))) return true
+
+  for (const literal of corpus.matchAll(sourceStringPattern)) {
+    const valueStart = literal.index + 1
+    const valueEnd = valueStart + literal[2].length
+    if (matchIndex >= valueStart && matchIndex < valueEnd && isWholeEnterpriseAvailabilityQuestion(literal[2])) return true
+  }
+  return false
+}
+
+const findClaimMatch = (corpus, claim) => {
+  if (claim.id !== 'positive-enterprise-availability') return corpus.match(claim.pattern)
+  const pattern = claim.pattern.flags.includes('g') ? claim.pattern : new RegExp(claim.pattern.source, `${claim.pattern.flags}g`)
+  for (const match of corpus.matchAll(pattern)) {
+    if (!isEnterpriseQuestionValue(corpus, match.index)) return match
+  }
+  return null
+}
 
 export function walk(directory, extensions) {
   const files = []
@@ -85,7 +114,10 @@ const decodeHtmlEntities = (text) =>
 export function findProhibitedClaims(text) {
   const corpus = decodeHtmlEntities(text)
   return prohibitedClaims
-    .map(({ id, reason, pattern }) => ({ id, reason, match: corpus.match(pattern)?.[0] }))
+    .map((claim) => {
+      const match = findClaimMatch(corpus, claim)
+      return { id: claim.id, reason: claim.reason, match: match?.[0] }
+    })
     .filter(({ match }) => match)
 }
 
