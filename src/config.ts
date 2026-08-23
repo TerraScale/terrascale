@@ -7,26 +7,18 @@ export type AccessTokenProvider = string | (() => Promise<string | undefined> | 
 import type { TerraScaleRequestMetricRecorder } from "./http.js";
 
 export type TerraScaleRuntimeConfig = {
-  /** Public API root. Defaults to https://api.terrascale.tech. */
   readonly apiBaseUrl?: string;
   readonly authBaseUrl?: string;
   readonly projectId?: ProjectId;
   readonly accessToken?: AccessTokenProvider;
   readonly defaultHeaders?: HeadersInit;
   readonly fetch?: FetchLike;
-  /** Records metrics for this client instance only. Recorder failures are ignored. */
   readonly requestMetricRecorder?: TerraScaleRequestMetricRecorder;
-  /** Generates a stable key once per mutating request. Disabled by default for public callers. */
   readonly idempotencyKeyFactory?: (() => string) | undefined;
-  /** Selected region preference. Failover affinity sends this as a routing hint. */
   readonly preferredRegion?: string | undefined;
-  /** Strict affinity uses the selected region's production hostname and never uses a failover hint. */
   readonly regionAffinity?: "failover" | "strict" | undefined;
-  /** Stores write tokens inside this client instance and sends the latest token on later reads. */
   readonly sessionConsistency?: "automatic" | "none" | undefined;
-  /** Number of transient retry attempts after the initial request. Disabled by default. */
   readonly maxRetryAttempts?: number | undefined;
-  /** Base delay in milliseconds when a transient response has no Retry-After header. */
   readonly retryDelayMs?: number | undefined;
 };
 

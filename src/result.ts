@@ -129,9 +129,6 @@ function routingFrom(headers: Headers): TerraScaleRoutingObservation | undefined
 
 function normalizeRegion(value: string | null): string | undefined {
   const normalized = value?.trim().toLowerCase();
-  // Routing headers are server-provided display data. Keep only the public
-  // region-code shape so an accidental operator hostname or diagnostic value
-  // cannot leak through the SDK's typed result.
   return normalized !== undefined && /^[a-z0-9][a-z0-9-]{1,31}$/u.test(normalized)
     ? normalized
     : undefined;

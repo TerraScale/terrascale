@@ -52,11 +52,8 @@ export type TerraScaleRequestOptions<TBody = unknown> = {
   readonly body?: TBody | undefined;
   readonly headers?: HeadersInit | undefined;
   readonly signal?: AbortSignal | undefined;
-  /** Controls whether TerraScale identity and configured default headers may be attached. */
   readonly headerPolicy?: "authenticated" | "anonymous" | undefined;
-  /** Overrides automatic generation. Set to false to explicitly opt out. */
   readonly idempotencyKey?: string | false | undefined;
-  /** Internal public-contract classification for document session token handling. */
   readonly consistency?: "read" | "write" | undefined;
 };
 
@@ -312,7 +309,7 @@ export class TerraScaleHttp {
     try {
       this.config.requestMetricRecorder?.({ base, routeName, status, durationMs });
     } catch {
-      // Observability must never change request behavior.
+      return;
     }
   }
 }

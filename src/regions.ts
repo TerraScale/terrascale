@@ -75,9 +75,6 @@ export function normalizeRegionCodes(
       continue;
     }
 
-    // Preserve a caller-supplied malformed or unknown value so the API can
-    // reject it. Silently substituting GRU could provision data in a region
-    // the caller never selected.
     selected.add(candidate);
   }
 

@@ -53,7 +53,6 @@ export type Page<TItem> = {
   readonly nextCursor?: string | null;
 };
 
-/** Exact signed 64-bit integer serialized as a base-10 JSON string. */
 export type Int64String = `${bigint}`;
 
 export type ProjectScoped = {
@@ -593,10 +592,6 @@ export type CreateDatabaseRequest = {
   readonly name: string;
 };
 
-/**
- * Physical database branch admission. The Platform currently returns
- * `"unavailable"` and all availability flags as false.
- */
 export type DatabaseBranchCapabilityResponse = {
   readonly projectId: ProjectId;
   readonly admissionState: string;
@@ -606,10 +601,6 @@ export type DatabaseBranchCapabilityResponse = {
   readonly detail: string;
 };
 
-/**
- * Requests a physical database clone. The Platform currently rejects every
- * request with its typed 503 error response; it does not create a branch.
- */
 export type CreateDatabaseBranchRequest = {
   readonly sourceDatabaseId?: DatabaseId;
 };
@@ -635,25 +626,19 @@ export type ProjectSavedQueryResponse = {
   readonly updatedAt: Timestamp;
 };
 
-/** A v2 saved query with an opaque, resource-bound conditional revision token. */
 export type ProjectSavedQueryV2Response = ProjectSavedQueryResponse & {
   readonly revision: string;
 };
 
-/** Conditional v2 saved-query update. Pass the revision returned by a v2 read or list. */
 export type UpdateProjectSavedQueryV2Request = ProjectSavedQueryRequest & {
   readonly revision: string;
 };
 
-/** Cursor parameters for a mutation-safe v3 saved-query snapshot. */
 export type ProjectSavedQuerySnapshotPageRequest = {
-  /** Opaque, project-bound cursor returned by the preceding v3 page. */
   readonly cursor?: string;
-  /** Number of results to return, from 1 through 500. */
   readonly take?: number;
 };
 
-/** A v3 snapshot page. Reload the collection if its opaque cursor expires with a conflict. */
 export type ProjectSavedQuerySnapshotPageResponse = {
   readonly items: readonly ProjectSavedQueryV2Response[];
   readonly nextCursor?: string | null;

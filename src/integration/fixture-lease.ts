@@ -14,11 +14,6 @@ export type FixtureLeaseScope = {
   readonly credentialFingerprint: string;
 };
 
-/**
- * Acquires a process-exclusive fixture lock. The lock is fail-closed: an
- * existing path is never treated as an expired lease and is never removed by
- * a process that did not create it.
- */
 export async function withFixtureLease<TValue>(
   leasePath: string,
   scope: FixtureLeaseScope,

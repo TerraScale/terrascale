@@ -1346,10 +1346,6 @@ export class DatabaseBranchesClient {
     });
   }
 
-  /**
-   * Always returns the Platform's typed failure today (normally 503); no
-   * physical branch is created until the capability reports admission.
-   */
   requestClone(
     request: Models.CreateDatabaseBranchRequest,
     projectId?: Ulid,
@@ -1359,7 +1355,6 @@ export class DatabaseBranchesClient {
       path: `${projectRoot(this.#http, projectId)}/database-branches`,
       routeName: "databaseBranches.requestClone",
       body: request,
-      // The public contract has no idempotency or successful clone semantics.
       idempotencyKey: false,
     });
   }
