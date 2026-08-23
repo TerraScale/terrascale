@@ -1,0 +1,30 @@
+[package]
+name = "terrabase-v2"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "LicenseRef-TerraScale-Pending"
+description = "TerraBaseV2 Rust engine foundation"
+repository = "ssh://git@git.terrascale.tech/TerraScale/TerraBaseV2.git"
+readme = "README.md"
+
+[workspace]
+resolver = "3"
+
+[lib]
+path = "src/lib.rs"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+panic = "abort"
+strip = "symbols"
+
+[profile.dev]
+debug = 1
+
+[package.metadata.terrabase]
+status = "foundation-only"
+license_gate = "pending-before-release"
+parity_matrix = "parity/inventory.json"

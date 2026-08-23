@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git.terrascale.tech/TerraScale/TerraBaseV2/parity/parity.schema.json",
+  "title": "TerraBaseV2 parity inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source", "status_values", "items"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product", "commit", "evidence_ids"],
+      "properties": {
+        "product": { "const": "TerraBase V1" },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^E-[0-9]{3}$" },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "status_values": {
+      "type": "array",
+      "items": {
+        "enum": ["unresolved", "in-progress", "implemented", "qualified", "accepted-exclusion"]
+      },
+      "minItems": 5,
+      "uniqueItems": true
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/item" }
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "name", "classification", "v1_evidence", "v2",
+        "public_contract", "proof_ids", "downstream_impact", "risk"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^PB-[0-9]{4}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "classification": {
+          "enum": ["core", "optional", "legacy", "admin", "protocol"]
+        },
+        "v1_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["evidence_ids", "source_commit", "scope"],
+          "properties": {
+            "evidence_ids": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^E-[0-9]{3}$" },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "source_commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "scope": { "type": "string", "minLength": 1 }
+          }
+        },
+        "v2": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["owner", "public_seam", "status"],
+          "properties": {
+            "owner": { "type": "string", "minLength": 1 },
+            "public_seam": { "type": "string", "minLength": 1 },
+            "status": {
+              "enum": ["unresolved", "in-progress", "implemented", "qualified", "accepted-exclusion"]
+            },
+            "disposition": { "type": "string" }
+          }
+        },
+        "public_contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["parity_required", "semantics", "compatibility"],
+          "properties": {
+            "parity_required": { "type": "boolean" },
+            "semantics": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+            "compatibility": { "type": "string", "minLength": 1 }
+          }
+        },
+        "proof_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^P-[0-9]{3}$" },
+          "uniqueItems": true
+        },
+        "downstream_impact": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "risk": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["level", "description"],
+          "properties": {
+            "level": { "enum": ["low", "medium", "high", "critical"] },
+            "description": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  }
+}

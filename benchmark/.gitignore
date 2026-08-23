@@ -1,0 +1,11 @@
+/target/
+*.swp
+*.swo
+.DS_Store
+__pycache__/
+*.pyc
+
+# Local benchmark and recovery output. Published receipts belong under the
+# explicitly reviewed evidence paths, after redaction.
+/evidence/
+/benches/results/
