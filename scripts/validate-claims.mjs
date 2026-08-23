@@ -59,7 +59,7 @@ export const prohibitedClaims = [
   { id: 'obsolete-plan', pattern: /\b(?:Scale|Business)\s+(?:plan|pricing|tier|subscription)|\b(?:plan|plano|pricing|precios?|pre[cç]os?)\s+(?:Scale|Business)\b/i, reason: 'Scale and Business plans are retired from the Public Alpha catalog.' },
   { id: 'deferred-queue-product-localized', pattern: /\b(?:filas?|fila)\b/i, reason: 'Do not advertise deferred queue products.' },
   { id: 'positive-paid-overages', pattern: /\b(?:(?:paid\s+overages?|overages?)\s+(?:are|remain|supported|available|included|offered)|excedentes?\s+(?:pagados?|pagos?)\s+(?:est[aá]\s+)?(?:disponibles?|dispon[ií]ve(?:l|is)))\b/i, reason: 'Paid overages are not available during Public Alpha.' },
-  { id: 'positive-enterprise-availability', pattern: /(?<!¿)\bEnterprise\s+(?:(?:is|remains)\s+available|(?:est[aá]\s+)?(?:disponibles?|dispon[ií]ve(?:l|is)))\b(?![^\n.!?]*\?)/i, reason: 'Enterprise is not available during Public Alpha.' },
+  { id: 'positive-enterprise-availability', pattern: /(?:(?<!¿)(?<!\bO )|(?<=\bO ))\bEnterprise\s+(?:(?:is|remains)\s+available|(?:est[aá]\s+)?(?:disponibles?|dispon[ií]ve(?:l|is)))\b(?!\?)/i, reason: 'Enterprise is not available during Public Alpha.' },
   { id: 'unpublished-terms-route', pattern: /href=["']\/terms["']/i, reason: 'The terms route must remain unpublished until approved.' },
 ]
 
