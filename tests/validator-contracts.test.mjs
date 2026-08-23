@@ -11,11 +11,13 @@ import {
 } from '../scripts/validate-redirect-contract.mjs'
 import { probeExternalLinks } from '../scripts/validate-links.mjs'
 import { validateRenderedLinks } from '../scripts/validate-links.mjs'
+import { scanProhibitedClaims, walk as walkClaimFiles } from '../scripts/validate-claims.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const claimsValidator = path.join(root, 'scripts/validate-claims.mjs')
 const claimsFixtureRoot = path.join(root, 'tests/fixtures/claims-prohibited')
 const linksFixture = path.join(root, 'tests/fixtures/links-prohibited.html')
+const localizedClaimsFixtureRoot = path.join(root, 'tests/fixtures/claims-localized')
 
 test('redirect rules reject insecure or non-permanent migrations', () => {
   const failures = validateRedirectRules(`
@@ -52,6 +54,7 @@ test('deployed redirect checks verify the complete safe chain', async () => {
       'https://dash.terrascale.tech/login?next=%2Fprojects',
       new Response('ok', { status: 200 }),
     ],
+    ['https://dash.terrascale.tech/register?plan=pro', new Response('ok', { status: 200 })],
   ])
 
   const failures = await checkDeployedRedirects({
@@ -63,6 +66,80 @@ test('deployed redirect checks verify the complete safe chain', async () => {
 
   assert.deepEqual(failures, [])
   assert.deepEqual(requests, [...responses.keys()])
+})
+
+test('deployed checks never fetch an insecure or noncanonical redirect target', async () => {
+  const input = 'https://terrascale.tech/signup?plan=pro&return=%2Fpricing'
+  for (const location of ['http://127.0.0.1:4173/loop', 'https://evil.example/loop', 'https://dash.terrascale.tech:8443/loop']) {
+    const requests = []
+    const failures = await checkDeployedRedirects({
+      vectors: [{ label: '/signup', input, destination: 'https://dash.terrascale.tech/register?plan=pro&return=%2Fpricing', initialStatus: 308 }],
+      fetchImpl: async (url) => {
+        requests.push(url)
+        return new Response(null, { status: 308, headers: { location } })
+      },
+    })
+
+    assert.deepEqual(requests, [input])
+    assert.match(failures.join('\n'), /HTTPS|canonical|rejected/i)
+  }
+})
+
+test('deployed checks reject malformed statuses before following a chain', async () => {
+  const input = 'https://terrascale.tech/signup?plan=pro&return=%2Fpricing'
+  const requests = []
+  const failures = await checkDeployedRedirects({
+    vectors: [{ label: '/signup', input, destination: 'https://dash.terrascale.tech/register?plan=pro&return=%2Fpricing', initialStatus: 308 }],
+    fetchImpl: async (url) => {
+      requests.push(url)
+      return { status: '308', headers: { location: 'https://dash.terrascale.tech/register?plan=pro&return=%2Fpricing' } }
+    },
+  })
+
+  assert.equal(requests.length, 1)
+  assert.match(failures.join('\n'), /status|numeric|malformed/i)
+})
+
+test('deployed checks reject path/query tampering and loops without continuing', async () => {
+  const input = 'https://terrascale.tech/signup?plan=pro&return=%2Fpricing'
+  const destination = 'https://dash.terrascale.tech/register?plan=pro&return=%2Fpricing'
+  const requests = []
+  const failures = await checkDeployedRedirects({
+    vectors: [{ label: '/signup', input, destination, initialStatus: 308 }],
+    fetchImpl: async (url) => {
+      requests.push(url)
+      if (url === input) return new Response(null, { status: 308, headers: { location: destination } })
+      return new Response(null, { status: 308, headers: { location: 'https://dash.terrascale.tech/login?next=%2Felsewhere' } })
+    },
+  })
+
+  assert.deepEqual(requests, [input, destination])
+  assert.match(failures.join('\n'), /path\/query state/i)
+})
+
+test('deployed checks detect a canonical-host redirect loop', async () => {
+  const input = 'https://terrascale.tech/signup?plan=pro&return=%2Fpricing'
+  const destination = 'https://dash.terrascale.tech/register?plan=pro&return=%2Fpricing'
+  const requests = []
+  const failures = await checkDeployedRedirects({
+    vectors: [{ label: '/signup', input, destination, initialStatus: 308 }],
+    fetchImpl: async (url) => {
+      requests.push(url)
+      return new Response(null, { status: 308, headers: { location: destination } })
+    },
+  })
+
+  assert.deepEqual(requests, [input, destination])
+  assert.match(failures.join('\n'), /loop/i)
+})
+
+test('localized source scans reject translated uptime and obsolete plan claims', () => {
+  const files = walkClaimFiles(path.join(localizedClaimsFixtureRoot, 'src'), new Set(['.ts']))
+  const failures = scanProhibitedClaims(files, localizedClaimsFixtureRoot)
+
+  assert.match(failures.join('\n'), /availability|uptime/i)
+  assert.match(failures.join('\n'), /annual|Scale|Business/i)
+  assert.match(failures.join('\n'), /backup|queue/i)
 })
 
 test('rendered claim scans inspect metadata and structured data', () => {
