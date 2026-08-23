@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
+import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -17,6 +18,8 @@ export const requiredLinks = [
   'https://docs.terrascale.tech/en/legal/data-processing-terms/',
   'https://docs.terrascale.tech/en/support/',
 ]
+
+export const approvedExternalHosts = new Set(requiredLinks.map((href) => new URL(href).hostname))
 
 export function walk(directory) {
   const files = []
@@ -175,6 +178,44 @@ export function validateRenderedLinks({ buildRoot, files = walk(buildRoot) } = {
   return { failures, linkCount: links.length, externalLinks }
 }
 
+const isPrivateHostname = (hostname) => {
+  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  if (
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized.endsWith('.local') ||
+    normalized.endsWith('.internal') ||
+    normalized.endsWith('.invalid') ||
+    normalized.endsWith('.test')
+  ) return true
+
+  if (net.isIP(normalized) === 6) {
+    return normalized === '::1' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')
+  }
+  if (net.isIP(normalized) !== 4) return false
+  const octets = normalized.split('.').map(Number)
+  const [first, second] = octets
+  return first === 0 || first === 10 || first === 127 || (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168) || (first === 100 && second >= 64 && second <= 127)
+}
+
+const normalizeProbeUrl = (value) => {
+  const url = new URL(value)
+  if (url.pathname === '/' && !url.search && !url.hash) url.pathname = ''
+  return url.href
+}
+
+const validateProbeTarget = (target, expectedHost) => {
+  const failures = []
+  if (target.protocol !== 'https:') failures.push(`external link redirect must use HTTPS: ${target.href}`)
+  if (target.username || target.password) failures.push(`external link redirect must not contain credentials: ${target.href}`)
+  if (target.port) failures.push(`external link redirect must not contain a non-default port: ${target.href}`)
+  if (target.hostname !== expectedHost || !approvedExternalHosts.has(target.hostname)) {
+    failures.push(`external link redirect must stay on an approved host: ${target.href}`)
+  }
+  if (isPrivateHostname(target.hostname)) failures.push(`external link redirect must not target a private or loopback host: ${target.href}`)
+  return failures
+}
+
 export async function probeExternalLinks(urls = requiredLinks, {
   fetchImpl = globalThis.fetch,
   timeoutMs = Number(process.env.TERRASCALE_VALIDATOR_TIMEOUT_MS ?? 10_000),
@@ -184,16 +225,32 @@ export async function probeExternalLinks(urls = requiredLinks, {
   if (typeof fetchImpl !== 'function') return ['release link check requires a fetch implementation']
 
   for (const href of urls) {
+    let initial
+    try {
+      initial = new URL(href)
+    } catch {
+      failures.push(`external link probe received an invalid URL: ${href}`)
+      continue
+    }
+    const initialFailures = validateProbeTarget(initial, initial.hostname)
+    if (initialFailures.length) {
+      failures.push(...initialFailures)
+      continue
+    }
+
     let current = href
+    const expectedHost = initial.hostname
     const seen = new Set()
-    let reachable = false
+    let completed = false
     for (let hop = 0; hop <= maxHops; hop += 1) {
-      if (seen.has(current)) {
+      const normalizedCurrent = normalizeProbeUrl(current)
+      if (seen.has(normalizedCurrent)) {
         failures.push(`external link redirect loop: ${href}`)
-        reachable = true
+        completed = true
         break
       }
-      seen.add(current)
+      seen.add(normalizedCurrent)
+
       let response
       try {
         const controller = new AbortController()
@@ -205,25 +262,31 @@ export async function probeExternalLinks(urls = requiredLinks, {
         }
       } catch (error) {
         failures.push(`external link probe failed for ${current}: ${error instanceof Error ? error.message : String(error)}`)
-        reachable = true
+        completed = true
         break
       }
-      const status = Number(response?.status)
+
+      const status = response?.status
+      if (typeof status !== 'number' || !Number.isInteger(status) || status < 100 || status > 599) {
+        failures.push(`external link returned a malformed or non-numeric status: ${current}`)
+        completed = true
+        break
+      }
       if (status >= 200 && status < 300) {
-        reachable = true
+        completed = true
         break
       }
       if (status < 300 || status >= 400) {
-        failures.push(`external link returned ${Number.isInteger(status) ? status : 'an invalid status'}: ${current}`)
-        reachable = true
+        failures.push(`external link returned ${status}: ${current}`)
+        completed = true
         break
       }
       const location = typeof response?.headers?.get === 'function'
         ? response.headers.get('location')
         : response?.headers?.location ?? response?.headers?.Location
-      if (!location) {
+      if (typeof location !== 'string' || !location.trim()) {
         failures.push(`external link returned ${status} without a Location header: ${current}`)
-        reachable = true
+        completed = true
         break
       }
       let next
@@ -231,14 +294,28 @@ export async function probeExternalLinks(urls = requiredLinks, {
         next = new URL(location, current)
       } catch {
         failures.push(`external link returned an invalid Location header: ${location}`)
-        reachable = true
+        completed = true
         break
       }
-      if (next.protocol !== 'https:') failures.push(`external link redirect must use HTTPS: ${next.href}`)
+      const targetFailures = validateProbeTarget(next, expectedHost)
+      if (targetFailures.length) {
+        failures.push(...targetFailures)
+        completed = true
+        break
+      }
+      if (seen.has(normalizeProbeUrl(next.href))) {
+        failures.push(`external link redirect loop: ${href}`)
+        completed = true
+        break
+      }
+      if (hop === maxHops) {
+        failures.push(`external link redirect chain exceeded ${maxHops} hops: ${href}`)
+        completed = true
+        break
+      }
       current = next.href
-      if (hop === maxHops) failures.push(`external link redirect chain exceeded ${maxHops} hops: ${href}`)
     }
-    if (!reachable) failures.push(`external link probe did not complete: ${href}`)
+    if (!completed) failures.push(`external link probe did not complete: ${href}`)
   }
   return failures
 }
