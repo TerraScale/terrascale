@@ -79,17 +79,15 @@ public sealed class TerraScaleBillingClientTests
             BearerTokenProvider = static _ => ValueTask.FromResult("test-token")
         });
 
-#pragma warning disable CS0618 // Compatibility members must be proven absent from the wire contract.
         var checkoutRequest = new TerraScaleCreateCheckoutSessionRequest
         {
             PlanId = "plan-a",
             BillingInterval = "annual",
-            Provider = "polar",
-            SuccessUrl = "https://app.example.test/checkout/success",
-            CancelUrl = "https://app.example.test/checkout/cancel",
-            CustomerEmail = "customer@example.test"
+            Provider = "polar"
         };
-#pragma warning restore CS0618
+        SetCompatibilityProperty(checkoutRequest, "SuccessUrl", "https://app.example.test/checkout/success");
+        SetCompatibilityProperty(checkoutRequest, "CancelUrl", "https://app.example.test/checkout/cancel");
+        SetCompatibilityProperty(checkoutRequest, "CustomerEmail", "customer@example.test");
 
         var checkout = await client.Billing.CreateCheckoutSessionAsync(
             "organization-a",
@@ -202,6 +200,16 @@ public sealed class TerraScaleBillingClientTests
         await Assert.That(exception).IsNotNull();
         await Assert.That(handler.IdempotencyKeys).Count().IsEqualTo(1);
         await Assert.That(handler.IdempotencyKeys[0]).IsNull();
+    }
+
+    private static void SetCompatibilityProperty(
+        TerraScaleCreateCheckoutSessionRequest request,
+        string propertyName,
+        string value)
+    {
+        var property = typeof(TerraScaleCreateCheckoutSessionRequest).GetProperty(propertyName)
+            ?? throw new InvalidOperationException($"Compatibility property {propertyName} is missing.");
+        property.SetValue(request, value);
     }
 
     private sealed class BillingRecordingHandler(bool forbidden = false) : HttpMessageHandler
