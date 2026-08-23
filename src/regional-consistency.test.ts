@@ -206,6 +206,86 @@ describe("regional document consistency", () => {
     assert.equal(requests[0]!.headers.get("if-match"), "stale-change-token");
   });
 
+  test("forwards conditional tokens for patch and delete conflicts", async () => {
+    const requests: Request[] = [];
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async input => {
+        requests.push(input instanceof Request ? input : new Request(input));
+        return Response.json(
+          {
+            code: "document_change_conflict",
+            message: "The document changed before this mutation.",
+            target: "document",
+          },
+          { status: 409 },
+        );
+      },
+    });
+
+    const patchResult = await client.documents.patch(
+      { repositoryId },
+      documentId,
+      { name: "Ada" },
+      { expectedChangeToken: "patch-change-token" },
+    );
+    const deleteResult = await client.documents.delete(
+      { repositoryId },
+      documentId,
+      { expectedChangeToken: "delete-change-token" },
+    );
+
+    for (const result of [patchResult, deleteResult]) {
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.status, 409);
+        assert.equal(result.error.kind, "conflict");
+        assert.equal(result.error.code, "document_change_conflict");
+        assert.equal(result.error.target, "document");
+      }
+    }
+    assert.equal(requests[0]!.method, "PATCH");
+    assert.equal(requests[0]!.headers.get("if-match"), "patch-change-token");
+    assert.equal(requests[1]!.method, "DELETE");
+    assert.equal(requests[1]!.headers.get("if-match"), "delete-change-token");
+  });
+
+  test("keeps strict-affinity retries on the selected regional host after 503 or transport failure", async () => {
+    for (const failure of ["503", "transport"] as const) {
+      const requests: Request[] = [];
+      const client = createTerraScaleClient({
+        apiBaseUrl: "https://api.terrascale.tech",
+        preferredRegion: "SFO",
+        regionAffinity: "strict",
+        maxRetryAttempts: 1,
+        retryDelayMs: 0,
+        fetch: async input => {
+          requests.push(input instanceof Request ? input : new Request(input));
+          if (failure === "transport") {
+            throw new Error("regional connection failed");
+          }
+          return Response.json(
+            { code: "regional_failure", message: "The regional service is unavailable." },
+            { status: 503 },
+          );
+        },
+      });
+
+      const result = await client.documents.get({ repositoryId }, documentId);
+
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.error.kind, failure === "transport" ? "transport" : "server");
+      }
+      assert.equal(requests.length, 2);
+      assert.deepEqual(
+        requests.map(request => new URL(request.url).hostname),
+        ["sfo.api.terrascale.tech", "sfo.api.terrascale.tech"],
+      );
+      assert.equal(requests.some(request => new URL(request.url).hostname === "api.terrascale.tech"), false);
+    }
+  });
+
   test("exposes only normalized public serving metadata on successful reads", async () => {
     const client = createTerraScaleClient({
       apiBaseUrl: "https://api.terrascale.test",
