@@ -197,7 +197,8 @@ test('localized Enterprise questions are not availability claims', () => {
     '<p>¿Enterprise está disponible?</p>',
     '<span>O Enterprise está disponível ?</span>',
   ]) {
-    assert.equal(findProhibitedClaims(question).some(({ id }) => id === 'positive-enterprise-availability'), false)
+    const mode = question.startsWith('<') ? 'rendered' : 'source'
+    assert.equal(findProhibitedClaims(question, { mode }).some(({ id }) => id === 'positive-enterprise-availability'), false)
   }
 
   for (const declaration of [
@@ -214,7 +215,8 @@ test('localized Enterprise questions are not availability claims', () => {
     'const faq = `Enterprise está disponível? ${salesCopy}`',
     "const faq = 'Enterprise está disponible?'; emit('Contacta ventas.')",
   ]) {
-    assert.equal(findProhibitedClaims(declaration).some(({ id }) => id === 'positive-enterprise-availability'), true)
+    const mode = declaration.startsWith('<') ? 'rendered' : 'source'
+    assert.equal(findProhibitedClaims(declaration, { mode }).some(({ id }) => id === 'positive-enterprise-availability'), true)
   }
 })
 
@@ -228,7 +230,7 @@ test('malformed HTML never earns an Enterprise question exemption', () => {
     '<p>Enterprise is available?',
     '<p>Enterprise is available?</p',
   ]) {
-    assert.equal(findProhibitedClaims(malformed).some(({ id }) => id === 'positive-enterprise-availability'), true)
+    assert.equal(findProhibitedClaims(malformed, { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability'), true)
   }
 })
 
@@ -241,7 +243,7 @@ test('normal rendered HTML exempts exact Enterprise FAQ nodes but not nearby cla
     '<!doctype html><html><head><meta name="description" content="x &quot; y"></head><body><p>Enterprise is available?</p></body></html>',
     '<!doctype html><html><head></head><body><p><span>Enterprise is <strong>available?</strong></span></p></body></html>',
   ]) {
-    assert.equal(findProhibitedClaims(document).some(({ id }) => id === 'positive-enterprise-availability'), false)
+    assert.equal(findProhibitedClaims(document, { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability'), false)
   }
 
   for (const document of [
@@ -252,8 +254,28 @@ test('normal rendered HTML exempts exact Enterprise FAQ nodes but not nearby cla
     ...questions.map((question) => `<!doctype html><html><body><p>${question}<span> for everyone.</span></p></body></html>`),
     '<!doctype html><html><body><!-- Enterprise is available? --><script type="application/ld+json">{"description":"Enterprise is available?"}</script><style>.faq::after { content: "Enterprise is available?"; }</style></body></html>',
   ]) {
-    assert.equal(findProhibitedClaims(document).some(({ id }) => id === 'positive-enterprise-availability'), true)
+    assert.equal(findProhibitedClaims(document, { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability'), true)
   }
+})
+
+test('rendered scans use complete decoded blocks and keep source exemptions out', () => {
+  for (const rendered of [
+    '<p>Enterprise is available?\n<span> for everyone.</span></p>',
+    '<span>Enterprise is available?<strong> for everyone.</strong></span>',
+    '<p>Enterprise&nbsp;is available? for everyone.</p>',
+    '<p>Enterprise&#32;is available? for everyone.</p>',
+    '<p>Enterprise&#x20;is available? for everyone.</p>',
+    '<p>Excedentes <strong>pagados disponibles</strong></p>',
+    '<p>Excedentes <strong>pagos disponíveis</strong></p>',
+    '<!--\nEnterprise is available?\n-->',
+    '<script type="application/ld+json">\n{"description":"Enterprise is available?"}\n</script>',
+    '<style>\n.enterprise::after { content: "Enterprise is available?"; }\n</style>',
+  ]) {
+    assert.equal(findProhibitedClaims(rendered, { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability' || id === 'positive-paid-overages'), true)
+  }
+
+  assert.equal(findProhibitedClaims("const faq = 'Enterprise is available?'", { mode: 'source' }).some(({ id }) => id === 'positive-enterprise-availability'), false)
+  assert.equal(findProhibitedClaims("const faq = 'Enterprise is available?'", { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability'), true)
 })
 
 test('rendered claim scans inspect metadata and structured data', () => {
