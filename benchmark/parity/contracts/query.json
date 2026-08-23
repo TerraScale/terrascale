@@ -4,7 +4,7 @@
   "owner": "WS-CONTRACT/query",
   "items": [
     {
-      "id": "PB-0003",
+      "id": "PB-4000",
       "name": "query-execution-results-and-errors",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryParser.Parse/TryParse, QueryOperation.Complete, QueryResult, QueriesHandler /databases/*/queries, and ParserTests.ParseQueries/ParseAndWrite establish the executable query, result, and failure contract."},
@@ -14,7 +14,7 @@
       "risk": {"level": "critical", "description": "A small result or error difference can silently change application behavior and benchmark correctness."}
     },
     {
-      "id": "PB-0004",
+      "id": "PB-4001",
       "name": "static-index-definition-and-planning",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IndexDefinition, AbstractIndexCreationTaskBase.CreateIndexDefinition/ExecuteAsync, IndexDefinitionHelper, IndexStore, and BasicStaticMapIndexing establish static index definition and query-planning behavior."},
@@ -24,7 +24,7 @@
       "risk": {"level": "critical", "description": "Index selection or definition drift can return wrong documents while basic query tests still pass."}
     },
     {
-      "id": "PB-0300",
+      "id": "PB-4002",
       "name": "query-source-selection-and-aliases",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "AsyncDocumentSession.Query<T>, DocumentSession.Query<T>, QueryParser.TryParseFromClause, QueryParser.TryParseExpressionAfterFromKeyword, and BasicDynamicMapQueries.Collection_query."},
@@ -34,7 +34,7 @@
       "risk": {"level": "high", "description": "Selecting the wrong collection or index changes every downstream result."}
     },
     {
-      "id": "PB-0301",
+      "id": "PB-4003",
       "name": "boolean-expression-precedence-and-negation",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryParser.Expression, QueryParser.OpenSubclause/CloseSubclause, QueryParser.NegateNext, IAbstractDocumentQuery.AndAlso/OrElse, and ParserTests.CanParse/CanParseNegated."},
@@ -44,7 +44,7 @@
       "risk": {"level": "critical", "description": "Precedence bugs produce plausible but incorrect result sets."}
     },
     {
-      "id": "PB-0302",
+      "id": "PB-4004",
       "name": "equality-null-missing-and-exists",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IAbstractDocumentQuery.WhereEquals/WhereNotEquals/WhereExists, TerraBaseQueryProviderProcessor null and missing-member translation, QueryingOnNull, QueryingOnEqualToNull, and FilterOnMissingProperty."},
@@ -54,7 +54,7 @@
       "risk": {"level": "critical", "description": "Conflating a missing field with null can expose or omit documents across tenants."}
     },
     {
-      "id": "PB-0303",
+      "id": "PB-4005",
       "name": "membership-in-and-array-contains",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryParser operator matches for IN and ALL IN, IAbstractDocumentQuery.WhereIn/ContainsAny/ContainsAll, TerraBaseQueryProviderProcessor, and Client/Queries/InQuery.cs."},
@@ -64,7 +64,7 @@
       "risk": {"level": "high", "description": "Wrong any/all semantics can over-select records without producing an execution error."}
     },
     {
-      "id": "PB-0304",
+      "id": "PB-4006",
       "name": "range-and-between-comparisons",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IAbstractDocumentQuery.WhereBetween/WhereGreaterThan/WhereGreaterThanOrEqual/WhereLessThan/WhereLessThanOrEqual, QueryParser range operators, RangeQuery, BasicDynamicMapQueries.Numeric_between_clause, and CoraxQueries.BetweenQuery."},
@@ -74,7 +74,7 @@
       "risk": {"level": "high", "description": "Boundary and type-coercion differences create silent result drift."}
     },
     {
-      "id": "PB-0305",
+      "id": "PB-4007",
       "name": "prefix-suffix-and-regex-matching",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IAbstractDocumentQuery.WhereStartsWith/WhereEndsWith/WhereRegex, TerraBaseQueryProviderProcessor method translation, RegexQueryTests, NameStartsWith, and WithStartWith."},
@@ -84,7 +84,7 @@
       "risk": {"level": "high", "description": "Pattern escaping and analyzer differences can broaden matches unexpectedly."}
     },
     {
-      "id": "PB-0306",
+      "id": "PB-4008",
       "name": "full-text-search-and-search-operators",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IAbstractDocumentQuery.Search, SearchOperator, TerraBaseQueryProviderProcessor Search translation, Searching.CanSearchByMultipleTerms/CanSearchByMultipleFields, and QueryingStopwordWithPrefixShouldWork."},
@@ -94,7 +94,7 @@
       "risk": {"level": "critical", "description": "Analyzer or operator changes alter relevance and result membership."}
     },
     {
-      "id": "PB-0307",
+      "id": "PB-4009",
       "name": "phrase-fuzzy-proximity-and-boosting",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IAbstractDocumentQuery.Fuzzy/Proximity/Boost, CoraxPhraseQueries, BoostingQuery, RankingFunctionTests, and Corax query evaluator behavior."},
@@ -104,7 +104,7 @@
       "risk": {"level": "high", "description": "Relevance features are easy to approximate while still changing user-visible ranking."}
     },
     {
-      "id": "PB-0308",
+      "id": "PB-4010",
       "name": "intersect-query",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IAbstractDocumentQuery.Intersect, CoraxIndexReadOperation.IntersectQuery, LuceneIndexReadOperation.IntersectQuery, and parser/query regression cases under CoraxQueries and ComplexQueries."},
@@ -114,7 +114,7 @@
       "risk": {"level": "medium", "description": "An omitted intersection path can force clients into less precise equivalent queries."}
     },
     {
-      "id": "PB-0309",
+      "id": "PB-4011",
       "name": "named-parameters-and-parameter-prefix",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IQueryBase.AddParameter, IAbstractDocumentQuery.ParameterPrefix, IndexQuery.QueryParameters, QueryParser.Value/parameter parsing, ParserTests.CanParseParameter, and QueriesWithVariables."},
@@ -124,7 +124,7 @@
       "risk": {"level": "critical", "description": "Incorrect binding can leak values across requests or change predicates without an obvious failure."}
     },
     {
-      "id": "PB-0310",
+      "id": "PB-4012",
       "name": "filter-clause-and-filter-limit",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryParser.Filter, IAbstractDocumentQuery.Filter, QueryResult.ScannedResults, TerraBaseQueryProviderProcessor Filter translation, Filtering.BasicFiltering, and StatsOnDynamicQueries."},
@@ -134,7 +134,7 @@
       "risk": {"level": "high", "description": "Filter-limit accounting affects both correctness and resource safety."}
     },
     {
-      "id": "PB-0311",
+      "id": "PB-4013",
       "name": "sorting-null-ordering-and-score",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IAbstractDocumentQuery.OrderBy/OrderByDescending/OrderByScore, OrderingType and NullsOrdering, QueryParser.OrderBy, OrderByNullsClauseParsing, Sorting.BasicSorting, and CoraxSorting."},
@@ -144,7 +144,7 @@
       "risk": {"level": "critical", "description": "Ordering differences alter pagination, exports, and benchmark workload comparability."}
     },
     {
-      "id": "PB-0312",
+      "id": "PB-4014",
       "name": "paging-limit-offset-and-caps",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryParser.Paging, IQueryBase and IPagingDocumentQueryBase Skip/Take, QueryResult.CappedMaxResults/SkippedResults, Paging.BasicPaging, and Lucene/Corax page handling."},
@@ -154,7 +154,7 @@
       "risk": {"level": "critical", "description": "Paging errors duplicate or omit records and invalidate comparison benchmarks."}
     },
     {
-      "id": "PB-0313",
+      "id": "PB-4015",
       "name": "select-load-and-projection",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryParser.SelectClause/SelectClauseExpressions, IRawDocumentQuery.Projection, IDocumentQuery.SelectFields/QueryData, QueryOperation.Deserialize, Projections.BasicProjections, and CoraxProjections."},
@@ -164,7 +164,7 @@
       "risk": {"level": "critical", "description": "Projection shape is part of client deserialization and cannot be repaired after data is returned."}
     },
     {
-      "id": "PB-0314",
+      "id": "PB-4016",
       "name": "document-counter-and-timeseries-includes",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006", "E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryParser.IncludeClause, IAbstractDocumentQuery.Include, QueryResult.Includes/CounterIncludes/TimeSeriesIncludes, IncludeOrLoadShouldReturnAllDocsEtag, and DocumentQueryIncludeAndStreamTest."},
@@ -174,7 +174,7 @@
       "risk": {"level": "high", "description": "Include omissions can create extra requests or stale related objects while the primary query appears correct."}
     },
     {
-      "id": "PB-0315",
+      "id": "PB-4017",
       "name": "distinct-results-and-counting",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IAbstractDocumentQuery.Distinct, IDocumentQuery.IsDistinct, CoraxIndexReadOperation distinct handling, LuceneIndexReadOperation distinct counting, and CoraxProjections."},
@@ -184,7 +184,7 @@
       "risk": {"level": "high", "description": "Distinct counting and page handling can disagree and create duplicate or missing records."}
     },
     {
-      "id": "PB-0316",
+      "id": "PB-4018",
       "name": "grouping-and-aggregation",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryParser.GroupBy, IAbstractDocumentQuery.GroupBy/GroupByKey/GroupBySum/GroupByCount, GroupByDocumentQuery, BasicDynamicMapReduceQueries.Group_by_string_calculate_count/Group_by_string_calculate_sum/Group_by_nested_field_sum_on_collection."},
@@ -194,7 +194,7 @@
       "risk": {"level": "critical", "description": "Aggregation errors corrupt reports even when individual document queries are correct."}
     },
     {
-      "id": "PB-0317",
+      "id": "PB-4019",
       "name": "facet-aggregation",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IDocumentQuery.AggregateBy/AggregateUsing, FacetBase/Facet/RangeFacet/FacetResult, RawDocumentQuery.ExecuteAggregation, Searching.CanPerformFacetedSearchAndLazyFacatedSearch, and FacetErrors."},
@@ -204,7 +204,7 @@
       "risk": {"level": "high", "description": "Facet totals are user-facing aggregates and can drift without affecting ordinary query tests."}
     },
     {
-      "id": "PB-0318",
+      "id": "PB-4020",
       "name": "suggestions",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IDocumentQuery.SuggestUsing, SuggestionBase/SuggestionResult/SuggestionOptions, SuggestionDocumentQuery, Suggestions tests in Searching.CanProvideSuggestionsAndLazySuggestions and Corax/Suggestions."},
@@ -214,7 +214,7 @@
       "risk": {"level": "medium", "description": "Suggestion ranking and option handling can regress independently of normal search."}
     },
     {
-      "id": "PB-0319",
+      "id": "PB-4021",
       "name": "more-like-this",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IDocumentQuery.MoreLikeThis, MoreLikeThisScope/MoreLikeThisOptions, CoraxIndexReadOperation.MoreLikeThis, MoreLikeThis tests, and IndexesFromClient.MoreLikeThis."},
@@ -224,7 +224,7 @@
       "risk": {"level": "medium", "description": "More-like-this depends on analyzer and scoring details that are easy to approximate incorrectly."}
     },
     {
-      "id": "PB-0320",
+      "id": "PB-4022",
       "name": "spatial-predicates",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IAbstractDocumentQuery.Spatial, SpatialCriteria/SpatialCriteriaFactory, DynamicSpatialField, SpatialTests, Searching.CanDoSpatialSearch, and AsyncSpatial."},
@@ -234,7 +234,7 @@
       "risk": {"level": "high", "description": "Coordinate and unit mistakes return plausible but geographically wrong records."}
     },
     {
-      "id": "PB-0321",
+      "id": "PB-4023",
       "name": "spatial-distance-ordering",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IAbstractDocumentQuery.OrderByDistance/OrderByDistanceDescending, SpatialCriteria, OrderByNullsClauseParsing spatial distance cases, SpatialBoostingInCorax, and SpatialTests."},
@@ -244,7 +244,7 @@
       "risk": {"level": "high", "description": "Distance rounding or null-ordering drift changes page membership and map views."}
     },
     {
-      "id": "PB-0322",
+      "id": "PB-4024",
       "name": "vector-search",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IAbstractDocumentQuery.VectorSearch, VectorSearchToken, VectorFieldFactory, VectorOptions, VectorSearchMatchTests, VectorSimilarityScoreTests, MultiVectorSearchClientAPI, and VectorAutoIndexClientApi."},
@@ -254,7 +254,7 @@
       "risk": {"level": "critical", "description": "Vector result quality and dimensions depend on index configuration and cannot be inferred from latency alone."}
     },
     {
-      "id": "PB-0323",
+      "id": "PB-4025",
       "name": "query-result-shape-and-metadata",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryResult, QueryResultBase, QueryOperation.Complete/CompleteAsArray/Deserialize, QueryCommand, Query_Simple, QueriesWithVariables, and QueryResult serialization."},
@@ -264,7 +264,7 @@
       "risk": {"level": "critical", "description": "Metadata and projection shape drive caching, pagination, tracking, and client type conversion."}
     },
     {
-      "id": "PB-0324",
+      "id": "PB-4026",
       "name": "staleness-and-wait-for-non-stale-results",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IQueryBase.WaitForNonStaleResults, QueryOperation.EnterQueryContext, QueryStatistics.IsStale, WaitingForNonStaleResults, and AfterDeletingTheIndexStopsBeingStale."},
@@ -274,7 +274,7 @@
       "risk": {"level": "critical", "description": "Stale reads can violate application consistency and make benchmarks compare different index states."}
     },
     {
-      "id": "PB-0325",
+      "id": "PB-4027",
       "name": "query-customization-cache-tracking-and-tags",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IQueryBase and IDocumentQueryCustomization NoCaching/NoTracking/WithTag/BeforeQueryExecuted/AfterQueryExecuted/AfterStreamExecuted, QueryOperation.CreateRequest/LogQuery, and Query_With_Customize."},
@@ -284,7 +284,7 @@
       "risk": {"level": "high", "description": "Caching or tracking mistakes can return stale data or retain tenant data in the wrong session."}
     },
     {
-      "id": "PB-0326",
+      "id": "PB-4028",
       "name": "query-statistics",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryStatistics.UpdateQueryStats, StreamQueryStatistics, QueryResult fields, IQueryBase.Statistics, StatsOnDynamicQueries, and query statistics response writers."},
@@ -294,7 +294,7 @@
       "risk": {"level": "high", "description": "Incorrect counts or timestamps undermine both application diagnostics and benchmark validity."}
     },
     {
-      "id": "PB-0327",
+      "id": "PB-4029",
       "name": "query-timings-and-plan",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IQueryBase.Timings, QueryTimings, QueryInspectionNode, QueryTimingsScope, Corax/Lucene query timing writers, and query timing regression cases."},
@@ -304,7 +304,7 @@
       "risk": {"level": "medium", "description": "Timing and plan output can leak parameters or mislead operators if its scope is not explicit."}
     },
     {
-      "id": "PB-0328",
+      "id": "PB-4030",
       "name": "query-explanations",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "ExplanationOptions, Explanations, QueryResult.Explanations, ExplainQueryCommand /databases/*/queries?debug=explain, and IndexesFromClient.CanExplain."},
@@ -314,7 +314,7 @@
       "risk": {"level": "high", "description": "Explanation output is both a correctness aid and a potential information disclosure path."}
     },
     {
-      "id": "PB-0329",
+      "id": "PB-4031",
       "name": "query-highlighting",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IAbstractDocumentQuery.Highlight, HighlightingOptions/Highlightings, QueryResult.Highlightings, HighlightingQuery, CoraxProjections, and Corax/Lucene highlighter paths."},
@@ -324,7 +324,7 @@
       "risk": {"level": "medium", "description": "Fragments can look valid while pointing to the wrong projected or map-reduce result."}
     },
     {
-      "id": "PB-0330",
+      "id": "PB-4032",
       "name": "linq-query-translation",
       "classification": "protocol",
       "v1_evidence": {"evidence_ids": ["E-006", "E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "TerraBaseQueryProvider, TerraBaseQueryProviderProcessor, QueryMethodConverter, LinqPathProvider, IDocumentQueryGenerator, Query.cs, QueryAsync.cs, and TranslatingLinqQueriesToIndexes."},
@@ -334,7 +334,7 @@
       "risk": {"level": "critical", "description": "Client translation can diverge from raw queries while remaining type-correct."}
     },
     {
-      "id": "PB-0331",
+      "id": "PB-4033",
       "name": "terminal-cardinality-operations",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IDocumentQueryBase ToList/ToArray/First/FirstOrDefault/Single/SingleOrDefault/Any/Count/LongCount, TerraBaseQueryProviderProcessor.GetQueryResult, and Query_Simple/QueryAsync_Simple."},
@@ -344,7 +344,7 @@
       "risk": {"level": "high", "description": "Terminal-operation differences often evade list-result tests and break application control flow."}
     },
     {
-      "id": "PB-0332",
+      "id": "PB-4034",
       "name": "raw-async-and-lazy-query-execution",
       "classification": "protocol",
       "v1_evidence": {"evidence_ids": ["E-006", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IRawDocumentQuery, IAsyncDocumentQuery, AsyncDocumentQuery, LazyQueryOperation/LazyAggregationQueryOperation/LazySuggestionQueryOperation, QueryCommand, QueryAsync, and Query_With_Customize."},
@@ -354,7 +354,7 @@
       "risk": {"level": "high", "description": "Execution timing and cancellation differences can create duplicate requests or use disposed sessions."}
     },
     {
-      "id": "PB-0333",
+      "id": "PB-4035",
       "name": "query-streaming-formats-and-cancellation",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryStreamCommand /databases/*/streams/queries, StreamingHandler /streams/queries, AbstractStreamingHandlerProcessorForGetStreamQuery, StreamCsvResultWriter, AbstractDocumentStreamQueryResultWriter, and QueryIntoStream."},
@@ -364,7 +364,7 @@
       "risk": {"level": "critical", "description": "Streaming errors can exhaust memory or produce a different dataset than ordinary queries."}
     },
     {
-      "id": "PB-0334",
+      "id": "PB-4036",
       "name": "sharded-query-routing-and-reduction",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryShardedContextBuilder, DocumentQuery.ShardContext, ShardedQueryCommand, ShardedCoraxIndexReadOperation/ShardedLuceneIndexReadOperation, BasicShardedQueryTests, BasicShardedMapReduceQueryTests, and BasicShardedMapReduceStreamingTests."},
@@ -374,7 +374,7 @@
       "risk": {"level": "critical", "description": "Shard merge errors can duplicate, omit, or reorder records while each shard remains locally correct."}
     },
     {
-      "id": "PB-0335",
+      "id": "PB-4037",
       "name": "patch-by-query",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "PatchByQueryOperation, PatchByQueryCommand, QueriesHandler PATCH /databases/*/queries, QueryOperationOptions, and patch-by-query operation tests."},
@@ -384,7 +384,7 @@
       "risk": {"level": "critical", "description": "A query-selection error turns a write operation into broad unintended data mutation."}
     },
     {
-      "id": "PB-0336",
+      "id": "PB-4038",
       "name": "delete-by-query",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "DeleteByQueryOperation, DeleteByQueryCommand, QueriesHandler DELETE /databases/*/queries, QueryOperationOptions, and delete-by-index/query tests."},
@@ -394,7 +394,7 @@
       "risk": {"level": "critical", "description": "Overbroad deletion is irreversible at the application level and requires strict query parity."}
     },
     {
-      "id": "PB-0337",
+      "id": "PB-4039",
       "name": "subscription-query-grammar-and-restrictions",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "SubscriptionConnection.ParseSubscriptionQuery, QueryParser.Parse, SubscriptionCriteria, SubscriptionConnectionBase, SubscriptionTestBase, Subscriptions, CriteriaScript, and RegexSubscriptionTests."},
@@ -404,7 +404,7 @@
       "risk": {"level": "high", "description": "A permissive subscription parser can stream data outside the intended collection or filter."}
     },
     {
-      "id": "PB-0338",
+      "id": "PB-4040",
       "name": "query-routes-and-authorization",
       "classification": "protocol",
       "v1_evidence": {"evidence_ids": ["E-006", "E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueriesHandler routes POST/GET/PATCH/DELETE /databases/*/queries, StreamingHandler /streams/queries, ExplainQueryCommand, and client QueryCommand/PatchByQueryOperation/DeleteByQueryOperation."},
@@ -414,7 +414,7 @@
       "risk": {"level": "critical", "description": "Route or authorization drift can expose cross-tenant data or private operations."}
     },
     {
-      "id": "PB-0339",
+      "id": "PB-4041",
       "name": "query-validation-and-error-contract",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "QueryParser.ThrowParseException/ThrowInvalidQueryException, InvalidQueryException, ParserTests.FailToParseInvalidJavascript, OrderByNullsClauseParsing.InvalidNullsKeywordThrowsWithMeaningfulMessage, and QueryWithWhere_WhenUsingNotSupportedExpressions_ShouldThrowNotSupported."},
@@ -424,7 +424,7 @@
       "risk": {"level": "high", "description": "Error collapse encourages clients to retry unsafe operations or misclassify user input."}
     },
     {
-      "id": "PB-0340",
+      "id": "PB-4042",
       "name": "static-map-reduce-indexes",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IndexDefinition.Maps/Reduce, MapReduceIndexDefinition, AbstractGenericIndexCreationTask, BasicStaticMapReduceIndexing.The_simpliest_static_map_reduce_index, CanPersist, and map-reduce query projection tests."},
@@ -434,7 +434,7 @@
       "risk": {"level": "critical", "description": "Reduce-key or incremental-update drift corrupts aggregate results over time."}
     },
     {
-      "id": "PB-0341",
+      "id": "PB-4043",
       "name": "multi-map-indexes",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "AbstractMultiMapIndexCreationTask.AddMap/AddMapForAll, IndexDefinition.Maps, Core/Indexing/MultiMap, BasicStaticMapIndexing, and multi-map index definition tests."},
@@ -444,7 +444,7 @@
       "risk": {"level": "high", "description": "A missing source map silently drops a document family from query results."}
     },
     {
-      "id": "PB-0342",
+      "id": "PB-4044",
       "name": "javascript-map-and-map-reduce-indexes",
       "classification": "legacy",
       "v1_evidence": {"evidence_ids": ["E-010", "E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "AbstractJavaScriptIndexCreationTask, JavaScriptIndexTests, IndexHandler admin JavaScript deployment routes, and JavaScript index compilation and validation paths."},
@@ -454,7 +454,7 @@
       "risk": {"level": "critical", "description": "Script compilation and deployment expand the attack surface and can change index outputs."}
     },
     {
-      "id": "PB-0343",
+      "id": "PB-4045",
       "name": "auto-map-indexes",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "AutoIndexDefinition, DynamicQueryMapping, BasicDynamicMapQueries, CreationOfAutoMapIndexDefinition, and AutoCreateIndexes."},
@@ -464,7 +464,7 @@
       "risk": {"level": "critical", "description": "Dynamic index selection determines correctness for clients that never name a static index."}
     },
     {
-      "id": "PB-0344",
+      "id": "PB-4046",
       "name": "auto-map-reduce-indexes",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "AutoIndexDefinition GroupByFields/Aggregation, AutoMapReduceIndexDefinition, BasicAutoMapReduceIndexing, CreationOfAutoMapReduceIndexDefinition, and BasicDynamicMapReduceQueries."},
@@ -474,7 +474,7 @@
       "risk": {"level": "critical", "description": "Auto aggregation can return stale or incorrect totals without obvious index-definition errors."}
     },
     {
-      "id": "PB-0345",
+      "id": "PB-4047",
       "name": "index-field-storage-indexing-and-term-vectors",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IndexFieldOptions, FieldIndexing, FieldStorage, FieldTermVector, IndexDefinition.Fields, BasicStaticMapIndexing.IndexDefinitionSerialization, Corax field conversion, and projection/highlighting tests."},
@@ -484,7 +484,7 @@
       "risk": {"level": "critical", "description": "Field options are the shared input to search, projection, highlighting, and vector behavior."}
     },
     {
-      "id": "PB-0346",
+      "id": "PB-4048",
       "name": "analyzers-and-indexed-suggestions",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "AnalyzerDefinition, IndexFieldOptions.Analyzer/Suggestions, BasicAnalyzers, CustomAnalyzers, MissingAnalyzer, ThrowingAnalyzer, and Suggestions tests."},
@@ -494,7 +494,7 @@
       "risk": {"level": "critical", "description": "Analyzer code can execute or transform user data and must be isolated and reproducible."}
     },
     {
-      "id": "PB-0347",
+      "id": "PB-4049",
       "name": "dynamic-and-compound-index-fields",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "AbstractIndexCreationTask.CreateField, IndexDefinition.CompoundFields, DynamicFieldsIntegration/DynamicFieldsTests, CompoundFieldsOnIndex, and DynamicFields index tests."},
@@ -504,7 +504,7 @@
       "risk": {"level": "high", "description": "Dynamic field naming can change both queryability and tenant data visibility."}
     },
     {
-      "id": "PB-0348",
+      "id": "PB-4050",
       "name": "spatial-index-options",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "SpatialOptions, SpatialOptionsFactory, AbstractGenericIndexCreationTask.Spatial, SpatialFieldType/SpatialSearchStrategy/SpatialUnits, Events_SpatialIndex, and SpatialTests."},
@@ -514,7 +514,7 @@
       "risk": {"level": "high", "description": "Index geometry mismatch can produce wrong distance and relation results."}
     },
     {
-      "id": "PB-0349",
+      "id": "PB-4051",
       "name": "vector-index-options-and-quantization",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "VectorOptions, AutoVectorOptions, VectorEmbeddingType, VectorOptions.Validate, VectorIndexDefinitionTests, VectorAutoIndexDefinitionTests, and VectorIndexingWithMixedFields."},
@@ -524,7 +524,7 @@
       "risk": {"level": "critical", "description": "Vector dimensions and quantization affect correctness as well as indexing cost."}
     },
     {
-      "id": "PB-0350",
+      "id": "PB-4052",
       "name": "corax-lucene-search-engine-selection",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006", "E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "SearchEngineType, AbstractIndexCreationTaskBase.SearchEngineType, IndexDefinition.Configuration, CoraxIndexReadOperation, LuceneIndexReadOperation, RawCoraxFlag, CoraxQueries, and Lucene query tests."},
@@ -534,7 +534,7 @@
       "risk": {"level": "critical", "description": "Engine-specific behavior can invalidate parity and benchmark comparisons."}
     },
     {
-      "id": "PB-0351",
+      "id": "PB-4053",
       "name": "index-create-delete-start-stop-reset-and-enable",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "PutIndexesOperation, DeleteIndexOperation, StartIndexOperation, StopIndexOperation, ResetIndexOperation, EnableIndexOperation, DisableIndexOperation, IndexHandler/AdminIndexHandler routes, and IndexesFromClient.CanReset/CanDelete/CanStopAndStart."},
@@ -544,7 +544,7 @@
       "risk": {"level": "critical", "description": "Lifecycle races can return stale data or destroy an index still needed by active queries."}
     },
     {
-      "id": "PB-0352",
+      "id": "PB-4054",
       "name": "index-state-staleness-and-rebuild",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IndexState, IndexRunningStatus, GetIndexStalenessCommand /indexes/staleness, IndexHandler staleness/progress/status routes, StalenessCalculationShouldWorkForAllDocsIndexes, and WaitingForNonStaleResults."},
@@ -554,7 +554,7 @@
       "risk": {"level": "critical", "description": "Staleness state is a correctness contract shared by reads, writes, and recovery."}
     },
     {
-      "id": "PB-0353",
+      "id": "PB-4055",
       "name": "index-errors-and-failure-information",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IndexErrors, IndexingError, IndexFailureInformation, GetIndexErrorsOperation /indexes/errors, IndexHandler error routes, IndexesFromClient.GetErrors, InvalidIndexes, and PoisonIndex."},
@@ -564,7 +564,7 @@
       "risk": {"level": "high", "description": "Over-redaction hides repair causes while under-redaction leaks indexed data."}
     },
     {
-      "id": "PB-0354",
+      "id": "PB-4056",
       "name": "index-metadata-terms-and-performance-observability",
       "classification": "admin",
       "v1_evidence": {"evidence_ids": ["E-006", "E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "GetIndexOperation, GetIndexStatisticsOperation, GetIndexPerformanceStatisticsOperation, GetTermsOperation, IndexStats/IndexPerformanceStats, IndexHandler /indexes/stats,/terms,/performance, and IndexesFromClient.GetDefinition/GetTerms/Performance."},
@@ -574,7 +574,7 @@
       "risk": {"level": "high", "description": "Incorrect counters or units can mask index failures and invalidate benchmark interpretation."}
     },
     {
-      "id": "PB-0355",
+      "id": "PB-4057",
       "name": "index-lock-priority-deployment-and-side-by-side",
       "classification": "admin",
       "v1_evidence": {"evidence_ids": ["E-006", "E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IndexLockMode, IndexPriority, IndexDeploymentMode, RollingIndex, SetIndexesLockOperation, SetIndexesPriorityOperation, IndexHandler replace/finish-rolling routes, and side-by-side index tests."},
@@ -584,7 +584,7 @@
       "risk": {"level": "critical", "description": "Incorrect cutover or lock handling can route queries to an unqualified definition."}
     },
     {
-      "id": "PB-0356",
+      "id": "PB-4058",
       "name": "counter-and-timeseries-index-source-types",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IndexSourceType, counters and time-series index creation tasks, CountersIndexDefinition, TimeSeriesIndexDefinition, BasicCountersIndexes, BasicTimeSeriesIndexes, and time-series query tests."},
@@ -594,7 +594,7 @@
       "risk": {"level": "high", "description": "Cross-family source confusion can return values from the wrong durable data family."}
     },
     {
-      "id": "PB-0357",
+      "id": "PB-4059",
       "name": "map-reduce-output-and-reference-collections",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IndexDefinition.OutputReduceToCollection/PatternForOutputReduceToCollectionReferences/PatternReferencesCollectionName, OutputReduceToCollectionReference, OutputReduceToCollectionClusterTests, and JavaScript map-reduce definitions."},
@@ -604,7 +604,7 @@
       "risk": {"level": "critical", "description": "Output collections create additional durable documents and can violate isolation if references are wrong."}
     },
     {
-      "id": "PB-0358",
+      "id": "PB-4060",
       "name": "sharded-index-definition-and-query-readers",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "ShardedCoraxIndexReadOperation, ShardedLuceneIndexReadOperation, ShardedQueryCommand, IndexDefinition and shard index lifecycle paths, BasicShardedQueryTests, and BasicShardedMapReduceQueryTests."},
@@ -614,7 +614,7 @@
       "risk": {"level": "critical", "description": "A reader that differs by shard can make merged results non-deterministic and hide local failures."}
     },
     {
-      "id": "PB-0359",
+      "id": "PB-4061",
       "name": "index-benchmark-observation-contract",
       "classification": "protocol",
       "v1_evidence": {"evidence_ids": ["E-006", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "IndexPerformanceStats, IndexingPerformanceStats, GetIndexesTotalTimeCommand, IndexHandler /indexes/total-time and /performance, TerraBase.BenchmarkTests/Indexing/Index.cs, and query result timing fields."},
@@ -624,7 +624,7 @@
       "risk": {"level": "high", "description": "Mixing build, wait, and query times can produce invalid speed claims and hide correctness regressions."}
     },
     {
-      "id": "PB-0360",
+      "id": "PB-4062",
       "name": "index-admin-authorization-and-private-operations",
       "classification": "admin",
       "v1_evidence": {"evidence_ids": ["E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "AdminIndexHandler routes /databases/*/admin/indexes/{start,stop,enable,disable,dump,optimize}, IndexHandler authorization attributes, AdminIndexHandlerProcessorForTestIndex, and IndexesFromClient lifecycle tests."},

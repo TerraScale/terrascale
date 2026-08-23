@@ -4,7 +4,7 @@
   "owner": "WS-CONTRACT/transfer",
   "items": [
     {
-      "id": "PB-0008",
+      "id": "PB-6000",
       "name": "streaming",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 streaming or bulk transfer contracts"},
@@ -14,7 +14,7 @@
       "risk": {"level": "high", "description": "Unbounded buffering would threaten efficiency and recovery safety."}
     },
     {
-      "id": "PB-0009",
+      "id": "PB-6001",
       "name": "backup-and-import",
       "classification": "core",
       "v1_evidence": {
@@ -37,7 +37,7 @@
       "risk": {"level": "critical", "description": "A transfer that reports success after skipping records, losing checkpoints, or accepting an incomplete chain can create unrecoverable data loss."}
     },
     {
-      "id": "PB-0015",
+      "id": "PB-6002",
       "name": "changes-api",
       "classification": "core",
       "v1_evidence": {
@@ -60,7 +60,7 @@
       "risk": {"level": "high", "description": "A missed or duplicated event can leave caches, indexes, ETL checkpoints, or customer projections inconsistent."}
     },
     {
-      "id": "PB-0016",
+      "id": "PB-6003",
       "name": "subscription-wire-and-batches",
       "classification": "core",
       "v1_evidence": {
@@ -83,7 +83,7 @@
       "risk": {"level": "high", "description": "Incorrect batch framing or session lifetime rules can acknowledge data that the consumer never processed."}
     },
     {
-      "id": "PB-0017",
+      "id": "PB-6004",
       "name": "subscription-checkpoints-acknowledgements-and-resend",
       "classification": "core",
       "v1_evidence": {
@@ -106,7 +106,7 @@
       "risk": {"level": "critical", "description": "Advancing a checkpoint before acknowledgement loses documents; retaining no resend state causes silent gaps after failure."}
     },
     {
-      "id": "PB-0018",
+      "id": "PB-6005",
       "name": "subscription-reconnect-failover-and-backpressure",
       "classification": "core",
       "v1_evidence": {
@@ -129,7 +129,7 @@
       "risk": {"level": "critical", "description": "Failover that loses a checkpoint or permits two active workers can duplicate or drop customer data."}
     },
     {
-      "id": "PB-0019",
+      "id": "PB-6006",
       "name": "subscription-criteria-scripts-and-revisions",
       "classification": "core",
       "v1_evidence": {
@@ -152,7 +152,7 @@
       "risk": {"level": "high", "description": "A filter or script mismatch can expose unauthorized documents or advance a subscription past items it was meant to deliver."}
     },
     {
-      "id": "PB-0020",
+      "id": "PB-6007",
       "name": "document-streaming",
       "classification": "core",
       "v1_evidence": {
@@ -174,7 +174,7 @@
       "risk": {"level": "medium", "description": "Selector or ordering drift changes export results and can make continuation-based transfer non-repeatable."}
     },
     {
-      "id": "PB-0021",
+      "id": "PB-6008",
       "name": "query-streaming",
       "classification": "core",
       "v1_evidence": {
@@ -196,7 +196,7 @@
       "risk": {"level": "high", "description": "A query-stream ordering or projection change invalidates exports and customer pagination assumptions."}
     },
     {
-      "id": "PB-0022",
+      "id": "PB-6009",
       "name": "time-series-streaming",
       "classification": "optional",
       "v1_evidence": {
@@ -218,7 +218,7 @@
       "risk": {"level": "high", "description": "Timestamp, rollup, or deleted-range drift silently changes analytical exports and retention results."}
     },
     {
-      "id": "PB-0023",
+      "id": "PB-6010",
       "name": "full-incremental-and-snapshot-backups",
       "classification": "core",
       "v1_evidence": {
@@ -240,7 +240,7 @@
       "risk": {"level": "critical", "description": "Accepting an incomplete incremental chain can make a restore appear successful while omitting committed data."}
     },
     {
-      "id": "PB-0024",
+      "id": "PB-6011",
       "name": "periodic-backup-scheduling-and-status",
       "classification": "admin",
       "v1_evidence": {
@@ -262,7 +262,7 @@
       "risk": {"level": "high", "description": "A timer or status race can run two backups, skip a scheduled backup, or report a stale recovery point."}
     },
     {
-      "id": "PB-0025",
+      "id": "PB-6012",
       "name": "backup-destinations-and-upload-modes",
       "classification": "core",
       "v1_evidence": {
@@ -284,7 +284,7 @@
       "risk": {"level": "critical", "description": "Provider retry or path mistakes can create orphaned archives, overwrite the wrong tenant's data, or make a valid chain undiscoverable."}
     },
     {
-      "id": "PB-0026",
+      "id": "PB-6013",
       "name": "backup-encryption-and-compression",
       "classification": "core",
       "v1_evidence": {
@@ -306,7 +306,7 @@
       "risk": {"level": "critical", "description": "Wrong key, weak identity binding, or accidental key logging can either destroy recoverability or expose customer data."}
     },
     {
-      "id": "PB-0027",
+      "id": "PB-6014",
       "name": "backup-retention",
       "classification": "core",
       "v1_evidence": {
@@ -328,7 +328,7 @@
       "risk": {"level": "critical", "description": "Deleting a chain member or misreading time can make all newer recovery points unusable."}
     },
     {
-      "id": "PB-0028",
+      "id": "PB-6015",
       "name": "recovery-point-manifests-and-integrity",
       "classification": "core",
       "v1_evidence": {
@@ -351,7 +351,7 @@
       "risk": {"level": "critical", "description": "A manifest that does not bind exact bytes and archive order can restore corrupted or incomplete data while reporting success."}
     },
     {
-      "id": "PB-0029",
+      "id": "PB-6016",
       "name": "restore-selection-and-execution",
       "classification": "core",
       "v1_evidence": {
@@ -373,7 +373,7 @@
       "risk": {"level": "critical", "description": "Wrong restore selection or target handling can overwrite data or materialize an incomplete tenant database."}
     },
     {
-      "id": "PB-0030",
+      "id": "PB-6017",
       "name": "backup-errors-throttling-and-concurrency",
       "classification": "core",
       "v1_evidence": {
@@ -395,7 +395,7 @@
       "risk": {"level": "high", "description": "Retrying a non-idempotent upload or ignoring throttling can corrupt a chain and destabilize the database."}
     },
     {
-      "id": "PB-0031",
+      "id": "PB-6018",
       "name": "smuggler-export-and-import",
       "classification": "core",
       "v1_evidence": {
@@ -417,7 +417,7 @@
       "risk": {"level": "critical", "description": "A logical export that silently skips records or changes IDs cannot support a trustworthy migration or customer export."}
     },
     {
-      "id": "PB-0032",
+      "id": "PB-6019",
       "name": "smuggler-data-families-and-selection",
       "classification": "core",
       "v1_evidence": {
@@ -439,7 +439,7 @@
       "risk": {"level": "critical", "description": "Family selection mistakes can lose attachments, revisions, counters, or time-series while leaving documents apparently intact."}
     },
     {
-      "id": "PB-0033",
+      "id": "PB-6020",
       "name": "smuggler-transform-scripts-and-revision-policy",
       "classification": "optional",
       "v1_evidence": {
@@ -461,7 +461,7 @@
       "risk": {"level": "high", "description": "An unrestricted transform can leak data or make a supposedly idempotent import mutate revisions on every retry."}
     },
     {
-      "id": "PB-0034",
+      "id": "PB-6021",
       "name": "smuggler-resume-idempotency-and-loss-reporting",
       "classification": "core",
       "v1_evidence": {
@@ -483,7 +483,7 @@
       "risk": {"level": "critical", "description": "A non-repeatable resume point can duplicate side effects or lose the tail of a transfer after process failure."}
     },
     {
-      "id": "PB-0035",
+      "id": "PB-6022",
       "name": "legacy-offline-migration",
       "classification": "legacy",
       "v1_evidence": {
@@ -505,7 +505,7 @@
       "risk": {"level": "critical", "description": "Legacy input parsing and partial output are difficult to audit, and an incomplete migration can be mistaken for a valid database."}
     },
     {
-      "id": "PB-0036",
+      "id": "PB-6023",
       "name": "relational-migration",
       "classification": "optional",
       "v1_evidence": {
@@ -527,7 +527,7 @@
       "risk": {"level": "high", "description": "Relationship or null-handling drift can create structurally valid documents with wrong references or missing child data."}
     },
     {
-      "id": "PB-0037",
+      "id": "PB-6024",
       "name": "etl-task-configuration-and-transformations",
       "classification": "optional",
       "v1_evidence": {
@@ -549,7 +549,7 @@
       "risk": {"level": "high", "description": "A transform or checkpoint reset that differs from V1 can duplicate external writes or delete the wrong destination records."}
     },
     {
-      "id": "PB-0038",
+      "id": "PB-6025",
       "name": "etl-document-attachment-counter-and-time-series-inputs",
       "classification": "optional",
       "v1_evidence": {
@@ -571,7 +571,7 @@
       "risk": {"level": "critical", "description": "Missing a tombstone or family update leaves stale external data that a later retry may never repair."}
     },
     {
-      "id": "PB-0039",
+      "id": "PB-6026",
       "name": "etl-destination-variants",
       "classification": "optional",
       "v1_evidence": {
@@ -593,7 +593,7 @@
       "risk": {"level": "high", "description": "Treating provider-specific delivery as one generic sink hides ordering, transaction, size, and failure differences."}
     },
     {
-      "id": "PB-0040",
+      "id": "PB-6027",
       "name": "etl-delivery-retry-dead-letter-and-metrics",
       "classification": "optional",
       "v1_evidence": {
@@ -615,7 +615,7 @@
       "risk": {"level": "critical", "description": "Retrying a failed external batch without a durable idempotency key can create duplicate side effects or mask a dead-letter backlog."}
     },
     {
-      "id": "PB-0041",
+      "id": "PB-6028",
       "name": "queue-etl-providers-and-delivery",
       "classification": "optional",
       "v1_evidence": {
@@ -637,7 +637,7 @@
       "risk": {"level": "critical", "description": "A publish acknowledgment mismatch can lose records or duplicate messages in an external queue."}
     },
     {
-      "id": "PB-0042",
+      "id": "PB-6029",
       "name": "queue-sink-configuration-and-processing",
       "classification": "optional",
       "v1_evidence": {
@@ -659,7 +659,7 @@
       "risk": {"level": "high", "description": "A sink that acknowledges a message before its database write commits can lose source queue data."}
     },
     {
-      "id": "PB-0043",
+      "id": "PB-6030",
       "name": "queue-sink-brokers-and-dead-letter-behavior",
       "classification": "optional",
       "v1_evidence": {
@@ -681,7 +681,7 @@
       "risk": {"level": "critical", "description": "Broker acknowledgment and failover differences are exactly where duplicate or lost messages tend to hide."}
     },
     {
-      "id": "PB-0044",
+      "id": "PB-6031",
       "name": "transfer-connection-strings-and-secret-audit",
       "classification": "admin",
       "v1_evidence": {
@@ -703,7 +703,7 @@
       "risk": {"level": "critical", "description": "Leaking a provider credential through status, audit, or parity evidence is a direct tenant-security failure."}
     },
     {
-      "id": "PB-0045",
+      "id": "PB-6032",
       "name": "ongoing-transfer-task-controls",
       "classification": "admin",
       "v1_evidence": {
@@ -725,7 +725,7 @@
       "risk": {"level": "high", "description": "A task control race can stop the wrong owner, leave two workers active, or expose private control-plane state."}
     },
     {
-      "id": "PB-0046",
+      "id": "PB-6033",
       "name": "transfer-replication-and-failure-domain-interactions",
       "classification": "core",
       "v1_evidence": {
@@ -748,7 +748,7 @@
       "risk": {"level": "critical", "description": "A transfer task that outlives its owner without fencing can write duplicates or continue against the wrong tenant or member."}
     },
     {
-      "id": "PB-0047",
+      "id": "PB-6034",
       "name": "sharded-transfer-and-migration-interactions",
       "classification": "optional",
       "v1_evidence": {
@@ -770,7 +770,7 @@
       "risk": {"level": "critical", "description": "A merged continuation that advances one shard but loses another can create an apparently complete but incomplete transfer."}
     },
     {
-      "id": "PB-0048",
+      "id": "PB-6035",
       "name": "transfer-progress-status-and-operational-observability",
       "classification": "admin",
       "v1_evidence": {
@@ -792,7 +792,7 @@
       "risk": {"level": "high", "description": "A misleading green status is operationally worse than a visible failure because it prevents recovery action."}
     },
     {
-      "id": "PB-0049",
+      "id": "PB-6036",
       "name": "transfer-authorization-and-private-route-separation",
       "classification": "protocol",
       "v1_evidence": {

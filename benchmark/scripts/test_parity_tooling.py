@@ -61,7 +61,7 @@ class ParityToolingTests(unittest.TestCase):
             self.write_json(duplicate_path, duplicate)
             result = self.run_cli(root, "--check")
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("duplicate item id PB-0001", result.stderr)
+            self.assertIn("duplicate item id PB-2000", result.stderr)
 
     def test_malformed_fragment_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -90,7 +90,7 @@ class ParityToolingTests(unittest.TestCase):
     def test_unknown_overlay_id_and_status_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self.fixture(Path(temporary))
-            overlay_path = root / "parity" / "overlays" / "PB-0001.json"
+            overlay_path = root / "parity" / "overlays" / "PB-1000.json"
             overlay = self.read_json(overlay_path)
             overlay["item_id"] = "PB-9999"
             self.write_json(overlay_path, overlay)
@@ -100,7 +100,7 @@ class ParityToolingTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             root = self.fixture(Path(temporary))
-            overlay_path = root / "parity" / "overlays" / "PB-0001.json"
+            overlay_path = root / "parity" / "overlays" / "PB-1000.json"
             overlay = self.read_json(overlay_path)
             overlay["status"] = "done"
             self.write_json(overlay_path, overlay)
@@ -111,7 +111,7 @@ class ParityToolingTests(unittest.TestCase):
     def test_status_transition_and_proof_requirements_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self.fixture(Path(temporary))
-            overlay_path = root / "parity" / "overlays" / "PB-0001.json"
+            overlay_path = root / "parity" / "overlays" / "PB-1000.json"
             overlay = self.read_json(overlay_path)
             overlay.update({"status": "implemented", "previous_status": "in-progress"})
             self.write_json(overlay_path, overlay)
@@ -121,7 +121,7 @@ class ParityToolingTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             root = self.fixture(Path(temporary))
-            overlay_path = root / "parity" / "overlays" / "PB-0001.json"
+            overlay_path = root / "parity" / "overlays" / "PB-1000.json"
             overlay = self.read_json(overlay_path)
             overlay.update(
                 {"status": "implemented", "previous_status": "qualified", "proof_ids": ["P-001"]}
@@ -134,13 +134,35 @@ class ParityToolingTests(unittest.TestCase):
     def test_accepted_exclusion_requires_disposition_and_proof(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self.fixture(Path(temporary))
-            overlay_path = root / "parity" / "overlays" / "PB-0001.json"
+            overlay_path = root / "parity" / "overlays" / "PB-1000.json"
             overlay = self.read_json(overlay_path)
             overlay.update({"status": "accepted-exclusion", "previous_status": "unresolved", "proof_ids": ["P-001"]})
             self.write_json(overlay_path, overlay)
             result = self.run_cli(root, "--check")
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("accepted-exclusion requires disposition", result.stderr)
+
+    def test_invalid_proof_id_format_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.fixture(Path(temporary))
+            overlay_path = root / "parity" / "overlays" / "PB-1000.json"
+            overlay = self.read_json(overlay_path)
+            overlay["proof_ids"] = ["P-invalid"]
+            self.write_json(overlay_path, overlay)
+            result = self.run_cli(root, "--check")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("contains an invalid Proof ID", result.stderr)
+
+    def test_duplicate_proof_ids_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.fixture(Path(temporary))
+            overlay_path = root / "parity" / "overlays" / "PB-1000.json"
+            overlay = self.read_json(overlay_path)
+            overlay["proof_ids"] = ["P-001", "P-001"]
+            self.write_json(overlay_path, overlay)
+            result = self.run_cli(root, "--check")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("proof_ids must be a unique list", result.stderr)
 
 
 if __name__ == "__main__":

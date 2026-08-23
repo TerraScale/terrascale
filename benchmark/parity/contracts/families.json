@@ -4,7 +4,7 @@
   "owner": "WS-CONTRACT/families",
   "items": [
     {
-      "id": "PB-0005",
+      "id": "PB-3000",
       "name": "attachments-crud",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Session/IAttachmentsSessionOperationsBase.cs::IAttachmentsSessionOperationsBase (GetNames, Store, Delete, Rename, Copy, Move); src/TerraBase.Client/Documents/Operations/Attachments/PutAttachmentOperation.cs::PutAttachmentOperation; src/TerraBase.Server/Documents/Attachment.cs::Attachment. Tests: test/TerraBase.SlowTests/Client/Attachments/AttachmentsCrud.cs::PutAttachments, DeleteAttachments, PutAndDeleteAttachmentsWithTheSameStream_AlsoTestBigStreams, DeleteDocumentWithAttachmentsThatHaveTheSameStream."},
@@ -14,7 +14,7 @@
       "risk": {"level": "critical", "description": "Attachment metadata and byte ownership are coupled to document mutation and migration correctness."}
     },
     {
-      "id": "PB-0006",
+      "id": "PB-3001",
       "name": "counters-crud",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Session/ISessionDocumentCountersBase.cs::ISessionDocumentCountersBase (Increment, Delete); src/TerraBase.Client/Documents/Operations/Counters/GetCountersOperation.cs::GetCountersOperation; src/TerraBase.Server/Documents/CountersStorage.cs::CountersStorage. Tests: test/TerraBase.SlowTests/Client/Counters/CountersSingleNode.cs::IncrementCounter, GetCounterValue, DeleteCounter, MultiGet, DeleteCreateWithSameNameDeleteAgain."},
@@ -24,7 +24,7 @@
       "risk": {"level": "critical", "description": "Incorrect increment or delete semantics silently change durable totals and document metadata."}
     },
     {
-      "id": "PB-0015",
+      "id": "PB-3002",
       "name": "attachments-range-stream",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Operations/Attachments/{GetAttachmentOperation,GetAttachmentsOperation,AttachmentStream,LimitedStream}.cs; src/TerraBase.Server/Documents/Handlers/Processors/Attachments/RangeHelper.cs. Tests: test/TerraBase.SlowTests/Client/Attachments/AttachmentsStreamTests.cs::CanGetOneAttachment, CanGetOneAttachmentAsync, CanConsumeStream, CanGetListOfAttachmentsAndSkip, CanGetListOfAttachmentsAndReadOrdered, CanGetListOfAttachmentsAndReadPartially, ShouldThrowOnDisposedStream, CanSendNonExistingListOfAttachments."},
@@ -34,7 +34,7 @@
       "risk": {"level": "critical", "description": "Range or disposal divergence can corrupt downloads or exhaust memory for large attachments."}
     },
     {
-      "id": "PB-0016",
+      "id": "PB-3003",
       "name": "attachments-batch-session",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Commands/Batches/{PutAttachmentCommandData,DeleteAttachmentCommandData,CopyAttachmentCommandData,MoveAttachmentCommandData}.cs; src/TerraBase.Client/Documents/Session/{DocumentSessionAttachments,DocumentSessionAttachmentsAsync}.cs. Tests: test/TerraBase.SlowTests/Client/Attachments/BulkInsertAttachments.cs::StoreManyAttachments, StoreManyAttachmentsAndDocs, CanHaveAttachmentBulkInsertsWithCounters; test/TerraBase.SlowTests/Client/Attachments/AttachmentsCrud.cs::CanPatchWithoutConflictsOnAttachments, PutAttachmentAndModifyDocument."},
@@ -44,7 +44,7 @@
       "risk": {"level": "high", "description": "Batch ordering and stream validation affect atomicity, conflict handling, and resource lifetime."}
     },
     {
-      "id": "PB-0017",
+      "id": "PB-3004",
       "name": "attachments-replication-conflict",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/Replication/ReplicationItems/{AttachmentReplicationItem,AttachmentTombstoneReplicationItem}.cs; src/TerraBase.Server/Documents/AttachmentsStorage.cs::AttachmentsStorage. Tests: test/TerraBase.SlowTests/Client/Attachments/AttachmentsReplication.cs::PutAttachments, DeleteAttachments, PutDifferentAttachmentsShouldNotConflict, PutDifferentAttachmentsShouldConflict, ReplicationShouldSendMissingAttachments, AttachmentWithDifferentStreamAndSameNameShouldBeResolvedToLatestAfterConflict."},
@@ -54,7 +54,7 @@
       "risk": {"level": "critical", "description": "Missing or prematurely deleted attachment bytes can cause silent cross-region data loss."}
     },
     {
-      "id": "PB-0018",
+      "id": "PB-3005",
       "name": "attachments-revisions",
       "classification": "legacy",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/Replication/ReplicationItems/AttachmentReplicationItem.cs::AttachmentReplicationItem; src/TerraBase.Client/Documents/Operations/Revisions/RevisionIncludeResult.cs. Tests: test/TerraBase.SlowTests/Client/Attachments/AttachmentsRevisions.cs::ReplaceAttachmentsStreamAfterRevisionsEnabled, ReplaceAttachmentsStreamAndDocumentAfterRevisionsEnabled, ModifyAttachmentsDetailsAfterRevisionsEnabled; test/TerraBase.SlowTests/Client/Attachments/AttachmentsReplication.cs::AttachmentsRevisionsReplicationAfterEnable, AttachmentsRevisionsReplication."},
@@ -64,7 +64,7 @@
       "risk": {"level": "high", "description": "Revision attachment references are easy to orphan or resolve to current content by mistake."}
     },
     {
-      "id": "PB-0019",
+      "id": "PB-3006",
       "name": "attachments-sharding",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/AttachmentsStorage.Sharding.cs; src/TerraBase.Server/Documents/Sharding/Handlers/Processors/Attachments/ShardedAttachmentHandlerProcessorForPutAttachment.cs and related get/delete processors; src/TerraBase.Server/Documents/Schemas/Attachments.cs::Attachments. Tests: test/TerraBase.SlowTests/Client/Attachments/AttachmentsCrud.cs::PutAttachments and AssertAttachmentCount with shard number; test/TerraBase.SlowTests/Client/Attachments/AttachmentsSessionAsync.cs::shard-number attachment assertions; test/TerraBase.SlowTests/Server/Documents/Attachments/S3RemoteAttachmentsSlowTests.cs::sharded remote-attachment rejection cases."},
@@ -74,7 +74,7 @@
       "risk": {"level": "critical", "description": "A wrong attachment routing key can strand bytes on the wrong shard or leak another document's attachment."}
     },
     {
-      "id": "PB-0020",
+      "id": "PB-3007",
       "name": "attachments-backup-smuggler",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Smuggler/Documents/SmugglerDocumentType.cs::SmugglerDocumentType.Attachment; src/TerraBase.Client/Documents/Smuggler/DatabaseSmuggler; src/TerraBase.Server/Documents/AttachmentsStorage.cs. Tests: test/TerraBase.SlowTests/Client/Attachments/AttachmentsSmuggler.cs::ExportAndDeleteAttachmentThanCreateAnotherOneAndImport, ExportFullThanDeleteAttachmentAndCreateAnotherOneThanExportIncrementalThanImport, ExportEmptyStream, CanExportAndImportAttachmentsAndRevisionAttachments; test/TerraBase.SlowTests/Server/Documents/Attachments/{AzureRemoteAttachmentsBackupRestoreTests,S3RemoteAttachmentsBackupRestoreTests}.cs."},
@@ -84,7 +84,7 @@
       "risk": {"level": "critical", "description": "A backup that restores metadata without bytes, or bytes without references, is silent data loss."}
     },
     {
-      "id": "PB-0021",
+      "id": "PB-3008",
       "name": "attachments-remote-storage",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Attachments/{RemoteAttachmentsConfiguration,RemoteAttachmentsDestinationConfiguration,RemoteAttachmentFlags}.cs; src/TerraBase.Server/Documents/{RemoteAttachmentsStorage,RemoteAttachmentsSender}.cs; src/TerraBase.Server/Documents/Handlers/Processors/Attachments/Remote/*.cs. Tests: test/TerraBase.SlowTests/Server/Documents/Attachments/{AzureRemoteAttachmentsSlowTests,S3RemoteAttachmentsSlowTests,RemoteAttachmentSchemaUpdateTests,DocumentSessionRemoteAttachmentsAsyncTests}.cs."},
@@ -94,7 +94,7 @@
       "risk": {"level": "critical", "description": "Remote configuration can expose credentials or make metadata look durable while bytes are unavailable."}
     },
     {
-      "id": "PB-0022",
+      "id": "PB-3009",
       "name": "counters-batch-transaction",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Commands/Batches/CountersBatchCommandData.cs::CountersBatchCommandData; src/TerraBase.Client/Documents/Operations/Counters/CounterBatchOperation.cs::CounterBatchOperation; src/TerraBase.Server/Documents/CountersStorage.cs. Tests: test/TerraBase.SlowTests/Client/Counters/CountersSingleNode.cs::MultiSetAndGetViaBatch, BatchWithDifferentTypesOfOperations; test/TerraBase.SlowTests/Client/Counters/CountersReplication.cs::RespectTxBoundaries, CountersTotalValueCanOverflow."},
@@ -104,7 +104,7 @@
       "risk": {"level": "critical", "description": "Partial counter batches produce totals no client can reconcile."}
     },
     {
-      "id": "PB-0023",
+      "id": "PB-3010",
       "name": "counters-query-index",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-006", "E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Queries/TerraBaseQuery.cs::Counter; src/TerraBase.Server/Documents/Queries/Results/Counters/CountersQueryResultRetriever.cs; src/TerraBase.Server/Documents/Indexes/Static/Counters/{MapCountersIndex,MapReduceCountersIndex}.cs. Tests: test/TerraBase.SlowTests/Client/Counters/QueryOnCounters.cs::RawQuerySelectSingleCounter, RawQuerySelectMultipuleCounters, RawQueryGetAllCountersValuesFromMetadata, SessionQuerySelectMultipuleCounters_UsingTerraBaseQueryCounter; test/TerraBase.EndToEndTests/Client/Indexing/Counters/BasicCountersIndexes.cs."},
@@ -114,7 +114,7 @@
       "risk": {"level": "high", "description": "Query/index mismatches can return plausible but wrong counter totals."}
     },
     {
-      "id": "PB-0024",
+      "id": "PB-3011",
       "name": "counters-replication-conflict",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/Replication/ReplicationItems/CounterReplicationItem.cs::CounterReplicationItem; src/TerraBase.Server/Documents/CountersStorage.cs. Tests: test/TerraBase.SlowTests/Client/Counters/CountersReplication.cs::ConflictsInMetadata, CounterConflictBetweenNewAndDeleted, MergeCountersOnDocumentConflict, MergeCountersOnCounterConflict, IncrementOnConflictedDocument, DeleteCounterOnConflictedDocument, CanSplitCounterWithUnicode."},
@@ -124,7 +124,7 @@
       "risk": {"level": "critical", "description": "Counter conflict merging can double-count, drop increments, or resurrect deleted names."}
     },
     {
-      "id": "PB-0025",
+      "id": "PB-3012",
       "name": "counters-sharding-tombstones",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/{CountersStorage.Sharding,Schemas/Counters,Schemas/CounterTombstones}.cs; src/TerraBase.Server/Documents/Sharding/Handlers/Processors/Counters/*.cs. Tests: test/TerraBase.SlowTests/Client/Counters/CountersCluster.cs::IncrementCounter, IncrementCounterIn3NodesCluster, DeleteCounter; test/TerraBase.SlowTests/Server/Documents/Counters/CountersTombstoneCleaner.cs."},
@@ -134,7 +134,7 @@
       "risk": {"level": "critical", "description": "Premature tombstone cleanup can resurrect counters after delayed replication or shard movement."}
     },
     {
-      "id": "PB-0026",
+      "id": "PB-3013",
       "name": "counters-backup-smuggler",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Smuggler/Documents/Iteration/CountersIterationState.cs; src/TerraBase.Server/Documents/ETL/Providers/TerraBase/Enumerators/CountersToTerraBaseEtlItems.cs. Tests: test/TerraBase.SlowTests/Client/Counters/CountersReplication.cs::RestoreAndConnectTwoNodesShouldHaveSameCounterValue, RestoreAndReplicateCounters, CanImportAndReplicateCounters."},
@@ -144,7 +144,7 @@
       "risk": {"level": "critical", "description": "Restoring a counter as zero or dropping its tombstone creates durable arithmetic corruption."}
     },
     {
-      "id": "PB-0027",
+      "id": "PB-3014",
       "name": "counters-changes-subscriptions",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Changes/ICounterChanges.cs::ICounterChanges; src/TerraBase.Client/Documents/Changes/ChangeNotification.cs; src/TerraBase.Server/Documents/Subscriptions/Processor/DatabaseSubscriptionProcessor.cs. Tests: test/TerraBase.SlowTests/Client/Counters/CountersSingleNode.cs::IncrementAndDeleteShouldChangeDocumentMetadata; test/TerraBase.EndToEndTests/Client/Operations/BasicChangesOperationsTests.cs; test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs::acknowledgement and error cases."},
@@ -154,7 +154,7 @@
       "risk": {"level": "high", "description": "Dropped or duplicated counter events make downstream projections disagree with durable totals."}
     },
     {
-      "id": "PB-0028",
+      "id": "PB-3015",
       "name": "counters-errors-overflow",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Exceptions/Documents/Counters/CounterOverflowException.cs; src/TerraBase.Client/Documents/Commands/Batches/CounterBatch.cs::CounterOperation.Parse. Tests: test/TerraBase.SlowTests/Client/Counters/CountersSingleNode.cs::ShouldThrowOnAttemptToAddCounterToArtificailDoc, DeleteCreateWithSameNameDeleteAgain; test/TerraBase.SlowTests/Client/Counters/CountersReplication.cs::CountersTotalValueCanOverflow, CountersTotalValueCanOverflow2."},
@@ -164,7 +164,7 @@
       "risk": {"level": "critical", "description": "Numeric wraparound is silent corruption and invalidates replication merges."}
     },
     {
-      "id": "PB-0029",
+      "id": "PB-3016",
       "name": "time-series-append-delete",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Session/ISessionDocumentTimeSeriesBase.cs::{ISessionDocumentAppendTimeSeriesBase,ISessionDocumentDeleteTimeSeriesBase}; src/TerraBase.Client/Documents/Operations/TimeSeries/TimeSeriesOperation.cs::TimeSeriesOperation; src/TerraBase.Server/Documents/TimeSeries/TimeSeriesStorage.cs. Tests: test/TerraBase.EndToEndTests/Server/Documents/TimeSeries/TimeSeriesAppendTests.cs; test/TerraBase.SlowTests/Client/TimeSeries/Operations/TimeSeriesOperations.cs::CanCreateAndGetSimpleTimeSeriesUsingStoreOperations, CanStoreAndReadMultipleTimestampsUsingStoreOperations, CanDeleteTimestampUsingStoreOperations, CanAppendAndRemoveTimestampsInSingleBatch."},
@@ -174,7 +174,7 @@
       "risk": {"level": "critical", "description": "Timestamp or delete-range mistakes permanently alter analytical history."}
     },
     {
-      "id": "PB-0030",
+      "id": "PB-3017",
       "name": "time-series-range-stream",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Operations/TimeSeries/{GetTimeSeriesOperation,GetMultipleTimeSeriesOperation,TimeSeriesRange,TimeSeriesRangeResult}.cs; src/TerraBase.Client/Documents/Session/{ISessionDocumentTimeSeriesBase,DocumentSession.TimeSeriesStream}.cs; src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetTimeSeries.cs. Tests: test/TerraBase.SlowTests/Client/TimeSeries/Operations/TimeSeriesOperations.cs::CanGetMultipleRangesInSingleRequest, CanGetMultipleTimeSeriesInSingleRequest, ShouldThrowOnNullOrEmptyRanges; test/TerraBase.SlowTests/Client/TimeSeries/Session/TimeSeriesStreamingTests.cs::CanStream, CanStreamAsync, CanStreamIncrementalTimeSeriesAsync."},
@@ -184,7 +184,7 @@
       "risk": {"level": "critical", "description": "Range boundary or backpressure bugs can drop data or exhaust memory on large series."}
     },
     {
-      "id": "PB-0031",
+      "id": "PB-3018",
       "name": "time-series-incremental",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Session/ISessionDocumentTimeSeriesBase.cs::{ISessionDocumentIncrementTimeSeriesBase,ISessionDocumentTypedIncrementTimeSeriesBase}; src/TerraBase.Server/Documents/TimeSeries/TimeSeriesStorage.cs. Tests: test/TerraBase.SlowTests/Client/TimeSeries/IncrementalTimeSeriesTests.cs::MultipleOperationsOnIncrementalTimeSeries, ShouldMergeEntriesForIncrementalTimeSeries, ShouldTakeLowerValueOnReplicationConflictWhenDecrementOperation, ShouldTakeHigherValueOnReplicationConflictWhenIncrementOperation, ShouldThrowIfIncrementOperationOnRollupTimeSeries, GetIncrementalTimeSeriesFullResultsShouldWork."},
@@ -194,7 +194,7 @@
       "risk": {"level": "critical", "description": "Incorrect incremental merge arithmetic can double-count or lose events while appearing plausible."}
     },
     {
-      "id": "PB-0032",
+      "id": "PB-3019",
       "name": "time-series-rollup-retention-config",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Operations/TimeSeries/{ConfigureTimeSeriesPolicyOperation,TimeSeriesConfiguration,TimeSeriesCollectionConfiguration}.cs; src/TerraBase.Server/Documents/TimeSeries/{TimeSeriesPolicyRunner,TimeSeriesRollups}.cs. Tests: test/TerraBase.SlowTests/Client/TimeSeries/Policies/TimeSeriesConfigurationTests.cs::CanConfigureTimeSeries, CanExecuteSimpleRollup, CanExecuteRawRetention, CanRetainAndRollup, RemoveConfigurationWillKeepData, CanRecordAndReplay, FullRetentionAndRollupInACluster."},
@@ -204,7 +204,7 @@
       "risk": {"level": "critical", "description": "Retention and rollup mistakes can destroy source measurements or produce wrong aggregates."}
     },
     {
-      "id": "PB-0033",
+      "id": "PB-3020",
       "name": "time-series-query-index",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-006", "E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Queries/TimeSeries/{TimeSeriesQueryable,TimeSeriesQueryBuilder,TimeSeriesAggregation}.cs; src/TerraBase.Server/Documents/Queries/TimeSeries/TimeSeriesQueryResultRetriever.cs; src/TerraBase.Server/Documents/Indexes/Static/TimeSeries/{MapTimeSeriesIndex,MapReduceTimeSeriesIndex}.cs. Tests: test/TerraBase.SlowTests/Client/TimeSeries/Query/TimeSeriesLinqQuery.cs::CanQueryTimeSeriesAggregation_UsingLinq, CanQueryTimeSeriesRaw_UsingLinq, CanQueryTimeSeriesAggregation_WhereTagIn, CanQueryTimeSeriesAggregation_MultipleSeries, ShouldThrowOnBadReturnType; test/TerraBase.EndToEndTests/Client/Indexing/TimeSeries/BasicTimeSeriesIndexes.cs."},
@@ -214,7 +214,7 @@
       "risk": {"level": "high", "description": "Analytical query mismatches can pass CRUD checks while changing customer reports."}
     },
     {
-      "id": "PB-0034",
+      "id": "PB-3021",
       "name": "time-series-replication-tombstone",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/Replication/ReplicationItems/TimeSeriesReplicationItem.cs::{TimeSeriesReplicationItem,TimeSeriesDeletedRangeItem}; src/TerraBase.Server/Documents/TimeSeries/TimeSeriesStorage.cs. Tests: test/TerraBase.SlowTests/Client/TimeSeries/Replication/TimeSeriesReplicationTests.cs::CanReplicate, CanSplitAndMergeLargeRange, CanReplicateValuesOutOfOrder, CanReplicateManyWithDeletions, CanReplicateDeletions, PreferDeletedValues, MergeValues, MergeTimeSeriesOnConflict; test/TerraBase.SlowTests/Server/Documents/TimeSeries/TimeSeriesTombstoneCleaner.cs."},
@@ -224,7 +224,7 @@
       "risk": {"level": "critical", "description": "Segment/tombstone ordering errors resurrect deleted measurements or lose late arrivals."}
     },
     {
-      "id": "PB-0035",
+      "id": "PB-3022",
       "name": "time-series-backup-smuggler",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Smuggler/Documents/Iteration/{TimeSeriesIterationState,TimeSeriesDeletedRangeIterationState}.cs. Tests: test/TerraBase.SlowTests/Client/TimeSeries/Issues/TerraBase-14702.cs::CanImportTimeSeries; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/BackupAndRestoreForIncrementalTimeSeries.cs::IncrementalTimeSeriesCanRestoreDeadValue, IncrementalTimeSeriesCanRestoreDeadValueInCluster."},
@@ -234,7 +234,7 @@
       "risk": {"level": "critical", "description": "Losing deleted ranges or incremental dead values during restore changes future merge results."}
     },
     {
-      "id": "PB-0036",
+      "id": "PB-3023",
       "name": "time-series-changes-subscriptions",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Changes/{ITimeSeriesChanges,ChangeNotification}.cs; src/TerraBase.Client/Documents/Subscriptions/SubscriptionCriteria.cs; src/TerraBase.Server/Documents/Subscriptions/Processor/DatabaseSubscriptionProcessor.cs. Tests: test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs::CanCreateSubscriptionWithIncludeTimeSeries_LastRangeByTime, CanCreateSubscriptionWithIncludeTimeSeries_LastRangeByCount, CanCreateSubscriptionWithIncludeTimeSeries_All_LastRange; test/TerraBase.SlowTests/Client/TimeSeries/Session/TimeSeriesIncludes.cs."},
@@ -244,7 +244,7 @@
       "risk": {"level": "high", "description": "A cursor advanced without the requested range can permanently skip measurements."}
     },
     {
-      "id": "PB-0037",
+      "id": "PB-3024",
       "name": "time-series-errors",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Operations/TimeSeries/TimeSeriesOperation.cs::{Parse,ParseForBulkInsert}; src/TerraBase.Client/Documents/Operations/TimeSeries/TimeSeriesConfiguration.cs. Tests: test/TerraBase.SlowTests/Client/TimeSeries/Operations/TimeSeriesOperations.cs::ShouldThrowOnAttemptToCreateTimeSeriesOnMissingDocument, ShouldThrowOnNullOrEmptyRanges, GetMultipleTimeSeriesShouldThrowOnMissingNameFromRange, GetTimeSeriesShouldThrowOnMissingName; test/TerraBase.SlowTests/Client/TimeSeries/Policies/TimeSeriesConfigurationTests.cs::NotValidConfigureShouldThrow; test/TerraBase.SlowTests/Client/TimeSeries/Query/TimeSeriesLinqQuery.cs::ShouldThrowOnMultipleCalls, ShouldThrowOnBadReturnType."},
@@ -254,7 +254,7 @@
       "risk": {"level": "high", "description": "Collapsing time-series failures makes retries unsafe and hides malformed data."}
     },
     {
-      "id": "PB-0038",
+      "id": "PB-3025",
       "name": "revisions-crud-range",
       "classification": "legacy",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Operations/Revisions/{GetRevisionsOperation,RevertRevisionsByIdOperation,RevisionsResult}.cs; src/TerraBase.Client/Documents/Session/IRevisionsSessionOperations.cs; src/TerraBase.Server/Documents/Revisions/RevisionsStorage.cs. Tests: test/TerraBase.SlowTests/Server/Documents/Revisions/{RevertRevisionsTests,RevertRevisionsByCollectionTests}.cs; test/TerraBase.SlowTests/Tests/Linq/CanQueryAndIncludeRevisions.cs; test/TerraBase.SlowTests/Client/ForceRevisionCreation.cs."},
@@ -264,7 +264,7 @@
       "risk": {"level": "critical", "description": "Revision ordering or revert mistakes can make historical state unrecoverable."}
     },
     {
-      "id": "PB-0039",
+      "id": "PB-3026",
       "name": "revisions-config-bin-retention",
       "classification": "legacy",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Operations/Revisions/{ConfigureRevisionsOperation,RevisionsConfiguration,ConfigureRevisionsBinCleanerOperation,RevisionsBinConfiguration}.cs; src/TerraBase.Server/Documents/RevisionsBinCleaner.cs. Tests: test/TerraBase.SlowTests/Server/Documents/Revisions/RevisionsStartFromEtagTests.cs; test/TerraBase.SlowTests/Server/Documents/DataArchival/DataArchivalRevisionsTests.cs; test/TerraBase.SlowTests/Client/Attachments/AttachmentsRevisions.cs::ReplaceAttachmentsStreamAfterRevisionsEnabled."},
@@ -274,7 +274,7 @@
       "risk": {"level": "critical", "description": "Unsafe revision cleanup can destroy conflict or audit history before consumers observe it."}
     },
     {
-      "id": "PB-0040",
+      "id": "PB-3027",
       "name": "revisions-conflicts-tombstones",
       "classification": "legacy",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/Schemas/{Revisions,Conflicts,Tombstones}.cs; src/TerraBase.Server/Documents/Replication/ReplicationItems/RevisionTombstoneReplicationItem.cs; src/TerraBase.Client/Documents/Commands/GetConflictsResult.cs::Conflict. Tests: test/TerraBase.SlowTests/Client/TimeSeries/TimeSeriesAndDocumentConflicts.cs; test/TerraBase.SlowTests/Server/Replication/ReplicationRevisionsTests.cs; test/TerraBase.SlowTests/Client/Subscriptions/RevisionsSubscriptions.cs::PlainRevisionsSubscriptionsCompareDocs."},
@@ -284,7 +284,7 @@
       "risk": {"level": "critical", "description": "Confusing conflict records with current documents can leak or resurrect data across regions."}
     },
     {
-      "id": "PB-0041",
+      "id": "PB-3028",
       "name": "revisions-replication-transfer",
       "classification": "legacy",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/Revisions/RevisionsStorage.cs; src/TerraBase.Server/Documents/Replication/ReplicationItems/RevisionTombstoneReplicationItem.cs; src/TerraBase.Server/Smuggler/Documents/SmugglerDocumentType.cs::{Revision,Tombstone,DocumentConflict}. Tests: test/TerraBase.SlowTests/Server/Documents/Revisions/{RevisionsReplication,RevisionsReplicationTransactionMarker}.cs; test/TerraBase.SlowTests/Server/Replication/ReplicationWithRevisions.cs; test/TerraBase.SlowTests/Smuggler/Data/{DocumentWithRevisions,RevisionsWithoutADocument}.terrabasedump."},
@@ -294,7 +294,7 @@
       "risk": {"level": "critical", "description": "A current document can look converged while required revision history is missing elsewhere."}
     },
     {
-      "id": "PB-0042",
+      "id": "PB-3029",
       "name": "compare-exchange-conditional",
       "classification": "admin",
       "v1_evidence": {"evidence_ids": ["E-010", "E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Operations/CompareExchange/{GetCompareExchangeValueOperation,PutCompareExchangeValueOperation,DeleteCompareExchangeValueOperation}.cs; src/TerraBase.Server/Documents/{AbstractCompareExchangeStorage,CompareExchangeStorage}.cs; src/TerraBase.Server/ServerWide/Commands/CompareExchangeCommands.cs. Tests: test/TerraBase.SlowTests/Cluster/CompareExchangeTests.cs::conditional put/delete/get and concurrency cases."},
@@ -304,7 +304,7 @@
       "risk": {"level": "critical", "description": "Exposing cluster-wide compare-exchange without authorization bypasses tenant isolation and ordering."}
     },
     {
-      "id": "PB-0043",
+      "id": "PB-3030",
       "name": "compare-exchange-batch-expiration",
       "classification": "admin",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Commands/Batches/{PutCompareExchangeCommandData,DeleteCompareExchangeCommandData}.cs; src/TerraBase.Server/ServerWide/{CompareExchangeExpirationStorage,Commands/DeleteExpiredCompareExchangeCommand}.cs; src/TerraBase.Server/Smuggler/Documents/Actions/DatabaseCompareExchangeActions.cs. Tests: test/TerraBase.SlowTests/Cluster/CompareExchangeTests.cs; test/TerraBase.SlowTests/SchemaUpgrade/Issues/SystemVersion/TerraBase_17999/CompareExchange_Expiration_TerraBaseData_v5.3_from50000.zip."},
@@ -314,7 +314,7 @@
       "risk": {"level": "critical", "description": "Incorrect expiry or batch ordering can release a coordination value while a client still owns it."}
     },
     {
-      "id": "PB-0044",
+      "id": "PB-3031",
       "name": "identities-hi-lo-seeding",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Operations/Identities/{NextIdentityForOperation,SeedIdentityForOperation,GetIdentitiesOperation}.cs; src/TerraBase.Client/Documents/Identity/{AsyncHiLoIdGenerator,AsyncMultiDatabaseHiLoIdGenerator,AsyncMultiTypeHiLoIdGenerator}.cs; src/TerraBase.Server/Documents/Handlers/Processors/Identities/*.cs. Tests: test/TerraBase.EndToEndTests/Client/NextAndSeedIdentities.cs::next, seed, force-update, and list identity cases; test/TerraBase.EmbeddedTests/BuildVersionIdentityTests.cs."},
@@ -324,7 +324,7 @@
       "risk": {"level": "critical", "description": "Duplicate identities overwrite documents; unsafe force-seeding can move counters backwards."}
     },
     {
-      "id": "PB-0045",
+      "id": "PB-3032",
       "name": "identities-sharding-recovery",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/Sharding/Handlers/Processors/Identities/*.cs; src/TerraBase.Server/Documents/Indexes/IndexIdentities.cs; src/TerraBase.Server/ServerWide/Commands/{IncrementClusterIdentityCommand,IncrementClusterIdentitiesBatchCommand,UpdateClusterIdentityCommand}.cs. Tests: test/TerraBase.EndToEndTests/Client/NextAndSeedIdentities.cs; test/TerraBase.SlowTests/SchemaUpgrade/Issues/SystemVersion/Identities_CompareExchange_TerraBaseData.zip and from12/from13 variants."},
@@ -334,7 +334,7 @@
       "risk": {"level": "critical", "description": "Identity rollback after restore can cause document overwrites that are hard to detect."}
     },
     {
-      "id": "PB-0046",
+      "id": "PB-3033",
       "name": "expiration-and-refresh",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Operations/{Expiration,Refresh}/*.cs; src/TerraBase.Client/Documents/Session/DocumentSession.cs::{Refresh,RefreshIfChanged}; src/TerraBase.Server/Documents/{Expiration,Refresh}/*.cs. Tests: test/TerraBase.SlowTests/Server/Documents/Expiration/ExpirationTests.cs::CanAddEntityWithExpiry_ThenReadItBeforeItExpires_ButWillNotBeAbleToReadItAfterExpiry, CanSetupExpirationAndRefresh, CanRefreshFromClusterTransaction, ThrowsIfUsingWrongExpiresOrRefresh, ShouldDeleteExpiredDocumentsForSharding, RefreshWithMaxItemsToProcessConfiguredShouldWork; test/TerraBase.EndToEndTests/Utils/{ExpirationHelper,RefreshHelper}.cs."},
@@ -344,7 +344,7 @@
       "risk": {"level": "critical", "description": "Expiry races can expose deleted data or delete a document a concurrent refresh should retain."}
     },
     {
-      "id": "PB-0047",
+      "id": "PB-3034",
       "name": "data-archival",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Operations/DataArchival/{ConfigureDataArchivalOperation,DataArchivalConfiguration}.cs; src/TerraBase.Server/Documents/DataArchival/{ArchiveDocumentsCommand,DataArchivist,DataArchivalStorage}.cs. Tests: test/TerraBase.SlowTests/Server/Documents/DataArchival/DataArchivalTests.cs::CanSetupDataArchival, WillArchiveAllDocumentsToBeArchivedInSingleRun_EvenWhenMoreThanBatchSize, ArchiveFlagShouldNotBeRemovedAfterDocumentUpdate, ShouldRebuildArchivedInMetadataIfArchivedDocumentUpdateRemovesIt, ThrowsIfUsingWrongArchiveAtDateTimeFormat."},
@@ -354,7 +354,7 @@
       "risk": {"level": "critical", "description": "Archiving a document without family data or metadata makes recovery and queries disagree."}
     },
     {
-      "id": "PB-0048",
+      "id": "PB-3035",
       "name": "data-archival-interactions",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/DataArchival/DataArchivist.cs; src/TerraBase.Server/Documents/Replication/ReplicationItems/*.cs. Tests: test/TerraBase.SlowTests/Server/Documents/DataArchival/{DataArchivalIndexingTests,DataArchivalPatchingTests,DataArchivalReplicationTests,DataArchivalShardingTests,DataArchivalSmugglerTests,DataArchivalDataSubscriptionsTests,DataArchivalRevisionsTests}.cs."},
@@ -364,7 +364,7 @@
       "risk": {"level": "critical", "description": "Archival is cross-family state; inconsistent consumers can expose or omit records after migration."}
     },
     {
-      "id": "PB-0049",
+      "id": "PB-3036",
       "name": "schema-validation-config-errors",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Operations/SchemaValidation/{ConfigureSchemaValidationOperation,GetSchemaValidationConfiguration,StartSchemaValidationOperation,SchemaDefinition}.cs; src/TerraBase.Server/Documents/SchemaValidation/{SchemaValidator,SchemaValidationHelper,InvalidSchemaValidationDefinitionException}.cs. Tests: test/TerraBase.EndToEndTests/SchemaValidation/{GeneralSchemaValidationTests,TypeSchemaValidationTests,ArraySchemaValidationTests,NumberRulesSchemaValidationTests,StringRulesSchemaValidationTests,InvalidSchemaValidationTests}.cs; test/TerraBase.SlowTests/SchemaValidation/{SchemaValidationConfigurationTests,SchemaValidationFeaturesTests,SchemaValidationOperationTests}.cs."},
@@ -374,7 +374,7 @@
       "risk": {"level": "critical", "description": "Validation drift can admit data V1 rejects or reject existing data during migration."}
     },
     {
-      "id": "PB-0050",
+      "id": "PB-3037",
       "name": "schema-validation-index-sharding",
       "classification": "optional",
       "v1_evidence": {"evidence_ids": ["E-006", "E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/Indexes/SchemaValidation/IndexSchemaValidatorsByCollection.cs; src/TerraBase.Server/Documents/Sharding/Handlers/Processors/SchemaValidation/*.cs; src/TerraBase.Server/Documents/SchemaValidation/SchemaValidatorCache.cs. Tests: test/TerraBase.SlowTests/Server/Documents/Indexing/SchemaValidationIndexingTests.cs; test/TerraBase.SlowTests/SchemaValidation/BasicIntegrationSchemaValidationTests.cs."},
@@ -384,7 +384,7 @@
       "risk": {"level": "high", "description": "Stale validator caches create cross-shard acceptance differences that are hard to repair."}
     },
     {
-      "id": "PB-0051",
+      "id": "PB-3038",
       "name": "family-conflicts-tombstones",
       "classification": "legacy",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/{Tombstone,AttachmentOrTombstone}.cs; src/TerraBase.Server/Documents/Schemas/{Tombstones,Conflicts,Attachments,CounterTombstones,TimeSeries}.cs; src/TerraBase.Server/Documents/TombstoneCleaner.cs. Tests: test/TerraBase.EndToEndTests/Server/Documents/Tombstones/BasicTombstones.cs; test/TerraBase.SlowTests/Server/Replication/{ReplicationConflictsTests,ReplicationTombstoneTests,ReplicationCleanTombstones}.cs; test/TerraBase.SlowTests/Server/Documents/{Counters/CountersTombstoneCleaner,TimeSeries/TimeSeriesTombstoneCleaner}.cs."},
@@ -394,7 +394,7 @@
       "risk": {"level": "critical", "description": "Tombstone loss is delayed data loss that appears when a stale member rejoins."}
     },
     {
-      "id": "PB-0052",
+      "id": "PB-3039",
       "name": "family-transactions-batch",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006", "E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Commands/Batches/{CountersBatchCommandData,TimeSeriesBatchCommandData,PutAttachmentCommandData}.cs; src/TerraBase.Server/Documents/TransactionMerger/*.cs; src/TerraBase.Client/Documents/Session/{DocumentSessionAttachments,SessionDocumentCounters,SessionDocumentTimeSeries}.cs. Tests: test/TerraBase.SlowTests/Client/Counters/CountersReplication.cs::RespectTxBoundaries; test/TerraBase.SlowTests/Client/TimeSeries/Operations/TimeSeriesOperations.cs::CanAppendAndRemoveTimestampsInSingleBatch; test/TerraBase.SlowTests/Client/Attachments/BulkInsertAttachments.cs::CanHaveAttachmentBulkInsertsWithCounters."},
@@ -404,7 +404,7 @@
       "risk": {"level": "critical", "description": "Cross-family partial commits create states V1 clients cannot interpret or repair."}
     },
     {
-      "id": "PB-0053",
+      "id": "PB-3040",
       "name": "family-query-index",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006", "E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/Indexes/Workers/{Counters/MapCounters,TimeSeries/MapTimeSeries}.cs; src/TerraBase.Server/Documents/Indexes/Persistence/Corax/{CountersAndTimeSeriesAnonymousCoraxDocumentConverter,CountersAndTimeSeriesJintCoraxDocumentConverter}.cs; src/TerraBase.Server/Documents/Queries/{Counters/CounterIncludesField,TimeSeries/TimeSeriesRetriever}.cs. Tests: test/TerraBase.EndToEndTests/Client/Indexing/{Counters/BasicCountersIndexes,TimeSeries/BasicTimeSeriesIndexes}.cs; test/TerraBase.SlowTests/Client/Counters/QueryOnCounters.cs; test/TerraBase.SlowTests/Client/TimeSeries/Query/{TimeSeriesLinqQuery,IncrementalTimeSeriesQueries}.cs."},
@@ -414,7 +414,7 @@
       "risk": {"level": "critical", "description": "A family-aware index can return valid-looking but cross-tenant or stale values if ownership is wrong."}
     },
     {
-      "id": "PB-0054",
+      "id": "PB-3041",
       "name": "family-changes-subscriptions",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Changes/{ChangeNotification,ICounterChanges,ITimeSeriesChanges}.cs; src/TerraBase.Client/Documents/Subscriptions/{SubscriptionCriteria,SubscriptionBatch,SubscriptionWorker}.cs; src/TerraBase.Server/Documents/Subscriptions/Processor/{DatabaseSubscriptionProcessor,RevisionsDatabaseSubscriptionProcessor}.cs. Tests: test/TerraBase.EndToEndTests/Client/DatabaseChangesTests.cs; test/TerraBase.SlowTests/Client/Subscriptions/{Subscriptions,SubscriptionsBasic,RevisionsSubscriptions}.cs; test/TerraBase.SlowTests/Server/Documents/DataArchival/DataArchivalDataSubscriptionsTests.cs."},
@@ -424,7 +424,7 @@
       "risk": {"level": "critical", "description": "Cursor advancement or retry mistakes permanently skip family changes."}
     },
     {
-      "id": "PB-0055",
+      "id": "PB-3042",
       "name": "family-authorization",
       "classification": "protocol",
       "v1_evidence": {"evidence_ids": ["E-010", "E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Exceptions/Security/AuthorizationException.cs; src/TerraBase.Server/Documents/Handlers/{AttachmentHandler,CountersHandler,TimeSeriesHandler,RevisionsHandler}.cs; src/TerraBase.Server/Documents/Sharding/Handlers/*.cs. Tests: test/TerraBase.SlowTests/Authentication/{AuthenticationEndpointTests,AuthenticationChangesTests}.cs; test/TerraBase.SlowTests/Client/Attachments/AttachmentFailover.cs; test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs::AcknowledgeSubscriptionBatchWhenDBisBeingDeletedShouldThrow."},
@@ -434,7 +434,7 @@
       "risk": {"level": "critical", "description": "Family data includes large bytes and history, so an authorization bypass has high blast radius."}
     },
     {
-      "id": "PB-0056",
+      "id": "PB-3043",
       "name": "family-size-stream-range",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Client/Documents/Operations/Attachments/{AttachmentStream,LimitedStream}.cs; src/TerraBase.Client/Documents/Operations/TimeSeries/{GetTimeSeriesOperation,TimeSeriesRangeResult}.cs; src/TerraBase.Server/Documents/Handlers/Processors/Streaming/*.cs. Tests: test/TerraBase.SlowTests/Client/Attachments/{AttachmentsBigFiles,AttachmentsStreamTests}.cs; test/TerraBase.SlowTests/Client/TimeSeries/Session/TimeSeriesStreamingTests.cs; test/TerraBase.StressTests/Client/Attachments/AttachmentsHugeFiles.cs."},
@@ -444,7 +444,7 @@
       "risk": {"level": "critical", "description": "Large payloads expose memory, cancellation, and truncation bugs missed by CRUD tests."}
     },
     {
-      "id": "PB-0057",
+      "id": "PB-3044",
       "name": "family-replication-sharding",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Documents/Replication/ReplicationItems/{AttachmentReplicationItem,AttachmentTombstoneReplicationItem,CounterReplicationItem,TimeSeriesReplicationItem,RevisionTombstoneReplicationItem}.cs; src/TerraBase.Server/Documents/Schemas/{Attachments,Counters,CounterTombstones,TimeSeries,Revisions,Tombstones,Conflicts}.cs; src/TerraBase.Server/Documents/Sharding/Handlers/Processors/{Attachments,Counters,TimeSeries,Revisions}/*.cs. Tests: test/TerraBase.SlowTests/Client/{Attachments/AttachmentsReplication,Counters/CountersReplication,TimeSeries/Replication/TimeSeriesReplicationTests}.cs; test/TerraBase.SlowTests/Server/Documents/DataArchival/DataArchivalShardingTests.cs; test/TerraBase.SlowTests/Sharding/Subscriptions/ShardedSubscriptionClusterTests.cs."},
@@ -454,7 +454,7 @@
       "risk": {"level": "critical", "description": "Family merge and routing rules are distinct; treating all payloads as generic documents can lose data."}
     },
     {
-      "id": "PB-0058",
+      "id": "PB-3045",
       "name": "family-backup-migration-errors",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-010", "E-011", "E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 source: src/TerraBase.Server/Smuggler/Documents/{SmugglerDocumentType.cs,Iteration/CountersIterationState.cs,Iteration/TimeSeriesIterationState.cs,Iteration/TombstonesIterationState.cs}; src/TerraBase.Client/Documents/Smuggler/DatabaseSmuggler; src/TerraBase.Client/Exceptions/{Documents/Attachments/AttachmentDoesNotExistException,Documents/Attachments/InvalidAttachmentRangeException,Documents/Counters/CounterOverflowException,Documents/Revisions/RevisionsDisabledException,SchemaValidation/SchemaValidationException,Security/AuthorizationException}.cs. Tests: test/TerraBase.SlowTests/Client/{Attachments/AttachmentsSmuggler,Counters/CountersReplication}.cs; test/TerraBase.SlowTests/Client/TimeSeries/Issues/TerraBase-14702.cs; test/TerraBase.SlowTests/Server/Documents/DataArchival/DataArchivalSmugglerTests.cs; test/TerraBase.SlowTests/Smuggler/SmugglerConflicts.cs."},

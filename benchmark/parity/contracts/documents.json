@@ -4,7 +4,7 @@
   "owner": "WS-CONTRACT/documents",
   "items": [
     {
-      "id": "PB-0001",
+      "id": "PB-2000",
       "name": "document-store-and-session-lifecycle",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 public IDocumentStore.Initialize, OpenSession, OpenAsyncSession, database selection, session disposal, and DocumentStore.Dispose; source src/TerraBase.Client/Documents/IDocumentStore.cs::IDocumentStore and src/TerraBase.Client/Documents/DocumentStore.cs::OpenSession, OpenAsyncSession, Dispose; tests Client/Documents/BasicDocuments.cs::CanStoreAnonymousObject and Client/Store.cs::Store_Document."},
@@ -14,7 +14,7 @@
       "risk": {"level": "critical", "description": "A lifecycle mismatch can leak resources or make every document operation unavailable."}
     },
     {
-      "id": "PB-0002",
+      "id": "PB-2001",
       "name": "session-savechanges-unit-of-work",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 IDocumentSession.SaveChanges, IAsyncDocumentSession.SaveChangesAsync, deferred command ordering, successful session-state clearing, and save event behavior; source src/TerraBase.Client/Documents/Session/IDocumentSession.cs::SaveChanges, src/TerraBase.Client/Documents/Session/IAsyncDocumentSession.cs::SaveChangesAsync, and src/TerraBase.Client/Documents/Session/InMemoryDocumentSessionOperations.cs::SaveChangesData and ClearSessionStateAfterSuccessfulSaveChanges; tests Client/Store.cs::Update_Document and Client/Documents/BasicDocuments.cs::CanChangeDocumentCollectionWithDeleteAndSave."},
@@ -24,7 +24,7 @@
       "risk": {"level": "critical", "description": "Incorrect commit boundaries or state clearing can lose writes or repeat commands."}
     },
     {
-      "id": "PB-0007",
+      "id": "PB-2002",
       "name": "document-conflicts-and-tombstones",
       "classification": "legacy",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 client-visible conflict metadata, conflict exceptions, deleted-document state, conflict load/delete/patch outcomes, and tombstone effects; source src/TerraBase.Client/Documents/Session/InMemoryDocumentSessionOperations.cs::TrackEntity and IsDeleted, src/TerraBase.Client/Exceptions/Documents/DocumentConflictException.cs::DocumentConflictException, and src/TerraBase.Client/Documents/Commands/GetConflictsCommand.cs::GetConflictsCommand; tests Server/Replication/ReplicationConflictsTests.cs::Conflict_then_load_by_id_will_return_409_and_conflict_data, Conflict_then_delete_query_will_return_409_and_conflict_data, and Server/Replication/ReplicationTombstoneTests.cs::Tombstones_replication_should_delete_document_at_destination."},
@@ -34,7 +34,7 @@
       "risk": {"level": "high", "description": "Dropping conflict or tombstone signals can resurrect deleted data or hide divergent writes."}
     },
     {
-      "id": "PB-0015",
+      "id": "PB-2003",
       "name": "document-identity-generation-and-id-forms",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 entity-id extraction, client/server generation, HiLo allocation, string IDs, and ULID IDs; source src/TerraBase.Client/Documents/Session/InMemoryDocumentSessionOperations.cs::Store, src/TerraBase.Client/Documents/Identity/GenerateEntityIdOnTheClient.cs::GenerateDocumentId, src/TerraBase.Client/Documents/Identity/AsyncMultiDatabaseHiLoIdGenerator.cs::AsyncMultiDatabaseHiLoIdGenerator, and src/TerraBase.Client/Documents/DocumentIdValue.cs::DocumentIdValue; tests Client/Store.cs::Store_Document_without_id_prop and Client/UlidSupport.cs::Can_store_and_load_entity_with_ulid_identity, Can_load_multiple_and_conditionally_load_by_ulid."},
@@ -44,7 +44,7 @@
       "risk": {"level": "high", "description": "Identity divergence can create duplicate documents or make existing documents unreachable."}
     },
     {
-      "id": "PB-0016",
+      "id": "PB-2004",
       "name": "document-metadata-and-last-modified",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 DocumentInfo metadata, change vector, new-document marker, ignore-changes marker, last-modified value, document ID lookup, and metadata dictionary; source src/TerraBase.Client/Documents/Session/DocumentInfo.cs::DocumentInfo and src/TerraBase.Client/Documents/Session/IAdvancedDocumentSessionOperations.cs::GetMetadataFor, GetDocumentId, GetLastModifiedFor, GetChangeVectorFor; tests Client/Store.cs::Refresh_stored_document and Client/WhatChanged.cs::What_Changed_New_Field."},
@@ -54,7 +54,7 @@
       "risk": {"level": "high", "description": "Metadata and change-vector drift breaks concurrency, cache validation, and migration checks."}
     },
     {
-      "id": "PB-0017",
+      "id": "PB-2005",
       "name": "load-by-id-and-batch",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 single-ID, multi-ID, string-ID, ULID-ID, sync, and async load behavior including missing values and session identity-map reuse; source src/TerraBase.Client/Documents/Session/IDocumentSession.Load.cs::Load and src/TerraBase.Client/Documents/Session/DocumentSession.Load.cs::Load, src/TerraBase.Client/Documents/Session/AsyncDocumentSession.Load.cs::LoadAsync; tests Client/Documents/BasicDocuments.cs::GetAsync, Client/Documents/Load.cs::LoadWithIncludesAndMissingDocument, and Client/UlidSupport.cs::Can_load_many_ulids_with_typed_keys."},
@@ -64,7 +64,7 @@
       "risk": {"level": "critical", "description": "Load result or identity-map mismatches change the primary read path and can return stale or duplicate objects."}
     },
     {
-      "id": "PB-0018",
+      "id": "PB-2006",
       "name": "exists-and-head",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 document existence and HEAD/change-vector checks; source src/TerraBase.Client/Documents/Session/IAdvancedSessionOperations.Load.cs::Exists, src/TerraBase.Client/Documents/Session/DocumentSession.cs::Exists and AsyncDocumentSession.cs::ExistsAsync, and src/TerraBase.Client/Documents/Commands/HeadDocumentCommand.cs::HeadDocumentCommand; tests Client/Documents/Load.cs::LoadWithIncludesAndMissingDocument and Client/UlidSupport.cs::Can_use_document_commands_with_ulid_identity."},
@@ -74,7 +74,7 @@
       "risk": {"level": "high", "description": "A false positive or false negative can cause unsafe writes or hide deleted data."}
     },
     {
-      "id": "PB-0019",
+      "id": "PB-2007",
       "name": "conditional-load-and-change-vector",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 conditional load returns an entity and current change vector, returns null when the vector is unchanged or the document is absent, and rejects an invalid null vector; source src/TerraBase.Client/Documents/Session/IAdvancedSessionOperations.ConditionalLoad.cs::ConditionalLoad and IAsyncAdvancedSessionOperations.ConditionalLoad.cs::ConditionalLoadAsync; tests Client/ConditionalLoadTest.cs::ConditionalLoad_CanGetDocumentById, ConditionalLoad_GetNotModifiedDocumentByIdShouldReturnNull, ConditionalLoad_NonExistsDocumentShouldReturnNull, and Client/UlidSupport.cs::Can_load_multiple_and_conditionally_load_by_ulid."},
@@ -84,7 +84,7 @@
       "risk": {"level": "high", "description": "Incorrect conditional behavior causes stale cache reuse or unnecessary document transfers."}
     },
     {
-      "id": "PB-0020",
+      "id": "PB-2008",
       "name": "store-put-and-overwrite",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 Store and StoreAsync overloads for generated IDs, explicit IDs, ULIDs, and explicit expected change vectors; source src/TerraBase.Client/Documents/Session/IDocumentSession.cs::Store, IAsyncDocumentSession.cs::StoreAsync, and InMemoryDocumentSessionOperations.cs::Store; tests Client/Store.cs::Store_Document, Store_Documents, Store_Document_without_id_prop, Client/Documents/BasicDocuments.cs::CanStoreAnonymousObject, and Client/UlidSupport.cs::Can_store_and_load_entity_with_ulid_identity."},
@@ -94,7 +94,7 @@
       "risk": {"level": "critical", "description": "Put or overwrite divergence can silently replace the wrong document or lose a pending write."}
     },
     {
-      "id": "PB-0021",
+      "id": "PB-2009",
       "name": "delete-and-expected-change-vector",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 entity, string-ID, ULID-ID, and expected-change-vector delete overloads, deferred delete commands, before-delete listener differences, and changed-entity guard; source src/TerraBase.Client/Documents/Session/IDocumentSession.cs::Delete, IAsyncDocumentSession.cs::Delete, and InMemoryDocumentSessionOperations.cs::Delete; tests Client/Documents/BasicDocuments.cs::CanChangeDocumentCollectionWithDeleteAndSave, Client/UlidSupport.cs::Can_store_and_delete_entity_by_explicit_ulid_identity, and Client/OptimisticConcurrency.cs::delete_should_throw_exception_if_doc_exists_and_optimistic_concurrency_is_enabled, delete_should_throw_exception_if_doc_exists_and_optimistic_concurrency_is_enabled_async."},
@@ -104,7 +104,7 @@
       "risk": {"level": "critical", "description": "Unsafe deletes can remove concurrent writes and break replication convergence."}
     },
     {
-      "id": "PB-0022",
+      "id": "PB-2010",
       "name": "refresh-and-eviction",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 refresh of one or many tracked entities, advanced Evict, Clear, IsLoaded, and session identity-map replacement; source src/TerraBase.Client/Documents/Session/DocumentSession.cs::Refresh, AsyncDocumentSession.cs::RefreshAsync, and IAdvancedDocumentSessionOperations.cs::Evict, Clear, IsLoaded; tests Client/Store.cs::Refresh_stored_document and Client/WhatChanged.cs::WhatChanged_should_be_idempotent_operation."},
@@ -114,7 +114,7 @@
       "risk": {"level": "medium", "description": "Incorrect refresh or eviction semantics can overwrite local edits or leave writes unexpectedly queued."}
     },
     {
-      "id": "PB-0023",
+      "id": "PB-2011",
       "name": "session-tracking-and-change-detection",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 identity-map tracking, HasChanges, HasChanged, GetTrackedEntities, IgnoreChangesFor, no-tracking mode, and tracked-document disposal; source src/TerraBase.Client/Documents/Session/IAdvancedDocumentSessionOperations.cs::HasChanges, HasChanged, GetTrackedEntities, IgnoreChangesFor, and src/TerraBase.Client/Documents/Session/InMemoryDocumentSessionOperations.cs::TrackEntity, HasChanges, Dispose; tests Client/WhatChanged.cs::WhatChanged_should_be_idempotent_operation and Client/Documents/BasicDocuments.cs::CanCalculateDocumentsByEntity_Count."},
@@ -124,7 +124,7 @@
       "risk": {"level": "critical", "description": "Change detection errors can drop edits or emit writes that the caller did not make."}
     },
     {
-      "id": "PB-0024",
+      "id": "PB-2012",
       "name": "what-changed",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 WhatChanged and WhatChangedFor field-level reports, array additions/removals, field replacement/removal, deletes, and idempotent repeated inspection; source src/TerraBase.Client/Documents/Session/InMemoryDocumentSessionOperations.cs::WhatChanged and WhatChangedFor; tests Client/WhatChanged.cs::What_Changed_New_Field, What_Changed_Removed_Field, What_Changed_Change_Field, What_Changed_Array_Value_Added, What_Changed_Array_Value_Removed, WhatChanged_should_be_idempotent_operation, and Client/WhatChangedFor.cs::What_Changed_For_New_Field."},
@@ -134,7 +134,7 @@
       "risk": {"level": "medium", "description": "A change report that misses nested or array edits gives callers false audit information."}
     },
     {
-      "id": "PB-0025",
+      "id": "PB-2013",
       "name": "session-command-defer-and-batching",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 Advanced.Defer for one or many ICommandData values, command batching with document writes, no-reply batch commands, and command validation on SaveChanges; source src/TerraBase.Client/Documents/Session/IAdvancedDocumentSessionOperations.cs::Defer and src/TerraBase.Client/Documents/Session/InMemoryDocumentSessionOperations.cs::Defer; tests Client/BatchCommandWithNoReplyFlagTest.cs::BatchWithNoReply_WhenPatch_ShouldNotFail, BatchWithNoReply_WhenJsonPatch_ShouldNotFail, and Client/UlidSupport.cs::Can_defer_commands_by_ulid."},
@@ -144,7 +144,7 @@
       "risk": {"level": "high", "description": "Batch ordering or validation mistakes can produce partial writes or bypass command-specific checks."}
     },
     {
-      "id": "PB-0026",
+      "id": "PB-2014",
       "name": "document-patch-operations",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 Advanced.Patch and JsonPatch operations for scalar fields, arrays, dictionaries, add-or-patch, add-or-increment, string and ULID IDs, and patch result errors; source src/TerraBase.Client/Documents/Session/IAdvancedSessionOperations.Patch.cs::Patch, AddOrPatch, AddOrIncrement and src/TerraBase.Client/Documents/Session/InMemoryDocumentSessionOperations.Patch.cs::Patch; tests Client/Documents/Patch.cs::PatchOnEnumShouldWork, Client/BatchCommandWithNoReplyFlagTest.cs::BatchWithNoReply_WhenPatch_ShouldNotFail, and Client/UlidSupport.cs::Can_json_patch_by_ulid."},
@@ -154,7 +154,7 @@
       "risk": {"level": "high", "description": "Patch semantics are easy to make subtly different, especially for arrays, enums, and missing paths."}
     },
     {
-      "id": "PB-0027",
+      "id": "PB-2015",
       "name": "bulk-insert",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 DocumentStore.BulkInsert sync and async writers, explicit/generated IDs, metadata mutation, dynamic collection selection, cancellation/abort, and protocol validation; source src/TerraBase.Client/Documents/IDocumentStore.cs::BulkInsert and src/TerraBase.Client/Documents/BulkInsert/BulkInsertOperation.cs::BulkInsertOperation, Store and StoreAsync; tests Client/BulkInsert/BulkInserts.cs::SimpleBulkInsertShouldWork, AsyncSimpleBulkInsertShouldWork, KilledTooEarly, ShouldNotAcceptIdsEndingWithPipeLine, CanModifyMetadataWithBulkInsert, and BulkInsertDynamic_WhenProvideDelegateForDynamicCollectionAndType_ShouldUseIt."},
@@ -164,7 +164,7 @@
       "risk": {"level": "critical", "description": "Bulk insert is a high-volume path where acknowledgement and cancellation mistakes can lose or duplicate documents."}
     },
     {
-      "id": "PB-0028",
+      "id": "PB-2016",
       "name": "single-node-transactions",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 SessionOptions.TransactionMode.SingleNode and sharded single-bucket transaction modes, atomic SaveChanges command batches, isolation, and mode changes; source src/TerraBase.Client/Documents/Session/SessionOptions.cs::TransactionMode, InMemoryDocumentSessionOperations.cs::SetTransactionMode, and DocumentSession.cs::SaveChanges; tests SlowTests/Cluster/ClusterTransactionTests.cs::TestSessionMixture, Client/BatchCommandWithNoReplyFlagTest.cs::BatchWithNoReply_WhenPatch_ShouldNotFail, and Sharding/Client/Session/BasicShardedSessionTests.cs::CanStoreNullOrEmptyId."},
@@ -174,7 +174,7 @@
       "risk": {"level": "critical", "description": "A transaction-mode mismatch can make multi-command writes partially visible."}
     },
     {
-      "id": "PB-0029",
+      "id": "PB-2017",
       "name": "cluster-wide-transactions",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 TransactionMode.ClusterWide session behavior, atomic document writes, leader/index waits, concurrency errors, mode restrictions for counters/attachments/time series, and transition back to SingleNode; source src/TerraBase.Client/Documents/Session/SessionOptions.cs::TransactionMode and src/TerraBase.Client/Documents/Session/InMemoryDocumentSessionOperations.cs::SaveChanges, ClusterTransactionSession.cs::ClusterTransactionOperations; tests SlowTests/Cluster/ClusterTransactionTests.cs::ClusterTransactionSession, ClusterTransactionWaitForIndexes, ThrowOnClusterTransactionWithCounters, ThrowOnClusterTransactionWithAttachments, ThrowOnClusterTransactionWithTimeSeries, and TestSessionMixture."},
@@ -184,7 +184,7 @@
       "risk": {"level": "critical", "description": "Cluster transaction errors can violate cross-member atomicity or leave clients believing a commit succeeded."}
     },
     {
-      "id": "PB-0030",
+      "id": "PB-2018",
       "name": "compare-exchange",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 cluster transaction compare-exchange create, get, get-many, prefix paging, delete-by-index, missing values, tracked state, lazy/async forms, and concurrency failure; source src/TerraBase.Client/Documents/Session/ClusterTransactionSession.cs::IClusterTransactionOperations and IClusterTransactionOperationsAsync and src/TerraBase.Client/Documents/Operations/CompareExchange; tests SlowTests/Cluster/ClusterTransactionTests.cs::SessionCompareExchangeCommands, TestSessionSequence, and SlowTests/Cluster/CompareExchangeTests.cs::DeletingCompareExchangeCommand_WhenNotExist_ShouldReturnFalse."},
@@ -194,7 +194,7 @@
       "risk": {"level": "critical", "description": "Compare-exchange is used for uniqueness and coordination, so stale-index handling must be exact."}
     },
     {
-      "id": "PB-0031",
+      "id": "PB-2019",
       "name": "lazy-and-deferred-reads",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 Lazily.Load, lazy batch execution, eager ExecuteAllPendingLazyOperations, lazy conditional loads and async cancellation; source src/TerraBase.Client/Documents/Session/Operations/Lazy/ILazySessionOperations.cs::ILazySessionOperations, DocumentSession.Lazy.cs::ExecuteAllPendingLazyOperations, AsyncDocumentSession.Lazy.cs::ExecuteAllPendingLazyOperationsAsync; tests SlowTests/Client/Lazy/Async/lazyAsync.cs::CanLazilyLoadEntity, CanExecuteAllPendingLazyOperations, WithQueuedActions_Load, LazyLoadById and Client/UlidSupport.cs::Can_load_with_include_lazily_using_ulid_identity."},
@@ -204,7 +204,7 @@
       "risk": {"level": "medium", "description": "Lazy evaluation timing and batching affect both correctness and request-count limits."}
     },
     {
-      "id": "PB-0032",
+      "id": "PB-2020",
       "name": "document-includes",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 document includes for scalar and collection IDs, nested paths, dictionary keys/values, include builders, multi-load, query load, counters, lazy, async, and ULID IDs; source src/TerraBase.Client/Documents/Session/IDocumentSession.Include.cs::Include, src/TerraBase.Client/Documents/Session/Loaders/IncludeBuilder.cs::IIncludeBuilder, and src/TerraBase.Client/Documents/Session/IncludesUtil.cs::IncludesUtil; tests Client/Includes.cs::Can_Load_With_Include, Can_Use_Includes_Within_Multi_Load, Can_Include_By_Secondary_String_Property, Can_Include_Nested_Dictionary_Values_Property, and Client/Documents/Load.cs::LoadWithIncludesAndMissingDocument."},
@@ -214,7 +214,7 @@
       "risk": {"level": "high", "description": "Include path or cache behavior can return the wrong related document while basic loads still pass."}
     },
     {
-      "id": "PB-0033",
+      "id": "PB-2021",
       "name": "request-cache-and-aggressive-cache",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-006"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 HTTP response cache, session NoCaching, DocumentStore.AggressivelyCacheFor/AggressivelyCache, DisableAggressiveCaching, change-driven cache eviction, and conditional validation; source src/TerraBase.Client/Documents/IDocumentStore.cs::AggressivelyCacheFor, AggressivelyCache, DisableAggressiveCaching and src/TerraBase.Client/Documents/DocumentStore.cs::ListenToChangesAndUpdateTheCacheAsync; tests Client/ConditionalLoadTest.cs::ConditionalLoad_GetNotModifiedDocumentByIdShouldReturnNull and Client/DatabaseChangesTests.cs::DatabaseChanges_WhenDeleteDatabaseAfterSubscribe_ShouldSetConnectionStateToDatabaseDoesNotExistException."},
@@ -224,7 +224,7 @@
       "risk": {"level": "critical", "description": "Cache scope or invalidation mistakes can expose stale or cross-database data."}
     },
     {
-      "id": "PB-0034",
+      "id": "PB-2022",
       "name": "topology-failover-and-retry",
       "classification": "protocol",
       "v1_evidence": {"evidence_ids": ["E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 RequestExecutor topology selection, session node affinity, topology updates, failed-node handling, retry/failover, load-balance behavior, request timeout, cancellation, and AllTopologyNodesDownException; source src/TerraBase.Client/Http/RequestExecutor.cs::ExecuteAsync, ChooseNodeForRequest, UpdateTopologyAsync, HandleServerNotResponsive, src/TerraBase.Client/Documents/Conventions/DocumentConventions.cs::LoadBalanceBehavior, DisableTopologyUpdates, RequestTimeout, and src/TerraBase.Client/Exceptions/AllTopologyNodesDownException.cs::AllTopologyNodesDownException; tests SlowTests.Issues/Issues/TerraBase-17903.cs::Bulk_Insert_Failover, Should_Throw_AllTopologyNodesDownException and SlowTests.Issues/Issues/TerraBase_19900.cs::UpdateTopologyTimeoutBehaviourShouldBeAccordingToConfiguration."},
@@ -234,7 +234,7 @@
       "risk": {"level": "critical", "description": "Retrying a non-idempotent write after an unknown response can duplicate data or violate transaction guarantees."}
     },
     {
-      "id": "PB-0035",
+      "id": "PB-2023",
       "name": "document-session-stream-and-projection-boundary",
       "classification": "protocol",
       "v1_evidence": {"evidence_ids": ["E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 document-owned session streaming and load-starting-with stream methods, stream result metadata, cancellation, and query projection handoff; source src/TerraBase.Client/Documents/Session/IAdvancedSessionOperations.Stream.cs::IDocumentsSessionOperations, DocumentSession.Stream.cs::Stream, AsyncDocumentSession.Stream.cs::StreamAsync, and DocumentSession.Load.cs::LoadStartingWithIntoStream; tests Client/QueryIntoStream.cs::QueryIntoStream and Client/LoadIntoStream.cs::LoadIntoStream."},
@@ -244,7 +244,7 @@
       "risk": {"level": "high", "description": "A stream that reorders, buffers without bounds, or conflates projections with documents breaks large-read clients."}
     },
     {
-      "id": "PB-0036",
+      "id": "PB-2024",
       "name": "document-change-notifications",
       "classification": "protocol",
       "v1_evidence": {"evidence_ids": ["E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 IDocumentStore.Changes, document/collection/prefix observers, connection-state transitions, disposal, and topology-aware reconnect; source src/TerraBase.Client/Documents/IDocumentStore.cs::Changes, src/TerraBase.Client/Documents/Changes/IDocumentChanges.cs::IDocumentChanges, and src/TerraBase.Client/Documents/Changes/DatabaseChanges.cs::DatabaseChanges; tests Client/DatabaseChangesTests.cs::DatabaseChanges_WhenRetryAfterCreatingDatabase_ShouldSubscribe, DatabaseChanges_WhenDeleteDatabaseAfterSubscribe_ShouldSetConnectionStateToDatabaseDoesNotExistException, and SlowTests/Client/ChangesApiFailover.cs::Can_Subscribe_To_Single_Document_Changes_With_Failover."},
@@ -254,7 +254,7 @@
       "risk": {"level": "high", "description": "Incorrect notification filtering or reconnect behavior can invalidate caches or hide writes."}
     },
     {
-      "id": "PB-0037",
+      "id": "PB-2025",
       "name": "document-error-cancellation-and-idempotency",
       "classification": "protocol",
       "v1_evidence": {"evidence_ids": ["E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 document client errors for missing/conflicting documents, invalid commands, request cancellation, timeout, aborted bulk insert, protocol violations, and retry-safe versus non-idempotent operations; source src/TerraBase.Client/Exceptions/Documents/DocumentDoesNotExistException.cs::DocumentDoesNotExistException, DocumentConflictException.cs::DocumentConflictException, Exceptions/Documents/BulkInsert/BulkInsertAbortedException.cs::BulkInsertAbortedException, and Http/RequestExecutor.cs::ExecuteAsync; tests Client/BulkInsert/BulkInserts.cs::KilledTooEarly, ShouldNotAcceptIdsEndingWithPipeLine, Client/ConditionalLoadTest.cs::ConditionalLoad_NonExistsDocumentShouldReturnNull, and SlowTests.Issues/Issues/TerraBase-17903.cs::Should_Throw_AllTopologyNodesDownException."},
@@ -264,7 +264,7 @@
       "risk": {"level": "critical", "description": "Error collapse or unsafe replay is a direct data-integrity risk."}
     },
     {
-      "id": "PB-0038",
+      "id": "PB-2026",
       "name": "document-revisions",
       "classification": "legacy",
       "v1_evidence": {"evidence_ids": ["E-010"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 session revisions access, revision includes, revision loads, revision metadata, revision conflict visibility, and revision behavior in cluster transactions; source src/TerraBase.Client/Documents/Session/IRevisionsSessionOperations.cs::IRevisionsSessionOperations, DocumentSessionRevisions.cs::DocumentSessionRevisions, and Session/InMemoryDocumentSessionOperations.cs::IncludeRevisionsByChangeVector; tests SlowTests/Server/Documents/Revisions/RevisionsReplication.cs::RevisionsOrder, ConflictedRevisionShouldReplicateBack and Client/UlidSupport.cs::Can_get_revision_count_by_ulid."},
@@ -274,7 +274,7 @@
       "risk": {"level": "high", "description": "Revision omission can break audit and conflict-resolution workflows even if current document reads work."}
     },
     {
-      "id": "PB-0039",
+      "id": "PB-2027",
       "name": "document-session-event-and-conversion-hooks",
       "classification": "core",
       "v1_evidence": {"evidence_ids": ["E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 store/session events before and after store, delete, save, query, entity/document conversion, request success/failure, topology update, and session disposal; source src/TerraBase.Client/Documents/IDocumentStore.cs::OnBeforeStore, OnAfterSaveChanges, OnBeforeDelete, OnBeforeQuery, OnBeforeConversionToDocument, OnAfterConversionToDocument, OnBeforeConversionToEntity, OnAfterConversionToEntity, OnFailedRequest, OnBeforeRequest, OnSucceedRequest, OnTopologyUpdated, OnSessionDisposing and src/TerraBase.Client/Documents/Session/IAdvancedDocumentSessionOperations.cs::events; tests Client/Events.cs::Events and Client/SerializationTweaking.cs::SerializationTweaking."},
@@ -284,7 +284,7 @@
       "risk": {"level": "medium", "description": "Changing hook order or conversion timing can break application listeners without changing storage results."}
     },
     {
-      "id": "PB-0040",
+      "id": "PB-2028",
       "name": "server-wide-document-maintenance-ownership",
       "classification": "admin",
       "v1_evidence": {"evidence_ids": ["E-029"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 database-scoped maintenance and server-wide operation adapters exposed from IDocumentStore.Maintenance and Operations, including statistics, identities, database records, indexes, ongoing tasks, and server/database lifecycle commands; source src/TerraBase.Client/Documents/IDocumentStore.cs::Maintenance and Operations, src/TerraBase.Client/Documents/Operations/MaintenanceOperationExecutor.cs::ForDatabase, ForNode, ForShard, Send, SendAsync, and src/TerraBase.Client/ServerWide/Operations; tests SlowTests/Server/Replication/DisableDatabasePropagationInRaftCluster.cs::DisableDatabaseToggleOperation_should_propagate_through_raft_cluster and StressTests/Rachis/DatabaseCluster/ClusterDatabaseMaintenanceStress.cs::MoveLoadingNodeToLast."},

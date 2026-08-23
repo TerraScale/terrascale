@@ -2,5 +2,15 @@
   "schema_version": "1.0",
   "product": "TerraBase V1",
   "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-  "evidence_ids": ["E-006", "E-010", "E-011", "E-029"]
+  "evidence_ids": [
+    "E-006",
+    "E-010",
+    "E-011",
+    "E-012",
+    "E-013",
+    "E-014",
+    "E-015",
+    "E-027",
+    "E-029"
+  ]
 }

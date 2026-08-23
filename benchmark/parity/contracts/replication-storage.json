@@ -4,7 +4,7 @@
   "owner": "WS-CONTRACT/replication-storage",
   "items": [
     {
-      "id": "PB-0010",
+      "id": "PB-5000",
       "name": "replication",
       "classification": "core",
       "v1_evidence": {
@@ -27,7 +27,7 @@
       "risk": {"level": "critical", "description": "Replication behavior can acknowledge data that is not durable or converged unless each acknowledgement and failure mode is proven."}
     },
     {
-      "id": "PB-0011",
+      "id": "PB-5001",
       "name": "storage-wal-and-recovery",
       "classification": "core",
       "v1_evidence": {
@@ -49,7 +49,7 @@
       "risk": {"level": "critical", "description": "A storage or recovery mismatch can lose committed data and invalidate every higher-level parity result."}
     },
     {
-      "id": "PB-0100",
+      "id": "PB-5002",
       "name": "storage-environment-lifecycle",
       "classification": "core",
       "v1_evidence": {
@@ -70,7 +70,7 @@
       "risk": {"level": "critical", "description": "Incorrect open or dispose behavior can leave journals, locks, or durable state inconsistent across restart."}
     },
     {
-      "id": "PB-0101",
+      "id": "PB-5003",
       "name": "storage-file-headers-and-versioning",
       "classification": "core",
       "v1_evidence": {
@@ -91,7 +91,7 @@
       "risk": {"level": "critical", "description": "Header drift can make valid data look empty, replay the wrong journal, or accept an incompatible file."}
     },
     {
-      "id": "PB-0102",
+      "id": "PB-5004",
       "name": "storage-wal-ordering-and-sync",
       "classification": "core",
       "v1_evidence": {
@@ -112,7 +112,7 @@
       "risk": {"level": "critical", "description": "Reordering or acknowledging before the required sync can expose uncommitted data or lose a committed write."}
     },
     {
-      "id": "PB-0103",
+      "id": "PB-5005",
       "name": "storage-transactions-mvcc-and-concurrency",
       "classification": "core",
       "v1_evidence": {
@@ -133,7 +133,7 @@
       "risk": {"level": "critical", "description": "A concurrency mismatch can produce stale reads, lost updates, leaked uncommitted pages, or unreproducible recovery results."}
     },
     {
-      "id": "PB-0104",
+      "id": "PB-5006",
       "name": "storage-trees-tables-and-paging",
       "classification": "core",
       "v1_evidence": {
@@ -154,7 +154,7 @@
       "risk": {"level": "high", "description": "Tree or page semantics underpin every persisted value and can corrupt unrelated records when wrong."}
     },
     {
-      "id": "PB-0105",
+      "id": "PB-5007",
       "name": "storage-scratch-buffers",
       "classification": "core",
       "v1_evidence": {
@@ -175,7 +175,7 @@
       "risk": {"level": "high", "description": "Premature scratch reclamation loses writes, while unbounded scratch growth can exhaust the process."}
     },
     {
-      "id": "PB-0106",
+      "id": "PB-5008",
       "name": "storage-compaction",
       "classification": "core",
       "v1_evidence": {
@@ -196,7 +196,7 @@
       "risk": {"level": "high", "description": "Compaction can lose pages or invalidate backup and replication cursors if it rewrites state without preserving their contracts."}
     },
     {
-      "id": "PB-0107",
+      "id": "PB-5009",
       "name": "storage-restart-and-recovery",
       "classification": "core",
       "v1_evidence": {
@@ -218,7 +218,7 @@
       "risk": {"level": "critical", "description": "Recovery is the last line of defense after process, host, or journal failure and must not turn uncertainty into a success claim."}
     },
     {
-      "id": "PB-0108",
+      "id": "PB-5010",
       "name": "storage-corruption-and-disk-full",
       "classification": "core",
       "v1_evidence": {
@@ -240,7 +240,7 @@
       "risk": {"level": "critical", "description": "Silent acceptance of corrupted or incomplete storage is worse than a visible failure because it can spread bad state through replication and backup."}
     },
     {
-      "id": "PB-0109",
+      "id": "PB-5011",
       "name": "storage-encryption",
       "classification": "core",
       "v1_evidence": {
@@ -262,7 +262,7 @@
       "risk": {"level": "critical", "description": "Encryption changes can cause unrecoverable data loss or secret disclosure if key failure and recovery behavior are not explicit."}
     },
     {
-      "id": "PB-0110",
+      "id": "PB-5012",
       "name": "storage-schema-upgrade",
       "classification": "core",
       "v1_evidence": {
@@ -283,7 +283,7 @@
       "risk": {"level": "critical", "description": "An incomplete schema transition can make an otherwise valid database unreadable or alter values during upgrade."}
     },
     {
-      "id": "PB-0111",
+      "id": "PB-5013",
       "name": "storage-full-backup-and-snapshot",
       "classification": "core",
       "v1_evidence": {
@@ -305,7 +305,7 @@
       "risk": {"level": "critical", "description": "A backup that omits a journal, header, or family value can produce an apparently successful but incomplete restore."}
     },
     {
-      "id": "PB-0112",
+      "id": "PB-5014",
       "name": "storage-incremental-backup-chain",
       "classification": "core",
       "v1_evidence": {
@@ -327,7 +327,7 @@
       "risk": {"level": "critical", "description": "Accepting a missing incremental archive creates a restore with an unreported data gap."}
     },
     {
-      "id": "PB-0113",
+      "id": "PB-5015",
       "name": "storage-recovery-point-manifest",
       "classification": "core",
       "v1_evidence": {
@@ -349,7 +349,7 @@
       "risk": {"level": "critical", "description": "Manifest confusion or path traversal can restore the wrong data, skip an archive, or expose files outside the approved source."}
     },
     {
-      "id": "PB-0114",
+      "id": "PB-5016",
       "name": "cluster-consensus-commit",
       "classification": "core",
       "v1_evidence": {
@@ -370,7 +370,7 @@
       "risk": {"level": "critical", "description": "Applying an uncommitted command or reporting commit without quorum can diverge topology and data across members."}
     },
     {
-      "id": "PB-0115",
+      "id": "PB-5017",
       "name": "cluster-consensus-elections",
       "classification": "core",
       "v1_evidence": {
@@ -391,7 +391,7 @@
       "risk": {"level": "critical", "description": "Two leaders or a stale leader accepting writes can fork committed state and violate acknowledgement claims."}
     },
     {
-      "id": "PB-0116",
+      "id": "PB-5018",
       "name": "cluster-log-divergence-and-snapshots",
       "classification": "core",
       "v1_evidence": {
@@ -412,7 +412,7 @@
       "risk": {"level": "critical", "description": "Incorrect divergence repair can overwrite committed history or admit a stale member as current."}
     },
     {
-      "id": "PB-0117",
+      "id": "PB-5019",
       "name": "cluster-membership-and-topology",
       "classification": "core",
       "v1_evidence": {
@@ -433,7 +433,7 @@
       "risk": {"level": "critical", "description": "A stale topology write can resurrect removed members or route data to a member that lacks the required state."}
     },
     {
-      "id": "PB-0118",
+      "id": "PB-5020",
       "name": "cluster-failover-and-member-loss",
       "classification": "core",
       "v1_evidence": {
@@ -455,7 +455,7 @@
       "risk": {"level": "critical", "description": "Failover without explicit commit and replay boundaries can duplicate writes or lose acknowledged state."}
     },
     {
-      "id": "PB-0119",
+      "id": "PB-5021",
       "name": "replication-change-vectors",
       "classification": "core",
       "v1_evidence": {
@@ -476,7 +476,7 @@
       "risk": {"level": "critical", "description": "Incorrect vector comparison can discard newer data, manufacture conflicts, or allow stale conditional writes."}
     },
     {
-      "id": "PB-0120",
+      "id": "PB-5022",
       "name": "replication-conflict-resolution",
       "classification": "core",
       "v1_evidence": {
@@ -498,7 +498,7 @@
       "risk": {"level": "critical", "description": "An implicit conflict winner can overwrite customer data and make active-active behavior impossible to audit."}
     },
     {
-      "id": "PB-0121",
+      "id": "PB-5023",
       "name": "replication-tombstones",
       "classification": "core",
       "v1_evidence": {
@@ -520,7 +520,7 @@
       "risk": {"level": "critical", "description": "Premature tombstone cleanup can resurrect deleted records after reconnect or restore."}
     },
     {
-      "id": "PB-0122",
+      "id": "PB-5024",
       "name": "replication-anti-entropy-and-catch-up",
       "classification": "core",
       "v1_evidence": {
@@ -542,7 +542,7 @@
       "risk": {"level": "critical", "description": "Without an explicit progress cursor and catch-up boundary, retries can duplicate data or declare convergence too early."}
     },
     {
-      "id": "PB-0123",
+      "id": "PB-5025",
       "name": "replication-external-destinations",
       "classification": "core",
       "v1_evidence": {
@@ -564,7 +564,7 @@
       "risk": {"level": "critical", "description": "A destination failure must not turn local success into a false remote durability or convergence claim."}
     },
     {
-      "id": "PB-0124",
+      "id": "PB-5026",
       "name": "replication-write-acknowledgement",
       "classification": "core",
       "v1_evidence": {
@@ -586,7 +586,7 @@
       "risk": {"level": "critical", "description": "Conflating local receipt with replica acknowledgement is a direct data-loss and availability risk."}
     },
     {
-      "id": "PB-0125",
+      "id": "PB-5027",
       "name": "replication-pull-hub-and-sink",
       "classification": "core",
       "v1_evidence": {
@@ -608,7 +608,7 @@
       "risk": {"level": "critical", "description": "A pull-replication access or deletion mistake can leak data or resurrect protected records."}
     },
     {
-      "id": "PB-0126",
+      "id": "PB-5028",
       "name": "replication-attachments",
       "classification": "optional",
       "v1_evidence": {
@@ -629,7 +629,7 @@
       "risk": {"level": "high", "description": "Attachment metadata or bytes can diverge from their document and silently restore deleted content."}
     },
     {
-      "id": "PB-0127",
+      "id": "PB-5029",
       "name": "replication-counters-and-time-series",
       "classification": "optional",
       "v1_evidence": {
@@ -650,7 +650,7 @@
       "risk": {"level": "high", "description": "Family values can be lost or resurrected if their replication cursor is not ordered with document changes."}
     },
     {
-      "id": "PB-0128",
+      "id": "PB-5030",
       "name": "replication-revisions",
       "classification": "legacy",
       "v1_evidence": {
@@ -672,7 +672,7 @@
       "risk": {"level": "high", "description": "Dropping revision history can change conflict resolution and break existing restore or audit expectations."}
     },
     {
-      "id": "PB-0129",
+      "id": "PB-5031",
       "name": "replication-local-progress",
       "classification": "core",
       "v1_evidence": {
@@ -694,7 +694,7 @@
       "risk": {"level": "critical", "description": "Reporting local progress as cluster or region convergence can mislead callers about data visibility and durability."}
     },
     {
-      "id": "PB-0130",
+      "id": "PB-5032",
       "name": "replication-health-and-convergence-observations",
       "classification": "core",
       "v1_evidence": {
@@ -716,7 +716,7 @@
       "risk": {"level": "critical", "description": "An observation API that conflates heartbeat, acknowledgement, and convergence can support unsafe operational decisions."}
     },
     {
-      "id": "PB-0131",
+      "id": "PB-5033",
       "name": "replication-restart-and-rejoin",
       "classification": "core",
       "v1_evidence": {
@@ -738,7 +738,7 @@
       "risk": {"level": "critical", "description": "A rejoin that skips or repeats a cursor can lose mutations, resurrect tombstones, or duplicate externally observed events."}
     },
     {
-      "id": "PB-0132",
+      "id": "PB-5034",
       "name": "replication-active-active",
       "classification": "core",
       "v1_evidence": {
@@ -760,7 +760,7 @@
       "risk": {"level": "critical", "description": "Process-local active-active tests do not prove regional durability or exactly-once external effects, so overclaiming them is unsafe."}
     },
     {
-      "id": "PB-0133",
+      "id": "PB-5035",
       "name": "replication-commands-and-snapshots",
       "classification": "protocol",
       "v1_evidence": {
@@ -781,7 +781,7 @@
       "risk": {"level": "high", "description": "Broad diagnostics or snapshot commands can expose credentials, document content, or private control-plane state."}
     },
     {
-      "id": "PB-0134",
+      "id": "PB-5036",
       "name": "sharding-topology",
       "classification": "core",
       "v1_evidence": {
@@ -802,7 +802,7 @@
       "risk": {"level": "critical", "description": "A routing mismatch can read or write the wrong shard and violate document identity or tenant isolation."}
     },
     {
-      "id": "PB-0135",
+      "id": "PB-5037",
       "name": "sharding-buckets",
       "classification": "core",
       "v1_evidence": {
@@ -823,7 +823,7 @@
       "risk": {"level": "high", "description": "Changing bucket identity during migration or resharding can orphan records or duplicate them across shards."}
     },
     {
-      "id": "PB-0136",
+      "id": "PB-5038",
       "name": "sharding-resharding-and-bucket-migration",
       "classification": "core",
       "v1_evidence": {
@@ -845,7 +845,7 @@
       "risk": {"level": "critical", "description": "A partial bucket move can create two owners, no owner, stale conditional writes, or duplicate replicated data."}
     },
     {
-      "id": "PB-0137",
+      "id": "PB-5039",
       "name": "sharding-orchestrator-coordination",
       "classification": "core",
       "v1_evidence": {
@@ -866,7 +866,7 @@
       "risk": {"level": "critical", "description": "Orchestrator races can leave shards with different records, route requests to unavailable members, or lose migration progress."}
     },
     {
-      "id": "PB-0138",
+      "id": "PB-5040",
       "name": "sharding-replication-backup-and-rejoin",
       "classification": "core",
       "v1_evidence": {
@@ -888,7 +888,7 @@
       "risk": {"level": "critical", "description": "Treating one shard's success as a whole database success can hide missing shard data or premature tombstone cleanup."}
     },
     {
-      "id": "PB-0139",
+      "id": "PB-5041",
       "name": "sharding-failover-and-cluster-transactions",
       "classification": "core",
       "v1_evidence": {
@@ -909,7 +909,7 @@
       "risk": {"level": "critical", "description": "A partial cross-shard commit can violate application invariants and cannot be repaired by local shard retries alone."}
     },
     {
-      "id": "PB-0140",
+      "id": "PB-5042",
       "name": "v2-multi-region-acknowledgement-level",
       "classification": "core",
       "v1_evidence": {
@@ -931,7 +931,7 @@
       "risk": {"level": "critical", "description": "An unspecified acknowledgement level makes durability and visibility claims impossible to interpret."}
     },
     {
-      "id": "PB-0141",
+      "id": "PB-5043",
       "name": "v2-multi-region-convergence",
       "classification": "core",
       "v1_evidence": {
@@ -953,7 +953,7 @@
       "risk": {"level": "critical", "description": "Without a defined convergence observation, callers cannot distinguish a healthy link from a converged operation."}
     },
     {
-      "id": "PB-0142",
+      "id": "PB-5044",
       "name": "v2-failure-domain-and-region-loss",
       "classification": "core",
       "v1_evidence": {
@@ -975,7 +975,7 @@
       "risk": {"level": "critical", "description": "Correlated failure of a Region can invalidate a member-level quorum assumption and expose a false durability guarantee."}
     },
     {
-      "id": "PB-0143",
+      "id": "PB-5045",
       "name": "v2-multi-region-partition-and-conflict",
       "classification": "core",
       "v1_evidence": {
@@ -997,7 +997,7 @@
       "risk": {"level": "critical", "description": "An unqualified partition policy can silently overwrite divergent writes or expose conflicting values as settled."}
     },
     {
-      "id": "PB-0144",
+      "id": "PB-5046",
       "name": "v2-replay-idempotency-and-external-effects",
       "classification": "core",
       "v1_evidence": {
@@ -1019,7 +1019,7 @@
       "risk": {"level": "critical", "description": "A replay-safe data mutation can still duplicate an external effect if the adapter boundary does not carry an operation identity."}
     },
     {
-      "id": "PB-0145",
+      "id": "PB-5047",
       "name": "v2-member-rejoin-and-recovery-receipt",
       "classification": "core",
       "v1_evidence": {
@@ -1041,7 +1041,7 @@
       "risk": {"level": "critical", "description": "Admitting a stale or incompatible member can reintroduce deleted data or make acknowledgements meaningless."}
     },
     {
-      "id": "PB-0146",
+      "id": "PB-5048",
       "name": "v2-multi-region-sharding-orchestration",
       "classification": "core",
       "v1_evidence": {
