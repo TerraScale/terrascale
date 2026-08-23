@@ -17,11 +17,801 @@
       "id": "PB-0009",
       "name": "backup-and-import",
       "classification": "core",
-      "v1_evidence": {"evidence_ids": ["E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 backup, restore, and import capabilities"},
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/BackupOperation.cs, StartBackupOperation.cs, and ServerWide/Operations/RestoreBackupOperation.cs; src/TerraBase.Client/Documents/Smuggler/DatabaseSmuggler.cs; src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs, Restore/RestoreBackupTask.cs, and Smuggler/Documents/DatabaseSmuggler.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs and test/TerraBase.SlowTests/Server/Documents/PeriodicBackup"
+      },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
-      "public_contract": {"parity_required": true, "semantics": ["Recovery and import outcomes require a manifest and receipt"], "compatibility": "new V2 storage format with logical migration"},
-      "downstream_impact": ["storage/WAL/recovery", "Platform Adapter", "release evidence"],
-      "risk": {"level": "critical", "description": "Incorrect recovery evidence can hide permanent data loss."}
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Backup, restore, export, and import are separate operations with observable progress, completion, cancellation, and failure results.",
+          "V2 uses a new storage format and must expose a manifest-verified logical migration path rather than opening V1 files directly.",
+          "The contract must identify which records, data families, configuration, and credentials are transferred, and which authorization checks reject or skip them.",
+          "No implementation or recovery proof is claimed by this unresolved inventory row."
+        ],
+        "compatibility": "Logical V1-to-V2 compatibility is required, but direct V1 storage compatibility is explicitly not promised."
+      },
+      "downstream_impact": ["storage/WAL/recovery", "family and replication seams", "Platform Adapter", "release evidence"],
+      "risk": {"level": "critical", "description": "A transfer that reports success after skipping records, losing checkpoints, or accepting an incomplete chain can create unrecoverable data loss."}
+    },
+    {
+      "id": "PB-0015",
+      "name": "changes-api",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Changes/IDatabaseChanges.cs, IDocumentChanges.cs, IIndexChanges.cs, ICounterChanges.cs, ITimeSeriesChanges.cs, IOperationChanges.cs, DatabaseChanges.cs, and AbstractDatabaseChanges.cs; src/TerraBase.Server/Documents/Changes/ChangesClientConnection.cs, AbstractChangesClientConnection.cs, DocumentsChanges.cs, and Handlers/ChangesHandler.cs; test/TerraBase.EndToEndTests/Client/Changes/BasicChangesDocumentsTests.cs, BasicChangesIndexesTests.cs, DatabaseChangesTests.cs, Operations/BasicChangesOperationsTests.cs, and test/TerraBase.SlowTests/Client/ChangesApiFailover.cs"
+      },
+      "v2": {"owner": "engine/streaming", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Changes exposes document, index, counter, time-series, operation, and database change observables with the V1 event shape and filters.",
+          "The client manages connection state, reconnects, disposal, throttling, and node selection; failures are surfaced as typed connection or subscription errors.",
+          "The server must define event ordering, duplicate delivery after reconnect, buffering, slow-consumer behavior, and cancellation instead of assuming a best-effort feed.",
+          "The approved protocol adapter must carry only typed public changes operations and preserve tenant authorization."
+        ],
+        "compatibility": "V1 Changes semantics remain unresolved pending event-shape, reconnect, ordering, and failure tests."
+      },
+      "downstream_impact": ["documents and data-family owners", "protocol adapter", "aggressive cache invalidation", "replication and ETL consumers"],
+      "risk": {"level": "high", "description": "A missed or duplicated event can leave caches, indexes, ETL checkpoints, or customer projections inconsistent."}
+    },
+    {
+      "id": "PB-0016",
+      "name": "subscription-wire-and-batches",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Subscriptions/AbstractSubscriptionWorker.cs, SubscriptionWorkerOptions.cs, SubscriptionBatch.cs, and SubscriptionWorker.cs; src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs, SubscriptionFetcher.cs, Processor/AbstractSubscriptionProcessor.cs, DocumentsDatabaseSubscriptionProcessor.cs, and RevisionsDatabaseSubscriptionProcessor.cs; test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs and SubscriptionOperationsSignaling.cs"
+      },
+      "v2": {"owner": "engine/subscriptions", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "A subscription opens a negotiated connection, receives batches bounded by MaxDocsPerBatch, sends acknowledgements and heartbeats, and closes with an explicit status.",
+          "SubscriptionOpeningStrategy, compression negotiation, send and receive buffer sizes, CloseWhenNoDocsLeft, and IgnoreSubscriberErrors affect observable connection behavior.",
+          "Document and revision batches have distinct payload and include semantics; a batch may be opened once into a sync or async session and then acknowledged.",
+          "The V2 interface must state framing, ordering, memory bounds, timeout behavior, and all connection status and error transitions."
+        ],
+        "compatibility": "The V1 subscription wire contract is unresolved pending protocol fixtures and end-to-end batch tests."
+      },
+      "downstream_impact": ["protocol adapter", "documents and revisions", "multi-region failover", "operational task status"],
+      "risk": {"level": "high", "description": "Incorrect batch framing or session lifetime rules can acknowledge data that the consumer never processed."}
+    },
+    {
+      "id": "PB-0017",
+      "name": "subscription-checkpoints-acknowledgements-and-resend",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Server/Documents/Subscriptions/Processor/AbstractSubscriptionProcessor.cs (TryRecordBatchAsync and AcknowledgeBatchAsync), DocumentsDatabaseSubscriptionProcessor.cs, SubscriptionConnectionsState.cs, ResendItem.cs, ServerWide/Commands/Subscriptions/AcknowledgeSubscriptionBatchCommand.cs, and SubscriptionStorage.cs; test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs and test/TerraBase.RachisTests/SubscriptionsFailover.cs"
+      },
+      "v2": {"owner": "engine/subscriptions", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "The server records a batch boundary and last change vector before waiting for the client acknowledgement, then advances durable subscription state only at the acknowledgement seam.",
+          "Unacknowledged items can enter resend state; reconnect and conflict-vector logic must specify whether delivery is at-least-once and how duplicates are identified.",
+          "Acknowledge failures, changed subscription state, database deletion, and concurrent administrative updates return observable errors without silently advancing the checkpoint.",
+          "Tests must cover retry, resume, duplicate suppression or exposure, ordering, and checkpoint durability."
+        ],
+        "compatibility": "V1 checkpoint and resend behavior is unresolved until crash, duplicate, and replay tests compare observable state."
+      },
+      "downstream_impact": ["storage/WAL/recovery", "replication and failover", "document conflicts", "parity tests"],
+      "risk": {"level": "critical", "description": "Advancing a checkpoint before acknowledgement loses documents; retaining no resend state causes silent gaps after failure."}
+    },
+    {
+      "id": "PB-0018",
+      "name": "subscription-reconnect-failover-and-backpressure",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Subscriptions/AbstractSubscriptionWorker.cs (ProcessSubscriptionAsync, CheckIfShouldReconnectWorker, TrySetRedirectNode, and SendAckAsync), SubscriptionWorker.cs, and SubscriptionWorkerOptions.cs; src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs; test/TerraBase.RachisTests/SubscriptionsFailover.cs, SubscriptionFailoverWIthWaitingChains.cs, and test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs"
+      },
+      "v2": {"owner": "engine/subscriptions", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Worker reconnect decisions distinguish expected connection loss, redirect, subscription takeover, subscriber failure, invalid state, and terminal errors.",
+          "Failover preserves the durable checkpoint and does not acknowledge or skip a batch merely because responsibility moved to another member.",
+          "The worker applies bounded send and receive buffers, waits for acknowledgement, and exposes cancellation and disposal without leaking a connection or task.",
+          "Multi-region qualification must cover member loss, retry timing, rejoin, duplicate delivery, and tenant isolation without selecting an unapproved consistency policy."
+        ],
+        "compatibility": "V1 reconnect and failover outcomes are unresolved pending failure-domain and bounded-buffer tests."
+      },
+      "downstream_impact": ["replication", "multi-region qualification", "storage/recovery", "operational metrics"],
+      "risk": {"level": "critical", "description": "Failover that loses a checkpoint or permits two active workers can duplicate or drop customer data."}
+    },
+    {
+      "id": "PB-0019",
+      "name": "subscription-criteria-scripts-and-revisions",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-010", "E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Subscriptions/SubscriptionCriteria.cs, SubscriptionMode.cs, SubscriptionOpeningStrategy.cs, DocumentSubscriptions.cs, and revision subscription types; src/TerraBase.Server/Documents/Subscriptions/Processor/DocumentsDatabaseSubscriptionProcessor.cs and RevisionsDatabaseSubscriptionProcessor.cs; test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionScripts.cs, SubscriptionScriptErrorHandling.cs, RevisionsSubscriptions.cs, CriteriaScript.cs, and SubscriptionsBasic.cs"
+      },
+      "v2": {"owner": "engine/subscriptions", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Subscription criteria support the V1 predicate, projection, nested-property, date, collection, and include behavior with deterministic validation errors.",
+          "Revision subscriptions expose current and previous revisions, criteria script errors, and revision-specific checkpoint and resend behavior.",
+          "Scripts have explicit execution limits, cancellation, error reporting, and authorization treatment; untrusted source text cannot become a generic control-plane escape hatch.",
+          "The contract states whether filtered or skipped items affect batch size, change-vector progress, ordering, and duplicate handling."
+        ],
+        "compatibility": "V1 criteria and revision behavior is unresolved pending independent parser and end-to-end stream tests."
+      },
+      "downstream_impact": ["query and document semantics", "revisions family", "security adapter", "parity tests"],
+      "risk": {"level": "high", "description": "A filter or script mismatch can expose unauthorized documents or advance a subscription past items it was meant to deliver."}
+    },
+    {
+      "id": "PB-0020",
+      "name": "document-streaming",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-006", "E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Session/DocumentSession.Stream.cs, AsyncDocumentSession.Stream.cs, Session/Operations/StreamOperation.cs, and Commands/StreamCommand.cs; src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetDocs.cs; test/TerraBase.EndToEndTests/Client/LoadIntoStream.cs, LoadIntoStreamAsync.cs, and test/TerraBase.SlowTests/Core/Streaming/DocumentStreaming.cs"
+      },
+      "v2": {"owner": "engine/streaming", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Document streaming supports id, prefix, match, exclusion, paging, and continuation selectors and preserves the V1 document result shape.",
+          "Sync and async consumers observe the same item ordering and terminal behavior, with cancellation and disposal closing the underlying response.",
+          "The implementation defines behavior for missing documents, invalid selectors, malformed frames, and mid-stream transport failure while bounding memory."
+        ],
+        "compatibility": "V1 document-stream compatibility remains unresolved pending selector, ordering, cancellation, and malformed-response tests."
+      },
+      "downstream_impact": ["document engine", "protocol adapter", "benchmark adapter"],
+      "risk": {"level": "medium", "description": "Selector or ordering drift changes export results and can make continuation-based transfer non-repeatable."}
+    },
+    {
+      "id": "PB-0021",
+      "name": "query-streaming",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-006", "E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Session/AsyncDocumentSession.Stream.cs, DocumentSession.Stream.cs, Session/Operations/StreamOperation.cs, and Commands/QueryStreamCommand.cs; src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetStreamQuery.cs; test/TerraBase.EndToEndTests/Client/QueryIntoStream.cs and test/TerraBase.SlowTests/Core/Streaming/QueryStreaming.cs"
+      },
+      "v2": {"owner": "engine/streaming", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Raw, document, LINQ, and index query streams preserve projection, query result format, ordering, statistics, and typed versus blittable results.",
+          "The stream exposes unsupported format, invalid query, index staleness, timeout, cancellation, and partial-write errors through the typed protocol.",
+          "Sharded map-reduce and query stream merging define cross-shard ordering, continuation, duplicate, and backpressure behavior."
+        ],
+        "compatibility": "V1 query-stream compatibility is unresolved pending result-shape, ordering, sharding, and failure tests."
+      },
+      "downstream_impact": ["query/index owner", "sharding", "protocol adapter", "benchmark adapter"],
+      "risk": {"level": "high", "description": "A query-stream ordering or projection change invalidates exports and customer pagination assumptions."}
+    },
+    {
+      "id": "PB-0022",
+      "name": "time-series-streaming",
+      "classification": "optional",
+      "v1_evidence": {
+        "evidence_ids": ["E-010", "E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Session/AsyncDocumentSession.TimeSeriesStream.cs, DocumentSession.TimeSeriesStream.cs, Session/Operations/StreamOperation.cs, and time-series stream result types; src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetTimeSeries.cs; test/TerraBase.SlowTests/Client/TimeSeries/Session/TimeSeriesStreamingTests.cs and test/TerraBase.SlowTests/Client/Indexing/TimeSeries/TimeSeriesIndexStreamTests.cs"
+      },
+      "v2": {"owner": "engine/streaming", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Time-series streams support document and series selection, from and to bounds, offsets, typed and raw query results, and incremental time-series values.",
+          "Entries, rollups, deleted ranges, and empty ranges retain V1 timestamp, tag, value, and ordering rules.",
+          "Cancellation, malformed entries, retention or missing-series errors, and cross-shard merge behavior are observable and tested."
+        ],
+        "compatibility": "Time-series streaming is a required parity item, but its V2 owner and wire details remain unresolved."
+      },
+      "downstream_impact": ["time-series family", "query/index owner", "ETL and Smuggler", "sharding"],
+      "risk": {"level": "high", "description": "Timestamp, rollup, or deleted-range drift silently changes analytical exports and retention results."}
+    },
+    {
+      "id": "PB-0023",
+      "name": "full-incremental-and-snapshot-backups",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/BackupConfiguration.cs, BackupType.cs, SnapshotSettings.cs, BackupOperation.cs, and src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs, BackupExtensions.cs, BackupKind.cs; test/TerraBase.EndToEndTests/Voron/Backups/Full.cs, BackupToOneZipFile.cs, IncrementalBackupTestUtils.cs, and test/TerraBase.SlowTests/Voron/Backups/Incremental.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "V1 distinguishes full, incremental, and snapshot backup kinds and reports the files, counts, and upload progress for each operation.",
+          "Incremental archives depend on a complete ordered base chain; missing, reordered, truncated, or corrupt archives fail restore rather than produce a partial database.",
+          "Snapshot and logical backup modes have distinct storage, compression, encryption, and restore constraints that the V2 interface states."
+        ],
+        "compatibility": "V2 backup kind and chain compatibility is unresolved pending storage and Recovery Receipt evidence."
+      },
+      "downstream_impact": ["storage/WAL/recovery", "backup destinations", "restore", "benchmark adapter"],
+      "risk": {"level": "critical", "description": "Accepting an incomplete incremental chain can make a restore appear successful while omitting committed data."}
+    },
+    {
+      "id": "PB-0024",
+      "name": "periodic-backup-scheduling-and-status",
+      "classification": "admin",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/PeriodicBackupConfiguration.cs, PeriodicBackupStatus.cs, UpdatePeriodicBackupOperation.cs, StartBackupOperation.cs, and GetPeriodicBackupStatusOperation.cs; src/TerraBase.Server/Documents/PeriodicBackup/PeriodicBackup.cs and PeriodicBackupRunner.cs, Utils/BackupUtils.cs, and Documents/Handlers/Processors/OngoingTasks; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/ClusterBackupTests.cs, ServerWideBackup.cs, and Retention.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Periodic tasks support full and optional incremental cron frequencies, disabled state, task identity, mentor assignment, pinning, and durable status.",
+          "Status reports last and running full or incremental work, destination state, next occurrence, errors, encryption, and responsible member without exposing secrets.",
+          "Configuration updates, one-time backup, delay, cancellation, and concurrent updates have typed authorization, idempotency, and error behavior."
+        ],
+        "compatibility": "V1 scheduling and status are unresolved until timer, failover, idempotency, and public authorization tests exist."
+      },
+      "downstream_impact": ["control and operational adapter", "replication/member assignment", "retention", "dashboard and metrics"],
+      "risk": {"level": "high", "description": "A timer or status race can run two backups, skip a scheduled backup, or report a stale recovery point."}
+    },
+    {
+      "id": "PB-0025",
+      "name": "backup-destinations-and-upload-modes",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/BackupConfiguration.cs, BackupSettings.cs, BackupUploadMode.cs, and IAzureSettings.cs/IS3Settings.cs; src/TerraBase.Server/Documents/PeriodicBackup/FileUploaderBase.cs, BackupUploader.cs, DirectUpload/DirectUploadBackupTask.cs, Aws/TerraBaseAwsS3Client.cs, Azure/TerraBaseAzureClient.cs, GoogleCloud/TerraBaseGoogleCloudClient.cs, TerraBaseFtpClient.cs, and restore source providers; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/Aws.cs, Azure.cs, GoogleCloud.cs, CustomS3.cs, FtpBasicTests.cs, and Restore/RestoreFromAwsS3.cs, RestoreFromAzure.cs, RestoreFromGoogleCloud.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Backup destination behavior covers local storage, Amazon S3 and Glacier, Azure, Google Cloud, FTP, and direct versus staged upload modes where V1 exposes them.",
+          "Each provider defines configuration validation, multipart or streaming upload, list/download/delete behavior, retry and error mapping, path naming, and restore discovery.",
+          "Credentials and connection strings never appear in audit or proof artifacts; provider-specific differences are not flattened into a generic HTTP escape hatch."
+        ],
+        "compatibility": "Provider parity is unresolved and must be qualified independently for local and each supported cloud or FTP adapter."
+      },
+      "downstream_impact": ["typed provider adapters", "security and secret handling", "restore and retention", "multi-region placement"],
+      "risk": {"level": "critical", "description": "Provider retry or path mistakes can create orphaned archives, overwrite the wrong tenant's data, or make a valid chain undiscoverable."}
+    },
+    {
+      "id": "PB-0026",
+      "name": "backup-encryption-and-compression",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/BackupEncryptionSettings.cs, BackupConfiguration.cs, and RestoreBackupConfiguration.cs; src/TerraBase.Server/Documents/PeriodicBackup/EncryptedBackup.cs, BackupCompressionAlgorithmExtensions.cs, and ServerWide/TempCryptoStream.cs; docs/implementation/encrypted-backup-key-integrity.md and docs/implementation/incremental-backup-chain-integrity.md; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/EncryptedBackupTest.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Encryption mode, key selection, algorithm and key-size validation, encrypted versus unencrypted source and destination combinations, and wrong-key failures are observable contract behavior.",
+          "Compression is part of archive identity and restore behavior; decompression rejects malformed or unsupported input without leaking plaintext or secrets.",
+          "A successful encrypted full-plus-incremental restore proves configured-key and archive integrity, but does not imply key rotation or managed key service support."
+        ],
+        "compatibility": "V1 encryption and compression compatibility is unresolved pending redacted Recovery Receipt evidence."
+      },
+      "downstream_impact": ["storage format and manifest", "secret handling", "provider upload", "restore"],
+      "risk": {"level": "critical", "description": "Wrong key, weak identity binding, or accidental key logging can either destroy recoverability or expose customer data."}
+    },
+    {
+      "id": "PB-0027",
+      "name": "backup-retention",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/RetentionPolicy.cs and PeriodicBackupConfiguration.cs; src/TerraBase.Server/Documents/PeriodicBackup/Retention/RetentionHelper.cs, RetentionPolicyRunnerBase.cs, LocalRetentionPolicyRunner.cs, S3RetentionPolicyRunner.cs, AzureRetentionPolicyRunner.cs, GlacierRetentionPolicyRunner.cs, GoogleCloudRetentionPolicyRunner.cs, and FtpRetentionPolicyRunner.cs; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/Retention.cs and test/TerraBase.StressTests/Server/Documents/PeriodicBackup/RetentionStress.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Retention can be disabled or configured with a minimum backup age and preserves every archive needed by a valid full and incremental chain.",
+          "Local and provider-specific deletion implementations report missing objects, partial deletion, and retry state without deleting an active or in-progress recovery point.",
+          "Retention selection, clock handling, and deletion are separate from restore selection and require full-only and full-plus-incremental history tests."
+        ],
+        "compatibility": "V1 retention behavior is unresolved pending provider matrix tests and recovery-chain evidence."
+      },
+      "downstream_impact": ["backup chain integrity", "provider adapters", "restore discovery", "operational status"],
+      "risk": {"level": "critical", "description": "Deleting a chain member or misreading time can make all newer recovery points unusable."}
+    },
+    {
+      "id": "PB-0028",
+      "name": "recovery-point-manifests-and-integrity",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Server/Documents/PeriodicBackup/Restore/RecoveryPointManifest.cs, ManifestRestoreSource.cs, RemoteRecoveryPointDiscovery.cs, LocalRestorePoints.cs, and RestoreUtils.cs; src/TerraBase.Client/Documents/Operations/Backups/RestoreBackupConfiguration.cs (RecoveryPointManifestReference); docs/implementation/2026-08-07-recovery-point-manifests.md and docs/agentic-delivery/2026-08-07/recovery-manifest-production-proof.md; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/RecoveryPointManifestTests.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "A completed recovery-point manifest names an immutable recovery-point identity and the ordered archive names, lengths, and SHA-256 digests needed to restore it.",
+          "Discovery rejects missing, tampered, path-traversal, or in-progress manifests and stages remote archives under an ownership lock before restore.",
+          "Manifest selection binds the requested identity to the loaded manifest and fails before materializing a target database when identity or archive completeness is wrong.",
+          "The V2 record states whether manifest signatures, object lock, arbitrary point-in-time recovery, and external-provider manifests are unsupported rather than implying them."
+        ],
+        "compatibility": "The V1 local and remote manifest contract is unresolved pending a V2 manifest decision and Recovery Receipt."
+      },
+      "downstream_impact": ["storage/recovery", "retention", "local and cloud restore", "security review"],
+      "risk": {"level": "critical", "description": "A manifest that does not bind exact bytes and archive order can restore corrupted or incomplete data while reporting success."}
+    },
+    {
+      "id": "PB-0029",
+      "name": "restore-selection-and-execution",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/RestoreBackupConfiguration.cs, ServerWide/Operations/RestoreBackupOperation.cs, RestoreProgress.cs, and RestoreResult.cs; src/TerraBase.Server/Documents/PeriodicBackup/Restore/IRestoreSource.cs, RestoreFromLocal.cs, RestoreFromS3.cs, RestoreFromAzure.cs, RestoreFromGoogleCloud.cs, RestoreBackupTask.cs, RestoreSnapshotTask.cs, and RestoreUtils.cs; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/Restore/RestoreFromAwsS3.cs, RestoreFromAzure.cs, RestoreFromGoogleCloud.cs and test/TerraBase.SlowTests/Sharding/Backup/ShardedRestoreBackupTests.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Restore selection supports local and provider sources, a last-file selector or immutable recovery-point reference, destination directory, encryption settings, max read rate, shard settings, skip-indexes, and disable-ongoing-tasks options.",
+          "Restore progress and result report files, counts, destination identity, errors, and terminal state; restore does not silently overwrite an unrelated source database.",
+          "Restore admission validates source configuration and archive completeness before materializing work, and cancellation leaves a recoverable state or explicit failure."
+        ],
+        "compatibility": "V1 restore selection and result behavior is unresolved pending local, provider, sharded, and failure-path tests."
+      },
+      "downstream_impact": ["manifest and storage recovery", "Platform confirmation and audit", "sharding", "operational status"],
+      "risk": {"level": "critical", "description": "Wrong restore selection or target handling can overwrite data or materialize an incomplete tenant database."}
+    },
+    {
+      "id": "PB-0030",
+      "name": "backup-errors-throttling-and-concurrency",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Server/Documents/PeriodicBackup/ConcurrentBackupsCounter.cs, BackupDelayException.cs, BackupHelper.cs, BackupTask.cs, Utils/BackupUtils.cs, Exceptions/PeriodicBackup/StorageException.cs, and Client/Exceptions/Database/BackupAlreadyRunningException.cs; src/TerraBase.Client/Documents/Operations/Backups/BackupConfiguration.cs (MaxReadOpsPerSecond); test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/TerraBase-20544.cs and test/TerraBase.StressTests/Server/Documents/PeriodicBackup/MaxReadOpsPerSecOptionTests.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Backup admission rejects or reports concurrent work, disabled or unhealthy members, invalid destinations, delayed scheduling, and provider storage errors with typed status.",
+          "MaxReadOpsPerSecond limits source reads without changing archive ordering or dropping records, and throttling is visible in progress and metrics.",
+          "Retries are bounded and idempotent at archive and manifest seams; an uncertain result cannot create duplicate or contradictory recovery-point identities."
+        ],
+        "compatibility": "V1 backup failure and throttling behavior is unresolved pending deterministic fault-injection tests."
+      },
+      "downstream_impact": ["storage/WAL/recovery", "provider adapters", "scheduler", "benchmark methodology"],
+      "risk": {"level": "high", "description": "Retrying a non-idempotent upload or ignoring throttling can corrupt a chain and destabilize the database."}
+    },
+    {
+      "id": "PB-0031",
+      "name": "smuggler-export-and-import",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Smuggler/DatabaseSmuggler.cs, DatabaseSmugglerExportOptions.cs, DatabaseSmugglerImportOptions.cs, DatabaseSmugglerOptions.cs, SmugglerResult.cs, and SmugglerProgressBase.cs; src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs, DatabaseSource.cs, DatabaseDestination.cs, StreamSource.cs, StreamDestination.cs, and Handlers/SmugglerHandler.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs and test/TerraBase.EmbeddedTests/SmugglerTests.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Smuggler exports and imports logical records through files or streams with selectable item types, compression, progress counts, cancellation, and typed result errors.",
+          "Remote and local transfer modes preserve document identity and collection selection, reject malformed input, and report skipped or unauthorized items rather than hiding them.",
+          "The V2 logical package format needs an explicit version, manifest, checksum, duplicate policy, and migration contract; it is not a physical V1 backup."
+        ],
+        "compatibility": "V1 Smuggler behavior is unresolved pending package fixtures and V1/V2 logical round-trip tests."
+      },
+      "downstream_impact": ["document and family owners", "protocol adapter", "migration", "security and audit"],
+      "risk": {"level": "critical", "description": "A logical export that silently skips records or changes IDs cannot support a trustworthy migration or customer export."}
+    },
+    {
+      "id": "PB-0032",
+      "name": "smuggler-data-families-and-selection",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-010", "E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Smuggler/DatabaseItemType.cs and DatabaseSmugglerOptions.cs; src/TerraBase.Server/Smuggler/Documents/StreamSource.cs, StreamDestination.cs, CsvStreamSource.cs, and Actions/DatabaseRecordActions.cs, DatabaseIndexActions.cs, DatabaseCompareExchangeActions.cs, DatabaseSubscriptionActions.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs, SmugglerConflicts.cs, and test/TerraBase.SlowTests/Server/Documents/DataArchival/DataArchivalSmugglerTests.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Item selection covers documents, revisions, conflicts, tombstones, attachments, counters, time-series values and deleted ranges, indexes, identities, compare-exchange, subscriptions, and database record configuration where V1 exposes them.",
+          "Collection filters and family dependencies define whether an item is exported, imported, skipped, or reported as an error; counters and time-series retain document identity and range semantics.",
+          "Import of configuration or control-plane records is permission-sensitive and must not bypass tenant isolation or expose private operations."
+        ],
+        "compatibility": "Every V1 item type requires an explicit V2 disposition and focused round-trip or accepted-exclusion evidence; this row currently excludes nothing."
+      },
+      "downstream_impact": ["data families", "security and authorization", "replication conflicts", "parity matrix"],
+      "risk": {"level": "critical", "description": "Family selection mistakes can lose attachments, revisions, counters, or time-series while leaving documents apparently intact."}
+    },
+    {
+      "id": "PB-0033",
+      "name": "smuggler-transform-scripts-and-revision-policy",
+      "classification": "optional",
+      "v1_evidence": {
+        "evidence_ids": ["E-010", "E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Smuggler/DatabaseSmugglerExportOptions.cs and DatabaseSmugglerImportOptions.cs (TransformScript, MaxStepsForTransformScript, SkipRevisionCreation); src/TerraBase.Server/Smuggler/Documents/Data/DatabaseSmugglerOptionsServerSide.cs and SmugglerPatcher.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs (revision and max-read cases)"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Export and import transformation scripts have a bounded step budget, deterministic failure reporting, cancellation, and an explicit execution context.",
+          "SkipRevisionCreation and related revision options control whether imported documents create new revisions, while existing revision records and document identity remain observable.",
+          "Script input is untrusted data and cannot become a generic query, network, filesystem, or control-plane escape hatch."
+        ],
+        "compatibility": "V1 transform and revision options remain unresolved pending sandbox, limit, and round-trip tests."
+      },
+      "downstream_impact": ["security adapter", "documents and revisions", "migration", "resource limits"],
+      "risk": {"level": "high", "description": "An unrestricted transform can leak data or make a supposedly idempotent import mutate revisions on every retry."}
+    },
+    {
+      "id": "PB-0034",
+      "name": "smuggler-resume-idempotency-and-loss-reporting",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Server/Smuggler/Documents/Iteration/DocumentsIterationState.cs, CollectionAwareIterationState.cs, CountersIterationState.cs, TimeSeriesIterationState.cs, TombstonesIterationState.cs, and DatabaseSmuggler.cs; src/TerraBase.Client/Documents/Smuggler/SmugglerProgressBase.cs and SmugglerResult.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs (repeat imports and limits) and SmugglerConflicts.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Each transfer family tracks its last durable position and reports counts, skipped items, errors, and last etag or equivalent progress without claiming completion before the write commits.",
+          "Retrying an interrupted import or export defines duplicate handling, resume identity, ordering, and whether a partial package is discarded or recoverable.",
+          "A loss or permission skip is a visible result with enough redacted identity to diagnose it; success cannot mean that unreported items were dropped."
+        ],
+        "compatibility": "V1 resume and idempotency behavior is unresolved pending crash and repeat-transfer tests; no data-loss claim is made."
+      },
+      "downstream_impact": ["storage/WAL/recovery", "manifest and migration", "parity tests", "audit and metrics"],
+      "risk": {"level": "critical", "description": "A non-repeatable resume point can duplicate side effects or lose the tail of a transfer after process failure."}
+    },
+    {
+      "id": "PB-0035",
+      "name": "legacy-offline-migration",
+      "classification": "legacy",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/ServerWide/Operations/Migration/OfflineMigrationConfiguration.cs and OfflineMigrationOperation.cs; src/TerraBase.Server/Smuggler/Migration/AbstractLegacyMigrator.cs, AbstractMigrator.cs, Migrator.cs, Migrator_V2.cs, Migrator_V3.cs, Importer.cs, MigrationConfiguration.cs, and LegacyMigrationJson.cs; test/TerraBase.EndToEndTests/Server/Smuggler/LegacyMigrationJsonTests.cs and test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Legacy migration validates source directories, exporter paths, database identity, optional compression and encryption, batch limits, journal options, and timeout before work starts.",
+          "Version-specific migrators preserve supported legacy payload shape, record progress and errors, and state unsupported storage or item types instead of treating a physical file as a V2 database.",
+          "Migration is resumable and idempotent at its logical record boundary, with explicit behavior for interrupted or partially written output."
+        ],
+        "compatibility": "Legacy migration is required as an explicit, versioned logical path; direct V1 file opening remains excluded by the charter, not this parity row."
+      },
+      "downstream_impact": ["new V2 storage format", "security and secret handling", "release migration tooling", "recovery evidence"],
+      "risk": {"level": "critical", "description": "Legacy input parsing and partial output are difficult to audit, and an incomplete migration can be mistaken for a valid database."}
+    },
+    {
+      "id": "PB-0036",
+      "name": "relational-migration",
+      "classification": "optional",
+      "v1_evidence": {
+        "evidence_ids": ["E-010", "E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Server/SqlMigration/GenericDatabaseMigrator.cs, DatabaseDriverDispatcher.cs, MigrationProvider.cs, JsPatcher.cs, Model/MigrationRequest.cs, MigrationSettings.cs, MigrationResult.cs, and MsSQL/MySQL/NpgSQL/Oracle providers; test/TerraBase.SlowTests/Server/Documents/Migration/BasicMigrationTests.cs, AttachmentsTest.cs, PatchTest.cs, and provider schema tests"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "SQL migration supports the V1 provider matrix, schema discovery, root and child collection relationships, skip/embed/link modes, limits, key mapping, attachments or binary policy, and document patching.",
+          "Provider errors, missing parents, unsupported schema shapes, null propagation, and partial batches are returned as explicit migration results.",
+          "Migration scripts and connection details are secret-sensitive and validated through a typed adapter with no credentials in audit output."
+        ],
+        "compatibility": "V1 relational migration is unresolved pending provider-by-provider logical migration tests and limits."
+      },
+      "downstream_impact": ["documents and attachments", "connection-string security", "logical migration", "Platform Adapter"],
+      "risk": {"level": "high", "description": "Relationship or null-handling drift can create structurally valid documents with wrong references or missing child data."}
+    },
+    {
+      "id": "PB-0037",
+      "name": "etl-task-configuration-and-transformations",
+      "classification": "optional",
+      "v1_evidence": {
+        "evidence_ids": ["E-010", "E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/ETL/EtlConfiguration.cs, Transformation.cs, EtlType.cs, AddEtlOperation.cs, UpdateEtlOperation.cs, and ResetEtlOperation.cs; src/TerraBase.Server/Documents/ETL/EtlLoader.cs, EtlProcess.cs, EtlTransformer.cs, ExtractedItemsEnumerator.cs, and Handlers/EtlHandler.cs; test/TerraBase.SlowTests/Server/Documents/ETL/EtlTasksManagement_TerraBase_7276.cs, BasicTerraBaseEtlTests.cs, and EtlLoaderTests.cs"
+      },
+      "v2": {"owner": "engine/etl", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "ETL configuration validates stable task identity, unique names, connection-string selection, mentor and pinning, disabled state, non-empty transformations, script names, and encrypted-channel policy.",
+          "Transformations can filter, load, delete, route collections, access attachments, counters, and time-series according to the selected ETL type, with deterministic script validation and resource limits.",
+          "Task updates compare configuration changes, restart or preserve checkpoints as V1 requires, and expose a typed reset operation with no private control-plane route."
+        ],
+        "compatibility": "V1 ETL configuration and script behavior is unresolved pending type-specific public seam tests."
+      },
+      "downstream_impact": ["document and family changes", "connection strings", "ongoing tasks", "security and metrics"],
+      "risk": {"level": "high", "description": "A transform or checkpoint reset that differs from V1 can duplicate external writes or delete the wrong destination records."}
+    },
+    {
+      "id": "PB-0038",
+      "name": "etl-document-attachment-counter-and-time-series-inputs",
+      "classification": "optional",
+      "v1_evidence": {
+        "evidence_ids": ["E-010", "E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Server/Documents/ETL/EtlProcess.cs (Extract, ExtractDocuments, ExtractCounters, ExtractTimeSeries, tombstone and attachment enumerators), EtlLoader.cs, and Providers/TerraBase/Enumerators/DocumentsToTerraBaseEtlItems.cs, CountersToTerraBaseEtlItems.cs, TimeSeriesToTerraBaseEtlItems.cs, and AttachmentTombstonesToTerraBaseEtlItems.cs; test/TerraBase.SlowTests/Server/Documents/ETL/EtlCountersTests.cs, EtlTimeSeriesTests.cs, Server/Documents/Attachments/S3RemoteAttachmentsSqlEtlTests.cs, and TerraBase/BasicTerraBaseEtlTests.cs"
+      },
+      "v2": {"owner": "engine/etl", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "ETL input ordering and checkpoint rules cover document changes, tombstones, attachment tombstones, counters, time-series values, and deleted ranges according to each configured provider.",
+          "Family changes committed near a document change are neither omitted nor delivered twice without an explicit duplicate policy; lower or higher etag cases have defined behavior.",
+          "Retention, missing attachments, unloaded time-series, and family-specific transform functions produce typed status or errors and do not silently delete source data."
+        ],
+        "compatibility": "V1 ETL family-input behavior is unresolved pending source/destination convergence and checkpoint tests."
+      },
+      "downstream_impact": ["data families", "storage/WAL", "replication and tombstones", "external destination adapters"],
+      "risk": {"level": "critical", "description": "Missing a tombstone or family update leaves stale external data that a later retry may never repair."}
+    },
+    {
+      "id": "PB-0039",
+      "name": "etl-destination-variants",
+      "classification": "optional",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/ETL/EtlType.cs and configuration classes TerraBaseEtlConfiguration.cs, SQL/SqlEtlConfiguration.cs, OLAP/OlapEtlConfiguration.cs, Elasticsearch/ElasticSearchEtlConfiguration.cs, Queue/QueueEtlConfiguration.cs, and Snowflake/SnowflakeEtlConfiguration.cs; src/TerraBase.Server/Documents/ETL/Providers; test/TerraBase.SlowTests/Server/Documents/ETL/Elasticsearch/ElasticSearchEtlTests.cs, OLAP/LocalTests.cs, SQL/SqlEtlTests.cs, Snowflake/SnowflakeEtlTests.cs, Queue/KafkaEtlTests.cs, Queue/RabbitMqEtlTests.cs, Queue/AmazonSqs/AmazonSqsEtlTests.cs, Queue/AzureQueueStorageEtlTests.cs, and TerraBase/BasicTerraBaseEtlTests.cs"
+      },
+      "v2": {"owner": "engine/etl", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "V1 ETL variants include TerraBase, SQL, OLAP, Elasticsearch, Queue, Snowflake, EmbeddingsGeneration, and GenAi task types where the pinned source exposes them.",
+          "Each destination defines load, insert-only or delete behavior, schema or table mapping, batching, provider limits, connection validation, and test-script results.",
+          "Unsupported combinations, including sharded or encrypted-channel limitations, are explicit capability errors rather than accepted as no-op tasks."
+        ],
+        "compatibility": "All pinned V1 ETL types remain in scope; exact V2 provider set and adapter ownership are unresolved."
+      },
+      "downstream_impact": ["provider adapters", "connection strings", "scripts and metrics", "sharding and failover"],
+      "risk": {"level": "high", "description": "Treating provider-specific delivery as one generic sink hides ordering, transaction, size, and failure differences."}
+    },
+    {
+      "id": "PB-0040",
+      "name": "etl-delivery-retry-dead-letter-and-metrics",
+      "classification": "optional",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Server/Documents/ETL/EtlProcess.cs (Load, ForceBatchRetry, EnterFallbackMode, UpdateEtlProcessState, RecordLoadError, RecordConfigurationError, RecordUnknownError, GetPerformanceStats, and GetConnectionStatus), EtlProcessHealthStatus.cs, EtlProcessStatistics.cs, ETL/Handlers/Processors/AbstractEtlHandlerProcessorForRetryBatch.cs and task-error processors; test/TerraBase.SlowTests/Server/Documents/ETL/SQL/SqlEtlTests.cs, Elasticsearch/ElasticSearchEtlTests.cs, Queue/TerraBase_21530.cs, and EtlTasksManagement_TerraBase_7276.cs"
+      },
+      "v2": {"owner": "engine/etl", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "ETL delivery reports running, disabled, fallback, healthy, impaired, failed, and stopped states with last successful batch and error details.",
+          "Batch retry, task error listing and deletion, dead-letter or equivalent failed-item handling, and reset behavior are explicit operations with bounded retries and durable checkpoints.",
+          "Progress, throughput, transformation, load, and resource metrics are stable typed records and never include connection credentials or customer payloads."
+        ],
+        "compatibility": "V1 ETL retry and observability behavior is unresolved pending fault-injection and metrics-shape tests."
+      },
+      "downstream_impact": ["external provider adapters", "operational controls", "audit and metrics", "recovery and replay"],
+      "risk": {"level": "critical", "description": "Retrying a failed external batch without a durable idempotency key can create duplicate side effects or mask a dead-letter backlog."}
+    },
+    {
+      "id": "PB-0041",
+      "name": "queue-etl-providers-and-delivery",
+      "classification": "optional",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/ETL/Queue/QueueEtlConfiguration.cs, QueueConnectionString.cs, QueueBrokerType.cs, and provider connection settings for Amazon SQS, Azure Queue Storage, Azure Service Bus, Kafka, and RabbitMQ; src/TerraBase.Server/Documents/ETL/Providers/Queue/QueueEtl.cs, Kafka/KafkaEtl.cs, RabbitMq/RabbitMqEtl.cs, AmazonSqs/AmazonSqsEtl.cs, AzureQueueStorage/AzureQueueStorageEtl.cs, and CloudEventConverter.cs; test/TerraBase.SlowTests/Server/Documents/ETL/Queue"
+      },
+      "v2": {"owner": "engine/etl", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Queue ETL publishes transformed records as provider-specific messages, including CloudEvent metadata, headers or attributes, queue declarations, routing, FIFO and size constraints where supported.",
+          "Provider delivery errors, retries, delete-processed behavior, connection validation, and sharding limitations are observable and do not advance source checkpoints before a confirmed publish.",
+          "Connection strings are references to typed secret-bearing configuration, never values copied into logs, audit output, or parity evidence."
+        ],
+        "compatibility": "V1 queue ETL provider behavior is unresolved pending provider fixtures and failure/retry tests."
+      },
+      "downstream_impact": ["connection-string security", "ETL checkpointing", "queue integrations", "multi-region failover"],
+      "risk": {"level": "critical", "description": "A publish acknowledgment mismatch can lose records or duplicate messages in an external queue."}
+    },
+    {
+      "id": "PB-0042",
+      "name": "queue-sink-configuration-and-processing",
+      "classification": "optional",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/QueueSink/QueueSinkConfiguration.cs, QueueSinkScript.cs, AddQueueSinkOperation.cs, and UpdateQueueSinkOperation.cs; src/TerraBase.Server/Documents/QueueSink/QueueSinkLoader.cs, QueueSinkProcess.cs, Test/TestQueueSinkScript.cs, ServerWide/Commands/QueueSink/AddQueueSinkCommand.cs and UpdateQueueSinkCommand.cs; test/TerraBase.SlowTests/Server/Documents/QueueSink/QueueSinkTestBase.cs, KafkaQueueSinkTests.cs, RabbitMqSinkTests.cs, AzureServiceBusSinkTests.cs, and Issues/TerraBase_22105.cs"
+      },
+      "v2": {"owner": "engine/queue-sink", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Queue sinks validate task name, broker type, connection-string reference, non-empty unique scripts, disabled state, mentor and pinning, and provider-specific queue entries.",
+          "The process consumes messages, executes bounded scripts, writes documents or other supported records, and reports duplicate, parse, poison-message, and connection outcomes.",
+          "Changing a referenced connection or configuration restarts the correct process and preserves or resets its checkpoint according to an explicit V1-compatible rule."
+        ],
+        "compatibility": "V1 queue-sink behavior is unresolved pending typed adapter, process, and restart tests."
+      },
+      "downstream_impact": ["queue providers", "documents and scripts", "ongoing task controls", "secret handling"],
+      "risk": {"level": "high", "description": "A sink that acknowledges a message before its database write commits can lose source queue data."}
+    },
+    {
+      "id": "PB-0043",
+      "name": "queue-sink-brokers-and-dead-letter-behavior",
+      "classification": "optional",
+      "v1_evidence": {
+        "evidence_ids": ["E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Server/Documents/QueueSink/KafkaQueueSink.cs, RabbitMqQueueSink.cs, AzureServiceBusQueueSink.cs, QueueSinkProcess.cs, and QueueSinkLoader.cs; src/TerraBase.Client/Documents/Operations/QueueSink/AzureServiceBusSinkSource.cs; test/TerraBase.EndToEndTests/Server/Documents/QueueSink/AzureServiceBusSinkSourceTests.cs and test/TerraBase.SlowTests/Server/Documents/QueueSink/AzureServiceBusSinkTests.cs, KafkaQueueSinkTests.cs, RabbitMqSinkTests.cs, AzureServiceBusClusterSinkTests.cs"
+      },
+      "v2": {"owner": "engine/queue-sink", "public_seam": "streaming"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Kafka, RabbitMQ, and Azure Service Bus sinks preserve broker-specific queue, topic, subscription, routing, header, and acknowledgment rules.",
+          "Malformed queue or subscription entries fail validation; consumer errors enter a defined retry, fallback, poison-message or dead-letter state without acknowledging bad data.",
+          "Cluster responsibility transfer keeps one active sink owner, resumes from a durable checkpoint, and exposes failover and connection status to operations."
+        ],
+        "compatibility": "V1 broker-specific semantics are unresolved pending provider and cluster-failover tests; no generic broker abstraction is assumed."
+      },
+      "downstream_impact": ["queue integrations", "multi-region/member failover", "ongoing task status", "security adapter"],
+      "risk": {"level": "critical", "description": "Broker acknowledgment and failover differences are exactly where duplicate or lost messages tend to hide."}
+    },
+    {
+      "id": "PB-0044",
+      "name": "transfer-connection-strings-and-secret-audit",
+      "classification": "admin",
+      "v1_evidence": {
+        "evidence_ids": ["E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/ConnectionStrings/ConnectionString.cs, GetConnectionStringsOperation.cs, PutConnectionStringOperation.cs, RemoveConnectionStringOperation.cs, ETL provider connection-string classes, and Queue/QueueConnectionString.cs; test/TerraBase.SlowTests/Server/Documents/ETL/ConnectionStringTests.cs and Snowflake/SnowflakeEtlTests.cs (audit JSON credential checks)"
+      },
+      "v2": {"owner": "adapter/platform", "public_seam": "Platform Adapter"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Connection strings are typed records with provider validation, get, put, remove, dependency checks, and stable names used by ETL and queue-sink tasks.",
+          "Audit and status serialization omits credentials, keys, tokens, and private connection details while retaining enough non-secret identity to diagnose a task.",
+          "The Platform Adapter enforces tenant authorization, audit, confirmation where required, and secret handling; the engine does not expose raw or generic HTTP access."
+        ],
+        "compatibility": "V1 typed connection-string behavior is unresolved pending authorization, dependency, and secret-redaction tests."
+      },
+      "downstream_impact": ["all ETL and queue sinks", "backup providers", "Platform Adapter", "audit and security review"],
+      "risk": {"level": "critical", "description": "Leaking a provider credential through status, audit, or parity evidence is a direct tenant-security failure."}
+    },
+    {
+      "id": "PB-0045",
+      "name": "ongoing-transfer-task-controls",
+      "classification": "admin",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Operations/OngoingTasks/GetOngoingTaskInfoOperation.cs, ToggleOngoingTaskStateOperation.cs, DeleteOngoingTaskOperation.cs, and OngoingTask types; src/TerraBase.Server/Documents/OngoingTasks/AbstractOngoingTasks.cs, OngoingTasks.cs, Commands/OngoingTasks/GetOngoingTasksCommand.cs, and Dashboard/Cluster/Notifications/OngoingTasksNotificationSender.cs; test/TerraBase.RachisTests/DatabaseCluster/OngoingTasks.cs, test/TerraBase.SlowTests/Server/Documents/OngoingTasks/PinOnGoingTaskToMentorNode.cs, and ETL task-management tests"
+      },
+      "v2": {"owner": "adapter/platform", "public_seam": "Platform Adapter"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Operations list, inspect, disable, enable, and delete transfer tasks by stable ID or name and report task type, responsible member, state, connection status, progress, and error details.",
+          "The task inventory includes periodic backup, subscriptions, ETL variants, queue sinks, and other transfer-owned operations while retaining a clear distinction from private control-plane tasks.",
+          "Mutations use the typed authorized seam, are concurrency-safe, audit their result, and never turn task inspection into a generic route or secret-read capability."
+        ],
+        "compatibility": "V1 operational controls are unresolved pending typed adapter authorization and status-shape tests."
+      },
+      "downstream_impact": ["backup, subscription, ETL, and queue-sink owners", "Platform Adapter", "dashboard and metrics", "multi-region responsibility"],
+      "risk": {"level": "high", "description": "A task control race can stop the wrong owner, leave two workers active, or expose private control-plane state."}
+    },
+    {
+      "id": "PB-0046",
+      "name": "transfer-replication-and-failure-domain-interactions",
+      "classification": "core",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Server/Documents/Replication/BucketMigrationReplication.cs, Incoming/IncomingMigrationReplicationHandler.cs, Outgoing/OutgoingMigrationReplicationHandler.cs, Senders/MigrationReplicationDocumentSender.cs, ServerWide/Commands/Sharding/StartBucketMigrationCommand.cs and migration completion commands; test/TerraBase.RachisTests/DatabaseCluster/EtlFailover.cs, SubscriptionsFailover.cs, test/TerraBase.SlowTests/Sharding/ETL/ShardedEtlFailoverTests.cs, and Sharding/Subscriptions/SubscriptionsWithReshardingTests.cs"
+      },
+      "v2": {"owner": "engine/replication", "public_seam": "replication"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Transfer-owned consumers define what happens to subscription, ETL, queue-sink, and backup checkpoints during member loss, bucket migration, responsibility transfer, replay, and rejoin.",
+          "Replication owns core acknowledgement and convergence decisions; this row records only handoff obligations needed to prevent duplicate or lost transfer work.",
+          "Tenant isolation, source and destination identity, old-owner fencing, and recovery after interrupted migration require scenario tests and redacted Replication or Recovery Receipts.",
+          "No replication algorithm, consistency default, or conflict policy is selected by this unresolved contract row."
+        ],
+        "compatibility": "V1 failure-domain interactions are unresolved and require a separately accepted multi-region scenario contract."
+      },
+      "downstream_impact": ["replication core", "subscriptions and ETL", "backup/recovery", "multi-region qualification"],
+      "risk": {"level": "critical", "description": "A transfer task that outlives its owner without fencing can write duplicates or continue against the wrong tenant or member."}
+    },
+    {
+      "id": "PB-0047",
+      "name": "sharded-transfer-and-migration-interactions",
+      "classification": "optional",
+      "v1_evidence": {
+        "evidence_ids": ["E-010", "E-011"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Server/Documents/Sharding/Handlers/Processors/Streaming, Subscriptions, Smuggler, and OngoingTasks; src/TerraBase.Server/Documents/Sharding/Streaming/CombinedReadContinuationState.cs, CombinedStreamResult.cs, ReadContinuationState.cs, and Subscriptions/ShardedSubscriptionWorker.cs; src/TerraBase.Client/Documents/Operations/Backups/Sharding/ShardRestoreSettings.cs; test/TerraBase.SlowTests/Sharding/Backup/ShardedBackupTests.cs, ShardedRestoreBackupTests.cs, ShardedSmugglerTests.cs, ETL/ShardedEtlTests.cs, Subscriptions/ShardedSubscriptionClusterTests.cs, ShardedSubscriptionConcurrentTests.cs, and ShardedSubscriptionSlowTests.cs"
+      },
+      "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Sharded streaming, subscription, Smuggler, backup, restore, and ETL operations identify shard ownership and preserve per-shard checkpoint, ordering, and failure semantics.",
+          "Merged results define continuation state, duplicate behavior, shard failure, partial completion, and rejoin instead of presenting an unordered aggregate as complete.",
+          "Shard restore settings and migration controls remain typed and tenant-scoped; they do not grant direct access to private shard or control-plane routes."
+        ],
+        "compatibility": "V1 sharded transfer behavior is unresolved pending per-shard and aggregate qualification tests."
+      },
+      "downstream_impact": ["sharding and replication", "streaming", "backup/import", "Platform authorization"],
+      "risk": {"level": "critical", "description": "A merged continuation that advances one shard but loses another can create an apparently complete but incomplete transfer."}
+    },
+    {
+      "id": "PB-0048",
+      "name": "transfer-progress-status-and-operational-observability",
+      "classification": "admin",
+      "v1_evidence": {
+        "evidence_ids": ["E-011", "E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Client/Documents/Smuggler/SmugglerProgressBase.cs, SmugglerResult.cs, OfflineMigrationProgress.cs, OfflineMigrationResult.cs, Backups/BackupProgress.cs, BackupResult.cs, PeriodicBackupStatus.cs, ETL/EtlProcessState.cs, and QueueSink/QueueSinkProcessState.cs; src/TerraBase.Server/Documents/ETL/Stats, QueueSink/Stats, PeriodicBackup/Progress.cs, and Dashboard/DatabasesOngoingTasksInfo.cs; src/TerraBase.Server/Documents/Commands/ETL and OngoingTasks; test/TerraBase.SlowTests/Server/Documents/ETL and PeriodicBackup status and progress tests"
+      },
+      "v2": {"owner": "adapter/platform", "public_seam": "Platform Adapter"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Progress and status records identify the operation and non-secret counts, rates, checkpoints, current step, health, responsible member, and terminal error without exposing payloads or credentials.",
+          "Reads and mutations are separate typed operations; retrying a status read is safe, while a mutation requires V1 authorization, confirmation, idempotency, and audit rules.",
+          "Metrics distinguish source extraction, transformation, destination delivery, backup upload, restore, and skipped or dead-letter records so a green status cannot hide loss."
+        ],
+        "compatibility": "V1 status and metrics shapes are unresolved pending protocol snapshots, secret scans, and failure-path tests."
+      },
+      "downstream_impact": ["all transfer owners", "Platform Adapter", "dashboard and SDKs", "benchmark and recovery receipts"],
+      "risk": {"level": "high", "description": "A misleading green status is operationally worse than a visible failure because it prevents recovery action."}
+    },
+    {
+      "id": "PB-0049",
+      "name": "transfer-authorization-and-private-route-separation",
+      "classification": "protocol",
+      "v1_evidence": {
+        "evidence_ids": ["E-029"],
+        "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+        "scope": "src/TerraBase.Server/Smuggler/Documents/Actions/DatabaseRecordActions.cs permission-gated imports, src/TerraBase.Server/Documents/Handlers/Processors/Smuggler, OngoingTasks, ETL, and Subscriptions, client operation classes for typed requests, and audit serializers in backup, ETL, queue-sink, and connection-string configuration; test/TerraBase.SlowTests/Server/Documents/ETL/ConnectionStringTests.cs and authorization-sensitive Smuggler tests"
+      },
+      "v2": {"owner": "adapter/platform", "public_seam": "approved protocol adapter"},
+      "public_contract": {
+        "parity_required": true,
+        "semantics": [
+          "Every transfer operation states actor authorization, tenant and database scope, confirmation requirements, audit event, secret handling, and typed error behavior.",
+          "Permission-denied configuration records are reported as skipped or failed according to V1 behavior and never become an implicit success or authorization bypass.",
+          "Private control-plane routes, raw engine access, and generic HTTP escape hatches are outside this public seam even when V1 has internal handlers with similar names."
+        ],
+        "compatibility": "Platform and private-route classification is explicitly unresolved until the approved typed adapter and security tests settle the public contract; no transfer feature is excluded."
+      },
+      "downstream_impact": ["Platform Adapter", "protocol adapter", "all backup/import/streaming tasks", "MCP and SDK boundaries"],
+      "risk": {"level": "critical", "description": "Confusing an internal administrative handler with a public engine operation can expose cross-tenant data or credentials."}
     }
   ]
 }
