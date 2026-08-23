@@ -65,6 +65,16 @@ test('redirect rules reject insecure or non-permanent migrations', () => {
   assert.ok(failures.some((failure) => /308/i.test(failure)))
 })
 
+test('redirect rules reject non-default canonical destination ports', () => {
+  const failures = validateRedirectRules(`
+    /signup https://dash.terrascale.tech/register 308
+    https://dashboard.terrascale.tech/* https://dash.terrascale.tech/:splat 308
+    https://terrascale.tech/custom https://dash.terrascale.tech:8443/custom 308
+  `)
+
+  assert.match(failures.join('\n'), /HTTPS and the canonical dashboard host/i)
+})
+
 test('deployed redirect checks verify the complete safe chain', async () => {
   const requests = []
   const responses = new Map([
@@ -172,6 +182,17 @@ test('deployed checks detect a canonical-host redirect loop', async () => {
 test('localized source scans reject every translated prohibited claim category', () => {
   const files = walkClaimFiles(path.join(localizedClaimsFixtureRoot, 'src'), new Set(['.ts']))
   assertLocalizedClaimCategories(files, localizedClaimsFixtureRoot, 'source')
+})
+
+test('localized Enterprise questions are not availability claims', () => {
+  for (const question of [
+    '¿Enterprise está disponible?',
+    'O Enterprise está disponível?',
+    '¿Enterprise está disponible durante Public Alpha?',
+    'O Enterprise está disponível durante o Public Alpha?',
+  ]) {
+    assert.equal(findProhibitedClaims(question).some(({ id }) => id === 'positive-enterprise-availability'), false)
+  }
 })
 
 test('rendered claim scans inspect metadata and structured data', () => {
