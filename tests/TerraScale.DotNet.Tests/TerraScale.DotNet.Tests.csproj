@@ -11,5 +11,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\TerraScale.DotNet\TerraScale.DotNet.csproj" />
+    <ProjectReference Include="..\..\samples\TerraScale.Samples.Quickstart\TerraScale.Samples.Quickstart.csproj" />
   </ItemGroup>
 </Project>
