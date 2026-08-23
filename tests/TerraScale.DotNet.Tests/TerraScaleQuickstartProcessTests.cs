@@ -7,14 +7,14 @@ public sealed class TerraScaleQuickstartProcessTests
     private const string MissingConfigurationMessage =
         "Set TERRASCALE_API_BASE_ADDRESS plus either TERRASCALE_BEARER_TOKEN or both TERRASCALE_API_KEY and TERRASCALE_PROJECT_ID.";
 
-    private static readonly string[] QuickstartEnvironmentNames =
+    private static readonly (string SampleName, string FixtureName)[] QuickstartEnvironmentNames =
     [
-        "TERRASCALE_API_BASE_ADDRESS",
-        "TERRASCALE_API_KEY",
-        "TERRASCALE_BEARER_TOKEN",
-        "TERRASCALE_PROJECT_ID",
-        "TERRASCALE_DATABASE_ID",
-        "TERRASCALE_ENVIRONMENT_ID"
+        ("TERRASCALE_API_BASE_ADDRESS", "TERRASCALE_E2E_QUICKSTART_BASE_URL"),
+        ("TERRASCALE_API_KEY", "TERRASCALE_E2E_QUICKSTART_API_KEY"),
+        ("TERRASCALE_BEARER_TOKEN", "TERRASCALE_E2E_QUICKSTART_BEARER_TOKEN"),
+        ("TERRASCALE_PROJECT_ID", "TERRASCALE_E2E_QUICKSTART_PROJECT_ID"),
+        ("TERRASCALE_DATABASE_ID", "TERRASCALE_E2E_QUICKSTART_DATABASE_ID"),
+        ("TERRASCALE_ENVIRONMENT_ID", "TERRASCALE_E2E_QUICKSTART_ENVIRONMENT_ID")
     ];
 
     [Test]
@@ -48,6 +48,7 @@ public sealed class TerraScaleQuickstartProcessTests
 
     [Test]
     [RequiresTerraScaleQuickstartApi]
+    [NotInParallel("quickstart-public-api")]
     public async Task ConfiguredQuickstart_CompletesPublicApiJourneyAndCleansUp()
     {
         var result = await RunQuickstartAsync(
@@ -126,8 +127,8 @@ public sealed class TerraScaleQuickstartProcessTests
 
     private static IReadOnlyDictionary<string, string?> QuickstartEnvironment() =>
         QuickstartEnvironmentNames.ToDictionary(
-            static name => name,
-            static name => Environment.GetEnvironmentVariable(name));
+            static mapping => mapping.SampleName,
+            static mapping => Environment.GetEnvironmentVariable(mapping.FixtureName));
 
     private static string FindDotnetHost()
     {
@@ -193,19 +194,24 @@ internal sealed class RequiresTerraScaleQuickstartApiAttribute()
 internal static class QuickstartEnvironmentConfiguration
 {
     public const string SkipReason =
-        "Set TERRASCALE_API_BASE_ADDRESS, TERRASCALE_DATABASE_ID, TERRASCALE_ENVIRONMENT_ID, and either TERRASCALE_BEARER_TOKEN or TERRASCALE_API_KEY plus TERRASCALE_PROJECT_ID to run the quickstart public-API process test.";
+        "Set the dedicated TERRASCALE_E2E_QUICKSTART_BASE_URL, TERRASCALE_E2E_QUICKSTART_DATABASE_ID, TERRASCALE_E2E_QUICKSTART_ENVIRONMENT_ID, and either TERRASCALE_E2E_QUICKSTART_BEARER_TOKEN or TERRASCALE_E2E_QUICKSTART_API_KEY plus TERRASCALE_E2E_QUICKSTART_PROJECT_ID, then set TERRASCALE_E2E_ENABLE_QUICKSTART=true and TERRASCALE_E2E_QUICKSTART_CONFIRMED_DISPOSABLE=true to run the quickstart public-API process test.";
 
     public static bool IsConfigured =>
         IsAbsoluteBaseAddress() &&
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_DATABASE_ID")) &&
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_ENVIRONMENT_ID")) &&
-        (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_BEARER_TOKEN")) ||
-            (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_API_KEY")) &&
-                !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_PROJECT_ID"))));
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_QUICKSTART_DATABASE_ID")) &&
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_QUICKSTART_ENVIRONMENT_ID")) &&
+        (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_QUICKSTART_BEARER_TOKEN")) ||
+            (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_QUICKSTART_API_KEY")) &&
+                !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TERRASCALE_E2E_QUICKSTART_PROJECT_ID")))) &&
+        IsEnabled("TERRASCALE_E2E_ENABLE_QUICKSTART") &&
+        IsEnabled("TERRASCALE_E2E_QUICKSTART_CONFIRMED_DISPOSABLE");
 
     private static bool IsAbsoluteBaseAddress() =>
         Uri.TryCreate(
-            Environment.GetEnvironmentVariable("TERRASCALE_API_BASE_ADDRESS"),
+            Environment.GetEnvironmentVariable("TERRASCALE_E2E_QUICKSTART_BASE_URL"),
             UriKind.Absolute,
             out _);
+
+    private static bool IsEnabled(string name) =>
+        string.Equals(Environment.GetEnvironmentVariable(name), "true", StringComparison.OrdinalIgnoreCase);
 }
