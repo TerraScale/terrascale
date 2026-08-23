@@ -9,21 +9,21 @@ component patterns as needed.
 
 ## 0. Design principles
 
-1. **Dark, technical, confident.** Single theme only — there is no light mode
+1. **Dark, technical, confident.** Single theme only - there is no light mode
    toggle. Assume `color-scheme: dark` at the document root.
 2. **One atmosphere.** The body has a single fixed ambient radial glow drawn
    from `body::before`. Sections never paint their own background decoratives
-   (grids, orbs, scanlines) — that was tried and reverted. Keep per-section
+   (grids, orbs, scanlines) - that was tried and reverted. Keep per-section
    chrome clean so the unified glow reads as one continuous space.
 3. **Brand blue carries hierarchy.** Accents, active states, gradient text,
    and "most important" affordances all use `--ts-primary` (#2563EB) or its
    light companion `--ts-primary-light` (#60A5FA). Secondary colours exist
-   (green, purple) but are used sparingly — status pulse, pricing accents,
+   (green, purple) but are used sparingly - status pulse, pricing accents,
    decorative dots.
-4. **Glass over solid.** Elevated surfaces are `.ts-glass` — translucent
+4. **Glass over solid.** Elevated surfaces are `.ts-glass` - translucent
    background, low-alpha border, `backdrop-filter: blur(14px)`. They sit on
    the body glow rather than on opaque cards.
-5. **Monospaced numbers, monospaced data.** Prices, stats, filenames, code —
+5. **Monospaced numbers, monospaced data.** Prices, stats, filenames, code -
    all `--ts-font-mono`. Adds a technical feel and keeps digits aligned
    (`font-variant-numeric: tabular-nums` on animated counters).
 6. **Motion is subtle and shared.** Most transitions are 150–260 ms with
@@ -96,7 +96,7 @@ breathing radial glow behind it (see §11).
 ## 3. Tokens (CSS custom properties)
 
 Drop this block unchanged at the top of your global stylesheet. It is the
-single source of truth — every component reaches for these variables, never
+single source of truth - every component reaches for these variables, never
 hard-coded colours.
 
 ```css
@@ -196,7 +196,7 @@ background: rgba(var(--ts-primary-rgb), 0.08);
 border: 1px solid rgba(var(--ts-primary-rgb), 0.22);
 ```
 
-Follow this pattern religiously — do not introduce new hardcoded RGBA values.
+Follow this pattern religiously - do not introduce new hardcoded RGBA values.
 
 ---
 
@@ -206,18 +206,18 @@ Follow this pattern religiously — do not introduce new hardcoded RGBA values.
 |---|---|---|
 | Page background | `--ts-bg-base` | 1 |
 | Elevated surface (footer) | `--ts-bg-surface` | 1 |
-| Card/panel | `.ts-glass` (≈0.025 blue) | — |
-| Primary CTA bg | `var(--ts-gradient-primary)` | — |
+| Card/panel | `.ts-glass` (≈0.025 blue) | - |
+| Primary CTA bg | `var(--ts-gradient-primary)` | - |
 | Primary CTA shadow | `rgba(var(--ts-primary-rgb), 0.35–0.50)` | 0.35–0.5 |
 | Brand accent chip bg | `rgba(var(--ts-primary-rgb), 0.08–0.10)` | 0.08–0.1 |
 | Brand accent chip border | `rgba(var(--ts-primary-rgb), 0.22–0.28)` | 0.22–0.28 |
-| Active nav/tab | `rgba(var(--ts-primary-rgb), 0.10)` bg + `0.25` border | — |
-| Hairline | `var(--ts-divider)` or `var(--ts-glass-border)` | — |
+| Active nav/tab | `rgba(var(--ts-primary-rgb), 0.10)` bg + `0.25` border | - |
+| Hairline | `var(--ts-divider)` or `var(--ts-glass-border)` | - |
 | Body text | `var(--ts-text)` | 1 |
 | Muted text | `var(--ts-text-muted)` | 1 |
-| Status online/ok | `var(--ts-secondary)` with `0 0 8px` glow | — |
+| Status online/ok | `var(--ts-secondary)` with `0 0 8px` glow | - |
 | Success highlight | `rgba(var(--ts-secondary-rgb), 0.5)` | 0.5 |
-| Accent / decorative | `var(--ts-tertiary)` at ≤0.4 alpha | — |
+| Accent / decorative | `var(--ts-tertiary)` at ≤0.4 alpha | - |
 
 ### Gradient text
 
@@ -239,13 +239,13 @@ lines.
 
 ### Fonts
 
-- **Body — Quantico** (self-hosted woff2, 400 + 700 weights). Geometric, angled,
+- **Body - Quantico** (self-hosted woff2, 400 + 700 weights). Geometric, angled,
   reads as "confident / engineered". Every paragraph, headline, button,
   navigation link uses this unless noted.
-- **Accent — Roboto** (Google Fonts, 300/400/500/700). Used for eyebrows,
-  footer text, badges, subtitles, pill labels, form labels — anywhere the
+- **Accent - Roboto** (Google Fonts, 300/400/500/700). Used for eyebrows,
+  footer text, badges, subtitles, pill labels, form labels - anywhere the
   tone needs to be "calm UI" rather than "engineered".
-- **Mono — Roboto Mono** with JetBrains Mono as fallback. Used for prices,
+- **Mono - Roboto Mono** with JetBrains Mono as fallback. Used for prices,
   stats, code, filenames, and anything numeric that should stay tabular.
 
 Token names map as: `--ts-font-body`, `--ts-font-accent`, `--ts-font-mono`.
@@ -315,7 +315,7 @@ depending on density.
 | `16–18px` (`--ts-radius-lg`/`xl`) | Large billboard CTAs |
 | `9999px` (`--ts-radius-pill`) | Highlight pills, billing toggle, status chip |
 
-Never mix two different "medium" radii inside one component — pick `10` or
+Never mix two different "medium" radii inside one component - pick `10` or
 `12` and stick with it.
 
 ---
@@ -383,7 +383,7 @@ A subtle inner light is sometimes added on elevated glass:
 ```
 
 Ambient loops live between **2.2 s** (dot pulse) and **16 s** (float). The
-`.breathe` class runs at 5.5 s — use it for subtle glows behind logos/hero
+`.breathe` class runs at 5.5 s - use it for subtle glows behind logos/hero
 elements.
 
 ### `prefers-reduced-motion` policy
@@ -448,7 +448,7 @@ actually hit the fold.
 ## 10. Background & atmosphere
 
 The entire site sits on one fixed radial-gradient backdrop. Do not add
-per-section background colours, grids, orbs, or scanlines — they were tried
+per-section background colours, grids, orbs, or scanlines - they were tried
 and removed because they fragmented the page.
 
 ```css
@@ -488,7 +488,7 @@ edges instead of creating a rectangle.
 - Background transitions from `rgba(var(--ts-bg-base-raw), 0.75)` to `0.94`
   once the user scrolls > 24 px (add/remove a `.scrolled` class on scroll).
 - `backdrop-filter: blur(20px)`.
-- Three-column layout: `grid-template-columns: 1fr auto 1fr` — nav centred,
+- Three-column layout: `grid-template-columns: 1fr auto 1fr` - nav centred,
   brand left, actions right. Collapses to 2 cols at `max-width: 960px` and
   reveals a hamburger button.
 - Height: `72px`.
@@ -511,7 +511,7 @@ on hover, active state = brand pill (10% blue bg + 25% blue border).
 
 - `background: var(--ts-bg-surface)` + top hairline (`border-top: 1px solid
   var(--ts-divider)`).
-- Grid: `1.6fr repeat(4, 1fr)` — brand column wider than the 4 link columns.
+- Grid: `1.6fr repeat(4, 1fr)` - brand column wider than the 4 link columns.
 - Brand column: logo-white (26px tall) + muted tagline + social row.
 - Column headings: 11px, 700, uppercase, 0.14em letter-spacing.
 - Each link has a chevron glyph that translates +2px on hover.
@@ -558,7 +558,7 @@ Three variants. All use `--ts-font-accent`, `font-size: 13px`, `font-weight:
 .ts-btn-compact { padding: 11px 22px; font-size: 12px; }
 ```
 
-**CTA shine** — primary CTAs often get a white-gradient sheen that sweeps
+**CTA shine** - primary CTAs often get a white-gradient sheen that sweeps
 across on hover:
 
 ```css
@@ -608,7 +608,7 @@ across on hover:
 
 ### 11.5 Eyebrows (kickers)
 
-Small pill above a section title. Two variants — with leading dot (default),
+Small pill above a section title. Two variants - with leading dot (default),
 or plain.
 
 ```css
@@ -694,10 +694,10 @@ All cards on the site share a repeatable shape:
   `6–8 px`, 14% alpha bg + 30% alpha border, `color: var(--ts-primary-light)`)
 - Title H3, 17–22 px, 700
 - Muted body 13–15 px, line-height 1.55–1.65
-- Optional pill bullets at bottom — monospace, 10–11 px, 8 px padding, 4 px
+- Optional pill bullets at bottom - monospace, 10–11 px, 8 px padding, 4 px
   radius, same 8% / 18% alpha treatment
 
-**Do not** add radial glow blobs inside cards (they were removed) — keep the
+**Do not** add radial glow blobs inside cards (they were removed) - keep the
 card surface clean.
 
 Card variants observed:
@@ -709,7 +709,7 @@ Card variants observed:
   hover shadow.
 - **Triad card** (3 up, compact): 22 px padding, horizontal layout with
   icon + copy inline.
-- **FAQ item**: full-width collapsing panel — see §11.12.
+- **FAQ item**: full-width collapsing panel - see §11.12.
 - **Contact channel**: horizontal pill with icon tile + label/value + trailing
   chevron; slides 3 px right on hover and highlights border.
 
@@ -769,7 +769,7 @@ A two-option segmented control with a sliding thumb:
 ```
 
 **Important**: chevron and panel *must share the same duration and easing*
-so they animate in lockstep — otherwise it reads as "arrow turns, then body
+so they animate in lockstep - otherwise it reads as "arrow turns, then body
 opens" (we fixed this). 220 ms feels right.
 
 ### 11.13 Terminal / code panel
@@ -795,7 +795,7 @@ Syntax highlighting uses token classes:
 .tok-op      { color: #CBD5E1; }
 ```
 
-Keep the highlighter minimal and hand-rolled — no Prism / shiki runtime.
+Keep the highlighter minimal and hand-rolled - no Prism / shiki runtime.
 
 ### 11.14 Icon system
 
@@ -833,7 +833,7 @@ const format = n => {
 Render inside a `<span>` with `font-variant-numeric: tabular-nums` to avoid
 digits jumping horizontally.
 
-**Do not** add a glow / drop-shadow during the transition — we removed it
+**Do not** add a glow / drop-shadow during the transition - we removed it
 because it felt flashy.
 
 ### 11.16 Social buttons (footer)
@@ -860,7 +860,7 @@ All lift `translateY(-2px)` and gain a brand-blue shadow on hover.
 
 Composition top-to-bottom, all centred:
 
-1. (optional) World-map widget as the background — see §13.
+1. (optional) World-map widget as the background - see §13.
 2. Wordmark mark (`logo-principal.svg`) with a soft breathing blue radial
    glow behind it (via `.hero__brand-glow` pseudo / absolute div with
    `.breathe`).
@@ -870,23 +870,23 @@ Composition top-to-bottom, all centred:
 6. Highlight pills: 3 glass pills `padding: 9px 16px`, `gap: 10px`, `font-size
    13px`, each with a 15 × 15 icon (tinted primary-light) + label.
 7. Section min-height: `clamp(580px, calc(78vh - 72px), 760px)`. Inner
-   padding `40px`. No per-section background colour — the body glow handles
+   padding `40px`. No per-section background colour - the body glow handles
    the backdrop.
 
-**Keep the hero quiet.** No crosshairs, grids, scanlines, or stacked orbs —
+**Keep the hero quiet.** No crosshairs, grids, scanlines, or stacked orbs -
 all of those were added and later removed because they fragmented the page.
 
 ### 12.2 Content section (Features, Pricing, Code panel, etc.)
 
 ```
-[SectionHeader — eyebrow + H2 + muted subtitle, centred, max 720]
+[SectionHeader - eyebrow + H2 + muted subtitle, centred, max 720]
   48–64 px gutter
 [Grid / panel of cards, same visual language]
 ```
 
 Common grids:
 - 2 × 2 feature cards (max-width 1240, gap 18)
-- 3 × pricing cards (max-width 1240, gap 20) — collapses to 1 column at
+- 3 × pricing cards (max-width 1240, gap 20) - collapses to 1 column at
   `max-width: 960px`
 - 3 × triad cards, horizontal layout (max-width 1120, gap 16)
 - 1 × code terminal with 1.2fr preview column, gap 72 at desktop, gap 40
@@ -926,13 +926,13 @@ Requirements:
 - Generator script writes `static/world-map.svg` (brand-tinted dots on a
   transparent background) and a TS manifest (`world-map.generated.ts`)
   with viewBox dimensions + region (x, y) coordinates.
-- Pins and connection arcs are overlays rendered by the component — they
+- Pins and connection arcs are overlays rendered by the component - they
   share a single "frame" element sized to the map's aspect ratio so the
   three layers stay aligned.
 - Arcs use `preserveAspectRatio="none"` inline SVG paths
   (`M x1 y1 Q cx cy x2 y2`) with animated `stroke-dashoffset`.
 - Pins are absolutely-positioned DOM spans with `left`/`top` expressed as
-  percentages of the frame — a solid core `box-shadow: 0 0 0 2px
+  percentages of the frame - a solid core `box-shadow: 0 0 0 2px
   rgba(5,5,8,0.9)` to punch through the map, plus a ring that expands via
   `@keyframes` from scale 1 → 3.8 fading to 0 over 2.6 s.
 - The whole container uses a soft radial mask-image so the map dissolves
@@ -946,7 +946,7 @@ mask-image: radial-gradient(ellipse 95% 92% at 50% 50%,
 - Topology: a **ring** between ~7 major hubs (each region connects to the
   next, last closes back to first). Don't use full mesh (too noisy) or
   random pairs (reads like mistakes).
-- Map size: `width: min(1600px, 100%)` with `aspect-ratio: 119 / 60` — lets
+- Map size: `width: min(1600px, 100%)` with `aspect-ratio: 119 / 60` - lets
   the entire map fit inside the viewport while keeping regions at the right
   geographic coords.
 
@@ -966,7 +966,7 @@ The site uses a handful of max-width breakpoints, not a formal grid system:
 | `max-width: 640px` | Most "final mobile" adjustments (FAQ title shrink, CTA card padding drops) |
 | `max-width: 560px` | Footer grid → 1 col, meta row stacks |
 
-No `@media (min-width: ...)` queries — always mobile-friendly by default and
+No `@media (min-width: ...)` queries - always mobile-friendly by default and
 use max-width overrides.
 
 All `.section__inner` containers shrink their gutter from `0 40px` to
@@ -1004,9 +1004,19 @@ All `.section__inner` containers shrink their gutter from `0 40px` to
 - **Casing rhythm.** Sentence case for headlines and body. UPPERCASE for
   eyebrows, pill labels, button text, status chips, column headings. Never
   Title Case for a whole paragraph.
-- **No credit-card friendliness theatre.** We require a card for the free
-  trial (prevents abuse). Copy says "Full feature access · Cancel anytime ·
-  No lock-in", *not* "No credit card required".
+- **Keep signup verification separate from billing.** The target onboarding
+  contract opens with identity and email verification already counted as one
+  completed step. It then guides the User through the first Organization,
+  Project, and logical Database before requiring a payment card for signup
+  abuse control, not to start a paid trial. Card verification creates no
+  charge, subscription, or automatic renewal. Copy must make the later choice
+  explicit: continue with no paid plan and no automatic renewal while retaining
+  the Developer allowance, or select Starter or Pro with monthly automatic
+  renewal and an eligible first 30 days at no charge. Invited-user onboarding
+  remains separate and does not require signup card verification or a plan
+  choice. Until
+  [TerraScale.Internals issue 30](https://git.terrascale.tech/TerraScale/TerraScale.Internals/issues/30)
+  ships, label this as the target contract rather than released behavior.
 - **Export + no-lock-in is a first-class story.** FAQ addresses this
   directly: rate-limit on exports is for platform health, never charges,
   never locks users in.
@@ -1027,15 +1037,15 @@ If you're applying this design to a new page, work in this order:
    preconnect Google Fonts for Roboto + Roboto Mono).
 3. Paint the body glow from §10 (no other backgrounds).
 4. Add the sticky header and footer from §11.1–11.2.
-5. Pick section patterns from §12 — every page starts with a
+5. Pick section patterns from §12 - every page starts with a
    `SectionHeader`, wraps content in `max-width: 1240px` + `0 40px` gutter,
    and uses section `padding: 80–88px 0`.
 6. For any new card or panel, reach for `.ts-glass` + one of the card
    patterns in §11.9 before inventing new styles.
-7. Buttons, inputs, eyebrows, gradient text, pulse-dot — compose from
+7. Buttons, inputs, eyebrows, gradient text, pulse-dot - compose from
    §11.3–11.7, do not write new variants.
 8. Respect `prefers-reduced-motion` from day one.
-9. Copy passes the grounded-voice test (§16) — strip any uptime / latency /
+9. Copy passes the grounded-voice test (§16) - strip any uptime / latency /
    certification claim that isn't literally verifiable.
 
 ---
@@ -1093,5 +1103,5 @@ scripts/
 Tech: SvelteKit 2 + Svelte 5 + Vite 8 + Tailwind 4 (for `@theme` tokens) +
 TypeScript. Static prerendering via `@sveltejs/adapter-static`.
 
-Not all of that stack is required on a consumer — the tokens, utilities, and
+Not all of that stack is required on a consumer - the tokens, utilities, and
 component patterns above are what define the look.
