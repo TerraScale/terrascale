@@ -30,7 +30,7 @@ describe("DevHost smoke", { skip: apiBaseUrl === undefined || authBaseUrl === un
     assert.equal(result.routeName, "auth.session.get");
     assert.equal(result.status, 401);
     assert.equal(result.error.kind, "authentication");
-    assert.equal(result.error.code, "unauthenticated");
+    assert.equal(result.error.code, "TERRASCALE-1100");
   });
 });
 
