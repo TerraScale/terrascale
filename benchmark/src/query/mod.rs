@@ -1,180 +1,295 @@
-//! Declaration-only typed query seam over immutable snapshots.
+//! The typed query and index seam over immutable snapshots.
+//!
+//! This module implements the W3-2 query contract: one compile/execute path
+//! over [`QueryInput`], execution against an immutable [`ReadSnapshot`], and
+//! generation-aware index selection. The typed clause values and the
+//! V1-compatible grammar normalize into one private model, the plan is
+//! immutable after compilation, and execution consumes only the caller's
+//! snapshot.
+//!
+//! W3-2 proves the seam; it does not claim the V1 query matrix. Execution is
+//! an index-less full scan of the snapshot view, the private index catalog
+//! keeps in-memory segments, and every query parity row stays unresolved
+//! until its parity test and Proof ID exist. The design record with the
+//! supported grammar, per-row coverage notes, limits, and non-claims is
+//! `docs/query/w3-query-index.md`.
 
-#![allow(dead_code)]
-#![allow(
-    clippy::missing_errors_doc,
-    clippy::must_use_candidate,
-    clippy::needless_pass_by_value,
-    clippy::unimplemented
+mod execute;
+mod model;
+mod result;
+mod spec;
+mod v1;
+
+#[cfg(test)]
+mod tests;
+
+use std::sync::Arc;
+
+pub use result::{
+    IndexGenerationRef, ObservedGeneration, QueryResult, QueryRow, StaleIndexObservation,
+    StalenessReport,
+};
+pub use spec::{
+    IndexNamespace, MAX_CONDITIONS, MAX_FIELD_BYTES, MAX_ORDERING_KEYS, MAX_PAGE_LIMIT,
+    MAX_PROJECTION_FIELDS, MAX_STALENESS_INDEXES, OrderDirection, OrderingKey, QueryCondition,
+    QueryOrdering, QueryPaging, QueryPredicate, QueryProjection, QuerySource, QuerySpec,
+    StalenessMode, StalenessPolicy,
+};
+#[allow(
+    unused_imports,
+    reason = "the public V1QueryText constructor delegates here once the integrator action lands"
 )]
-
-use std::marker::PhantomData;
+pub(crate) use v1::validate as validate_v1_text;
 
 use crate::{
     engine::Engine,
-    operations::{QueryInput, RequestValidationError},
-    types::{Cancellation, Deadline, ReadSnapshot, TenantId},
+    index::IndexCatalog,
+    operations::{QueryInput, QueryInputError},
+    types::{ReadSnapshot, StorageSequence, TenantId},
 };
-
-macro_rules! query_value {
-    ($name:ident, $description:literal) => {
-        #[doc = $description]
-        #[derive(Clone, Debug, Eq, PartialEq)]
-        pub struct $name {
-            marker: PhantomData<()>,
-        }
-    };
-}
-
-query_value!(QuerySource, "A typed query source.");
-query_value!(QueryPredicate, "A typed query predicate.");
-query_value!(QueryOrdering, "A typed query ordering.");
-query_value!(QueryProjection, "A typed query projection.");
-query_value!(QueryPaging, "A typed query page request.");
-query_value!(StalenessPolicy, "A typed index staleness policy.");
-
-/// A validated typed query specification.
-#[derive(Clone, Debug, PartialEq)]
-pub struct QuerySpec {
-    tenant_claim: TenantId,
-    source: QuerySource,
-    predicate: QueryPredicate,
-    ordering: QueryOrdering,
-    projection: QueryProjection,
-    paging: QueryPaging,
-    staleness: StalenessPolicy,
-    deadline: Deadline,
-    cancellation: Cancellation,
-}
-
-impl QuerySpec {
-    /// Creates a typed query specification after request validation.
-    #[allow(clippy::too_many_arguments)]
-    pub fn try_new(
-        tenant_claim: TenantId,
-        source: QuerySource,
-        predicate: QueryPredicate,
-        ordering: QueryOrdering,
-        projection: QueryProjection,
-        paging: QueryPaging,
-        staleness: StalenessPolicy,
-        deadline: Deadline,
-        cancellation: Cancellation,
-    ) -> Result<Self, RequestValidationError> {
-        let _ = (
-            tenant_claim,
-            source,
-            predicate,
-            ordering,
-            projection,
-            paging,
-            staleness,
-            deadline,
-            cancellation,
-        );
-        unimplemented!("query specification validation belongs to a later behavior packet")
-    }
-
-    /// Returns the untrusted tenant claim.
-    pub fn tenant_claim(&self) -> &TenantId {
-        &self.tenant_claim
-    }
-
-    /// Returns the typed source.
-    pub fn source(&self) -> &QuerySource {
-        &self.source
-    }
-
-    /// Returns the typed predicate.
-    pub fn predicate(&self) -> &QueryPredicate {
-        &self.predicate
-    }
-
-    /// Returns the typed ordering.
-    pub fn ordering(&self) -> &QueryOrdering {
-        &self.ordering
-    }
-
-    /// Returns the typed projection.
-    pub fn projection(&self) -> &QueryProjection {
-        &self.projection
-    }
-
-    /// Returns the typed page request.
-    pub fn paging(&self) -> &QueryPaging {
-        &self.paging
-    }
-
-    /// Returns the typed index staleness policy.
-    pub fn staleness(&self) -> &StalenessPolicy {
-        &self.staleness
-    }
-
-    /// Returns the request deadline.
-    pub fn deadline(&self) -> Deadline {
-        self.deadline
-    }
-
-    /// Returns a clone of the cancellation signal.
-    pub fn cancellation(&self) -> Cancellation {
-        self.cancellation.clone()
-    }
-}
-
-/// An immutable generation-aware query plan.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct QueryPlan {
-    marker: PhantomData<()>,
-}
-
-/// A typed query result.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct QueryResult {
-    marker: PhantomData<()>,
-}
+use model::NormalizedQuery;
 
 /// Query planning or execution failures.
+///
+/// Every case is typed and carries no document value, storage detail, path,
+/// or private implementation type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QueryError {
     /// The Engine has closed.
     EngineClosed,
     /// The snapshot belongs to another Engine.
     SnapshotEngineMismatch,
-    /// The query tenant does not match the snapshot tenant.
+    /// The snapshot names another tenant than the query's tenant claim.
+    SnapshotTenantMismatch,
+    /// A required index namespace or data-access scope belongs to another
+    /// tenant than the query's tenant binding.
     TenantMismatch,
     /// The typed query specification is invalid.
     InvalidSpec,
-    /// The requested index generation is not ready.
+    /// A required index generation is missing, too old, or from a different
+    /// epoch, and the policy is strict.
     IndexNotReady,
     /// The request deadline expired.
     Deadline,
     /// The request was cancelled.
     Cancelled,
+    /// The Engine's snapshot view returned a typed failure.
+    StorageFailure,
+}
+
+/// An immutable, generation-aware query plan.
+///
+/// A plan is produced only by [`QueryStore::compile`] and never changes
+/// afterwards. It owns no index, no lock, and no storage handle, so it can be
+/// reused with any compatible snapshot; execution reads the snapshot and
+/// never writes one back.
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueryPlan {
+    query: NormalizedQuery,
+}
+
+impl QueryPlan {
+    /// Creates a plan from one normalized model. Crate-only: compile is the
+    /// only plan constructor.
+    pub(crate) fn new(query: NormalizedQuery) -> Self {
+        Self { query }
+    }
+
+    /// Returns the plan's model. Crate-only planner surface.
+    pub(crate) fn model(&self) -> &NormalizedQuery {
+        &self.query
+    }
+
+    /// Returns the tenant claim the plan carries, or `None` for the
+    /// V1-compatible form, whose tenant binding is the snapshot's tenant.
+    #[must_use]
+    pub fn tenant_claim(&self) -> Option<&TenantId> {
+        self.query.tenant_claim()
+    }
+
+    /// Returns the typed source of the plan.
+    #[must_use]
+    pub fn source(&self) -> &QuerySource {
+        self.query.source()
+    }
+
+    /// Returns the ordering the plan will apply.
+    #[must_use]
+    pub fn ordering(&self) -> &QueryOrdering {
+        self.query.ordering()
+    }
+}
+
+/// The index-generation view one query evaluates staleness against.
+///
+/// The production implementation is the private index catalog. The seam is
+/// crate-private so the selection rule stays provable with independent
+/// observed and supplied generations.
+pub(crate) trait GenerationView {
+    /// Returns the generation a snapshot at the given sequence observed for
+    /// one namespace, with its epoch.
+    fn observed_generation(
+        &self,
+        namespace: &IndexNamespace,
+        at: StorageSequence,
+    ) -> Option<ObservedGeneration>;
+
+    /// Returns the generation the view can currently supply for one
+    /// namespace, with its epoch.
+    fn available_generation(&self, namespace: &IndexNamespace) -> Option<ObservedGeneration>;
 }
 
 /// A query store borrowed from one Engine.
+///
+/// The store is bound to its Engine's lifetime and durable open state. It can
+/// neither outlive the Engine, open a storage location, nor switch to an
+/// in-memory implementation, and
+/// [`Engine::queries`](crate::engine::Engine::queries) is its only
+/// production acquisition path.
+///
+/// ```compile_fail
+/// // No store may outlive its Engine. This must not compile.
+/// let engine = terrabase_v2::engine::Engine::open(config)?;
+/// let store = engine.queries();
+/// engine.shutdown()?;
+/// let _ = store;
+/// ```
+///
+/// ```compile_fail
+/// // There is no independent durable or in-memory query constructor. This
+/// // must not compile.
+/// let store = terrabase_v2::query::QueryStore::open("/tmp/other");
+/// ```
 pub struct QueryStore<'engine> {
-    engine: PhantomData<&'engine Engine>,
+    engine: &'engine Engine,
+    indexes: Arc<IndexCatalog>,
 }
 
 impl<'engine> QueryStore<'engine> {
-    pub(crate) fn from_engine(_: &'engine Engine) -> Self {
-        Self { engine: PhantomData }
+    /// Binds one store to one Engine. Crate-only: the durable Engine is the
+    /// only production acquisition path.
+    pub(crate) fn from_engine(engine: &'engine Engine) -> Self {
+        Self { engine, indexes: Arc::new(IndexCatalog::new()) }
+    }
+
+    /// Binds one index catalog to this store.
+    ///
+    /// Crate-only: the Engine does not own an index catalog yet, so the
+    /// wiring that installs the catalog's publication-event sink on the
+    /// Engine is the integrator action recorded in the design record.
+    #[allow(dead_code, reason = "used by the in-crate tests and the later engine wiring")]
+    pub(crate) fn with_index_catalog(mut self, indexes: Arc<IndexCatalog>) -> Self {
+        self.indexes = indexes;
+        self
     }
 
     /// Compiles typed or V1-compatible input into an immutable plan.
+    ///
+    /// Both input forms normalize through this one seam: the typed form is
+    /// re-validated as it is normalized, and the V1-compatible text is parsed
+    /// against the supported grammar subset and rejected with
+    /// [`QueryError::InvalidSpec`] for anything the subset does not define.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::InvalidSpec`] for an invalid typed specification
+    /// or unsupported query text, and [`QueryError::TenantMismatch`] when a
+    /// required index namespace belongs to another tenant than the query's
+    /// tenant claim.
+    #[allow(clippy::needless_pass_by_value)] // the frozen contract passes the input by value
     pub fn compile(&self, input: QueryInput) -> Result<QueryPlan, QueryError> {
-        let _ = (self, input);
-        unimplemented!("query behavior belongs to W3-2")
+        match input {
+            QueryInput::Typed(spec) => self.compile_normalized(NormalizedQuery::from_spec(
+                spec.source().clone(),
+                spec.predicate().clone(),
+                spec.ordering().clone(),
+                spec.projection().clone(),
+                spec.paging(),
+                spec.staleness().clone(),
+                spec.tenant_claim().clone(),
+                spec.deadline(),
+                spec.cancellation(),
+            )),
+            QueryInput::V1Compatible(text) => {
+                let (source, predicate, ordering, paging, projection) =
+                    v1::parse_clauses(text.as_str()).map_err(input_error)?;
+                self.compile_normalized(NormalizedQuery::unbound(
+                    source,
+                    predicate,
+                    ordering,
+                    projection,
+                    paging,
+                    v1::default_staleness(),
+                ))
+            }
+        }
+    }
+
+    /// Compiles raw V1-compatible text through the same seam.
+    ///
+    /// Test-only: the public path wraps the text in
+    /// [`V1QueryText`](crate::operations::V1QueryText) first, and that
+    /// constructor's validation is the integrator action recorded in the
+    /// design record. Both entries parse with the same function.
+    #[cfg(test)]
+    pub(crate) fn compile_v1_text(&self, text: &str) -> Result<QueryPlan, QueryError> {
+        let (source, predicate, ordering, paging, projection) =
+            v1::parse_clauses(text).map_err(input_error)?;
+        self.compile_normalized(NormalizedQuery::unbound(
+            source,
+            predicate,
+            ordering,
+            projection,
+            paging,
+            v1::default_staleness(),
+        ))
+    }
+
+    /// Validates one normalized model and freezes it into a plan.
+    #[allow(clippy::unused_self, reason = "compile is one store-bound seam")]
+    fn compile_normalized(&self, query: NormalizedQuery) -> Result<QueryPlan, QueryError> {
+        if let Some(claim) = query.tenant_claim() {
+            for namespace in query.staleness().indexes() {
+                if namespace.tenant() != claim {
+                    return Err(QueryError::TenantMismatch);
+                }
+            }
+        }
+        Ok(QueryPlan::new(query))
     }
 
     /// Executes an immutable plan against an immutable snapshot.
+    ///
+    /// The snapshot's Engine identity, its tenant, and the plan's tenant
+    /// claim are validated before any data access, the execution observes
+    /// only the supplied snapshot, and the result reports the ordering, the
+    /// per-namespace staleness observations, and the index generation used.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::SnapshotEngineMismatch`] for a snapshot from
+    /// another Engine, [`QueryError::SnapshotTenantMismatch`] when the
+    /// snapshot names another tenant than the plan's claim,
+    /// [`QueryError::TenantMismatch`] when a required index namespace belongs
+    /// to another tenant, [`QueryError::IndexNotReady`] when a strict policy
+    /// is not met, [`QueryError::Deadline`] or [`QueryError::Cancelled`] at a
+    /// bounded checkpoint, and [`QueryError::StorageFailure`] when the
+    /// snapshot view fails.
     pub fn execute(
         &self,
         plan: &QueryPlan,
         snapshot: &ReadSnapshot,
     ) -> Result<QueryResult, QueryError> {
-        let _ = (self, plan, snapshot);
-        unimplemented!("query behavior belongs to W3-2")
+        execute::execute(self.engine, &self.indexes, plan, snapshot)
+    }
+}
+
+/// Maps a grammar rejection onto the compile error. Both input forms report
+/// unsupported text through the same typed path.
+fn input_error(error: QueryInputError) -> QueryError {
+    match error {
+        QueryInputError::EmptyText
+        | QueryInputError::UnsupportedGrammar
+        | QueryInputError::InvalidIdentifier => QueryError::InvalidSpec,
     }
 }

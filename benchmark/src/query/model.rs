@@ -1,0 +1,329 @@
+//! The private normalized query model shared by both input forms.
+//!
+//! [`QuerySpec::try_new`](super::QuerySpec::try_new) and the V1-compatible
+//! grammar both normalize into [`NormalizedQuery`], and
+//! [`QueryStore::compile`](super::QueryStore::compile) is the only producer of
+//! plans from it. The model is crate-private: planner shapes, reducer state,
+//! and evaluation helpers are never exposed.
+
+use std::cmp::Ordering;
+
+use super::spec::{
+    OrderDirection, QueryCondition, QueryOrdering, QueryPaging, QueryPredicate, QueryProjection,
+    QuerySource, StalenessPolicy,
+};
+use crate::types::{Cancellation, Deadline, Document, DocumentValue, TenantId};
+
+/// The validated internal query model both input forms normalize into.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NormalizedQuery {
+    source: QuerySource,
+    predicate: QueryPredicate,
+    ordering: QueryOrdering,
+    projection: QueryProjection,
+    paging: QueryPaging,
+    staleness: StalenessPolicy,
+    tenant_claim: Option<TenantId>,
+    deadline: Option<Deadline>,
+    cancellation: Option<Cancellation>,
+}
+
+impl NormalizedQuery {
+    /// Builds a model from already validated typed clauses.
+    #[allow(clippy::too_many_arguments)] // the typed form carries every frozen clause
+    pub(crate) fn from_spec(
+        source: QuerySource,
+        predicate: QueryPredicate,
+        ordering: QueryOrdering,
+        projection: QueryProjection,
+        paging: QueryPaging,
+        staleness: StalenessPolicy,
+        tenant_claim: TenantId,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Self {
+        Self {
+            source,
+            predicate,
+            ordering,
+            projection,
+            paging,
+            staleness,
+            tenant_claim: Some(tenant_claim),
+            deadline: Some(deadline),
+            cancellation: Some(cancellation),
+        }
+    }
+
+    /// Builds an unbound model, the shape the V1-compatible grammar produces:
+    /// the grammar has no tenant, deadline, or cancellation clause, so those
+    /// stay unbound and the snapshot supplies the tenant binding at execution.
+    pub(crate) fn unbound(
+        source: QuerySource,
+        predicate: QueryPredicate,
+        ordering: QueryOrdering,
+        projection: QueryProjection,
+        paging: QueryPaging,
+        staleness: StalenessPolicy,
+    ) -> Self {
+        Self {
+            source,
+            predicate,
+            ordering,
+            projection,
+            paging,
+            staleness,
+            tenant_claim: None,
+            deadline: None,
+            cancellation: None,
+        }
+    }
+
+    /// Returns the typed source.
+    pub(crate) const fn source(&self) -> &QuerySource {
+        &self.source
+    }
+
+    /// Returns the typed predicate.
+    pub(crate) const fn predicate(&self) -> &QueryPredicate {
+        &self.predicate
+    }
+
+    /// Returns the typed ordering.
+    pub(crate) const fn ordering(&self) -> &QueryOrdering {
+        &self.ordering
+    }
+
+    /// Returns the typed projection.
+    pub(crate) const fn projection(&self) -> &QueryProjection {
+        &self.projection
+    }
+
+    /// Returns the typed page request.
+    pub(crate) const fn paging(&self) -> QueryPaging {
+        self.paging
+    }
+
+    /// Returns the typed staleness policy.
+    pub(crate) const fn staleness(&self) -> &StalenessPolicy {
+        &self.staleness
+    }
+
+    /// Returns the tenant claim, or `None` for the unbound V1 form.
+    pub(crate) fn tenant_claim(&self) -> Option<&TenantId> {
+        self.tenant_claim.as_ref()
+    }
+
+    /// Returns the deadline, or `None` when the form carries none.
+    pub(crate) fn deadline(&self) -> Option<Deadline> {
+        self.deadline
+    }
+
+    /// Returns a reference to the cancellation signal, or `None`.
+    ///
+    /// Crate-only: execution re-reads this signal at every bounded
+    /// checkpoint. The public construction path hands the signal over by
+    /// value, so a caller cannot cancel a compiled plan mid-flight; the later
+    /// wire adapter owns that lifecycle.
+    pub(crate) fn cancellation_signal(&self) -> Option<&Cancellation> {
+        self.cancellation.as_ref()
+    }
+
+    /// Returns a clone of the cancellation signal, or `None`.
+    ///
+    /// A clone snapshots the signal state at clone time; the bounded
+    /// checkpoints re-read the owned signal through
+    /// [`Self::cancellation_signal`] instead.
+    #[allow(dead_code, reason = "kept for the later wire adapter that observes the bound")]
+    pub(crate) fn cancellation(&self) -> Option<Cancellation> {
+        self.cancellation.clone()
+    }
+}
+
+/// Returns one top-level field of a document, or `None` when the document is
+/// not an object or does not carry the field. W3-2 addresses top-level fields
+/// only; nested paths are a documented limit.
+pub(crate) fn field_of<'document>(
+    document: &'document Document,
+    field: &str,
+) -> Option<&'document DocumentValue> {
+    match document.value() {
+        DocumentValue::Object(fields) => fields.get(field),
+        _ => None,
+    }
+}
+
+/// Reports whether one document satisfies the predicate conjunction.
+pub(crate) fn matches(predicate: &QueryPredicate, document: &Document) -> bool {
+    predicate
+        .conditions()
+        .iter()
+        .all(|condition| matches_condition(condition, field_of(document, condition.field())))
+}
+
+/// Evaluates one closed condition against one optionally present field value.
+fn matches_condition(condition: &QueryCondition, present: Option<&DocumentValue>) -> bool {
+    match condition {
+        QueryCondition::Exists { .. } => present.is_some(),
+        QueryCondition::Missing { .. } => present.is_none(),
+        QueryCondition::Equals { value, .. } => present == Some(value),
+        QueryCondition::NotEquals { value, .. } => present != Some(value),
+        QueryCondition::GreaterThan { value, .. } => {
+            compare(present, value) == Some(Ordering::Greater)
+        }
+        QueryCondition::GreaterOrEqual { value, .. } => {
+            matches!(compare(present, value), Some(Ordering::Greater | Ordering::Equal))
+        }
+        QueryCondition::LessThan { value, .. } => compare(present, value) == Some(Ordering::Less),
+        QueryCondition::LessOrEqual { value, .. } => {
+            matches!(compare(present, value), Some(Ordering::Less | Ordering::Equal))
+        }
+    }
+}
+
+/// Compares one present field value with a literal of the same logical type.
+///
+/// Ordering comparisons are defined inside the numeric domain (`Integer` and
+/// `Number` compare numerically) and inside the text domain. Any other pair,
+/// including cross-type pairs and absent fields, has no ordering and evaluates
+/// to `None`, which makes the comparison conditions false rather than error.
+fn compare(present: Option<&DocumentValue>, literal: &DocumentValue) -> Option<Ordering> {
+    /// Widens one integer into the float domain of the unified numeric order.
+    #[allow(clippy::cast_precision_loss)]
+    fn widen(value: i64) -> f64 {
+        value as f64
+    }
+    let present = present?;
+    match (present, literal) {
+        (DocumentValue::Integer(left), DocumentValue::Integer(right)) => Some(left.cmp(right)),
+        (DocumentValue::Integer(left), DocumentValue::Number(right)) => {
+            ordered_f64(widen(*left), *right)
+        }
+        (DocumentValue::Number(left), DocumentValue::Integer(right)) => {
+            ordered_f64(*left, widen(*right))
+        }
+        (DocumentValue::Number(left), DocumentValue::Number(right)) => ordered_f64(*left, *right),
+        (DocumentValue::String(left), DocumentValue::String(right)) => Some(left.cmp(right)),
+        (DocumentValue::Boolean(left), DocumentValue::Boolean(right)) => Some(left.cmp(right)),
+        _ => None,
+    }
+}
+
+/// Compares two finite floats; NaN compares as unordered (`None`).
+fn ordered_f64(left: f64, right: f64) -> Option<Ordering> {
+    left.partial_cmp(&right)
+}
+
+/// The type rank of the total document order used by `order by`.
+///
+/// Missing fields sort first, then null, then every value type in a fixed
+/// rank. The rank order is a W3-2 tracer rule, not a V1 parity claim.
+fn rank(value: Option<&DocumentValue>) -> u8 {
+    match value {
+        None => 0,
+        Some(DocumentValue::Null) => 1,
+        Some(DocumentValue::Boolean(_)) => 2,
+        Some(DocumentValue::Integer(_) | DocumentValue::Number(_)) => 3,
+        Some(DocumentValue::String(_)) => 4,
+        Some(DocumentValue::Array(_)) => 5,
+        Some(DocumentValue::Object(_)) => 6,
+    }
+}
+
+/// Compares two document values by the total document order.
+pub(crate) fn compare_values(
+    left: Option<&DocumentValue>,
+    right: Option<&DocumentValue>,
+) -> Ordering {
+    /// Widens one integer into the float domain of the unified numeric order.
+    #[allow(clippy::cast_precision_loss)]
+    fn widen(value: i64) -> f64 {
+        value as f64
+    }
+    let (left_rank, right_rank) = (rank(left), rank(right));
+    if left_rank != right_rank {
+        return left_rank.cmp(&right_rank);
+    }
+    match (left, right) {
+        (Some(DocumentValue::Boolean(left)), Some(DocumentValue::Boolean(right))) => {
+            left.cmp(right)
+        }
+        (Some(DocumentValue::Integer(left)), Some(DocumentValue::Integer(right))) => {
+            left.cmp(right)
+        }
+        (Some(DocumentValue::Integer(left)), Some(DocumentValue::Number(right))) => {
+            widen(*left).partial_cmp(right).unwrap_or(Ordering::Equal)
+        }
+        (Some(DocumentValue::Number(left)), Some(DocumentValue::Integer(right))) => {
+            left.partial_cmp(&widen(*right)).unwrap_or(Ordering::Equal)
+        }
+        (Some(DocumentValue::Number(left)), Some(DocumentValue::Number(right))) => {
+            left.partial_cmp(right).unwrap_or(Ordering::Equal)
+        }
+        (Some(DocumentValue::String(left)), Some(DocumentValue::String(right))) => left.cmp(right),
+        (Some(DocumentValue::Array(left)), Some(DocumentValue::Array(right))) => {
+            compare_arrays(left, right)
+        }
+        (Some(DocumentValue::Object(left)), Some(DocumentValue::Object(right))) => {
+            compare_objects(left, right)
+        }
+        _ => Ordering::Equal,
+    }
+}
+
+/// Compares arrays element-wise by the total document order.
+fn compare_arrays(left: &[DocumentValue], right: &[DocumentValue]) -> Ordering {
+    for (left_item, right_item) in left.iter().zip(right.iter()) {
+        let ordering = compare_values(Some(left_item), Some(right_item));
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    left.len().cmp(&right.len())
+}
+
+/// Compares objects by their sorted field names, then by field values.
+fn compare_objects(
+    left: &std::collections::BTreeMap<String, DocumentValue>,
+    right: &std::collections::BTreeMap<String, DocumentValue>,
+) -> Ordering {
+    let mut left_fields = left.iter();
+    let mut right_fields = right.iter();
+    loop {
+        match (left_fields.next(), right_fields.next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some((left_name, left_value)), Some((right_name, right_value))) => {
+                let name_ordering = left_name.cmp(right_name);
+                if name_ordering != Ordering::Equal {
+                    return name_ordering;
+                }
+                let value_ordering = compare_values(Some(left_value), Some(right_value));
+                if value_ordering != Ordering::Equal {
+                    return value_ordering;
+                }
+            }
+        }
+    }
+}
+
+/// Compares two documents under one typed ordering. The sort applied on top is
+/// stable, so equal keys keep the deterministic source order.
+pub(crate) fn compare_documents(
+    ordering: &QueryOrdering,
+    left: &Document,
+    right: &Document,
+) -> Ordering {
+    for key in ordering.keys() {
+        let ordering = compare_values(field_of(left, key.field()), field_of(right, key.field()));
+        let ordering = match key.direction() {
+            OrderDirection::Ascending => ordering,
+            OrderDirection::Descending => ordering.reverse(),
+        };
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    Ordering::Equal
+}
