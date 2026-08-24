@@ -26,6 +26,16 @@ use super::FamilyKind;
 /// The maximum byte length of a family-local name.
 const MAX_NAME_BYTES: usize = 255;
 
+/// The highest representable identity value.
+///
+/// Identity records encode `next` as one structured integer value, whose
+/// signed domain ends at `i64::MAX`. The payload layer rejects values above
+/// this ceiling at construction so every stored identity round-trips exactly;
+/// allocation past the ceiling is the typed
+/// [`FamilyError::IdentityExhausted`](super::FamilyError::IdentityExhausted)
+/// at the store.
+pub(crate) const MAX_IDENTITY_VALUE: u64 = 9_223_372_036_854_775_807;
+
 /// Validates one family-local name: non-empty, bounded, free of control
 /// characters, and without surrounding whitespace.
 fn validate_name(value: &str) -> Result<(), RequestValidationError> {
@@ -42,6 +52,21 @@ fn validate_name(value: &str) -> Result<(), RequestValidationError> {
 /// Validates one free-text metadata field, for example a content type.
 fn validate_text(value: &str) -> Result<(), RequestValidationError> {
     if value.is_empty() || value.chars().any(char::is_control) {
+        return Err(RequestValidationError::InvalidFamilyPayload);
+    }
+    Ok(())
+}
+
+/// Validates one series name.
+///
+/// Series names are the second segment of one reserved record identifier
+/// (`family:time-series/<document>/<name>`). `DocumentId` accepts `/`, so a
+/// series name containing `/` would let (document `a`, series `b/c`) and
+/// (document `a/b`, series `c`) address the same record: the series segment
+/// rejects the separator instead of the record codec escaping it.
+fn validate_series_name(value: &str) -> Result<(), RequestValidationError> {
+    validate_name(value)?;
+    if value.contains('/') {
         return Err(RequestValidationError::InvalidFamilyPayload);
     }
     Ok(())
@@ -654,7 +679,7 @@ impl TimeSeriesRead {
         deadline: Deadline,
         cancellation: Cancellation,
     ) -> Result<Self, RequestValidationError> {
-        validate_name(&name)?;
+        validate_series_name(&name)?;
         validate_deadline(&deadline)?;
         validate_cancellation(&cancellation)?;
         Ok(Self { document, name, range, deadline, cancellation })
@@ -871,7 +896,7 @@ impl TimeSeriesBatchWrite {
         deadline: Deadline,
         cancellation: Cancellation,
     ) -> Result<Self, RequestValidationError> {
-        validate_name(&name)?;
+        validate_series_name(&name)?;
         if appends.is_empty() && deletes.is_empty() && policy.is_none() {
             return Err(RequestValidationError::InvalidFamilyPayload);
         }
@@ -1632,7 +1657,8 @@ impl IdentityWrite {
     /// # Errors
     ///
     /// Returns [`RequestValidationError::InvalidFamilyPayload`] for an
-    /// invalid name or a zero allocation,
+    /// invalid name, a zero allocation, or a seed target above the
+    /// representable identity ceiling,
     /// [`RequestValidationError::InvalidDeadline`] for an elapsed deadline,
     /// and [`RequestValidationError::InvalidCancellation`] for an already
     /// cancelled signal.
@@ -1650,6 +1676,11 @@ impl IdentityWrite {
         }
         if let IdentityCommand::Allocate { count, .. } = command
             && count == 0
+        {
+            return Err(RequestValidationError::InvalidFamilyPayload);
+        }
+        if let IdentityCommand::Seed { value, .. } = command
+            && value > MAX_IDENTITY_VALUE
         {
             return Err(RequestValidationError::InvalidFamilyPayload);
         }

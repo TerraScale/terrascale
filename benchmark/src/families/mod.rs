@@ -494,6 +494,8 @@ pub enum FamilyError {
     CompareExchangeIndexStale,
     /// Seeding an identity backwards requires an explicit force.
     IdentitySeedInvalid,
+    /// One identity has consumed the representable identity range.
+    IdentityExhausted,
     /// A recorded family tombstone is newer than the writer's view.
     TombstoneConflict,
     /// A reserved family record could not be read as family state.

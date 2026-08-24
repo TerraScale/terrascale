@@ -22,12 +22,12 @@ use super::payloads::{
     CompareExchangeValueResult, CompareExchangeWrite, CounterBatchWrite, CounterEntry,
     CounterGroupResult, CounterOperation, CounterRead, IdentityCommand, IdentityEntry,
     IdentityRangeResult, IdentityRead, IdentityWrite, LifecycleCommand, LifecycleRead,
-    LifecycleResult, LifecycleWrite, RevisionCommand, RevisionEntry, RevisionPage, RevisionRead,
-    RevisionWrite, RollupPolicy, SchemaDefinition, SchemaFieldType, SchemaRule, SchemaViolation,
-    TimeSeriesAppend, TimeSeriesBatchWrite, TimeSeriesDelete, TimeSeriesEntry, TimeSeriesPage,
-    TimeSeriesPolicy, TimeSeriesRead, TombstoneCommand, TombstoneEntry, TombstoneRead,
-    TombstoneResult, TombstoneWrite, ValidationRead, ValidationResult, ValidationWrite,
-    ViolationKind,
+    LifecycleResult, LifecycleWrite, MAX_IDENTITY_VALUE, RevisionCommand, RevisionEntry,
+    RevisionPage, RevisionRead, RevisionWrite, RollupPolicy, SchemaDefinition, SchemaFieldType,
+    SchemaRule, SchemaViolation, TimeSeriesAppend, TimeSeriesBatchWrite, TimeSeriesDelete,
+    TimeSeriesEntry, TimeSeriesPage, TimeSeriesPolicy, TimeSeriesRead, TombstoneCommand,
+    TombstoneEntry, TombstoneRead, TombstoneResult, TombstoneWrite, ValidationRead,
+    ValidationResult, ValidationWrite, ViolationKind,
 };
 use super::state::{
     ArchivalRecord, AttachmentEntry as StoredAttachment, AttachmentRecord, CompareExchangeRecord,
@@ -243,6 +243,15 @@ fn type_matches(kind: SchemaFieldType, value: &DocumentValue) -> bool {
     )
 }
 
+/// Converts one integer policy bound into the float domain.
+///
+/// A bound beyond 2^53 rounds, which can only blur a comparison at the very
+/// edge of the integer range; rule bounds sit far below that in practice.
+#[allow(clippy::cast_precision_loss)]
+fn float_bound(bound: i64) -> f64 {
+    bound as f64
+}
+
 /// Computes the policy violations of one document value.
 fn violations(schema: &SchemaDefinition, value: &DocumentValue) -> Vec<SchemaViolation> {
     let DocumentValue::Object(fields) = value else {
@@ -283,10 +292,21 @@ fn violations(schema: &SchemaDefinition, value: &DocumentValue) -> Vec<SchemaVio
                 }
             }
             SchemaRule::NumberRange { field, min, max } => {
-                if let Some(DocumentValue::Integer(number)) = present {
-                    let below = min.is_some_and(|bound| *number < bound);
-                    let above = max.is_some_and(|bound| *number > bound);
-                    if below || above {
+                // The bound applies to every numeric encoding the type rule
+                // admits: the integer and the float domain alike.
+                if let Some(value) = present {
+                    let out_of_range = match value {
+                        DocumentValue::Integer(number) => {
+                            min.is_some_and(|bound| *number < bound)
+                                || max.is_some_and(|bound| *number > bound)
+                        }
+                        DocumentValue::Number(number) => {
+                            min.is_some_and(|bound| *number < float_bound(bound))
+                                || max.is_some_and(|bound| *number > float_bound(bound))
+                        }
+                        _ => false,
+                    };
+                    if out_of_range {
                         found.push(SchemaViolation::new(
                             field.clone(),
                             ViolationKind::NumberOutOfRange,
@@ -396,26 +416,45 @@ fn attachments_stage(
             let Some(entry) = record.entries.get(name).cloned() else {
                 return Err(FamilyError::InvalidRequest);
             };
-            guard_document(records, FamilyKind::Attachments, to_document, ExpectedVersion::Any)?;
-            let target_id = record_id("attachments", &[to_document.as_str()])?;
-            let mut target = match records.read(&target_id)? {
-                Some(value) => AttachmentRecord::decode(&value)?,
-                None => AttachmentRecord::default(),
-            };
-            if target.entries.contains_key(to_name) {
-                return Err(FamilyError::AttachmentNameDuplicate);
-            }
-            target.entries.insert(
-                to_name.clone(),
-                StoredAttachment {
-                    content_type: entry.content_type.clone(),
-                    size: entry.size,
-                    hash: entry.hash.clone(),
-                },
-            );
-            records.write(target_id, target.encode())?;
-            if moving {
-                record.entries.remove(name);
+            if to_document == &document {
+                // A same-document copy or move is ONE record mutation: the
+                // Engine rejects a write set that stages the same document
+                // identifier twice, so the target write and the source
+                // mutation merge here instead of staging two puts.
+                if record.entries.contains_key(to_name) {
+                    return Err(FamilyError::AttachmentNameDuplicate);
+                }
+                if moving {
+                    record.entries.remove(name);
+                }
+                record.entries.insert(to_name.clone(), entry);
+            } else {
+                guard_document(
+                    records,
+                    FamilyKind::Attachments,
+                    to_document,
+                    ExpectedVersion::Any,
+                )?;
+                let target_id = record_id("attachments", &[to_document.as_str()])?;
+                let mut target = match records.read(&target_id)? {
+                    Some(value) => AttachmentRecord::decode(&value)?,
+                    None => AttachmentRecord::default(),
+                };
+                if target.entries.contains_key(to_name) {
+                    return Err(FamilyError::AttachmentNameDuplicate);
+                }
+                target.entries.insert(
+                    to_name.clone(),
+                    StoredAttachment {
+                        content_type: entry.content_type.clone(),
+                        size: entry.size,
+                        hash: entry.hash.clone(),
+                    },
+                );
+                records.write(target_id, target.encode())?;
+                if moving {
+                    record.entries.remove(name);
+                }
             }
         }
     }
@@ -496,21 +535,26 @@ fn time_series_read(
         Some(value) => TimeSeriesRecord::decode(&value)?,
         None => TimeSeriesRecord::default(),
     };
-    if let (Some(policy), Some(range), Some(newest)) =
-        (record.policy.as_ref(), request.range(), record.entries.last())
-        && let Some(retention) = policy.retention_ms()
+    // The retention policy bounds both read paths symmetrically: a ranged
+    // read whose entire range precedes the horizon is a typed range error,
+    // and a full read returns the retained view only. The horizon is derived
+    // from the newest stored point, because retention cleanup itself belongs
+    // to the streaming packet.
+    let horizon =
+        record.policy.as_ref().and_then(TimeSeriesPolicy::retention_ms).and_then(|retention| {
+            record.entries.last().map(|newest| newest.timestamp().saturating_sub(retention))
+        });
+    if let (Some(horizon), Some(range)) = (horizon, request.range())
+        && range.end() < horizon
     {
-        let horizon = newest.timestamp().saturating_sub(retention);
-        if range.end() < horizon {
-            return Err(FamilyError::TimeSeriesRangeInvalid);
-        }
+        return Err(FamilyError::TimeSeriesRangeInvalid);
     }
     let entries = record
         .entries
         .iter()
         .filter(|entry| match request.range() {
             Some(range) => entry.timestamp() >= range.start() && entry.timestamp() <= range.end(),
-            None => true,
+            None => horizon.is_none_or(|bound| entry.timestamp() >= bound),
         })
         .map(|entry| {
             TimeSeriesEntry::new(
@@ -753,7 +797,16 @@ fn identities_stage(
     };
     match write.command() {
         IdentityCommand::Allocate { count, .. } => {
-            record.next = record.next.saturating_add(*count);
+            // Saturating would pin `next` at a ceiling forever; allocation
+            // past the representable identity range is a typed failure,
+            // consistent with counter overflow.
+            let Some(sum) = record.next.checked_add(*count) else {
+                return Err(FamilyError::IdentityExhausted);
+            };
+            if sum > MAX_IDENTITY_VALUE {
+                return Err(FamilyError::IdentityExhausted);
+            }
+            record.next = sum;
         }
         IdentityCommand::Seed { value, force, .. } => {
             if *value < record.next && !force {

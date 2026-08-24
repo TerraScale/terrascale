@@ -18,6 +18,7 @@ use std::{
     time::Duration,
 };
 
+use super::payloads::MAX_IDENTITY_VALUE;
 use super::{
     Aggregation, ArchivalCommand, ArchivalReadRequest, ArchivalState, ArchivalWrite,
     AttachmentMetadata, AttachmentMutation, AttachmentRead, AttachmentWrite,
@@ -30,7 +31,8 @@ use super::{
     SchemaDefinition, SchemaFieldType, SchemaRule, TimeSeriesAppend, TimeSeriesBatchWrite,
     TimeSeriesDelete, TimeSeriesEntry, TimeSeriesPolicy, TimeSeriesRange, TimeSeriesRead,
     TombstoneCommand, TombstoneRead, TombstoneWrite, ValidationRead, ValidationResult,
-    ValidationWrite, state::now_millis,
+    ValidationWrite, ViolationKind,
+    state::{RESERVED_COLLECTION, now_millis, record_id},
 };
 
 use crate::{
@@ -2819,5 +2821,449 @@ fn expected_version_conflicts_are_typed_at_stage_time() {
     );
     assert_eq!(staged, Err(FamilyError::Conflict));
     drop(transaction);
+    engine.shutdown().expect("shuts down");
+}
+
+// ---------------------------------------------------------------------------
+// Repair loop a2: gate findings
+// ---------------------------------------------------------------------------
+
+#[test]
+fn same_document_attachment_copy_and_move_commit_as_one_record() {
+    let (_dir, engine) = open_engine("same-document-attachments");
+    put_user_document(&engine, "tenant-a", "put-1", "doc-1", object_user_value(&[("n", "v")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "store-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    attachment_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        AttachmentMutation::Store {
+                            name: "logo".to_owned(),
+                            content_type: "image/png".to_owned(),
+                            size: 8,
+                            hash: "digest".to_owned(),
+                            replace: false,
+                        },
+                    ),
+                )
+                .expect("stages the source attachment");
+        },
+    );
+
+    // A same-document copy duplicates the attachment under a new name. The
+    // source mutation and the target write must merge into one staged record
+    // write, because the Engine rejects a write set that stages the same
+    // document identifier twice.
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "copy-same",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    attachment_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        AttachmentMutation::Copy {
+                            name: "logo".to_owned(),
+                            to_document: document_id("doc-1"),
+                            to_name: "banner".to_owned(),
+                        },
+                    ),
+                )
+                .expect("stages the same-document copy");
+        },
+    );
+    let copied = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::attachment_metadata(
+            AttachmentRead::try_new(document_id("doc-1"), deadline(), cancellation())
+                .expect("valid attachment read"),
+        ),
+    )
+    .expect("reads the copied metadata")
+    {
+        FamilyReadResult::AttachmentMetadata(metadata) => metadata,
+        other => panic!("expected attachment metadata, got {other:?}"),
+    };
+    assert_eq!(copied.entries().len(), 2, "the copy keeps the source");
+    assert_eq!(copied.find("logo").map(AttachmentMetadata::hash), Some("digest"));
+    assert_eq!(copied.find("banner").map(AttachmentMetadata::hash), Some("digest"));
+
+    // A same-document move renames in place, still as one staged record write.
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "move-same",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    attachment_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        AttachmentMutation::Move {
+                            name: "logo".to_owned(),
+                            to_document: document_id("doc-1"),
+                            to_name: "hero".to_owned(),
+                        },
+                    ),
+                )
+                .expect("stages the same-document move");
+        },
+    );
+    let moved = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::attachment_metadata(
+            AttachmentRead::try_new(document_id("doc-1"), deadline(), cancellation())
+                .expect("valid attachment read"),
+        ),
+    )
+    .expect("reads the moved metadata")
+    {
+        FamilyReadResult::AttachmentMetadata(metadata) => metadata,
+        other => panic!("expected attachment metadata, got {other:?}"),
+    };
+    assert_eq!(moved.entries().len(), 2);
+    assert!(moved.find("logo").is_none(), "the move drops the source name");
+    assert!(moved.find("hero").is_some());
+    assert!(moved.find("banner").is_some());
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn malformed_reserved_record_collision_is_typed() {
+    let (_dir, engine) = open_engine("reserved-collision");
+    put_user_document(&engine, "tenant-a", "put-1", "doc-1", object_user_value(&[("n", "v")]));
+
+    // A direct document-seam write of a malformed value at one reserved
+    // record identifier: the family read must surface the typed reserved
+    // state error instead of silently treating the value as family state.
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let identity = operation("squatter-1");
+    let mut transaction = engine.begin(&tenant_scope, snapshot, identity.clone()).expect("begins");
+    let squatter = Document::new(
+        record_id("counters", &["doc-1"]).expect("reserved record identifier"),
+        CollectionName::try_new(RESERVED_COLLECTION).expect("reserved collection name"),
+        DocumentValue::String("not-a-counter-record".to_owned()),
+    );
+    transaction.put(squatter, ExpectedVersion::Any).expect("stages the squatter");
+    assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+
+    let read = read_family(&engine, "tenant-a", counter_read("doc-1", &["hits"]));
+    assert_eq!(read, Err(FamilyError::ReservedStateInvalid));
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn number_range_binds_float_and_integer_values() {
+    let (_dir, engine) = open_engine("number-range");
+    let schema = SchemaDefinition::try_new(vec![SchemaRule::NumberRange {
+        field: "score".to_owned(),
+        min: Some(0),
+        max: Some(10),
+    }])
+    .expect("valid schema");
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "configure-schema",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    FamilyWriteRequest::schema_validation_update(
+                        ValidationWrite::try_new(
+                            tenant_scope.clone(),
+                            collection("users"),
+                            Some(schema.clone()),
+                            operation(identity.as_str()),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid validation write"),
+                    ),
+                )
+                .expect("stages the collection policy");
+        },
+    );
+
+    let score = |value: DocumentValue| {
+        DocumentValue::Object(
+            [
+                ("name".to_owned(), DocumentValue::String("ada".to_owned())),
+                ("score".to_owned(), value),
+            ]
+            .into_iter()
+            .collect(),
+        )
+    };
+    put_user_document(
+        &engine,
+        "tenant-a",
+        "put-float",
+        "doc-1",
+        score(DocumentValue::Number(99.5)),
+    );
+    put_user_document(&engine, "tenant-a", "put-int", "doc-2", score(DocumentValue::Integer(99)));
+    put_user_document(&engine, "tenant-a", "put-ok", "doc-3", score(DocumentValue::Number(5.5)));
+
+    let report = |document: &str| match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::validation(
+            ValidationRead::try_new(
+                collection("users"),
+                Some(document_id(document)),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid validation read"),
+        ),
+    )
+    .expect("reads the on-demand report")
+    {
+        FamilyReadResult::Validation(result) => result,
+        other => panic!("expected a validation result, got {other:?}"),
+    };
+    let float_violations = report("doc-1").violations().to_vec();
+    assert_eq!(float_violations.len(), 1, "an out-of-range float is rejected");
+    assert_eq!(float_violations[0].kind(), ViolationKind::NumberOutOfRange);
+    let int_violations = report("doc-2").violations().to_vec();
+    assert_eq!(int_violations.len(), 1, "an out-of-range integer stays rejected");
+    assert!(report("doc-3").violations().is_empty(), "an in-range float passes");
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "reject-float",
+        |store, transaction, tenant_scope, identity| {
+            let staged = store.stage(
+                transaction,
+                attachment_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    AttachmentMutation::Store {
+                        name: "logo".to_owned(),
+                        content_type: "image/png".to_owned(),
+                        size: 1,
+                        hash: "digest".to_owned(),
+                        replace: false,
+                    },
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::SchemaViolation));
+        },
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn time_series_names_reject_the_record_segment_separator() {
+    use crate::operations::RequestValidationError;
+
+    // Series names are the second segment of one reserved record identifier,
+    // so (document "a", series "b/c") and (document "a/b", series "c") would
+    // address the same record. The series segment cannot contain '/'.
+    assert_eq!(
+        TimeSeriesRead::try_new(
+            document_id("a"),
+            "b/c".to_owned(),
+            None,
+            deadline(),
+            cancellation()
+        )
+        .map(|_| ()),
+        Err(RequestValidationError::InvalidFamilyPayload)
+    );
+    let (_probe_dir, probe) = open_engine("segment-probe");
+    assert_eq!(
+        TimeSeriesBatchWrite::try_new(
+            scope(&probe, "tenant-a"),
+            document_id("a"),
+            "b/c".to_owned(),
+            vec![],
+            vec![TimeSeriesDelete::At { timestamp: 1 }],
+            None,
+            ExpectedVersion::Any,
+            operation("op-1"),
+            deadline(),
+            cancellation(),
+        )
+        .map(|_| ()),
+        Err(RequestValidationError::InvalidFamilyPayload)
+    );
+    probe.shutdown().expect("shuts down");
+
+    // A document identifier may still contain '/', and a slash-free series
+    // name on such a document stays uniquely addressable.
+    let (_dir, engine) = open_engine("segment-separator");
+    put_user_document(&engine, "tenant-a", "put-1", "a/b", object_user_value(&[("n", "v")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "append-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    time_series_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "a/b",
+                        "c",
+                        vec![(10, vec![1.0])],
+                        vec![],
+                        None,
+                    ),
+                )
+                .expect("stages the series on a slash-containing document");
+        },
+    );
+    assert_eq!(time_series_entries(&engine, "a/b", "c", None), vec![10]);
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn identity_allocation_exhaustion_is_typed() {
+    let (_dir, engine) = open_engine("identity-exhaustion");
+    // The record codec stores identities in the signed integer domain, so a
+    // seed target above the representable ceiling is rejected at construction
+    // and exhaustion happens at that ceiling, not at the unsigned edge.
+    let (_probe_dir, probe) = open_engine("identity-ceiling-probe");
+    assert_eq!(
+        IdentityWrite::try_new(
+            scope(&probe, "tenant-a"),
+            "orders".to_owned(),
+            IdentityCommand::Seed { name: "orders".to_owned(), value: u64::MAX, force: true },
+            operation("op-1"),
+            deadline(),
+            cancellation(),
+        )
+        .map(|_| ()),
+        Err(crate::operations::RequestValidationError::InvalidFamilyPayload)
+    );
+    probe.shutdown().expect("shuts down");
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "seed-max",
+        |store, transaction, tenant_scope, identity| {
+            stage_identity(
+                store,
+                transaction,
+                tenant_scope,
+                identity.as_str(),
+                IdentityCommand::Seed {
+                    name: "orders".to_owned(),
+                    value: MAX_IDENTITY_VALUE,
+                    force: true,
+                },
+            )
+            .expect("seeds the identity to its ceiling");
+        },
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "allocate-exhausted",
+        |store, transaction, tenant_scope, identity| {
+            let staged = stage_identity(
+                store,
+                transaction,
+                tenant_scope,
+                identity.as_str(),
+                IdentityCommand::Allocate { name: "orders".to_owned(), count: 1 },
+            );
+            assert_eq!(staged, Err(FamilyError::IdentityExhausted));
+        },
+    );
+    let range = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::identity_range(
+            IdentityRead::try_new(vec!["orders".to_owned()], deadline(), cancellation())
+                .expect("valid identity read"),
+        ),
+    )
+    .expect("reads the identity range")
+    {
+        FamilyReadResult::IdentityRange(result) => result,
+        other => panic!("expected an identity range, got {other:?}"),
+    };
+    assert_eq!(range.entries()[0].next(), MAX_IDENTITY_VALUE, "exhaustion changes no state");
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn time_series_full_reads_respect_the_retention_horizon() {
+    let (_dir, engine) = open_engine("retention-full-read");
+    put_user_document(&engine, "tenant-a", "put-1", "doc-1", object_user_value(&[("n", "v")]));
+    let policy = TimeSeriesPolicy::try_new(Some(1_000), vec![]).expect("valid policy");
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "append-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    time_series_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        "cpu",
+                        vec![(3_000, vec![2.0]), (5_000, vec![1.0])],
+                        vec![],
+                        Some(policy),
+                    ),
+                )
+                .expect("stages two points and the retention policy");
+        },
+    );
+    // The newest point is 5_000 with a 1_000 window, so the horizon is 4_000:
+    // a full read returns the retained view only, matching ranged reads.
+    assert_eq!(time_series_entries(&engine, "doc-1", "cpu", None), vec![5_000]);
+    assert_eq!(
+        time_series_entries(
+            &engine,
+            "doc-1",
+            "cpu",
+            Some(TimeSeriesRange::try_new(4_000, 6_000).expect("valid range"))
+        ),
+        vec![5_000]
+    );
+    assert_eq!(
+        read_family(
+            &engine,
+            "tenant-a",
+            FamilyReadRequest::time_series_range(
+                TimeSeriesRead::try_new(
+                    document_id("doc-1"),
+                    "cpu".to_owned(),
+                    Some(TimeSeriesRange::try_new(0, 1_000).expect("valid range")),
+                    deadline(),
+                    cancellation(),
+                )
+                .expect("valid time-series read")
+            ),
+        ),
+        Err(FamilyError::TimeSeriesRangeInvalid)
+    );
     engine.shutdown().expect("shuts down");
 }
