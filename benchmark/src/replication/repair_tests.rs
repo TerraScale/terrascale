@@ -7,6 +7,11 @@
 //! scope-minting role, every engine is durable in a unique temporary
 //! directory, and time moves only through pumps and injected lane instants.
 
+#![allow(
+    clippy::similar_names,
+    reason = "fixtures bind per-member values whose canonical names differ by one character (m_a1/m_b1, dir_a/dir_b)"
+)]
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -102,6 +107,10 @@ fn value_of(member: &ReplicationMember, tenant_name: &str, id: &str) -> Option<S
 // ---------------------------------------------------------------------------
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one scenario proving the control, the regression, and the recovery"
+)]
 fn region_quorum_counts_only_the_writers_home_region() {
     // Seating order places r-alpha's lone member first, so the buggy
     // derivation reads the home Region from it; the writer lives in r-beta.
@@ -126,19 +135,17 @@ fn region_quorum_counts_only_the_writers_home_region() {
     let mut network = ReplicationNetwork::new();
 
     let scope_a1 = scope(&m_a1, "tenant-a");
-    m_a1
-        .commit_write(&scope_a1, put_request("main", "op-1", "doc-1", "v1"))
+    m_a1.commit_write(&scope_a1, put_request("main", "op-1", "doc-1", "v1"))
         .expect("the writer commits locally");
 
-    // The writer's home-Region peer is lost; the foreign-Region member is
-    // alive and will durably record the write. That must not satisfy a
-    // Region quorum of the writer's home Region.
+    // Control first: with every peer alive the Region quorum of the writer's
+    // home Region holds, and the foreign-Region member durably records the
+    // write as a side effect of the replication the wait drives.
     let scope_x = scope(&m_x, "tenant-a");
     let scope_a2 = scope(&m_a2, "tenant-a");
-    m_a2.close();
     let deadline = network.now().plus_ticks(3);
-    let mut peers = [(&mut m_x, scope_x.clone()), (&mut m_a2, scope_a2)];
-    let outcome = m_a1.wait_for_acknowledgement(
+    let mut peers = [(&mut m_x, scope_x.clone()), (&mut m_a2, scope_a2.clone())];
+    let healthy = m_a1.wait_for_acknowledgement(
         &mut network,
         &scope_a1,
         &operation("op-1"),
@@ -146,14 +153,48 @@ fn region_quorum_counts_only_the_writers_home_region() {
         &mut peers,
         deadline,
     );
+    let ReplicationOutcome::Acknowledged(control) = healthy else {
+        panic!("the healthy lane reaches the home-Region quorum: {healthy:?}")
+    };
+    let home = control
+        .contributed()
+        .iter()
+        .find(|(region, _)| region.as_str() == "r-beta")
+        .expect("the report names the writer's home Region");
+    assert_eq!(home.1.iter().map(MemberId::as_str).collect::<Vec<_>>(), ["m-a1", "m-a2"]);
+    assert!(holds(&m_x, "tenant-a", "op-1"));
+
+    // The regression: a NEW write whose home-Region peer is lost. The
+    // foreign-Region member is alive, but it cannot supply a quorum of the
+    // writer's home Region — the acknowledgement must not be granted.
+    m_a2.close();
+    m_a1.commit_write(&scope_a1, put_request("main", "op-2", "doc-2", "v2"))
+        .expect("the writer commits locally");
+    let deadline = network.now().plus_ticks(3);
+    let mut peers = [(&mut m_x, scope_x), (&mut m_a2, scope_a2)];
+    let outcome = m_a1.wait_for_acknowledgement(
+        &mut network,
+        &scope_a1,
+        &operation("op-2"),
+        AcknowledgementLevel::RegionQuorum,
+        &mut peers,
+        deadline,
+    );
+    assert_ne!(
+        outcome,
+        ReplicationOutcome::Acknowledged(crate::replication::AcknowledgementReport::new(
+            AcknowledgementLevel::RegionQuorum,
+            AcknowledgementLevel::RegionQuorum,
+            Vec::new(),
+            super::ReplicationInstant::at_ticks(0),
+            None,
+        )),
+        "a foreign Region's member cannot supply the writer's home-Region quorum"
+    );
     assert_eq!(
         outcome,
         ReplicationOutcome::Failed(crate::replication::ReplicationError::QuorumUnreachable),
-        "a foreign Region's member cannot supply the writer's home-Region quorum: {outcome:?}"
-    );
-    assert!(
-        holds(&m_x, "tenant-a", "op-1"),
-        "the foreign member still durably recorded the write (it is simply not a quorum of home)"
+        "the unmet home-Region quorum is a typed failure: {outcome:?}"
     );
 
     // Recovery: the home-Region peer reopens, and the same request now holds
@@ -166,7 +207,7 @@ fn region_quorum_counts_only_the_writers_home_region() {
     let recovered = m_a1.wait_for_acknowledgement(
         &mut network,
         &scope_a1,
-        &operation("op-1"),
+        &operation("op-2"),
         AcknowledgementLevel::RegionQuorum,
         &mut peers,
         deadline,
@@ -248,11 +289,9 @@ fn catch_up_from_a_new_source_is_not_masked_by_the_old_source_cursor() {
     // Source B owns a different range from the start, so its own legitimate
     // commits occupy the SAME low sequences of its journal while remaining
     // unknown to the follower.
-    m_b1
-        .commit_write(&scope(&m_b1, "tenant-a"), put_request("archive", "op-b1", "doc-b1", "vb1"))
+    m_b1.commit_write(&scope(&m_b1, "tenant-a"), put_request("archive", "op-b1", "doc-b1", "vb1"))
         .expect("B writes its own range");
-    m_b1
-        .commit_write(&scope(&m_b1, "tenant-a"), put_request("archive", "op-b2", "doc-b2", "vb2"))
+    m_b1.commit_write(&scope(&m_b1, "tenant-a"), put_request("archive", "op-b2", "doc-b2", "vb2"))
         .expect("B writes its own range");
 
     // The control plane transitions the write path to B; the follower
@@ -322,8 +361,7 @@ fn commits_from_two_sources_sharing_a_sequence_both_apply() {
     // journal's sequence 1.
     m_a1.commit_write(&scope(&m_a1, "tenant-a"), put_request("main", "op-a1", "doc-a1", "va1"))
         .expect("A writes");
-    m_b1
-        .commit_write(&scope(&m_b1, "tenant-a"), put_request("archive", "op-b1", "doc-b1", "vb1"))
+    m_b1.commit_write(&scope(&m_b1, "tenant-a"), put_request("archive", "op-b1", "doc-b1", "vb1"))
         .expect("B writes");
 
     // One delivery pass receives both sources' commits at once — the pass
@@ -445,7 +483,11 @@ fn a_third_replica_converges_remote_competing_writes_by_stamp_not_arrival() {
     let rendered = format!("{:?}", replica.conflicts());
     assert!(!rendered.contains("older") && !rendered.contains("newer"), "content-free");
 
-    // The writer side reaches the same verdict, so the pair has converged.
+    // The writer side reaches the same verdict: repair the newer write back
+    // to the earlier writer, whose own older write loses to it.
+    let repaired = synchronize(&mut network, &mut w2, &scope_w2, &mut w1, &scope_w1, 4)
+        .expect("the newer write repairs to the earlier writer");
+    assert!(repaired.caught_up());
     assert_eq!(value_of(&w1, "tenant-a", "doc-shared").as_deref(), Some("newer"));
     assert_eq!(value_of(&w2, "tenant-a", "doc-shared").as_deref(), Some("newer"));
 
@@ -477,8 +519,7 @@ fn an_operation_beyond_the_head_scan_bound_still_acknowledges() {
 
     // More commits in one tenant than the catch-up batch bound the scan used
     // to stop at.
-    let total = usize::try_from(super::topology::MAX_CATCH_UP_BATCH).expect("usize batch")
-        + 6;
+    let total = usize::try_from(super::topology::MAX_CATCH_UP_BATCH).expect("usize batch") + 6;
     for index in 1..=total {
         let name = format!("op-{index:04}");
         member
@@ -527,6 +568,8 @@ fn observation_logs_are_bounded() {
             .expect("valid member")
             .with_owner_at_epoch("main", main_owner, main_epoch)
             .expect("valid owner")
+            .with_owner_at_epoch("aux", "m-x", 1)
+            .expect("valid owner")
             .validated()
             .expect("valid topology")
     };
@@ -543,7 +586,7 @@ fn observation_logs_are_bounded() {
         epoch += 1;
         member.apply_view(base("m-a1", epoch)).expect("the regaining view applies");
     }
-    assert_eq!(member.depositions().len(), 80.min(64), "the deposition log is bounded");
+    assert_eq!(member.depositions().len(), 64, "the deposition log is bounded");
 
     // Fenced batches: pushes stamped far below the highest seen epoch.
     m_x.apply_view(base("m-a1", 1)).expect("the peer's view applies");
@@ -572,13 +615,13 @@ fn observation_logs_are_bounded() {
         let fenced = member.apply_deliveries(&mut network, &scope(&member, "tenant-a"));
         assert!(matches!(fenced, Err(MemberError::FencedBatch { .. })), "stale pushes stay fenced");
     }
-    assert_eq!(member.fenced().len(), 80.min(64), "the fenced-batch log is bounded");
+    assert_eq!(member.fenced().len(), 64, "the fenced-batch log is bounded");
 
     // Catch-up fallbacks: alternate a real exchange (which restores the
     // per-source advisory) with a batch that flags the advisory cursor as
     // unservable.
-    m_x.commit_write(&scope(&m_x, "tenant-a"), put_request("main", "op-1", "doc-1", "v1"))
-        .expect("the peer writes");
+    m_x.commit_write(&scope(&m_x, "tenant-a"), put_request("aux", "op-1", "doc-1", "v1"))
+        .expect("the peer writes its own range");
     let x_id = member_id("m-x");
     let my_id = member_id("m-a1");
     for _ in 0..80 {
@@ -603,11 +646,9 @@ fn observation_logs_are_bounded() {
             )
             .expect("bounded link accepts the batch frame");
         network.pump();
-        member
-            .apply_deliveries(&mut network, &scope_mine)
-            .expect("the flagged batch falls back");
+        member.apply_deliveries(&mut network, &scope_mine).expect("the flagged batch falls back");
     }
-    assert_eq!(member.fallbacks().len(), 80.min(64), "the fallback log is bounded");
+    assert_eq!(member.fallbacks().len(), 64, "the fallback log is bounded");
 
     member.close();
     m_x.close();

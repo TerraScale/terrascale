@@ -198,6 +198,15 @@ no claim about what the lost Regions held (ADR-0004 D-4).
   determinism and both listed conflict tests do not cross a restart;
   a restart-crossing ordering guarantee would need the stamps persisted
   with the journal (proposed collision action below).
+- The D-1 fencing state (`highest_epoch_seen`) is likewise in-memory:
+  `reset_memory_state` deliberately KEEPS it across an engine reopen, so
+  the lane's "restart" models a process that retains its fencing
+  memory (close and reopen of the same process image), not a cold
+  process restart. A member that lost that memory — a true process
+  restart — would accept a deposed leader's below-epoch pushes again
+  until it re-learned the epoch from a view or a peer. Persisting the
+  fencing state with the journal is a separate proposed collision action
+  (W4-CA-13), distinct from the stamp proposal below.
 - `wait_for_acknowledgement` pushes the single operation it is waiting
   for; a production fan-out batching many in-flight operations is an R-3
   optimization, not a correctness gap.
@@ -217,6 +226,13 @@ no claim about what the lost Regions held (ADR-0004 D-4).
   operation is the same write set (not just the same identity) before
   counting it as contributing. This overlaps W4-CA-8 and should be
   executed as one action.
+- W4-CA-13 (proposed, added in repair loop 1): persist the per-range
+  fencing state (`highest_epoch_seen`) alongside the publication-history
+  journal, so a cold process restart preserves apply-time fencing instead
+  of re-learning it from a view or a peer. The lane's restart keeps the
+  memory today, which is the documented limit above; this is distinct from
+  W4-CA-10 (ordering stamps) and could be executed with it in one storage
+  schema change.
 
 ## Verification
 

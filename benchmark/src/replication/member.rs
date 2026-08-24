@@ -64,6 +64,14 @@ pub(crate) const MAX_DENIALS: usize = 64;
 /// this bound and no further.
 pub(crate) const MAX_CONFLICTS: usize = 64;
 
+/// The maximum number of entries each remaining observation log retains
+/// (depositions, fenced batches, catch-up fallbacks).
+///
+/// The same anti-flood rationale as the denial and conflict logs: a
+/// flooding control plane or hostile peer can grow each log to this bound
+/// and no further, evicting the oldest entry.
+pub(crate) const MAX_OBSERVATION_LOGS: usize = 64;
+
 /// The clock-skew bound B of the D-3 conflict policy, in lane ticks.
 ///
 /// Derivation (a lane-scoped fact, no production claim): the lane clock is
@@ -87,16 +95,23 @@ pub(crate) struct ReplicationMember {
     engine: Option<Engine>,
     engine_config: EngineConfig,
     config: ReplicationConfig,
-    /// Advisory, in-memory catch-up progress per tenant, expressed in the
-    /// serving member's storage-sequence space. It never survives a restart
-    /// and is never a durability fact; the journal-derived cursor is.
-    advisory: BTreeMap<TenantId, SourceProgress>,
+    /// Advisory, in-memory catch-up progress per tenant AND serving member,
+    /// expressed in that source's storage-sequence space. It never survives a
+    /// restart and is never a durability fact; the journal-derived cursor is.
+    /// Keying by source is what makes resumption source-matched: one source's
+    /// cursor masks only that source's redelivery, never a new source's
+    /// commits after a leader transition.
+    advisory: BTreeMap<(TenantId, MemberId), SourceProgress>,
     /// The member's bounded hybrid logical clock.
     hlc: ReplicationClockStamp,
     /// The clock stamp each locally admitted operation was minted at.
     operation_stamps: BTreeMap<OperationId, ReplicationClockStamp>,
     /// The data range each locally admitted operation wrote under.
     operation_ranges: BTreeMap<OperationId, String>,
+    /// Each operation's journal sequence, recorded when it was committed or
+    /// applied, so the acknowledgement path can locate an operation by
+    /// identity without scanning the journal head.
+    operation_sequences: BTreeMap<OperationId, StorageSequence>,
     /// The last clock stamp each document key carries, and whether that stamp
     /// came from this member's own write. An own stamp is what makes an
     /// incoming write to the same key a concurrent pair.
@@ -125,8 +140,14 @@ pub(crate) struct ReplicationMember {
 struct KeyState {
     /// The clock stamp of the last write the key carries.
     stamp: ReplicationClockStamp,
-    /// The operation that wrote it, when this member wrote it itself.
-    own_operation: Option<OperationId>,
+    /// The member whose write this state records: this member for its own
+    /// writes, the delivery source for a remote-applied write. The D-3 total
+    /// order compares `(stamp, writer)`, and remote-applied states compete
+    /// exactly like own writes — a third replica holding two remote writes
+    /// converges by that order, not by arrival order.
+    writer: MemberId,
+    /// The operation that wrote it.
+    operation: OperationId,
 }
 
 /// One tenant's advisory progress toward one serving member.
@@ -171,6 +192,7 @@ impl ReplicationMember {
             advisory: BTreeMap::new(),
             hlc: ReplicationClockStamp::new(0, 0),
             operation_stamps: BTreeMap::new(),
+            operation_sequences: BTreeMap::new(),
             operation_ranges: BTreeMap::new(),
             key_states: BTreeMap::new(),
             highest_epoch_seen: BTreeMap::new(),
@@ -230,9 +252,12 @@ impl ReplicationMember {
         let receipt = commit_locally(engine, scope, &write)?;
         self.operation_stamps.insert(write.operation.clone(), stamp);
         self.operation_ranges.insert(write.operation.clone(), write.range);
+        self.record_operation_sequence(&write.operation, receipt.sequence());
         for key in keys {
-            self.key_states
-                .insert(key, KeyState { stamp, own_operation: Some(write.operation.clone()) });
+            self.key_states.insert(
+                key,
+                KeyState { stamp, writer: self.id.clone(), operation: write.operation.clone() },
+            );
         }
         self.activated = true;
         Ok(receipt)
@@ -298,7 +323,7 @@ impl ReplicationMember {
         loop {
             self.refresh_clock_from(network.now());
             let contributing = self.contributing_members(scope, operation, peers);
-            if level_satisfied(canonical, &self.config, &contributing) {
+            if level_satisfied(canonical, &self.config, &self.id, &contributing) {
                 return ReplicationOutcome::Acknowledged(self.build_report(
                     level,
                     canonical,
@@ -317,7 +342,7 @@ impl ReplicationMember {
                     .filter(|(peer, _)| peer.engine().is_some())
                     .map(|(peer, _)| peer.id().clone()),
             );
-            if !level_satisfied(canonical, &self.config, &possible) {
+            if !level_satisfied(canonical, &self.config, &self.id, &possible) {
                 // The typed category follows the request's own shape: a
                 // level naming every Region points at the lost Member
                 // itself, a quorum level reports the unreachable quorum.
@@ -329,7 +354,7 @@ impl ReplicationMember {
                 return ReplicationOutcome::Failed(error);
             }
             if network.now() >= deadline {
-                let strongest = strongest_satisfied_level(&self.config, &contributing);
+                let strongest = strongest_satisfied_level(&self.config, &self.id, &contributing);
                 let (partial, _) = normalize_level(strongest, region_count);
                 return ReplicationOutcome::Timeout {
                     operation_id: operation.clone(),
@@ -437,10 +462,43 @@ impl ReplicationMember {
         operation: &OperationId,
     ) -> Option<StampedCommit> {
         let engine = self.engine.as_ref()?;
-        let commits = engine.tenant_commits(tenant, StorageSequence::new(0), MAX_CATCH_UP_BATCH);
-        let commit = commits.ok()?.into_iter().find(|commit| commit.operation_id() == operation)?;
         let stamp = self.operation_stamps.get(operation).copied().unwrap_or(self.hlc);
-        Some(StampedCommit::new(stamp, commit))
+        let matches = |commit: &PublishedCommit| commit.operation_id() == operation;
+        // Exact window first: the operation's journal sequence is recorded
+        // when it was committed or applied, so one bounded read serves
+        // `after` inclusive of the sequence itself (the read is exclusive of
+        // `after`, hence the saturating step down).
+        if let Some(sequence) = self.operation_sequences.get(operation).copied() {
+            let after = StorageSequence::new(sequence.get().saturating_sub(1));
+            if let Some(commit) =
+                engine.tenant_commits(tenant, after, 1).ok()?.into_iter().find(matches)
+            {
+                return Some(StampedCommit::new(stamp, commit));
+            }
+        }
+        // Fallback: page the journal forward. Each page advances strictly
+        // past the last sequence it served, so the scan terminates at the
+        // journal's end. This serves members whose sequence record is absent
+        // — for example after a restart — at the cost of a full scan.
+        let batch = usize::try_from(MAX_CATCH_UP_BATCH).unwrap_or(usize::MAX);
+        let mut after = StorageSequence::new(0);
+        loop {
+            let page = engine.tenant_commits(tenant, after, MAX_CATCH_UP_BATCH).ok()?;
+            let page_len = page.len();
+            let last_sequence = page.last().map(PublishedCommit::sequence)?;
+            if let Some(commit) = page.into_iter().find(matches) {
+                return Some(StampedCommit::new(stamp, commit));
+            }
+            if page_len < batch {
+                return None;
+            }
+            after = last_sequence;
+        }
+    }
+
+    /// Records one operation's journal sequence for the exact lookup path.
+    fn record_operation_sequence(&mut self, operation: &OperationId, sequence: StorageSequence) {
+        self.operation_sequences.insert(operation.clone(), sequence);
     }
 
     /// Observes the loss of entire Regions after an acknowledged write.
@@ -517,8 +575,7 @@ impl ReplicationMember {
         }
         let after = self
             .advisory
-            .get(scope.tenant())
-            .filter(|progress| progress.source == *source)
+            .get(&(scope.tenant().clone(), source.clone()))
             .and_then(|progress| progress.applied_through);
         network
             .send(
@@ -673,13 +730,13 @@ impl ReplicationMember {
                     if let Some(gap_cursor) = gap_below {
                         let advisory_cursor = self
                             .advisory
-                            .get(&tenant)
+                            .get(&(tenant.clone(), source.clone()))
                             .and_then(|progress| progress.applied_through);
                         if advisory_cursor == Some(gap_cursor) && gap_cursor.get() > 0 {
                             // The source cannot serve below this member's own
-                            // cursor: fall back to a full catch-up, never
-                            // silently skip the gap.
-                            self.advisory.remove(&tenant);
+                            // cursor under that source: fall back to a full
+                            // catch-up, never silently skip the gap.
+                            self.advisory.remove(&(tenant.clone(), source.clone()));
                             self.record_fallback(CatchUpFallback::new(tenant.clone(), gap_cursor));
                             continue;
                         }
@@ -740,12 +797,17 @@ impl ReplicationMember {
         }
 
         let mut report = ApplyReport { batches: batches.len(), ..ApplyReport::default() };
-        let resumed_from = self.advisory.get(&tenant).and_then(|progress| progress.applied_through);
-        let mut merged: BTreeMap<u64, (&StampedCommit, &MemberId)> = BTreeMap::new();
+        // The pass merge is keyed by (source, sequence): two sources' journals
+        // are independent sequence spaces, and one source's sequence-1 commit
+        // must never overwrite another's.
+        let mut merged: BTreeMap<(MemberId, u64), (&StampedCommit, &MemberId)> = BTreeMap::new();
         for batch in &batches {
             for stamped in &batch.commits {
                 if merged
-                    .insert(stamped.commit.sequence().get(), (stamped, &batch.source))
+                    .insert(
+                        (batch.source.clone(), stamped.commit.sequence().get()),
+                        (stamped, &batch.source),
+                    )
                     .is_some()
                 {
                     report.duplicates_resolved += 1;
@@ -754,8 +816,17 @@ impl ReplicationMember {
             report.tenant_high_water =
                 max_sequence(report.tenant_high_water, batch.tenant_high_water);
         }
-        for (sequence, (stamped, source)) in merged {
+        for ((source_id, sequence), (stamped, source)) in merged {
             let sequence = StorageSequence::new(sequence);
+            // Source-matched resumption: only THIS source's advisory cursor
+            // masks this source's redelivery. A new source's commits apply
+            // regardless of how far the member progressed under a previous
+            // source — the durable operation ledger and the D-3 policy are
+            // what make re-delivery safe, not the cursor.
+            let resumed_from = self
+                .advisory
+                .get(&(tenant.clone(), source_id.clone()))
+                .and_then(|progress| progress.applied_through);
             if let Some(resumed) = resumed_from
                 && sequence <= resumed
             {
@@ -783,29 +854,37 @@ impl ReplicationMember {
                     Incoming::ConflictSkipped => {
                         report.conflicts_recorded += 1;
                     }
-                    Incoming::Apply => match self.apply_one(scope, stamped)? {
+                    Incoming::Apply => match self.apply_one(scope, stamped, source)? {
                         ApplyStep::Applied => report.applied += 1,
                         ApplyStep::Duplicate => report.duplicates_resolved += 1,
                     },
                 }
             }
-            let progress = self.advisory.entry(tenant.clone()).or_insert(SourceProgress {
-                source: batches
-                    .last()
-                    .map_or_else(|| self.id.clone(), |batch| batch.source.clone()),
-                applied_through: None,
-                tenant_high_water: None,
-            });
+            let progress = self.advisory.entry((tenant.clone(), source_id.clone())).or_insert(
+                SourceProgress {
+                    source: source_id.clone(),
+                    applied_through: None,
+                    tenant_high_water: None,
+                },
+            );
             progress.applied_through = max_sequence(progress.applied_through, Some(sequence));
         }
         for batch in &batches {
-            if let Some(progress) = self.advisory.get_mut(&tenant) {
-                progress.source = batch.source.clone();
-                progress.tenant_high_water =
-                    max_sequence(progress.tenant_high_water, batch.tenant_high_water);
-            }
+            let progress = self.advisory.entry((tenant.clone(), batch.source.clone())).or_insert(
+                SourceProgress {
+                    source: batch.source.clone(),
+                    applied_through: None,
+                    tenant_high_water: None,
+                },
+            );
+            progress.tenant_high_water =
+                max_sequence(progress.tenant_high_water, batch.tenant_high_water);
         }
-        if let Some(progress) = self.advisory.get(&tenant) {
+        let last_source = batches.last().map(|batch| batch.source.clone());
+        let progress = last_source
+            .as_ref()
+            .and_then(|source| self.advisory.get(&(tenant.clone(), source.clone())));
+        if let Some(progress) = progress {
             report.through = progress.applied_through;
             report.caught_up =
                 report.batches > 0 && progress.applied_through >= progress.tenant_high_water;
@@ -818,14 +897,17 @@ impl ReplicationMember {
         Ok(report)
     }
 
-    /// Decides the D-3 disposition of one incoming commit against this
-    /// member's own writes and clock, recording the conflict either way.
+    /// Decides the D-3 disposition of one incoming commit against the
+    /// member's recorded key states and clock, recording the conflict either
+    /// way.
     ///
     /// The comparison is a total order on `(stamp, Member)`, so it decides
-    /// identically on both sides of a pair and convergence is symmetric.
-    /// Because an operation publishes atomically, one disposition covers all
-    /// of its keys: the operation applies only when its write beats every
-    /// competing own-write of this member.
+    /// identically on both sides of a pair and convergence is symmetric —
+    /// including when the competing state came from a REMOTE write this
+    /// member applied earlier: a third replica holding two remote writes
+    /// converges by that order, never by arrival order. Because an operation
+    /// publishes atomically, one disposition covers all of its keys: the
+    /// operation applies only when its write beats every competing key state.
     fn resolve_incoming(
         &mut self,
         source: &MemberId,
@@ -853,18 +935,21 @@ impl ReplicationMember {
         // A trusted peer stamp advances the local hybrid clock.
         self.hlc = merge_stamp(self.hlc, stamp);
         let keys = written_keys(tenant, &stamped.commit);
-        let competing: Vec<(&(TenantId, DocumentId), &KeyState)> = self
-            .key_states
-            .iter()
-            .filter(|(key, state)| keys.contains(key) && state.own_operation.is_some())
-            .collect();
+        // Every recorded state of the touched keys competes, regardless of
+        // whether this member or a remote peer wrote it.
+        let competing: Vec<(&(TenantId, DocumentId), &KeyState)> =
+            self.key_states.iter().filter(|(key, _)| keys.contains(key)).collect();
         if competing.is_empty() {
             return Incoming::Apply;
         }
         let incoming: (&ReplicationClockStamp, &MemberId) = (&stamp, source);
-        let beats_every = competing.iter().all(|(_, state)| incoming > (&state.stamp, &self.id));
+        let beats_every =
+            competing.iter().all(|(_, state)| incoming > (&state.stamp, &state.writer));
+        // The winner the record names: the incoming write when it beats every
+        // competing state, otherwise the strongest competing state — which
+        // may belong to a remote writer, exactly the third-replica case.
         let mut operations: Vec<OperationId> =
-            competing.iter().filter_map(|(_, state)| state.own_operation.clone()).collect();
+            competing.iter().map(|(_, state)| state.operation.clone()).collect();
         let mut clocks: Vec<ReplicationClockStamp> =
             competing.iter().map(|(_, state)| state.stamp).collect();
         operations.push(stamped.commit.operation_id().clone());
@@ -872,7 +957,7 @@ impl ReplicationMember {
         let (operations, clocks) = sort_record_facts(operations, clocks);
         if beats_every {
             // The incoming write wins every competing key: it applies, and
-            // this member's own losing writes are retained as history.
+            // the losing writes are retained as history.
             self.record_conflict(ConflictRecord::new(
                 operations,
                 sorted_members(&[source.clone(), self.id.clone()]),
@@ -881,14 +966,27 @@ impl ReplicationMember {
             ));
             Incoming::Apply
         } else {
-            // At least one of this member's own writes wins (or the
-            // deterministic tie favors it), so the atomic operation is
-            // skipped and the incoming write is retained as history.
+            // At least one recorded state wins (or the deterministic tie
+            // favors it), so the atomic operation is skipped and the
+            // incoming write is retained as history.
+            let winner = competing
+                .iter()
+                .map(|(_, state)| state)
+                .max_by_key(|state| (state.stamp, state.writer.clone()))
+                .map(|state| state.writer.clone())
+                .expect("competing states are nonempty");
+            let mut members = vec![source.clone(), winner.clone()];
+            for (_, state) in &competing {
+                members.push(state.writer.clone());
+            }
+            for (_, state) in &competing {
+                members.push(state.writer.clone());
+            }
             self.record_conflict(ConflictRecord::new(
                 operations,
-                sorted_members(&[source.clone(), self.id.clone()]),
+                sorted_members(&members),
                 clocks,
-                ConflictOutcome::Winner(self.id.clone()),
+                ConflictOutcome::Winner(winner),
             ));
             Incoming::ConflictSkipped
         }
@@ -908,6 +1006,7 @@ impl ReplicationMember {
         &mut self,
         scope: &TenantScope,
         stamped: &StampedCommit,
+        source: &MemberId,
     ) -> Result<ApplyStep, MemberError> {
         let commit = &stamped.commit;
         let engine = self.engine.as_ref().ok_or(MemberError::EngineClosed)?;
@@ -955,15 +1054,22 @@ impl ReplicationMember {
         match transaction.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => {
                 // The applied write now carries the incoming stamp on every
-                // key it touched; it is this member's state, not its own
-                // write, so a later competing delivery is compared against
-                // it without being a writer conflict. The stamp is recorded
-                // so a commit this member forwards keeps the stamp its
-                // originator minted.
+                // key it touched, recorded with the member the delivery came
+                // from so a later competing delivery — from this member or
+                // any peer — is compared under the same (stamp, Member)
+                // total order. The stamp is recorded too, so a commit this
+                // member forwards keeps the stamp its originator minted.
                 self.operation_stamps.entry(commit.operation_id().clone()).or_insert(stamped.stamp);
+                self.record_operation_sequence(commit.operation_id(), commit.sequence());
                 for key in written_keys(scope.tenant(), commit) {
-                    self.key_states
-                        .insert(key, KeyState { stamp: stamped.stamp, own_operation: None });
+                    self.key_states.insert(
+                        key,
+                        KeyState {
+                            stamp: stamped.stamp,
+                            writer: source.clone(),
+                            operation: commit.operation_id().clone(),
+                        },
+                    );
                 }
                 Ok(if already_committed { ApplyStep::Duplicate } else { ApplyStep::Applied })
             }
@@ -980,10 +1086,15 @@ impl ReplicationMember {
                         self.operation_stamps
                             .entry(commit.operation_id().clone())
                             .or_insert(stamped.stamp);
+                        self.record_operation_sequence(commit.operation_id(), commit.sequence());
                         for key in written_keys(scope.tenant(), commit) {
                             self.key_states.insert(
                                 key,
-                                KeyState { stamp: stamped.stamp, own_operation: None },
+                                KeyState {
+                                    stamp: stamped.stamp,
+                                    writer: source.clone(),
+                                    operation: commit.operation_id().clone(),
+                                },
                             );
                         }
                         Ok(ApplyStep::Applied)
@@ -1004,48 +1115,66 @@ impl ReplicationMember {
     /// Applies a new membership view to this member (a control-plane
     /// transition the member validates before admitting).
     ///
-    /// The view must seat this member and must not lower the epoch of any
-    /// range this member holds. Losing ownership of a range records the
-    /// deposition: from that moment the member's own writes to the range
-    /// fail admission (D-1), and its already-committed writes keep their
-    /// local receipts and converge under D-3.
+    /// The view must seat this member and must be a valid transition for
+    /// every range the member knows about, owned or not: a lowered epoch —
+    /// or an owner flip without a raised epoch — is stale anywhere, because
+    /// the member's fencing state (`highest_epoch_seen`) must stay
+    /// consistent with the view it holds. Losing ownership of a range
+    /// records the deposition: from that moment the member's own writes to
+    /// the range fail admission (D-1), and its already-committed writes keep
+    /// their local receipts and converge under D-3.
     ///
     /// # Errors
     ///
     /// Returns [`MemberError::InvalidTopology`] for an unservable view,
     /// [`MemberError::NotInTopology`] when the view does not seat this
-    /// member, and [`MemberError::StaleView`] when a held range's epoch would
-    /// go backwards or flip owner without a higher epoch.
+    /// member, and [`MemberError::StaleView`] when any known range's epoch
+    /// would go backwards, or an owner would flip without a raised epoch.
     pub(crate) fn apply_view(&mut self, view: TopologyView) -> Result<(), MemberError> {
         let view = view.validated().map_err(|_| MemberError::InvalidTopology)?;
         if !view.contains_member(&self.id) {
             return Err(MemberError::NotInTopology);
         }
-        for range in self.config.topology().owned_ranges().collect::<Vec<_>>() {
-            let current_owner_is_me = self.config.topology().owner_of(range) == Some(&self.id);
-            if !current_owner_is_me {
-                continue;
+        // Fencing consistency first: no known range may regress. The highest
+        // epoch seen comes from views AND received pushes, so this holds for
+        // ranges this member never owned.
+        for (range, highest) in self.highest_epoch_seen.clone() {
+            if let Some(offered) = view.owner_epoch_of(&range)
+                && offered < highest
+            {
+                return Err(MemberError::StaleView {
+                    range,
+                    current_epoch: highest,
+                    offered_epoch: offered,
+                });
             }
-            let current_epoch = self.config.topology().owner_epoch_of(range).unwrap_or(1);
-            let Some(new_owner) = view.owner_of(range) else {
-                continue;
-            };
-            let offered_epoch = view.owner_epoch_of(range).unwrap_or(1);
-            let acceptable = if new_owner == &self.id {
+        }
+        // Transition validity for every range the current view names: an
+        // owner flip requires a raised epoch (D-1).
+        let known_ranges: Vec<(String, MemberId, u64)> = self
+            .config
+            .topology()
+            .owned_ranges()
+            .filter_map(|range| {
+                let owner = self.config.topology().owner_of(range)?.clone();
+                let epoch = self.config.topology().owner_epoch_of(range).unwrap_or(1);
+                Some((range.to_owned(), owner, epoch))
+            })
+            .collect();
+        for (range, current_owner, current_epoch) in known_ranges {
+            let Some(new_owner) = view.owner_of(&range) else { continue };
+            let offered_epoch = view.owner_epoch_of(&range).unwrap_or(1);
+            let acceptable = if new_owner == &current_owner {
                 offered_epoch >= current_epoch
             } else {
                 offered_epoch > current_epoch
             };
             if !acceptable {
-                return Err(MemberError::StaleView {
-                    range: range.to_owned(),
-                    current_epoch,
-                    offered_epoch,
-                });
+                return Err(MemberError::StaleView { range, current_epoch, offered_epoch });
             }
-            if new_owner != &self.id {
-                self.depositions.push(Deposition::new(
-                    range.to_owned(),
+            if new_owner != &self.id && current_owner == self.id {
+                self.record_deposition(Deposition::new(
+                    range,
                     current_epoch,
                     offered_epoch,
                     new_owner.clone(),
@@ -1084,6 +1213,14 @@ impl ReplicationMember {
         if epoch > *highest {
             *highest = epoch;
         }
+    }
+
+    /// Records one deposition, evicting the oldest beyond the bound.
+    fn record_deposition(&mut self, deposition: Deposition) {
+        if self.depositions.len() >= MAX_OBSERVATION_LOGS {
+            self.depositions.remove(0);
+        }
+        self.depositions.push(deposition);
     }
 
     /// Observes an injected lane instant into the member's clock.
@@ -1125,8 +1262,11 @@ impl ReplicationMember {
         self.conflicts.push(record);
     }
 
-    /// Records one fenced batch.
+    /// Records one fenced batch, evicting the oldest beyond the bound.
     fn record_fenced(&mut self, batch: FencedBatch) {
+        if self.fenced.len() >= MAX_OBSERVATION_LOGS {
+            self.fenced.remove(0);
+        }
         self.fenced.push(batch);
     }
 
@@ -1181,6 +1321,7 @@ impl ReplicationMember {
     fn reset_memory_state(&mut self) {
         self.advisory.clear();
         self.operation_stamps.clear();
+        self.operation_sequences.clear();
         self.operation_ranges.clear();
         self.key_states.clear();
         self.hlc = ReplicationClockStamp::new(0, 0);
@@ -1232,7 +1373,11 @@ impl ReplicationMember {
     /// Returns the advisory, in-memory progress for one tenant, expressed in
     /// the serving member's sequence space.
     pub(crate) fn advisory_progress(&self, tenant: &TenantId) -> Option<StorageSequence> {
-        self.advisory.get(tenant).and_then(|progress| progress.applied_through)
+        self.advisory
+            .iter()
+            .filter(|((recorded, _), _)| recorded == tenant)
+            .filter_map(|(_, progress)| progress.applied_through)
+            .max()
     }
 
     /// Returns the observable tenant-isolation denial log.
@@ -1286,8 +1431,11 @@ impl ReplicationMember {
         self.denials.push(denial);
     }
 
-    /// Records one catch-up fallback.
+    /// Records one catch-up fallback, evicting the oldest beyond the bound.
     fn record_fallback(&mut self, fallback: CatchUpFallback) {
+        if self.fallbacks.len() >= MAX_OBSERVATION_LOGS {
+            self.fallbacks.remove(0);
+        }
         self.fallbacks.push(fallback);
     }
 }
@@ -1922,10 +2070,11 @@ fn merge_stamp(local: ReplicationClockStamp, peer: ReplicationClockStamp) -> Rep
     ReplicationClockStamp::new(local.ticks().max(peer.ticks()), local.counter().saturating_add(1))
 }
 
-/// Returns the members in canonical order.
+/// Returns the distinct members in canonical order.
 fn sorted_members(members: &[MemberId]) -> Vec<MemberId> {
     let mut sorted = members.to_vec();
     sorted.sort();
+    sorted.dedup();
     sorted
 }
 
@@ -1973,11 +2122,18 @@ fn quorum_of(total: usize) -> usize {
     total / 2 + 1
 }
 
-/// Reports whether the contributing Members satisfy one level under the
-/// member's topology.
+/// Reports whether the contributing Members satisfy one level for a write
+/// whose writer (the admitted owner of the operation's range) is `writer`.
+///
+/// The write's home Region is the WRITER's Region — the D-1 admission rule
+/// makes exactly that Member the write path's owner — never the Region of
+/// whichever contributing member happens to be seated first: a foreign
+/// Region's member durably recording the operation contributes to no home
+/// Region quorum of the writer.
 fn level_satisfied(
     level: AcknowledgementLevel,
     config: &ReplicationConfig,
+    writer: &MemberId,
     contributing: &BTreeSet<MemberId>,
 ) -> bool {
     use AcknowledgementLevel::{AllRegions, Local, MajorityRegions, RegionQuorum};
@@ -1985,11 +2141,7 @@ fn level_satisfied(
         return true;
     }
     let topology = config.topology();
-    let home_region = topology
-        .members()
-        .find(|member| contributing.contains(*member))
-        .and_then(|member| topology.region_of(member).cloned());
-    let Some(home) = home_region else { return false };
+    let Some(home) = topology.region_of(writer).cloned() else { return false };
     let home_members = topology.members_of_region(&home);
     let home_quorum = home_members.iter().filter(|member| contributing.contains(*member)).count()
         >= quorum_of(home_members.len());
@@ -2015,14 +2167,16 @@ fn level_satisfied(
     }
 }
 
-/// Returns the strongest level a contributing set actually achieves.
+/// Returns the strongest level a contributing set actually achieves for a
+/// write by `writer`.
 fn strongest_satisfied_level(
     config: &ReplicationConfig,
+    writer: &MemberId,
     contributing: &BTreeSet<MemberId>,
 ) -> AcknowledgementLevel {
     use AcknowledgementLevel::{AllRegions, Local, MajorityRegions, RegionQuorum};
     for level in [AllRegions, MajorityRegions, RegionQuorum] {
-        if level_satisfied(level, config, contributing) {
+        if level_satisfied(level, config, writer, contributing) {
             return level;
         }
     }

@@ -206,6 +206,10 @@ neither citable outside the lane.
   lane receipts are written within the lease but untracked until the
   integrator un-ignores `evidence/replication/` or designates a tracked
   evidence path.
+- W4-CA-13 (repair loop 1): persist the per-range fencing state
+  (`highest_epoch_seen`) so a cold process restart preserves apply-time
+  fencing; the lane's restart retains the memory today (see the R-2
+  record's limits).
 
 ## Verification
 
