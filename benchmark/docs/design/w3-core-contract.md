@@ -408,10 +408,11 @@ layout types are plain private declarations.
 | `CommitReceipt`, `CommitOutcome`, `CommitError`, `UnknownCommit`, `UnknownReason`, `DurableResolution` | `pub`; W3-0 declarations, then W3-1 `src/engine/` | Local commit and durable-resolution outcomes. `CommitReceipt` contains only `OperationId`, `StorageSequence`, and `LocalDurability`. |
 | `FamilyKind`, `FamilyReadContext`, `FamilyReadRequest`, `FamilyWriteRequest`, `FamilyReadResult`, `FamilyError`, `FamilyStore<'engine>` | `pub`; W3-0 declarations, then W3-F `src/families/` | Closed typed family seam. `FamilyStore<'engine>` borrows `Engine`; context validation prevents cross-tenant or cross-engine reads. |
 | `AttachmentRead`, `AttachmentWrite`, `AttachmentMetadataResult`, `CounterRead`, `CounterBatchWrite`, `CounterGroupResult`, `TimeSeriesRead`, `TimeSeriesBatchWrite`, `TimeSeriesPage`, `RevisionRead`, `RevisionWrite`, `RevisionPage`, `CompareExchangeRead`, `CompareExchangeWrite`, `CompareExchangeValueResult`, `IdentityRead`, `IdentityWrite`, `IdentityRangeResult`, `LifecycleRead`, `LifecycleWrite`, `LifecycleResult`, `ArchivalReadRequest`, `ArchivalWrite`, `ArchivalReadResult`, `ValidationRead`, `ValidationWrite`, `ValidationResult`, `TombstoneRead`, `TombstoneWrite`, `TombstoneResult` | `pub`; W3-0 declarations, then W3-F `src/families/` | Nested family inputs and results remain typed, bounded, tenant-scoped, and free of generic bytes or storage handles. |
-| `QueryStore<'engine>`, `QuerySpec`, `QueryPlan`, `QueryResult`, `QueryError` | `pub`; W3-0 declarations, then W3-2 `src/query/` and `src/index/` | Typed compilation and snapshot execution. `QueryStore<'engine>` borrows `Engine`; plans are immutable and generation-aware. |
-| `CallerContext`, `ProtocolAdapter`, `ProtocolError`, `PublicOperation`, `PublicResponse` | `pub`; W3-0 declarations, then W3-3 `src/adapters/protocol/` | Opaque caller input and closed typed forwarding. No grant, raw route/body, generic HTTP, arbitrary SQL, or private operation. |
-| `PlatformAdapter`, `PlatformError` | `pub`; W3-0 declarations, then W5 `src/adapters/platform/` | Platform-only validation, tenant isolation, confirmation, audit, expiry, and secret handling. |
-| `DocumentReadRequest`, `DocumentWriteRequest`, `FamilyOperation`, `QueryOperation` | `pub`; W3-0 `src/operations.rs`, then later integrator | Closed nested inputs used only by `PublicOperation`; fields stay private and carry required identity/deadline/cancellation data. |
+| `QueryStore<'engine>`, `QuerySpec`, `QuerySource`, `QueryPredicate`, `QueryOrdering`, `QueryProjection`, `QueryPaging`, `StalenessPolicy`, `QueryPlan`, `QueryResult`, `QueryError` | `pub`; W3-0 declarations, then W3-2 `src/query/` and `src/index/` | Typed compilation and snapshot execution. `QueryStore<'engine>` borrows `Engine`; plans are immutable and generation-aware. |
+| `PrincipalId`, `CallerEvidence`, `CredentialKind`, `CredentialInput`, `CallerContext`, `CallerContextError`, `ProtocolAdapter`, `ProtocolError`, `PublicOperation`, `PublicResponse` | `pub`; W3-0 declarations, then W3-3 `src/adapters/protocol/` | Structurally validated but untrusted caller evidence and closed typed forwarding. Credentials are redacted and non-`Clone`; no grant, permission claim, raw route/body, generic HTTP, arbitrary SQL, or private operation. |
+| `PlatformAdapter<'engine>`, `PlatformError` | `pub`; W3-0 declarations, then W5 `src/adapters/platform/` | Platform-only validation, tenant isolation, confirmation, audit, expiry, and secret handling. The adapter borrows the trusted `EnginePort`; its constructor is W5-owned. |
+| `DocumentReadRequest`, `DocumentWriteRequest`, `FamilyOperation`, `QueryOperation`, `QueryInput`, `V1QueryText`, `RequestValidationError`, `QueryInputError` | `pub`; W3-0 `src/operations.rs`, then later integrator | Closed nested inputs used only by `PublicOperation`; named constructors validate fields and carry required identity/deadline/cancellation data. V1-compatible query text is typed input, not a generic query escape hatch. |
+| `RetryDisposition` | `pub`; W3-0 `src/types.rs`, then later integrator | Closed retry policy for rejected commits. `Unknown` is resolved with the same `OperationId` and is never reduced to a guessed retry disposition. |
 
 The public `Engine` has no `new_in_memory`, `from_memory`, or equivalent
 durable constructor. `Engine::open(config)` is the production opening path and
@@ -448,7 +449,7 @@ The following types and modules must remain `pub(crate)` or private:
 | family physical records, retention workers, `FamilyProjectionInput` | `src/families/` | Family implementation details; projection inputs are typed and read-only at the Query adapter seam |
 | `IndexSegment`, `IndexDelta`, `IndexBuilder`, index lock | `src/index/` | Internal index publication and generation machinery |
 | planner AST, reducer state, scorer, wire codec | `src/query/` and adapters | Never expose implementation or raw transport bytes |
-| `PlatformGrant`, `LocalPlatformGrant`, authorization policy, `PlatformPort`, audit sink | `src/adapters/platform/` | Crate-private authorization state. The grant is short-lived, never re-exported, never returned, and never accepted by Protocol or Engine. |
+| `PlatformGrant`, `LocalPlatformGrant`, `TrustedAuthorizer`, authorization policy, `PlatformPort`, `map_engine_error`, `map_platform_error`, audit sink | `src/adapters/platform/` | Crate-private authorization state and pure error mapping. The trusted authorizer is supplied only by Platform wiring; the grant is short-lived, never re-exported, never returned, and never accepted by Protocol or Engine. |
 
 No public method may return a byte slice, WAL frame, file offset, manifest
 path, internal lock, or private route descriptor as a substitute for a typed
@@ -465,6 +466,17 @@ table below.
 impl EngineConfig {
     pub fn durable(location: impl Into<std::path::PathBuf>)
         -> Result<Self, EngineConfigError>;
+}
+
+impl Deadline {
+    pub fn after(duration: std::time::Duration)
+        -> Result<Self, RequestValidationError>;
+}
+
+impl Cancellation {
+    pub fn new() -> Self;
+    pub fn cancel(&self);
+    pub fn is_cancelled(&self) -> bool;
 }
 
 impl Engine {
@@ -518,6 +530,10 @@ impl<'engine> Transaction<'engine> {
 
 impl FamilyReadContext {
     pub fn new(tenant: TenantScope, snapshot: ReadSnapshot) -> Self;
+    pub fn try_new(
+        tenant: TenantScope,
+        snapshot: ReadSnapshot,
+    ) -> Result<Self, FamilyError>;
 }
 
 impl<'engine> FamilyStore<'engine> {
@@ -535,7 +551,7 @@ impl<'engine> FamilyStore<'engine> {
 }
 
 impl<'engine> QueryStore<'engine> {
-    pub fn compile(&self, spec: QuerySpec)
+    pub fn compile(&self, input: QueryInput)
         -> Result<QueryPlan, QueryError>;
 
     pub fn execute(
@@ -545,7 +561,18 @@ impl<'engine> QueryStore<'engine> {
     ) -> Result<QueryResult, QueryError>;
 }
 
-impl ProtocolAdapter {
+pub struct ProtocolAdapter<'platform> { /* borrows a private PlatformPort */ }
+
+impl<'platform> ProtocolAdapter<'platform> {
+    pub(crate) fn new(platform: &'platform dyn PlatformPort) -> Self;
+
+    pub fn from_platform(platform: &'platform PlatformAdapter<'_>) -> Self;
+
+    #[cfg(test)]
+    pub(crate) fn new_with_platform_port(
+        platform: &'platform dyn PlatformPort,
+    ) -> Self;
+
     pub fn call(
         &self,
         caller: &CallerContext,
@@ -553,7 +580,12 @@ impl ProtocolAdapter {
     ) -> Result<PublicResponse, ProtocolError>;
 }
 
-impl PlatformAdapter {
+impl<'engine> PlatformAdapter<'engine> {
+    pub(crate) fn new(
+        authorizer: TrustedAuthorizer,
+        engine: &'engine dyn EnginePort,
+    ) -> Self;
+
     pub fn dispatch(
         &self,
         caller: &CallerContext,
@@ -623,15 +655,24 @@ payload, arbitrary SQL, storage or session handle, private control-plane
 operation, or generic bytes. `EngineRequest` and `EngineResponse` are
 crate-private and are not re-exported.
 
+`ProtocolAdapter::new` is crate-private because `PlatformPort` is private. It
+borrows that port and cannot outlive it. `ProtocolAdapter::from_platform` is
+the public production acquisition path and borrows a `PlatformAdapter`, which
+internally satisfies the private port. Only the `cfg(test)`
+`new_with_platform_port` constructor accepts a private `PlatformPort` double;
+W3-3 therefore tests forwarding without exposing an injectable production
+authority. `PlatformAdapter::new` is crate-private W5 wiring. It takes the
+trusted private `TrustedAuthorizer` and a borrowed `EnginePort`; neither is a
+caller-supplied public credential or route.
+
 `ProtocolAdapter::call` accepts only the borrowed opaque `CallerContext` and a
-closed `PublicOperation`. It forwards through a crate-private `PlatformPort`
-double in `cfg(test)` or the production `PlatformAdapter`. Platform dispatch
-alone validates caller identity, tenant, permission, expiry, confirmation,
-audit, and secret handling. It creates a private short-lived `PlatformGrant`,
-converts the approved operation to `EngineRequest`, calls `EnginePort`, and
-never returns the grant. `EnginePort` receives no grant. W3-3 may prove typed
-forwarding and rejection of generic/private operations, but it owns no
-authorization or PB-3042 claim. W5 Platform owns those claims.
+closed `PublicOperation`. Platform dispatch alone validates caller identity,
+tenant, permission, expiry, confirmation, audit, and secret handling. It
+creates a private short-lived `PlatformGrant`, converts the approved operation
+to `EngineRequest`, calls `EnginePort`, and never returns the grant.
+`EnginePort` receives no grant. W3-3 may prove typed forwarding and rejection
+of generic/private operations, but it owns no authorization or PB-3042 claim.
+W5 Platform owns those claims.
 
 The forwarding seam is crate-private as well:
 
@@ -683,7 +724,7 @@ pub enum EngineError {
     SnapshotEngineMismatch,
     SnapshotTenantMismatch,
     ScopeMismatch,
-    OperationIdReuse,
+    OperationIdReuse { operation_id: OperationId },
     Conflict,
     InvalidDocument,
     Deadline,
@@ -722,9 +763,9 @@ pub enum ProtocolError {
     PrivateOperation,
     GenericAccessRejected,
     PlatformDenied,
-    Deadline,
-    Cancelled,
-    EngineFailure,
+    Deadline { operation_id: Option<OperationId> },
+    Cancelled { operation_id: Option<OperationId> },
+    EngineFailure { operation_id: Option<OperationId> },
 }
 
 pub enum PlatformError {
@@ -735,7 +776,35 @@ pub enum PlatformError {
     ConfirmationRequired,
     AuditFailure,
     SecretPolicyViolation,
-    EngineFailure,
+    InvalidRequest,
+    Conflict { operation_id: Option<OperationId> },
+    Deadline { operation_id: Option<OperationId> },
+    Cancelled { operation_id: Option<OperationId> },
+    EngineFailure { operation_id: Option<OperationId> },
+}
+
+pub enum CallerContextError {
+    EmptyPrincipal,
+    EmptyTenant,
+    EmptyCredential,
+    UnsupportedCredential,
+}
+
+pub enum RequestValidationError {
+    EmptyField,
+    InvalidIdentifier,
+    InvalidOperationIdentity,
+    InvalidDeadline,
+    InvalidCancellation,
+    InvalidRange,
+    InvalidFamilyPayload,
+    InvalidQuery,
+}
+
+pub enum QueryInputError {
+    EmptyText,
+    UnsupportedGrammar,
+    InvalidIdentifier,
 }
 
 pub enum ExpectedVersion {
@@ -744,16 +813,302 @@ pub enum ExpectedVersion {
     Exact(u64),
 }
 
+pub enum RetryDisposition {
+    Never,
+    SameOperation,
+    NewOperation,
+    AfterRecovery,
+}
+
 pub struct Deadline { /* validated monotonic deadline */ }
 pub struct Cancellation { /* bounded cancellation state */ }
-pub struct CallerContext { /* opaque, no public grant fields */ }
+pub struct PrincipalId { /* validated, non-secret principal identity */ }
+pub enum CredentialKind { Bearer, ApiKey }
+pub struct CredentialInput { /* private secret, non-Clone, redacted */ }
+pub struct CallerEvidence { /* private principal, tenant, and credential */ }
+pub struct CallerContext { /* untrusted, private credential, non-Clone, redacted */ }
 pub struct DocumentReadRequest { /* private validated fields */ }
 pub struct DocumentWriteRequest { /* private validated fields */ }
-pub struct QueryOperation { /* private QuerySpec and request metadata */ }
+pub struct QueryOperation { /* private QueryInput and request metadata */ }
+pub struct QuerySpec { /* private validated typed query fields */ }
+pub struct QuerySource { /* private typed source */ }
+pub struct QueryPredicate { /* private typed predicate */ }
+pub struct QueryOrdering { /* private typed ordering */ }
+pub struct QueryProjection { /* private typed projection */ }
+pub struct QueryPaging { /* private typed paging */ }
+pub struct StalenessPolicy { /* private typed staleness policy */ }
+pub struct V1QueryText { /* private validated V1-compatible grammar */ }
+pub enum QueryInput { Typed(QuerySpec), V1Compatible(V1QueryText) }
 
 pub enum FamilyOperation {
     Read(FamilyReadRequest),
     Write(FamilyWriteRequest),
+}
+```
+
+### Public construction, validation, and observation
+
+The declaration-only tree must not leave callers guessing how to create a
+valid value. Every public request has private fields and one named validated
+construction path. Public enum variants are closed; their associated
+constructors below are the supported spelling and prevent a caller from
+smuggling a route, permission, storage handle, or generic payload into the
+operation registry.
+
+Caller evidence is untrusted input. It can state only a principal, a tenant
+claim, and one closed credential kind. It cannot state permissions, a
+`TenantScope`, a `PlatformGrant`, or an authorization decision:
+
+```rust
+impl PrincipalId {
+    pub fn try_new(value: &str) -> Result<Self, CallerContextError>;
+}
+
+impl CredentialInput {
+    pub fn try_new(
+        kind: CredentialKind,
+        secret: &str,
+    ) -> Result<Self, CallerContextError>;
+
+    pub fn kind(&self) -> CredentialKind;
+}
+
+impl CallerEvidence {
+    pub fn try_new(
+        principal: PrincipalId,
+        tenant: TenantId,
+        credential: CredentialInput,
+    ) -> Result<Self, CallerContextError>;
+
+    pub fn principal(&self) -> &PrincipalId;
+    pub fn tenant(&self) -> &TenantId;
+    pub fn credential_kind(&self) -> CredentialKind;
+}
+
+impl CallerContext {
+    pub fn try_new(evidence: CallerEvidence)
+        -> Result<Self, CallerContextError>;
+
+    pub fn principal(&self) -> &PrincipalId;
+    pub fn tenant_claim(&self) -> &TenantId;
+    pub fn credential_kind(&self) -> CredentialKind;
+}
+```
+
+`CallerEvidence`, `CallerContext`, and `CredentialInput` do not implement
+`Clone`. Their
+`Debug`, `Display`, and serialization forms contain only the principal,
+tenant claim, credential kind, and a non-secret redacted fingerprint. They
+never expose the credential, a secret, a grant, permissions, or a source
+error. Platform authenticates and authorizes the context, checks that its
+tenant claim is allowed, creates the private `TenantScope` and short-lived
+`PlatformGrant`, and discards the grant before Engine dispatch. Any tenant
+claim carried in a request is untrusted input that Platform must compare with
+the authorized scope; it cannot select a tenant or permission by itself.
+
+The operation constructors and read-only accessors are fixed as follows:
+
+| Type | Construction path and inputs | Validation error | Read-only observation |
+| --- | --- | --- | --- |
+| `DocumentReadRequest` | `try_new(tenant_claim: TenantId, collection, document_id, deadline, cancellation)` | `RequestValidationError::{InvalidIdentifier, InvalidDeadline, InvalidCancellation}` | `tenant_claim`, `collection`, `document_id`, `deadline`, `cancellation` |
+| `DocumentWriteRequest` | `try_new(tenant_claim: TenantId, document, expected_version, operation_id, deadline, cancellation)` | `RequestValidationError::{InvalidOperationIdentity, InvalidDeadline, InvalidCancellation}` | `tenant_claim`, `document`, `expected_version`, `operation_id`, `deadline`, `cancellation` |
+| `QuerySpec` | `try_new(tenant_claim: TenantId, source, predicate, ordering, projection, paging, staleness, deadline, cancellation)` | `RequestValidationError::{InvalidIdentifier, InvalidQuery, InvalidDeadline, InvalidCancellation}` | Every typed clause, `tenant_claim`, `staleness`, `deadline`, `cancellation` |
+| `V1QueryText` | `try_new(text: &str)` | `QueryInputError::{EmptyText, UnsupportedGrammar, InvalidIdentifier}` | `as_str()` returns validated text only; no raw transport or SQL escape |
+| `QueryInput` | `typed(spec)` or `v1_compatible(text: V1QueryText)` | `QueryInputError` for the V1 form | Exhaustive matching on `Typed` or `V1Compatible` |
+| `QueryOperation` | `try_new(input, operation_id: Option<OperationId>, deadline, cancellation)` | `RequestValidationError::{InvalidOperationIdentity, InvalidDeadline, InvalidCancellation}` | `input`, optional `operation_id`, `deadline`, `cancellation` |
+| `FamilyOperation` | `read(request)` or `write(request)` | `RequestValidationError::InvalidFamilyPayload` | Exhaustive matching on `Read` or `Write` |
+| `PublicOperation` | `document_read(request)`, `document_write(request)`, `query(request)`, or `family(request)` | The nested constructor's typed error | Exhaustive matching on the four closed variants |
+
+`QuerySource`, `QueryPredicate`, `QueryOrdering`, `QueryProjection`,
+`QueryPaging`, and `StalenessPolicy` are also closed typed values. Each has a
+`try_new` or named builder that accepts only its documented typed clauses,
+rejects `RequestValidationError::InvalidQuery`, and exposes typed read-only
+accessors. None accepts a route, arbitrary SQL, a generic map, or generic
+bytes. `QuerySpec::try_new` is the only composition path, so typed and
+V1-compatible inputs reach the same `QueryStore::compile(QueryInput)` seam.
+
+The principal document and query constructors have this exact shape:
+
+```rust
+impl DocumentReadRequest {
+    pub fn try_new(
+        tenant_claim: TenantId,
+        collection: CollectionName,
+        document_id: DocumentId,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Result<Self, RequestValidationError>;
+}
+
+impl DocumentWriteRequest {
+    pub fn try_new(
+        tenant_claim: TenantId,
+        document: Document,
+        expected: ExpectedVersion,
+        operation_id: OperationId,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Result<Self, RequestValidationError>;
+}
+
+impl QuerySpec {
+    pub fn try_new(
+        tenant_claim: TenantId,
+        source: QuerySource,
+        predicate: QueryPredicate,
+        ordering: QueryOrdering,
+        projection: QueryProjection,
+        paging: QueryPaging,
+        staleness: StalenessPolicy,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Result<Self, RequestValidationError>;
+}
+
+impl V1QueryText {
+    pub fn try_new(text: &str) -> Result<Self, QueryInputError>;
+    pub fn as_str(&self) -> &str;
+}
+
+impl QueryInput {
+    pub fn typed(spec: QuerySpec) -> Self;
+    pub fn v1_compatible(text: V1QueryText) -> Self;
+}
+
+impl QueryOperation {
+    pub fn try_new(
+        input: QueryInput,
+        operation_id: Option<OperationId>,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Result<Self, RequestValidationError>;
+}
+```
+
+Every concrete family payload follows the same explicit rule. The phrase
+"typed family fields" below means the closed field set named by that family's
+parity contract, not an untyped map or generic bytes. W3-0 records the
+constructor and observation rule without inventing domain fields that belong
+to W3-F:
+
+| Type | Construction inputs | Validation error | Read-only observation |
+| --- | --- | --- | --- |
+| `AttachmentRead` | `try_new(typed attachment-read fields, deadline, cancellation)` | `InvalidFamilyPayload` | Typed attachment-read fields, `deadline`, `cancellation` |
+| `CounterRead` | `try_new(typed counter-read fields, deadline, cancellation)` | `InvalidFamilyPayload` | Typed counter-read fields, `deadline`, `cancellation` |
+| `TimeSeriesRead` | `try_new(typed time-series-read fields, deadline, cancellation)` | `InvalidFamilyPayload` | Typed time-series-read fields, `deadline`, `cancellation` |
+| `RevisionRead` | `try_new(typed revision-read fields, deadline, cancellation)` | `InvalidFamilyPayload` | Typed revision-read fields, `deadline`, `cancellation` |
+| `CompareExchangeRead` | `try_new(typed compare-exchange-read fields, deadline, cancellation)` | `InvalidFamilyPayload` | Typed compare-exchange-read fields, `deadline`, `cancellation` |
+| `IdentityRead` | `try_new(typed identity-read fields, deadline, cancellation)` | `InvalidFamilyPayload` | Typed identity-read fields, `deadline`, `cancellation` |
+| `LifecycleRead` | `try_new(typed lifecycle-read fields, deadline, cancellation)` | `InvalidFamilyPayload` | Typed lifecycle-read fields, `deadline`, `cancellation` |
+| `ArchivalReadRequest` | `try_new(typed archival-read fields, deadline, cancellation)` | `InvalidFamilyPayload` | Typed archival-read fields, `deadline`, `cancellation` |
+| `ValidationRead` | `try_new(typed validation-read fields, deadline, cancellation)` | `InvalidFamilyPayload` | Typed validation-read fields, `deadline`, `cancellation` |
+| `TombstoneRead` | `try_new(typed tombstone-read fields, deadline, cancellation)` | `InvalidFamilyPayload` | Typed tombstone-read fields, `deadline`, `cancellation` |
+| `AttachmentWrite` | `try_new(typed attachment-write fields, operation_id, deadline, cancellation)` | `InvalidFamilyPayload` | Typed fields, `operation_id`, `deadline`, `cancellation` |
+| `CounterBatchWrite` | `try_new(typed counter-write fields, operation_id, deadline, cancellation)` | `InvalidFamilyPayload` | Typed fields, `operation_id`, `deadline`, `cancellation` |
+| `TimeSeriesBatchWrite` | `try_new(typed time-series-write fields, operation_id, deadline, cancellation)` | `InvalidFamilyPayload` | Typed fields, `operation_id`, `deadline`, `cancellation` |
+| `RevisionWrite` | `try_new(typed revision-write fields, operation_id, deadline, cancellation)` | `InvalidFamilyPayload` | Typed fields, `operation_id`, `deadline`, `cancellation` |
+| `CompareExchangeWrite` | `try_new(typed compare-exchange-write fields, operation_id, deadline, cancellation)` | `InvalidFamilyPayload` | Typed fields, `operation_id`, `deadline`, `cancellation` |
+| `IdentityWrite` | `try_new(typed identity-write fields, operation_id, deadline, cancellation)` | `InvalidFamilyPayload` | Typed fields, `operation_id`, `deadline`, `cancellation` |
+| `LifecycleWrite` | `try_new(typed lifecycle-write fields, operation_id, deadline, cancellation)` | `InvalidFamilyPayload` | Typed fields, `operation_id`, `deadline`, `cancellation` |
+| `ArchivalWrite` | `try_new(typed archival-write fields, operation_id, deadline, cancellation)` | `InvalidFamilyPayload` | Typed fields, `operation_id`, `deadline`, `cancellation` |
+| `ValidationWrite` | `try_new(typed validation-write fields, operation_id, deadline, cancellation)` | `InvalidFamilyPayload` | Typed fields, `operation_id`, `deadline`, `cancellation` |
+| `TombstoneWrite` | `try_new(typed tombstone-write fields, operation_id, deadline, cancellation)` | `InvalidFamilyPayload` | Typed fields, `operation_id`, `deadline`, `cancellation` |
+
+The closed outer request enums have named constructors for every variant:
+
+```rust
+impl FamilyReadRequest {
+    pub fn attachment_metadata(value: AttachmentRead) -> Self;
+    pub fn counter_group(value: CounterRead) -> Self;
+    pub fn time_series_range(value: TimeSeriesRead) -> Self;
+    pub fn revision_page(value: RevisionRead) -> Self;
+    pub fn compare_exchange_value(value: CompareExchangeRead) -> Self;
+    pub fn identity_range(value: IdentityRead) -> Self;
+    pub fn lifecycle(value: LifecycleRead) -> Self;
+    pub fn archival(value: ArchivalReadRequest) -> Self;
+    pub fn validation(value: ValidationRead) -> Self;
+    pub fn tombstones(value: TombstoneRead) -> Self;
+}
+
+impl FamilyWriteRequest {
+    pub fn attachment_mutation(value: AttachmentWrite) -> Self;
+    pub fn counter_batch(value: CounterBatchWrite) -> Self;
+    pub fn time_series_batch(value: TimeSeriesBatchWrite) -> Self;
+    pub fn revision_command(value: RevisionWrite) -> Self;
+    pub fn compare_exchange_condition(value: CompareExchangeWrite) -> Self;
+    pub fn identity_allocation(value: IdentityWrite) -> Self;
+    pub fn lifecycle_update(value: LifecycleWrite) -> Self;
+    pub fn archival_update(value: ArchivalWrite) -> Self;
+    pub fn schema_validation_update(value: ValidationWrite) -> Self;
+    pub fn tombstone_operation(value: TombstoneWrite) -> Self;
+}
+
+impl FamilyOperation {
+    pub fn read(value: FamilyReadRequest) -> Self;
+    pub fn write(value: FamilyWriteRequest) -> Self;
+}
+
+impl PublicOperation {
+    pub fn document_read(value: DocumentReadRequest) -> Self;
+    pub fn document_write(value: DocumentWriteRequest) -> Self;
+    pub fn query(value: QueryOperation) -> Self;
+    pub fn family(value: FamilyOperation) -> Self;
+}
+```
+
+No family payload has a public unchecked-field constructor. `FamilyReadContext`
+has `new(tenant, snapshot)` for structural construction and `try_new` for
+callers that want immediate tenant/snapshot validation. `FamilyStore::read`
+performs the same check before family or index access. `FamilyStore::stage`
+checks the write's `operation_id()` against the borrowed transaction identity.
+
+The value and outcome types expose observation without exposing implementation
+details:
+
+```rust
+impl CommitReceipt {
+    pub fn operation_id(&self) -> &OperationId;
+    pub fn sequence(&self) -> StorageSequence;
+    pub fn durability(&self) -> LocalDurability;
+}
+
+```
+
+`CommitOutcome` and `DurableResolution` have no lossy `is_success` or
+`is_retryable` shortcut. Callers inspect every closed variant with exhaustive
+matching. `Committed` exposes `CommitReceipt`, `Rejected` exposes
+`CommitError`, `Unknown` exposes `UnknownCommit`, and `Pending` remains an
+explicit `DurableResolution` state.
+
+`OperationId`, `TenantId`, `TenantScope`, `DocumentId`, `CollectionName`,
+`StorageSequence`, `ExpectedVersion`, and structured document values implement
+safe equality and serialization for their validated logical representation.
+Their `Display` forms are canonical identifiers or redacted typed summaries.
+They never serialize storage keys, WAL frames, file paths, credentials,
+customer secrets, or raw byte buffers. `OperationId` has stable `Eq`, `Ord`,
+`Hash`, `Display`, and serialization behavior so retry and resolution tests can
+compare it without opening storage.
+
+Validated logical identifiers have named constructors. `TenantScope` is the
+exception: Platform creates it only after authenticating and authorizing a
+`CallerContext`, so no public string constructor can manufacture Engine
+authority:
+
+```rust
+impl OperationId {
+    pub fn try_new(value: &str) -> Result<Self, RequestValidationError>;
+}
+
+impl TenantId {
+    pub fn try_new(value: &str) -> Result<Self, RequestValidationError>;
+}
+
+impl DocumentId {
+    pub fn try_new(value: &str) -> Result<Self, RequestValidationError>;
+}
+
+impl CollectionName {
+    pub fn try_new(value: &str) -> Result<Self, RequestValidationError>;
 }
 ```
 
@@ -808,6 +1163,9 @@ dispatch must record the exact current docs tip by running
 `git rev-parse fleet/w3-core-design` after the docs commits are integrated. Its
 purpose is to materialize the shared logical types and exports named in this
 document, then prove that all later packets can compile against one vocabulary.
+The docs-only tip is not a W3-0 GO. The declaration tree and
+`tests/public_exports.rs` must land in their separate preparation commit, pass
+the independent W3-0 gate, and be recorded before W3-1 can start.
 The docs history leading to that dispatch includes the initial contract commit
 `ad3e52c` and the first reliability correction commit `74d5473`.
 
@@ -862,13 +1220,25 @@ pub use families::{
     FamilyError, FamilyKind, FamilyReadContext, FamilyReadRequest,
     FamilyReadResult, FamilyStore, FamilyWriteRequest,
 };
-pub use operations::{PublicOperation, PublicResponse};
-pub use query::{QueryError, QueryPlan, QueryResult, QuerySpec, QueryStore};
-pub use adapters::protocol::CallerContext;
+pub use operations::{
+    DocumentReadRequest, DocumentWriteRequest, FamilyOperation, PublicOperation,
+    PublicResponse, QueryInput, QueryOperation, QueryInputError,
+    RequestValidationError, V1QueryText,
+};
+pub use query::{
+    QueryError, QueryOrdering, QueryPaging, QueryPlan, QueryPredicate,
+    QueryProjection, QueryResult, QuerySource, QuerySpec, QueryStore,
+    StalenessPolicy,
+};
+pub use adapters::protocol::{
+    CallerContext, CallerContextError, CallerEvidence, CredentialInput,
+    CredentialKind, PrincipalId,
+};
 pub use types::{
     Cancellation, Deadline, Document, DocumentId, DocumentMetadata, DocumentValue,
     ExpectedVersion, IndexGeneration, IndexGenerationSet, LocalDurability,
-    OperationId, ReadSnapshot, StorageSequence, TenantId, TenantScope,
+    OperationId, ReadSnapshot, RetryDisposition, StorageSequence, TenantId,
+    TenantScope,
 };
 ```
 
@@ -884,13 +1254,14 @@ After that commit, the later integrator owns `src/lib.rs`, `src/types.rs`,
 shared vocabulary, root declarations, and export files. W3-1 takes the
 contents under `src/storage/**` and
 `src/engine/**`; W3-F takes `src/families/**`; W3-2 takes `src/query/**` and
-`src/index/**`; W3-3 takes `src/adapters/protocol/**`; and W5 takes
-`src/adapters/platform/**`. Those packets may replace declarations inside
-their assigned module directories, but none may edit `src/lib.rs` or add a
-second root. Cargo, lockfile, CI, generated parity, overlays, and shared
-manifests remain integrator-owned collision paths. If a shared declaration
-needs a dependency or a semantic change, the parent assigns that exact file as
-a separate collision action.
+`src/index/**`; W3-3 takes `src/adapters/protocol/**`; W4 takes the
+replication, backup, and migration paths; and W5 takes
+`src/adapters/platform/**` only after both W4 handoffs. Those packets may
+replace declarations inside their assigned module directories, but none may
+edit `src/lib.rs` or add a second root. Cargo, lockfile, CI, generated parity,
+overlays, and shared manifests remain integrator-owned collision paths. If a
+shared declaration needs a dependency or a semantic change, the parent
+assigns that exact file as a separate collision action.
 
 W3-0 must compile this tree with no speculative Storage, Engine, Families,
 Query, Index, Protocol, or Platform behavior. It may add compile-only
@@ -917,12 +1288,19 @@ hash, never directly on `8771f13` or on an unrecorded docs tip.
 | W3-1 Storage plus Engine | `terrabasev2-w3-storage-engine`, based on the recorded W3-0 type/export preparation commit | `src/storage/**`, `src/engine/**`, `tests/storage/**`, `tests/engine/**`, and explicitly named storage/engine docs or receipts | W3-1 owns those paths only; W3-0 retains `src/lib.rs` through preparation and the later integrator retains it afterward, along with shared type declarations, Cargo files, generated outputs, and overlays |
 | W3-F Data Families | `terrabasev2-w3-families`, based on the accepted W3-1 commit | `src/families/**`, `tests/families/**`, and explicitly named `docs/families/**` | W3-F owns family paths only; it does not edit Storage, Engine, Query, Index, replication, backup, migration, adapter, shared, or generated paths |
 | W3-2 Query | `terrabasev2-w3-query`, based on the accepted W3-F Families commit | `src/query/**`, `src/index/**`, `tests/query/**`, `tests/index/**`, and explicitly named query/index docs | W3-2 owns query/index paths; it does not edit W3-1, W3-F, or shared files |
-| W3-3 Protocol | `terrabasev2-w3-protocol`, based on the accepted W3-2 commit | `src/adapters/protocol/**`, named protocol tests, and named protocol docs | W3-3 owns protocol paths; Platform implementation remains a later adapter packet |
-| W5 Platform Adapter | `terrabasev2-w5-platform`, based on the accepted W3-3 commit | `src/adapters/platform/**`, named Platform tests, and named adapter docs | W5 owns authorization and PB-3042 proof; it does not edit Protocol, Engine, Families, or shared roots |
+| W3-3 Protocol | `terrabasev2-w3-protocol`, based on the accepted W3-2 commit | `src/adapters/protocol/**`, `tests/adapters/protocol/**`, `docs/adapters/protocol/**` | W3-3 owns typed forwarding only; Platform implementation remains a later adapter packet |
+| W4 Replication | `terrabasev2-w4-replication`, based on the accepted W3-3 commit | `src/replication/**`, `tests/replication/**`, `docs/replication/**` | W4 owns replication behavior and receipts; it does not edit adapters, backup, migration, or shared roots |
+| W4 Backup/Migration | `terrabasev2-w4-backup`, based on the accepted W3-3 commit | `src/backup/**`, `src/migration/**`, `tests/recovery/**`, `docs/backup/**`, `docs/migration/**` | W4 owns backup, restore, and Logical Migration behavior and receipts; it does not edit adapters, replication, or shared roots |
+| W5 Platform Adapter | `terrabasev2-w5-platform`, based on the accepted W4 Replication and W4 Backup/Migration commits | `src/adapters/platform/**`, `tests/adapters/platform/**`, `docs/adapters/platform/**` | W5 owns authorization and PB-3042 proof; it starts only after both W4 dependencies and does not edit Protocol, Engine, Families, or shared roots |
 
 The parent integrates each packet in sequence. Generated inventory and parity
 overlays are never generated from a builder worktree. They are regenerated by
 the integrator after behavior evidence exists.
+
+The W5 Platform Adapter dispatch is blocked until both W4 Replication and W4
+Backup/Migration have accepted handoffs. In charter terms,
+`WS-PLATFORM` depends on both `WS-REPLICATION` and `WS-BACKUP`; a W3-3 commit or
+one completed W4 branch is not a valid W5 base.
 
 Collision ownership is explicit:
 
@@ -932,7 +1310,11 @@ Collision ownership is explicit:
 | `Cargo.toml`, `Cargo.lock`, toolchain, format, and root CI files | later integrator | No dependency or manifest edits in W3 seam packets unless the dispatch names one exact file |
 | `parity/inventory.json` and `parity/overlays/**` | later integrator | Builders provide test/evidence handoffs; they do not regenerate or change status |
 | `docs/design/w3-core-contract.md` | W3-0 contract writer | This document is the durable W3 design record; behavior builders do not rewrite it |
-| `docs/storage/**`, `docs/engine/**`, `docs/families/**`, `docs/query/**`, `docs/index/**`, and `docs/adapters/protocol/**` | the packet named in the dispatch | A packet may create only its named documentation path; there is no residual `docs/**` ownership |
+| `src/replication/**`, `tests/replication/**`, and `docs/replication/**` | W4 Replication | W4 owns replication behavior and receipts only; it does not edit backup, migration, adapters, or shared roots |
+| `src/backup/**`, `src/migration/**`, `tests/recovery/**`, `docs/backup/**`, and `docs/migration/**` | W4 Backup/Migration | W4 owns backup, restore, and Logical Migration behavior and receipts only; it does not edit replication, adapters, or shared roots |
+| `src/adapters/protocol/**`, `tests/adapters/protocol/**`, and `docs/adapters/protocol/**` | W3-3 Protocol | W3-3 owns typed forwarding only; it does not edit Platform authorization or shared roots |
+| `src/adapters/platform/**`, `tests/adapters/platform/**`, and `docs/adapters/platform/**` | W5 Platform Adapter | W5 owns authorization, tenant isolation, confirmation, audit, secret handling, and PB-3042 only |
+| `docs/storage/**`, `docs/engine/**`, `docs/families/**`, `docs/query/**`, and `docs/index/**` | the packet named in the dispatch | A packet may create only its named documentation path; there is no residual `docs/**` ownership |
 
 If a builder discovers a required change outside its row, it records the exact
 path and asks the parent to assign that collision. It does not opportunistically
@@ -991,6 +1373,15 @@ pub enum CommitError {
     StorageFailure,
 }
 
+impl CommitError {
+    pub fn retry_disposition(&self) -> RetryDisposition;
+}
+
+impl UnknownCommit {
+    pub fn operation_id(&self) -> &OperationId;
+    pub fn reason(&self) -> UnknownReason;
+}
+
 pub struct UnknownCommit {
     operation_id: OperationId,
     reason: UnknownReason,
@@ -1005,6 +1396,72 @@ pub enum UnknownReason {
     PublishedLedgerSync,
 }
 ```
+
+`CommitError::retry_disposition` is exhaustive and stable:
+
+| `CommitError` | `RetryDisposition` | Caller action |
+| --- | --- | --- |
+| `Validation` | `NewOperation` | Correct the request and use a new identity. |
+| `Conflict` | `NewOperation` | Re-read and construct a new logical write with a new identity. |
+| `OperationIdReuse` | `Never` | Do not retry this identity or reinterpret the request. |
+| `EngineClosed` | `SameOperation` | Reopen or wait for controlled closure, then retry the exact request with the same identity. |
+| `StorageFailure` | `AfterRecovery` | Resolve or reopen first; do not issue a new identity until durable state is known. |
+| `UnknownCommit` | not a `CommitError` | Call `resolve_commit` with the original `OperationId`; never guess success or failure. |
+
+The adapter error mappings are pure, closed, and exhaustive. They preserve an
+optional `OperationId` for mutating deadline, cancellation, conflict, storage,
+and retry-resolution paths. They deliberately collapse tenant and existence
+details before an error crosses a less trusted seam:
+
+```rust
+pub(crate) fn map_engine_error(
+    error: EngineError,
+    operation_id: Option<OperationId>,
+) -> PlatformError;
+
+pub(crate) fn map_platform_error(error: PlatformError) -> ProtocolError;
+```
+
+Engine to Platform mapping has one row for every `EngineError` variant:
+
+| Source `EngineError` | Result `PlatformError` | Redaction and identity rule |
+| --- | --- | --- |
+| `Closed(_)` | `EngineFailure { operation_id }` | No closure internals or storage details. |
+| `SnapshotEngineMismatch` | `TenantDenied` | Do not reveal Engine identity or snapshot provenance. |
+| `SnapshotTenantMismatch` | `TenantDenied` | Do not reveal the other tenant or existence. |
+| `ScopeMismatch` | `TenantDenied` | Do not reveal scope contents or authorization policy. |
+| `OperationIdReuse { operation_id }` | `Conflict { operation_id: Some(operation_id) }` | Preserve the safe operation identity; never expose the request digest. |
+| `Conflict` | `Conflict { operation_id }` | Preserve the supplied identity when present. |
+| `InvalidDocument` | `InvalidRequest` | Return a typed category without customer data or source details. |
+| `Deadline` | `Deadline { operation_id }` | Preserve identity for exact retry or resolution. |
+| `Cancelled` | `Cancelled { operation_id }` | Preserve identity; cancellation is not rejection proof. |
+| `StorageFailure` | `EngineFailure { operation_id }` | Do not expose paths, WAL, pages, codec errors, or source chains. |
+
+Platform to Protocol mapping has one row for every `PlatformError` variant:
+
+| Source `PlatformError` | Result `ProtocolError` | Redaction rule |
+| --- | --- | --- |
+| `CallerDenied` | `PlatformDenied` | Hide caller authentication detail. |
+| `TenantDenied` | `PlatformDenied` | Hide tenant existence and policy detail. |
+| `PermissionDenied` | `PlatformDenied` | Hide permission names and control-plane policy. |
+| `Expired` | `PlatformDenied` | Hide credential expiry detail. |
+| `ConfirmationRequired` | `PlatformDenied` | Hide confirmation policy detail. |
+| `AuditFailure` | `PlatformDenied` | Hide audit sink and operational detail. |
+| `SecretPolicyViolation` | `PlatformDenied` | Never echo credentials or secret policy values. |
+| `InvalidRequest` | `InvalidOperation` | Return only the stable typed category. |
+| `Conflict { operation_id }` | `EngineFailure { operation_id }` | Preserve the safe identity for caller resolution. |
+| `Deadline { operation_id }` | `Deadline { operation_id }` | Preserve identity and deadline semantics. |
+| `Cancelled { operation_id }` | `Cancelled { operation_id }` | Preserve identity; do not claim rejection. |
+| `EngineFailure { operation_id }` | `EngineFailure { operation_id }` | Preserve identity without source chains or storage detail. |
+
+The W5 implementation owns these functions and their table-driven red tests:
+`engine_error_mapping_is_exhaustive_and_redacted`,
+`platform_error_mapping_is_exhaustive_and_redacted`,
+`mapped_error_preserves_operation_identity`, and
+`platform_denial_precedes_engine_dispatch`. The tests enumerate every source
+variant, assert that no mapping leaks paths, credentials, routes, WAL/pages,
+customer data, or private payloads, and verify that a denial never calls
+`EnginePort`.
 
 ```rust
 pub enum DurableResolution {
@@ -1182,19 +1639,34 @@ cancellation into an unknown success without preserving the operation identity.
 ## Query contract
 
 `QuerySpec` is a typed description of source, predicates, ordering, projection,
-paging, aggregation, and the requested staleness policy. It cannot contain a
-raw query string that bypasses validation or an untyped route. `QueryPlan` is
-immutable after compilation and can be reused with compatible snapshots and
-parameters. A plan does not own a mutable index or storage lock.
+paging, aggregation, tenant claim, and the requested staleness policy. It
+cannot contain a raw query string that bypasses validation or an untyped route.
+`V1QueryText` is the raw-query input wrapper for the supported V1-compatible
+query grammar. It is validated before use and is not arbitrary SQL or a
+route/body escape hatch. `QueryInput`
+closes the two accepted forms:
+
+```rust
+pub enum QueryInput {
+    Typed(QuerySpec),
+    V1Compatible(V1QueryText),
+}
+```
+
+`QueryPlan` is immutable after compilation and can be reused with compatible
+snapshots and parameters. A plan does not own a mutable index or storage lock.
 
 The query path is:
 
-1. Validate the `QuerySpec` and tenant scope.
-2. Compile or retrieve an immutable `QueryPlan`.
-3. Select an index whose generation satisfies the plan's policy, or use the
+1. Validate the `QuerySpec` and tenant claim; Platform later binds the
+   authorized `TenantScope` before Engine execution.
+2. Normalize `QueryInput::Typed` and `QueryInput::V1Compatible` into the same
+   validated internal query model.
+3. Compile or retrieve an immutable `QueryPlan`.
+4. Select an index whose generation satisfies the plan's policy, or use the
    documented stale fallback.
-4. Execute against the requested immutable `ReadSnapshot`.
-5. Return typed rows/documents, ordering metadata, staleness information, and
+5. Execute against the requested immutable `ReadSnapshot`.
+6. Return typed rows/documents, ordering metadata, staleness information, and
    the `IndexGeneration` used.
 
 Callers obtain the query module from the already-open durable Engine and use
@@ -1202,7 +1674,7 @@ one compile/execute path:
 
 ```rust
 impl<'engine> QueryStore<'engine> {
-    pub fn compile(&self, spec: QuerySpec) -> Result<QueryPlan, QueryError>;
+    pub fn compile(&self, input: QueryInput) -> Result<QueryPlan, QueryError>;
 
     pub fn execute(
         &self,
@@ -1215,9 +1687,9 @@ impl<'engine> QueryStore<'engine> {
 `Engine::queries` returns a borrowed `QueryStore<'engine>` tied to that
 Engine's durable state. The compiler validates typed query inputs, and
 execution consumes only the immutable snapshot supplied by the caller. A
-closed Engine returns typed `QueryError::EngineClosed`. Compatibility adapters
-may map V1-compatible query inputs into `QuerySpec`, but neither method accepts
-a raw route, arbitrary SQL, storage access, or a mutable snapshot.
+closed Engine returns typed `QueryError::EngineClosed`. Both typed `QuerySpec`
+and validated `V1QueryText` pass through this one compile seam. Neither method
+accepts a raw route, arbitrary SQL, storage access, or a mutable snapshot.
 
 The plan must preserve V1-observable result ordering, null/missing behavior,
 error classes, paging boundaries, and cancellation semantics for each parity
@@ -1414,7 +1886,8 @@ The public-seam red tests begin red at `FamilyStore::read` and
 - `family_transaction_abort_hides_all_staged_family_changes`;
 - `family_read_snapshot_remains_immutable_after_engine_commit`;
 - `family_read_context_rejects_tenant_mismatch_without_data_access`;
-- `family_scope_rejects_cross_tenant_reads_and_writes`.
+- `family_scope_rejects_cross_tenant_reads_and_writes`;
+- `family_payload_constructors_validate_typed_fields_before_access`.
 
 These tests observe typed results, errors, atomicity, isolation, and snapshot
 behavior through the family seam. They do not assert V1 parity or create
@@ -1495,6 +1968,8 @@ public Protocol route.
 Protocol tracer tests must begin red for:
 
 - an approved typed operation with a stable operation identity;
+- `caller_context_try_new_structurally_validates_and_redacts_evidence`;
+- `public_operation_constructors_reject_generic_payloads_and_permissions`;
 - `protocol_call_accepts_only_opaque_caller_context`;
 - `protocol_forwarding_calls_platform_port_before_engine`;
 - malformed or unknown operation rejection without generic forwarding;
@@ -1503,6 +1978,13 @@ Protocol tracer tests must begin red for:
 - bounded cancellation and deadline errors that preserve operation identity;
 - adapter behavior with an in-process test transport and a production-shaped
   transport adapter.
+
+W3-3 constructs `ProtocolAdapter` with the `cfg(test)`
+`new_with_platform_port` double only. It may observe call order and typed
+forwarding through that private `PlatformPort`; it does not construct a real
+authorizer, mint a grant, or claim PB-3042. Production construction uses the
+W5-owned `PlatformAdapter` through the public
+`ProtocolAdapter::from_platform` path.
 
 The core remains sync. A future async Protocol Adapter must use bounded
 blocking capacity, deadlines, cancellation, and a typed overload error. It may
@@ -1516,6 +1998,10 @@ confirmation, and grant-opacity behavior:
 - `platform_grant_is_private_and_never_reaches_protocol_or_engine`;
 - `platform_redacts_secrets_from_errors_and_audit_records`;
 - `platform_dispatch_creates_engine_request_only_after_authorization`;
+- `engine_error_mapping_is_exhaustive_and_redacted`;
+- `platform_error_mapping_is_exhaustive_and_redacted`;
+- `mapped_error_preserves_operation_identity`;
+- `platform_denial_precedes_engine_dispatch`;
 - `platform_owns_pb_3042_authorization_proof`.
 
 ## W3 tracer packets and red tests
@@ -1539,8 +2025,10 @@ W3-F Data Families
 W3-2 Query + Index
           |
 W3-3 Protocol Adapter
-          |
-W5 Platform Adapter
+       /       \
+W4 Replication  W4 Backup/Migration
+       \       /
+   W5 Platform Adapter
 ```
 
 W3-F follows W3-1 because it needs the durable Engine transaction and
@@ -1550,6 +2038,10 @@ consume the typed family result and projection-input contract. The disjoint
 path ownership is still enforced at every step. W3-1 remains the only packet
 allowed to modify or qualify Storage/WAL/recovery behavior, and W3-F cannot
 pull Query, Index, replication, Protocol, or backup code into its scope.
+W4 Replication and W4 Backup/Migration both start from the accepted W3-3
+Protocol commit. W5 Platform Adapter starts only after both W4 commits are
+accepted; it never bases directly on W3-3 and cannot begin on one W4 branch
+alone.
 
 The sequence handoffs are:
 
@@ -1565,8 +2057,10 @@ The sequence handoffs are:
    taking ownership of `src/families/**`.
 5. W3-3 returns typed Protocol forwarding evidence without an authorization
    claim.
-6. W5 returns Platform authorization, tenant-isolation, confirmation, audit,
-   secret-handling, and PB-3042 evidence through the Platform Adapter.
+6. W4 Replication and W4 Backup/Migration return their separate behavior,
+   recovery, migration, and receipt evidence from the accepted W3-3 commit.
+7. W5 returns Platform authorization, tenant-isolation, confirmation, audit,
+   secret-handling, and PB-3042 evidence only after both W4 handoffs.
 
 ### W3-1, Storage plus Engine
 
@@ -1645,6 +2139,8 @@ W3-2 starts only from an accepted W3-F Families commit. Its red tests are:
 - `index_rebuild_publishes_a_monotonic_generation`;
 - `replayed_index_build_cannot_overwrite_a_newer_generation`;
 - `query_store_compiles_and_executes_against_supplied_snapshot`;
+- `query_input_normalizes_typed_and_v1_text_through_one_compile_seam`;
+- `query_input_rejects_unsupported_or_generic_query_text`;
 - `query_store_borrow_prevents_engine_shutdown_while_live`;
 - `query_rejects_snapshot_from_another_engine`;
 - `query_rejects_snapshot_for_another_tenant`;
@@ -1782,8 +2278,16 @@ true:
 - W3-0's declaration-only module tree and public-export/lifetime tests are
   explicit; the integrator owns shared roots after preparation, and W5 owns
   the separate Platform Adapter implementation and PB-3042 proof.
-- The W3-1, W3-F, W3-2, W3-3, and W5 worktrees and collision ownership are
-  explicit.
+- Every public operation, query input, and family payload has a named
+  validated construction path and read-only observation rule.
+- `CallerContext` is untrusted, structurally validated, redacted, and has no
+  grant or permission authority. Protocol uses only the `cfg(test)`
+  `PlatformPort` double for W3-3 forwarding tests.
+- Commit outcomes expose safe accessors, `RetryDisposition` is exhaustive, and
+  Engine-to-Platform-to-Protocol error mappings are exhaustive and redaction-safe.
+- The W3-1, W3-F, W3-2, W3-3, W4 Replication, W4 Backup/Migration, and W5
+  worktrees and collision ownership are explicit. W5 depends on both W4
+  handoffs.
 - The 42 PB-5000 through PB-5041 obligations remain visible and unresolved
   until their required tests and receipts exist.
 - W2 is reviewed GO at integrated and pushed commit `8771f13`; strict
