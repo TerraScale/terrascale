@@ -177,7 +177,7 @@ fn publication_does_not_expose_a_root_before_the_commit_marker() {
         ExpectedVersion::New,
         LocalDurability::Synced,
     );
-    let events = install_event_recorder(&engine);
+    let (events, _sink_guard) = install_event_recorder(&engine);
     engine.arm_storage_fault(FaultPoint::CommitMarkerApplication);
     let outcome = commit_put(
         &engine,
@@ -1027,14 +1027,16 @@ fn read_snapshot_remains_immutable_after_a_later_commit() {
 #[allow(clippy::let_underscore_untyped)]
 fn install_event_recorder(
     engine: &Engine,
-) -> Arc<Mutex<Vec<crate::storage::CommitPublicationEvent>>> {
+) -> (Arc<Mutex<Vec<crate::storage::CommitPublicationEvent>>>, crate::engine::SubscriptionGuard) {
     let events: Arc<Mutex<Vec<crate::storage::CommitPublicationEvent>>> =
         Arc::new(Mutex::new(Vec::new()));
     let sink_events = Arc::clone(&events);
-    engine.set_publication_sink(Arc::new(move |event: &crate::storage::CommitPublicationEvent| {
-        sink_events.lock().expect("event lock").push(event.clone());
-    }));
-    events
+    let guard = engine.subscribe_publications(Arc::new(
+        move |event: &crate::storage::CommitPublicationEvent| {
+            sink_events.lock().expect("event lock").push(event.clone());
+        },
+    ));
+    (events, guard)
 }
 
 #[test]
@@ -1043,7 +1045,7 @@ fn commit_publication_event_is_emitted_after_storage_locks_release() {
     let storage_probe = Arc::clone(&engine.storage);
     let released = Arc::new(Mutex::new(false));
     let released_flag = Arc::clone(&released);
-    engine.set_publication_sink(Arc::new(
+    let _sink_guard = engine.subscribe_publications(Arc::new(
         move |_event: &crate::storage::CommitPublicationEvent| {
             // If storage locks were still held, this non-reentrant probe would
             // fail to acquire them.
@@ -1070,7 +1072,7 @@ fn commit_publication_event_is_emitted_after_storage_locks_release() {
 #[test]
 fn commit_publication_event_carries_an_immutable_root_and_storage_sequence() {
     let (_dir, engine) = open_engine("event-payload");
-    let events = install_event_recorder(&engine);
+    let (events, _sink_guard) = install_event_recorder(&engine);
     let receipt = committed(commit_put(
         &engine,
         "tenant-a",
@@ -1104,7 +1106,7 @@ fn commit_publication_event_carries_an_immutable_root_and_storage_sequence() {
 #[test]
 fn commit_publication_event_is_not_emitted_before_pointer_publication() {
     let (_dir, engine) = open_engine("event-order");
-    let events = install_event_recorder(&engine);
+    let (events, _sink_guard) = install_event_recorder(&engine);
     engine.arm_storage_fault(FaultPoint::PointerPublish);
     assert_eq!(
         rejected(commit_put(
@@ -1604,4 +1606,229 @@ fn snapshot_documents_rejects_cross_tenant_and_foreign_seams() {
     );
     drop(other);
     std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// W4 collision actions at the Engine seam
+// ---------------------------------------------------------------------------
+
+/// Proves the W4-CA-2 acquisition shape at compile time: a `StreamStore`
+/// value exists only inside the borrow region of its `Engine`, so the store
+/// and the engine borrow are returned together and shutdown must wait.
+fn streams_store_holds_the_engine_borrow<'engine>(
+    engine: &'engine Engine,
+    store: crate::streaming::StreamStore<'engine>,
+) -> (crate::streaming::StreamStore<'engine>, &'engine Engine) {
+    (store, engine)
+}
+
+#[test]
+fn engine_streams_acquisition_path_exists_and_borrows_the_engine() {
+    // W4-CA-2: `Engine::streams` exists, takes `&self`, returns a
+    // `StreamStore<'_>` borrowed from the Engine, and mirrors the
+    // `queries`/`families` acquisition precedents. The signature is asserted
+    // by the function-pointer coercion, so the seam cannot regress silently.
+    let _: fn(&Engine) -> crate::streaming::StreamStore<'_> = Engine::streams;
+    // The returned store holds the engine borrow for as long as it is live.
+    let _ = streams_store_holds_the_engine_borrow;
+    // Calling the seam is W4-STREAM's red behavior test
+    // (`engine_streams_returns_store_bound_to_durable_engine`): the
+    // declaration-only `StreamStore::from_engine` constructor this method
+    // delegates to stays unimplemented until that packet lands, so this test
+    // deliberately proves the acquisition path without invoking it.
+}
+
+#[test]
+fn publication_events_reach_every_registered_sink() {
+    // W4-CA-3: the registry is multi-subscriber in production. Two sinks
+    // registered independently both observe the same immutable events, in
+    // publication order, from the same commit.
+    let (_dir, engine) = open_engine("registry-multi-sink");
+    let first: Arc<Mutex<Vec<crate::storage::CommitPublicationEvent>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let second: Arc<Mutex<Vec<crate::storage::CommitPublicationEvent>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let first_events = Arc::clone(&first);
+    let second_events = Arc::clone(&second);
+    let _first_guard = engine.subscribe_publications(Arc::new(
+        move |event: &crate::storage::CommitPublicationEvent| {
+            first_events.lock().expect("first sink lock").push(event.clone());
+        },
+    ));
+    let _second_guard = engine.subscribe_publications(Arc::new(
+        move |event: &crate::storage::CommitPublicationEvent| {
+            second_events.lock().expect("second sink lock").push(event.clone());
+        },
+    ));
+    let receipt = committed(commit_put(
+        &engine,
+        "tenant-a",
+        "op-1",
+        "doc-1",
+        "value",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    assert_eq!(receipt.sequence().get(), 1);
+    for sink in [&first, &second] {
+        let recorded = sink.lock().expect("sink lock").clone();
+        assert_eq!(recorded.len(), 1, "every registered sink observes the event");
+        assert_eq!(recorded[0].sequence(), receipt.sequence());
+        assert_eq!(recorded[0].operation_id(), &operation("op-1"));
+    }
+}
+
+#[test]
+fn publication_sink_detaches_when_its_guard_drops() {
+    // W4-CA-3: a guard detaches its sink on drop, and only its sink.
+    let (_dir, engine) = open_engine("registry-detach");
+    let dropped_sink: Arc<Mutex<Vec<crate::storage::CommitPublicationEvent>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let kept_sink: Arc<Mutex<Vec<crate::storage::CommitPublicationEvent>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let dropped_events = Arc::clone(&dropped_sink);
+    let kept_events = Arc::clone(&kept_sink);
+    let detach_guard = engine.subscribe_publications(Arc::new(
+        move |event: &crate::storage::CommitPublicationEvent| {
+            dropped_events.lock().expect("dropped sink lock").push(event.clone());
+        },
+    ));
+    let _kept_guard = engine.subscribe_publications(Arc::new(
+        move |event: &crate::storage::CommitPublicationEvent| {
+            kept_events.lock().expect("kept sink lock").push(event.clone());
+        },
+    ));
+    committed(commit_put(
+        &engine,
+        "tenant-a",
+        "op-1",
+        "doc-1",
+        "value",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    assert_eq!(dropped_sink.lock().expect("dropped sink lock").len(), 1);
+    drop(detach_guard);
+    committed(commit_put(
+        &engine,
+        "tenant-a",
+        "op-2",
+        "doc-2",
+        "value",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    assert_eq!(
+        dropped_sink.lock().expect("dropped sink lock").len(),
+        1,
+        "a detached sink observes nothing after its guard drops"
+    );
+    assert_eq!(kept_sink.lock().expect("kept sink lock").len(), 2);
+}
+
+#[test]
+fn publication_registry_bounds_its_subscribers_without_blocking_the_commit() {
+    // W4-CA-3's bound rule: the emit path calls sinks synchronously on the
+    // committing thread, so the registry keeps a small subscriber bound, a
+    // subscribe attempt beyond it returns a detached guard, and the registry
+    // lock is never held while a sink runs — proven by registering a new sink
+    // from another thread while a deliberately slow sink is still executing.
+    let (_dir, engine) = open_engine("registry-bound");
+    let engine = Arc::new(engine);
+    let observed: Arc<Mutex<u32>> = Arc::new(Mutex::new(0));
+    let counter = Arc::clone(&observed);
+    let (sink_entered_tx, sink_entered_rx) = std::sync::mpsc::channel::<()>();
+    let (release_sink_tx, release_sink_rx) = std::sync::mpsc::channel::<()>();
+    // The channel ends are mutex-wrapped because a publication sink must be
+    // `Sync`; the channels only coordinate this test's threads.
+    let entered_from_sink = Mutex::new(sink_entered_tx);
+    let release_into_sink = Mutex::new(release_sink_rx);
+    let _slow_guard = engine.subscribe_publications(Arc::new(
+        move |_event: &crate::storage::CommitPublicationEvent| {
+            *counter.lock().expect("counter lock") += 1;
+            entered_from_sink.lock().expect("entered lock").send(()).ok();
+            // Stay inside the sink: the committing thread waits here by
+            // design, and the registry must stay operable meanwhile.
+            let _ = release_into_sink
+                .lock()
+                .expect("release lock")
+                .recv_timeout(std::time::Duration::from_secs(10));
+        },
+    ));
+    let committer_engine = Arc::clone(&engine);
+    let committer = std::thread::spawn(move || {
+        committed(commit_put(
+            &committer_engine,
+            "tenant-a",
+            "op-1",
+            "doc-1",
+            "value",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        ))
+    });
+    sink_entered_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the synchronous sink starts on the committing thread");
+
+    // The registry lock is free while the sink runs: a new subscription
+    // completes from another thread instead of deadlocking the registry.
+    let subscriber_engine = Arc::clone(&engine);
+    let late_subscription = std::thread::spawn(move || {
+        let guard = subscriber_engine.subscribe_publications(Arc::new(|_event| {}));
+        let attached = guard.is_attached();
+        drop(guard);
+        attached
+    })
+    .join()
+    .expect("subscribing while a sink runs must not deadlock");
+    assert!(late_subscription, "the registry admits a subscriber while a sink runs");
+
+    let mut detached_guards = Vec::new();
+    for _ in 0..crate::engine::MAX_PUBLICATION_SINKS {
+        detached_guards.push(engine.subscribe_publications(Arc::new(|_event| {})));
+    }
+    let overflow = engine.subscribe_publications(Arc::new(|_event| {}));
+    assert!(!overflow.is_attached(), "a sink offered beyond the registry bound is not registered");
+    drop(overflow);
+    drop(detached_guards);
+
+    release_sink_tx.send(()).ok();
+    let receipt = committer.join().expect("the committing thread finishes");
+    assert_eq!(receipt.sequence().get(), 1, "the bound never blocks a commit");
+    assert_eq!(*observed.lock().expect("counter lock"), 1);
+}
+
+#[test]
+fn engine_index_catalog_receives_publication_events_in_production() {
+    // W4-CA-3 absorbs the queued W3-2 integrator action: the Engine owns an
+    // index catalog whose sink is registered at open, so index maintenance is
+    // live for real commits without any test-installed sink.
+    let (_dir, engine) = open_engine("engine-index-catalog");
+    assert!(
+        engine.index_catalog().delta().is_none(),
+        "a fresh catalog has observed no publication"
+    );
+    let receipt = committed(commit_put(
+        &engine,
+        "tenant-a",
+        "op-1",
+        "doc-1",
+        "value",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    let delta = engine.index_catalog().delta().expect("the engine catalog observed the commit");
+    assert_eq!(delta.covered_sequence(), receipt.sequence().get());
+    committed(commit_put(
+        &engine,
+        "tenant-a",
+        "op-2",
+        "doc-2",
+        "value",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    let advanced = engine.index_catalog().delta().expect("the catalog advances");
+    assert_eq!(advanced.covered_sequence(), 2);
 }

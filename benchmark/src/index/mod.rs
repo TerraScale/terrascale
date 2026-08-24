@@ -57,10 +57,6 @@ pub(crate) struct IndexDelta {
 
 impl IndexDelta {
     /// Derives one delta from an immutable commit publication event.
-    #[allow(
-        dead_code,
-        reason = "wired to the engine sink by the integrator action; exercised in tests"
-    )]
     pub(crate) fn from_event(event: &CommitPublicationEvent) -> Self {
         Self { covered_sequence: event.sequence().get(), root: event.root().to_string() }
     }
@@ -188,8 +184,9 @@ impl IndexCatalog {
     /// events and applies them to this catalog.
     ///
     /// The sink only takes the index lock; it never touches storage, so it
-    /// can run inside the publication event after storage locks release.
-    #[allow(dead_code, reason = "installed by the integrator action; exercised in tests")]
+    /// can run inside the publication event after storage locks release. It
+    /// is registered through the Engine's publication registry at open
+    /// (integrator action W4-CA-3), so index maintenance is production-live.
     pub(crate) fn sink(self: &Arc<Self>) -> CommitPublicationSink {
         let catalog = Arc::clone(self);
         Arc::new(move |event: &CommitPublicationEvent| {
@@ -200,7 +197,6 @@ impl IndexCatalog {
     /// Applies one derived delta, ignoring replays and reorderings.
     ///
     /// Returns whether the delta advanced the covered sequence.
-    #[allow(dead_code, reason = "called by the sink installed by the integrator action")]
     pub(crate) fn apply(&self, delta: IndexDelta) -> bool {
         let mut state = self.state.lock().expect("index lock");
         match &state.delta {

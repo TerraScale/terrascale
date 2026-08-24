@@ -7,7 +7,7 @@
 //! [`EngineConfig::durable`] location is the only production path.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -24,6 +24,7 @@ use crate::{
     operations::{EngineRequest, EngineResponse},
     query::QueryStore,
     storage::{self, CommitIntent, CommitPublicationEvent, CommitResult, StagedWrite, StoragePort},
+    streaming::StreamStore,
     types::{
         Document, DocumentId, ExpectedVersion, IndexGenerationSet, LocalDurability, OperationId,
         ReadSnapshot, RetryDisposition, StorageSequence, TenantScope,
@@ -35,6 +36,124 @@ use crate::storage::FaultPoint;
 
 /// A sink receiving immutable publication events after locks release.
 pub(crate) type CommitPublicationSink = Arc<dyn Fn(&CommitPublicationEvent) + Send + Sync>;
+
+/// The maximum number of publication sinks one Engine registers at a time.
+///
+/// This is the publication path's subscriber bound (W4-CA-3). The emit path
+/// calls every registered sink synchronously on the committing thread, so the
+/// registry itself must stay small and bounded: a sink offered beyond this
+/// bound is not registered, and the returned guard's
+/// [`SubscriptionGuard::is_attached`] reports `false`.
+pub(crate) const MAX_PUBLICATION_SINKS: usize = 64;
+
+/// The production-visible, multi-subscriber registry of publication-event
+/// sinks (integrator action W4-CA-3).
+///
+/// The registry replaces the former single-slot, test-only sink. Its emit
+/// path snapshots the registered sink handles under the registry lock — a
+/// bounded clone of at most [`MAX_PUBLICATION_SINKS`] handles — releases the
+/// lock, and only then calls each sink. Consequences the design relies on:
+///
+/// - No sink call executes while the registry lock is held, so a sink that
+///   subscribes or unsubscribes during its own emit cannot deadlock the
+///   committing thread, and the registry stays operable while a sink runs.
+/// - Sinks are called synchronously on the committing thread, after storage
+///   locks release. A sink must not block, must not take a storage lock, and
+///   must not grow an unbounded queue: a slow or overflowing sink reports
+///   through its own bounded channel or is dropped, and never queues events
+///   inside this registry.
+pub(crate) struct PublicationRegistry {
+    inner: Mutex<RegistryInner>,
+}
+
+/// The registry's guarded state.
+struct RegistryInner {
+    next_id: u64,
+    sinks: BTreeMap<u64, CommitPublicationSink>,
+}
+
+impl PublicationRegistry {
+    /// Creates an empty registry.
+    pub(crate) fn new() -> Self {
+        Self { inner: Mutex::new(RegistryInner { next_id: 1, sinks: BTreeMap::new() }) }
+    }
+
+    /// Registers one sink and returns its detach-on-drop guard.
+    ///
+    /// When the registry already holds [`MAX_PUBLICATION_SINKS`] sinks, the
+    /// offered sink is not registered and the returned guard reports
+    /// `!is_attached()`.
+    pub(crate) fn subscribe(self: &Arc<Self>, sink: CommitPublicationSink) -> SubscriptionGuard {
+        let mut inner = self.inner.lock().expect("publication registry lock");
+        let id = if inner.sinks.len() < MAX_PUBLICATION_SINKS {
+            let id = inner.next_id;
+            inner.next_id = inner.next_id.saturating_add(1);
+            inner.sinks.insert(id, sink);
+            Some(id)
+        } else {
+            None
+        };
+        SubscriptionGuard { registry: Arc::clone(self), id }
+    }
+
+    /// Removes one registered sink identity.
+    ///
+    /// The removed sink closure drops outside the registry lock: a closure
+    /// may own the last handle to its Engine, and dropping that Engine runs
+    /// this registry again (the Engine's own index subscription detaches), so
+    /// running sink destructors under the lock would self-deadlock.
+    fn detach(&self, id: u64) {
+        let removed = {
+            let mut inner = self.inner.lock().expect("publication registry lock");
+            inner.sinks.remove(&id)
+        };
+        drop(removed);
+    }
+
+    /// Emits one immutable event to every registered sink.
+    ///
+    /// The sink snapshot is bounded by [`MAX_PUBLICATION_SINKS`] and the lock
+    /// is released before any sink runs; the calls themselves are synchronous
+    /// and never queued.
+    fn emit(&self, event: &CommitPublicationEvent) {
+        let sinks: Vec<CommitPublicationSink> = {
+            let inner = self.inner.lock().expect("publication registry lock");
+            inner.sinks.values().map(Arc::clone).collect()
+        };
+        for sink in sinks {
+            sink(event);
+        }
+    }
+}
+
+/// A guard that detaches its publication sink when dropped (W4-CA-3).
+///
+/// The guard does not borrow its Engine: it holds the registry handle, so it
+/// may outlive the Engine it subscribed through, and dropping it removes
+/// exactly its own sink.
+pub(crate) struct SubscriptionGuard {
+    registry: Arc<PublicationRegistry>,
+    id: Option<u64>,
+}
+
+impl SubscriptionGuard {
+    /// Reports whether the guarded sink is registered.
+    ///
+    /// `false` means the registry was at its subscriber bound when the sink
+    /// was offered, so the sink never receives events.
+    #[allow(dead_code, reason = "observed by the W4-STREAM subscription path; exercised in tests")]
+    pub(crate) fn is_attached(&self) -> bool {
+        self.id.is_some()
+    }
+}
+
+impl Drop for SubscriptionGuard {
+    fn drop(&mut self) {
+        if let Some(id) = self.id.take() {
+            self.registry.detach(id);
+        }
+    }
+}
 
 /// Describes a durable Engine location selecting the V2 Storage Format.
 ///
@@ -336,7 +455,16 @@ pub struct Engine {
     /// tenant keeps the reservation scoped: two tenants may run the same
     /// operation identity concurrently.
     in_flight: Mutex<BTreeSet<(String, String)>>,
-    sink: Mutex<Option<CommitPublicationSink>>,
+    /// The multi-subscriber publication-event registry (W4-CA-3).
+    subscriptions: Arc<PublicationRegistry>,
+    /// The Engine-owned production index catalog (W4-CA-3): its publication
+    /// sink is registered at open, so index maintenance is driven by real
+    /// commits without any test-only wiring.
+    indexes: Arc<crate::index::IndexCatalog>,
+    /// Drop-only: keeps the index catalog's sink registered for this
+    /// Engine's lifetime. The leading underscore marks a guard whose `Drop`
+    /// is its only effect.
+    _index_subscription: SubscriptionGuard,
 }
 
 impl Engine {
@@ -359,11 +487,18 @@ impl Engine {
             storage::StorageOpenError::FormatMismatch => EngineOpenError::FormatMismatch,
             storage::StorageOpenError::Unavailable => EngineOpenError::StorageUnavailable,
         })?;
+        let subscriptions = Arc::new(PublicationRegistry::new());
+        // W4-CA-3: register the Engine-owned index catalog's sink through the
+        // production registry so index maintenance observes every publication.
+        let indexes = Arc::new(crate::index::IndexCatalog::new());
+        let index_subscription = subscriptions.subscribe(indexes.sink());
         Ok(Self {
             identity: EngineIdentity::next().0,
             storage: Arc::new(Mutex::new(StorageState { port: Box::new(storage) })),
             in_flight: Mutex::new(BTreeSet::new()),
-            sink: Mutex::new(None),
+            subscriptions,
+            indexes,
+            _index_subscription: index_subscription,
         })
     }
 
@@ -459,6 +594,16 @@ impl Engine {
         FamilyStore::from_engine(self)
     }
 
+    /// Returns a stream store borrowed from this Engine.
+    ///
+    /// The store is bound to this Engine's lifetime; streaming behavior is
+    /// implemented in the streaming module. This acquisition path is the only
+    /// production way to obtain a [`StreamStore`](crate::streaming::StreamStore),
+    /// mirroring [`Engine::queries`] and [`Engine::families`].
+    pub fn streams(&self) -> StreamStore<'_> {
+        StreamStore::from_engine(self)
+    }
+
     /// Resolves an uncertain operation using its durable identity.
     ///
     /// # Errors
@@ -545,11 +690,25 @@ impl Engine {
         self.storage.lock().map_err(|_| EngineError::StorageFailure)
     }
 
-    /// Installs a crate-private publication-event sink. Test-only.
-    #[cfg(test)]
-    pub(crate) fn set_publication_sink(&self, sink: CommitPublicationSink) {
-        let mut slot = self.sink.lock().expect("publication sink lock");
-        *slot = Some(sink);
+    /// Registers one publication-event sink and returns its guard.
+    ///
+    /// The guard detaches the sink when dropped. Sinks are called
+    /// synchronously on the committing thread after storage locks release,
+    /// so a sink must not block, must not take a storage lock, and must not
+    /// grow an unbounded queue; the registry bounds its subscriber count at
+    /// [`MAX_PUBLICATION_SINKS`] and never queues events itself.
+    #[allow(dead_code, reason = "the W4-STREAM subscription path acquires through this seam")]
+    pub(crate) fn subscribe_publications(&self, sink: CommitPublicationSink) -> SubscriptionGuard {
+        self.subscriptions.subscribe(sink)
+    }
+
+    /// Returns the Engine-owned production index catalog (W4-CA-3).
+    ///
+    /// The catalog's publication sink is registered for the Engine's
+    /// lifetime, so its derived index state is maintained by real commits.
+    #[allow(dead_code, reason = "consumed by the query-side catalog binding and the index tests")]
+    pub(crate) fn index_catalog(&self) -> Arc<crate::index::IndexCatalog> {
+        Arc::clone(&self.indexes)
     }
 
     /// Arms one storage fault inside the publication order. Test-only.
@@ -560,10 +719,7 @@ impl Engine {
     }
 
     fn emit_publication_event(&self, event: &CommitPublicationEvent) {
-        let sink = self.sink.lock().ok().and_then(|slot| slot.as_ref().map(Arc::clone));
-        if let Some(sink) = sink {
-            sink(event);
-        }
+        self.subscriptions.emit(event);
     }
 }
 

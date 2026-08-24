@@ -379,7 +379,7 @@ fn allowed_stale_query_reports_the_generation_it_used() {
     // The catalog sink is installed before the first commit so the catalog
     // observes the whole publication history.
     let catalog = Arc::new(crate::index::IndexCatalog::new());
-    engine.set_publication_sink(catalog.sink());
+    let _sink_guard = engine.subscribe_publications(catalog.sink());
     commit_documents(
         &engine,
         &tenant_scope,

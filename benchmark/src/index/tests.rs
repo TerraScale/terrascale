@@ -128,7 +128,7 @@ fn index_delta_is_derived_from_the_immutable_commit_publication_event() {
         recorded.lock().expect("event lock").push(event.clone());
         fed.apply(IndexDelta::from_event(event));
     });
-    engine.set_publication_sink(sink);
+    let _sink_guard = engine.subscribe_publications(sink);
     let sequence = commit_one(&engine, "tenant-a", "op-1", "doc-1", 1);
     assert_eq!(sequence, 1);
     let recorded = events.lock().expect("event lock").clone();
@@ -154,18 +154,19 @@ fn index_publication_does_not_hold_the_storage_lock() {
     let probe_engine = Arc::clone(&engine);
     let probe_scope = tenant_scope.clone();
     let probe_outcome = Arc::clone(&probe_result);
-    engine.set_publication_sink(Arc::new(move |event: &CommitPublicationEvent| {
-        fed.apply(IndexDelta::from_event(event));
-        let (sender, receiver) = mpsc::channel();
-        let reader = Arc::clone(&probe_engine);
-        let reader_scope = probe_scope.clone();
-        std::thread::spawn(move || {
-            let read = reader.read_snapshot(&reader_scope);
-            let _ = sender.send(read.is_ok());
-        });
-        let observed = receiver.recv_timeout(Duration::from_secs(10));
-        *probe_outcome.lock().expect("probe lock") = observed.ok();
-    }));
+    let _sink_guard =
+        engine.subscribe_publications(Arc::new(move |event: &CommitPublicationEvent| {
+            fed.apply(IndexDelta::from_event(event));
+            let (sender, receiver) = mpsc::channel();
+            let reader = Arc::clone(&probe_engine);
+            let reader_scope = probe_scope.clone();
+            std::thread::spawn(move || {
+                let read = reader.read_snapshot(&reader_scope);
+                let _ = sender.send(read.is_ok());
+            });
+            let observed = receiver.recv_timeout(Duration::from_secs(10));
+            *probe_outcome.lock().expect("probe lock") = observed.ok();
+        }));
     commit_one(&engine, "tenant-a", "op-1", "doc-1", 1);
     assert_eq!(
         *probe_result.lock().expect("probe lock"),
@@ -204,7 +205,7 @@ fn index_publication_does_not_hold_the_storage_lock() {
 fn index_generation_never_moves_backward_within_its_namespace_and_epoch() {
     let (dir, engine) = open_engine("monotonic-namespace");
     let catalog = Arc::new(IndexCatalog::new());
-    engine.set_publication_sink(catalog.sink());
+    let _sink_guard = engine.subscribe_publications(catalog.sink());
     commit_one(&engine, "tenant-a", "op-1", "doc-1", 1);
     let first = catalog.delta().expect("event");
     commit_one(&engine, "tenant-a", "op-2", "doc-2", 2);
@@ -253,7 +254,7 @@ fn index_generation_never_moves_backward_within_its_namespace_and_epoch() {
 fn index_rebuild_publishes_a_monotonic_generation() {
     let (dir, engine) = open_engine("rebuild-monotonic");
     let catalog = Arc::new(IndexCatalog::new());
-    engine.set_publication_sink(catalog.sink());
+    let _sink_guard = engine.subscribe_publications(catalog.sink());
     let index_namespace = namespace("tenant-a", "by-age");
     assert_eq!(catalog.ensure_namespace(&index_namespace, "age"), 1);
     let builder = IndexBuilder::new(&catalog, &engine);
@@ -281,7 +282,7 @@ fn index_rebuild_publishes_a_monotonic_generation() {
 fn replayed_index_build_cannot_overwrite_a_newer_generation() {
     let (dir, engine) = open_engine("replay-no-overwrite");
     let catalog = Arc::new(IndexCatalog::new());
-    engine.set_publication_sink(catalog.sink());
+    let _sink_guard = engine.subscribe_publications(catalog.sink());
     commit_one(&engine, "tenant-a", "op-1", "doc-1", 1);
     let first = catalog.delta().expect("event");
     commit_one(&engine, "tenant-a", "op-2", "doc-2", 2);
@@ -366,7 +367,7 @@ fn namespace_epochs_move_only_forward() {
 fn segments_index_the_registered_field_of_their_own_tenant() {
     let (dir, engine) = open_engine("segment-entries");
     let catalog = Arc::new(IndexCatalog::new());
-    engine.set_publication_sink(catalog.sink());
+    let _sink_guard = engine.subscribe_publications(catalog.sink());
     commit_one(&engine, "tenant-a", "op-1", "doc-a1", 1);
     commit_one(&engine, "tenant-a", "op-2", "doc-a2", 1);
     // Another tenant's documents share the storage sequence space but never
@@ -407,7 +408,7 @@ fn builder_fails_typed_before_any_namespace_or_event_exists() {
         builder.rebuild(&index_namespace, engine.identity()),
         Err(IndexError::NoPublicationObserved)
     );
-    engine.set_publication_sink(catalog.sink());
+    let _sink_guard = engine.subscribe_publications(catalog.sink());
     commit_one(&engine, "tenant-a", "op-1", "doc-1", 1);
     assert_eq!(
         builder.rebuild(&index_namespace, engine.identity()),
@@ -466,7 +467,7 @@ fn strict_spec(claim: &str, required: IndexNamespace) -> QuerySpec {
 fn tenant_and_name_separator_cannot_alias_a_namespace() {
     let (dir, engine) = open_engine("namespace-aliasing");
     let catalog = Arc::new(IndexCatalog::new());
-    engine.set_publication_sink(catalog.sink());
+    let _sink_guard = engine.subscribe_publications(catalog.sink());
     // Both tenants commit, so both namespaces can build from real events.
     commit_one(&engine, "a", "op-1", "doc-a1", 1);
     commit_one(&engine, "a/b", "op-2", "doc-b1", 1);
