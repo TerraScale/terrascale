@@ -534,6 +534,57 @@ impl<'engine> FamilyStore<'engine> {
         Self { engine }
     }
 
+    /// Enumerates the tenant's family records from the reserved collection
+    /// as one immutable snapshot observed them (integrator action W4-CA-5).
+    ///
+    /// The enumeration feeds backup and migration: it produces the
+    /// crate-private [`FamilyRecordInput`](crate::backup::FamilyRecordInput)
+    /// — identity, family, value, and published version — so a consumer can
+    /// restore family state through the Engine transaction seam without any
+    /// knowledge of the reserved collection layout, which stays
+    /// family-private. Records arrive in canonical key order; a user
+    /// document outside the reserved collection is not a family record and
+    /// never appears.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FamilyError::SnapshotEngineMismatch`] when the scope or the
+    /// snapshot names another Engine, [`FamilyError::TenantMismatch`] when
+    /// the scope and snapshot name different tenants,
+    /// [`FamilyError::StorageFailure`] when the snapshot view cannot be read,
+    /// and [`FamilyError::ReservedStateInvalid`] when a document occupies the
+    /// reserved collection with an identifier that does not parse as a family
+    /// record.
+    #[allow(dead_code, reason = "consumed by the W4-BACKUP packet; exercised in tests")]
+    pub(crate) fn snapshot_family_records(
+        &self,
+        scope: &TenantScope,
+        snapshot: &ReadSnapshot,
+    ) -> Result<Vec<crate::backup::FamilyRecordInput>, FamilyError> {
+        let documents =
+            self.engine.snapshot_documents(scope, snapshot).map_err(|error| match error {
+                crate::engine::EngineError::SnapshotEngineMismatch
+                | crate::engine::EngineError::ScopeMismatch => FamilyError::SnapshotEngineMismatch,
+                crate::engine::EngineError::SnapshotTenantMismatch => FamilyError::TenantMismatch,
+                _ => FamilyError::StorageFailure,
+            })?;
+        let mut records = Vec::new();
+        for document in documents {
+            if document.collection().as_str() != state::RESERVED_COLLECTION {
+                continue;
+            }
+            let kind =
+                state::kind_of_record(document.id()).ok_or(FamilyError::ReservedStateInvalid)?;
+            records.push(crate::backup::FamilyRecordInput::new(
+                document.id().clone(),
+                kind,
+                document.value().clone(),
+                document.metadata().version(),
+            ));
+        }
+        Ok(records)
+    }
+
     /// Reads one typed family capability from a snapshot context.
     ///
     /// The context's tenant, snapshot, and Engine binding are validated

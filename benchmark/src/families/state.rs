@@ -43,6 +43,35 @@ pub(crate) fn record_id(kind: &str, parts: &[&str]) -> Result<DocumentId, Family
     DocumentId::try_new(&text).map_err(|_| FamilyError::InvalidRequest)
 }
 
+/// Parses the family a reserved record identifier belongs to (W4-CA-5).
+///
+/// A well-formed identifier is `family:<kind-key>/<owner...>`: it carries the
+/// reserved prefix, a known family key, and at least one owner segment. An
+/// identifier that does not parse is a reserved-collection collision and the
+/// caller reports the typed reserved-state error.
+#[allow(dead_code, reason = "consumed by snapshot_family_records (W4-CA-5); exercised in tests")]
+pub(crate) fn kind_of_record(id: &DocumentId) -> Option<super::FamilyKind> {
+    let text = id.as_str().strip_prefix(RECORD_PREFIX)?;
+    let (kind_key, owner) = text.split_once('/')?;
+    if owner.is_empty() {
+        return None;
+    }
+    [
+        super::FamilyKind::Attachments,
+        super::FamilyKind::Counters,
+        super::FamilyKind::TimeSeries,
+        super::FamilyKind::Revisions,
+        super::FamilyKind::CompareExchange,
+        super::FamilyKind::Identities,
+        super::FamilyKind::ExpirationRefresh,
+        super::FamilyKind::Archival,
+        super::FamilyKind::SchemaValidation,
+        super::FamilyKind::ConflictTombstones,
+    ]
+    .into_iter()
+    .find(|kind| family_key(*kind) == kind_key)
+}
+
 /// Returns the reserved tombstone map key of one family.
 pub(crate) fn family_key(family: super::FamilyKind) -> &'static str {
     match family {

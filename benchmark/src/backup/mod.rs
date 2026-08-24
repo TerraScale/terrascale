@@ -18,7 +18,8 @@
 
 use std::marker::PhantomData;
 
-use crate::types::StorageSequence;
+use crate::families::FamilyKind;
+use crate::types::{DocumentId, DocumentValue, StorageSequence};
 
 /// An immutable recovery-point identity plus the ordered archive members it
 /// binds (PB-6010, PB-6015, PB-5013..PB-5015).
@@ -133,7 +134,50 @@ pub enum BackupError {
 /// lets the families seam feed backup and migration without a public type or
 /// a families-owned backup type. Population belongs to W4-CA-5 and
 /// consumption to W4-BACKUP.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// The record carries the reserved document's identity, the family it
+/// belongs to, the record's encoded logical value exactly as one immutable
+/// snapshot observed it, and the published version at that boundary — every
+/// fact a backup or migration needs to restore family state through the
+/// Engine transaction seam, with no collection-layout knowledge of its own.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FamilyRecordInput {
-    record: PhantomData<()>,
+    id: DocumentId,
+    kind: FamilyKind,
+    value: DocumentValue,
+    version: u64,
+}
+
+impl FamilyRecordInput {
+    /// Creates one record input from the snapshot facts of a reserved
+    /// document.
+    pub(crate) fn new(
+        id: DocumentId,
+        kind: FamilyKind,
+        value: DocumentValue,
+        version: u64,
+    ) -> Self {
+        Self { id, kind, value, version }
+    }
+
+    /// Returns the reserved record's document identifier.
+    pub(crate) fn id(&self) -> &DocumentId {
+        &self.id
+    }
+
+    /// Returns the family the record belongs to.
+    pub(crate) fn kind(&self) -> FamilyKind {
+        self.kind
+    }
+
+    /// Returns the record's encoded logical value as the snapshot observed
+    /// it.
+    pub(crate) fn value(&self) -> &DocumentValue {
+        &self.value
+    }
+
+    /// Returns the record's published version at the snapshot boundary.
+    pub(crate) fn version(&self) -> u64 {
+        self.version
+    }
 }

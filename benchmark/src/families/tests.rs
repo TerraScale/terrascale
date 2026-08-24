@@ -3267,3 +3267,183 @@ fn time_series_full_reads_respect_the_retention_horizon() {
     );
     engine.shutdown().expect("shuts down");
 }
+
+// ---------------------------------------------------------------------------
+// W4-CA-5: the family-record enumeration for backup and migration
+// ---------------------------------------------------------------------------
+
+#[test]
+fn snapshot_family_records_enumerates_the_reserved_collection_at_a_snapshot() {
+    // The typed enumeration a backup consumes: family records arrive with
+    // identity, family kind, value, and published version, and user
+    // documents never appear.
+    let (_dir, engine) = open_engine("family-records-enumerate");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    put_user_document(
+        &engine,
+        "tenant-a",
+        "put-other",
+        "doc-user",
+        object_user_value(&[("n", "v")]),
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "counter-commit",
+        |store, transaction, scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 3 }],
+                    ),
+                )
+                .expect("stages the counter batch");
+        },
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "series-commit",
+        |store, transaction, scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    FamilyWriteRequest::time_series_batch(
+                        TimeSeriesBatchWrite::try_new(
+                            scope.clone(),
+                            document_id("doc-1"),
+                            "cpu".to_owned(),
+                            vec![TimeSeriesAppend::new(10, vec![1.0], None)],
+                            Vec::new(),
+                            None,
+                            ExpectedVersion::Any,
+                            identity.clone(),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid time-series batch"),
+                    ),
+                )
+                .expect("stages the time-series batch");
+        },
+    );
+
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let records = engine
+        .families()
+        .snapshot_family_records(&tenant_scope, &snapshot)
+        .expect("enumerates the reserved collection");
+    assert_eq!(records.len(), 2, "one counter record and one time-series record");
+    let kinds: Vec<FamilyKind> =
+        records.iter().map(crate::backup::FamilyRecordInput::kind).collect();
+    assert_eq!(kinds, [FamilyKind::Counters, FamilyKind::TimeSeries]);
+    for record in &records {
+        assert!(
+            record.id().as_str().starts_with("family:"),
+            "the reserved identifier travels unchanged: {}",
+            record.id().as_str()
+        );
+        assert!(record.version() >= 1, "the published version travels");
+    }
+    // The counter record's value is exactly what the family seam reads back.
+    let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &["hits"])))
+        .expect("reads the counter group");
+    assert_eq!(counter_value(&group, "hits"), Some(3));
+
+    // Another tenant's enumeration is empty: the records are tenant-scoped.
+    let other_scope = scope(&engine, "tenant-b");
+    let other_snapshot = engine.read_snapshot(&other_scope).expect("snapshot");
+    let other_records = engine
+        .families()
+        .snapshot_family_records(&other_scope, &other_snapshot)
+        .expect("enumerates");
+    assert!(other_records.is_empty());
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn snapshot_family_records_observe_only_committed_state() {
+    // The enumeration reads one immutable snapshot: staged-but-uncommitted
+    // records are invisible, and a later commit appears only in a later
+    // snapshot.
+    let (_dir, engine) = open_engine("family-records-snapshot");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    let tenant_scope = scope(&engine, "tenant-a");
+    let before = engine.read_snapshot(&tenant_scope).expect("snapshot before");
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "counter-commit",
+        |store, transaction, scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+                    ),
+                )
+                .expect("stages the counter batch");
+        },
+    );
+    let stale = engine
+        .families()
+        .snapshot_family_records(&tenant_scope, &before)
+        .expect("enumerates the older snapshot");
+    assert!(stale.is_empty(), "the record did not exist at the earlier boundary");
+    let after = engine.read_snapshot(&tenant_scope).expect("snapshot after");
+    let fresh = engine
+        .families()
+        .snapshot_family_records(&tenant_scope, &after)
+        .expect("enumerates the newer snapshot");
+    assert_eq!(fresh.len(), 1);
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn snapshot_family_records_reject_foreign_snapshots_and_collisions() {
+    // The same binding rules as every family read: a snapshot from another
+    // Engine or a scope naming another tenant is typed, never silently
+    // swapped; and a squatter in the reserved collection is a typed
+    // reserved-state error, not a silently skipped record.
+    let (_dir, engine) = open_engine("family-records-binding");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let other_tenant_scope = scope(&engine, "tenant-b");
+    assert_eq!(
+        engine.families().snapshot_family_records(&other_tenant_scope, &snapshot),
+        Err(FamilyError::TenantMismatch),
+        "a scope naming another tenant is rejected before any data access"
+    );
+    let other_snapshot = engine.read_snapshot(&other_tenant_scope).expect("snapshot");
+    assert_eq!(
+        engine.families().snapshot_family_records(&tenant_scope, &other_snapshot),
+        Err(FamilyError::TenantMismatch)
+    );
+
+    // A document in the reserved collection whose identifier does not parse
+    // as a family record is a collision the enumeration reports.
+    let identity = operation("squatter");
+    let mut transaction = engine.begin(&tenant_scope, snapshot, identity).expect("begins");
+    let squatter = Document::new(
+        document_id("not-a-family-record"),
+        CollectionName::try_new(RESERVED_COLLECTION).expect("reserved collection name"),
+        DocumentValue::String("squatter".to_owned()),
+    );
+    transaction.put(squatter, ExpectedVersion::Any).expect("stages the squatter");
+    assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    let after = engine.read_snapshot(&tenant_scope).expect("snapshot after");
+    assert_eq!(
+        engine.families().snapshot_family_records(&tenant_scope, &after),
+        Err(FamilyError::ReservedStateInvalid),
+        "a reserved-collection collision is typed, not skipped"
+    );
+    engine.shutdown().expect("shuts down");
+}
