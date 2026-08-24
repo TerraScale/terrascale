@@ -7,7 +7,7 @@
 //! [`EngineConfig::durable`] location is the only production path.
 
 use std::{
-    collections::{BTreeSet, VecDeque},
+    collections::BTreeSet,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -332,8 +332,10 @@ struct StorageState {
 pub struct Engine {
     identity: u128,
     storage: Arc<Mutex<StorageState>>,
-    snapshots: Mutex<VecDeque<(ReadSnapshot, StorageSequence)>>,
-    in_flight: Mutex<BTreeSet<String>>,
+    /// Live operation reservations, keyed by (tenant, operation). Keying by
+    /// tenant keeps the reservation scoped: two tenants may run the same
+    /// operation identity concurrently.
+    in_flight: Mutex<BTreeSet<(String, String)>>,
     sink: Mutex<Option<CommitPublicationSink>>,
 }
 
@@ -360,7 +362,6 @@ impl Engine {
         Ok(Self {
             identity: EngineIdentity::next().0,
             storage: Arc::new(Mutex::new(StorageState { port: Box::new(storage) })),
-            snapshots: Mutex::new(VecDeque::new()),
             in_flight: Mutex::new(BTreeSet::new()),
             sink: Mutex::new(None),
         })
@@ -392,10 +393,6 @@ impl Engine {
             sequence,
             IndexGenerationSet::default(),
         );
-        self.snapshots
-            .lock()
-            .map_err(|_| EngineError::StorageFailure)?
-            .push_back((snapshot.clone(), sequence));
         Ok(snapshot)
     }
 
@@ -431,23 +428,16 @@ impl Engine {
             .in_flight
             .lock()
             .map_err(|_| EngineError::StorageFailure)?
-            .insert(operation.as_str().to_owned());
+            .insert(reservation_key(scope, &operation));
         if !reserved {
             return Err(EngineError::OperationIdReuse { operation_id: operation });
         }
-        let snapshot_sequence = self
-            .snapshots
-            .lock()
-            .map_err(|_| EngineError::StorageFailure)?
-            .iter()
-            .rev()
-            .find(|(issued, _)| *issued == snapshot)
-            .map(|(_, sequence)| *sequence);
+        let snapshot_sequence = snapshot.sequence();
         Ok(Transaction {
             engine: self,
             scope: scope.clone(),
             snapshot,
-            snapshot_sequence: snapshot_sequence.unwrap_or_default(),
+            snapshot_sequence,
             operation,
             writes: Vec::new(),
         })
@@ -572,7 +562,7 @@ pub struct Transaction<'engine> {
 
 impl Drop for Transaction<'_> {
     fn drop(&mut self) {
-        self.engine.release_operation(&self.operation);
+        self.engine.release_operation(&self.scope, &self.operation);
     }
 }
 
@@ -679,14 +669,25 @@ impl Transaction<'_> {
     pub fn operation_id(&self) -> &OperationId {
         &self.operation
     }
+
+    /// Returns the staged writes. Test-only, used to compare logical digests.
+    #[cfg(test)]
+    pub(crate) fn staged_writes(&self) -> Vec<StagedWrite> {
+        self.writes.clone()
+    }
 }
 
 impl Engine {
-    fn release_operation(&self, operation: &OperationId) {
+    fn release_operation(&self, scope: &TenantScope, operation: &OperationId) {
         if let Ok(mut in_flight) = self.in_flight.lock() {
-            in_flight.remove(operation.as_str());
+            in_flight.remove(&reservation_key(scope, operation));
         }
     }
+}
+
+/// Builds the tenant-scoped reservation key of one operation identity.
+fn reservation_key(scope: &TenantScope, operation: &OperationId) -> (String, String) {
+    (scope.tenant().as_str().to_owned(), operation.as_str().to_owned())
 }
 
 /// The trusted in-process Engine seam used by the Platform Adapter.

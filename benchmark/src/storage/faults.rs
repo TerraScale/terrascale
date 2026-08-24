@@ -8,6 +8,9 @@
 /// One named point in the publication order where a test may inject a failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FaultPoint {
+    /// Write half of the next WAL frame and then fail the append.
+    #[allow(dead_code)]
+    WalAppend,
     /// Fail while applying the write set to the new private root and commit
     /// marker, before anything is published.
     CommitMarkerApplication,

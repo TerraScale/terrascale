@@ -384,11 +384,31 @@ fn sort_key(write: &StagedWrite) -> (u8, String, String) {
         StagedWrite::Put { document, .. } => {
             (1, document.collection().as_str().to_owned(), document.id().as_str().to_owned())
         }
-        StagedWrite::Delete { collection: Some(collection), id, .. } => {
-            (2, collection.as_str().to_owned(), id.as_str().to_owned())
+        StagedWrite::Delete { id, .. } => (2, String::new(), id.as_str().to_owned()),
+    }
+}
+
+/// Appends one write in the digest's canonical form.
+///
+/// The digest form deliberately excludes the snapshot-resolved collection of a
+/// delete: the same logical delete stages as `Some(collection)` when the
+/// snapshot contains the document and as `None` when it does not, and a retry
+/// after an uncertain outcome may run against either view. The collection is
+/// kept for conflict checking and WAL replay, but it is not part of the
+/// identity binding.
+fn encode_digest_write(out: &mut Vec<u8>, write: &StagedWrite) {
+    match write {
+        StagedWrite::Put { document, expected } => {
+            push_u8(out, 1);
+            push_str(out, document.collection().as_str());
+            push_str(out, document.id().as_str());
+            encode_expected(out, *expected);
+            encode_document(out, document);
         }
-        StagedWrite::Delete { collection: None, id, .. } => {
-            (3, String::new(), id.as_str().to_owned())
+        StagedWrite::Delete { id, expected, .. } => {
+            push_u8(out, 2);
+            push_str(out, id.as_str());
+            encode_expected(out, *expected);
         }
     }
 }
@@ -398,7 +418,10 @@ fn sort_key(write: &StagedWrite) -> (u8, String, String) {
 ///
 /// The digest covers the tenant, every staged write, and each expected-version
 /// clause, in canonical write order. It does not cover the read snapshot, so a
-/// retry of the same logical write set after a lost response keeps its identity.
+/// retry of the same logical write set after a lost response keeps its
+/// identity. A delete contributes only its identifier and expected version:
+/// the collection a delete happens to resolve against is snapshot state, not
+/// part of the logical request.
 pub(crate) fn write_set_digest(tenant: &TenantId, writes: &[StagedWrite]) -> u64 {
     let mut ordered: Vec<&StagedWrite> = writes.iter().collect();
     ordered.sort_by_key(|write| sort_key(write));
@@ -406,7 +429,7 @@ pub(crate) fn write_set_digest(tenant: &TenantId, writes: &[StagedWrite]) -> u64
     push_str(&mut bytes, tenant.as_str());
     push_u32(&mut bytes, ordered.len() as u32);
     for write in ordered {
-        encode_staged_write(&mut bytes, write);
+        encode_digest_write(&mut bytes, write);
     }
     fnv1a(&bytes)
 }

@@ -50,6 +50,11 @@ pub(crate) struct Published {
     pub(crate) tenant: String,
     /// The operation identity.
     pub(crate) operation: String,
+    /// The logical write-set digest the identity is bound to. Recovery
+    /// roll-forward appends this record without a preceding `Ready` record,
+    /// so the digest travels here too and the identity stays bound for a
+    /// same-digest retry.
+    pub(crate) digest: u64,
     /// The immutable root that became visible.
     pub(crate) root: String,
     /// The storage sequence of the publication.
@@ -164,6 +169,7 @@ impl LedgerWriter {
                 codec::push_u8(&mut payload, RECORD_PUBLISHED);
                 codec::push_str(&mut payload, &published.tenant);
                 codec::push_str(&mut payload, &published.operation);
+                codec::push_u64(&mut payload, published.digest);
                 codec::push_str(&mut payload, &published.root);
                 codec::push_u64(&mut payload, published.sequence);
                 codec::push_u8(&mut payload, u8::from(published.post_publish_synced));
@@ -228,6 +234,11 @@ impl LedgerIndex {
         self.entries.get(&(tenant.to_owned(), operation.to_owned()))
     }
 
+    /// Returns the durable entries, in canonical key order.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = &OperationEntry> {
+        self.entries.values()
+    }
+
     /// Applies one record to the index.
     pub(crate) fn apply(&mut self, record: LedgerRecord) {
         match record {
@@ -249,11 +260,17 @@ impl LedgerIndex {
                     entry.state = LedgerState::Published {
                         post_publish_synced: published.post_publish_synced,
                     };
+                    // A record written before the digest traveled on the
+                    // `Published` record itself has no binding yet; adopt the
+                    // real one instead of leaving the identity bound to zero.
+                    if entry.digest == 0 {
+                        entry.digest = published.digest;
+                    }
                 } else {
                     self.upsert(OperationEntry {
                         tenant: published.tenant,
                         operation: published.operation,
-                        digest: 0,
+                        digest: published.digest,
                         sequence: published.sequence,
                         root: published.root,
                         requested: LocalDurabilityCode::Written,
@@ -332,12 +349,14 @@ fn read_record(reader: &mut Reader<'_>) -> Option<LedgerRecord> {
         RECORD_PUBLISHED => {
             let tenant = payload_reader.read_string()?;
             let operation = payload_reader.read_string()?;
+            let digest = payload_reader.read_u64()?;
             let root = payload_reader.read_string()?;
             let sequence = payload_reader.read_u64()?;
             let post_publish_synced = matches!(payload_reader.read_u8()?, 1);
             Some(LedgerRecord::Published(Published {
                 tenant,
                 operation,
+                digest,
                 root,
                 sequence,
                 post_publish_synced,

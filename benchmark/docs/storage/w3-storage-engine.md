@@ -3,7 +3,10 @@
 Status: implementation record for the W3-1 Storage plus Engine packet,
 2026-08-24. Source identity: the W3-1 worktree branch
 `fleet/w3-storage-engine`, based on commit `2775b24` (W3-0 preparation
-`c21a85f` included). This record describes focused-test evidence only. It is
+`c21a85f` included). Repair history pinned on this record: loop 1 (a3)
+applied at commit `1898653`; loop 2 (a4) applies on top of `1898653`, and the
+parent records the resulting tip hash in the packet report (a commit cannot
+embed its own hash). This record describes focused-test evidence only. It is
 not a Recovery Receipt, not a parity qualification, and not a performance
 claim.
 
@@ -95,10 +98,30 @@ Open verifies the format identity, scans the ledger, and scans the WAL:
 - A prepare group without a structurally complete, checksum-valid commit
   marker is discarded. It never publishes anything
   (`recovery_discards_prepare_frames_without_a_valid_commit_marker`).
-- Any truncated frame or checksum mismatch anywhere in the WAL fails the open
-  with `FormatMismatch` (`recovery_rejects_bad_checksum_and_truncated_frame`).
-  This is deliberately fail-closed: the design mandates rejection, so a torn
-  WAL tail makes the location unopenable rather than silently lossy.
+- A torn or checksum-failing frame in the **trailing** position is the
+  interrupted-append case: recovery treats it as absent, truncates the log to
+  the verified prefix, and opens on that prefix. The commit before the torn
+  tail remains readable
+  (`torn_trailing_wal_frame_is_truncated_at_recovery_and_data_survives`).
+- The same damage at any **non-trailing** position is mid-file corruption and
+  fails the open with `FormatMismatch`
+  (`recovery_rejects_bad_checksum_and_truncated_frame`). This is deliberately
+  fail-closed: the design mandates rejection of frames that do not verify, and
+  replaying around a hole in the middle of the log cannot be justified.
+- `WalWriter::append` rolls back to the last-good offset whenever a write
+  cannot complete, so a partially written frame never persists
+  (`failed_wal_append_rolls_back_to_the_last_good_offset`). If the
+  recovery-time truncation of a torn tail itself fails, the open fails with
+  the typed unavailable error rather than returning a writer whose append
+  offset still spans the torn bytes
+  (`failed_torn_tail_truncation_fails_the_open`).
+- Recovery roll-forward appends a `Published` record for every verified WAL
+  commit, and that record carries the operation's write-set digest taken from
+  the WAL commit. A commit interrupted after its WAL group was durable but
+  before its `ReadyToPublish` record therefore keeps its identity bound, so a
+  same-identity same-write-set retry replays the recorded resolution instead
+  of colliding as identity reuse
+  (`roll_forward_digest_lets_a_same_identity_retry_replay_after_reopen`).
 - A manifest whose checksum or root identity does not verify is ignored, and
   the published state is rebuilt from the verified WAL commits
   (`manifests_that_do_not_verify_are_ignored_during_recovery`).
@@ -139,6 +162,17 @@ second commit; a different digest under the same identity is
   operation.
 - Every durability level follows the same marker, pointer, ledger, lock
   release, and event order; only the byte-level actions differ.
+- Storage sequences are allocated past a watermark that starts above every
+  sequence the manifest, the WAL, and the operation ledger name, and advances
+  as soon as a commit allocates its sequence — including a commit that later
+  fails. A sequence is therefore never reused inside one location, so WAL
+  replay can order groups by sequence without a failed group shadowing a
+  later committed one
+  (`mid_publication_failure_never_reuses_a_storage_sequence`).
+- The write-set digest binds an operation identity to the logical request: a
+  delete contributes its identifier and expected version, not the collection
+  the delete happened to resolve against in the caller's snapshot
+  (`delete_digest_is_independent_of_snapshot_state`).
 
 ## Deviations corrected against the declaration tree
 
@@ -159,18 +193,46 @@ implementation; no public type moved, because the module had no public items.
   a u32 length.
 - Recovery reads whole WAL, ledger, and root files into memory. Segmenting,
   compaction, and incremental scans are later work.
+- The write-set digest spelling changed in this packet (a delete no longer
+  encodes its snapshot-resolved collection). Locations written by the first
+  W3-1 revision would bind pre-existing identities under the old spelling;
+  W3-1 has no released storage format, so no compatibility path is kept.
 
 ## Limits
 
 - Roots are full tables: every commit rewrites the complete document set of
   the tenant's root. There is no delta or segment format and no compaction.
-- The root history and the Engine's snapshot registry grow without garbage
-  collection.
+- The root history grows without garbage collection.
 - `Buffered` publication is in-memory only, so its data is lost on process
   exit by design; only its resolution metadata survives.
+- **Explicit operational limit: a `Buffered` commit interrupted between the
+  `ReadyToPublish` record and the `Published` record resolves `Pending`
+  forever.** A `Buffered` commit writes no WAL group, so there is nothing for
+  recovery to roll forward: its durable `Ready` record names a root identity
+  that never reaches disk, and the reopened published root can never match it.
+  `resolve_commit` therefore returns `Pending` (never a silent rejection, per
+  contract), and a same-identity retry keeps returning
+  `Unknown(ResponseInterrupted)`. The escape is a new operation identity: the
+  data never persisted, so re-issuing the logical write under a new identity
+  succeeds. `Written` and `Synced` commits do not have this window, because
+  their durable WAL group is rolled forward at reopen and a `Published`
+  record is appended for it. This is the "retain `Pending` with an explicit
+  operational limit" clause of the durable-resolution contract.
 - No lock file, no concurrent-Engine protocol, no encryption, no compaction,
-  no backup or restore, and no crash-tail tolerance in the WAL (a torn tail
-  fails closed).
+  and no backup or restore.
+- The torn-tail rule classifies damage by position: a corrupted length field
+  inside an early frame can make the remainder of the log look like one
+  trailing torn frame, in which case recovery truncates at that frame and the
+  commits behind it are dropped. Verified-prefix recovery cannot distinguish
+  that case from an interrupted append; the fail-closed mid-file rule covers
+  every damage shape that leaves readable bytes behind the damaged frame.
+- **Accepted identity-binding limit (parent-adjudicated deferral).** The
+  operation-identity binding and the root identity are both derived from the
+  private 64-bit FNV-1a checksum, not from a collision-resistant digest. W3-1
+  claims no collision resistance: within one tenant, two distinct write sets
+  deliberately constructed to collide on this checksum would share one
+  operation-identity binding or one root identity. Replacing it with a
+  stronger std-only digest is deferred to a later packet.
 
 ## What is not claimed
 

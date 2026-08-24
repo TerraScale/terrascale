@@ -3,7 +3,10 @@
 Status: implementation record for the W3-1 Storage plus Engine packet,
 2026-08-24. Source identity: the W3-1 worktree branch
 `fleet/w3-storage-engine`, based on commit `2775b24` (W3-0 preparation
-`c21a85f` included). This record describes focused-test evidence only. It is
+`c21a85f` included). Repair history pinned on this record: loop 1 (a3)
+applied at commit `1898653`; loop 2 (a4) applies on top of `1898653`, and the
+parent records the resulting tip hash in the packet report (a commit cannot
+embed its own hash). This record describes focused-test evidence only. It is
 not a parity qualification and makes no V1 comparison.
 
 ## Scope and ownership
@@ -40,12 +43,13 @@ what makes cross-Engine snapshots and scopes rejectable
 separate from the persistent storage-format identity on disk; a location whose
 format bytes do not verify opens as `EngineOpenError::FormatMismatch`.
 
-Because `ReadSnapshot` keeps its storage sequence private to `src/types.rs`,
-which this packet does not own, the Engine records the sequence of every
-snapshot it issues and recovers it by value equality when a transaction
-begins. A `pub(crate) fn sequence()` accessor on `ReadSnapshot` in
-`src/types.rs` would remove that registry; that exact collision action is
-proposed to the parent at the end of this record.
+`ReadSnapshot` exposes its storage sequence through the crate-private
+`ReadSnapshot::sequence()` accessor that the integrator added to
+`src/types.rs`, so `Engine::begin` binds a transaction to its snapshot's
+sequence directly. An earlier revision of this packet kept an equality-keyed
+snapshot registry in the Engine because the accessor did not yet exist; the
+integrator's collision action removed the need for it and the registry was
+dropped in this packet's cleanup commit.
 
 ## Transaction semantics
 
@@ -53,11 +57,14 @@ proposed to the parent at the end of this record.
 snapshot's Engine identity, the requested scope's Engine identity, the
 snapshot tenant against the scope tenant, and the operation identity. The
 operation-identity check rejects an identity already in use by another live
-transaction of the same Engine with `EngineError::OperationIdReuse`;
-`OperationId` is validated at construction, so "invalid at begin" can only
-mean "already bound to another live request". Committing or dropping the
-transaction releases that reservation; the durable operation ledger remains
-the binding for any committed identity.
+transaction of the same Engine **and tenant** with
+`EngineError::OperationIdReuse`; the reservation is keyed by (tenant,
+operation), so two tenants may run the same operation identity concurrently
+(`same_operation_id_in_two_tenants_both_proceed`). `OperationId` is validated
+at construction, so "invalid at begin" can only mean "already bound to another
+live request". Committing or dropping the transaction releases that
+reservation; the durable operation ledger remains the binding for any
+committed identity.
 
 `Transaction` stages `put` and `delete` operations. Reads inside the
 transaction observe the staged writes and otherwise the transaction's
@@ -70,6 +77,19 @@ whole write set atomically under one storage sequence
 (`one_transaction_publishes_all_writes_atomically`). The tenant scope is
 captured at `begin` and has no mutation path
 (`tenant_scope_cannot_change_during_a_transaction`).
+
+A staged `delete` resolves the document's collection from the snapshot for
+conflict checking, but that resolved collection is snapshot state, not part of
+the logical request: the operation-identity digest excludes it, so retrying
+the same delete against a newer snapshot — where the document may already be
+absent — keeps its identity and replays the recorded commit
+(`delete_digest_is_independent_of_snapshot_state`).
+
+Storage sequences are allocated monotonically past every sequence the location
+has ever named, including sequences of commits that failed mid-publication, so
+a later committed operation can never be shadowed by an earlier failed one
+during WAL replay
+(`mid_publication_failure_never_reuses_a_storage_sequence`).
 
 An empty write set and duplicate targets are validation rejections; documents
 beyond one megabyte or sixty-four levels of nesting are rejected as
@@ -150,20 +170,32 @@ no commit-outcome variants, so the shared-file exception was not used.
   a record cannot prove rejection, and the caller must not retry under a new
   identity.
 - Same-identity, same-digest retries replay the recorded resolution,
-  including a recorded rejection, so retries are deterministic.
+  including a recorded rejection, so retries are deterministic. This also
+  holds after recovery roll-forward: the `Published` record recovery appends
+  for a verified WAL commit carries the operation's digest, so a commit
+  interrupted between its durable WAL group and its `ReadyToPublish` record
+  still replays one commit rather than being rejected as identity reuse
+  (`roll_forward_digest_lets_a_same_identity_retry_replay_after_reopen`).
 - In-crate tests use `pub(crate) TenantScope::from_parts`, mirroring
   Platform's production role of creating a validated scope. Integration tests
   cover only public construction paths.
 
 ## Limits
 
-- The snapshot registry and root history grow without bound; there is no
-  garbage collection.
+- The Engine's retained root history grows without bound; there is no garbage
+  collection. (The snapshot registry an earlier revision kept was removed with
+  the direct accessor; snapshots are no longer retained by the Engine.)
 - Conflict detection is first-committer-wins through expected versions; a
   write staged with `ExpectedVersion::Any` deliberately overwrites.
 - `EnginePort` remains an unimplemented declaration owned by the Platform
   Adapter packets.
 - No query, index, family, replication, or backup behavior exists here.
+- **Accepted identity-binding limit (parent-adjudicated deferral).** The
+  operation-identity binding that decides idempotent retry versus
+  `OperationIdReuse` is the storage codec's private 64-bit FNV-1a checksum,
+  not a collision-resistant digest. Under the std-only constraint the parent
+  deferred the stronger digest to a later packet, so W3-1 claims no
+  same-tenant collision resistance for that binding.
 
 ## What is not claimed
 
@@ -175,11 +207,14 @@ no commit-outcome variants, so the shared-file exception was not used.
   claim; `CommitReceipt` is strictly local.
 - No concurrency, throughput, or latency claim; no benchmark ran.
 
-## Proposed collision action for the parent
+## Resolved collision action
 
-`src/types.rs` (integrator-owned) would ideally add
-`impl ReadSnapshot { pub(crate) fn sequence(&self) -> StorageSequence }` so
-the Engine can bind a snapshot to its storage sequence directly and the
-equality-keyed snapshot registry can be removed. This packet did not edit that
-file; the registry is a documented in-scope workaround. The parent should
-assign that exact one-line collision action to the integrator if accepted.
+The parent assigned the exact one-line collision action proposed in the a1
+handoff, and the integrator added
+`impl ReadSnapshot { pub(crate) fn sequence(&self) -> StorageSequence }` to
+`src/types.rs` (commit `3cf2540`). This packet consumed it in its cleanup
+commit: the equality-keyed snapshot registry in `src/engine/mod.rs` is removed
+and `Engine::begin` reads the sequence from the snapshot itself. No behavior
+changed, because a registry match always returned the snapshot's own sequence
+and the fallback branch was unreachable for snapshots that passed the
+identity checks.

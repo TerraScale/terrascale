@@ -87,42 +87,154 @@ fn recovery_discards_prepare_frames_without_a_valid_commit_marker() {
 
 #[test]
 fn recovery_rejects_bad_checksum_and_truncated_frame() {
-    for (tag, damage) in [("checksum", 1_usize), ("truncated", 3_usize)] {
-        let (dir, mut storage) = open_storage(tag);
+    // Mid-file damage must fail closed. Commit twice so the damaged frame is
+    // followed by an intact one, then corrupt a byte inside the first commit's
+    // frames.
+    let (dir, mut storage) = open_storage("mid-file-checksum");
+    for index in 0..2 {
         let outcome = storage.commit(intent(
-            "op-durable",
-            vec![put(document("doc-1", "users", "value"), ExpectedVersion::New)],
+            &format!("op-{index}"),
+            vec![put(document(&format!("doc-{index}"), "users", "value"), ExpectedVersion::New)],
             LocalDurability::Synced,
         ));
         assert!(matches!(outcome, CommitResult::Committed(_)));
-        drop(storage);
-
-        // Damage the write-ahead log by flipping one byte or removing the end
-        // of the final frame. The test never reads the bytes back; it only
-        // asserts the typed recovery result.
-        let wal = dir.join("wal");
-        let length = std::fs::metadata(&wal).expect("wal exists").len();
-        if damage == 1 {
-            let mut bytes = std::fs::read(&wal).expect("wal reads");
-            let last = bytes.len().saturating_sub(1);
-            bytes[last] = bytes[last].wrapping_add(1);
-            std::fs::write(&wal, bytes).expect("wal rewrites");
-        } else {
-            let file = std::fs::OpenOptions::new().write(true).open(&wal).expect("wal opens");
-            let truncated = length
-                .checked_sub(u64::try_from(damage).expect("small damage"))
-                .expect("damage fits inside the log");
-            file.set_len(truncated).expect("wal truncates");
-        }
-
-        let error = FileStorage::open(&dir).err().expect("recovery refuses damaged bytes");
-        assert_eq!(
-            error,
-            StorageOpenError::FormatMismatch,
-            "case {tag} must fail closed instead of replaying unverifiable frames"
-        );
-        std::fs::remove_dir_all(&dir).ok();
     }
+    drop(storage);
+
+    let wal = dir.join("wal");
+    let mut bytes = std::fs::read(&wal).expect("wal reads");
+    bytes[5] = bytes[5].wrapping_add(1);
+    std::fs::write(&wal, bytes).expect("wal rewrites");
+    assert_eq!(
+        FileStorage::open(&dir).err(),
+        Some(StorageOpenError::FormatMismatch),
+        "a checksum failure in a non-trailing frame is mid-file corruption and fails closed"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+
+    // A truncated frame that is not the trailing frame is the same mid-file
+    // corruption: a valid frame is cut through and bytes still follow it.
+    let (dir, mut storage) = open_storage("mid-file-truncated");
+    for index in 0..2 {
+        let outcome = storage.commit(intent(
+            &format!("op-{index}"),
+            vec![put(
+                document(&format!("doc-{index}"), "users", &format!("value-{index}")),
+                ExpectedVersion::New,
+            )],
+            LocalDurability::Synced,
+        ));
+        assert!(matches!(outcome, CommitResult::Committed(_)));
+    }
+    drop(storage);
+    let wal = dir.join("wal");
+    let mut bytes = std::fs::read(&wal).expect("wal reads");
+    // Keep the first commit's group whole, then overwrite the rest with a
+    // single valid-looking prefix of a frame header so the damaged region is
+    // followed by remaining bytes: the parser sees a frame it cannot verify
+    // with data behind it.
+    let cut = bytes.len() / 2;
+    bytes.truncate(cut);
+    bytes.extend_from_slice(&[3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+    std::fs::write(&wal, bytes).expect("wal rewrites");
+    assert_eq!(
+        FileStorage::open(&dir).err(),
+        Some(StorageOpenError::FormatMismatch),
+        "a truncated frame with bytes behind it fails closed"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn torn_trailing_wal_frame_is_truncated_at_recovery_and_data_survives() {
+    let (dir, mut storage) = open_storage("torn-tail");
+    for index in 0..2 {
+        let outcome = storage.commit(intent(
+            &format!("op-{index}"),
+            vec![put(
+                document(&format!("doc-{index}"), "users", &format!("value-{index}")),
+                ExpectedVersion::New,
+            )],
+            LocalDurability::Written,
+        ));
+        assert!(matches!(outcome, CommitResult::Committed(_)));
+    }
+    drop(storage);
+
+    // Flip one byte of the final frame: an interrupted or partially lost
+    // append. Recovery must treat that trailing frame as absent, truncate it,
+    // and open on the verified prefix.
+    let wal = dir.join("wal");
+    let mut bytes = std::fs::read(&wal).expect("wal reads");
+    let last = bytes.len() - 1;
+    bytes[last] = bytes[last].wrapping_add(1);
+    std::fs::write(&wal, bytes).expect("wal rewrites");
+    let length_after_damage = std::fs::metadata(&wal).expect("wal exists").len();
+
+    let reopened = FileStorage::open(&dir).expect("a torn trailing frame opens on its prefix");
+    let tenant = tenant();
+    assert!(
+        reopened
+            .read_document_at(StorageSequence::new(1), &tenant, document("doc-0", "users", "").id())
+            .is_some(),
+        "the commit before the torn tail must survive"
+    );
+    let truncated = std::fs::metadata(&wal).expect("wal exists").len();
+    assert!(
+        truncated < length_after_damage,
+        "recovery truncates the torn trailing frame instead of leaving it behind"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn failed_wal_append_rolls_back_to_the_last_good_offset() {
+    let (dir, mut storage) = open_storage("append-rollback");
+    assert!(matches!(
+        storage.commit(intent(
+            "op-seed",
+            vec![put(document("doc-0", "users", "value"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        )),
+        CommitResult::Committed(_)
+    ));
+    let before = std::fs::metadata(dir.join("wal")).expect("wal exists").len();
+
+    storage.arm_test_fault(FaultPoint::WalAppend);
+    assert!(matches!(
+        storage.commit(intent(
+            "op-torn",
+            vec![put(document("doc-1", "users", "value"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        )),
+        CommitResult::Rejected(_)
+    ));
+    assert_eq!(
+        std::fs::metadata(dir.join("wal")).expect("wal exists").len(),
+        before,
+        "a failed append must roll back to the last-good offset"
+    );
+
+    // The store still opens, and a later commit appends onto the clean log.
+    drop(storage);
+    let mut reopened = FileStorage::open(&dir).expect("opens after the rolled-back append");
+    assert!(matches!(
+        reopened.commit(intent(
+            "op-after",
+            vec![put(document("doc-2", "users", "value"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        )),
+        CommitResult::Committed(_)
+    ));
+    drop(reopened);
+    let again = FileStorage::open(&dir).expect("reopens with the later commit");
+    let tenant = tenant();
+    assert!(
+        again
+            .read_document_at(StorageSequence::new(2), &tenant, document("doc-2", "users", "").id())
+            .is_some()
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -132,6 +244,101 @@ fn open_rejects_a_foreign_storage_format() {
     std::fs::write(dir.join("format"), b"NOT-TBV2FMT\x00\x00\x00\x00\x00\x00\x00\x00")
         .expect("format rewrites");
     assert_eq!(FileStorage::open(&dir).err(), Some(StorageOpenError::FormatMismatch));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn failed_torn_tail_truncation_fails_the_open() {
+    let (dir, mut storage) = open_storage("truncate-fails");
+    assert!(matches!(
+        storage.commit(intent(
+            "op-1",
+            vec![put(document("doc-1", "users", "value"), ExpectedVersion::New)],
+            LocalDurability::Written,
+        )),
+        CommitResult::Committed(_)
+    ));
+    drop(storage);
+
+    // Tear the trailing frame, then poison the truncation of exactly this
+    // log. The open must fail loudly rather than hand back a writer whose
+    // append offset still spans the torn bytes.
+    let wal = dir.join("wal");
+    let mut bytes = std::fs::read(&wal).expect("wal reads");
+    let last = bytes.len() - 1;
+    bytes[last] = bytes[last].wrapping_add(1);
+    std::fs::write(&wal, bytes).expect("wal rewrites");
+    super::wal::fail_truncate_for(wal.clone());
+    assert_eq!(
+        FileStorage::open(&dir).err(),
+        Some(StorageOpenError::Unavailable),
+        "a truncation that cannot complete must fail the open instead of masking the damage"
+    );
+
+    // The poison is one-shot and consumed: the same location opens once the
+    // truncation can run, and the verified prefix survives.
+    let reopened = FileStorage::open(&dir).expect("opens once the truncation succeeds");
+    let tenant = tenant();
+    assert!(
+        reopened
+            .read_document_at(
+                StorageSequence::new(1),
+                &tenant,
+                &DocumentId::try_new("doc-1").expect("valid identifier")
+            )
+            .is_some()
+    );
+    drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn roll_forward_keeps_the_operation_digest_for_a_same_identity_retry() {
+    // A commit that fails after its WAL group is durable but before its
+    // Ready ledger record leaves no prior entry, so recovery's roll-forward
+    // Published record must itself carry the digest from the WAL commit.
+    let (dir, mut storage) = open_storage("roll-forward-digest");
+    storage.arm_test_fault(FaultPoint::ReadyLedgerSync);
+    assert!(matches!(
+        storage.commit(intent(
+            "op-a",
+            vec![put(document("doc-a", "users", "a"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        )),
+        CommitResult::Rejected(_)
+    ));
+    drop(storage);
+
+    let mut reopened = FileStorage::open(&dir).expect("rolls the durable group forward");
+    let tenant = tenant();
+    let operation = OperationId::try_new("op-a").expect("valid identifier");
+    match reopened.resolve_operation(&tenant, &operation).expect("resolves") {
+        super::intent::OperationResolution::Committed { sequence, durability } => {
+            assert_eq!(sequence.get(), 1);
+            assert_ne!(durability, LocalDurability::Synced);
+        }
+        other => panic!("the rolled-forward commit must resolve as committed, got {other:?}"),
+    }
+    // Same identity, same write set: the recorded resolution replays instead
+    // of colliding as identity reuse.
+    assert!(matches!(
+        reopened.commit(intent(
+            "op-a",
+            vec![put(document("doc-a", "users", "a"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        )),
+        CommitResult::Committed(_)
+    ));
+    // A different write set under the same identity is still reuse.
+    assert!(matches!(
+        reopened.commit(intent(
+            "op-a",
+            vec![put(document("doc-a", "users", "mutated"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        )),
+        CommitResult::Rejected(super::intent::CommitRejection::OperationIdReuse)
+    ));
+    drop(reopened);
     std::fs::remove_dir_all(&dir).ok();
 }
 
