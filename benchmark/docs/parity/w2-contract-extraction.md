@@ -204,21 +204,27 @@ The following checks and dispatch commands are recorded for this worktree:
   checks, contract versus strict mode, missing-root fail-closed behavior, and
   the machine-readable gap report.
 - Contract citation audit dispatch command, requiring the parent to provide a
-  clean pinned V1 checkout through `TERRABASE_V1_ROOT`:
+  clean pinned V1 checkout through `TERRABASE_V1_ROOT` and the TerraScale
+  workspace through `TERRASCALE_WORKSPACE_ROOT`:
 
   ```sh
   : "${TERRABASE_V1_ROOT:?dispatch must provide the clean pinned V1 root}" &&
+  : "${TERRASCALE_WORKSPACE_ROOT:?dispatch must provide the TerraScale workspace root}" &&
+  workspace_charter="${TERRASCALE_WORKSPACE_ROOT}/specs/2026-08-23-terrabase-v2-goal.md" &&
+  test -f "$workspace_charter" &&
+  v2_root="$(git rev-parse --show-toplevel)" &&
   python3 scripts/validate_v1_citations.py \
     --mode contract \
     --v1-root "$TERRABASE_V1_ROOT" \
-    --workspace-root "$(git rev-parse --show-toplevel)" \
-    --gap-report parity/v1-test-gaps.json
+    --workspace-root "$TERRASCALE_WORKSPACE_ROOT" \
+    --gap-report "$v2_root/parity/v1-test-gaps.json"
   ```
 
-  This docs-only worktree does not claim that the dispatch command ran. When a
-  clean pinned V1 root is supplied, the contract audit must report 258 rows,
-  251 V1-backed rows, 267 source citations, 231 test citations, and 42
-  unresolved test gaps. The report is an audit result, not qualification.
+  The charter path is `${TERRASCALE_WORKSPACE_ROOT}/specs/2026-08-23-terrabase-v2-goal.md`;
+  the explicit file check fails closed before validation. With both dispatch
+  roots supplied, the contract audit must report 258 rows, 251 V1-backed rows,
+  267 source citations, 231 test citations, and 42 unresolved test gaps. The
+  report is an audit result, not qualification.
 - Strict audit: the dispatch command above with `--strict` is the qualification
   gate. It must fail while 42 unresolved test gaps remain, and `./scripts/check.sh`
   must fail closed until those obligations are closed. This worktree does not
