@@ -1,5 +1,8 @@
 # W2 contract extraction and integration
 
+Status: reviewed GO and integrated/pushed at `8771f13`. Strict qualification
+remains blocked by the same 42 unresolved PB-5000 through PB-5041 test gaps.
+
 Date: 2026-08-23
 
 This record covers the W2 contract freeze integration. It joins six approved
@@ -30,11 +33,11 @@ The six fragments contain 258 rows. No row was dropped or merged.
 
 ## Correction pass after independent review
 
-The independent contract review returned NO-GO `A-REV-CONTRACT-001` because
+The first independent contract review returned NO-GO `A-REV-CONTRACT-001` because
 the first integration had pathless query and replication scopes, stale V1
 paths/symbols, and a secret scanner that assumed a `tests/` directory existed.
-This branch is the bounded correction assignment
-`A-INT-CONTRACT-FIX-001`; it does not mark W2 verified. A later bounded
+The bounded corrections resolved those findings. This branch records the
+bounded correction assignment `A-INT-CONTRACT-FIX-001`; the later bounded
 validator-hardening correction is recorded below as `A-INT-CONTRACT-FIX-004`.
 
 The correction adds an explicit, reproducible citation to all 258 scopes. The
@@ -71,8 +74,9 @@ types, constructors, methods, properties/fields, and test declarations while
 rejecting calls, assignments, member access, comments, literals, and
 incidental substrings. PB-3007 and PB-3045 now cite the exact
 `DatabaseSmuggler` declaration in addition to their existing evidence. This
-correction is pending independent re-review and does not change IDs, overlays,
-statuses, Proof IDs, or the 42 gaps.
+correction changed no IDs, overlays, statuses, Proof IDs, or the 42 gaps. The
+independent reliability review accepted the corrected W2 tree as GO, and the
+integrator pushed it as `8771f13`.
 
 Contract-audit mode is allowed to complete with those explicit obligations
 and prints `CONTRACT AUDIT COMPLETE WITH 42 UNRESOLVED TEST GAPS`. Strict mode
@@ -224,6 +228,8 @@ The following commands ran in this worktree:
 - No push, merge, issue, pull request, sibling-repository edit, or database
   implementation was performed.
 
-The next gate is independent re-review of `A-INT-CONTRACT-FIX-004`, followed by
-the W3 behavior builders if that gate passes. This record does not mark W2 as
-independently verified.
+The next gate is W3 core design and behavior work. W2 is independently reviewed
+GO and remains a contract freeze only. It does not claim V2 implementation,
+parity qualification, recovery safety, multi-region convergence, or benchmark
+validity. Strict qualification correctly remains closed until the same 42
+PB-5000 through PB-5041 test gaps are resolved with the required evidence.
