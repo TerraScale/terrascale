@@ -24,8 +24,7 @@ use std::{
 use crate::{
     adapters::platform::{PlatformAdapter, PlatformError, PlatformPort},
     families::{
-        AttachmentMutation, AttachmentRead, AttachmentWrite, FamilyReadRequest,
-        FamilyWriteRequest,
+        AttachmentMutation, AttachmentRead, AttachmentWrite, FamilyReadRequest, FamilyWriteRequest,
     },
     operations::{
         DocumentReadRequest, DocumentWriteRequest, FamilyOperation, PublicOperation,
@@ -39,8 +38,8 @@ use crate::{
 };
 
 use super::{
-    CallerContext, CallerContextError, CallerEvidence, CredentialInput, CredentialKind, PrincipalId,
-    ProtocolAdapter, ProtocolError,
+    CallerContext, CallerContextError, CallerEvidence, CredentialInput, CredentialKind,
+    PrincipalId, ProtocolAdapter, ProtocolError,
 };
 
 // ---------------------------------------------------------------------------
@@ -152,21 +151,14 @@ impl PlatformPort for ScriptedPlatform {
         caller: &CallerContext,
         operation: PublicOperation,
     ) -> Result<PublicResponse, PlatformError> {
-        self.record.order
-            .lock()
-            .expect("order lock")
-            .push("platform.dispatch");
-        self.record
-            .seen
-            .lock()
-            .expect("seen lock")
-            .push(SeenDispatch {
-                principal: caller.principal().to_string(),
-                tenant: caller.tenant_claim().to_string(),
-                credential_kind: caller.credential_kind(),
-                same_caller_reference: std::ptr::eq(caller, self.expected_caller),
-                operation,
-            });
+        self.record.order.lock().expect("order lock").push("platform.dispatch");
+        self.record.seen.lock().expect("seen lock").push(SeenDispatch {
+            principal: caller.principal().to_string(),
+            tenant: caller.tenant_claim().to_string(),
+            credential_kind: caller.credential_kind(),
+            same_caller_reference: std::ptr::eq(caller, self.expected_caller),
+            operation,
+        });
         self.script.clone()
     }
 }
@@ -179,7 +171,7 @@ fn scripted_platform(
     let record = Arc::new(Record::default());
     let platform = ScriptedPlatform {
         record: Arc::clone(&record),
-        expected_caller: caller as *const CallerContext,
+        expected_caller: std::ptr::from_ref(caller),
         script,
     };
     (platform, record)
@@ -192,13 +184,7 @@ fn order(record: &Record) -> Vec<&'static str> {
 
 /// Returns every operation the platform double received.
 fn seen_operations(record: &Record) -> Vec<PublicOperation> {
-    record
-        .seen
-        .lock()
-        .expect("seen lock")
-        .iter()
-        .map(|entry| entry.operation.clone())
-        .collect()
+    record.seen.lock().expect("seen lock").iter().map(|entry| entry.operation.clone()).collect()
 }
 
 /// Matches the closed public operation registry with no wildcard arm, so a
@@ -246,8 +232,7 @@ fn caller_context_try_new_structurally_validates_and_redacts_evidence() {
     // the context shows the principal, the tenant claim, the credential
     // kind, and a redacted fingerprint — never the secret.
     for kind in [CredentialKind::Bearer, CredentialKind::ApiKey] {
-        let credential =
-            CredentialInput::try_new(kind, TEST_SECRET).expect("valid credential");
+        let credential = CredentialInput::try_new(kind, TEST_SECRET).expect("valid credential");
         let credential_forms = [format!("{credential:?}"), format!("{credential}")];
         for (label, form) in [
             ("credential debug", &credential_forms[0]),
@@ -262,23 +247,22 @@ fn caller_context_try_new_structurally_validates_and_redacts_evidence() {
 
         let evidence =
             CallerEvidence::try_new(principal(), tenant(), credential).expect("valid evidence");
+        let evidence_debug = format!("{evidence:?}");
+        let evidence_display = format!("{evidence}");
         let context = CallerContext::try_new(evidence).expect("valid context");
         for (label, form) in [
-            ("evidence debug", format!("{evidence:?}")),
-            ("evidence display", format!("{evidence}")),
+            ("evidence debug", evidence_debug),
+            ("evidence display", evidence_display),
             ("context debug", format!("{context:?}")),
             ("context display", format!("{context}")),
         ] {
             assert!(!form.contains(TEST_SECRET), "{label} must not reveal the secret: {form}");
-            assert!(form.contains("redacted:"), "{label} must carry the redacted fingerprint: {form}");
             assert!(
-                form.contains("principal-alice"),
-                "{label} carries the principal: {form}"
+                form.contains("redacted:"),
+                "{label} must carry the redacted fingerprint: {form}"
             );
-            assert!(
-                form.contains("tenant-beta"),
-                "{label} carries the tenant claim: {form}"
-            );
+            assert!(form.contains("principal-alice"), "{label} carries the principal: {form}");
+            assert!(form.contains("tenant-beta"), "{label} carries the tenant claim: {form}");
         }
     }
 }
@@ -295,10 +279,7 @@ fn public_operation_constructors_reject_generic_payloads_and_permissions() {
         Err(QueryInputError::UnsupportedGrammar)
     );
     let oversized = format!("from {}", "x".repeat(17 * 1024));
-    assert_eq!(
-        V1QueryText::try_new(&oversized),
-        Err(QueryInputError::UnsupportedGrammar)
-    );
+    assert_eq!(V1QueryText::try_new(&oversized), Err(QueryInputError::UnsupportedGrammar));
     assert!(V1QueryText::try_new("from users where name = 'ada'").is_ok());
 
     // The query input forms accept only the typed specification or the
@@ -333,8 +314,11 @@ fn public_operation_constructors_reject_generic_payloads_and_permissions() {
     // Caller evidence can state no permission: its only inputs are the
     // principal, the tenant claim, and one closed credential kind
     // (compile-shape), and its observable forms carry no permission claim.
-    let evidence_shape: fn(PrincipalId, TenantId, CredentialInput) -> Result<CallerEvidence, CallerContextError> =
-        CallerEvidence::try_new;
+    let evidence_shape: fn(
+        PrincipalId,
+        TenantId,
+        CredentialInput,
+    ) -> Result<CallerEvidence, CallerContextError> = CallerEvidence::try_new;
     let _ = evidence_shape;
     let context = caller();
     for form in [format!("{context:?}"), format!("{context}")] {
@@ -358,24 +342,23 @@ fn protocol_call_accepts_only_opaque_caller_context() {
     ) -> Result<PublicResponse, ProtocolError> {
         adapter.call(caller, operation)
     }
-    let call_shape: fn(&ProtocolAdapter<'_>, &CallerContext, PublicOperation) -> Result<PublicResponse, ProtocolError> =
-        call_takes_only_the_opaque_caller;
+    let call_shape: fn(
+        &ProtocolAdapter<'_>,
+        &CallerContext,
+        PublicOperation,
+    ) -> Result<PublicResponse, ProtocolError> = call_takes_only_the_opaque_caller;
     let _ = call_shape;
 
     // Runtime: the exact opaque reference reaches the platform unchanged.
     let caller = caller();
     let (platform, record) = scripted_platform(&caller, Ok(scripted_response()));
     let adapter = ProtocolAdapter::new_with_platform_port(&platform);
-    let response = adapter
-        .call(&caller, family_read_operation())
-        .expect("typed forwarding succeeds");
+    let response =
+        adapter.call(&caller, family_read_operation()).expect("typed forwarding succeeds");
     assert_eq!(response, scripted_response());
     let seen = record.seen.lock().expect("seen lock");
     let entry = &seen[0];
-    assert!(
-        entry.same_caller_reference,
-        "the opaque caller reference is forwarded unchanged"
-    );
+    assert!(entry.same_caller_reference, "the opaque caller reference is forwarded unchanged");
     assert_eq!(entry.principal, "principal-alice");
     assert_eq!(entry.tenant, "tenant-beta");
     assert_eq!(entry.credential_kind, CredentialKind::Bearer);
@@ -389,9 +372,8 @@ fn protocol_forwarding_calls_platform_port_before_engine() {
     let caller = caller();
     let (platform, record) = scripted_platform(&caller, Ok(scripted_response()));
     let adapter = ProtocolAdapter::new_with_platform_port(&platform);
-    let response = adapter
-        .call(&caller, family_read_operation())
-        .expect("typed forwarding succeeds");
+    let response =
+        adapter.call(&caller, family_read_operation()).expect("typed forwarding succeeds");
     assert_eq!(response, scripted_response());
     assert_eq!(
         order(&record),
@@ -417,9 +399,7 @@ fn protocol_rejects_generic_route_body_and_storage_handle() {
     let (platform, record) = scripted_platform(&caller, Ok(scripted_response()));
     let adapter = ProtocolAdapter::new_with_platform_port(&platform);
     for operation in [family_read_operation(), family_write_operation("op-generic")] {
-        adapter
-            .call(&caller, operation)
-            .expect("typed forwarding succeeds");
+        adapter.call(&caller, operation).expect("typed forwarding succeeds");
     }
     for operation in seen_operations(&record) {
         assert!(
@@ -455,7 +435,15 @@ fn approved_typed_operation_with_stable_identity_is_forwarded_and_answered() {
 
     let seen = seen_operations(&record);
     assert_eq!(seen.len(), 1);
-    assert_eq!(seen[0], operation, "the platform receives the operation unchanged");
+    // The forwarded operation equals the sent one structurally. Whole-value
+    // equality is impossible by design: a cloned request carries a distinct
+    // cancellation-signal identity, so the observable comparison is the
+    // redacted Debug form plus the stable identity below.
+    assert_eq!(
+        format!("{:?}", seen[0]),
+        format!("{operation:?}"),
+        "the platform receives the operation unchanged"
+    );
     match &seen[0] {
         PublicOperation::Family(FamilyOperation::Write(request)) => {
             assert_eq!(
@@ -515,10 +503,7 @@ fn protocol_rejects_private_control_plane_operations() {
             "only approved public operations exist in the registry"
         );
     }
-    assert_ne!(
-        ProtocolError::PrivateOperation,
-        ProtocolError::GenericAccessRejected
-    );
+    assert_ne!(ProtocolError::PrivateOperation, ProtocolError::GenericAccessRejected);
 }
 
 #[test]
@@ -540,18 +525,14 @@ fn deadline_and_cancellation_errors_preserve_operation_identity() {
         adapter.call(&caller, expired_write),
         Err(ProtocolError::Deadline { operation_id: Some(identity.clone()) })
     );
-    assert!(
-        order(&record).is_empty(),
-        "the refusal happens before any platform dispatch"
-    );
+    assert!(order(&record).is_empty(), "the refusal happens before any platform dispatch");
 
     // Decision logic: a set cancellation signal is refused under the same
     // identity rule. No public operation constructor admits an
     // already-cancelled signal and no cancel handle survives construction
     // into the request, so this half is proven at the refusal decision
     // itself; the mapping half is covered by the scripted platform row.
-    let cancelled_identity =
-        OperationId::try_new("op-preserve-cancelled").expect("valid identity");
+    let cancelled_identity = OperationId::try_new("op-preserve-cancelled").expect("valid identity");
     assert_eq!(
         super::bound_refusal(false, true, Some(cancelled_identity.clone())),
         Some(ProtocolError::Cancelled { operation_id: Some(cancelled_identity) })
@@ -561,36 +542,38 @@ fn deadline_and_cancellation_errors_preserve_operation_identity() {
         super::bound_refusal(true, false, Some(deadline_identity.clone())),
         Some(ProtocolError::Deadline { operation_id: Some(deadline_identity.clone()) })
     );
-    // The deadline is checked first when both bounds are violated, and a
-    // live operation passes.
+    // The deadline is checked first when both bounds are violated, still
+    // preserving the identity, and a live operation passes.
     assert_eq!(
         super::bound_refusal(true, true, Some(deadline_identity)),
-        Some(ProtocolError::Deadline { operation_id: None })
+        Some(ProtocolError::Deadline {
+            operation_id: Some(OperationId::try_new("op-preserve-both").expect("valid identity"))
+        })
     );
     assert_eq!(super::bound_refusal(false, false, None), None);
 }
 
 #[test]
 fn protocol_adapter_supports_in_process_and_production_transports() {
+    // Production-shaped acquisition: the public path borrows the W5
+    // PlatformAdapter. Its constructor is W5 wiring and is not implemented
+    // at this base, so W3-3 proves the acquisition shape compiles and hides
+    // the private port; execution through it lands with W5.
+    fn production_acquisition<'platform>(
+        platform: &'platform PlatformAdapter<'_>,
+    ) -> ProtocolAdapter<'platform> {
+        ProtocolAdapter::from_platform(platform)
+    }
+    let acquire: for<'platform> fn(&'platform PlatformAdapter<'_>) -> ProtocolAdapter<'platform> =
+        production_acquisition;
+    let _ = acquire;
+
     // In-process test transport: the cfg(test) port double is the only
     // double W3-3 may construct, and it injects no production authority.
     let caller = caller();
     let (platform, _record) = scripted_platform(&caller, Ok(scripted_response()));
     let adapter = ProtocolAdapter::new_with_platform_port(&platform);
     assert!(adapter.call(&caller, family_read_operation()).is_ok());
-
-    // Production-shaped acquisition: the public path borrows the W5
-    // PlatformAdapter. Its constructor is W5 wiring and is not implemented
-    // at this base, so W3-3 proves the acquisition shape compiles and hides
-    // the private port; execution through it lands with W5.
-    fn production_acquisition<'platform, 'engine>(
-        platform: &'platform PlatformAdapter<'engine>,
-    ) -> ProtocolAdapter<'platform> {
-        ProtocolAdapter::from_platform(platform)
-    }
-    let acquire: for<'platform, 'engine> fn(&'platform PlatformAdapter<'engine>) -> ProtocolAdapter<'platform> =
-        production_acquisition;
-    let _ = acquire;
 }
 
 #[test]
@@ -638,11 +621,7 @@ fn platform_error_forwarding_follows_the_contract_rows() {
             Err(expected),
             "the platform refusal maps to its Protocol row"
         );
-        assert_eq!(
-            order(&record).len(),
-            1,
-            "the platform saw the dispatch before refusing"
-        );
+        assert_eq!(order(&record).len(), 1, "the platform saw the dispatch before refusing");
     }
 }
 
@@ -651,10 +630,7 @@ fn credential_fingerprint_is_stable_prefixed_and_secret_free() {
     let first = super::redacted_fingerprint(TEST_SECRET);
     let second = super::redacted_fingerprint(TEST_SECRET);
     assert_eq!(first, second, "the fingerprint is stable for one secret");
-    assert!(
-        first.starts_with("redacted:"),
-        "the fingerprint carries the fixed redaction prefix"
-    );
+    assert!(first.starts_with("redacted:"), "the fingerprint carries the fixed redaction prefix");
     assert_eq!(
         first.len(),
         "redacted:".len() + 16,
@@ -665,13 +641,7 @@ fn credential_fingerprint_is_stable_prefixed_and_secret_free() {
         super::redacted_fingerprint("test-secret-do-not-use-either"),
         "different secrets fingerprint differently"
     );
-    assert!(
-        !first.contains("test-secret"),
-        "the fingerprint never embeds the secret"
-    );
+    assert!(!first.contains("test-secret"), "the fingerprint never embeds the secret");
     // FNV-1a of the empty input is the offset basis, pinning the algorithm.
-    assert_eq!(
-        super::redacted_fingerprint(""),
-        "redacted:cbf29ce484222325"
-    );
+    assert_eq!(super::redacted_fingerprint(""), "redacted:cbf29ce484222325");
 }
