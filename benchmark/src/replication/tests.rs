@@ -18,6 +18,11 @@
 //! fault lane and `ReplicationReceipt` artifacts belong to R-3 and are not
 //! claimed here.
 
+#![allow(
+    clippy::similar_names,
+    reason = "fixtures bind per-member values whose canonical names differ by one character (m_a1/m_a2, dir_a1/dir_b1)"
+)]
+
 use std::{
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
@@ -25,17 +30,19 @@ use std::{
 
 use crate::engine::EngineConfig;
 use crate::replication::{
-    AcknowledgementLevel, AcknowledgementReport, ConflictOutcome, Convergence, MemberId,
-    ReplicationConfig, ReplicationInstant, ReplicationOutcome, ReplicationStatus, TopologyView,
-    member::{ApplyReport, MemberError, ReplicationMember, ReplicationWrite, observe_convergence, synchronize},
-    transport::{FrameSelector, ReplicationClockStamp, ReplicationFrame, ReplicationNetwork, StampedCommit},
+    AcknowledgementLevel, ConflictOutcome, ConflictRecord, MemberId, RegionId,
+    ReplicationClockStamp, ReplicationConfig, ReplicationOutcome, ReplicationStatus, TopologyView,
+    member::{
+        ApplyReport, MemberError, ReplicationMember, ReplicationWrite, observe_convergence,
+        synchronize,
+    },
+    transport::{FrameSelector, ReplicationFrame, ReplicationNetwork, StampedCommit},
 };
 use crate::storage::{PublishedCommit, PublishedWrite};
 use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, LocalDurability, OperationId,
     StorageSequence, TenantId, TenantScope,
 };
-
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -954,7 +961,8 @@ fn rejoin_rejects_a_location_whose_format_does_not_verify() {
 #[test]
 fn write_admission_is_per_range_and_stronger_levels_commit_locally_then_wait() {
     let topology = two_member_topology("m-src", "m-dst", "main");
-    let (dir, mut follower) = open_member("admission", "m-dst", &topology);
+    let (dir_src, mut source) = open_member("admission-source", "m-src", &topology);
+    let (dir_dst, mut follower) = open_member("admission", "m-dst", &topology);
     let tenant_scope = scope(&follower, "tenant-a");
 
     // D-1 admission: only the owner of a range's write path commits it.
@@ -973,7 +981,8 @@ fn write_admission_is_per_range_and_stronger_levels_commit_locally_then_wait() {
         ReplicationWrite::new(operation("op-2"), "main", AcknowledgementLevel::RegionQuorum)
             .expect("valid write request")
             .with_put(text_document("users", "doc-1", "v1"));
-    let receipt = follower.commit_write(&tenant_scope, stronger).expect("local commit completes");
+    let owner_scope = scope(&source, "tenant-a");
+    let receipt = source.commit_write(&owner_scope, stronger).expect("local commit completes");
     assert_eq!(receipt.durability(), LocalDurability::Synced);
 
     // Invalid range text is rejected before any engine work. Inner spaces
@@ -995,8 +1004,10 @@ fn write_admission_is_per_range_and_stronger_levels_commit_locally_then_wait() {
         "a member outside the view is never constructed"
     );
 
+    source.close();
     follower.close();
-    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&dir_src).ok();
+    std::fs::remove_dir_all(&dir_dst).ok();
 }
 
 // ---------------------------------------------------------------------------
@@ -1091,15 +1102,17 @@ fn acknowledgement_report_names_the_regions_and_members_that_contributed() {
     m_a1.commit_write(&scope_a1, put_request("main", "op-1", "doc-1", "v1"))
         .expect("local write commits");
     let before = network.now();
-    let mut peers =
-        [(&mut m_a2, scope(&m_a2, "tenant-a")), (&mut m_b1, scope(&m_b1, "tenant-a"))];
+    let deadline = network.now().plus_ticks(4);
+    let scope_a2 = scope(&m_a2, "tenant-a");
+    let scope_b1 = scope(&m_b1, "tenant-a");
+    let mut peers = [(&mut m_a2, scope_a2), (&mut m_b1, scope_b1)];
     let outcome = m_a1.wait_for_acknowledgement(
         &mut network,
         &scope_a1,
         &operation("op-1"),
         AcknowledgementLevel::MajorityRegions,
         &mut peers,
-        network.now().plus_ticks(4),
+        deadline,
     );
 
     let ReplicationOutcome::Acknowledged(report) = outcome else {
@@ -1111,9 +1124,9 @@ fn acknowledgement_report_names_the_regions_and_members_that_contributed() {
     let contributed = report.contributed();
     assert_eq!(contributed.len(), 2, "both Regions contributed");
     assert_eq!(contributed[0].0.as_str(), "r-alpha");
-    assert_eq!(contributed[0].1.iter().map(|id| id.as_str()).collect::<Vec<_>>(), ["m-a1", "m-a2"]);
+    assert_eq!(contributed[0].1.iter().map(MemberId::as_str).collect::<Vec<_>>(), ["m-a1", "m-a2"]);
     assert_eq!(contributed[1].0.as_str(), "r-beta");
-    assert_eq!(contributed[1].1.iter().map(|id| id.as_str()).collect::<Vec<_>>(), ["m-b1"]);
+    assert_eq!(contributed[1].1.iter().map(MemberId::as_str).collect::<Vec<_>>(), ["m-b1"]);
     assert!(
         report.observed_at().ticks() > before.ticks(),
         "the observation time is the deterministic lane instant at acknowledgement"
@@ -1146,14 +1159,16 @@ fn acknowledgement_timeout_is_distinct_from_local_commit_failure() {
         .expect("the local commit completes on its own");
     assert_eq!(receipt.durability(), LocalDurability::Synced);
 
-    let mut peers = [(&mut m_b1, scope(&m_b1, "tenant-a"))];
+    let deadline = network.now().plus_ticks(2);
+    let scope_b1 = scope(&m_b1, "tenant-a");
+    let mut peers = [(&mut m_b1, scope_b1)];
     let outcome = m_a1.wait_for_acknowledgement(
         &mut network,
         &scope_a1,
         &operation("op-1"),
         AcknowledgementLevel::AllRegions,
         &mut peers,
-        network.now().plus_ticks(2),
+        deadline,
     );
 
     let ReplicationOutcome::Timeout { operation_id, requested, observed } = outcome else {
@@ -1171,7 +1186,7 @@ fn acknowledgement_timeout_is_distinct_from_local_commit_failure() {
     );
     assert_eq!(observed.contributed()[0].0.as_str(), "r-alpha");
     assert_eq!(
-        observed.contributed()[0].1.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        observed.contributed()[0].1.iter().map(MemberId::as_str).collect::<Vec<_>>(),
         ["m-a1"]
     );
     assert_eq!(
@@ -1218,14 +1233,17 @@ fn one_region_multiple_members_reach_region_quorum_under_member_delay() {
     let scope_a1 = scope(&m_a1, "tenant-a");
     m_a1.commit_write(&scope_a1, put_request("main", "op-1", "doc-1", "v1"))
         .expect("local write commits");
-    let mut peers = [(&mut m_a2, scope(&m_a2, "tenant-a")), (&mut m_a3, scope(&m_a3, "tenant-a"))];
+    let deadline = network.now().plus_ticks(3);
+    let scope_a2 = scope(&m_a2, "tenant-a");
+    let scope_a3 = scope(&m_a3, "tenant-a");
+    let mut peers = [(&mut m_a2, scope_a2), (&mut m_a3, scope_a3)];
     let outcome = m_a1.wait_for_acknowledgement(
         &mut network,
         &scope_a1,
         &operation("op-1"),
         AcknowledgementLevel::RegionQuorum,
         &mut peers,
-        network.now().plus_ticks(3),
+        deadline,
     );
 
     let ReplicationOutcome::Acknowledged(report) = outcome else {
@@ -1237,7 +1255,7 @@ fn one_region_multiple_members_reach_region_quorum_under_member_delay() {
     assert_eq!(contributed.len(), 1);
     assert_eq!(contributed[0].0.as_str(), "r-alpha");
     assert_eq!(
-        contributed[0].1.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        contributed[0].1.iter().map(MemberId::as_str).collect::<Vec<_>>(),
         ["m-a1", "m-a2"],
         "the report names exactly the Members that contributed, delayed m-a3 excluded"
     );
@@ -1248,14 +1266,17 @@ fn one_region_multiple_members_reach_region_quorum_under_member_delay() {
     // records the normalization so reports stay comparable.
     m_a1.commit_write(&scope_a1, put_request("main", "op-2", "doc-2", "v2"))
         .expect("local write commits");
-    let mut peers = [(&mut m_a2, scope(&m_a2, "tenant-a")), (&mut m_a3, scope(&m_a3, "tenant-a"))];
+    let deadline = network.now().plus_ticks(2);
+    let scope_a2 = scope(&m_a2, "tenant-a");
+    let scope_a3 = scope(&m_a3, "tenant-a");
+    let mut peers = [(&mut m_a2, scope_a2), (&mut m_a3, scope_a3)];
     let degenerate = m_a1.wait_for_acknowledgement(
         &mut network,
         &scope_a1,
         &operation("op-2"),
         AcknowledgementLevel::AllRegions,
         &mut peers,
-        network.now().plus_ticks(2),
+        deadline,
     );
     let ReplicationOutcome::Acknowledged(normalized) = degenerate else {
         panic!("the degenerate level is satisfiable: {degenerate:?}")
@@ -1294,14 +1315,16 @@ fn two_regions_healthy_links_achieve_cross_region_acknowledgement_and_read_visib
         "the write is invisible at r-beta before its Member published it"
     );
 
-    let mut peers = [(&mut m_b1, scope(&m_b1, "tenant-a"))];
+    let deadline = network.now().plus_ticks(3);
+    let scope_b1 = scope(&m_b1, "tenant-a");
+    let mut peers = [(&mut m_b1, scope_b1)];
     let outcome = m_a1.wait_for_acknowledgement(
         &mut network,
         &scope_a1,
         &operation("op-1"),
         AcknowledgementLevel::MajorityRegions,
         &mut peers,
-        network.now().plus_ticks(3),
+        deadline,
     );
 
     let ReplicationOutcome::Acknowledged(report) = outcome else {
@@ -1342,15 +1365,17 @@ fn member_loss_before_acknowledgement_returns_a_typed_error_not_silent_success()
     // The r-beta Member is lost before the acknowledgement: its engine is
     // closed, so AllRegions cannot be met and the wait says so with the
     // typed MemberUnavailable category — never a silent success.
+    let scope_b1 = scope(&m_b1, "tenant-a");
     m_b1.close();
-    let mut peers = [(&mut m_b1, scope(&m_b1, "tenant-a"))];
+    let deadline = network.now().plus_ticks(3);
+    let mut peers = [(&mut m_b1, scope_b1)];
     let outcome = m_a1.wait_for_acknowledgement(
         &mut network,
         &scope_a1,
         &operation("op-1"),
         AcknowledgementLevel::AllRegions,
         &mut peers,
-        network.now().plus_ticks(3),
+        deadline,
     );
     assert_eq!(
         outcome,
@@ -1362,14 +1387,16 @@ fn member_loss_before_acknowledgement_returns_a_typed_error_not_silent_success()
     // rebuilt against the new engine identity, and the same operation now
     // reaches the requested level.
     m_b1.restart().expect("the lost member reopens");
-    let mut peers = [(&mut m_b1, scope(&m_b1, "tenant-a"))];
+    let deadline = network.now().plus_ticks(3);
+    let scope_b1 = scope(&m_b1, "tenant-a");
+    let mut peers = [(&mut m_b1, scope_b1)];
     let recovered = m_a1.wait_for_acknowledgement(
         &mut network,
         &scope_a1,
         &operation("op-1"),
         AcknowledgementLevel::AllRegions,
         &mut peers,
-        network.now().plus_ticks(3),
+        deadline,
     );
     assert!(
         matches!(recovered, ReplicationOutcome::Acknowledged(_)),
@@ -1398,29 +1425,35 @@ fn region_loss_after_acknowledged_write_states_durable_visibility_and_recovery_l
     let scope_a1 = scope(&m_a1, "tenant-a");
     m_a1.commit_write(&scope_a1, put_request("main", "op-1", "doc-1", "v1"))
         .expect("local write commits");
-    let mut peers =
-        [(&mut m_b1, scope(&m_b1, "tenant-a")), (&mut m_g1, scope(&m_g1, "tenant-a"))];
+    let deadline = network.now().plus_ticks(3);
+    let scope_b1 = scope(&m_b1, "tenant-a");
+    let scope_g1 = scope(&m_g1, "tenant-a");
+    let mut peers = [(&mut m_b1, scope_b1), (&mut m_g1, scope_g1)];
     let outcome = m_a1.wait_for_acknowledgement(
         &mut network,
         &scope_a1,
         &operation("op-1"),
         AcknowledgementLevel::MajorityRegions,
         &mut peers,
-        network.now().plus_ticks(3),
+        deadline,
     );
     let ReplicationOutcome::Acknowledged(report) = outcome else {
         panic!("a Region majority acknowledges without the partitioned Region: {outcome:?}")
     };
     assert_eq!(report.observed(), AcknowledgementLevel::MajorityRegions);
 
-    // The entire Region is then lost: its member is closed.
+    // The entire Region is then lost: its member is closed. The closed
+    // member keeps its scope from before the loss, and its engine being
+    // absent is what makes it not durably hold anything observable.
+    let scope_b1_observed = scope(&m_b1, "tenant-a");
+    let scope_g1_observed = scope(&m_g1, "tenant-a");
     m_g1.close();
     let observation = m_a1.observe_region_loss(
         network.now(),
         &scope_a1,
         &operation("op-1"),
         &report,
-        &[(&m_b1, &scope(&m_b1, "tenant-a")), (&m_g1, &scope(&m_g1, "tenant-a"))],
+        &[(&m_b1, &scope_b1_observed), (&m_g1, &scope_g1_observed)],
         &[crate::replication::RegionId::try_new("r-gamma").expect("valid region")],
     );
 
@@ -1432,13 +1465,13 @@ fn region_loss_after_acknowledged_write_states_durable_visibility_and_recovery_l
         ["r-alpha", "r-beta"],
         "the observation states durable visibility: {held:?}"
     );
-    assert_eq!(held[0].1.iter().map(|id| id.as_str()).collect::<Vec<_>>(), ["m-a1"]);
-    assert_eq!(held[1].1.iter().map(|id| id.as_str()).collect::<Vec<_>>(), ["m-b1"]);
+    assert_eq!(held[0].1.iter().map(MemberId::as_str).collect::<Vec<_>>(), ["m-a1"]);
+    assert_eq!(held[1].1.iter().map(MemberId::as_str).collect::<Vec<_>>(), ["m-b1"]);
     assert_eq!(observation.operation().as_str(), "op-1");
     assert_eq!(observation.acknowledged(), AcknowledgementLevel::MajorityRegions);
     // The recovery limit: what is NOT yet known is stated, not guessed.
     assert_eq!(
-        observation.unknown_in().iter().map(|region| region.as_str()).collect::<Vec<_>>(),
+        observation.unknown_in().iter().map(RegionId::as_str).collect::<Vec<_>>(),
         ["r-gamma"]
     );
     assert_eq!(
@@ -1517,15 +1550,10 @@ fn convergence_report_names_members_operation_identity_and_observation_time() {
     let mut network = ReplicationNetwork::new();
 
     member_put(&mut m_a1, "tenant-a", "main", "op-1", "doc-1", "v1");
-    let report = synchronize(
-        &mut network,
-        &mut m_a1,
-        &scope(&m_a1, "tenant-a"),
-        &mut m_b1,
-        &scope(&m_b1, "tenant-a"),
-        4,
-    )
-    .expect("the write replicates");
+    let scope_m_a1 = scope(&m_a1, "tenant-a");
+    let scope_m_b1 = scope(&m_b1, "tenant-a");
+    let report = synchronize(&mut network, &mut m_a1, &scope_m_a1, &mut m_b1, &scope_m_b1, 4)
+        .expect("the write replicates");
     assert!(report.caught_up());
 
     // Convergence is its own observation, produced by its own seam at an
@@ -1581,16 +1609,14 @@ fn isolated_writers_scenario() -> (String, String, Vec<ConflictOutcome>) {
     let mut network = ReplicationNetwork::new();
 
     let scope_a = scope(&m_a1, "tenant-a");
-    m_a1
-        .commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "value-a"))
+    m_a1.commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "value-a"))
         .expect("the isolated writer commits locally");
     // The lane clock advances and the second writer observes the instant, so
     // its write is deterministically the later one.
     network.pump();
     m_b1.observe_instant(network.now());
     let scope_b = scope(&m_b1, "tenant-a");
-    m_b1
-        .commit_write(&scope_b, put_request("main", "op-b", "doc-shared", "value-b"))
+    m_b1.commit_write(&scope_b, put_request("main", "op-b", "doc-shared", "value-b"))
         .expect("the isolated writer commits locally");
 
     // Healing: both sides apply the same converged view.
@@ -1600,48 +1626,45 @@ fn isolated_writers_scenario() -> (String, String, Vec<ConflictOutcome>) {
 
     // Catch-up runs in both directions so both writers see each other's
     // journal and the conflict policy decides on both sides.
-    let report_into_b = synchronize(
-        &mut network,
-        &mut m_a1,
-        &scope(&m_a1, "tenant-a"),
-        &mut m_b1,
-        &scope(&m_b1, "tenant-a"),
-        4,
-    )
-    .expect("repair into the promoted owner");
+    let scope_m_a1 = scope(&m_a1, "tenant-a");
+    let scope_m_b1 = scope(&m_b1, "tenant-a");
+    let report_into_b =
+        synchronize(&mut network, &mut m_a1, &scope_m_a1, &mut m_b1, &scope_m_b1, 4)
+            .expect("repair into the promoted owner");
     assert!(report_into_b.caught_up());
-    let report_into_a = synchronize(
-        &mut network,
-        &mut m_b1,
-        &scope(&m_b1, "tenant-a"),
-        &mut m_a1,
-        &scope(&m_a1, "tenant-a"),
-        4,
-    )
-    .expect("repair into the deposed side");
+    let scope_m_b1 = scope(&m_b1, "tenant-a");
+    let scope_m_a1 = scope(&m_a1, "tenant-a");
+    let report_into_a =
+        synchronize(&mut network, &mut m_b1, &scope_m_b1, &mut m_a1, &scope_m_a1, 4)
+            .expect("repair into the deposed side");
     assert!(report_into_a.caught_up());
 
     let value_at = |member: &ReplicationMember| {
         documents_of(member, "tenant-a")
             .into_iter()
             .find(|document| document.id().as_str() == "doc-shared")
-            .map_or_else(|| "absent".to_owned(), |document| match document.value() {
-                DocumentValue::String(text) => text.clone(),
-                _ => "non-text".to_owned(),
-            })
+            .map_or_else(
+                || "absent".to_owned(),
+                |document| match document.value() {
+                    DocumentValue::String(text) => text.clone(),
+                    _ => "non-text".to_owned(),
+                },
+            )
     };
     let outcomes = m_a1
         .conflicts()
         .iter()
         .chain(m_b1.conflicts().iter())
-        .map(|record| record.outcome())
+        .map(ConflictRecord::outcome)
         .collect::<Vec<_>>();
+    let value_at_a = value_at(&m_a1);
+    let value_at_b = value_at(&m_b1);
 
     m_a1.close();
     m_b1.close();
     std::fs::remove_dir_all(&dir_a1).ok();
     std::fs::remove_dir_all(&dir_b1).ok();
-    (value_at(&m_a1), value_at(&m_b1), outcomes)
+    (value_at_a, value_at_b, outcomes)
 }
 
 #[test]
@@ -1673,28 +1696,22 @@ fn conflicted_writes_produce_the_recorded_policy_outcome_and_a_content_free_conf
     let mut network = ReplicationNetwork::new();
 
     let scope_a = scope(&m_a1, "tenant-a");
-    m_a1
-        .commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "value-a"))
+    m_a1.commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "value-a"))
         .expect("writer one commits");
     network.pump();
     m_b1.observe_instant(network.now());
     let scope_b = scope(&m_b1, "tenant-a");
-    m_b1
-        .commit_write(&scope_b, put_request("main", "op-b", "doc-shared", "value-b"))
+    m_b1.commit_write(&scope_b, put_request("main", "op-b", "doc-shared", "value-b"))
         .expect("writer two commits");
 
     let healed = healed_view("main");
     m_a1.apply_view(healed.clone()).expect("healed view applies");
     m_b1.apply_view(healed).expect("healed view applies");
-    let report_into_b = synchronize(
-        &mut network,
-        &mut m_a1,
-        &scope(&m_a1, "tenant-a"),
-        &mut m_b1,
-        &scope(&m_b1, "tenant-a"),
-        4,
-    )
-    .expect("repair into the promoted owner");
+    let scope_m_a1 = scope(&m_a1, "tenant-a");
+    let scope_m_b1 = scope(&m_b1, "tenant-a");
+    let report_into_b =
+        synchronize(&mut network, &mut m_a1, &scope_m_a1, &mut m_b1, &scope_m_b1, 4)
+            .expect("repair into the promoted owner");
     assert!(report_into_b.caught_up());
     assert!(
         report_into_b.conflicts_recorded() >= 1,
@@ -1715,14 +1732,14 @@ fn conflicted_writes_produce_the_recorded_policy_outcome_and_a_content_free_conf
     let mut operations = record.operations().to_vec();
     operations.sort();
     assert_eq!(
-        operations.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        operations.iter().map(OperationId::as_str).collect::<Vec<_>>(),
         ["op-a", "op-b"],
         "the record names both conflicting operation identities"
     );
     let mut members = record.members().to_vec();
     members.sort();
     assert_eq!(
-        members.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        members.iter().map(MemberId::as_str).collect::<Vec<_>>(),
         ["m-a1", "m-b1"],
         "the record names both writer identities"
     );
@@ -1759,15 +1776,10 @@ fn leader_loss_stops_new_commits_until_a_new_leader_is_confirmed() {
     let mut network = ReplicationNetwork::new();
 
     member_put(&mut m_a1, "tenant-a", "main", "op-1", "doc-1", "v1");
-    let report = synchronize(
-        &mut network,
-        &mut m_a1,
-        &scope(&m_a1, "tenant-a"),
-        &mut m_b1,
-        &scope(&m_b1, "tenant-a"),
-        4,
-    )
-    .expect("the follower holds the range state");
+    let scope_m_a1 = scope(&m_a1, "tenant-a");
+    let scope_m_b1 = scope(&m_b1, "tenant-a");
+    let report = synchronize(&mut network, &mut m_a1, &scope_m_a1, &mut m_b1, &scope_m_b1, 4)
+        .expect("the follower holds the range state");
     assert!(report.caught_up());
 
     // The leader is lost: its member closes. No surviving Member owns the
@@ -1775,8 +1787,7 @@ fn leader_loss_stops_new_commits_until_a_new_leader_is_confirmed() {
     // admission with the typed error — there is no silent failover.
     m_a1.close();
     let scope_b = scope(&m_b1, "tenant-a");
-    let stopped =
-        m_b1.commit_write(&scope_b, put_request("main", "op-2", "doc-2", "v2"));
+    let stopped = m_b1.commit_write(&scope_b, put_request("main", "op-2", "doc-2", "v2"));
     assert!(
         matches!(stopped, Err(MemberError::NotOwner { ref range }) if range == "main"),
         "new commits stop while the leader is lost: {stopped:?}"
@@ -1788,7 +1799,7 @@ fn leader_loss_stops_new_commits_until_a_new_leader_is_confirmed() {
     m_b1.apply_view(healed_view("main")).expect("the promoted leader is confirmed");
     let resumed = m_b1.commit_write(&scope_b, put_request("main", "op-2", "doc-2", "v2"));
     assert!(
-        matches!(resumed, Ok(receipt) if receipt.durability() == LocalDurability::Synced),
+        matches!(resumed, Ok(ref receipt) if receipt.durability() == LocalDurability::Synced),
         "commits resume once the new leader is confirmed: {resumed:?}"
     );
     assert!(documents_of(&m_b1, "tenant-a").iter().any(|d| d.id().as_str() == "doc-2"));
@@ -1800,6 +1811,7 @@ fn leader_loss_stops_new_commits_until_a_new_leader_is_confirmed() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines, reason = "one fencing scenario proving all four D-1 clauses")]
 fn old_owner_is_fenced_after_leader_transition() {
     let topology = two_regions_one_member_each("main");
     let (dir_a1, mut m_a1) = open_member("fence-a1", "m-a1", &topology);
@@ -1811,8 +1823,7 @@ fn old_owner_is_fenced_after_leader_transition() {
     // The deposed leader writes before learning of the transition, and the
     // new leader writes its own concurrent value after being promoted.
     let scope_a = scope(&m_a1, "tenant-a");
-    m_a1
-        .commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "value-a"))
+    m_a1.commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "value-a"))
         .expect("the old owner's write keeps its local receipt");
     let transitioned = healed_view("main");
     m_a1.apply_view(transitioned.clone()).expect("the old owner learns of the transition");
@@ -1820,8 +1831,7 @@ fn old_owner_is_fenced_after_leader_transition() {
     network.pump();
     m_b1.observe_instant(network.now());
     let scope_b = scope(&m_b1, "tenant-a");
-    m_b1
-        .commit_write(&scope_b, put_request("main", "op-b", "doc-shared", "value-b"))
+    m_b1.commit_write(&scope_b, put_request("main", "op-b", "doc-shared", "value-b"))
         .expect("the new owner commits");
 
     // Admission fencing: the deposed owner's new writes fail locally, with
@@ -1889,34 +1899,29 @@ fn old_owner_is_fenced_after_leader_transition() {
             if receipt.durability() == LocalDurability::Synced),
         "the deposed owner keeps its local receipt: {resolution:?}"
     );
-    let into_b = synchronize(
-        &mut network,
-        &mut m_a1,
-        &scope(&m_a1, "tenant-a"),
-        &mut m_b1,
-        &scope(&m_b1, "tenant-a"),
-        4,
-    )
-    .expect("repair into the new owner");
+    let scope_m_a1 = scope(&m_a1, "tenant-a");
+    let scope_m_b1 = scope(&m_b1, "tenant-a");
+    let into_b = synchronize(&mut network, &mut m_a1, &scope_m_a1, &mut m_b1, &scope_m_b1, 4)
+        .expect("repair into the new owner");
     assert!(into_b.caught_up());
-    let into_a = synchronize(
-        &mut network,
-        &mut m_b1,
-        &scope(&m_b1, "tenant-a"),
-        &mut m_a1,
-        &scope(&m_a1, "tenant-a"),
-        4,
-    )
-    .expect("repair into the deposed owner");
+    let scope_m_b1 = scope(&m_b1, "tenant-a");
+    let scope_m_a1 = scope(&m_a1, "tenant-a");
+    let into_a = synchronize(&mut network, &mut m_b1, &scope_m_b1, &mut m_a1, &scope_m_a1, 4)
+        .expect("repair into the deposed owner");
     assert!(into_a.caught_up());
-    assert_eq!(
-        documents_of(&m_a1, "tenant-a"), documents_of(&m_b1, "tenant-a"),
-        "the deposed owner's write converges under the conflict policy after healing"
-    );
+    // The converged value, not the per-member document version, is what
+    // convergence means here: replay assigns each member its own version
+    // counter, so identity and value are compared.
     let shared_at_a = documents_of(&m_a1, "tenant-a")
         .into_iter()
         .find(|document| document.id().as_str() == "doc-shared")
-        .expect("the converged document exists");
+        .expect("the converged document exists at the deposed owner");
+    let shared_at_b = documents_of(&m_b1, "tenant-a")
+        .into_iter()
+        .find(|document| document.id().as_str() == "doc-shared")
+        .expect("the converged document exists at the new owner");
+    assert_eq!(shared_at_a.id(), shared_at_b.id());
+    assert_eq!(shared_at_a.value(), shared_at_b.value());
     assert_eq!(shared_at_a.value(), &DocumentValue::String("value-b".to_owned()));
 
     m_a1.close();
@@ -1927,17 +1932,29 @@ fn old_owner_is_fenced_after_leader_transition() {
 
 #[test]
 fn a_peer_stamp_beyond_the_skew_bound_converges_as_a_conflict() {
-    let topology = two_regions_one_member_each("main");
+    // The observing member owns the range, so it holds its own write to the
+    // key that the untrusted stamp competes with.
+    let topology = TopologyView::new()
+        .with_region("r-alpha")
+        .expect("valid region")
+        .with_region("r-beta")
+        .expect("valid region")
+        .with_member("m-a1", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_member("m-b1", "r-beta", "fd-beta")
+        .expect("valid member")
+        .with_owner("main", "m-b1")
+        .expect("valid owner")
+        .validated()
+        .expect("valid topology");
     let (dir_a1, mut m_a1) = open_member("skew-a1", "m-a1", &topology);
     let (dir_b1, mut m_b1) = open_member("skew-b1", "m-b1", &topology);
     let a1 = member_id("m-a1");
     let b1 = member_id("m-b1");
     let mut network = ReplicationNetwork::new();
 
-    // The new owner holds its own write to the key.
     let scope_b = scope(&m_b1, "tenant-a");
-    m_b1
-        .commit_write(&scope_b, put_request("main", "op-b", "doc-1", "value-b"))
+    m_b1.commit_write(&scope_b, put_request("main", "op-b", "doc-1", "value-b"))
         .expect("the local write commits");
 
     // A peer claims a stamp far beyond the lane clock plus the skew bound:

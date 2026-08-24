@@ -19,7 +19,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use super::MemberId;
+use super::{MemberId, ReplicationClockStamp, ReplicationInstant};
 use crate::storage::PublishedCommit;
 use crate::types::{StorageSequence, TenantId};
 
@@ -34,12 +34,44 @@ use crate::types::{StorageSequence, TenantId};
 )]
 pub(crate) const MAX_LINK_FRAMES: usize = 64;
 
+/// One committed operation paired with its writer's hybrid logical clock
+/// stamp.
+///
+/// The stamp is the D-3 ordering fact of the write: a follower compares it
+/// against its own key state to decide last-writer-wins. History the server
+/// no longer has a stamp for (for example after a restart) is served at the
+/// server's current clock, which the implementation record states as a
+/// limit.
+#[derive(Clone, Debug)]
+pub(crate) struct StampedCommit {
+    /// The writer's clock stamp of the commit.
+    pub(crate) stamp: ReplicationClockStamp,
+    /// The reconstructable published commit.
+    pub(crate) commit: PublishedCommit,
+}
+
+impl StampedCommit {
+    /// Pairs one commit with an explicit stamp.
+    pub(crate) fn new(stamp: ReplicationClockStamp, commit: PublishedCommit) -> Self {
+        Self { stamp, commit }
+    }
+
+    /// Pairs one commit with the zero stamp, the lane's origin clock.
+    ///
+    /// Fixtures use this for deliveries whose ordering fact is not under
+    /// test.
+    #[allow(dead_code, reason = "used by the W4-REPLICATION lane fixtures")]
+    pub(crate) fn at_origin_clock(commit: PublishedCommit) -> Self {
+        Self { stamp: ReplicationClockStamp::new(0, 0), commit }
+    }
+}
+
 /// One replication frame crossing a controlled link.
 ///
-/// A frame carries only what the catch-up protocol needs: identities, the
-/// tenant, sequence bounds, and the reconstructable committed write sets the
-/// publication journal serves. It is crate-private by design and never
-/// crosses the public seam.
+/// A frame carries only what the catch-up and push protocols need:
+/// identities, the tenant, sequence bounds, ownership epochs, clock stamps,
+/// and the reconstructable committed write sets the publication journal
+/// serves. It is crate-private by design and never crosses the public seam.
 #[derive(Clone, Debug)]
 #[allow(
     dead_code,
@@ -64,8 +96,9 @@ pub(crate) enum ReplicationFrame {
         source: MemberId,
         /// The tenant the batch belongs to.
         tenant: TenantId,
-        /// The served commits in global storage-sequence order.
-        commits: Vec<PublishedCommit>,
+        /// The served commits with their writer clock stamps, in global
+        /// storage-sequence order.
+        commits: Vec<StampedCommit>,
         /// The highest source sequence this batch serves.
         through: Option<StorageSequence>,
         /// The source's latest recorded sequence for this tenant.
@@ -75,6 +108,24 @@ pub(crate) enum ReplicationFrame {
         /// The requester's cursor position the source cannot serve below;
         /// `None` when the served range is complete.
         gap_below: Option<StorageSequence>,
+    },
+    /// One member pushes its just-committed operations to a peer.
+    ///
+    /// The push is the leader fan-out of the D-1 data plane: it carries the
+    /// ownership epoch of the pushed range, so a follower that has seen a
+    /// higher epoch fences the batch (a deposed leader's raced write is
+    /// retained as conflict history, never silently dropped).
+    Push {
+        /// The member pushing the operations.
+        source: MemberId,
+        /// The data range the pushed operations were admitted under.
+        range: String,
+        /// The ownership epoch of that range at the pushing member's view.
+        epoch: u64,
+        /// The tenant the pushed commits belong to.
+        tenant: TenantId,
+        /// The pushed commits with their writer clock stamps.
+        commits: Vec<StampedCommit>,
     },
 }
 
@@ -87,7 +138,8 @@ pub(crate) enum ReplicationFrame {
 pub(crate) enum FrameSelector {
     /// Drain catch-up requests, leaving deliveries in place.
     Requests,
-    /// Drain catch-up deliveries, leaving requests in place.
+    /// Drain catch-up deliveries and pushed commits, leaving requests in
+    /// place.
     Deliveries,
 }
 
@@ -101,7 +153,10 @@ impl FrameSelector {
         matches!(
             (self, frame),
             (Self::Requests, ReplicationFrame::CatchUpRequest { .. })
-                | (Self::Deliveries, ReplicationFrame::CatchUpBatch { .. })
+                | (
+                    Self::Deliveries,
+                    ReplicationFrame::CatchUpBatch { .. } | ReplicationFrame::Push { .. }
+                )
         )
     }
 }
@@ -117,8 +172,8 @@ impl FrameSelector {
     reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
 )]
 struct LinkFaults {
-    /// Hold every sent frame back until an explicit pump releases it.
-    delay: bool,
+    /// Hold sent frames back for this many pumps; zero delivers immediately.
+    delay_pumps: u32,
     /// Deliver every frame twice.
     duplicate: bool,
     /// Release held frames newest-first.
@@ -137,8 +192,9 @@ struct LinkFaults {
 pub(crate) struct DirectedLink {
     to: MemberId,
     faults: LinkFaults,
-    /// The ordered hold-back queue of a delayed direction.
-    held: VecDeque<ReplicationFrame>,
+    /// The ordered hold-back queue of a delayed direction: each entry waits
+    /// for the lane tick named with it.
+    held: VecDeque<(u64, ReplicationFrame)>,
     /// The frames waiting to be received.
     inbound: VecDeque<ReplicationFrame>,
     dropped: u64,
@@ -153,9 +209,18 @@ pub(crate) struct DirectedLink {
 )]
 impl DirectedLink {
     /// Arms the delay control: frames sent on this direction are held back
-    /// in send order until a pump releases them.
+    /// until the next pump releases them.
     pub(crate) fn delay(&mut self) {
-        self.faults.delay = true;
+        self.faults.delay_pumps = 1;
+    }
+
+    /// Arms the delay control for several pumps: frames sent on this
+    /// direction are held back until the `pumps`-th pump after their send.
+    ///
+    /// Delay is an instant-queue model of latency, so a longer hold models a
+    /// longer delay — never a timer, and never wall time.
+    pub(crate) fn delay_pumps(&mut self, pumps: u32) {
+        self.faults.delay_pumps = pumps;
     }
 
     /// Arms the duplicate control: every frame delivered on this direction
@@ -220,7 +285,7 @@ impl DirectedLink {
     }
 
     /// Accepts one frame onto the direction, applying the ingress faults.
-    fn accept(&mut self, frame: ReplicationFrame) -> Result<(), TransportError> {
+    fn accept(&mut self, frame: ReplicationFrame, now: u64) -> Result<(), TransportError> {
         if self.faults.partition {
             self.dropped += 1;
             return Ok(());
@@ -233,12 +298,12 @@ impl DirectedLink {
             }
             self.faults.drop_next = None;
         }
-        if self.faults.delay {
+        if self.faults.delay_pumps > 0 {
             if self.held.len() >= MAX_LINK_FRAMES {
                 self.overflowed += 1;
                 return Err(TransportError::LinkFull);
             }
-            self.held.push_back(frame);
+            self.held.push_back((now + u64::from(self.faults.delay_pumps), frame));
             return Ok(());
         }
         self.deliver(&frame);
@@ -259,17 +324,16 @@ impl DirectedLink {
         }
     }
 
-    /// Releases this direction's held frames according to its faults.
-    fn release(&mut self) {
+    /// Releases the held frames whose release tick has arrived.
+    fn release(&mut self, now: u64) {
         if self.held.is_empty() {
             return;
         }
-        let held = std::mem::take(&mut self.held);
-        let order: Vec<ReplicationFrame> = if self.faults.reorder {
-            held.into_iter().rev().collect()
-        } else {
-            held.into_iter().collect()
-        };
+        let due: Vec<ReplicationFrame> =
+            self.held.iter().filter(|(at, _)| *at <= now).map(|(_, f)| f.clone()).collect();
+        self.held.retain(|(at, _)| *at > now);
+        let order: Vec<ReplicationFrame> =
+            if self.faults.reorder { due.into_iter().rev().collect() } else { due };
         let before = self.delivered;
         for frame in order {
             self.deliver(&frame);
@@ -281,6 +345,11 @@ impl DirectedLink {
 }
 
 /// A bounded set of controlled in-process links between members.
+///
+/// The network is also the lane clock: it advances exactly one tick per
+/// [`ReplicationNetwork::pump`], and every deadline, timeout bound, and
+/// observation instant is a value of that clock. There is no wall time
+/// anywhere in the seam.
 #[allow(
     dead_code,
     reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
@@ -288,6 +357,7 @@ impl DirectedLink {
 #[derive(Default)]
 pub(crate) struct ReplicationNetwork {
     links: BTreeMap<(MemberId, MemberId), DirectedLink>,
+    clock: u64,
 }
 
 #[allow(
@@ -328,18 +398,27 @@ impl ReplicationNetwork {
         to: &MemberId,
         frame: ReplicationFrame,
     ) -> Result<(), TransportError> {
-        self.link(from, to).accept(frame)
+        let now = self.clock;
+        self.link(from, to).accept(frame, now)
     }
 
-    /// Advances every link's hold-back by one explicit step.
+    /// Advances the lane clock by one tick and releases every hold-back that
+    /// came due.
     ///
     /// Time moves only here: held frames are released in send order
     /// (newest-first under the reorder control) and duplicated under the
     /// duplicate control.
     pub(crate) fn pump(&mut self) {
+        self.clock = self.clock.saturating_add(1);
+        let now = self.clock;
         for link in self.links.values_mut() {
-            link.release();
+            link.release(now);
         }
+    }
+
+    /// Returns the current instant of the lane clock.
+    pub(crate) fn now(&self) -> ReplicationInstant {
+        ReplicationInstant::at_ticks(self.clock)
     }
 
     /// Drains the frames addressed to `member` that match `selector`,

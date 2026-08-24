@@ -86,7 +86,8 @@ impl TopologyView {
         Ok(self)
     }
 
-    /// Assigns one data range's write path to an owning Member.
+    /// Assigns one data range's write path to an owning Member at the first
+    /// ownership epoch.
     ///
     /// # Errors
     ///
@@ -95,8 +96,33 @@ impl TopologyView {
     /// owner: under D-1 exactly one Member owns each data range's write
     /// path, and re-assignment is a control-plane transition, not a builder
     /// step.
-    pub fn with_owner(mut self, range: &str, member: &str) -> Result<Self, ReplicationError> {
+    pub fn with_owner(self, range: &str, member: &str) -> Result<Self, ReplicationError> {
+        self.with_owner_at_epoch(range, member, 1)
+    }
+
+    /// Assigns one data range's write path to an owning Member at an
+    /// explicit ownership epoch.
+    ///
+    /// The epoch is the fencing fact of D-1: a leader transition is the
+    /// control plane raising a range's epoch, members refuse views that
+    /// lower an epoch they hold, and followers reject replication batches
+    /// stamped below the highest epoch they have seen for a range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReplicationError::InvalidTopology`] for invalid range text,
+    /// an epoch below one, a Member not seated by this view, or a range that
+    /// already has an owner in this view.
+    pub fn with_owner_at_epoch(
+        mut self,
+        range: &str,
+        member: &str,
+        epoch: u64,
+    ) -> Result<Self, ReplicationError> {
         validate_topology_identifier(range).map_err(|_| ReplicationError::InvalidTopology)?;
+        if epoch < 1 {
+            return Err(ReplicationError::InvalidTopology);
+        }
         let member = MemberId::try_new(member).map_err(|_| ReplicationError::InvalidTopology)?;
         if !self.members.iter().any(|seat| seat.member == member) {
             return Err(ReplicationError::InvalidTopology);
@@ -104,7 +130,7 @@ impl TopologyView {
         if self.owners.iter().any(|ownership| ownership.range == range) {
             return Err(ReplicationError::InvalidTopology);
         }
-        self.owners.push(RangeOwnership { range: range.to_owned(), owner: member });
+        self.owners.push(RangeOwnership { range: range.to_owned(), owner: member, epoch });
         Ok(self)
     }
 
@@ -192,6 +218,12 @@ impl TopologyView {
     #[must_use]
     pub fn owner_of(&self, range: &str) -> Option<&MemberId> {
         self.owners.iter().find(|ownership| ownership.range == range).map(|o| &o.owner)
+    }
+
+    /// Returns the ownership epoch one data range is owned at.
+    #[must_use]
+    pub fn owner_epoch_of(&self, range: &str) -> Option<u64> {
+        self.owners.iter().find(|ownership| ownership.range == range).map(|o| o.epoch)
     }
 
     /// Returns the data ranges this view assigns an owner to.

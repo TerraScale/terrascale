@@ -44,6 +44,73 @@ use std::marker::PhantomData;
 
 use crate::types::{OperationId, StorageSequence, TenantId};
 
+/// A deterministic instant of the replication lane's clock.
+///
+/// The lane clock advances exactly one tick per transport pump; nothing in
+/// the replication seam reads wall time. An instant is a point in that
+/// clock: deadlines, observation times, and timeout bounds are caller-
+/// injected values of this type, so every timing behavior in the seam is
+/// reproducible by driving the same pumps. It is a lane-scoped fact and
+/// carries no wall-clock or production timing claim.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ReplicationInstant {
+    ticks: u64,
+}
+
+impl ReplicationInstant {
+    /// Creates the instant at `ticks` lane ticks.
+    #[must_use]
+    pub const fn at_ticks(ticks: u64) -> Self {
+        Self { ticks }
+    }
+
+    /// Returns the lane tick of this instant.
+    #[must_use]
+    pub const fn ticks(self) -> u64 {
+        self.ticks
+    }
+
+    /// Returns the instant `ticks` pumps later than this one.
+    #[must_use]
+    pub const fn plus_ticks(self, ticks: u64) -> Self {
+        Self { ticks: self.ticks.saturating_add(ticks) }
+    }
+}
+
+/// One stamp of a Member's bounded hybrid logical clock.
+///
+/// The stamp pairs the physical component — lane ticks observed from the
+/// shared transport clock or an injected instant — with a logical counter
+/// that orders writes inside one tick. Stamps order by physical time first
+/// and the counter second, which is the ordering the D-3 last-writer-wins
+/// policy decides with; the tie past that is the deterministic Member
+/// identity order. Lane-scoped: no wall-clock claim.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ReplicationClockStamp {
+    ticks: u64,
+    counter: u64,
+}
+
+impl ReplicationClockStamp {
+    /// Creates one stamp from its physical ticks and logical counter.
+    #[must_use]
+    pub const fn new(ticks: u64, counter: u64) -> Self {
+        Self { ticks, counter }
+    }
+
+    /// Returns the physical component, in lane ticks.
+    #[must_use]
+    pub const fn ticks(self) -> u64 {
+        self.ticks
+    }
+
+    /// Returns the logical counter within the physical tick.
+    #[must_use]
+    pub const fn counter(self) -> u64 {
+        self.counter
+    }
+}
+
 /// A validated logical Region identifier (CONTEXT: Region).
 ///
 /// `Display` renders the canonical identifier. Validation follows the
@@ -95,6 +162,9 @@ struct MemberSeat {
 struct RangeOwnership {
     range: String,
     owner: MemberId,
+    /// The ownership epoch: monotonically raised by every control-plane
+    /// transition of this range, so a deposed owner can be fenced (D-1).
+    epoch: u64,
 }
 
 /// The strongest state a Region or Member has confirmed for a replicated
@@ -149,13 +219,73 @@ impl Default for AcknowledgementLevel {
 /// Any normalization of a degenerate level request is recorded here, so
 /// reports stay comparable across topologies.
 ///
-/// R-1 implements no report content: the acknowledgement lattice above
-/// `Local`, the contributing sets, and the observation facts belong to the
-/// R-2 phase of W4-REPLICATION.
+/// Contributing means the Member's own local publication of the operation
+/// reached [`LocalDurability::Synced`](crate::types::LocalDurability::Synced)
+/// — the only local level with a durable-recoverability claim (ADR-0004
+/// D-2). A Region appears with the Members of that Region that contributed,
+/// both in canonical order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcknowledgementReport {
-    #[allow(dead_code, reason = "reserved for R-2: acknowledgement observation content")]
-    report: PhantomData<()>,
+    /// The level the request named.
+    requested: AcknowledgementLevel,
+    /// The level actually observed and reported, in the topology's canonical
+    /// naming.
+    observed: AcknowledgementLevel,
+    /// The Regions and their contributing Members, in canonical order.
+    contributed: Vec<(RegionId, Vec<MemberId>)>,
+    /// The lane instant the observation was taken at.
+    observed_at: ReplicationInstant,
+    /// The degenerate normalization that produced `observed` from
+    /// `requested`, when the topology does not distinguish them (D-4).
+    normalization: Option<(AcknowledgementLevel, AcknowledgementLevel)>,
+}
+
+impl AcknowledgementReport {
+    /// Creates one report from its observed facts.
+    pub(crate) fn new(
+        requested: AcknowledgementLevel,
+        observed: AcknowledgementLevel,
+        contributed: Vec<(RegionId, Vec<MemberId>)>,
+        observed_at: ReplicationInstant,
+        normalization: Option<(AcknowledgementLevel, AcknowledgementLevel)>,
+    ) -> Self {
+        Self { requested, observed, contributed, observed_at, normalization }
+    }
+
+    /// Returns the acknowledgement level the request named.
+    #[must_use]
+    pub fn requested(&self) -> AcknowledgementLevel {
+        self.requested
+    }
+
+    /// Returns the acknowledgement level observed and reported.
+    #[must_use]
+    pub fn observed(&self) -> AcknowledgementLevel {
+        self.observed
+    }
+
+    /// Returns the Regions that contributed, each with its contributing
+    /// Members, in canonical order.
+    #[must_use]
+    pub fn contributed(&self) -> &[(RegionId, Vec<MemberId>)] {
+        &self.contributed
+    }
+
+    /// Returns the lane instant this observation was taken at.
+    #[must_use]
+    pub fn observed_at(&self) -> ReplicationInstant {
+        self.observed_at
+    }
+
+    /// Returns the degenerate normalization recorded in this report, as
+    /// `(requested, canonical)`, when the topology does not distinguish the
+    /// requested level from a weaker name (D-4: with one Region,
+    /// `RegionQuorum` = `MajorityRegions` = `AllRegions`; with two,
+    /// `MajorityRegions` = `AllRegions`).
+    #[must_use]
+    pub fn normalization(&self) -> Option<(AcknowledgementLevel, AcknowledgementLevel)> {
+        self.normalization
+    }
 }
 
 /// The contract-defined converged-state observation for one operation
@@ -163,15 +293,50 @@ pub struct AcknowledgementReport {
 ///
 /// Names which Members hold the operation, at which acknowledgement state,
 /// and when it was observed. `Convergence` is reported as its own observation
-/// and is never inferred from an acknowledgement.
-///
-/// R-1 implements no convergence content and adds no way to derive a
-/// `Convergence` value from any health observation; that belongs to the R-2
-/// phase of W4-REPLICATION.
+/// and is never inferred from an acknowledgement: it is produced by its own
+/// seam at a caller-injected lane instant. Each holding is the Member's own
+/// local publication fact of that operation, so a holding carries
+/// [`AcknowledgementLevel::Local`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Convergence {
-    #[allow(dead_code, reason = "reserved for R-2: convergence observation content")]
-    observation: PhantomData<()>,
+    /// The operation identity the observation is about.
+    operation: OperationId,
+    /// Every observed Member that durably holds the operation, in canonical
+    /// Member order, each at its own acknowledgement state.
+    holdings: Vec<(MemberId, AcknowledgementLevel)>,
+    /// The lane instant the observation was taken at.
+    observed_at: ReplicationInstant,
+}
+
+#[allow(dead_code, reason = "consumed by the R-2 observation seam and its lane tests")]
+impl Convergence {
+    /// Creates one convergence observation from its facts.
+    pub(crate) fn new(
+        operation: OperationId,
+        holdings: Vec<(MemberId, AcknowledgementLevel)>,
+        observed_at: ReplicationInstant,
+    ) -> Self {
+        Self { operation, holdings, observed_at }
+    }
+
+    /// Returns the operation identity this observation is about.
+    #[must_use]
+    pub fn operation(&self) -> &OperationId {
+        &self.operation
+    }
+
+    /// Returns every Member that durably holds the operation, in canonical
+    /// Member order, each with its own acknowledgement state.
+    #[must_use]
+    pub fn holdings(&self) -> &[(MemberId, AcknowledgementLevel)] {
+        &self.holdings
+    }
+
+    /// Returns the lane instant this observation was taken at.
+    #[must_use]
+    pub fn observed_at(&self) -> ReplicationInstant {
+        self.observed_at
+    }
 }
 
 /// The outcome of one replication request at an explicit acknowledgement
@@ -240,13 +405,73 @@ pub struct ReplicationReceipt {
 /// under ADR-0004 D-3, deterministic last-writer-wins on a bounded hybrid
 /// logical clock, with losers retained as observable history. No conflicting
 /// document payload crosses this type.
-///
-/// R-1 implements no conflict content: the D-3 conflict policy belongs to
-/// the R-2 phase of W4-REPLICATION.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConflictRecord {
-    #[allow(dead_code, reason = "reserved for R-2: conflict policy observations")]
-    record: PhantomData<()>,
+    /// The conflicting operation identities, in canonical order.
+    operations: Vec<OperationId>,
+    /// The writer identities of the conflicting operations, in canonical
+    /// order.
+    members: Vec<MemberId>,
+    /// The bounded hybrid logical clock stamps of the conflicting writes,
+    /// paired with `operations` order.
+    clocks: Vec<ReplicationClockStamp>,
+    /// The recorded policy outcome.
+    outcome: ConflictOutcome,
+}
+
+impl ConflictRecord {
+    /// Creates one conflict record from its content-free facts.
+    pub(crate) fn new(
+        operations: Vec<OperationId>,
+        members: Vec<MemberId>,
+        clocks: Vec<ReplicationClockStamp>,
+        outcome: ConflictOutcome,
+    ) -> Self {
+        Self { operations, members, clocks, outcome }
+    }
+
+    /// Returns the conflicting operation identities, in canonical order.
+    #[must_use]
+    pub fn operations(&self) -> &[OperationId] {
+        &self.operations
+    }
+
+    /// Returns the writer identities of the conflicting operations.
+    #[must_use]
+    pub fn members(&self) -> &[MemberId] {
+        &self.members
+    }
+
+    /// Returns the clock stamps of the conflicting writes.
+    #[must_use]
+    pub fn clocks(&self) -> &[ReplicationClockStamp] {
+        &self.clocks
+    }
+
+    /// Returns the recorded policy outcome of the conflict.
+    #[must_use]
+    pub fn outcome(&self) -> ConflictOutcome {
+        self.outcome.clone()
+    }
+}
+
+/// The recorded policy outcome of one conflict (ADR-0004 D-3, D-1).
+///
+/// Every variant names the Member the recorded pair converged to, so a
+/// conflict record always states the disposition, never just the detection.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ConflictOutcome {
+    /// Last-writer-wins on the bounded hybrid logical clock kept the write
+    /// of this Member; the other write is retained as history.
+    Winner(MemberId),
+    /// The write came from a deposed owner and is retained as observable
+    /// history under D-1; this Member names the deposed owner whose local
+    /// receipt stays real locally while the write converges under D-3.
+    DeposedOwnerRetained(MemberId),
+    /// The peer's clock exceeded the skew bound, so its timestamps were
+    /// treated as untrusted and the pair converged by the deterministic
+    /// Member-identity tie-break naming this Member.
+    UntrustedClock(MemberId),
 }
 
 /// Durable per-Member replication progress bound to storage sequence
