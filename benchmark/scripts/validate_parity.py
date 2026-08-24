@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import argparse
 import copy
+import importlib
 import json
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +38,15 @@ STATUS_TRANSITIONS = {
     "qualified": {"qualified"},
     "accepted-exclusion": {"accepted-exclusion"},
 }
+
+
+class _JsonSchemaValidator(Protocol):
+    def validate(self, instance: object) -> None:
+        """Validate an instance against the configured schema."""
+
+
+class _JsonSchemaModule(Protocol):
+    Draft202012Validator: Callable[[object], _JsonSchemaValidator]
 
 
 def fail(message: str) -> None:
@@ -309,7 +320,7 @@ def canonical_json(value: object) -> str:
 
 def optional_draft_validation(inventory: dict[str, Any], schema: object) -> str:
     try:
-        import jsonschema  # type: ignore[import-not-found]
+        jsonschema = cast(_JsonSchemaModule, importlib.import_module("jsonschema"))
     except ModuleNotFoundError:
         return "Draft 2020-12 direct validation: unrun (optional jsonschema package unavailable); supported schema rules checked"
     try:
