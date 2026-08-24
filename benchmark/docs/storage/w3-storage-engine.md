@@ -1,0 +1,187 @@
+# W3-1 storage record: WAL, publication order, and recovery
+
+Status: implementation record for the W3-1 Storage plus Engine packet,
+2026-08-24. Source identity: the W3-1 worktree branch
+`fleet/w3-storage-engine`, based on commit `2775b24` (W3-0 preparation
+`c21a85f` included). This record describes focused-test evidence only. It is
+not a Recovery Receipt, not a parity qualification, and not a performance
+claim.
+
+## Scope and ownership
+
+This packet owns `src/storage/**`, `src/engine/**`, `tests/storage/**`,
+`tests/engine/**`, and this documentation path. It changed nothing under
+`src/lib.rs`, `src/types.rs`, `src/operations.rs`, `src/adapters/**`,
+`src/families/**`, `src/query/**`, `src/index/**`, `Cargo.toml`,
+`Cargo.lock`, or `docs/design/**`.
+
+## Implementation design
+
+The storage module is one private adapter behind one crate-private port.
+
+| Piece | File | Responsibility |
+| --- | --- | --- |
+| `StoragePort` | `src/storage/mod.rs` | The only seam the Engine sees: commit, resolve, read at a snapshot, published state, flush. |
+| `CommitPublicationEvent` | `src/storage/mod.rs` | Immutable crate-private event emitted after storage locks release. |
+| codec | `src/storage/codec.rs` | Storage keys, value and document encoding, the FNV-1a checksum, the logical write-set digest, structural limits. |
+| intents | `src/storage/intent.rs` | `CommitIntent`, `StagedWrite`, receipts, rejections, unknown causes, durable resolutions. |
+| WAL | `src/storage/wal.rs` | Checksummed prepare/data/commit-marker frames, verified replay, corruption classification. |
+| operation ledger | `src/storage/ledger.rs` | Durable `ReadyToPublish`, `Published`, and `Rejected` records plus the in-memory resolution index. |
+| roots and manifest | `src/storage/root.rs` | Immutable `RootTable`s, root files, the manifest pointer, file and directory syncs. |
+| file adapter | `src/storage/file.rs` | `FileStorage`: open, recovery, the publication order, resolution. |
+| faults | `src/storage/faults.rs` | One-shot fault points inside the publication order, armable only from `cfg(test)` code in this crate. |
+
+File layout inside a configured location (names are private to the adapter):
+
+- `format` — storage-format identity: magic plus one version word. A location
+  whose `format` bytes are absent is initialized; bytes that do not verify
+  open as `EngineOpenError::FormatMismatch`.
+- `wal` — append-only checksummed frames.
+- `ledger` — append-only checksummed operation-ledger records.
+- `manifest.tmp` and `manifest` — the temporary and atomically published root
+  pointer.
+- `roots/<identity>.root` — immutable root files named by sequence and content
+  checksum.
+
+Every checksum is a private 64-bit FNV-1a. It detects corruption; it is not a
+cryptographic digest and never crosses a public seam.
+
+## Publication order proof
+
+`FileStorage::commit_intent` implements the ten mandated steps in order. The
+code path is linear, so the order is readable directly:
+
+1. Validate the write set, the operation identity against the durable ledger,
+   and every expected version against both the transaction's snapshot table
+   and the published table. Nothing is written, and the published root does
+   not move. `Validation` and `OperationIdReuse` are returned without any
+   durable record; only a conflict rejection is recorded durably.
+2. Encode the write set into private frames through the codec. Raw bytes exist
+   only from here into the private writers.
+3. Append the prepare record (tenant, operation, digest, sequence, write
+   count) and one data frame per staged write. `Buffered` keeps these frames
+   process-local only.
+4. Apply the write set to a new private root, compute the root identity, and
+   append the commit marker naming the root. The published root stays readable
+   throughout.
+5. Apply the requested durability action. `Synced` syncs the WAL, then writes
+   and syncs the root file and the temporary manifest. `Written` writes both
+   without syncing. `Buffered` performs no file writes.
+6. Append and durably sync the `ReadyToPublish` ledger record. This sync
+   happens for every durability level: it persists resolution metadata, not
+   data bytes.
+7. Publish the root pointer. `Written` and `Synced` rename the temporary
+   manifest; `Buffered` swaps the in-memory published root only, which is the
+   whole difference its loss window declares.
+8. For `Synced`, sync the published pointer file and then the containing
+   directory. A failure of either returns `Unknown` with the matching reason
+   and never claims `Synced`.
+9. Append and durably sync the `Published` ledger record, recording whether
+   the post-publication syncs were confirmed. A failure here returns
+   `Unknown(PublishedLedgerSync)`.
+10. Return the receipt. Storage locks release when the commit call returns,
+    and only then does the Engine emit the immutable `CommitPublicationEvent`.
+
+The test `ready_to_publish_ledger_record_is_durable_before_pointer_replacement`
+proves the step 6 to step 7 ordering behaviorally in both directions: with the
+ledger sync fault armed, the pointer is never replaced; with the pointer
+publication fault armed, the durable record still answers resolution by
+identity after a reopen.
+
+## Recovery
+
+Open verifies the format identity, scans the ledger, and scans the WAL:
+
+- A prepare group without a structurally complete, checksum-valid commit
+  marker is discarded. It never publishes anything
+  (`recovery_discards_prepare_frames_without_a_valid_commit_marker`).
+- Any truncated frame or checksum mismatch anywhere in the WAL fails the open
+  with `FormatMismatch` (`recovery_rejects_bad_checksum_and_truncated_frame`).
+  This is deliberately fail-closed: the design mandates rejection, so a torn
+  WAL tail makes the location unopenable rather than silently lossy.
+- A manifest whose checksum or root identity does not verify is ignored, and
+  the published state is rebuilt from the verified WAL commits
+  (`manifests_that_do_not_verify_are_ignored_during_recovery`).
+- Every verified WAL commit newer than the published root is rolled forward:
+  its write set is applied, its root file and manifest are written, and a
+  `Published` record with `post_publish_synced = false` is appended. Roll
+  forward never claims a post-publication sync it did not perform
+  (`recovery_replays_a_verified_commit_that_was_never_published`).
+- The ledger scan ignores one torn trailing record: an appended record that
+  was never synced is not durable state (`ledger_scan_ignores_a_torn_trailing_record`).
+
+## Durable resolution rules
+
+Resolution is computed from the ledger index and the published root identity:
+
+| Durable state | Resolution |
+| --- | --- |
+| `Published` with confirmed post-publication syncs | `Committed(min(requested, Synced))` |
+| `Published` without confirmed syncs | `Committed(min(requested, Written))` |
+| `Ready` and the published root identity matches the recorded root | `Committed(min(requested, Written))` |
+| `Ready` and no matching published root | `Pending`, never a silent rejection |
+| `Rejected` record | `Rejected` with the recorded reason |
+| No record for the identity | `Pending`, because absence cannot prove rejection |
+
+A same-identity retry replays the recorded resolution instead of publishing a
+second commit; a different digest under the same identity is
+`OperationIdReuse`.
+
+## Invariants held
+
+- Raw bytes, frames, checksums, manifests, paths, and lock state never leave
+  `src/storage/**`. Public results carry identifiers, sequences, durability
+  levels, and typed outcomes only.
+- The commit of one transaction publishes its whole write set under one
+  sequence or nothing at all.
+- The resolution ledger is tenant-scoped: records are keyed by tenant and
+  operation identity, so one tenant cannot resolve or bind another tenant's
+  operation.
+- Every durability level follows the same marker, pointer, ledger, lock
+  release, and event order; only the byte-level actions differ.
+
+## Deviations corrected against the declaration tree
+
+The W3-0 declaration file `src/storage/mod.rs` contained placeholder private
+types and an empty `StoragePort`. This packet replaced them with the real
+implementation; no public type moved, because the module had no public items.
+
+## Assumptions
+
+- A storage location is owned by one open Engine at a time. There is no lock
+  file in W3-1; concurrent Engines on one location are undefined.
+- Document identifiers are unique within a tenant plus collection, the key the
+  adapter stores. `Transaction::read`, whose frozen signature names only a
+  `DocumentId`, returns the first match in canonical key order when an
+  identifier repeats across collections.
+- The FNV-1a checksum and the u32 frame lengths are bounded by the codec's
+  one-megabyte document limit and by write-set sizes no caller can push past
+  a u32 length.
+- Recovery reads whole WAL, ledger, and root files into memory. Segmenting,
+  compaction, and incremental scans are later work.
+
+## Limits
+
+- Roots are full tables: every commit rewrites the complete document set of
+  the tenant's root. There is no delta or segment format and no compaction.
+- The root history and the Engine's snapshot registry grow without garbage
+  collection.
+- `Buffered` publication is in-memory only, so its data is lost on process
+  exit by design; only its resolution metadata survives.
+- No lock file, no concurrent-Engine protocol, no encryption, no compaction,
+  no backup or restore, and no crash-tail tolerance in the WAL (a torn tail
+  fails closed).
+
+## What is not claimed
+
+- No V1 parity: no PB-5000 through PB-5041 row is implemented or qualified by
+  this packet, and no parity overlay status changed.
+- No Recovery Receipt: formal recovery qualification belongs to the exclusive
+  recovery qualification lane after crash, restart, restore, migration, and
+  fault scenarios run with the required redaction.
+- No multi-region, replication, acknowledgement-level, convergence, or member
+  visibility claim. `LocalDurability` is local only.
+- No performance claim of any kind; no benchmark ran.
+- No power-loss simulation: `Written` and `Synced` are observed through
+  process exit and reopen only. The declared loss windows are contract
+  statements, not measured results.
