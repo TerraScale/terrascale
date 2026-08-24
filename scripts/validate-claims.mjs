@@ -2,6 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { decodeHTML } from 'entities'
 import { parse as parseHtml, parseFragment } from 'parse5'
 
 const scriptPath = fileURLToPath(import.meta.url)
@@ -73,24 +74,52 @@ const isElement = (node) => Boolean(node?.tagName)
 
 const isRangeInside = (range, offset) => range && offset >= range.startOffset && offset < range.endOffset
 
-const decodeCodePoint = (value, radix = 10) => {
-  const codePoint = Number.parseInt(value, radix)
-  return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : ''
+const collapseClaimWhitespace = (text) => String(text).replace(/\p{White_Space}+/gu, ' ')
+export const normalizeClaimText = (text) => collapseClaimWhitespace(decodeHTML(String(text)))
+
+const canonicalSiteOrigin = 'https://terrascale.tech'
+const canonicalSiteOrigins = new Set([new URL(canonicalSiteOrigin).origin])
+
+const normalizeRoutePath = (pathname) => {
+  const decodedPath = decodeURIComponent(pathname)
+  const segments = decodedPath.split('/')
+  const normalized = []
+  for (const segment of segments) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') normalized.pop()
+    else normalized.push(segment)
+  }
+  const route = `/${normalized.join('/')}`
+  return decodedPath.endsWith('/') && route !== '/' ? `${route}/` : route
 }
 
-const decodeHtmlEntities = (text) =>
-  text
-    .replace(/&#x([0-9a-f]+);?/gi, (_, value) => decodeCodePoint(value, 16))
-    .replace(/&#(\d+);?/g, (_, value) => decodeCodePoint(value))
-    .replace(/&(amp|quot|apos|#39|lt|gt|nbsp);/gi, (_, entity) => ({
-      amp: '&',
-      quot: '"',
-      apos: "'",
-      '#39': "'",
-      lt: '<',
-      gt: '>',
-      nbsp: '\u00a0',
-    })[entity.toLowerCase()])
+const canonicalizeTermsHref = (value) => {
+  const decoded = normalizeClaimText(value).trim()
+  let url
+  try {
+    url = new URL(decoded, `${canonicalSiteOrigin}/`)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'https:' || !canonicalSiteOrigins.has(url.origin)) return null
+  let pathname
+  try {
+    pathname = normalizeRoutePath(url.pathname)
+  } catch {
+    return null
+  }
+  return pathname === '/terms' || pathname === '/terms/' ? url : null
+}
+
+const sourceHrefValues = (html) => {
+  const values = []
+  const tagPattern = /<[a-z][^<>]*>/gi
+  const attributePattern = /(?:^|\s)href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/gi
+  for (const tag of html.matchAll(tagPattern)) {
+    for (const match of tag[0].matchAll(attributePattern)) values.push(match[1] ?? match[2] ?? match[3])
+  }
+  return values
+}
 
 const descendantText = (node) => {
   if (node.nodeName === '#text') return node.value
@@ -171,14 +200,14 @@ const parseRenderedDocument = (corpus) => {
     const isIgnored = htmlIgnoredElements.has(node.tagName)
     for (const attribute of node.attrs) {
       if (attribute.name.toLowerCase() === 'href') hrefs.push(attribute.value)
-      if (isIgnored) ignored.push({ raw: attribute.value, text: decodeHtmlEntities(attribute.value) })
+      if (isIgnored) ignored.push({ raw: attribute.value, text: attribute.value, decoded: true })
       else appendAttribute(attribute.value)
     }
     const isBlock = !htmlInlineElements.has(node.tagName) && !htmlVoidElements.has(node.tagName) && !isIgnored
     if (isIgnored) {
       recordOpaqueDescendants(node)
       const raw = rawDescendantText(node)
-      ignored.push({ raw, text: decodeHtmlEntities(raw) })
+      ignored.push({ raw, text: raw, decoded: false })
       return
     }
 
@@ -189,7 +218,7 @@ const parseRenderedDocument = (corpus) => {
   walk(tree)
 
   const addIgnoredValue = (node) => {
-    if (node.nodeName === '#comment') ignored.push({ raw: node.data, text: decodeHtmlEntities(node.data) })
+    if (node.nodeName === '#comment') ignored.push({ raw: node.data, text: node.data, decoded: false })
     for (const child of node.childNodes ?? []) addIgnoredValue(child)
   }
   addIgnoredValue(tree)
@@ -198,24 +227,35 @@ const parseRenderedDocument = (corpus) => {
     if (!opaqueRanges.some((range) => isRangeInside(range, match.index)) && !explicitEndTags.has(match.index)) structuralError = true
   }
   structuralError ||= parseErrors.length > 0
-  return { raw: corpus, text, ignored, hrefs, fallback: structuralError ? decodeHtmlEntities(corpus) : '' }
+  return { raw: corpus, text, ignored, hrefs, fallback: structuralError ? corpus : '' }
 }
 
 const findRenderedClaimMatch = (rendered, claim) => {
   if (claim.id === 'unpublished-terms-route') {
-    const rawMatch = rendered.raw.match(claim.pattern)
-    if (rawMatch) return rawMatch
-    const href = rendered.hrefs.find((value) => /^\/terms\/?(?:[?#].*)?$/i.test(value))
+    const href = rendered.hrefs.find((value) => canonicalizeTermsHref(value))
     if (href) return [`href="${href}"`]
+    return null
   }
-  for (const value of [rendered.raw, rendered.text, ...rendered.ignored.flatMap(({ raw, text }) => [raw, text]), rendered.fallback]) {
-    const match = value.match(claim.pattern)
+  const values = [
+    [rendered.raw, false],
+    [rendered.text, true],
+    ...rendered.ignored.flatMap(({ raw, text, decoded }) => [[raw, false], [text, decoded]]),
+    [rendered.fallback, false],
+  ]
+  for (const [value, decoded] of values) {
+    const match = (decoded ? collapseClaimWhitespace(value) : normalizeClaimText(value)).match(claim.pattern)
     if (match) return match
   }
   return null
 }
 
-const findClaimMatch = (corpus, claim) => corpus.match(claim.pattern)
+const findClaimMatch = (corpus, claim) => {
+  if (claim.id === 'unpublished-terms-route') {
+    const href = sourceHrefValues(corpus).find((value) => canonicalizeTermsHref(value))
+    return href ? [`href="${href}"`] : null
+  }
+  return normalizeClaimText(corpus).match(claim.pattern)
+}
 
 export function walk(directory, extensions) {
   const files = []
@@ -230,7 +270,7 @@ export function walk(directory, extensions) {
 
 export function findProhibitedClaims(text, { mode = 'source' } = {}) {
   const rendered = mode === 'rendered'
-  const corpus = rendered ? parseRenderedDocument(text) : decodeHtmlEntities(text)
+  const corpus = rendered ? parseRenderedDocument(text) : text
   return prohibitedClaims
     .map((claim) => {
       const match = rendered

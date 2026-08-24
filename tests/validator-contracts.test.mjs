@@ -9,7 +9,7 @@ import {
   checkDeployedRedirects,
   validateRedirectRules,
 } from '../scripts/validate-redirect-contract.mjs'
-import { probeExternalLinks } from '../scripts/validate-links.mjs'
+import { extractAttributes, extractStructuredDataUrls, probeExternalLinks } from '../scripts/validate-links.mjs'
 import { validateRenderedLinks } from '../scripts/validate-links.mjs'
 import { findProhibitedClaims, scanProhibitedClaims, walk as walkClaimFiles } from '../scripts/validate-claims.mjs'
 
@@ -36,10 +36,10 @@ const localizedClaimCategories = [
   { id: 'obsolete-plan', label: 'Business', samples: ['plano Business'] },
 ]
 
-function assertLocalizedClaimCategories(files, fixtureRoot, label) {
+function assertLocalizedClaimCategories(files, fixtureRoot, label, mode = 'source') {
   const corpus = files.map((file) => readFileSync(file, 'utf8')).join('\n')
   const normalizedCorpus = corpus.toLocaleLowerCase()
-  const failures = scanProhibitedClaims(files, fixtureRoot)
+  const failures = scanProhibitedClaims(files, fixtureRoot, { mode })
   for (const category of localizedClaimCategories) {
     assert.ok(
       failures.some((failure) => failure.includes(`: ${category.id}:`)),
@@ -48,7 +48,7 @@ function assertLocalizedClaimCategories(files, fixtureRoot, label) {
     for (const sample of category.samples) {
       assert.ok(normalizedCorpus.includes(sample.toLocaleLowerCase()), `${label} fixture is missing ${sample}`)
       assert.ok(
-        findProhibitedClaims(sample).some(({ id }) => id === category.id),
+        findProhibitedClaims(sample, { mode }).some(({ id }) => id === category.id),
         `${label} validator did not reject ${sample}`,
       )
     }
@@ -331,6 +331,56 @@ test('rendered terms routes are detected from normalized href attributes', () =>
   assert.equal(findProhibitedClaims('<a href="/terms-of-service">Terms</a>', { mode: 'rendered' }).some(({ id }) => id === 'unpublished-terms-route'), false)
 })
 
+test('claim matching decodes complete HTML entities and collapses Unicode whitespace', () => {
+  for (const sample of [
+    'instant&nbsp;replication',
+    'instant&ensp;replication',
+    'instant&emsp;replication',
+    'instant&#160;replication',
+    'instant&#xA0;replication',
+    '<meta name="description" content="Replicación&ensp;instantánea">',
+    '<script type="application/ld+json">{"description":"Replicação&emsp;instantânea"}</script>',
+  ]) {
+    const mode = sample.startsWith('<') ? 'rendered' : 'source'
+    assert.equal(findProhibitedClaims(sample, { mode }).some(({ id }) => id === 'unsupported-consistency-or-latency'), true, sample)
+  }
+  assert.equal(findProhibitedClaims('<meta content="99.9&#xA0;% uptime">', { mode: 'rendered' }).some(({ id }) => id === 'unsupported-availability'), true)
+  assert.equal(findProhibitedClaims('<p>instant&amp;nbsp;replication</p>', { mode: 'rendered' }).some(({ id }) => id === 'unsupported-consistency-or-latency'), false)
+})
+
+test('terms validation only considers actual href attributes and canonical TerraScale routes', () => {
+  for (const sample of [
+    '<a href="/terms">Terms</a>',
+    '<a href="/foo/../terms/?ref=footer#privacy">Terms</a>',
+    '<a href="https://terrascale.tech/terms/?ref=footer#privacy">Terms</a>',
+    '<a href="//terrascale.tech/%74erms">Terms</a>',
+    '<a href="/&#x74;erms">Terms</a>',
+    '<a href="/%2Fterms">Terms</a>',
+    '<a href="/foo/%2E%2E/terms">Terms</a>',
+    '<a href=/terms?from=footer>Terms</a>',
+  ]) {
+    assert.equal(findProhibitedClaims(sample, { mode: 'rendered' }).some(({ id }) => id === 'unpublished-terms-route'), true, sample)
+  }
+  for (const sample of [
+    '<a data-href="/terms">Terms</a>',
+    '<p>href="/terms"</p>',
+    'href="/terms"',
+    '<a href="/terms-of-service">Terms</a>',
+    '<a href="https://evil.example/terms">Terms</a>',
+    '<a href="https://docs.terrascale.tech/terms">Terms</a>',
+  ]) {
+    assert.equal(findProhibitedClaims(sample, { mode: 'rendered' }).some(({ id }) => id === 'unpublished-terms-route'), false, sample)
+  }
+  for (const sample of [
+    '<a data-href="/terms">Terms</a>',
+    '<a href="/terms">Terms</a>',
+    '<a href=/terms>Terms</a>',
+  ]) {
+    const result = findProhibitedClaims(sample, { mode: 'source' }).some(({ id }) => id === 'unpublished-terms-route')
+    assert.equal(result, sample.includes(' href='), sample)
+  }
+})
+
 test('availability percentages are rejected in natural and localized wording', () => {
   for (const sample of ['99.9% uptime', '99,9 % disponibilidad', '99,9% disponibilidade']) {
     assert.equal(findProhibitedClaims(sample).some(({ id }) => id === 'unsupported-availability'), true, sample)
@@ -417,7 +467,7 @@ test('release link probes stop before fetching a redirect loop', async () => {
 
 test('localized rendered scans inspect every metadata and JSON-LD prohibited claim category', () => {
   const files = walkClaimFiles(path.join(localizedClaimsFixtureRoot, 'build'), new Set(['.html']))
-  assertLocalizedClaimCategories(files, localizedClaimsFixtureRoot, 'rendered')
+  assertLocalizedClaimCategories(files, localizedClaimsFixtureRoot, 'rendered', 'rendered')
 })
 
 test('rendered link scans inspect metadata and structured-data URLs', () => {
@@ -426,8 +476,31 @@ test('rendered link scans inspect metadata and structured-data URLs', () => {
   assert.match(result.failures.join('\n'), /must use HTTPS|preview or non-canonical external host/i)
 })
 
+test('rendered link extraction uses actual parsed attributes and JSON-LD scripts', () => {
+  const html = `
+    <a data-href="https://preview.example.invalid/data" href=https://status.terrascale.tech>status</a>
+    <form action='/contact'><img data-src="https://preview.example.invalid/data" src=/logo-principal.svg></form>
+    <meta property=og:url content="https://preview.example.invalid/" />
+    <script type=application/ld+json>{"url":"https://preview.example.invalid/"}</script>
+  `
+  assert.deepEqual(extractAttributes(html), [
+    { name: 'href', value: 'https://status.terrascale.tech' },
+    { name: 'action', value: '/contact' },
+    { name: 'src', value: '/logo-principal.svg' },
+    { name: 'content', value: 'https://preview.example.invalid/' },
+  ])
+  assert.deepEqual(extractStructuredDataUrls(html), ['https://preview.example.invalid/'])
+})
+
 test('the release script is explicit and separate from offline checks', () => {
   const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
   assert.match(packageJson.scripts['check:release'], /--release/)
   assert.doesNotMatch(packageJson.scripts.check, /--release/)
+})
+
+test('the release profile runs the fail-closed release check before other release commands', () => {
+  const deployConfig = JSON.parse(readFileSync(path.join(root, '.terrascale/deploy.json'), 'utf8'))
+  const profile = deployConfig.releaseProfiles.find(({ name }) => name === 'release-e2e')
+  assert.ok(profile)
+  assert.deepEqual(profile.commands[0].arguments, ['run', 'check:release'])
 })
