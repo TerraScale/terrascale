@@ -968,21 +968,6 @@ pub struct SubscriptionBatch {
 }
 
 impl SubscriptionBatch {
-    /// Returns the count of notifications the bounded ingress dropped.
-    ///
-    /// The count includes both queue-full drops and lock-contention drops
-    /// (the sink never blocks a commit, so a contended notification is
-    /// dropped and counted). Engine-level contention drops are attributed
-    /// to every subscription of that engine, including any that predate
-    /// this subscription, so the value is an advisory delivery-health
-    /// statistic, never a delivery-loss count: delivery is journal-driven
-    /// and at-least-once.
-    pub fn dropped_notifications(&self) -> u64 {
-        self.dropped_notifications
-    }
-}
-
-impl SubscriptionBatch {
     /// Assembles one batch from its typed parts. Crate-only.
     pub(crate) fn new(
         events: Vec<ChangeEvent>,
@@ -1014,7 +999,15 @@ impl SubscriptionBatch {
     }
 
     /// Returns the cumulative number of publication notifications the
-    /// bounded notification buffer dropped for this subscription.
+    /// bounded notification ingress dropped for this subscription.
+    ///
+    /// The count includes both queue-full drops and lock-contention drops
+    /// (the sink never blocks a commit, so a contended notification is
+    /// dropped and counted). Engine-level contention drops are attributed
+    /// to every subscription of that engine, including any that predate
+    /// this subscription, so the value is an advisory delivery-health
+    /// statistic, never a delivery-loss count: delivery is journal-driven
+    /// and at-least-once.
     #[must_use]
     pub const fn dropped_notifications(&self) -> u64 {
         self.dropped_notifications
