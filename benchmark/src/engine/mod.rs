@@ -686,6 +686,52 @@ impl Engine {
         Ok(documents)
     }
 
+    /// Returns one bounded window of the tenant's documents as the supplied
+    /// read snapshot observed them, in canonical key order resuming at the
+    /// boundary named by `after` (W4-CA-7).
+    ///
+    /// This is the bounded-memory read path for streaming: one call serves
+    /// at most `limit` documents, so a snapshot-bound stream source never
+    /// materializes a whole tenant per batch. The validation matches
+    /// [`Engine::snapshot_documents`] before any storage access; the resume
+    /// rule and its at-least-once caveat are documented there on the storage
+    /// port.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::SnapshotEngineMismatch`] for a snapshot from
+    /// another Engine, [`EngineError::ScopeMismatch`] for a scope from another
+    /// Engine, [`EngineError::SnapshotTenantMismatch`] when the snapshot and
+    /// scope name different tenants, and
+    /// [`EngineError::StorageFailure`] when storage cannot be reached.
+    #[allow(dead_code, reason = "consumed by the W4-STREAM packet")]
+    #[allow(clippy::needless_pass_by_value)] // the frozen contract passes the cursor by value
+    pub(crate) fn snapshot_documents_from(
+        &self,
+        scope: &TenantScope,
+        snapshot: &ReadSnapshot,
+        after: Option<DocumentId>,
+        limit: u32,
+    ) -> Result<Vec<Document>, EngineError> {
+        if snapshot.engine_identity() != self.identity {
+            return Err(EngineError::SnapshotEngineMismatch);
+        }
+        self.validate_scope(scope)?;
+        if snapshot.tenant() != scope.tenant() {
+            return Err(EngineError::SnapshotTenantMismatch);
+        }
+        let documents = {
+            let storage = self.lock_storage()?;
+            storage.port.documents_at_from(
+                snapshot.sequence(),
+                scope.tenant(),
+                after.as_ref(),
+                limit,
+            )
+        };
+        Ok(documents)
+    }
+
     fn lock_storage(&self) -> Result<std::sync::MutexGuard<'_, StorageState>, EngineError> {
         self.storage.lock().map_err(|_| EngineError::StorageFailure)
     }

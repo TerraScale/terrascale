@@ -588,6 +588,16 @@ impl super::StoragePort for FileStorage {
         self.table_at(sequence).tenant_documents(tenant)
     }
 
+    fn documents_at_from(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        after: Option<&DocumentId>,
+        limit: u32,
+    ) -> Vec<Document> {
+        self.table_at(sequence).tenant_documents_from(tenant, after, limit)
+    }
+
     fn published_state(&self) -> (StorageSequence, StorageRootId) {
         (StorageSequence::new(self.published.sequence), self.published.id.clone())
     }

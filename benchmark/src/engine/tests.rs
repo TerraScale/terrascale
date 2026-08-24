@@ -1832,3 +1832,68 @@ fn engine_index_catalog_receives_publication_events_in_production() {
     let advanced = engine.index_catalog().delta().expect("the catalog advances");
     assert_eq!(advanced.covered_sequence(), 2);
 }
+
+#[test]
+fn snapshot_documents_from_serves_bounded_windows_and_validates_the_view() {
+    // W4-CA-7: the Engine's bounded windowed read pages exactly the view the
+    // full snapshot read materializes, and rejects a foreign snapshot, scope,
+    // or tenant with the same typed errors as that read.
+    let (dir, engine) = open_engine("engine-window");
+    let scope = tenant_scope(&engine, "tenant-a");
+    for (operation_name, id, collection) in
+        [("op-1", "doc-1", "beta"), ("op-2", "doc-2", "alpha"), ("op-3", "doc-3", "gamma")]
+    {
+        let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+        let mut transaction =
+            engine.begin(&scope, snapshot, operation(operation_name)).expect("begins");
+        transaction.put(document(id, collection, "value"), ExpectedVersion::Any).expect("stages");
+        match transaction.commit(LocalDurability::Written) {
+            CommitOutcome::Committed(receipt) => {
+                assert!(receipt.sequence().get() <= 3, "three commits publish");
+            }
+            other => panic!("commit did not succeed: {other:?}"),
+        }
+    }
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    let full = engine.snapshot_documents(&scope, &snapshot).expect("full view");
+
+    let mut paged: Vec<Document> = Vec::new();
+    let mut after: Option<DocumentId> = None;
+    loop {
+        let window =
+            engine.snapshot_documents_from(&scope, &snapshot, after, 2).expect("window reads");
+        let Some(last) = window.last() else {
+            break;
+        };
+        let last_id = last.id().clone();
+        paged.extend(window);
+        after = Some(last_id);
+    }
+    assert_eq!(paged, full, "paging by two reproduces the full canonical view");
+
+    let other_scope = tenant_scope(&engine, "tenant-b");
+    assert_eq!(
+        engine.snapshot_documents_from(&other_scope, &snapshot, None, 2),
+        Err(EngineError::SnapshotTenantMismatch),
+        "a scope naming another tenant is rejected before data access"
+    );
+    let (_, other_engine) = open_engine("engine-window-other");
+    let other_engine_scope = tenant_scope(&other_engine, "tenant-a");
+    let foreign = other_engine.read_snapshot(&other_engine_scope).expect("snapshot");
+    assert_eq!(
+        engine.snapshot_documents_from(&scope, &foreign, None, 2),
+        Err(EngineError::SnapshotEngineMismatch),
+        "a snapshot from another Engine is rejected"
+    );
+    drop(other_engine);
+    drop(engine);
+    let reopened = reopen_engine(&dir);
+    let reopened_scope = tenant_scope(&reopened, "tenant-a");
+    assert_eq!(
+        reopened.snapshot_documents_from(&reopened_scope, &snapshot, None, 2),
+        Err(EngineError::SnapshotEngineMismatch),
+        "a snapshot from the closed instance is rejected"
+    );
+    drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}

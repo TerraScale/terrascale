@@ -438,6 +438,126 @@ fn root_identities_depend_on_content() {
     assert_eq!(first.as_str(), super::root::root_identity_of(1, &table).as_str());
 }
 
+// ---------------------------------------------------------------------------
+// W4-CA-7: the bounded windowed snapshot read
+// ---------------------------------------------------------------------------
+
+/// Commits one document per call so the tenant's canonical key order mixes
+/// collections and identifier orders.
+fn commit_document(storage: &mut FileStorage, operation: &str, id: &str, collection: &str) {
+    let outcome = storage.commit(intent(
+        operation,
+        vec![put(document(id, collection, "value"), ExpectedVersion::New)],
+        LocalDurability::Written,
+    ));
+    assert!(matches!(outcome, CommitResult::Committed(_)));
+}
+
+#[test]
+fn documents_at_from_pages_canonical_key_order_exactly() {
+    // The windowed read is the streaming production path (W4-CA-7): paging
+    // by the last document of each window, at several limits, must reproduce
+    // exactly the canonical-order tenant view that `documents_at` returns —
+    // with collections and identifier orders interleaved.
+    let (dir, mut storage) = open_storage("window-pages");
+    // Canonical (collection, identifier) order for these writes:
+    // (alpha, doc-2), (alpha, doc-4), (beta, doc-1), (beta, doc-3),
+    // (gamma, doc-5) — identifier order is deliberately not monotonic.
+    for (operation, id, collection) in [
+        ("op-1", "doc-1", "beta"),
+        ("op-2", "doc-2", "alpha"),
+        ("op-3", "doc-3", "beta"),
+        ("op-4", "doc-4", "alpha"),
+        ("op-5", "doc-5", "gamma"),
+    ] {
+        commit_document(&mut storage, operation, id, collection);
+    }
+    let tenant = tenant();
+    let sequence = StorageSequence::new(5);
+    let expected = storage.documents_at(sequence, &tenant);
+    let expected_ids: Vec<&str> = expected.iter().map(|document| document.id().as_str()).collect();
+    assert_eq!(expected_ids, ["doc-2", "doc-4", "doc-1", "doc-3", "doc-5"]);
+
+    for limit in [1_u32, 2, 3, 5, 9] {
+        let mut paged: Vec<Document> = Vec::new();
+        let mut after: Option<DocumentId> = None;
+        loop {
+            let window = storage.documents_at_from(sequence, &tenant, after.as_ref(), limit);
+            let Some(last) = window.last() else {
+                break;
+            };
+            let last_id = last.id().clone();
+            paged.extend(window);
+            after = Some(last_id);
+        }
+        let paged_ids: Vec<&str> = paged.iter().map(|document| document.id().as_str()).collect();
+        assert_eq!(&paged_ids, &expected_ids, "limit {limit} must page the exact view");
+    }
+
+    // A zero bound serves an empty window without touching the view.
+    assert!(
+        storage.documents_at_from(sequence, &tenant, None, 0).is_empty(),
+        "a zero limit serves nothing"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn documents_at_from_resumes_strictly_after_the_cursor_identifier() {
+    // The resume rule: the window resumes immediately after the FIRST
+    // canonical key whose document identifier equals the cursor. With a
+    // unique identifier this pages the canonical order exactly; when one
+    // identifier is reused across collections, a window that ended past a
+    // later occurrence may re-serve keys between the first occurrence and
+    // the window end — duplicates only, never losses, which is the
+    // streaming contract's at-least-once shape. A foreign tenant is never
+    // served by another tenant's window.
+    let (dir, mut storage) = open_storage("window-resume");
+    for (operation, id, collection) in
+        [("op-1", "doc-1", "alpha"), ("op-2", "doc-1", "beta"), ("op-3", "doc-2", "alpha")]
+    {
+        commit_document(&mut storage, operation, id, collection);
+    }
+    let tenant = tenant();
+    let sequence = StorageSequence::new(3);
+    let cursor = DocumentId::try_new("doc-1").expect("valid identifier");
+    let window = storage.documents_at_from(sequence, &tenant, Some(&cursor), 10);
+    let ids: Vec<&str> = window.iter().map(|document| document.id().as_str()).collect();
+    assert_eq!(
+        ids,
+        ["doc-2", "doc-1"],
+        "the window resumes immediately after the first key bearing the cursor identifier"
+    );
+
+    // Paging a tenant whose identifier repeats across collections never
+    // loses a document: every document appears in at least one window. (The
+    // iteration count is bounded because such a paging sequence can cycle —
+    // duplicates only — which is the documented id-cursor limit.)
+    let mut seen: Vec<(String, String)> = Vec::new();
+    let mut after: Option<DocumentId> = None;
+    for _ in 0..8 {
+        let window = storage.documents_at_from(sequence, &tenant, after.as_ref(), 1);
+        let Some(last) = window.last() else {
+            break;
+        };
+        let last_id = last.id().clone();
+        seen.extend(window.iter().map(|document| {
+            (document.collection().as_str().to_owned(), document.id().as_str().to_owned())
+        }));
+        after = Some(last_id);
+    }
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), 3, "every document is served at least once: {seen:?}");
+
+    let other = TenantId::try_new("tenant-b").expect("valid tenant");
+    assert!(
+        storage.documents_at_from(sequence, &other, None, 10).is_empty(),
+        "another tenant's window is empty"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn manifests_that_do_not_verify_are_ignored_during_recovery() {
     let (dir, mut storage) = open_storage("bad-manifest");

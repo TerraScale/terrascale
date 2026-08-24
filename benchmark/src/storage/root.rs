@@ -96,6 +96,74 @@ impl RootTable {
             .collect()
     }
 
+    /// Returns up to `limit` documents of one tenant in canonical key order,
+    /// resuming at the window boundary named by `after` (W4-CA-7).
+    ///
+    /// The resume rule is deterministic and lossless: the window resumes
+    /// immediately after the first canonical key of this tenant whose
+    /// document identifier equals `after`; when no document bears that
+    /// identifier, keys whose identifier sorts below it are skipped. With a
+    /// tenant-unique identifier this pages the canonical order exactly. When
+    /// one identifier is reused across collections, a window that ended past
+    /// a later occurrence of its cursor identifier may re-serve the keys
+    /// between the first occurrence and the window end — duplicates only,
+    /// never losses — which is the at-least-once shape the streaming
+    /// contract accepts; a caller paging a whole tenant with reused
+    /// identifiers can also cycle, so collection scoped selectors are the
+    /// exact path.
+    ///
+    /// The cursor scan walks the tenant's key range; a keyed secondary
+    /// structure is a later optimization, not part of this seam.
+    pub(crate) fn tenant_documents_from(
+        &self,
+        tenant: &TenantId,
+        after: Option<&DocumentId>,
+        limit: u32,
+    ) -> Vec<Document> {
+        let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+        let Some(after) = after else {
+            return self.tenant_documents(tenant).into_iter().take(limit).collect();
+        };
+        // Resolve the cursor to a canonical position: the first key of this
+        // tenant bearing the identifier.
+        let resume_after_key = self
+            .documents
+            .iter()
+            .find(|(key, _)| key.tenant() == tenant.as_str() && key.document() == after.as_str())
+            .map(|(key, _)| key.clone());
+        let mut documents: Vec<Document> = Vec::new();
+        let mut skipping_below_cursor = resume_after_key.is_none();
+        for (key, document) in self.documents.range((
+            match resume_after_key {
+                Some(ref key) => std::ops::Bound::Excluded(key),
+                None => std::ops::Bound::Unbounded,
+            },
+            std::ops::Bound::Unbounded,
+        )) {
+            if key.tenant() != tenant.as_str() {
+                continue;
+            }
+            if skipping_below_cursor && key.document() < after.as_str() {
+                continue;
+            }
+            skipping_below_cursor = false;
+            if documents.len() == limit {
+                break;
+            }
+            documents.push(document.clone());
+        }
+        documents
+    }
+
+    /// Returns the document stored at one exact canonical key, if present.
+    ///
+    /// The publication-history derivation uses this to serve the published
+    /// form of a write without re-deriving its version assignment.
+    #[allow(dead_code, reason = "consumed by the W4-CA-4 publication-history derivation")]
+    pub(crate) fn document(&self, key: &StorageKey) -> Option<Document> {
+        self.documents.get(key).cloned()
+    }
+
     /// Applies a validated write set and returns the resulting new table.
     ///
     /// The source table is not modified. Replacement documents receive the

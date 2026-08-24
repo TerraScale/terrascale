@@ -61,6 +61,17 @@ pub(crate) trait StoragePort: Send {
     /// observed them, in canonical key order.
     fn documents_at(&self, sequence: StorageSequence, tenant: &TenantId) -> Vec<Document>;
 
+    /// Returns one bounded window of a tenant's documents as the given read
+    /// snapshot observed them, in canonical key order resuming at the
+    /// boundary named by `after` (W4-CA-7).
+    fn documents_at_from(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        after: Option<&DocumentId>,
+        limit: u32,
+    ) -> Vec<Document>;
+
     /// Returns the currently published sequence and root identity.
     fn published_state(&self) -> (StorageSequence, StorageRootId);
 
