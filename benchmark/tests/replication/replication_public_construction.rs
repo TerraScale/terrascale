@@ -156,14 +156,23 @@ fn topology_views_validate_membership_ownership_and_failure_domains() {
         .validated()
         .expect("valid topology");
 
-    assert_eq!(view.owner_of("main").map(|id| id.as_str().to_owned()), Some("m-alpha-1".to_owned()));
-    assert_eq!(view.owner_of("archive").map(|id| id.as_str().to_owned()), Some("m-beta-1".to_owned()));
+    assert_eq!(
+        view.owner_of("main").map(|id| id.as_str().to_owned()),
+        Some("m-alpha-1".to_owned())
+    );
+    assert_eq!(
+        view.owner_of("archive").map(|id| id.as_str().to_owned()),
+        Some("m-beta-1".to_owned())
+    );
     assert_eq!(
         view.region_of(&MemberId::try_new("m-alpha-2").expect("valid member"))
             .map(|id| id.as_str().to_owned()),
         Some("r-alpha".to_owned())
     );
-    assert_eq!(view.failure_domain_of(&MemberId::try_new("m-alpha-1").expect("valid member")), Some("fd-alpha"));
+    assert_eq!(
+        view.failure_domain_of(&MemberId::try_new("m-alpha-1").expect("valid member")),
+        Some("fd-alpha")
+    );
     assert!(view.contains_region(&RegionId::try_new("r-beta").expect("valid region")));
     assert!(!view.contains_region(&RegionId::try_new("r-gamma").expect("valid region")));
     assert!(view.contains_member(&MemberId::try_new("m-beta-1").expect("valid member")));
@@ -284,7 +293,9 @@ fn replication_cursor_starts_empty_and_reports_only_progress_facts() {
     assert_eq!(cursor.member(), &member);
     assert_eq!(cursor.high_water(), None);
     assert_eq!(
-        cursor.tenant_progress(&terrabase_v2::types::TenantId::try_new("tenant-a").expect("valid tenant")),
+        cursor.tenant_progress(
+            &terrabase_v2::types::TenantId::try_new("tenant-a").expect("valid tenant")
+        ),
         None
     );
     assert!(cursor.tenants().next().is_none());

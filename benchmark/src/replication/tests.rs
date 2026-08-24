@@ -179,16 +179,12 @@ fn exchange_once(
 ) -> ApplyReport {
     let source_id = source.id().clone();
     let follower_scope = scope(follower, follower_tenant);
-    follower
-        .request_catch_up(network, &source_id, &follower_scope)
-        .expect("request sent");
+    follower.request_catch_up(network, &source_id, &follower_scope).expect("request sent");
     network.pump();
     let source_scope = scope(source, source_tenant);
     source.serve_catch_up(network, &source_scope).expect("requests served");
     network.pump();
-    follower
-        .apply_deliveries(network, &follower_scope)
-        .expect("deliveries applied")
+    follower.apply_deliveries(network, &follower_scope).expect("deliveries applied")
 }
 
 #[test]
@@ -409,9 +405,8 @@ fn delayed_and_reordered_replication_replays_idempotently_to_the_contract_outcom
         network.link(&source_id, &follower_id).reordered() > 0,
         "the release order was actually reversed"
     );
-    let report = follower
-        .apply_deliveries(&mut network, &follower_scope)
-        .expect("deliveries apply");
+    let report =
+        follower.apply_deliveries(&mut network, &follower_scope).expect("deliveries apply");
 
     assert_eq!(report.applied(), 3, "every operation applies exactly once");
     assert_eq!(report.duplicates_resolved(), 3, "the overlapping delivery resolves idempotently");
@@ -598,14 +593,7 @@ fn anti_entropy_repairs_a_lagging_member_after_a_gap() {
     let mut network = ReplicationNetwork::new();
 
     for index in 1..=5 {
-        member_put(
-            &mut source,
-            "tenant-a",
-            "main",
-            &format!("op-{index}"),
-            "doc-1",
-            "advancing",
-        );
+        member_put(&mut source, "tenant-a", "main", &format!("op-{index}"), "doc-1", "advancing");
     }
     let caught_up = exchange_once(&mut network, &mut source, "tenant-a", &mut follower, "tenant-a");
     assert!(caught_up.caught_up());
@@ -642,4 +630,369 @@ fn anti_entropy_repairs_a_lagging_member_after_a_gap() {
     follower.close();
     std::fs::remove_dir_all(&source_dir).ok();
     std::fs::remove_dir_all(&follower_dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// Focused R-1 extras: the hard correctness rules and the fault vocabulary
+// the contract names but the ten listed tests above do not isolate.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn operation_id_reuse_with_a_different_write_set_is_a_typed_failure() {
+    let topology = two_member_topology("m-src", "m-dst", "main");
+    let (source_dir, mut source) = open_member("reuse-source", "m-src", &topology);
+    let (follower_dir, mut follower) = open_member("reuse-follower", "m-dst", &topology);
+    let source_id = member_id("m-src");
+    let follower_id = member_id("m-dst");
+    let mut network = ReplicationNetwork::new();
+
+    member_put(&mut source, "tenant-a", "main", "op-1", "doc-1", "original");
+    let report = exchange_once(&mut network, &mut source, "tenant-a", &mut follower, "tenant-a");
+    assert_eq!(report.applied(), 1);
+
+    // A hostile delivery reuses the live operation identity for a different
+    // write set: the engine's operation ledger rejects it and the failure is
+    // surfaced as a typed replication failure, never silently skipped.
+    let reuse = PublishedCommit::new(
+        tenant("tenant-a"),
+        operation("op-1"),
+        StorageSequence::new(9),
+        LocalDurability::Synced,
+        vec![PublishedWrite::Put { document: text_document("users", "doc-9", "hostile") }],
+    );
+    network
+        .send(
+            &source_id,
+            &follower_id,
+            ReplicationFrame::CatchUpBatch {
+                source: source_id.clone(),
+                tenant: tenant("tenant-a"),
+                commits: vec![reuse],
+                through: Some(StorageSequence::new(9)),
+                tenant_high_water: Some(StorageSequence::new(9)),
+                servable_from: Some(StorageSequence::new(1)),
+                gap_below: None,
+            },
+        )
+        .expect("bounded link accepts the batch frame");
+    let rejected = follower.apply_deliveries(&mut network, &scope(&follower, "tenant-a"));
+    assert!(
+        matches!(
+            &rejected,
+            Err(MemberError::ApplyFailed {
+                operation,
+                reason: crate::replication::member::ApplyFailure::Rejected(
+                    crate::engine::CommitError::OperationIdReuse
+                )
+            }) if operation.as_str() == "op-1"
+        ),
+        "identity reuse under a different write set is a typed failure: {rejected:?}"
+    );
+    // The follower's view still holds the original write only.
+    let view = documents_of(&follower, "tenant-a");
+    assert_eq!(view.len(), 1);
+    assert_eq!(view[0].value(), &DocumentValue::String("original".to_owned()));
+
+    source.close();
+    follower.close();
+    std::fs::remove_dir_all(&source_dir).ok();
+    std::fs::remove_dir_all(&follower_dir).ok();
+}
+
+#[test]
+fn a_cursor_below_servable_history_falls_back_to_full_catch_up_never_silently_skips() {
+    use crate::replication::member::catch_up_gap;
+
+    // The rule itself: a cursor the journal cannot serve below is a gap,
+    // except when the journal serves from its first recorded sequence.
+    let sequence = |value: u64| Some(StorageSequence::new(value));
+    assert_eq!(catch_up_gap(None, sequence(1)), None, "a full scan from a complete journal");
+    assert_eq!(catch_up_gap(sequence(2), sequence(1)), None, "an incremental scan above the bound");
+    assert_eq!(catch_up_gap(sequence(2), sequence(4)), sequence(2), "history 3 is unservable");
+    assert_eq!(catch_up_gap(None, sequence(3)), sequence(0), "the journal lost its beginning");
+    assert_eq!(catch_up_gap(sequence(2), None), None, "no servable history, nothing requested");
+
+    // The live fallback: a source that flags the follower's own cursor as
+    // unservable makes the follower drop its advisory progress and re-request
+    // a full catch-up.
+    let topology = two_member_topology("m-src", "m-dst", "main");
+    let (source_dir, mut source) = open_member("gap-source", "m-src", &topology);
+    let (follower_dir, mut follower) = open_member("gap-follower", "m-dst", &topology);
+    let source_id = member_id("m-src");
+    let follower_id = member_id("m-dst");
+    let mut network = ReplicationNetwork::new();
+
+    member_put(&mut source, "tenant-a", "main", "op-1", "doc-1", "v1");
+    member_put(&mut source, "tenant-a", "main", "op-2", "doc-2", "v2");
+    let caught_up = exchange_once(&mut network, &mut source, "tenant-a", &mut follower, "tenant-a");
+    assert!(caught_up.caught_up());
+    assert_eq!(follower.advisory_progress(&tenant("tenant-a")), Some(StorageSequence::new(2)));
+
+    network
+        .send(
+            &source_id,
+            &follower_id,
+            ReplicationFrame::CatchUpBatch {
+                source: source_id.clone(),
+                tenant: tenant("tenant-a"),
+                commits: Vec::new(),
+                through: None,
+                tenant_high_water: Some(StorageSequence::new(2)),
+                servable_from: Some(StorageSequence::new(3)),
+                gap_below: Some(StorageSequence::new(2)),
+            },
+        )
+        .expect("bounded link accepts the batch frame");
+    let report = follower
+        .apply_deliveries(&mut network, &scope(&follower, "tenant-a"))
+        .expect("the flagged batch falls back instead of failing");
+    assert_eq!(report.applied(), 0);
+    assert_eq!(follower.fallbacks().len(), 1, "the fallback is observable");
+    assert_eq!(follower.fallbacks()[0].tenant().as_str(), "tenant-a");
+    assert_eq!(follower.fallbacks()[0].cursor(), StorageSequence::new(2));
+    assert_eq!(follower.advisory_progress(&tenant("tenant-a")), None, "advisory progress dropped");
+
+    follower
+        .request_catch_up(&mut network, &source_id, &scope(&follower, "tenant-a"))
+        .expect("fallback request sent");
+    let requests = network.receive(&source_id, FrameSelector::Requests);
+    assert_eq!(requests.len(), 1);
+    assert!(
+        matches!(&requests[0], ReplicationFrame::CatchUpRequest { after: None, .. }),
+        "the fallback re-requests the full history: {:?}",
+        requests[0]
+    );
+
+    // The unservable case: a gap the source cannot serve even from the
+    // beginning is a typed failure, never a silent skip.
+    network
+        .send(
+            &source_id,
+            &follower_id,
+            ReplicationFrame::CatchUpBatch {
+                source: source_id.clone(),
+                tenant: tenant("tenant-a"),
+                commits: Vec::new(),
+                through: None,
+                tenant_high_water: None,
+                servable_from: Some(StorageSequence::new(4)),
+                gap_below: Some(StorageSequence::new(0)),
+            },
+        )
+        .expect("bounded link accepts the batch frame");
+    let unservable = follower.apply_deliveries(&mut network, &scope(&follower, "tenant-a"));
+    assert!(
+        matches!(&unservable, Err(MemberError::GapUnservable { cursor, servable_from, .. })
+            if *cursor == StorageSequence::new(0) && *servable_from == StorageSequence::new(4)),
+        "an unservable history is reported with its bounds: {unservable:?}"
+    );
+
+    source.close();
+    follower.close();
+    std::fs::remove_dir_all(&source_dir).ok();
+    std::fs::remove_dir_all(&follower_dir).ok();
+}
+
+#[test]
+fn member_health_reports_status_only_and_never_convergence() {
+    let topology = two_member_topology("m-src", "m-dst", "main");
+    let source_dir = location("health-source");
+    let follower_dir = location("health-follower");
+    std::fs::remove_dir_all(&source_dir).ok();
+    std::fs::remove_dir_all(&follower_dir).ok();
+    // A one-commit batch bound keeps the follower observably behind after a
+    // single round, which is the lag the Stale observation reports.
+    let follower_config = ReplicationConfig::try_new(topology.clone())
+        .expect("valid config")
+        .with_catch_up_batch(1)
+        .expect("bounded batch");
+    let source_config = ReplicationConfig::try_new(topology).expect("valid config");
+    let mut source = ReplicationMember::try_new(
+        source_config,
+        member_id("m-src"),
+        EngineConfig::durable(&source_dir).expect("durable location"),
+    )
+    .expect("source opens");
+    let mut follower = ReplicationMember::try_new(
+        follower_config,
+        member_id("m-dst"),
+        EngineConfig::durable(&follower_dir).expect("durable location"),
+    )
+    .expect("follower opens");
+    let mut network = ReplicationNetwork::new();
+
+    assert_eq!(follower.health(), ReplicationStatus::Assigned, "a seated member that did nothing");
+
+    member_put(&mut source, "tenant-a", "main", "op-1", "doc-1", "v1");
+    member_put(&mut source, "tenant-a", "main", "op-2", "doc-2", "v2");
+    let partial = exchange_once(&mut network, &mut source, "tenant-a", &mut follower, "tenant-a");
+    assert_eq!(partial.applied(), 1);
+    assert_eq!(partial.through(), Some(StorageSequence::new(1)));
+    assert!(!partial.caught_up());
+    assert_eq!(
+        follower.health(),
+        ReplicationStatus::Stale,
+        "a member that knows it is behind answers outside its bound"
+    );
+    assert_eq!(source.health(), ReplicationStatus::Responsive, "the source answered a request");
+
+    let healed = exchange_once(&mut network, &mut source, "tenant-a", &mut follower, "tenant-a");
+    assert!(healed.caught_up());
+    assert_eq!(follower.health(), ReplicationStatus::Active, "a caught-up member is active");
+
+    follower.close();
+    assert_eq!(follower.health(), ReplicationStatus::Unavailable, "a closed member is unreachable");
+    source.close();
+    std::fs::remove_dir_all(&source_dir).ok();
+    std::fs::remove_dir_all(&follower_dir).ok();
+}
+
+#[test]
+fn partitioned_link_blocks_catch_up_until_healed() {
+    let topology = two_member_topology("m-src", "m-dst", "main");
+    let (source_dir, mut source) = open_member("partition-source", "m-src", &topology);
+    let (follower_dir, mut follower) = open_member("partition-follower", "m-dst", &topology);
+    let source_id = member_id("m-src");
+    let follower_id = member_id("m-dst");
+    let mut network = ReplicationNetwork::new();
+
+    member_put(&mut source, "tenant-a", "main", "op-1", "doc-1", "v1");
+    network.link(&source_id, &follower_id).partition();
+    let source_scope = scope(&source, "tenant-a");
+    let follower_scope = scope(&follower, "tenant-a");
+    let partitioned =
+        synchronize(&mut network, &mut source, &source_scope, &mut follower, &follower_scope, 3)
+            .expect("the partitioned exchange stays typed");
+    assert!(!partitioned.caught_up(), "a full partition stops catch-up");
+    assert!(
+        network.link(&source_id, &follower_id).dropped() >= 1,
+        "the partition observably lost the frames"
+    );
+    assert_eq!(network.pending(&follower_id), 0, "nothing is in flight while partitioned");
+    assert!(journal_of(&follower, "tenant-a").is_empty());
+
+    network.link(&source_id, &follower_id).clear_faults();
+    let healed =
+        synchronize(&mut network, &mut source, &source_scope, &mut follower, &follower_scope, 3)
+            .expect("the healed exchange runs");
+    assert!(healed.caught_up(), "healing resumes catch-up");
+    assert_eq!(documents_of(&follower, "tenant-a"), documents_of(&source, "tenant-a"));
+
+    source.close();
+    follower.close();
+    std::fs::remove_dir_all(&source_dir).ok();
+    std::fs::remove_dir_all(&follower_dir).ok();
+}
+
+#[test]
+fn bounded_links_reject_frames_beyond_their_bound() {
+    use crate::replication::transport::{MAX_LINK_FRAMES, TransportError};
+
+    let from = member_id("m-src");
+    let to = member_id("m-dst");
+    let mut network = ReplicationNetwork::new();
+    network.link(&from, &to).delay();
+    for index in 0..MAX_LINK_FRAMES {
+        network
+            .send(
+                &from,
+                &to,
+                ReplicationFrame::CatchUpRequest {
+                    requester: to.clone(),
+                    tenant: tenant("tenant-a"),
+                    after: None,
+                    limit: 1,
+                },
+            )
+            .unwrap_or_else(|_| panic!("frame {index} fits the bound"));
+    }
+    let rejected = network.send(
+        &from,
+        &to,
+        ReplicationFrame::CatchUpRequest {
+            requester: to.clone(),
+            tenant: tenant("tenant-a"),
+            after: None,
+            limit: 1,
+        },
+    );
+    assert_eq!(rejected, Err(TransportError::LinkFull), "the link is bounded");
+    assert_eq!(network.link(&from, &to).held(), MAX_LINK_FRAMES);
+    assert_eq!(network.link(&from, &to).overflowed(), 1, "the refused send is counted as overflow");
+}
+
+#[test]
+fn rejoin_rejects_a_location_whose_format_does_not_verify() {
+    let topology = two_member_topology("m-src", "m-dst", "main");
+    let (dir, mut member) = open_member("rejoin-format", "m-src", &topology);
+    let tenant_scope = scope(&member, "tenant-a");
+    member
+        .commit_write(&tenant_scope, put_request("main", "op-1", "doc-1", "v1"))
+        .expect("local write commits");
+    let cursor = member.cursor().expect("cursor derives from the journal");
+
+    // Corrupt the recorded storage format identity: the reopen must fail the
+    // format check instead of admitting the member over foreign bytes.
+    member.close();
+    std::fs::write(dir.join("format"), b"not a terrabase format file").expect("format corrupted");
+    let rejected = member.rejoin(&cursor);
+    assert!(
+        matches!(
+            rejected,
+            Err(MemberError::EngineOpen(crate::engine::EngineOpenError::FormatMismatch))
+        ),
+        "a location whose format does not verify is reported, not admitted: {rejected:?}"
+    );
+    assert_eq!(member.health(), ReplicationStatus::Unavailable);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn write_admission_is_per_range_and_levels_above_local_are_refused_in_r1() {
+    let topology = two_member_topology("m-src", "m-dst", "main");
+    let (dir, mut follower) = open_member("admission", "m-dst", &topology);
+    let tenant_scope = scope(&follower, "tenant-a");
+
+    // D-1 admission: only the owner of a range's write path commits it.
+    let not_owner =
+        follower.commit_write(&tenant_scope, put_request("main", "op-1", "doc-1", "v1"));
+    assert!(
+        matches!(not_owner, Err(MemberError::NotOwner { ref range }) if range == "main"),
+        "a non-owner's write fails admission locally: {not_owner:?}"
+    );
+
+    // R-1 evaluates no acknowledgement level above Local: naming one is a
+    // typed refusal, not a silent downgrade or an unimplemented panic.
+    let stronger =
+        ReplicationWrite::new(operation("op-2"), "main", AcknowledgementLevel::RegionQuorum)
+            .expect("valid write request")
+            .with_put(text_document("users", "doc-1", "v1"));
+    let refused = follower.commit_write(&tenant_scope, stronger);
+    assert_eq!(
+        refused,
+        Err(MemberError::AcknowledgementLevelNotImplemented(AcknowledgementLevel::RegionQuorum)),
+        "stronger levels arrive with the R-2 acknowledgement lattice"
+    );
+
+    // Invalid range text is rejected before any engine work. Inner spaces
+    // are valid identifier text; leading whitespace is not.
+    let invalid_range =
+        ReplicationWrite::new(operation("op-3"), " bad-range", AcknowledgementLevel::Local);
+    assert!(matches!(invalid_range, Err(MemberError::InvalidRange)));
+
+    // The owner-side control: a member not seated by the view never opens.
+    let view = single_member_topology("r-gamma", "m-gamma-real", "main");
+    let config = ReplicationConfig::try_new(view).expect("valid config");
+    let outside = ReplicationMember::try_new(
+        config,
+        member_id("m-ghost"),
+        EngineConfig::durable(location("admission-ghost")).expect("durable location"),
+    );
+    assert!(
+        matches!(outside, Err(MemberError::NotInTopology)),
+        "a member outside the view is never constructed"
+    );
+
+    follower.close();
+    std::fs::remove_dir_all(&dir).ok();
 }

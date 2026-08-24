@@ -10,7 +10,8 @@
 
 use super::{
     AcknowledgementLevel, MemberId, MemberSeat, RangeOwnership, RegionId, ReplicationConfig,
-    ReplicationError, TopologyView, identifier::validate_topology_identifier, member::DEFAULT_CATCH_UP_BATCH,
+    ReplicationError, TopologyView, identifier::validate_topology_identifier,
+    member::DEFAULT_CATCH_UP_BATCH,
 };
 
 /// The largest catch-up batch one replication request may name.
@@ -40,7 +41,7 @@ impl TopologyView {
     /// text or a Region already named by this view.
     pub fn with_region(mut self, region: &str) -> Result<Self, ReplicationError> {
         let validated = RegionId::try_new(region).map_err(|_| ReplicationError::InvalidTopology)?;
-        if self.regions.iter().any(|existing| *existing == validated) {
+        if self.regions.contains(&validated) {
             return Err(ReplicationError::InvalidTopology);
         }
         self.regions.push(validated);
@@ -168,6 +169,7 @@ impl TopologyView {
 
     /// Returns the distinct Failure Domains this view groups Members into,
     /// in canonical order.
+    #[must_use]
     pub fn failure_domains(&self) -> Vec<&str> {
         let mut domains: Vec<&str> =
             self.members.iter().map(|seat| seat.failure_domain.as_str()).collect();
@@ -177,6 +179,7 @@ impl TopologyView {
     }
 
     /// Returns the Members seated in one Region, in canonical order.
+    #[must_use]
     pub fn members_of_region(&self, region: &RegionId) -> Vec<MemberId> {
         self.members
             .iter()
@@ -206,12 +209,6 @@ impl TopologyView {
     #[must_use]
     pub fn is_servable(&self) -> bool {
         self.clone().validated().is_ok()
-    }
-}
-
-impl Default for TopologyView {
-    fn default() -> Self {
-        Self { regions: Vec::new(), members: Vec::new(), owners: Vec::new() }
     }
 }
 
@@ -263,6 +260,10 @@ impl ReplicationConfig {
     /// Returns [`ReplicationError::InvalidTopology`] for a zero batch or one
     /// above [`MAX_CATCH_UP_BATCH`]: a catch-up round is never unbounded and
     /// never empty.
+    #[allow(
+        dead_code,
+        reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+    )]
     pub(crate) fn with_catch_up_batch(mut self, batch: u32) -> Result<Self, ReplicationError> {
         if batch == 0 || batch > MAX_CATCH_UP_BATCH {
             return Err(ReplicationError::InvalidTopology);
@@ -273,6 +274,10 @@ impl ReplicationConfig {
 
     /// Returns the bounded catch-up batch this configuration names.
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+    )]
     pub(crate) fn catch_up_batch(&self) -> u32 {
         self.catch_up_batch
     }

@@ -39,9 +39,17 @@ pub(crate) const DEFAULT_CATCH_UP_BATCH: u32 = 32;
 ///
 /// The log is bounded: a flooding hostile requester can grow it to this bound
 /// and no further, and the health observation degrades on the first entry.
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) const MAX_DENIALS: usize = 64;
 
 /// One replication member: one Engine, one configuration, one identity.
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) struct ReplicationMember {
     id: MemberId,
     engine: Option<Engine>,
@@ -63,12 +71,20 @@ pub(crate) struct ReplicationMember {
 
 /// One tenant's advisory progress toward one serving member.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 struct SourceProgress {
     source: MemberId,
     applied_through: Option<StorageSequence>,
     tenant_high_water: Option<StorageSequence>,
 }
 
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 impl ReplicationMember {
     /// Opens one member over a durable Engine location under a validated
     /// configuration.
@@ -217,19 +233,19 @@ impl ReplicationMember {
             else {
                 continue;
             };
-            if requested != tenant {
-                denials.push(TenantDenial::new(
-                    DenialSeam::ServeRequest,
-                    tenant.clone(),
-                    requested.clone(),
-                    requester,
-                ));
-                if denial_error.is_none() {
-                    denial_error =
-                        Some(MemberError::CrossTenant { scope: tenant.clone(), attempted: requested });
-                }
-            } else {
+            if requested == tenant {
                 admitted.push((requester, after, limit));
+                continue;
+            }
+            denials.push(TenantDenial::new(
+                DenialSeam::ServeRequest,
+                tenant.clone(),
+                requested.clone(),
+                requester,
+            ));
+            if denial_error.is_none() {
+                denial_error =
+                    Some(MemberError::CrossTenant { scope: tenant.clone(), attempted: requested });
             }
         }
         let mut served = 0;
@@ -238,7 +254,6 @@ impl ReplicationMember {
             network.send(&self.id, &requester, batch).map_err(|_| MemberError::TransportFull)?;
             served += 1;
         }
-        drop(engine);
         for denial in denials {
             self.record_denial(denial);
         }
@@ -318,16 +333,10 @@ impl ReplicationMember {
                     servable_from: servable_from.unwrap_or(gap_cursor),
                 });
             }
-            batches.push(CatchUpDelivery {
-                source,
-                commits,
-                through,
-                tenant_high_water,
-            });
+            batches.push(CatchUpDelivery { source, commits, through, tenant_high_water });
         }
 
-        let mut report = ApplyReport::default();
-        report.batches = batches.len();
+        let mut report = ApplyReport { batches: batches.len(), ..ApplyReport::default() };
         let resumed_from = self.advisory.get(&tenant).and_then(|progress| progress.applied_through);
         let mut merged: BTreeMap<u64, &PublishedCommit> = BTreeMap::new();
         for batch in &batches {
@@ -336,7 +345,8 @@ impl ReplicationMember {
                     report.duplicates_resolved += 1;
                 }
             }
-            report.tenant_high_water = max_sequence(report.tenant_high_water, batch.tenant_high_water);
+            report.tenant_high_water =
+                max_sequence(report.tenant_high_water, batch.tenant_high_water);
         }
         for (sequence, commit) in merged {
             let sequence = StorageSequence::new(sequence);
@@ -381,26 +391,36 @@ impl ReplicationMember {
 
     /// Applies one served commit through the Engine transaction seam with
     /// its original operation identity.
+    ///
+    /// The commit is always staged and committed, never short-circuited by a
+    /// pre-check: the engine's operation ledger is the component that binds
+    /// an operation identity to its write set, so it is the one that decides
+    /// between an idempotent replay (same write set) and the typed
+    /// [`CommitError::OperationIdReuse`] rejection (a different write set
+    /// under a live identity). The pre-resolve only classifies the outcome
+    /// for the caller's accounting.
     fn apply_one(
         &self,
         scope: &TenantScope,
         commit: &PublishedCommit,
     ) -> Result<ApplyStep, MemberError> {
         let engine = self.engine.as_ref().ok_or(MemberError::EngineClosed)?;
-        // The durable operation ledger resolves a redelivery before any
-        // staging: replaying the same operation identity is a no-op.
-        if let DurableResolution::Committed(_) =
-            engine.resolve_commit(scope, commit.operation_id().clone()).map_err(MemberError::from)?
-        {
-            return Ok(ApplyStep::Duplicate);
-        }
+        let already_committed = matches!(
+            engine
+                .resolve_commit(scope, commit.operation_id().clone())
+                .map_err(MemberError::from)?,
+            DurableResolution::Committed(_)
+        );
         let snapshot = engine.read_snapshot(scope).map_err(MemberError::from)?;
-        let mut transaction =
-            engine.begin(scope, snapshot, commit.operation_id().clone()).map_err(MemberError::from)?;
+        let mut transaction = engine
+            .begin(scope, snapshot, commit.operation_id().clone())
+            .map_err(MemberError::from)?;
         for write in commit.writes() {
             match write {
                 PublishedWrite::Put { document } => {
-                    transaction.put(document.clone(), ExpectedVersion::Any).map_err(MemberError::from)?;
+                    transaction
+                        .put(document.clone(), ExpectedVersion::Any)
+                        .map_err(MemberError::from)?;
                 }
                 PublishedWrite::Delete { collection, id, version_at_delete } => {
                     // The recorded key and version bind the replay: an
@@ -427,7 +447,9 @@ impl ReplicationMember {
             }
         }
         match transaction.commit(LocalDurability::Synced) {
-            CommitOutcome::Committed(_) => Ok(ApplyStep::Applied),
+            CommitOutcome::Committed(_) => {
+                Ok(if already_committed { ApplyStep::Duplicate } else { ApplyStep::Applied })
+            }
             CommitOutcome::Rejected(reason) => Err(MemberError::ApplyFailed {
                 operation: commit.operation_id().clone(),
                 reason: ApplyFailure::Rejected(reason),
@@ -454,7 +476,7 @@ impl ReplicationMember {
     /// Closes the member's Engine; the durable location keeps its bytes.
     pub(crate) fn close(&mut self) {
         if let Some(engine) = self.engine.take() {
-            drop(engine.shutdown());
+            let _ = engine.shutdown();
         }
         self.advisory.clear();
     }
@@ -470,9 +492,7 @@ impl ReplicationMember {
     /// reopened and the engine's typed shutdown failure otherwise.
     pub(crate) fn restart(&mut self) -> Result<(), MemberError> {
         if let Some(engine) = self.engine.take() {
-            engine
-                .shutdown()
-                .map_err(|_| MemberError::Engine(EngineError::StorageFailure))?;
+            engine.shutdown().map_err(|_| MemberError::Engine(EngineError::StorageFailure))?;
         }
         let engine = Engine::open(self.engine_config.clone()).map_err(MemberError::EngineOpen)?;
         self.engine = Some(engine);
@@ -501,11 +521,8 @@ impl ReplicationMember {
         self.restart()?;
         let derived = self.cursor()?;
         if !cursor_progression_is_valid(previous, &derived) {
-            let rejection = RejoinRejection::new(
-                previous.clone(),
-                derived.clone(),
-                RejoinReason::CursorRegression,
-            );
+            let rejection =
+                RejoinRejection::new(previous, &derived, RejoinReason::CursorRegression);
             self.last_rejection = Some(rejection.clone());
             self.activated = false;
             return Err(MemberError::RejoinRejected(rejection));
@@ -591,6 +608,10 @@ impl ReplicationMember {
 
 /// One write request a member commits locally at a named acknowledgement
 /// level.
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) struct ReplicationWrite {
     operation: OperationId,
     range: String,
@@ -599,11 +620,19 @@ pub(crate) struct ReplicationWrite {
 }
 
 /// One staged mutation of a local write request.
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 enum LocalWrite {
     Put(Document),
     Delete(DocumentId),
 }
 
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 impl ReplicationWrite {
     /// Creates one write request for a data range at an explicit
     /// acknowledgement level.
@@ -681,6 +710,10 @@ impl ReplicationCursor {
     /// # Errors
     ///
     /// Returns the engine's typed failures.
+    #[allow(
+        dead_code,
+        reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+    )]
     pub(crate) fn from_journal(member: &MemberId, engine: &Engine) -> Result<Self, MemberError> {
         let high_water = engine.journaled_high_water().map_err(MemberError::from)?;
         let mut tenants = Vec::new();
@@ -696,6 +729,10 @@ impl ReplicationCursor {
 }
 
 /// Commits one write request through the Engine transaction seam.
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 fn commit_locally(
     engine: &Engine,
     scope: &TenantScope,
@@ -707,7 +744,9 @@ fn commit_locally(
     for staged in &write.writes {
         match staged {
             LocalWrite::Put(document) => {
-                transaction.put(document.clone(), ExpectedVersion::Any).map_err(MemberError::from)?;
+                transaction
+                    .put(document.clone(), ExpectedVersion::Any)
+                    .map_err(MemberError::from)?;
             }
             LocalWrite::Delete(id) => {
                 transaction.delete(id.clone(), ExpectedVersion::Any).map_err(MemberError::from)?;
@@ -721,7 +760,9 @@ fn commit_locally(
             reason: ApplyFailure::Rejected(reason),
         }),
         CommitOutcome::Unknown(unknown) => {
-            match engine.resolve_commit(scope, unknown.operation_id().clone()).map_err(MemberError::from)?
+            match engine
+                .resolve_commit(scope, unknown.operation_id().clone())
+                .map_err(MemberError::from)?
             {
                 DurableResolution::Committed(receipt) => Ok(receipt),
                 DurableResolution::Rejected(reason) => Err(MemberError::ApplyFailed {
@@ -738,6 +779,10 @@ fn commit_locally(
 }
 
 /// Builds one catch-up batch from the serving member's journal.
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 fn build_catch_up_batch(
     engine: &Engine,
     source: &MemberId,
@@ -752,9 +797,9 @@ fn build_catch_up_batch(
         // the batch is empty and the gap is named instead.
         (Vec::new(), None)
     } else {
-        let commits =
-            engine.tenant_commits(tenant, after.unwrap_or(StorageSequence::new(0)), limit)
-                .map_err(MemberError::from)?;
+        let commits = engine
+            .tenant_commits(tenant, after.unwrap_or(StorageSequence::new(0)), limit)
+            .map_err(MemberError::from)?;
         let through = commits.last().map(PublishedCommit::sequence);
         (commits, through)
     };
@@ -796,6 +841,10 @@ pub(crate) fn catch_up_gap(
 }
 
 /// One delivered catch-up batch, already admitted for the applying tenant.
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 struct CatchUpDelivery {
     source: MemberId,
     commits: Vec<PublishedCommit>,
@@ -814,6 +863,10 @@ enum ApplyStep {
 
 /// The report of one apply pass.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) struct ApplyReport {
     applied: usize,
     duplicates_resolved: usize,
@@ -823,6 +876,10 @@ pub(crate) struct ApplyReport {
     caught_up: bool,
 }
 
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 impl ApplyReport {
     /// Returns the number of commits this pass applied.
     pub(crate) fn applied(&self) -> usize {
@@ -850,6 +907,10 @@ impl ApplyReport {
 
 /// One observable tenant-isolation denial.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) struct TenantDenial {
     seam: DenialSeam,
     scope_tenant: TenantId,
@@ -857,6 +918,10 @@ pub(crate) struct TenantDenial {
     counterparty: MemberId,
 }
 
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 impl TenantDenial {
     /// Records one denial from its facts.
     fn new(
@@ -900,11 +965,19 @@ pub(crate) enum DenialSeam {
 
 /// One observable catch-up fallback to a full scan.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) struct CatchUpFallback {
     tenant: TenantId,
     cursor: StorageSequence,
 }
 
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 impl CatchUpFallback {
     /// Records one fallback from its facts.
     fn new(tenant: TenantId, cursor: StorageSequence) -> Self {
@@ -924,20 +997,28 @@ impl CatchUpFallback {
 
 /// One observable rejoin rejection.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) struct RejoinRejection {
     previous: Option<StorageSequence>,
     derived: Option<StorageSequence>,
     reason: RejoinReason,
 }
 
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 impl RejoinRejection {
     /// Records one rejection from its facts.
-    fn new(previous: ReplicationCursor, derived: ReplicationCursor, reason: RejoinReason) -> Self {
-        Self {
-            previous: previous.high_water(),
-            derived: derived.high_water(),
-            reason,
-        }
+    fn new(
+        previous: &ReplicationCursor,
+        derived: &ReplicationCursor,
+        reason: RejoinReason,
+    ) -> Self {
+        Self { previous: previous.high_water(), derived: derived.high_water(), reason }
     }
 
     /// Returns the cursor the member rejoined with.
@@ -1085,6 +1166,10 @@ fn max_sequence(
 /// # Errors
 ///
 /// Propagates the member errors of any round.
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) fn synchronize(
     network: &mut ReplicationNetwork,
     source: &mut ReplicationMember,

@@ -28,6 +28,10 @@ use crate::types::{StorageSequence, TenantId};
 /// The bound keeps the double's memory bounded: a hold-back or delivery
 /// queue that would exceed it rejects or counts-and-drops the frame instead
 /// of growing.
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) const MAX_LINK_FRAMES: usize = 64;
 
 /// One replication frame crossing a controlled link.
@@ -37,6 +41,10 @@ pub(crate) const MAX_LINK_FRAMES: usize = 64;
 /// publication journal serves. It is crate-private by design and never
 /// crosses the public seam.
 #[derive(Clone, Debug)]
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) enum ReplicationFrame {
     /// One member asks another for a tenant's published commits.
     CatchUpRequest {
@@ -72,6 +80,10 @@ pub(crate) enum ReplicationFrame {
 
 /// Which frames a receive drains from a member's inbound links.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) enum FrameSelector {
     /// Drain catch-up requests, leaving deliveries in place.
     Requests,
@@ -79,6 +91,10 @@ pub(crate) enum FrameSelector {
     Deliveries,
 }
 
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 impl FrameSelector {
     /// Reports whether one frame matches this selector.
     fn matches(self, frame: &ReplicationFrame) -> bool {
@@ -92,6 +108,14 @@ impl FrameSelector {
 
 /// The per-direction fault controls of one controlled link.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent fault toggles are the double's control surface"
+)]
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 struct LinkFaults {
     /// Hold every sent frame back until an explicit pump releases it.
     delay: bool,
@@ -106,6 +130,10 @@ struct LinkFaults {
 }
 
 /// One directed link between two members.
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) struct DirectedLink {
     to: MemberId,
     faults: LinkFaults,
@@ -119,6 +147,10 @@ pub(crate) struct DirectedLink {
     reordered: u64,
 }
 
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 impl DirectedLink {
     /// Arms the delay control: frames sent on this direction are held back
     /// in send order until a pump releases them.
@@ -209,13 +241,13 @@ impl DirectedLink {
             self.held.push_back(frame);
             return Ok(());
         }
-        self.deliver(frame);
+        self.deliver(&frame);
         Ok(())
     }
 
     /// Places one frame in the delivery position, applying the duplicate
     /// control.
-    fn deliver(&mut self, frame: ReplicationFrame) {
+    fn deliver(&mut self, frame: &ReplicationFrame) {
         let copies = if self.faults.duplicate { 2 } else { 1 };
         for _ in 0..copies {
             if self.inbound.len() >= MAX_LINK_FRAMES {
@@ -240,7 +272,7 @@ impl DirectedLink {
         };
         let before = self.delivered;
         for frame in order {
-            self.deliver(frame);
+            self.deliver(&frame);
         }
         if self.faults.reorder && self.delivered > before {
             self.reordered += self.delivered - before;
@@ -249,16 +281,19 @@ impl DirectedLink {
 }
 
 /// A bounded set of controlled in-process links between members.
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
+#[derive(Default)]
 pub(crate) struct ReplicationNetwork {
     links: BTreeMap<(MemberId, MemberId), DirectedLink>,
 }
 
-impl Default for ReplicationNetwork {
-    fn default() -> Self {
-        Self { links: BTreeMap::new() }
-    }
-}
-
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 impl ReplicationNetwork {
     /// Creates an empty network with no links.
     pub(crate) fn new() -> Self {
@@ -268,18 +303,16 @@ impl ReplicationNetwork {
     /// Returns the directed link from `from` to `to`, creating it as a
     /// healthy link on first use.
     pub(crate) fn link(&mut self, from: &MemberId, to: &MemberId) -> &mut DirectedLink {
-        self.links
-            .entry((from.clone(), to.clone()))
-            .or_insert_with(|| DirectedLink {
-                to: to.clone(),
-                faults: LinkFaults::default(),
-                held: VecDeque::new(),
-                inbound: VecDeque::new(),
-                dropped: 0,
-                overflowed: 0,
-                delivered: 0,
-                reordered: 0,
-            })
+        self.links.entry((from.clone(), to.clone())).or_insert_with(|| DirectedLink {
+            to: to.clone(),
+            faults: LinkFaults::default(),
+            held: VecDeque::new(),
+            inbound: VecDeque::new(),
+            dropped: 0,
+            overflowed: 0,
+            delivered: 0,
+            reordered: 0,
+        })
     }
 
     /// Sends one frame from `from` to `to` through the controlled link.
@@ -339,12 +372,16 @@ impl ReplicationNetwork {
 
     /// Returns the number of frames waiting to be received by `member`.
     pub(crate) fn pending(&self, member: &MemberId) -> usize {
-        self.links.values().filter(|link| link.to == *member).map(|link| link.queued()).sum()
+        self.links.values().filter(|link| link.to == *member).map(DirectedLink::queued).sum()
     }
 }
 
 /// Typed transport failure of a controlled link.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) enum TransportError {
     /// The direction was at its bounded frame capacity.
     LinkFull,

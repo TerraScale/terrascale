@@ -11,8 +11,8 @@
 //! R-2 phase of W4-REPLICATION and must be reported as its own type through
 //! its own seam, never derived here.
 
-use super::member::ReplicationMember;
 use super::ReplicationStatus;
+use super::member::ReplicationMember;
 
 /// Derives one member's health observation from its own facts.
 ///
@@ -31,6 +31,10 @@ use super::ReplicationStatus;
 ///    [`ReplicationStatus::Active`];
 /// 6. a seated member that has done nothing yet is
 ///    [`ReplicationStatus::Assigned`].
+#[allow(
+    dead_code,
+    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
+)]
 pub(crate) fn member_health(member: &ReplicationMember) -> ReplicationStatus {
     if member.engine().is_none() {
         return ReplicationStatus::Unavailable;

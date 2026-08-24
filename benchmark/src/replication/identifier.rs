@@ -90,7 +90,7 @@ impl fmt::Display for MemberId {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_topology_identifier, MAX_IDENTIFIER_BYTES};
+    use super::{MAX_IDENTIFIER_BYTES, validate_topology_identifier};
     use crate::operations::RequestValidationError;
 
     #[test]

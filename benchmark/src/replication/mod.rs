@@ -72,7 +72,7 @@ pub struct MemberId {
 /// data range's write path). A view is built through the validated
 /// [`TopologyView::new`] builder chain and becomes servable only after
 /// [`TopologyView::validated`] accepts it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TopologyView {
     /// The Regions named by the view, in canonical order.
     regions: Vec<RegionId>,
