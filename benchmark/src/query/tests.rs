@@ -1287,6 +1287,49 @@ fn nan_and_non_finite_numbers_keep_a_total_deterministic_order() {
         Some(DocumentValue::Number(f64::INFINITY)),
         Some(DocumentValue::Number(1.0e308)),
         Some(DocumentValue::String("a".to_owned())),
+        // The exact-integer boundary of the float domain: above 2^53 the
+        // float spacing exceeds 1, so a widened integer rounds and distinct
+        // integers can collapse onto one float. This is the range of
+        // snowflake identifiers and nanosecond timestamps.
+        Some(DocumentValue::Integer(9_007_199_254_740_992)), // 2^53
+        Some(DocumentValue::Integer(9_007_199_254_740_993)), // 2^53 + 1
+        Some(DocumentValue::Integer(-9_007_199_254_740_993)), // -(2^53) - 1
+        Some(DocumentValue::Number(9_007_199_254_740_992.0)), // 2^53 exactly
+        Some(DocumentValue::Number(9_007_199_254_740_993.0)), // rounds to 2^53
+        // The whole i64 range against the sign gates of the exact comparison.
+        Some(DocumentValue::Integer(i64::MIN)),
+        Some(DocumentValue::Integer(i64::MAX)),
+        Some(DocumentValue::Number(-9_223_372_036_854_775_808.0)), // -2^63 exactly
+        Some(DocumentValue::Number(f64::MAX)),
+        Some(DocumentValue::Number(f64::MIN)),
+        // Smallest magnitudes and the two zeroes, which probe the fractional
+        // tie-break and the zero-equality of the unified numeric order.
+        Some(DocumentValue::Number(f64::MIN_POSITIVE)),
+        Some(DocumentValue::Number(-f64::MIN_POSITIVE)),
+        Some(DocumentValue::Number(-0.0)),
+        // Nested values exercise the array and object comparisons, which
+        // delegate element-wise: a NaN inside a container, a plain element,
+        // and a mixed container with the exact-integer boundary.
+        Some(DocumentValue::Array(vec![DocumentValue::Number(f64::NAN)])),
+        Some(DocumentValue::Array(vec![DocumentValue::Integer(1)])),
+        Some(DocumentValue::Array(vec![
+            DocumentValue::Integer(9_007_199_254_740_992),
+            DocumentValue::Number(f64::NAN),
+        ])),
+        Some(DocumentValue::Object(
+            [("a".to_owned(), DocumentValue::Number(f64::NAN))].into_iter().collect(),
+        )),
+        Some(DocumentValue::Object(
+            [("a".to_owned(), DocumentValue::Integer(1))].into_iter().collect(),
+        )),
+        Some(DocumentValue::Object(
+            [
+                ("a".to_owned(), DocumentValue::Integer(9_007_199_254_740_993)),
+                ("b".to_owned(), DocumentValue::Number(f64::NAN)),
+            ]
+            .into_iter()
+            .collect(),
+        )),
     ];
     let values: Vec<Option<&DocumentValue>> = owned.iter().map(|value| value.as_ref()).collect();
     for (index, left) in values.iter().enumerate() {
@@ -1307,6 +1350,25 @@ fn nan_and_non_finite_numbers_keep_a_total_deterministic_order() {
         std::cmp::Ordering::Equal,
         "NaN must equal NaN"
     );
+    // Substitution: two values that compare Equal must be interchangeable —
+    // against every third value, both must answer the same way. This is the
+    // total-order axiom a widening comparison breaks: above 2^53 two distinct
+    // integers can round onto one float, compare Equal against it, and yet
+    // compare unequal to each other.
+    for equal_left in &values {
+        for equal_right in &values {
+            if compare_values(*equal_left, *equal_right) != std::cmp::Ordering::Equal {
+                continue;
+            }
+            for third in &values {
+                assert_eq!(
+                    compare_values(*equal_left, *third),
+                    compare_values(*equal_right, *third),
+                    "{equal_left:?} and {equal_right:?} compare Equal, so they must agree against {third:?}"
+                );
+            }
+        }
+    }
     for left in &values {
         for middle in &values {
             for right in &values {
@@ -1327,12 +1389,64 @@ fn nan_and_non_finite_numbers_keep_a_total_deterministic_order() {
     let nan = Some(&DocumentValue::Number(f64::NAN));
     let text = Some(&DocumentValue::String("a".to_owned()));
     assert_eq!(compare_values(finite, nan), std::cmp::Ordering::Less);
+    // The widening defect's exact counterexample and the cross-type
+    // boundaries, pinned directly so the regression reads without the loops:
+    // one-apart integers at 2^53, the exact -2^63, the sign gates at the
+    // finite extremes, the fractional tie-break, and the two zeroes.
+    assert_eq!(
+        compare_values(
+            Some(&DocumentValue::Integer(9_007_199_254_740_992)),
+            Some(&DocumentValue::Number(9_007_199_254_740_992.0))
+        ),
+        std::cmp::Ordering::Equal
+    );
+    assert_eq!(
+        compare_values(
+            Some(&DocumentValue::Integer(9_007_199_254_740_993)),
+            Some(&DocumentValue::Number(9_007_199_254_740_992.0))
+        ),
+        std::cmp::Ordering::Greater,
+        "2^53 + 1 is strictly greater than the float 2^53, not equal to it"
+    );
+    assert_eq!(
+        compare_values(
+            Some(&DocumentValue::Integer(i64::MIN)),
+            Some(&DocumentValue::Number(-9_223_372_036_854_775_808.0))
+        ),
+        std::cmp::Ordering::Equal,
+        "i64::MIN and the exact float -2^63 are the same mathematical value"
+    );
+    assert_eq!(
+        compare_values(
+            Some(&DocumentValue::Integer(i64::MAX)),
+            Some(&DocumentValue::Number(f64::MAX))
+        ),
+        std::cmp::Ordering::Less
+    );
+    assert_eq!(
+        compare_values(
+            Some(&DocumentValue::Integer(i64::MIN)),
+            Some(&DocumentValue::Number(f64::MIN))
+        ),
+        std::cmp::Ordering::Greater
+    );
+    assert_eq!(
+        compare_values(Some(&DocumentValue::Integer(2)), Some(&DocumentValue::Number(2.5))),
+        std::cmp::Ordering::Less
+    );
+    assert_eq!(
+        compare_values(Some(&DocumentValue::Integer(0)), Some(&DocumentValue::Number(-0.0))),
+        std::cmp::Ordering::Equal
+    );
     assert_eq!(compare_values(nan, text), std::cmp::Ordering::Less);
 
-    // End to end: a corpus with several NaN documents sorts deterministically
+    // End to end: a corpus with several NaN documents and a mixed
+    // Integer/Number field at the 2^53 boundary sorts deterministically
     // through the public path, and every NaN document lands after every
-    // finite number. NaN survives the storage codec bit-exactly, so the
-    // ordering is exercised over real committed documents.
+    // finite number. NaN survives the storage codec bit-exactly and integers
+    // and floats keep their encodings, so the ordering is exercised over real
+    // committed documents in the exact domain where widening used to collapse
+    // distinct values.
     let (dir, engine) = open_engine("nan-order");
     let tenant_scope = scope(&engine, "tenant-a");
     let scores = [
@@ -1345,6 +1459,16 @@ fn nan_and_non_finite_numbers_keep_a_total_deterministic_order() {
         DocumentValue::Integer(10),
         DocumentValue::String("text".to_owned()),
         DocumentValue::Number(f64::NEG_INFINITY),
+        // Mixed Integer/Number values around the 2^53 boundary and the
+        // extremes of the cross-type range: the widening defect's range.
+        DocumentValue::Integer(9_007_199_254_740_992),
+        DocumentValue::Integer(9_007_199_254_740_993),
+        DocumentValue::Number(9_007_199_254_740_992.0),
+        DocumentValue::Number(9_007_199_254_740_992.5),
+        DocumentValue::Integer(i64::MIN),
+        DocumentValue::Integer(i64::MAX),
+        DocumentValue::Number(f64::MAX),
+        DocumentValue::Number(-0.0),
     ];
     let documents = scores
         .iter()

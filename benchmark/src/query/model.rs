@@ -236,21 +236,65 @@ fn rank(value: Option<&DocumentValue>) -> u8 {
     }
 }
 
+/// Compares one integer with one finite number by exact mathematical value.
+///
+/// Widening the integer into `f64` rounds above 2^53 (`9007199254740992`),
+/// where the float spacing exceeds one: `Integer(2^53)` and
+/// `Integer(2^53 + 1)` both widen to `2^53.0`, so each would compare `Equal`
+/// against `Number(2^53.0)` while comparing unequal to each other — an
+/// inconsistent equivalence class that can misorder or panic a sort. The
+/// comparison therefore stays exact:
+///
+/// - a number at or beyond 2^63 in magnitude is decided by sign against the
+///   whole `i64` range (only `-2^63` itself is an `i64` value, and the exact
+///   path below handles it);
+/// - every other number compares its exact whole part through `i128`;
+/// - equal whole parts tie-break on the fractional part, symmetrically for
+///   negatives because `fract` carries the number's sign.
+fn compare_integer_with_number(integer: i64, number: f64) -> Ordering {
+    // The rank gate sends non-finite numbers elsewhere, so `number` is finite.
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    if number >= TWO_POW_63 {
+        // Every i64 is at most 2^63 - 1, below any float at or beyond 2^63.
+        return Ordering::Less;
+    }
+    if number < -TWO_POW_63 {
+        // Every i64 is at least -2^63, above any float below -2^63.
+        return Ordering::Greater;
+    }
+    // `number` is finite with |number| <= 2^63, so its whole part is an
+    // exact integer of at most 2^63 in magnitude: far inside `i128`, with no
+    // rounding on the cast.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "trunc of a finite f64 with magnitude at most 2^63 is an exact integer that fits i128"
+    )]
+    let whole = number.trunc() as i128;
+    let ordering = i128::from(integer).cmp(&whole);
+    if ordering != Ordering::Equal {
+        return ordering;
+    }
+    let fraction = number.fract();
+    if fraction > 0.0 {
+        Ordering::Less
+    } else if fraction < 0.0 {
+        Ordering::Greater
+    } else {
+        Ordering::Equal
+    }
+}
+
 /// Compares two document values by the total document order.
 ///
 /// The order is a true total order over every [`DocumentValue`], including
-/// `NaN`: same-type operands compare consistently, `NaN` equals `NaN`, and
-/// antisymmetry and transitivity hold, so the stable sort in the execution
-/// path can never observe an inconsistent comparator.
+/// `NaN`: same-type operands compare consistently, `NaN` equals `NaN`,
+/// integers and finite numbers compare by exact mathematical value across
+/// the two encodings, and antisymmetry and transitivity hold, so the stable
+/// sort in the execution path can never observe an inconsistent comparator.
 pub(crate) fn compare_values(
     left: Option<&DocumentValue>,
     right: Option<&DocumentValue>,
 ) -> Ordering {
-    /// Widens one integer into the float domain of the unified numeric order.
-    #[allow(clippy::cast_precision_loss)]
-    fn widen(value: i64) -> f64 {
-        value as f64
-    }
     let (left_rank, right_rank) = (rank(left), rank(right));
     if left_rank != right_rank {
         return left_rank.cmp(&right_rank);
@@ -262,13 +306,13 @@ pub(crate) fn compare_values(
         (Some(DocumentValue::Integer(left)), Some(DocumentValue::Integer(right))) => {
             left.cmp(right)
         }
-        // Equal ranks mean a `Number` here is finite, so widening an integer
-        // against it stays inside the total finite domain.
+        // Equal ranks mean a `Number` here is finite, so the mixed arms run
+        // the exact cross-type comparison instead of a widening one.
         (Some(DocumentValue::Integer(left)), Some(DocumentValue::Number(right))) => {
-            widen(*left).partial_cmp(right).unwrap_or(Ordering::Equal)
+            compare_integer_with_number(*left, *right)
         }
         (Some(DocumentValue::Number(left)), Some(DocumentValue::Integer(right))) => {
-            left.partial_cmp(&widen(*right)).unwrap_or(Ordering::Equal)
+            compare_integer_with_number(*right, *left).reverse()
         }
         (Some(DocumentValue::Number(left)), Some(DocumentValue::Number(right))) => {
             if left.is_finite() && right.is_finite() {
