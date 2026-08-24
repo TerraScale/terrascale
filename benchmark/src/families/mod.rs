@@ -545,8 +545,7 @@ impl<'engine> FamilyStore<'engine> {
     /// snapshot belongs to another Engine, [`FamilyError::DeadlineExceeded`]
     /// or [`FamilyError::Cancelled`] for an elapsed deadline or cancelled
     /// signal, and the family-specific case for a rejected request.
-    /// The frozen contract passes the context by value.
-    #[allow(clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)] // the frozen contract passes the context by value
     pub fn read(
         &self,
         context: FamilyReadContext,
