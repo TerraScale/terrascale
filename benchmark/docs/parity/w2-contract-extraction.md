@@ -185,7 +185,7 @@ not treat a discovery note as implementation proof.
 
 ## Validation commands and results
 
-The following commands ran in this worktree:
+The following checks and dispatch commands are recorded for this worktree:
 
 - JSON syntax: `find parity -type f -name '*.json' -print0 | xargs -0 -n1
   jq empty`, passed for 267 JSON files.
@@ -203,16 +203,26 @@ The following commands ran in this worktree:
   symlinks, parent/absolute paths, declaration versus expression-context
   checks, contract versus strict mode, missing-root fail-closed behavior, and
   the machine-readable gap report.
-- Contract audit: `TERRABASE_V1_ROOT=/path/to/TerraBase python3
-  scripts/validate_v1_citations.py --mode contract --v1-root
-  /path/to/TerraBase --workspace-root /path/to/TerraScale
-  --gap-report parity/v1-test-gaps.json`, passed the citation checks with 258
-  rows, 251 V1-backed rows, 267 source citations, 231 test citations, and 42
+- Contract citation audit dispatch command, requiring the parent to provide a
+  clean pinned V1 checkout through `TERRABASE_V1_ROOT`:
+
+  ```sh
+  : "${TERRABASE_V1_ROOT:?dispatch must provide the clean pinned V1 root}" &&
+  python3 scripts/validate_v1_citations.py \
+    --mode contract \
+    --v1-root "$TERRABASE_V1_ROOT" \
+    --workspace-root "$(git rev-parse --show-toplevel)" \
+    --gap-report parity/v1-test-gaps.json
+  ```
+
+  This docs-only worktree does not claim that the dispatch command ran. When a
+  clean pinned V1 root is supplied, the contract audit must report 258 rows,
+  251 V1-backed rows, 267 source citations, 231 test citations, and 42
   unresolved test gaps. The report is an audit result, not qualification.
-- Strict audit: the same command with `--strict` failed as required because
-  42 unresolved test gaps remain. `./scripts/check.sh` uses this strict mode,
-  so it is also expected to fail until those obligations are closed. With no
-  pinned V1 checkout it reports `UNRUN` and fails closed.
+- Strict audit: the dispatch command above with `--strict` is the qualification
+  gate. It must fail while 42 unresolved test gaps remain, and `./scripts/check.sh`
+  must fail closed until those obligations are closed. This worktree does not
+  claim a strict audit run without the dispatch-provided pinned V1 checkout.
 - Secret-scan black-box tests: `uv run --no-project --python 3.14.7 python3
   scripts/test_secret_scan.py`, 4 tests passed. `./scripts/check_secrets.sh`
   passed and honestly reported that this repository has no `tests/` root; the
@@ -220,11 +230,12 @@ The following commands ran in this worktree:
   distinguishes no-match, match, and scanner-error exit codes.
 - Direct Draft 2020-12 validation through the optional `jsonschema` package:
   unrun because the package is unavailable.
-- Full repository check: `./scripts/check.sh`, not a pass while strict V1
-  gaps remain. Rust format, check, release tests, clippy, documentation,
-  parity, secret, and license checks were run separately where available; the
-  strict citation gate correctly stopped qualification on the 42 gaps. The
-  optional `cargo-deny` advisory check was unavailable and recorded as unrun.
+- Full repository check: `./scripts/check.sh` is not a qualification pass while
+  strict V1 gaps remain. Rust format, check, release tests, clippy,
+  documentation, parity, secret, and license checks were run separately where
+  available; the strict citation gate must stop qualification on the 42 gaps.
+  The optional `cargo-deny` advisory check was unavailable and recorded as
+  unrun.
 - No push, merge, issue, pull request, sibling-repository edit, or database
   implementation was performed from this W2 extraction worktree. The later
   integrator pushed the corrected tree as `8771f13`.

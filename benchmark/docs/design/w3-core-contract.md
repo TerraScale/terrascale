@@ -407,7 +407,7 @@ layout types are plain private declarations.
 | `LocalDurability` | shared logical types, integrator-owned | Exactly `Buffered`, `Written`, and `Synced` with the meanings below |
 | `CommitOutcome`, `CommitReceipt` | `src/engine/` | Distinguishes committed, rejected, and unknown acceptance |
 | `DurableResolution` | `src/engine/` | Resolves an unknown operation from the durable operation ledger |
-| `QuerySpec`, `QueryPlan`, `QueryResult` | `src/query/` | Typed query clauses, immutable plan, result metadata and generation |
+| `QueryStore`, `QuerySpec`, `QueryPlan`, `QueryResult` | `src/query/` | Typed query compilation and execution, immutable plan, result metadata and generation |
 | `FamilyKind`, `FamilyReadRequest`, `FamilyWriteRequest` | `src/families/` | Closed typed family operations with no generic family escape hatch |
 | `FamilyReadResult`, `FamilyReadContext`, `FamilyStore` | `src/families/` | Tenant-scoped family reads and transaction-bound family writes |
 | `ProtocolAdapter`, `PublicOperation`, `PublicResponse` | `src/adapters/protocol/` | Typed approved operations and transport-neutral errors |
@@ -470,10 +470,17 @@ backup. `Index` consumes
 published storage roots and emits a new `IndexGeneration`; it cannot publish a
 storage root. Storage never depends on Protocol, Platform, Query, or Families.
 
-Shared logical types, `src/lib.rs`, root Cargo files, `Cargo.lock`, generated
-parity output, overlays, and root CI manifests are integrator-owned. A builder
-must not edit them unless the parent names one exact file in the dispatch
-packet. Each builder uses a worktree based on the preceding accepted commit.
+The W3-0 preparation packet exclusively owns `src/lib.rs` through its
+preparation commit. It declares and re-exports every W3 module root: Storage,
+Engine, Families, Query, Index, and the typed Protocol Adapter. Later packets
+own only the implementation contents under `src/storage/**`, `src/engine/**`,
+`src/families/**`, `src/query/**`, `src/index/**`, and
+`src/adapters/protocol/**`; they do not edit `src/lib.rs` to add a root or
+change an export. After preparation, shared logical types, root Cargo files,
+`Cargo.lock`, generated parity output, overlays, and root CI manifests are
+integrator-owned. A builder must not edit them unless the parent names one
+exact file in the dispatch packet. Each builder uses a worktree based on the
+preceding accepted commit.
 
 ### W3-0 type and export preparation packet
 
@@ -498,24 +505,21 @@ types require a dependency, the parent integrator makes that exact manifest
 change as a separate named action; W3-0 does not take ownership of the Cargo
 files.
 
-W3-0 owns the shared declarations in `src/lib.rs`; after the preparation
-commit, W3-1 has a narrow, named exception to that file only for declaring and
-re-exporting the Storage and Engine modules it implements. This exception does
-not transfer ownership of shared logical types or the rest of `src/lib.rs`.
-
-The W3-0 integrator owns those shared source files exclusively for this
-preparation commit.
-It materializes only the exact shared logical types and their exports. It must
-not implement Storage, Engine, Query, Index, Protocol, or Platform behavior.
-It may add compile-only type/export checks, but it must not edit generated
-parity output, overlays, or any W3 behavior path. The packet reports a clean
-locked check, format, clippy, and docs result, and then commits the preparation.
+W3-0 owns `src/lib.rs` exclusively for this preparation commit. It declares and
+re-exports all W3 module roots, including roots whose implementation packets
+run later. The preparation must compile with those roots and shared logical
+types present, but it contains no speculative Storage, Engine, Families, Query,
+Index, Protocol, or Platform behavior. W3-0 may add compile-only type/export
+checks, but it must not edit generated parity output, overlays, or any W3
+behavior path. The packet reports a clean locked check, format, clippy, and
+docs result, and then commits the preparation. No later packet has an exception
+to edit `src/lib.rs`.
 The parent records that preparation commit hash and W3-1 must base on that
 hash, never directly on `8771f13` or on an unrecorded docs tip.
 
 | Packet | Worktree and base | Write scope | Collision owner |
 | --- | --- | --- | --- |
-| W3-1 Storage plus Engine | `terrabasev2-w3-storage-engine`, based on the recorded W3-0 type/export preparation commit | `src/storage/**`, `src/engine/**`, `tests/storage/**`, `tests/engine/**`, and explicitly named storage/engine docs or receipts, plus the narrow `src/lib.rs` module declaration/re-export edit described below | W3-1 owns those paths only; integrator retains shared type declarations, Cargo files, generated outputs, overlays, and all other `src/lib.rs` content |
+| W3-1 Storage plus Engine | `terrabasev2-w3-storage-engine`, based on the recorded W3-0 type/export preparation commit | `src/storage/**`, `src/engine/**`, `tests/storage/**`, `tests/engine/**`, and explicitly named storage/engine docs or receipts | W3-1 owns those paths only; W3-0 retains `src/lib.rs` through preparation and the later integrator retains it afterward, along with shared type declarations, Cargo files, generated outputs, and overlays |
 | W3-F Data Families | `terrabasev2-w3-families`, based on the accepted W3-1 commit | `src/families/**`, `tests/families/**`, and explicitly named `docs/families/**` | W3-F owns family paths only; it does not edit Storage, Engine, Query, Index, replication, backup, migration, adapter, shared, or generated paths |
 | W3-2 Query | `terrabasev2-w3-query`, based on the accepted W3-F Families commit | `src/query/**`, `src/index/**`, `tests/query/**`, `tests/index/**`, and explicitly named query/index docs | W3-2 owns query/index paths; it does not edit W3-1, W3-F, or shared files |
 | W3-3 Protocol | `terrabasev2-w3-protocol`, based on the accepted W3-2 commit | `src/adapters/protocol/**`, named protocol tests, and named protocol docs | W3-3 owns protocol paths; Platform implementation remains a later adapter packet |
@@ -528,7 +532,7 @@ Collision ownership is explicit:
 
 | Path family | Owner during W3 | Rule |
 | --- | --- | --- |
-| `src/lib.rs` and shared logical type declarations | later integrator, with a W3-1 narrow exception | W3-1 may edit only the exact lines needed to declare and re-export its newly implemented Storage and Engine modules. It may not change shared logical types or any other export. |
+| `src/lib.rs` and shared logical type declarations | W3-0 through preparation, then later integrator | W3-0 declares and re-exports all W3 module roots. No behavior packet may edit `src/lib.rs`; later integrations update it only as a separately named collision action. |
 | `Cargo.toml`, `Cargo.lock`, toolchain, format, and root CI files | later integrator | No dependency or manifest edits in W3 seam packets unless the dispatch names one exact file |
 | `parity/inventory.json` and `parity/overlays/**` | later integrator | Builders provide test/evidence handoffs; they do not regenerate or change status |
 | `docs/design/w3-core-contract.md` | W3-0 contract writer | This document is the durable W3 design record; behavior builders do not rewrite it |
@@ -748,6 +752,8 @@ impl Engine {
         scope: &TenantScope,
     ) -> Result<ReadSnapshot, EngineError>;
 
+    pub fn queries(&self) -> QueryStore;
+
     pub fn begin(
         &self,
         scope: &TenantScope,
@@ -792,6 +798,27 @@ The query path is:
 4. Execute against the requested immutable `ReadSnapshot`.
 5. Return typed rows/documents, ordering metadata, staleness information, and
    the `IndexGeneration` used.
+
+Callers obtain the query module from the already-open durable Engine and use
+one compile/execute path:
+
+```rust
+impl QueryStore {
+    pub fn compile(&self, spec: QuerySpec) -> Result<QueryPlan, QueryError>;
+
+    pub fn execute(
+        &self,
+        plan: &QueryPlan,
+        snapshot: &ReadSnapshot,
+    ) -> Result<QueryResult, QueryError>;
+}
+```
+
+`Engine::queries` returns a store tied to that Engine's durable state. The
+compiler validates typed query inputs, and execution consumes only the
+immutable snapshot supplied by the caller. Compatibility adapters may map
+V1-compatible query inputs into `QuerySpec`, but neither method accepts a raw
+route, arbitrary SQL, storage access, or a mutable snapshot.
 
 The plan must preserve V1-observable result ordering, null/missing behavior,
 error classes, paging boundaries, and cancellation semantics for each parity
@@ -888,6 +915,20 @@ typed chunks. It never exposes a storage page, WAL frame, codec buffer, or
 generic byte escape hatch. `FamilyStore` is obtained from the durable Engine;
 it has no independent durable or in-memory production constructor.
 
+The caller obtains a family store from the already-open durable Engine:
+
+```rust
+impl Engine {
+    pub fn families(&self) -> FamilyStore;
+}
+```
+
+`Engine::families` returns a handle tied to that Engine's lifetime and durable
+open state. It cannot outlive the Engine, open a second storage location, or
+switch to an in-memory implementation. The handle is the only production
+acquisition path for `FamilyStore`; test fixtures may provide a non-durable
+store only through the test-only construction rule above.
+
 Family writes can only be staged into an Engine `Transaction`. The transaction
 supplies the single `OperationId`, snapshot, conflict check, and commit
 outcome. A family operation cannot commit independently or return a remote
@@ -899,6 +940,9 @@ and Protocol authorization belong to their later seams.
 
 - Every read and staged write carries one validated `TenantScope`; family
   values, attachment metadata, cursors, and errors cannot cross tenants.
+- `FamilyReadContext.tenant` must equal the tenant bound to its
+  `ReadSnapshot`. A mismatch returns a typed `FamilyError` before any family
+  data access, including index lookup or cursor creation.
 - A transaction that changes documents and one or more families publishes one
   transaction marker. Validation, conflict, abort, retry, and commit never
   expose a partial family result.
@@ -932,10 +976,10 @@ Storage plus Engine commit in worktree `terrabasev2-w3-families` and owns only:
 It depends on the W3-1 public Engine transaction and immutable snapshot
 contract. It must not edit `src/storage/**`, `src/engine/**`, `src/query/**`,
 `src/index/**`, `src/replication/**`, `src/backup/**`, `src/migration/**`,
-`src/adapters/**`, or their tests. It does not edit `src/lib.rs`; the W3-1
-narrow declaration/re-export exception remains the only behavior-module
-export exception. Cargo files, root CI, generated parity output, overlays,
-and shared manifests remain integrator-owned.
+`src/adapters/**`, or their tests. It does not edit `src/lib.rs`; W3-0 already
+declared and re-exported the module roots, and no behavior packet has an export
+exception. Cargo files, root CI, generated parity output, overlays, and shared
+manifests remain integrator-owned.
 
 W3-F must finish before W3-2 Query and Index starts. Query's family-aware
 projection and index-source tests depend on the typed family result contract.
@@ -946,6 +990,7 @@ authority. W3-3 Protocol starts only after both W3-F and W3-2 are accepted.
 The public-seam red tests begin red at `FamilyStore::read` and
 `FamilyStore::stage`:
 
+- `engine_families_returns_store_bound_to_durable_engine`;
 - `attachment_metadata_round_trip_is_tenant_scoped`;
 - `counter_crud_preserves_signed_values_and_missing_errors`;
 - `counter_batch_is_atomic_across_increment_delete_and_recreate`;
@@ -957,6 +1002,7 @@ The public-seam red tests begin red at `FamilyStore::read` and
 - `family_tombstone_blocks_stale_local_resurrection`;
 - `family_transaction_abort_hides_all_staged_family_changes`;
 - `family_read_snapshot_remains_immutable_after_engine_commit`;
+- `family_read_context_rejects_tenant_mismatch_without_data_access`;
 - `family_scope_rejects_cross_tenant_reads_and_writes`.
 
 These tests observe typed results, errors, atomicity, isolation, and snapshot
@@ -973,8 +1019,9 @@ neighboring seam:
 
 | Owner packet | Family rows | Scope |
 | --- | --- | --- |
-| W3-F Families | PB-3000, PB-3001, PB-3003, PB-3005, PB-3009, PB-3015, PB-3016, PB-3019, PB-3024, PB-3025, PB-3026, PB-3029, PB-3030, PB-3031, PB-3033, PB-3036, PB-3038, PB-3039, PB-3042 | Initial typed family CRUD, lifecycle, validation, identity, transaction, and tenant-isolation behavior |
+| W3-F Families | PB-3000, PB-3001, PB-3003, PB-3005, PB-3009, PB-3015, PB-3016, PB-3019, PB-3024, PB-3025, PB-3026, PB-3029, PB-3030, PB-3031, PB-3033, PB-3036, PB-3038, PB-3039 | Initial typed family CRUD, lifecycle, validation, identity, transaction, and supporting logical tenant-isolation behavior |
 | W3-2 Query/Index | PB-3010, PB-3020, PB-3040 | Family query sources, projections, index maintenance, staleness, and ordering. Query owns the query/index code. |
+| W3-3 Protocol/Platform Adapter (`adapter/platform-family-access`) | PB-3042 | Public family authorization through Platform Adapter. W3-F proves only the supporting logical tenant-isolation invariant and has no Platform or Protocol authority. |
 | W4 Streaming | PB-3002, PB-3014, PB-3017, PB-3023, PB-3041, PB-3043 | Bounded family readers, changes, subscriptions, cancellation, acknowledgement, and backpressure |
 | W4 Replication/qualification | PB-3004, PB-3006, PB-3011, PB-3012, PB-3018, PB-3021, PB-3027, PB-3028, PB-3032, PB-3034, PB-3035, PB-3037, PB-3044 | Family replication, conflicts, tombstones, sharding, archival interactions, and Region/Member behavior |
 | W4 Backup/migration | PB-3007, PB-3013, PB-3022, PB-3045 | Family backup, import/export, restore, Logical Migration, manifests, and checksums |
@@ -995,6 +1042,32 @@ returns typed `PublicResponse` values and typed errors. It does not expose raw
 bytes, arbitrary method/path dispatch, private control-plane routes, or a
 generic HTTP forwarding method.
 
+The public call path is concrete and typed:
+
+```rust
+impl PlatformAdapter {
+    pub fn call(
+        &self,
+        grant: PlatformGrant,
+        operation: PublicOperation,
+    ) -> Result<PublicResponse, ProtocolError>;
+}
+
+impl ProtocolAdapter {
+    pub fn call(
+        &self,
+        operation: PublicOperation,
+    ) -> Result<PublicResponse, ProtocolError>;
+}
+```
+
+`ProtocolAdapter::call` routes every public operation through
+`PlatformAdapter::call`; the grant is validated before any Engine or family
+data access. A direct Engine adapter is internal or `cfg(test)` only and cannot
+back a public route. The closed `PublicOperation` type is the typed-operation
+input; callers cannot replace it with a raw route, arbitrary SQL, or storage
+handle.
+
 Every public Protocol operation must pass `PlatformAdapter` authorization
 before it reaches the Engine. `PlatformGrant` is validated only by
 `PlatformAdapter`. Validation covers the tenant, principal, operation
@@ -1008,6 +1081,8 @@ path; it cannot be mounted behind a public Protocol route.
 Protocol tracer tests must begin red for:
 
 - an approved typed operation with a stable operation identity;
+- `platform_adapter_call_authorizes_before_engine_dispatch`;
+- `protocol_adapter_call_routes_through_platform_authorization`;
 - malformed or unknown operation rejection without generic forwarding;
 - private control-plane operation rejection;
 - missing, expired, wrong-tenant, and insufficient `PlatformGrant` rejection;
@@ -1138,6 +1213,7 @@ W3-2 starts only from an accepted W3-F Families commit. Its red tests are:
 - `index_generation_never_moves_backward_within_its_namespace_and_epoch`;
 - `index_rebuild_publishes_a_monotonic_generation`;
 - `replayed_index_build_cannot_overwrite_a_newer_generation`;
+- `query_store_compiles_and_executes_against_supplied_snapshot`;
 - `plan_reuse_does_not_mutate_the_snapshot`;
 - `projection_and_paging_have_typed_errors_and_boundaries`;
 - `query_cancellation_is_bounded_and_does_not_leak_a_lock`;
