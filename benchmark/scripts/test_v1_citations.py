@@ -21,6 +21,10 @@ def write_json(path: Path, value: object) -> None:
 
 
 def fixture(root: Path, scope: str) -> None:
+    fixture_rows(root, [("PB-1000", scope)])
+
+
+def fixture_rows(root: Path, rows: list[tuple[str, str]]) -> None:
     write_json(
         root / "parity" / "contracts" / "fixture.json",
         {
@@ -29,14 +33,44 @@ def fixture(root: Path, scope: str) -> None:
             "owner": "WS-CONTRACT/fixture",
             "items": [
                 {
-                    "id": "PB-1000",
+                    "id": row_id,
                     "name": "fixture",
                     "classification": "core",
                     "v1_evidence": {"scope": scope},
                 }
+                for row_id, scope in rows
             ],
         },
     )
+
+
+def search_record_fixture(root: Path) -> None:
+    (root / "docs" / "parity").mkdir(parents=True, exist_ok=True)
+    (root / "docs" / "parity" / "search-record.md").write_text(
+        "# fixture search record\n\n## PB-1000 section\n\nNo V1 test exists in the pinned checkout.\n",
+        encoding="utf-8",
+    )
+
+
+def adjudication_entry(**overrides: object) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "decision_id": "PD-2026-01-02-03",
+        "search_record": "docs/parity/search-record.md#PB-1000 section",
+        "v2_proof_obligation": "V2-side tests in the storage lane plus a Recovery Receipt",
+        "owner": "WS-TEST/fixture",
+    }
+    entry.update(overrides)
+    return entry
+
+
+def write_adjudications(root: Path, entries: dict[str, dict[str, object]]) -> None:
+    write_json(
+        root / "parity" / "adjudications.json",
+        {"schema_version": "1.0", "adjudications": entries},
+    )
+
+
+GAPPED_SCOPE = "[v1:src/folder with space/source.cs::KnownSymbol] [v1:test-gap:coverage is not isolated]"
 
 
 def git_fixture(root: Path) -> str:
@@ -312,6 +346,196 @@ class V1CitationTests(unittest.TestCase):
             fixture(root, "[v1:src/folder with space/source.cs::KnownSymbol] [v1:test:test/known/known.cs]")
             result = self.run_cli(root, v1, expected)
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_adjudicated_gap_passes_strict_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, GAPPED_SCOPE)
+            search_record_fixture(root)
+            write_adjudications(root, {"PB-1000": adjudication_entry()})
+            result = self.run_cli(root, v1, expected, "--strict")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("STRICT V1 QUALIFICATION PASSED", result.stdout)
+            self.assertIn("1 test gaps (1 adjudicated, 0 unresolved)", result.stdout)
+            self.assertIn("ADJUDICATED NO-V1-TEST GAPS: 1", result.stdout)
+            self.assertIn("PD-2026-01-02-03", result.stdout)
+
+    def test_unresolved_gap_still_fails_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, GAPPED_SCOPE)
+            search_record_fixture(root)
+            result = self.run_cli(root, v1, expected, "--strict")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("STRICT V1 QUALIFICATION FAILED: 1 UNRESOLVED TEST GAPS", result.stderr)
+            self.assertIn("1 test gaps (0 adjudicated, 1 unresolved)", result.stdout)
+
+    def test_adjudicated_gap_contract_mode_still_records_gaps(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, GAPPED_SCOPE)
+            search_record_fixture(root)
+            write_adjudications(root, {"PB-1000": adjudication_entry()})
+            result = self.run_cli(root, v1, expected)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("CONTRACT AUDIT COMPLETE WITH 0 UNRESOLVED TEST GAPS (1 ADJUDICATED)", result.stdout)
+
+    def test_adjudication_missing_decision_id_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, GAPPED_SCOPE)
+            search_record_fixture(root)
+            entry = adjudication_entry()
+            del entry["decision_id"]
+            write_adjudications(root, {"PB-1000": entry})
+            result = self.run_cli(root, v1, expected, "--strict")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("decision_id", result.stderr)
+
+    def test_adjudication_missing_v2_proof_obligation_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, GAPPED_SCOPE)
+            search_record_fixture(root)
+            entry = adjudication_entry()
+            del entry["v2_proof_obligation"]
+            write_adjudications(root, {"PB-1000": entry})
+            result = self.run_cli(root, v1, expected, "--strict")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("v2_proof_obligation", result.stderr)
+
+    def test_adjudication_missing_search_record_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, GAPPED_SCOPE)
+            entry = adjudication_entry()
+            del entry["search_record"]
+            write_adjudications(root, {"PB-1000": entry})
+            result = self.run_cli(root, v1, expected, "--strict")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("search_record", result.stderr)
+
+    def test_adjudication_missing_owner_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, GAPPED_SCOPE)
+            search_record_fixture(root)
+            entry = adjudication_entry()
+            del entry["owner"]
+            write_adjudications(root, {"PB-1000": entry})
+            result = self.run_cli(root, v1, expected, "--strict")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("owner", result.stderr)
+
+    def test_adjudication_decision_id_pattern_is_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, GAPPED_SCOPE)
+            search_record_fixture(root)
+            for decision_id in ("PD-2026-1-02-03", "PD-2026-01-02", "decision-1", "PD-2026-01-02-3"):
+                write_adjudications(root, {"PB-1000": adjudication_entry(decision_id=decision_id)})
+                result = self.run_cli(root, v1, expected, "--strict")
+                self.assertNotEqual(result.returncode, 0, decision_id)
+                self.assertIn("PD-YYYY-MM-DD-NN", result.stderr, decision_id)
+
+    def test_adjudication_search_record_must_resolve(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, GAPPED_SCOPE)
+            search_record_fixture(root)
+            for search_record in (
+                "docs/parity/missing-record.md#PB-1000 section",
+                "docs/parity/search-record.md#absent section",
+                "docs/parity/search-record.md",
+            ):
+                write_adjudications(root, {"PB-1000": adjudication_entry(search_record=search_record)})
+                result = self.run_cli(root, v1, expected, "--strict")
+                self.assertNotEqual(result.returncode, 0, search_record)
+                self.assertIn("search record", result.stderr, search_record)
+
+    def test_adjudicated_gap_reported_distinctly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, GAPPED_SCOPE)
+            search_record_fixture(root)
+            entry = adjudication_entry()
+            write_adjudications(root, {"PB-1000": entry})
+            report = root / "parity" / "v1-test-gaps.json"
+            result = self.run_cli(root, v1, expected, "--strict", "--gap-report", str(report))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(payload["status"], "complete_with_adjudicated_gaps")
+            self.assertEqual(payload["counts"]["test_gaps"], 1)
+            self.assertEqual(payload["counts"]["test_gaps_adjudicated"], 1)
+            self.assertEqual(payload["counts"]["test_gaps_unresolved"], 0)
+            echoed = payload["gaps"][0]["adjudicated"]
+            self.assertEqual(echoed["decision_id"], entry["decision_id"])
+            self.assertEqual(echoed["search_record"], entry["search_record"])
+            self.assertEqual(echoed["v2_proof_obligation"], entry["v2_proof_obligation"])
+            self.assertEqual(echoed["owner"], entry["owner"])
+
+    def test_non_adjudicated_rows_unaffected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture_rows(
+                root,
+                [
+                    ("PB-1000", GAPPED_SCOPE),
+                    ("PB-1001", "[v1:src/folder with space/source.cs::KnownSymbol] [v1:test:test/known/known.cs]"),
+                ],
+            )
+            search_record_fixture(root)
+            write_adjudications(root, {"PB-1000": adjudication_entry()})
+            result = self.run_cli(root, v1, expected, "--strict")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("2 rows", result.stdout)
+            self.assertIn("1 test citations", result.stdout)
+            self.assertIn("1 test gaps (1 adjudicated, 0 unresolved)", result.stdout)
+
+    def test_stale_adjudication_without_gap_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, "[v1:src/folder with space/source.cs::KnownSymbol] [v1:test:test/known/known.cs]")
+            search_record_fixture(root)
+            write_adjudications(root, {"PB-1000": adjudication_entry()})
+            result = self.run_cli(root, v1, expected, "--strict")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("does not correspond to an open test gap", result.stderr)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, GAPPED_SCOPE)
+            search_record_fixture(root)
+            write_adjudications(root, {"PB-9999": adjudication_entry()})
+            result = self.run_cli(root, v1, expected, "--strict")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unknown contract row", result.stderr)
 
 
 if __name__ == "__main__":

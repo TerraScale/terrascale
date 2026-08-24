@@ -5,10 +5,18 @@
     "source_citations": 267,
     "test_citations": 346,
     "test_gaps": 1,
+    "test_gaps_adjudicated": 1,
+    "test_gaps_unresolved": 0,
     "v1_backed_rows": 251
   },
   "gaps": [
     {
+      "adjudicated": {
+        "decision_id": "PD-2026-08-24-02",
+        "owner": "engine/storage seam (W3-1 lane and later recovery qualification) per PD-2026-08-24-02",
+        "search_record": "docs/parity/w2-gap-closure.md#PB-5012 storage-schema-upgrade",
+        "v2_proof_obligation": "Storage-schema-upgrade remains required V2 behavior owned by the storage/WAL seam (W3-1 lane and later recovery qualification): V2-side schema-upgrade tests for ordered schema transitions, unsupported-version rejection, and upgrade recovery (explicit format migration; V1 files are never opened directly), plus a secret-safe Recovery Receipt in the exclusive recovery lane. V1's missing test evidence cannot lower the bar (PD-2026-08-24-02 D1)."
+      },
       "reason": "the pinned checkout ships the SchemaUpgrade fixtures (DocumentsVersion schema_9/schema_999, VoronCurrentVersion schema_999, and SystemVersion archives) as csproj content items, but no test class references them and no V1 test exercises VoronSchemaUpdater or SchemaUpgrader; the only schema-upgrade reference is the skipped TerraBase_19152 revision test.",
       "row_id": "PB-5012"
     }
@@ -16,5 +24,5 @@
   "mode": "strict",
   "schema_version": "1.0",
   "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-  "status": "failed_unresolved_test_gaps"
+  "status": "complete_with_adjudicated_gaps"
 }
