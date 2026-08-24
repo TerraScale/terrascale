@@ -13,8 +13,8 @@ seam design integrator packets, the cross-seam coherence review, and the
 reliability corrections accepted by the parent. Those inputs are design
 evidence. They are not behavior Proof IDs.
 
-The governing records are the workspace execution charter at
-`specs/2026-08-23-terrabase-v2-goal.md`, the
+The governing records are the workspace execution charter at the
+repository-relative path `../specs/2026-08-23-terrabase-v2-goal.md`, the
 [W2 contract extraction](../parity/w2-contract-extraction.md), and the
 [accepted storage-format ADR](../adr/0001-independent-rust-repository-and-storage-format.md).
 
@@ -397,8 +397,9 @@ layout types are plain private declarations.
 | `OperationId` | shared logical types, integrator-owned | Stable caller identity for a mutating operation and all retries |
 | `TenantScope` | shared logical types, integrator-owned | Opaque validated scope; no public constructor from an untrusted string or `PlatformGrant` |
 | `Transaction` | `src/engine/` | Opaque write set tied to one snapshot and one operation identity |
-| `ReadSnapshot` | shared logical types, integrator-owned | Immutable storage sequence and index-generation view |
-| `IndexGeneration` | shared logical types, integrator-owned | Monotonic, non-wrapping generation token |
+| `ReadSnapshot` | shared logical types, integrator-owned | Immutable storage sequence, tenant scope, and per-namespace index-generation view |
+| `IndexGeneration` | shared logical types, integrator-owned | Namespace, persisted epoch, and monotonic non-wrapping sequence |
+| `IndexGenerationSet` | shared logical types, integrator-owned | Immutable per-namespace generations carried by a read snapshot and query result |
 | `LocalDurability` | shared logical types, integrator-owned | Exactly `Buffered`, `Written`, and `Synced` with the meanings below |
 | `CommitOutcome`, `CommitReceipt` | `src/engine/` | Distinguishes committed, rejected, and unknown acceptance |
 | `DurableResolution` | `src/engine/` | Resolves an unknown operation from the durable operation ledger |
@@ -462,9 +463,32 @@ parity output, overlays, and root CI manifests are integrator-owned. A builder
 must not edit them unless the parent names one exact file in the dispatch
 packet. Each builder uses a worktree based on the preceding accepted commit.
 
+### W3-0 type and export preparation packet
+
+The documentation gate is followed by one small executable preparation packet
+before behavior work. The parent dispatches `W3-0-TYPE-EXPORT-PREP` in
+worktree `terrabasev2-w3-type-prep`, based on commit `ad3e52c`. Its purpose is
+to materialize the shared logical types and exports named in this document,
+then prove that all later packets can compile against one vocabulary.
+
+The packet owns exactly these shared files:
+
+- `src/lib.rs`, for the public re-exports and crate module declarations;
+- `src/types.rs`, if the integrator chooses a separate shared-type module;
+- `Cargo.toml`, only when a dependency is required by those shared types;
+- `Cargo.lock`, only when `Cargo.toml` changes require its lockfile update.
+
+The W3-0 integrator owns those files exclusively for this preparation commit.
+It may add compile-only type/export checks, but it must not implement Storage,
+Engine, Query, Index, or Protocol behavior. It must not edit generated parity
+output, overlays, or any W3 behavior path. The packet reports a clean locked
+check, format, clippy, and docs result, and then commits the preparation. The
+parent records that commit hash and W3-1 must base on that hash, never directly
+on `8771f13`.
+
 | Packet | Worktree and base | Write scope | Collision owner |
 | --- | --- | --- | --- |
-| W3-1 Storage plus Engine | `terrabasev2-w3-storage-engine`, based on `8771f13` | `src/storage/**`, `src/engine/**`, `tests/storage/**`, `tests/engine/**`, and explicitly named storage/engine docs or receipts | W3-1 owns those paths only; integrator owns `src/lib.rs`, Cargo files, generated outputs, overlays, and shared logical types |
+| W3-1 Storage plus Engine | `terrabasev2-w3-storage-engine`, based on the W3-0 type/export preparation commit | `src/storage/**`, `src/engine/**`, `tests/storage/**`, `tests/engine/**`, and explicitly named storage/engine docs or receipts | W3-1 owns those paths only; integrator retains `src/lib.rs`, shared types, Cargo files, generated outputs, overlays, and shared logical types |
 | W3-2 Query | `terrabasev2-w3-query`, based on the accepted W3-1 commit | `src/query/**`, `src/index/**`, `tests/query/**`, `tests/index/**`, and explicitly named query/index docs | W3-2 owns query/index paths; it does not edit W3-1 paths or shared files |
 | W3-3 Protocol | `terrabasev2-w3-protocol`, based on the accepted W3-2 commit | `src/adapters/protocol/**`, named protocol tests, and named protocol docs | W3-3 owns protocol paths; Platform implementation remains a later adapter packet |
 
@@ -563,20 +587,28 @@ The storage implementation must use this order for every accepted write:
    names the operation and expected write-set digest.
 4. Apply the write set to a new private root and append a commit marker. The
    old published root remains readable while this work is in progress.
-5. Apply the requested local durability action. For `Synced`, flush the WAL,
-   commit marker, and new manifest, then fsync the containing directory as
-   required by the adapter contract.
-6. Atomically publish the new manifest/root pointer. Only after this point may
-   the Engine return `Committed` or make the new root the source of ordinary
-   reads.
-7. Release storage locks. Enqueue an index delta carrying the committed root
-   and storage sequence. Index publication is separate and may lag.
+5. Apply the requested local durability action. For `Synced`, write and sync
+   the WAL frames, commit marker, referenced data, and temporary manifest. The
+   temporary manifest names the complete new root but is not visible yet.
+6. Atomically rename or otherwise publish the manifest/root pointer. For
+   `Synced`, sync the published pointer and the containing directory after that
+   publication. Only after this post-publish sync may the Engine return a
+   `Committed` receipt claiming `Synced`.
+7. For `Buffered` and `Written`, return only the guarantees defined below,
+   after the pointer publication that makes the root visible to this process.
+   No level may report visibility before the commit marker and pointer
+   publication sequence completes.
+8. Release storage locks. Emit a private immutable commit-publication event
+   carrying the committed root and storage sequence. Index publication is a
+   separate W3-2 concern and may lag.
 
 Recovery ignores prepare frames without a valid commit marker and ignores
-manifests whose checksums or root identity do not verify. A manifest is never
-published before its referenced data and commit marker satisfy the selected
-`LocalDurability`. The implementation may use a different file arrangement,
-but it may not change this logical order.
+manifests whose checksums or root identity do not verify. For `Synced`, the
+published manifest is never visible before its referenced data, commit marker,
+temporary manifest, post-publish pointer sync, and containing-directory sync
+complete. Lower levels may lose bytes after a crash, but they still follow the
+same logical marker, pointer, lock-release, and event order. The implementation
+may use a different file arrangement, but it may not change this order.
 
 ### Local durability
 
@@ -586,7 +618,7 @@ but it may not change this logical order.
 | --- | --- | --- |
 | `Buffered` | The operation and its commit marker are accepted into the process-local WAL buffer and the new root is visible to this live process. No OS write or flush guarantee exists. | Process crash, machine loss, or power loss may remove the operation. |
 | `Written` | The WAL and commit marker bytes have been handed to the OS through successful writes, and the new root is published. No fsync or power-loss guarantee exists. | OS cache loss, power loss, or device failure may remove the operation. |
-| `Synced` | The WAL, commit marker, referenced data, and manifest publication have completed the adapter's required flush and fsync steps before the receipt is returned. | The receipt covers the declared adapter/storage fault model only. It does not cover a lost region or remote member. |
+| `Synced` | The WAL, commit marker, referenced data, and temporary manifest are written and synced; the root pointer is atomically published; then the published pointer and containing directory are synced after publication, before the receipt is returned. | The receipt covers the declared adapter/storage fault model only. It does not cover a lost region or remote member. |
 
 These names describe local storage only. `Acknowledgement Level` describes
 which replication members confirmed an operation. `Convergence` describes the
@@ -596,24 +628,37 @@ durability level, and a local `Synced` receipt does not imply remote durability.
 ### Read snapshots and index generations
 
 `ReadSnapshot` is an immutable value containing a storage sequence, a tenant
-scope, and the `IndexGeneration` observed when the snapshot was created. It
+scope, and an `IndexGenerationSet` observed when the snapshot was created. It
 can be copied and used by concurrent readers. No method mutates it, advances
 it, or silently changes its tenant scope. A later query obtains a new snapshot.
 
-`IndexGeneration` is a monotonic token. Every successfully published index
-generation is greater than the prior generation in the same index namespace.
-Builders use compare-and-publish or an equivalent serialized rule. A stale,
-replayed, or reordered index build can never lower the visible generation.
+Each `IndexGeneration` contains an index namespace, a persisted epoch, and a
+monotonic non-wrapping sequence. The namespace identifies the tenant and
+logical index definition. The epoch is created with that namespace and is
+persisted in the index manifest, so a restart cannot reset it. A new epoch is
+allowed only when the namespace is explicitly recreated under its migration
+contract. The sequence increases within one namespace and epoch. Generations
+from different namespaces, or from different epochs, are never ordered or
+compared as if they belonged to one sequence. Builders use compare-and-publish
+or an equivalent serialized rule. A stale, replayed, or reordered index build
+can never lower the visible generation for its own namespace.
 
 Index publication follows storage publication, not the reverse. Once the
 storage lock is released, an index builder reads the immutable committed root,
 builds privately, and publishes its segment with a monotonic generation. It
 does not wait while holding a storage lock and it never asks Storage to publish
-the data root. Query execution chooses an index only when its generation meets
-the requested snapshot policy. Otherwise it uses the approved stale fallback,
-waits through a bounded synchronous operation, or returns a typed
-`IndexNotReady` error. It never silently returns a result with a generation
-older than a strict request.
+the data root.
+
+For a query that uses multiple indexes, the `QueryPlan` names each participating
+namespace. Execution checks each selected index against the matching generation
+in the snapshot's `IndexGenerationSet`, using the namespace and persisted epoch
+as part of the match. A strict policy requires every selected index to meet the
+snapshot's generation for its namespace. An allow-stale policy records the
+older generation used for each namespace and returns that map in the result.
+If a generation is missing or too old, the query uses the approved stale
+fallback, waits through a bounded synchronous operation, or returns a typed
+`IndexNotReady` error. It never silently returns a result with an older
+generation for a strict namespace request.
 
 ### Engine interface and invariants
 
@@ -695,12 +740,15 @@ returns typed `PublicResponse` values and typed errors. It does not expose raw
 bytes, arbitrary method/path dispatch, private control-plane routes, or a
 generic HTTP forwarding method.
 
-`PlatformGrant` is validated only by `PlatformAdapter`. Validation covers the
-tenant, principal, operation permission, confirmation requirement, expiry, and
-secret-handling policy. The adapter produces an opaque `TenantScope` and an
-audited typed Engine request. The Engine receives no grant and cannot make a
-Platform authorization decision. Protocol receives no grant authority and
-cannot mint a scope.
+Every public Protocol operation must pass `PlatformAdapter` authorization
+before it reaches the Engine. `PlatformGrant` is validated only by
+`PlatformAdapter`. Validation covers the tenant, principal, operation
+permission, confirmation requirement, expiry, and secret-handling policy. The
+adapter produces an opaque `TenantScope` and an audited typed Engine request.
+The Engine receives no grant and cannot make a Platform authorization
+decision. Protocol receives no grant authority and cannot mint a scope. A
+direct Engine adapter is allowed only for `cfg(test)` or an internal trusted
+path; it cannot be mounted behind a public Protocol route.
 
 Protocol tracer tests must begin red for:
 
@@ -746,11 +794,19 @@ The initial red test names are:
 - `one_transaction_publishes_all_writes_atomically`;
 - `buffered_written_and_synced_have_distinct_loss_windows`;
 - `read_snapshot_remains_immutable_after_a_later_commit`;
-- `index_delta_is_enqueued_after_storage_publication`;
-- `index_publication_does_not_hold_the_storage_lock`;
-- `index_generation_never_moves_backward`;
+- `commit_publication_event_is_emitted_after_storage_locks_release`;
+- `commit_publication_event_carries_an_immutable_root_and_storage_sequence`;
+- `commit_publication_event_is_not_emitted_before_pointer_publication`;
 - `tenant_scope_cannot_change_during_a_transaction`;
 - `production_api_has_no_ephemeral_durable_engine_constructor`.
+
+W3-1 is the exclusive recovery and storage lane. No other packet may modify or
+qualify storage/WAL/recovery behavior concurrently. W3-1 may define and test
+only a crate-private immutable `CommitPublicationEvent` sink emitted after
+storage locks release. It must not edit `src/index/**` or run index
+implementation tests. Builder evidence is redacted and includes the exact
+source/storage-format identity, test result, fault setup, and limits without
+credentials, customer data, raw backup contents, or private host paths.
 
 The first tracer should be a synced single-document write, reopen, and read.
 The next tracer should interrupt the response after publication and resolve the
@@ -767,6 +823,9 @@ W3-2 starts only from an accepted W3-1 commit. Its red tests are:
 - `null_missing_and_exists_have_distinct_results`;
 - `strict_generation_rejects_an_index_that_is_too_old`;
 - `allowed_stale_query_reports_the_generation_it_used`;
+- `index_delta_is_derived_from_the_immutable_commit_publication_event`;
+- `index_publication_does_not_hold_the_storage_lock`;
+- `index_generation_never_moves_backward_within_its_namespace_and_epoch`;
 - `index_rebuild_publishes_a_monotonic_generation`;
 - `replayed_index_build_cannot_overwrite_a_newer_generation`;
 - `plan_reuse_does_not_mutate_the_snapshot`;
@@ -833,9 +892,10 @@ sequential integration.
 
 Required checks for this contract document and W2 synchronization are:
 
-- Markdown syntax and every repository-relative link/path resolve from the
-  repository root. The design links only existing charter, ADR, glossary, W2,
-  and parity paths.
+- Markdown syntax and every repository-relative link resolves from the
+  repository root. The workspace charter path `../specs/...` is an intentional
+  sibling-workspace path from the TerraBaseV2 root and is checked by the parent
+  workspace. The design's in-repository ADR and W2 links resolve locally.
 - JSON syntax, parity generation, parity `--check`, deterministic inventory,
   parity tooling tests, and the pinned V1 citation audit.
 - Secret scan over declared existing roots.

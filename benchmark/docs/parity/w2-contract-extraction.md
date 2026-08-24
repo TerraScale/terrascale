@@ -226,7 +226,8 @@ The following commands ran in this worktree:
   strict citation gate correctly stopped qualification on the 42 gaps. The
   optional `cargo-deny` advisory check was unavailable and recorded as unrun.
 - No push, merge, issue, pull request, sibling-repository edit, or database
-  implementation was performed.
+  implementation was performed from this W2 extraction worktree. The later
+  integrator pushed the corrected tree as `8771f13`.
 
 The next gate is W3 core design and behavior work. W2 is independently reviewed
 GO and remains a contract freeze only. It does not claim V2 implementation,
