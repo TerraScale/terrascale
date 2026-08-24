@@ -1,19 +1,22 @@
-//! In-crate W4-REPLICATION R-1 tests covering the contract's red-test list.
+//! In-crate W4-REPLICATION tests covering the contract's red-test lists for
+//! R-1 and R-2.
 //!
 //! These tests use `TenantScope::from_parts`, which mirrors Platform's
 //! production role of creating a validated scope, because `TenantScope` has no
 //! public constructor by design; the public-construction paths are covered by
 //! `tests/replication/`. Every fixture uses a temporary directory and
 //! synthetic documents only, drives time explicitly through transport pump
-//! calls (no threads, no async runtimes, no sleeps), and never inspects
-//! pages, WAL bytes, or private lock state.
+//! calls and injected lane instants (no threads, no async runtimes, no
+//! sleeps), and never inspects pages, WAL bytes, or private lock state.
 //!
 //! R-1 scope: the data-plane foundation — topology validation, the
 //! deterministic in-process transport doubles, idempotent catch-up and
-//! replay, durable cursors, rejoin, anti-entropy, and tenant isolation. The
-//! acknowledgement lattice above `Local`, convergence, conflicts, fencing,
-//! and the three-Region fault lane belong to R-2/R-3 and are not claimed
-//! here.
+//! replay, durable cursors, rejoin, anti-entropy, and tenant isolation.
+//! R-2 scope: the D-2 acknowledgement lattice with timeout and degenerate
+//! normalization, the convergence observation, the D-3 conflict policy on a
+//! bounded hybrid logical clock, and D-1 leader fencing. The three-Region
+//! fault lane and `ReplicationReceipt` artifacts belong to R-3 and are not
+//! claimed here.
 
 use std::{
     path::PathBuf,
@@ -22,9 +25,10 @@ use std::{
 
 use crate::engine::EngineConfig;
 use crate::replication::{
-    AcknowledgementLevel, MemberId, ReplicationConfig, ReplicationStatus, TopologyView,
-    member::{ApplyReport, MemberError, ReplicationMember, ReplicationWrite, synchronize},
-    transport::{FrameSelector, ReplicationFrame, ReplicationNetwork},
+    AcknowledgementLevel, AcknowledgementReport, ConflictOutcome, Convergence, MemberId,
+    ReplicationConfig, ReplicationInstant, ReplicationOutcome, ReplicationStatus, TopologyView,
+    member::{ApplyReport, MemberError, ReplicationMember, ReplicationWrite, observe_convergence, synchronize},
+    transport::{FrameSelector, ReplicationClockStamp, ReplicationFrame, ReplicationNetwork, StampedCommit},
 };
 use crate::storage::{PublishedCommit, PublishedWrite};
 use crate::types::{
@@ -326,7 +330,7 @@ fn tenant_isolation_probe_denies_cross_tenant_replication_and_is_observable() {
             ReplicationFrame::CatchUpBatch {
                 source: source_id.clone(),
                 tenant: tenant("tenant-a"),
-                commits: vec![hostile],
+                commits: vec![StampedCommit::at_origin_clock(hostile)],
                 through: Some(StorageSequence::new(1)),
                 tenant_high_water: Some(StorageSequence::new(1)),
                 servable_from: Some(StorageSequence::new(1)),
@@ -667,7 +671,7 @@ fn operation_id_reuse_with_a_different_write_set_is_a_typed_failure() {
             ReplicationFrame::CatchUpBatch {
                 source: source_id.clone(),
                 tenant: tenant("tenant-a"),
-                commits: vec![reuse],
+                commits: vec![StampedCommit::at_origin_clock(reuse)],
                 through: Some(StorageSequence::new(9)),
                 tenant_high_water: Some(StorageSequence::new(9)),
                 servable_from: Some(StorageSequence::new(1)),
@@ -948,7 +952,7 @@ fn rejoin_rejects_a_location_whose_format_does_not_verify() {
 }
 
 #[test]
-fn write_admission_is_per_range_and_levels_above_local_are_refused_in_r1() {
+fn write_admission_is_per_range_and_stronger_levels_commit_locally_then_wait() {
     let topology = two_member_topology("m-src", "m-dst", "main");
     let (dir, mut follower) = open_member("admission", "m-dst", &topology);
     let tenant_scope = scope(&follower, "tenant-a");
@@ -961,18 +965,16 @@ fn write_admission_is_per_range_and_levels_above_local_are_refused_in_r1() {
         "a non-owner's write fails admission locally: {not_owner:?}"
     );
 
-    // R-1 evaluates no acknowledgement level above Local: naming one is a
-    // typed refusal, not a silent downgrade or an unimplemented panic.
+    // R-2: naming a stronger level no longer refuses the local commit — the
+    // local publication completes first and the replication wait is a
+    // separate, explicitly driven step (ADR-0004 D-2, V1's post-commit
+    // waits). The wait itself is exercised by the listed R-2 tests.
     let stronger =
         ReplicationWrite::new(operation("op-2"), "main", AcknowledgementLevel::RegionQuorum)
             .expect("valid write request")
             .with_put(text_document("users", "doc-1", "v1"));
-    let refused = follower.commit_write(&tenant_scope, stronger);
-    assert_eq!(
-        refused,
-        Err(MemberError::AcknowledgementLevelNotImplemented(AcknowledgementLevel::RegionQuorum)),
-        "stronger levels arrive with the R-2 acknowledgement lattice"
-    );
+    let receipt = follower.commit_write(&tenant_scope, stronger).expect("local commit completes");
+    assert_eq!(receipt.durability(), LocalDurability::Synced);
 
     // Invalid range text is rejected before any engine work. Inner spaces
     // are valid identifier text; leading whitespace is not.
@@ -995,4 +997,460 @@ fn write_admission_is_per_range_and_levels_above_local_are_refused_in_r1() {
 
     follower.close();
     std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// R-2: the D-2 acknowledgement lattice, timeout, member and Region loss.
+// ---------------------------------------------------------------------------
+
+/// Two Regions where the home Region seats a full quorum pair.
+fn two_region_quorum_topology(range: &str) -> TopologyView {
+    TopologyView::new()
+        .with_region("r-alpha")
+        .expect("valid region")
+        .with_region("r-beta")
+        .expect("valid region")
+        .with_member("m-a1", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_member("m-a2", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_member("m-b1", "r-beta", "fd-beta")
+        .expect("valid member")
+        .with_owner(range, "m-a1")
+        .expect("valid owner")
+        .validated()
+        .expect("valid topology")
+}
+
+/// One Region seating three Members, `m-a1` owning the range.
+fn one_region_three_members(range: &str) -> TopologyView {
+    TopologyView::new()
+        .with_region("r-alpha")
+        .expect("valid region")
+        .with_member("m-a1", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_member("m-a2", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_member("m-a3", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_owner(range, "m-a1")
+        .expect("valid owner")
+        .validated()
+        .expect("valid topology")
+}
+
+/// Two Regions, one Member each: the cross-Region acknowledgement shape.
+fn two_regions_one_member_each(range: &str) -> TopologyView {
+    TopologyView::new()
+        .with_region("r-alpha")
+        .expect("valid region")
+        .with_region("r-beta")
+        .expect("valid region")
+        .with_member("m-a1", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_member("m-b1", "r-beta", "fd-beta")
+        .expect("valid member")
+        .with_owner(range, "m-a1")
+        .expect("valid owner")
+        .validated()
+        .expect("valid topology")
+}
+
+/// Three Regions, one Member each: the non-degenerate D-4 topology.
+fn three_regions_one_member_each(range: &str) -> TopologyView {
+    TopologyView::new()
+        .with_region("r-alpha")
+        .expect("valid region")
+        .with_region("r-beta")
+        .expect("valid region")
+        .with_region("r-gamma")
+        .expect("valid region")
+        .with_member("m-a1", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_member("m-b1", "r-beta", "fd-beta")
+        .expect("valid member")
+        .with_member("m-g1", "r-gamma", "fd-gamma")
+        .expect("valid member")
+        .with_owner(range, "m-a1")
+        .expect("valid owner")
+        .validated()
+        .expect("valid topology")
+}
+
+#[test]
+fn acknowledgement_report_names_the_regions_and_members_that_contributed() {
+    let topology = two_region_quorum_topology("main");
+    let (dir_a1, mut m_a1) = open_member("ack-a1", "m-a1", &topology);
+    let (dir_a2, mut m_a2) = open_member("ack-a2", "m-a2", &topology);
+    let (dir_b1, mut m_b1) = open_member("ack-b1", "m-b1", &topology);
+    let mut network = ReplicationNetwork::new();
+
+    // MajorityRegions over two Regions needs both Regions through a Region
+    // quorum: r-alpha needs both of its Members, r-beta its one.
+    let scope_a1 = scope(&m_a1, "tenant-a");
+    m_a1.commit_write(&scope_a1, put_request("main", "op-1", "doc-1", "v1"))
+        .expect("local write commits");
+    let before = network.now();
+    let mut peers =
+        [(&mut m_a2, scope(&m_a2, "tenant-a")), (&mut m_b1, scope(&m_b1, "tenant-a"))];
+    let outcome = m_a1.wait_for_acknowledgement(
+        &mut network,
+        &scope_a1,
+        &operation("op-1"),
+        AcknowledgementLevel::MajorityRegions,
+        &mut peers,
+        network.now().plus_ticks(4),
+    );
+
+    let ReplicationOutcome::Acknowledged(report) = outcome else {
+        panic!("the cross-region acknowledgement is observed: {outcome:?}")
+    };
+    assert_eq!(report.requested(), AcknowledgementLevel::MajorityRegions);
+    assert_eq!(report.observed(), AcknowledgementLevel::MajorityRegions);
+    assert_eq!(report.normalization(), None, "two Regions distinguish this level");
+    let contributed = report.contributed();
+    assert_eq!(contributed.len(), 2, "both Regions contributed");
+    assert_eq!(contributed[0].0.as_str(), "r-alpha");
+    assert_eq!(contributed[0].1.iter().map(|id| id.as_str()).collect::<Vec<_>>(), ["m-a1", "m-a2"]);
+    assert_eq!(contributed[1].0.as_str(), "r-beta");
+    assert_eq!(contributed[1].1.iter().map(|id| id.as_str()).collect::<Vec<_>>(), ["m-b1"]);
+    assert!(
+        report.observed_at().ticks() > before.ticks(),
+        "the observation time is the deterministic lane instant at acknowledgement"
+    );
+    assert_eq!(report.observed_at(), network.now(), "no pump moves between report and read");
+
+    m_a1.close();
+    m_a2.close();
+    m_b1.close();
+    std::fs::remove_dir_all(&dir_a1).ok();
+    std::fs::remove_dir_all(&dir_a2).ok();
+    std::fs::remove_dir_all(&dir_b1).ok();
+}
+
+#[test]
+fn acknowledgement_timeout_is_distinct_from_local_commit_failure() {
+    let topology = two_regions_one_member_each("main");
+    let (dir_a1, mut m_a1) = open_member("timeout-a1", "m-a1", &topology);
+    let (dir_b1, mut m_b1) = open_member("timeout-b1", "m-b1", &topology);
+    let a1 = member_id("m-a1");
+    let b1 = member_id("m-b1");
+    let mut network = ReplicationNetwork::new();
+
+    // The follower's link holds every push back far longer than the deadline,
+    // so nothing it carries is released before the deadline hits.
+    network.link(&a1, &b1).delay_pumps(8);
+    let scope_a1 = scope(&m_a1, "tenant-a");
+    let receipt = m_a1
+        .commit_write(&scope_a1, put_request("main", "op-1", "doc-1", "v1"))
+        .expect("the local commit completes on its own");
+    assert_eq!(receipt.durability(), LocalDurability::Synced);
+
+    let mut peers = [(&mut m_b1, scope(&m_b1, "tenant-a"))];
+    let outcome = m_a1.wait_for_acknowledgement(
+        &mut network,
+        &scope_a1,
+        &operation("op-1"),
+        AcknowledgementLevel::AllRegions,
+        &mut peers,
+        network.now().plus_ticks(2),
+    );
+
+    let ReplicationOutcome::Timeout { operation_id, requested, observed } = outcome else {
+        panic!("the unmet deadline is a timeout observation, not a commit failure: {outcome:?}")
+    };
+    assert_eq!(operation_id.as_str(), "op-1");
+    assert_eq!(requested, AcknowledgementLevel::AllRegions);
+    // The partial observation names exactly who had durably recorded when
+    // the deadline hit: only the writer, at its own Region quorum.
+    assert_eq!(
+        observed.contributed().len(),
+        1,
+        "the held-back Member contributed nothing: {:?}",
+        observed.contributed()
+    );
+    assert_eq!(observed.contributed()[0].0.as_str(), "r-alpha");
+    assert_eq!(
+        observed.contributed()[0].1.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        ["m-a1"]
+    );
+    assert_eq!(
+        observed.observed(),
+        AcknowledgementLevel::RegionQuorum,
+        "the strongest level the partial set actually achieved is reported"
+    );
+
+    // The timeout is distinct from a local commit failure: the local receipt
+    // stands and the document still reads back at its writer.
+    let resolution = m_a1
+        .engine()
+        .expect("engine open")
+        .resolve_commit(&scope_a1, operation("op-1"))
+        .expect("durable resolution");
+    assert!(
+        matches!(&resolution, crate::engine::DurableResolution::Committed(receipt)
+            if receipt.durability() == LocalDurability::Synced),
+        "the local commit is unaffected by the replication timeout: {resolution:?}"
+    );
+    assert_eq!(documents_of(&m_a1, "tenant-a").len(), 1);
+    // And nothing crossed to the delayed Member before the deadline.
+    assert_eq!(network.link(&a1, &b1).held(), 2, "every pushed frame is still held back");
+    assert!(documents_of(&m_b1, "tenant-a").is_empty());
+
+    m_a1.close();
+    m_b1.close();
+    std::fs::remove_dir_all(&dir_a1).ok();
+    std::fs::remove_dir_all(&dir_b1).ok();
+}
+
+#[test]
+fn one_region_multiple_members_reach_region_quorum_under_member_delay() {
+    let topology = one_region_three_members("main");
+    let (dir_a1, mut m_a1) = open_member("quorum-a1", "m-a1", &topology);
+    let (dir_a2, mut m_a2) = open_member("quorum-a2", "m-a2", &topology);
+    let (dir_a3, mut m_a3) = open_member("quorum-a3", "m-a3", &topology);
+    let a1 = member_id("m-a1");
+    let a3 = member_id("m-a3");
+    let mut network = ReplicationNetwork::new();
+
+    // One Member of the Region is delayed well past the quorum window.
+    network.link(&a1, &a3).delay_pumps(6);
+    let scope_a1 = scope(&m_a1, "tenant-a");
+    m_a1.commit_write(&scope_a1, put_request("main", "op-1", "doc-1", "v1"))
+        .expect("local write commits");
+    let mut peers = [(&mut m_a2, scope(&m_a2, "tenant-a")), (&mut m_a3, scope(&m_a3, "tenant-a"))];
+    let outcome = m_a1.wait_for_acknowledgement(
+        &mut network,
+        &scope_a1,
+        &operation("op-1"),
+        AcknowledgementLevel::RegionQuorum,
+        &mut peers,
+        network.now().plus_ticks(3),
+    );
+
+    let ReplicationOutcome::Acknowledged(report) = outcome else {
+        panic!("the Region quorum is reachable without the delayed Member: {outcome:?}")
+    };
+    assert_eq!(report.observed(), AcknowledgementLevel::RegionQuorum);
+    assert_eq!(report.requested(), AcknowledgementLevel::RegionQuorum);
+    let contributed = report.contributed();
+    assert_eq!(contributed.len(), 1);
+    assert_eq!(contributed[0].0.as_str(), "r-alpha");
+    assert_eq!(
+        contributed[0].1.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        ["m-a1", "m-a2"],
+        "the report names exactly the Members that contributed, delayed m-a3 excluded"
+    );
+    assert!(documents_of(&m_a3, "tenant-a").is_empty(), "the delayed Member holds nothing yet");
+
+    // D-4 canonical reading of the degenerate one-Region lattice: requesting
+    // AllRegions normalizes to the weakest distinct name and the report
+    // records the normalization so reports stay comparable.
+    m_a1.commit_write(&scope_a1, put_request("main", "op-2", "doc-2", "v2"))
+        .expect("local write commits");
+    let mut peers = [(&mut m_a2, scope(&m_a2, "tenant-a")), (&mut m_a3, scope(&m_a3, "tenant-a"))];
+    let degenerate = m_a1.wait_for_acknowledgement(
+        &mut network,
+        &scope_a1,
+        &operation("op-2"),
+        AcknowledgementLevel::AllRegions,
+        &mut peers,
+        network.now().plus_ticks(2),
+    );
+    let ReplicationOutcome::Acknowledged(normalized) = degenerate else {
+        panic!("the degenerate level is satisfiable: {degenerate:?}")
+    };
+    assert_eq!(normalized.requested(), AcknowledgementLevel::AllRegions);
+    assert_eq!(normalized.observed(), AcknowledgementLevel::RegionQuorum);
+    assert_eq!(
+        normalized.normalization(),
+        Some((AcknowledgementLevel::AllRegions, AcknowledgementLevel::RegionQuorum)),
+        "the one-Region normalization is recorded in the report"
+    );
+
+    m_a1.close();
+    m_a2.close();
+    m_a3.close();
+    std::fs::remove_dir_all(&dir_a1).ok();
+    std::fs::remove_dir_all(&dir_a2).ok();
+    std::fs::remove_dir_all(&dir_a3).ok();
+}
+
+#[test]
+fn two_regions_healthy_links_achieve_cross_region_acknowledgement_and_read_visibility() {
+    let topology = two_regions_one_member_each("main");
+    let (dir_a1, mut m_a1) = open_member("cross-a1", "m-a1", &topology);
+    let (dir_b1, mut m_b1) = open_member("cross-b1", "m-b1", &topology);
+    let mut network = ReplicationNetwork::new();
+
+    // Per-level visibility: before the observing Member's storage publishes
+    // the operation, a read at that Region observes nothing — no level
+    // implies read-your-writes at a Region that has not recorded it.
+    let scope_a1 = scope(&m_a1, "tenant-a");
+    m_a1.commit_write(&scope_a1, put_request("main", "op-1", "doc-1", "value-one"))
+        .expect("local write commits");
+    assert!(
+        documents_of(&m_b1, "tenant-a").is_empty(),
+        "the write is invisible at r-beta before its Member published it"
+    );
+
+    let mut peers = [(&mut m_b1, scope(&m_b1, "tenant-a"))];
+    let outcome = m_a1.wait_for_acknowledgement(
+        &mut network,
+        &scope_a1,
+        &operation("op-1"),
+        AcknowledgementLevel::MajorityRegions,
+        &mut peers,
+        network.now().plus_ticks(3),
+    );
+
+    let ReplicationOutcome::Acknowledged(report) = outcome else {
+        panic!("healthy links reach the cross-Region acknowledgement: {outcome:?}")
+    };
+    assert_eq!(report.observed(), AcknowledgementLevel::MajorityRegions);
+    let contributed = report.contributed();
+    assert_eq!(
+        contributed.iter().map(|(region, _)| region.as_str()).collect::<Vec<_>>(),
+        ["r-alpha", "r-beta"],
+        "the report names the Region the read-your-writes guarantee holds for"
+    );
+
+    // After the acknowledgement named r-beta, that Region's Member published
+    // the operation and a read there observes it.
+    let at_beta = documents_of(&m_b1, "tenant-a");
+    assert_eq!(at_beta.len(), 1);
+    assert_eq!(at_beta[0].value(), &DocumentValue::String("value-one".to_owned()));
+    assert_eq!(at_beta[0].id().as_str(), "doc-1");
+
+    m_a1.close();
+    m_b1.close();
+    std::fs::remove_dir_all(&dir_a1).ok();
+    std::fs::remove_dir_all(&dir_b1).ok();
+}
+
+#[test]
+fn member_loss_before_acknowledgement_returns_a_typed_error_not_silent_success() {
+    let topology = two_regions_one_member_each("main");
+    let (dir_a1, mut m_a1) = open_member("loss-a1", "m-a1", &topology);
+    let (dir_b1, mut m_b1) = open_member("loss-b1", "m-b1", &topology);
+    let mut network = ReplicationNetwork::new();
+
+    let scope_a1 = scope(&m_a1, "tenant-a");
+    m_a1.commit_write(&scope_a1, put_request("main", "op-1", "doc-1", "v1"))
+        .expect("local write commits");
+
+    // The r-beta Member is lost before the acknowledgement: its engine is
+    // closed, so AllRegions cannot be met and the wait says so with the
+    // typed MemberUnavailable category — never a silent success.
+    m_b1.close();
+    let mut peers = [(&mut m_b1, scope(&m_b1, "tenant-a"))];
+    let outcome = m_a1.wait_for_acknowledgement(
+        &mut network,
+        &scope_a1,
+        &operation("op-1"),
+        AcknowledgementLevel::AllRegions,
+        &mut peers,
+        network.now().plus_ticks(3),
+    );
+    assert_eq!(
+        outcome,
+        ReplicationOutcome::Failed(crate::replication::ReplicationError::MemberUnavailable),
+        "member loss before acknowledgement is a typed failure: {outcome:?}"
+    );
+
+    // Recovery: the member reopens from its durable location, its scope is
+    // rebuilt against the new engine identity, and the same operation now
+    // reaches the requested level.
+    m_b1.restart().expect("the lost member reopens");
+    let mut peers = [(&mut m_b1, scope(&m_b1, "tenant-a"))];
+    let recovered = m_a1.wait_for_acknowledgement(
+        &mut network,
+        &scope_a1,
+        &operation("op-1"),
+        AcknowledgementLevel::AllRegions,
+        &mut peers,
+        network.now().plus_ticks(3),
+    );
+    assert!(
+        matches!(recovered, ReplicationOutcome::Acknowledged(_)),
+        "the rejoined member contributes again: {recovered:?}"
+    );
+
+    m_a1.close();
+    m_b1.close();
+    std::fs::remove_dir_all(&dir_a1).ok();
+    std::fs::remove_dir_all(&dir_b1).ok();
+}
+
+#[test]
+fn region_loss_after_acknowledged_write_states_durable_visibility_and_recovery_limit() {
+    let topology = three_regions_one_member_each("main");
+    let (dir_a1, mut m_a1) = open_member("regionloss-a1", "m-a1", &topology);
+    let (dir_b1, mut m_b1) = open_member("regionloss-b1", "m-b1", &topology);
+    let (dir_g1, mut m_g1) = open_member("regionloss-g1", "m-g1", &topology);
+    let a1 = member_id("m-a1");
+    let g1 = member_id("m-g1");
+    let mut network = ReplicationNetwork::new();
+
+    // The acknowledgement is reached by a Region majority: r-gamma's link is
+    // partitioned so two of three Regions durably record the write.
+    network.link(&a1, &g1).partition();
+    let scope_a1 = scope(&m_a1, "tenant-a");
+    m_a1.commit_write(&scope_a1, put_request("main", "op-1", "doc-1", "v1"))
+        .expect("local write commits");
+    let mut peers =
+        [(&mut m_b1, scope(&m_b1, "tenant-a")), (&mut m_g1, scope(&m_g1, "tenant-a"))];
+    let outcome = m_a1.wait_for_acknowledgement(
+        &mut network,
+        &scope_a1,
+        &operation("op-1"),
+        AcknowledgementLevel::MajorityRegions,
+        &mut peers,
+        network.now().plus_ticks(3),
+    );
+    let ReplicationOutcome::Acknowledged(report) = outcome else {
+        panic!("a Region majority acknowledges without the partitioned Region: {outcome:?}")
+    };
+    assert_eq!(report.observed(), AcknowledgementLevel::MajorityRegions);
+
+    // The entire Region is then lost: its member is closed.
+    m_g1.close();
+    let observation = m_a1.observe_region_loss(
+        network.now(),
+        &scope_a1,
+        &operation("op-1"),
+        &report,
+        &[(&m_b1, &scope(&m_b1, "tenant-a")), (&m_g1, &scope(&m_g1, "tenant-a"))],
+        &[crate::replication::RegionId::try_new("r-gamma").expect("valid region")],
+    );
+
+    // Durable visibility: exactly the Regions and Members that durably hold
+    // the acknowledged write are named.
+    let held = observation.durably_held_by();
+    assert_eq!(
+        held.iter().map(|(region, _)| region.as_str()).collect::<Vec<_>>(),
+        ["r-alpha", "r-beta"],
+        "the observation states durable visibility: {held:?}"
+    );
+    assert_eq!(held[0].1.iter().map(|id| id.as_str()).collect::<Vec<_>>(), ["m-a1"]);
+    assert_eq!(held[1].1.iter().map(|id| id.as_str()).collect::<Vec<_>>(), ["m-b1"]);
+    assert_eq!(observation.operation().as_str(), "op-1");
+    assert_eq!(observation.acknowledged(), AcknowledgementLevel::MajorityRegions);
+    // The recovery limit: what is NOT yet known is stated, not guessed.
+    assert_eq!(
+        observation.unknown_in().iter().map(|region| region.as_str()).collect::<Vec<_>>(),
+        ["r-gamma"]
+    );
+    assert_eq!(
+        observation.recovery_limit(),
+        crate::replication::member::RegionLossLimit::UnknownUntilRejoin,
+        "the limit names the condition that would resolve the unknown"
+    );
+
+    m_a1.close();
+    m_b1.close();
+    m_g1.close();
+    std::fs::remove_dir_all(&dir_a1).ok();
+    std::fs::remove_dir_all(&dir_b1).ok();
+    std::fs::remove_dir_all(&dir_g1).ok();
 }
