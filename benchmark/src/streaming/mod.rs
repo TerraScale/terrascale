@@ -169,8 +169,9 @@ impl<'engine> StreamStore<'engine> {
     /// # Errors
     ///
     /// Returns [`StreamError::SnapshotEngineMismatch`] for a scope naming
-    /// another `Engine`, [`StreamError::InvalidSource`] for an invalid spec
-    /// or an already open subscription, and
+    /// another `Engine`, [`StreamError::InvalidSource`] for an invalid spec,
+    /// an already open subscription, or when this `Engine` already holds the
+    /// maximum live subscriptions, and
     /// [`StreamError::EngineClosed`] when the publication registry cannot
     /// accept the notification sink.
     pub fn subscribe(
@@ -964,6 +965,21 @@ pub struct SubscriptionBatch {
     checkpoint: SubscriptionCheckpoint,
     filtered_dropped: u64,
     dropped_notifications: u64,
+}
+
+impl SubscriptionBatch {
+    /// Returns the count of notifications the bounded ingress dropped.
+    ///
+    /// The count includes both queue-full drops and lock-contention drops
+    /// (the sink never blocks a commit, so a contended notification is
+    /// dropped and counted). Engine-level contention drops are attributed
+    /// to every subscription of that engine, including any that predate
+    /// this subscription, so the value is an advisory delivery-health
+    /// statistic, never a delivery-loss count: delivery is journal-driven
+    /// and at-least-once.
+    pub fn dropped_notifications(&self) -> u64 {
+        self.dropped_notifications
+    }
 }
 
 impl SubscriptionBatch {
