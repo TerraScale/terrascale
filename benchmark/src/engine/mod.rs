@@ -455,12 +455,10 @@ impl Engine {
 
     /// Returns a family store borrowed from this Engine.
     ///
-    /// Family behavior belongs to the W3-F packet; the borrowed store is wired
-    /// but not implemented here.
-    #[allow(clippy::missing_panics_doc)]
+    /// The store is bound to this Engine's lifetime; family behavior is
+    /// implemented in the families module.
     pub fn families(&self) -> FamilyStore<'_> {
-        let _store = FamilyStore::from_engine(self);
-        unimplemented!("family behavior belongs to W3-F")
+        FamilyStore::from_engine(self)
     }
 
     /// Resolves an uncertain operation using its durable identity.
