@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse as parseHtml, parseFragment } from 'parse5'
 
 const scriptPath = fileURLToPath(import.meta.url)
 const defaultRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -32,14 +33,30 @@ export function walk(directory) {
   return files.sort()
 }
 
-const decodeHtmlEntities = (text) => text.replaceAll('&amp;', '&').replaceAll('&quot;', '"').replaceAll('&#39;', "'")
+const isElement = (node) => Boolean(node?.tagName)
+
+const parseRenderedHtml = (html) => {
+  const isDocument = /<html(?:\s|>)/i.test(html) || /^\s*<!doctype\b/i.test(html)
+  return isDocument ? parseHtml(html) : parseFragment(html)
+}
+
+const walkTree = (node, visit) => {
+  visit(node)
+  for (const child of node.childNodes ?? []) walkTree(child, visit)
+}
 
 export function extractAttributes(html) {
   const attributes = []
-  const pattern = /\b(href|src|action|content)\s*=\s*(["'])(.*?)\2/gi
-  for (const match of html.matchAll(pattern)) {
-    attributes.push({ name: match[1].toLowerCase(), value: decodeHtmlEntities(match[3]) })
-  }
+  const tree = parseRenderedHtml(html)
+  walkTree(tree, (node) => {
+    if (!isElement(node)) return
+    for (const attribute of node.attrs) {
+      const name = attribute.name.toLowerCase()
+      if (name === 'href' || name === 'src' || name === 'action' || name === 'content') {
+        attributes.push({ name, value: attribute.value })
+      }
+    }
+  })
   return attributes
 }
 
@@ -51,14 +68,18 @@ const collectJsonUrls = (value, urls) => {
 
 export function extractStructuredDataUrls(html) {
   const urls = new Set()
-  const scripts = html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)
-  for (const match of scripts) {
+  const tree = parseRenderedHtml(html)
+  walkTree(tree, (node) => {
+    if (!isElement(node) || node.tagName !== 'script') return
+    const type = node.attrs.find(({ name }) => name.toLowerCase() === 'type')?.value.trim().toLowerCase()
+    if (type !== 'application/ld+json') return
+    const payload = (node.childNodes ?? []).map((child) => child.nodeName === '#text' ? child.value : '').join('')
     try {
-      collectJsonUrls(JSON.parse(match[1]), urls)
+      collectJsonUrls(JSON.parse(payload), urls)
     } catch {
       urls.add('invalid-json-ld://payload')
     }
-  }
+  })
   return [...urls]
 }
 
@@ -75,8 +96,13 @@ const resolveInternalTarget = (buildRoot, pathname) => {
 const checkFragment = (target, fragment, source, failures) => {
   if (!fragment) return
   const html = fs.readFileSync(target, 'utf8')
-  const escaped = fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  if (!new RegExp(`(?:id|name)="${escaped}"`).test(html)) failures.push(`${source}: missing internal anchor #${fragment}`)
+  const tree = parseRenderedHtml(html)
+  let found = false
+  walkTree(tree, (node) => {
+    if (!isElement(node) || found) return
+    found = node.attrs.some(({ name, value }) => (name === 'id' || name === 'name') && value === fragment)
+  })
+  if (!found) failures.push(`${source}: missing internal anchor #${fragment}`)
 }
 
 const isExternalHttpUrl = (value) => /^https?:\/\//i.test(value)
