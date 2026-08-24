@@ -131,12 +131,14 @@ adjudicates that decision. Decision index:
 Every row appears exactly once. Row ID ranges are contiguous and complete:
 PB-6000..PB-6036 and PB-5000..PB-5048, matching the fragment files.
 
-Decision-marker counts (30 of 86 rows): D-1: 6 (PB-5000, PB-5016..PB-5020);
+Decision-marker counts (31 of 86 rows): D-1: 6 (PB-5000, PB-5016..PB-5020);
 D-2: 3 (PB-5026, PB-5042, PB-5043); D-3: 3 (PB-5022, PB-5034, PB-5045);
 D-4: 1 (PB-5044); D-5: 2 (PB-6006, PB-6020 — partial rows; script portions
 only); D-6: 8 (PB-6023..PB-6030); D-7: 8 (PB-5036..PB-5041, PB-5048,
-PB-6034). Of those 30, 14 are W4-owned rows and 16 are later-wave rows.
+PB-6034). Of those 31, 15 are W4-owned rows (all of D-1 through D-5, which
+sit on W4-REPLICATION, W4-STREAM, and W4-BACKUP rows) and 16 are later-wave
+rows (all of D-6 and D-7).
 
 Two rows carry a partial decision marker (PB-6006 and PB-6020): their typed
 portions proceed in W4-STREAM/W4-BACKUP; only the script-execution portions
-wait on D-5. Counting them keeps the marker arithmetic honest at 30.
+wait on D-5. They are counted once each in the 31 above.

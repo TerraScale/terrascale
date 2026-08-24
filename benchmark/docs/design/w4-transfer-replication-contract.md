@@ -85,7 +85,7 @@ recovery rules stay behind them.
 | Seam | Proposed interface | Main reason | What stays behind the seam |
 | --- | --- | --- | --- |
 | Streaming | Borrowed `StreamStore<'engine>` with cursor-based batches, subscription checkpoints, and bounded buffers | One ordering and checkpoint rule can govern document, query, time-series, family, and change streams | Buffering policy, slow-consumer handling, resend state, subscription storage, event filtering |
-| Replication | `RegionId`/`MemberId`/`TopologyView` inputs, `AcknowledgementLevel` request, `ReplicationOutcome` with `AcknowledgementReport`, `ConvergenceReport`, and `ReplicationReceipt` | The charter's Acknowledgement Level and Convergence vocabulary becomes observable without exposing transport or leader state | Transport, message codec, leader or shard state, anti-entropy internals, membership transitions |
+| Replication | `RegionId`/`MemberId`/`TopologyView` inputs, `AcknowledgementLevel` request, `ReplicationOutcome` with `AcknowledgementReport`, `Convergence`, and `ReplicationReceipt` | The charter's Acknowledgement Level and Convergence vocabulary becomes observable without exposing transport or leader state | Transport, message codec, leader or shard state, anti-entropy internals, membership transitions |
 | Backup/Import | Manifest-verified `BackupManifest`/`BackupArchive` and `MigrationManifest` with restartable, idempotent logical records | A manifest that binds exact bytes and order makes restore and Logical Migration auditable | Archive codec, incremental chain internals, staging directories, provider adapters |
 
 No interface in this document is a decision about the replication algorithm,
@@ -184,7 +184,7 @@ archive, and leader-state types are plain private declarations.
 | `AcknowledgementLevel` | `pub` | The lattice proposed in decision D-2 (e.g. `Local`, `RegionQuorum`, `MajorityRegions`, `AllRegions`); the exact set is parent-gated. |
 | `AcknowledgementReport` | `pub` | The observed level, the Region/Member set that contributed, and the observation time. It names members explicitly (PB-5026, PB-5042). |
 | `Convergence` | `pub` | The contract-defined converged-state observation for an operation identity: which Members hold it, at which acknowledgement state, observed when (PB-5043). |
-| `ReplicationOutcome` | `pub` | `Acknowledged(AcknowledgementReport)`, `Timeout { operation_id, requested: AcknowledgementLevel }`, `Failed(ReplicationError)`. Timeout is distinct from local-commit failure (PB-5026). |
+| `ReplicationOutcome` | `pub` | `Acknowledged(AcknowledgementReport)`, `Timeout { operation_id, requested: AcknowledgementLevel, observed: AcknowledgementReport }`, `Failed(ReplicationError)`. Timeout is distinct from local-commit failure and carries the partial-ack observation — which Members had durably recorded when the deadline hit (PB-5026; a D-2 parameter, see below). |
 | `ReplicationStatus` | `pub` | Health observations (assigned, active, responsive, stale, unavailable, degraded, unknown) reported separately from convergence state (PB-5032). |
 | `ReplicationReceipt` | `pub` | Secret-safe record of a qualification scenario: scenario identity, topology, fault classes, acknowledgement facts, convergence outcome, measured limits. No document content (PB-5042..PB-5047). |
 | `ConflictRecord` | `pub` | Content-free conflict observation: identities, vectors or clocks, and the recorded policy outcome. No conflicting document payloads (PB-5022). |
@@ -225,8 +225,9 @@ local resolution path.
 | stream buffers, slow-consumer queues, resend state, subscription storage | `src/streaming/` | Bounded, test-observable through the public seam only |
 | replication transport, message codec, leader/shard state, anti-entropy workers, membership transition engine | `src/replication/` | Never re-exported; the qualification lane substitutes controlled in-process links |
 | archive codec, incremental chain internals, staging directory management, destination adapter trait | `src/backup/` | Archive bytes never leave the module; destination providers are later adapters |
+| `FamilyRecordInput` | `src/backup/mod.rs`, declared by W4-0, owned by W4-BACKUP | `pub(crate)` only: the typed family-record input that W4-CA-5 produces from the reserved collection, so the families seam can feed backup and migration without a public type or a families-owned backup type; never re-exported from `src/lib.rs` |
 | migration iteration state, V1 record parsers, resume journal | `src/migration/` | Physical V1 layout parsing stays private; public types are logical records |
-| `FaultPoint` arming and the publication-sink registry | `src/storage/` and `src/engine/` | Test-only fault arming stays `cfg(test)`; production-visible subscription is the proposed collision action below |
+| `FaultPoint` arming and the publication-sink registry | `src/storage/` and `src/engine/` | Test-only fault arming stays `cfg(test)`; production-visible subscription is the proposed collision action W4-CA-3 |
 
 No public W4 method may return a byte slice, WAL frame, file offset, manifest
 path, archive path, transport frame, leader term, or private host path as a
@@ -253,7 +254,9 @@ tests/public_exports_w4.rs      (new file; tests/public_exports.rs untouched)
 ```
 
 Each `mod.rs` contains only the module documentation, the type declarations
-listed in the ownership tables above, and named validated constructors with
+listed in the ownership tables above (public types from the public tables,
+plus the crate-private `FamilyRecordInput` in `src/backup/mod.rs` for
+W4-CA-5), and named validated constructors with
 `todo!("w4 implementation packet")` bodies where a body is required for
 compilation. `src/lib.rs` gains exactly these additions:
 
@@ -285,16 +288,22 @@ pub use streaming::{
 ```
 
 The root never re-exports a transport, codec, leader-state, archive-internals,
-or anti-entropy type. `Engine::streams()` (proposed collision action CA-1
+or anti-entropy type. `Engine::streams()` (proposed collision action W4-CA-1
 below) is the only production acquisition path for `StreamStore`.
 
 The declaration-only packet starts red with these four public-surface tests in
 `tests/public_exports_w4.rs`:
 
 - `w4_public_exports_compile_with_declaration_only_tree`;
-- `streaming_replication_and_backup_handles_borrow_the_engine`;
+- `streaming_store_borrows_the_engine_and_prevents_shutdown_while_live`;
 - `commit_receipt_stays_local_only_in_the_w4_surface`;
 - `w4_roots_reexport_no_transport_codec_or_leader_state`.
+
+`StreamStore<'engine>` is the only engine-borrowing handle type W4-0 declares:
+replication and backup operations acquire the Engine per operation inside
+their behavior packets, so no `ReplicationStore`/`BackupStore` handle is
+declared here. The borrow test is scoped to the declared surface
+accordingly; it makes no claim about undeclared handle types.
 
 These tests inspect only the compile/export and lifetime surface. They do not
 claim that any streaming, replication, backup, or migration behavior exists.
@@ -309,12 +318,39 @@ cannot edit any of these files.
 
 | ID | File | Exact proposed change | Why a builder cannot do it |
 | --- | --- | --- | --- |
-| CA-1 | `src/lib.rs` | Add the four `pub mod` roots and the export block above. | Frozen for behavior packets; only the parent-dispatched W4-0 preparation (or the integrator) may edit it. |
-| CA-2 | `src/engine/mod.rs` | Add `pub fn streams(&self) -> StreamStore<'_>` returning the borrowed store (mirrors `Engine::queries`/`Engine::families`). | `src/engine/**` is outside every W4 packet's write scope. |
-| CA-3 | `src/engine/mod.rs` (and `src/storage/mod.rs` only if the event type moves) | Replace the single-slot, `#[cfg(test)]` `set_publication_sink` with a production-visible, multi-subscriber registry: `pub(crate) fn subscribe_publications(&self, sink: CommitPublicationSink) -> SubscriptionGuard` where the guard detaches on drop. The existing index sink and the streaming subscription both register. | Streaming needs `CommitPublicationEvent` deltas in production; the current seam is test-only and single-slot, and `src/engine/**` is frozen to W4 builders. |
-| CA-4 | `src/storage/mod.rs`, `src/storage/file.rs`, `src/storage/ledger.rs`, `src/engine/mod.rs` | Extend the crate-private `StoragePort` with a durable publication-history read for replication catch-up and backup checkpoints: `fn tenant_commits(&self, tenant: &TenantId, after: StorageSequence, limit: u32) -> Vec<PublishedCommit>` where `PublishedCommit` is a crate-private record of `{ operation_id, sequence, write_set_digest, document_ids }` derived from the ledger and root chain. | Replication resume and backup boundaries need ordered committed history; `src/storage/**` and `src/engine/**` are frozen to W4 builders. |
-| CA-5 | `src/families/mod.rs` | Re-export a typed family-record enumeration for backup and migration: `pub(crate) fn snapshot_family_records(scope: &TenantScope, snapshot: &ReadSnapshot) -> Result<Vec<crate::backup::FamilyRecordInput>, FamilyError>` implemented in `src/families/` against the reserved collection `terrabase.families`. | `src/families/**` is outside W4-BACKUP's write scope; the reserved collection layout is family-private. |
-| CA-6 | `tests/public_exports_w4.rs` (new) | Created by W4-0 as its own file so the shared `tests/public_exports.rs` stays untouched. | The shared export test is integrator-owned after W3-0. |
+| W4-CA-1 | `src/lib.rs` | Add the four `pub mod` roots and the export block above. | Frozen for behavior packets; only the parent-dispatched W4-0 preparation (or the integrator) may edit it. |
+| W4-CA-2 | `src/engine/mod.rs` | Add `pub fn streams(&self) -> StreamStore<'_>` returning the borrowed store (mirrors `Engine::queries`/`Engine::families`). | `src/engine/**` is outside every W4 packet's write scope. |
+| W4-CA-3 | `src/engine/mod.rs` (and `src/storage/mod.rs` only if the event type moves) | Replace the single-slot, `#[cfg(test)]` `set_publication_sink` with a production-visible, multi-subscriber registry: `pub(crate) fn subscribe_publications(&self, sink: CommitPublicationSink) -> SubscriptionGuard` where the guard detaches on drop. The existing index sink and the streaming subscription both register. Sinks are non-blocking and bounded: the emit call runs synchronously on the committing thread, so a sink must not block, must not take a storage lock, and must not grow an unbounded queue — a slow or overflowing sink is dropped or reported through its own bounded channel, never allowed to delay or block the publication path. | Streaming needs `CommitPublicationEvent` deltas in production; the current seam is test-only and single-slot, and `src/engine/**` is frozen to W4 builders. Absorbs the queued W3-2 integrator catalog action (see the warning below). |
+| W4-CA-4 | `src/storage/mod.rs`, `src/storage/file.rs`, `src/storage/ledger.rs`, `src/engine/mod.rs` | Extend the crate-private `StoragePort` with a durable publication-history read for replication catch-up and backup boundaries. The read carries the logical write set itself, not a digest: `fn commits_after(&self, after: StorageSequence, limit: u32) -> Vec<PublishedCommit>` in global storage-sequence order across tenants, with `PublishedCommit { tenant: TenantId, operation_id: OperationId, sequence: StorageSequence, writes: Vec<PublishedWrite> }` and `enum PublishedWrite { Put { document: Document }, Delete { id: DocumentId, version_at_delete: u64 } }` — deletes must be reconstructable, and `read_document_at` cannot distinguish a delete from a never-existed id, so ids/digests alone are insufficient. A tenant enumeration `fn committed_tenants(&self) -> Vec<TenantId>` and a tenant-to-sequence mapping entry `fn tenant_sequence(&self, tenant: &TenantId, at: StorageSequence) -> Option<StorageSequence>` complete the seam, because `ReplicationCursor` is a global `StorageSequence` while tenant data is per-tenant. | Replication resume and backup boundaries need ordered, reconstructable committed history; `src/storage/**` and `src/engine/**` are frozen to W4 builders. Verification obligations for the integrator are recorded below the table. |
+| W4-CA-5 | `src/families/mod.rs` | Re-export a typed family-record enumeration for backup and migration: `pub(crate) fn snapshot_family_records(scope: &TenantScope, snapshot: &ReadSnapshot) -> Result<Vec<crate::backup::FamilyRecordInput>, FamilyError>` implemented in `src/families/` against the reserved collection `terrabase.families`. `FamilyRecordInput` is declared crate-private in `src/backup/mod.rs` by W4-0 (see the crate-private table). | `src/families/**` is outside W4-BACKUP's write scope; the reserved collection layout is family-private. |
+| W4-CA-6 | `tests/public_exports_w4.rs` (new) | Created by W4-0 as its own file so the shared `tests/public_exports.rs` stays untouched. | The shared export test is integrator-owned after W3-0. |
+| W4-CA-7 | `src/engine/mod.rs`, `src/storage/mod.rs`, `src/storage/file.rs` | Add a bounded windowed snapshot read so streaming batches never materialize a whole tenant: `pub(crate) fn snapshot_documents_from(&self, scope: &TenantScope, snapshot: &ReadSnapshot, after: Option<DocumentId>, limit: u32) -> Result<Vec<Document>, EngineError>` on `Engine`, backed by a StoragePort windowed read `fn documents_at_from(&self, sequence: StorageSequence, tenant: &TenantId, after: Option<&DocumentId>, limit: u32) -> Vec<Document>` in canonical key order after `after`. Cursor binding needs no new seam: `StreamStore<'engine>` borrows the Engine, and `Engine::identity()` / `ReadSnapshot::engine_identity()` are already `pub(crate)`. | `src/engine/**` and `src/storage/**` are frozen to W4 builders; the only existing read (`snapshot_documents`) materializes every tenant document per call. |
+
+W4-CA-3 warning (label and scope). The charter's ledger records a queued
+W3-2 integrator action for an engine-owned index catalog; `IndexCatalog::sink`
+is currently dead code in production pending that action. W4-CA-3 supersedes
+and absorbs it: wiring the publication sink makes index maintenance
+production-live, which is a change beyond the streaming scope, so the parent
+must execute the combined action (registry plus index-catalog wiring) as one
+named integrator action rather than two. The W4-CA-n labels exist to
+disambiguate these from the W3-2 collision actions recorded in the charter
+ledger.
+
+W4-CA-4 verification obligations (inspector facts; the integrator must verify
+each before executing the action):
+
+1. The W3 ledger records no `document_ids` — a ledger-derived read cannot
+   reconstruct the write set from `ReadyToPublish`/`Published` records alone;
+   recoverability must come from the WAL/root chain (or a ledger schema
+   extension, which is a larger collision action).
+2. The ledger index is keyed `(tenant, operation)` and iterated in canonical
+   key order, not storage-sequence order; a sequence-ordered
+   `commits_after` needs a different iteration path or a secondary index.
+3. Torn-tail truncation at open and W3-permitted ledger compaction bound the
+   servable history window; `commits_after` must report the window's start
+   (the oldest servable sequence) so replication and backup can detect a
+   cursor older than servable history and fall back to a full catch-up or
+   backup rather than silently skipping a gap.
 
 Fault injection for the W4 fault lanes needs no `src/storage/**` change: the
 three-region lane controls members and links at the replication level, and
@@ -326,7 +362,7 @@ member restart reuses the existing Engine reopen path. Storage-level
 ### Sources and ordering
 
 `StreamStore<'engine>` is obtained only from a durable Engine through
-`Engine::streams()` (CA-2). Its one batch contract is
+`Engine::streams()` (W4-CA-2). Its one batch contract is
 `next_batch(cursor, bound) -> StreamBatch`: each batch is bounded by the
 caller's item limit, ends with the next `StreamCursor`, and reports a terminal
 `StreamCompletion` exactly once at the end of the stream.
@@ -350,11 +386,29 @@ Ordering is per source and is part of the public contract:
 ### The never-committed read rule
 
 Streams read only two things: immutable `ReadSnapshot` state and
-already-published `CommitPublicationEvent` facts (via CA-3). A live
+already-published `CommitPublicationEvent` facts (via W4-CA-3). A live
 `Transaction`'s staged writes, an in-flight commit between marker and pointer
 publication, and any rejected or `Unknown` operation are never observable
 through any stream. This is the streaming restatement of W3's
 "publication visibility" rule and is red-tested at the seam.
+
+### Production read path
+
+Snapshot-bound stream sources (documents, queries, time-series, families) read
+through `Engine::read_snapshot` and then the bounded windowed read of W4-CA-7
+(`snapshot_documents_from`), which serves one bounded batch per call in
+canonical key order. Streams do not route through the existing
+`snapshot_documents` engine helper: it materializes every document of the
+tenant per call, so its cost is O(tenant documents) per batch — a stated limit
+that would make the bounded-memory red test
+(`stream_memory_stays_bounded_when_the_consumer_never_drains`) dishonest for
+large tenants. W4-CA-7 is therefore a hard prerequisite for that test: until
+it executes, the test stays red, and no streaming packet may quiet it by
+shrinking the fixture.
+
+Change and subscription streams read only already-published
+`CommitPublicationEvent` facts via the W4-CA-3 registry and the bounded
+buffers described next.
 
 ### Backpressure, cancellation, and bounded memory
 
@@ -451,10 +505,10 @@ durable operation ledger, and `CommitPublicationEvent` after lock release.
 
 | Option | How it works | Evidence for | Evidence against |
 | --- | --- | --- | --- |
-| A. Single leader per data range with cross-Region quorum commit | One Member owns each range's write path; commits acknowledge once a quorum of Regions durably records the operation; followers catch up asynchronously via the publication history (CA-4) | Maps directly onto W3's single-writer publication order and operation ledger; keeps `AcknowledgementLevel` meaningful (the quorum is observable); follower catch-up is the existing anti-entropy direction; failover is an explicit, testable transition | Leader failover needs a fencing story (PB-6033 old-owner fencing); write affinity to one Region per range |
+| A. Single leader per data range with cross-Region quorum commit | One Member owns each range's write path; commits acknowledge once a quorum of Regions durably records the operation; followers catch up asynchronously via the publication history (W4-CA-4) | Maps directly onto W3's single-writer publication order and operation ledger; keeps `AcknowledgementLevel` meaningful (the quorum is observable); follower catch-up is the existing anti-entropy direction; failover is an explicit, testable transition | Leader failover needs a fencing story (PB-6033 old-owner fencing); write affinity to one Region per range |
 | B. Leaderless quorum writes | Any Member accepts a write; a quorum of Regions stores it; read repair and vector clocks reconcile | No failover window for writes; matches some Dynamo-style deployments | Every write path becomes a conflict path; contradicts W3's single-writer storage design; `AcknowledgementLevel` semantics blur with read repair; far larger red-test surface before any claim |
 | C. Full consensus protocol for the data plane (Raft-style log per range) | One replicated log per range; commit = log commit | Strongest ordering; V1's own cluster layer is Raft-style, so the shape is familiar | Reimplements W3's ledger+publication at a second layer; highest complexity and test cost; V1 itself does not run document data through Rachis |
-| D. V1-style asynchronous multi-leader with change vectors only | Every member accepts writes; replication converges in the background | Closest to observed V1 document behavior | No cross-Region acknowledgement is possible at commit time, so `RegionQuorum`-class levels and the charter's region-loss-after-acknowledgement scenario cannot be offered honestly; PB-5042 requires observable levels |
+| D. V1-style asynchronous multi-leader with change vectors only | Every member accepts writes; replication converges in the background | Closest to observed V1 document behavior; V1's post-commit waits (PB-5026) are level-shaped observations atop this model | No commit-time acknowledgement exists to observe — V1's waits happen after the local commit; no single agreed order per document; no bounded loss window for a lost Region — so `RegionQuorum`-class commit-time levels and the charter's region-loss-after-acknowledgement scenario cannot be offered honestly; PB-5042 requires observable levels |
 
 Recommendation (proposal only): Option A — single leader per data range with
 quorum acknowledgement across Regions and asynchronous follower catch-up —
@@ -464,6 +518,47 @@ lattice and region-loss scenarios honestly. Option C remains the recorded
 fallback if the fault lane shows A's failover fencing cannot be made safe.
 Parent adjudication required; PB-5000, PB-5016..PB-5020 stay unresolved until
 then.
+
+Fencing (D-1 parameter, parent adjudication required). Option A names fencing
+as its open cost. The candidate mechanisms are:
+
+- epoch/term checked at follower apply — every follower rejects a replication
+  batch whose epoch is below the highest it has seen (the shape of V1's
+  monotonic terms, PB-5017);
+- admission-time topology-ownership validation — a Member accepts a write only
+  while its current `TopologyView` names it owner of the target range, so a
+  deposed leader's new writes fail admission locally without any cross-Member
+  round trip;
+- conflict-policy disposition — no hard fence; a deposed leader's writes are
+  ordinary concurrent writes resolved by D-3 after healing.
+
+Recommendation (proposal only): admission-time ownership validation plus
+apply-time epoch checks. Admission fencing stops new writes immediately and
+locally; apply-time epoch checks catch in-flight batches a follower might
+otherwise accept. Conflict-policy disposition alone is rejected as a proposal
+because it lets a deposed leader keep minting writes that will all become
+conflicts.
+
+Old-leader writes after deposition (D-1 × D-3, parent adjudication
+required). A deposed leader may have committed writes locally after losing
+leadership but before observing the deposition. Their disposition must be
+explicit: fenced-and-discarded (they never existed outside the deposed
+Member) or retained and surfaced as `ConflictRecord` history under D-3 after
+healing. Discarding silently contradicts the W3 local-receipt contract — a
+`Local`-level commit was honestly reported to its caller; retaining makes
+every post-deposition local write a potential conflict. Recommendation
+(proposal only): retain as content-free conflict history. The choice is
+recorded here because it changes what
+`isolated_concurrent_writes_converge_deterministically_after_healing` must
+assert under D-3.
+
+Option C fallback trigger (proposal only). Option C is escalated at the
+W4-REPLICATION gate — not before — if the lane tests
+`old_owner_is_fenced_after_leader_transition` and its fault variants (leader
+loss, partition healing, duplicate delivery of a deposed leader's batch)
+cannot pass with the adjudicated fencing mechanism. That gate reports the
+failing mechanism and its evidence; the parent then re-adjudicates D-1 toward
+Option C before the packet may claim any PB-5016..PB-5020 progress.
 
 ### Decision D-2: consistency and acknowledgement defaults (parent adjudication required)
 
@@ -484,6 +579,22 @@ asynchronously; `WaitForReplicationAfterSaveChanges`/`WaitForReplicas`/
 parity, all stronger levels explicit per operation, timeout reported as
 `ReplicationOutcome::Timeout` distinct from any local commit failure. Parent
 adjudication required; PB-5026, PB-5042, PB-5043 stay unresolved until then.
+
+Contributing threshold (D-2 parameter, parent adjudication required): a
+Member contributes to any level above `Local` only after its own local
+publication of the operation reaches `LocalDurability::Synced`. W3's
+loss-window table makes `Synced` the only level with a durable-recoverability
+claim — `Written` and `Buffered` may lose bytes after a fault, so counting
+them would let an acknowledgement overstate durability. Recommendation
+(proposal only): `Synced`; the exact threshold is parent-gated with the rest
+of D-2.
+
+Timeout partial-ack observation (D-2 parameter): `ReplicationOutcome::Timeout`
+carries the partial-ack `AcknowledgementReport` naming which Members had
+durably recorded the operation when the deadline hit, so a timeout is an
+honest partial fact rather than an unknown. Whether the partial observation
+is also retained for `Failed` outcomes is part of the same parent-gated D-2
+parameter set.
 
 Per-level visibility rules (conditioned on D-2): a read observes a replicated
 operation only after the observing Member's storage published it; no
@@ -507,6 +618,22 @@ history, per-family deterministic merge where the family already defines one
 addition — the closest honest match to the pinned V1 observations. Parent
 adjudication required; PB-5022, PB-5034, PB-5045 stay unresolved until then.
 
+Two bounded-clock parameters are part of D-3 and parent-gated (proposal only;
+no numeric value is selected in this document):
+
+- the skew bound B and its derivation. B must be derived from the deployment's
+  provisioned clock discipline (for example an NTP or PTP tolerance) plus a
+  stated safety margin; a raw number without that derivation is not a
+  decision. The charter's cross-Region timing bounds (D-4) bound the same
+  envelope and must be decided together with B.
+- the behavior when a peer's timestamp exceeds the local clock by more than B.
+  The options are: reject the write with a typed error; clamp the observation
+  to local-clock + B; or classify the pair as a conflict and route it through
+  the conflict policy. Recommendation (proposal only): classify as a
+  conflict, because clamping silently reorders causality and rejecting turns
+  a clock fault into a data outage; the conflict path already has an
+  observable, auditable outcome.
+
 ### Decision D-4: production topology limits (parent adjudication required)
 
 The qualification lane below uses three synthetic Regions. Production limits —
@@ -514,6 +641,16 @@ maximum Regions and Members per Region, placement and failure-domain
 assumptions, cross-Region timing bounds, and whether `AllRegions` is offered —
 are parent-gated (charter risk ledger). No W4 artifact may state a production
 topology limit. PB-5044 and PB-5048 stay unresolved.
+
+The D-2 lattice degenerates at small Region counts, and D-4 must fix the
+canonical reading (parent-gated): with one Region, `RegionQuorum`,
+`MajorityRegions`, and `AllRegions` coincide; with two Regions,
+`MajorityRegions` equals `AllRegions`. The parent should state whether a
+degenerate request is normalized to one canonical level name, reported under
+the requested name with a note, or rejected as an invalid request for that
+topology. Recommendation (proposal only): normalize to the weakest distinct
+name the topology actually distinguishes and record the normalization in the
+`AcknowledgementReport`, so reports stay comparable across topologies.
 
 ### Decisions D-5..D-7 (restated from the risk ledger)
 
@@ -553,7 +690,7 @@ intra-region member fault domain.
   applying a duplicate is idempotent at the storage seam (W3's
   `OperationId`/ledger contract makes replay resolution deterministic).
 - A lagging or restarted Member resumes from its durable `ReplicationCursor`
-  (backed by CA-4's publication history), validates storage identity and
+  (backed by W4-CA-4's publication history), validates storage identity and
   format before rejoining, catches up, and does not duplicate committed
   mutations (PB-5033, PB-5047).
 - Anti-entropy repair is a background convergence mechanism observable only
@@ -607,23 +744,24 @@ restore scenarios sharing the exclusive lane under parent scheduling):
 
 Each starts red at the public replication seam (scenario tests run in the
 exclusive lane; rows marked D-x are blocked until that decision is
-adjudicated):
+adjudicated — the marker names every decision whose adjudication the test's
+assertions need):
 
 - `local_commit_receipt_contains_no_region_or_member_facts`;
-- `replication_request_names_an_explicit_acknowledgement_level`;
-- `acknowledgement_report_names_the_regions_and_members_that_contributed`;
-- `acknowledgement_timeout_is_distinct_from_local_commit_failure`;
+- `replication_request_names_an_explicit_acknowledgement_level` (D-2);
+- `acknowledgement_report_names_the_regions_and_members_that_contributed` (D-2);
+- `acknowledgement_timeout_is_distinct_from_local_commit_failure` (D-2);
 - `single_region_single_member_write_reads_back_and_survives_restart`;
-- `one_region_multiple_members_reach_region_quorum_under_member_delay`;
-- `two_regions_healthy_links_achieve_cross_region_acknowledgement_and_read_visibility`;
+- `one_region_multiple_members_reach_region_quorum_under_member_delay` (D-2);
+- `two_regions_healthy_links_achieve_cross_region_acknowledgement_and_read_visibility` (D-2);
 - `member_loss_before_acknowledgement_returns_a_typed_error_not_silent_success`;
-- `region_loss_after_acknowledged_write_states_durable_visibility_and_recovery_limit`;
+- `region_loss_after_acknowledged_write_states_durable_visibility_and_recovery_limit` (D-2, D-4);
 - `delayed_and_reordered_replication_replays_idempotently_to_the_contract_outcome`;
 - `duplicate_delivery_applies_each_operation_once`;
 - `member_rejoin_checks_identity_and_catches_up_without_duplicates`;
 - `restarted_member_resumes_from_its_durable_replication_cursor`;
 - `anti_entropy_repairs_a_lagging_member_after_a_gap`;
-- `convergence_report_names_members_operation_identity_and_observation_time`;
+- `convergence_report_names_members_operation_identity_and_observation_time` (D-2);
 - `replication_status_reports_health_separately_from_convergence`;
 - `isolated_concurrent_writes_converge_deterministically_after_healing` (D-3);
 - `conflicted_writes_produce_the_recorded_policy_outcome_and_a_content_free_conflict_record` (D-3);
@@ -707,6 +845,7 @@ against a manifest; the program never claims V2 opens V1 files directly.
 | Category | Disposition | Reason |
 | --- | --- | --- |
 | Documents and revisions | Convert through the Engine seam | Logical record with a V2 contract |
+| Referenced attachments (metadata and content) | Convert through the family seam: attachment metadata plus content bytes via the family bounded reader, written through the Engine transaction seam | A referenced attachment is a Data Family record with an explicit contract; PB-6019 requires an explicit per-type disposition. If the W4-BACKUP packet proves content transport exceeds its scope, this category is recorded as deferred with a count and reason in `MigrationReport` — never silently dropped |
 | Tombstones and deleted ranges | Convert where a consumer needs them; otherwise record as dropped with counts | Deletion evidence matters only for consumers that can still act on it; retention policy is part of `MigrationOptions` |
 | Counters and time-series values | Convert (family records in the reserved collection) | Data Family records with explicit contracts |
 | Identities and compare-exchange values | Convert | Logical state with observable contracts |
@@ -767,9 +906,9 @@ the [W4 row mapping](../parity/w4-row-mapping.md). Summary:
 | Later waves | PB-5001..PB-5012, PB-5036..PB-5041, PB-5048, PB-6023..PB-6030, PB-6034 | 28 |
 | Total | 86 | |
 
-Of the 54 W4-owned rows (86 minus 4 W5 and 28 later-wave rows), 30 of the 86
+Of the 54 W4-owned rows (86 minus 4 W5 and 28 later-wave rows), 31 of the 86
 total rows carry an explicit unresolved-parent-decision marker (D-1: 6; D-2:
-3; D-3: 3; D-4: 1; D-5: 2 partial rows; D-6: 8; D-7: 8). Fourteen of the
+3; D-3: 3; D-4: 1; D-5: 2 partial rows; D-6: 8; D-7: 8). Fifteen of the
 marked rows are W4-owned and sixteen are later-wave rows. Every one of the 86
 rows remains `unresolved` with an empty Proof ID list; this mapping assigns
 first ownership only and resolves nothing.
@@ -779,10 +918,19 @@ first ownership only and resolves nothing.
 The charter graph (WS-STREAM depends on WS-CONTRACT+WS-FAMILIES; WS-BACKUP on
 WS-CONTRACT+WS-STORAGE+WS-FAMILIES; WS-REPLICATION on
 WS-CONTRACT+WS-STORAGE+WS-ENGINE+WS-STREAM; WS-PLATFORM on WS-PROTOCOL +
-WS-REPLICATION + WS-BACKUP) admits exactly this schedule:
+WS-REPLICATION + WS-BACKUP) constrains the schedule but does not fully order
+it: W4-0 must come first, W4-STREAM and W4-BACKUP may run in parallel, and
+W4-REPLICATION cannot start before W4-STREAM. The serialization of
+W4-REPLICATION after W4-BACKUP below is a lane-scheduling choice, not a
+charter edge — replication's non-lane work (types, algorithm implementation,
+catch-up state machine) could start on the W4-STREAM handoff alone, with only
+its exclusive-lane fault scenarios serialized against W4-BACKUP's. The choice
+below orders replication after both packets so a single handoff carries the
+complete W4 evidence bundle to W5; the trade-off is a longer critical path.
+The parent may select the faster variant at dispatch:
 
 ```text
-W4-0 declaration preparation (parent-assigned collision actions CA-1..CA-6)
+W4-0 declaration preparation (parent-assigned collision actions W4-CA-1..W4-CA-7)
           |
    +------+------+
    |             |
@@ -790,26 +938,27 @@ W4-STREAM     W4-BACKUP        (parallel; disjoint paths)
    |             |
    +------+------+
           |
-   W4-REPLICATION              (needs STREAM; shares the exclusive recovery
-          |                     lane with W4-BACKUP fault work by parent
-          |                     scheduling, never concurrently)
+   W4-REPLICATION              (needs STREAM; serialized after W4-BACKUP by
+          |                     lane-scheduling choice — see above; shares the
+          |                     exclusive recovery lane with W4-BACKUP fault
+          |                     work by parent scheduling, never concurrently)
           |
    W5 Platform Adapter handoff (both W4 handoffs required)
 ```
 
 | Packet | Worktree and base | Write scope | Collision owner |
 | --- | --- | --- | --- |
-| W4-0 preparation | `terrabasev2-w4-type-prep`, based on the integrated W4 design tip | `src/streaming/mod.rs`, `src/replication/mod.rs`, `src/backup/mod.rs`, `src/migration/mod.rs`, `tests/public_exports_w4.rs`, plus the parent-assigned `src/lib.rs` edit (CA-1) | Owns the declaration-only tree through its preparation commit; after that, integrator |
+| W4-0 preparation | `terrabasev2-w4-type-prep`, based on the integrated W4 design tip | `src/streaming/mod.rs`, `src/replication/mod.rs`, `src/backup/mod.rs`, `src/migration/mod.rs`, `tests/public_exports_w4.rs`, plus the parent-assigned `src/lib.rs` edit (W4-CA-1) | Owns the declaration-only tree through its preparation commit; after that, integrator |
 | W4-STREAM | `terrabasev2-w4-streaming`, based on the recorded W4-0 commit | `src/streaming/**`, `tests/streaming/**`, explicitly named `docs/streaming/**` | Streaming only; no engine, storage, families, replication, backup, adapter, or shared-root edits |
 | W4-BACKUP | `terrabasev2-w4-backup`, based on the recorded W4-0 commit | `src/backup/**`, `src/migration/**`, `tests/recovery/**`, explicitly named `docs/backup/**` and `docs/migration/**` | Backup, restore, and Logical Migration only; no replication, streaming, adapter, or shared-root edits |
-| W4-REPLICATION | `terrabasev2-w4-replication`, based on both accepted W4-STREAM and W4-BACKUP commits | `src/replication/**`, `tests/replication/**`, explicitly named `docs/replication/**` and lane receipts under `evidence/replication/**` | Replication behavior and receipts only; no backup, migration, adapters, or shared roots |
+| W4-REPLICATION | `terrabasev2-w4-replication`, based on both accepted W4-STREAM and W4-BACKUP commits (the serialized choice above; the parent may instead base non-lane work on the W4-STREAM handoff) | `src/replication/**`, `tests/replication/**`, explicitly named `docs/replication/**` and lane receipts under `evidence/replication/**` | Replication behavior and receipts only; no backup, migration, adapters, or shared roots |
 
 Collision ownership during W4:
 
 | Path family | Owner during W4 | Rule |
 | --- | --- | --- |
 | `src/lib.rs`, `src/types.rs`, `src/operations.rs`, `tests/public_exports.rs` | W4-0 through preparation (lib.rs only), then integrator | No behavior packet edits them; changes are named collision actions |
-| `src/engine/**`, `src/storage/**`, `src/families/**` | integrator via CA-2..CA-5 | W4 packets request; the parent assigns and executes |
+| `src/engine/**`, `src/storage/**`, `src/families/**` | integrator via W4-CA-2, W4-CA-3, W4-CA-4, W4-CA-5, W4-CA-7 | W4 packets request; the parent assigns and executes |
 | `Cargo.toml`, `Cargo.lock`, toolchain, CI, root manifests | integrator | No dependency edits in W4 packets without a named action |
 | `parity/inventory.json`, `parity/overlays/**`, `parity/contracts/**` | integrator and WS-PARITY | W4 adds no Proof IDs and changes no status |
 | `src/streaming/**`, `tests/streaming/**`, `docs/streaming/**` | W4-STREAM | Streaming only |
@@ -896,7 +1045,8 @@ routing, lifecycle, external authentication policy, and control-plane
 replication. The pending distribution license remains a release gate.
 
 Limits of this document: it is a design contract, not behavior evidence; its
-decision records are proposals; its collision actions CA-1..CA-6 are proposed
+decision records are proposals; its collision actions W4-CA-1..W4-CA-7 are
+proposed
 exact changes, executable only when the parent assigns them; its red-test
 lists are the minimum sufficient set, and packets may add tests but not
 remove a listed one.
@@ -916,8 +1066,11 @@ true:
    `ReplicationReceipt` facts.
 4. The W4-0 declaration tree, the verbatim `src/lib.rs` export block, and the
    four red export test names are recorded.
-5. Collision actions CA-1..CA-6 name the exact file, the proposed signature,
-   and why the requesting builder cannot make the change.
+5. Collision actions W4-CA-1..W4-CA-7 name the exact file, the proposed
+   signature, and why the requesting builder cannot make the change; W4-CA-3
+   records the sink-registry absorption of the queued W3-2 catalog action and
+   the non-blocking/bounded sink rule; W4-CA-4 records its integrator
+   verification obligations.
 6. The streaming contract fixes ordering per source, bounded memory,
    backpressure, cancellation liveness, the never-committed read rule, and
    checkpoint/acknowledgement/resend semantics, and lists the W4-STREAM red
@@ -932,11 +1085,13 @@ true:
    the explicit loss matrix, secret-safe evidence, and the W4-BACKUP red
    tests.
 9. All 86 rows PB-5000..PB-5048 and PB-6000..PB-6036 are mapped exactly once
-   in the row mapping with counts cross-checked, and 30 rows carry explicit
-   parent-decision markers.
+   in the row mapping with counts cross-checked, and 31 rows carry explicit
+   parent-decision markers (15 W4-owned, 16 later-wave).
 10. The packet sequence W4-0 → {W4-STREAM ∥ W4-BACKUP} → W4-REPLICATION → W5
-    matches the charter graph, with worktrees, write scopes, and collision
-    owners tabulated, and the exclusive recovery lane rule stated.
+    is consistent with the charter graph, records the W4-REPLICATION-after-
+    W4-BACKUP serialization as a lane-scheduling choice with its trade-off
+    stated, and tabulates worktrees, write scopes, and collision owners, with
+    the exclusive recovery lane rule stated.
 11. Parity non-claims are explicit: no multi-region capability claim, no
     unmeasured numbers, no speed claims, no direct-V1-file claim, no
     authorization claim, and no decision treated as accepted.
