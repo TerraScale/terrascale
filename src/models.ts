@@ -194,6 +194,10 @@ export type RegisterRequest = {
   readonly firstName?: string;
   readonly lastName?: string;
   readonly verifyUrl?: string;
+  readonly fullName?: string;
+  readonly username?: string;
+  readonly acceptedTerms?: boolean;
+  readonly termsVersion?: string;
 };
 
 export type SignInRequest = {

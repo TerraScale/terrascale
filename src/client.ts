@@ -2340,6 +2340,10 @@ function toSignupRequest(request: Models.RegisterRequest) {
     password: request.password,
     firstName,
     lastName,
+    fullName: (request.fullName ?? request.displayName ?? "").trim(),
+    username: request.username?.trim().toLowerCase() ?? "",
+    acceptedTerms: request.acceptedTerms ?? false,
+    termsVersion: request.termsVersion ?? "",
     verifyUrl: request.verifyUrl ?? request.redirectUrl ?? "",
   };
 }
