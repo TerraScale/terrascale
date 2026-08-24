@@ -1454,3 +1454,542 @@ fn region_loss_after_acknowledged_write_states_durable_visibility_and_recovery_l
     std::fs::remove_dir_all(&dir_b1).ok();
     std::fs::remove_dir_all(&dir_g1).ok();
 }
+
+// ---------------------------------------------------------------------------
+// R-2: convergence, the D-3 conflict policy, and D-1 leader fencing.
+// ---------------------------------------------------------------------------
+
+/// Divergent membership views for isolated concurrent writers: each side's
+/// control-plane state names itself owner of the range at the same epoch,
+/// which is exactly a split-brain partition.
+fn divergent_owner_views(range: &str) -> (TopologyView, TopologyView) {
+    let view_a = TopologyView::new()
+        .with_region("r-alpha")
+        .expect("valid region")
+        .with_region("r-beta")
+        .expect("valid region")
+        .with_member("m-a1", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_member("m-b1", "r-beta", "fd-beta")
+        .expect("valid member")
+        .with_owner(range, "m-a1")
+        .expect("valid owner")
+        .validated()
+        .expect("valid topology");
+    let view_b = TopologyView::new()
+        .with_region("r-alpha")
+        .expect("valid region")
+        .with_region("r-beta")
+        .expect("valid region")
+        .with_member("m-a1", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_member("m-b1", "r-beta", "fd-beta")
+        .expect("valid member")
+        .with_owner(range, "m-b1")
+        .expect("valid owner")
+        .validated()
+        .expect("valid topology");
+    (view_a, view_b)
+}
+
+/// The healed membership view: `m-b1` owns the range at the next epoch.
+fn healed_view(range: &str) -> TopologyView {
+    TopologyView::new()
+        .with_region("r-alpha")
+        .expect("valid region")
+        .with_region("r-beta")
+        .expect("valid region")
+        .with_member("m-a1", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_member("m-b1", "r-beta", "fd-beta")
+        .expect("valid member")
+        .with_owner_at_epoch(range, "m-b1", 2)
+        .expect("valid owner")
+        .validated()
+        .expect("valid topology")
+}
+
+#[test]
+fn convergence_report_names_members_operation_identity_and_observation_time() {
+    let topology = two_regions_one_member_each("main");
+    let (dir_a1, mut m_a1) = open_member("convergence-a1", "m-a1", &topology);
+    let (dir_b1, mut m_b1) = open_member("convergence-b1", "m-b1", &topology);
+    let mut network = ReplicationNetwork::new();
+
+    member_put(&mut m_a1, "tenant-a", "main", "op-1", "doc-1", "v1");
+    let report = synchronize(
+        &mut network,
+        &mut m_a1,
+        &scope(&m_a1, "tenant-a"),
+        &mut m_b1,
+        &scope(&m_b1, "tenant-a"),
+        4,
+    )
+    .expect("the write replicates");
+    assert!(report.caught_up());
+
+    // Convergence is its own observation, produced by its own seam at an
+    // injected lane instant — never inferred from an acknowledgement or a
+    // health status.
+    let at = network.now().plus_ticks(2);
+    let convergence = observe_convergence(
+        &operation("op-1"),
+        &[(&m_a1, &scope(&m_a1, "tenant-a")), (&m_b1, &scope(&m_b1, "tenant-a"))],
+        at,
+    );
+    assert_eq!(convergence.operation().as_str(), "op-1");
+    let holdings = convergence.holdings();
+    assert_eq!(
+        holdings.iter().map(|(member, _)| member.as_str()).collect::<Vec<_>>(),
+        ["m-a1", "m-b1"],
+        "the observation names every Member that holds the operation"
+    );
+    assert!(
+        holdings.iter().all(|(_, state)| *state == AcknowledgementLevel::Local),
+        "each holding is the Member's own local publication fact: {holdings:?}"
+    );
+    assert_eq!(convergence.observed_at(), at, "the observation time is the injected instant");
+
+    // A member that does not hold the operation is simply not named as
+    // holding it, and a different injected instant is a different
+    // observation time — deterministic, driven by the caller.
+    let later = observe_convergence(
+        &operation("op-2"),
+        &[(&m_a1, &scope(&m_a1, "tenant-a")), (&m_b1, &scope(&m_b1, "tenant-a"))],
+        at.plus_ticks(5),
+    );
+    assert!(later.holdings().is_empty(), "an unreplicated operation is held by no one");
+    assert_eq!(later.observed_at(), at.plus_ticks(5));
+
+    m_a1.close();
+    m_b1.close();
+    std::fs::remove_dir_all(&dir_a1).ok();
+    std::fs::remove_dir_all(&dir_b1).ok();
+}
+
+/// Runs the isolated-concurrent-writers scenario once and returns the
+/// converged value each member holds plus the recorded conflict outcomes.
+///
+/// Both members run the same deterministic script: divergent views, one
+/// write each to the same document key, a lane pump and an injected instant
+/// between the writes so the second write is the later one, then healing
+/// (one owner at epoch 2 on both sides) and catch-up in both directions.
+fn isolated_writers_scenario() -> (String, String, Vec<ConflictOutcome>) {
+    let (view_a, view_b) = divergent_owner_views("main");
+    let (dir_a1, mut m_a1) = open_member("isolated-a1", "m-a1", &view_a);
+    let (dir_b1, mut m_b1) = open_member("isolated-b1", "m-b1", &view_b);
+    let mut network = ReplicationNetwork::new();
+
+    let scope_a = scope(&m_a1, "tenant-a");
+    m_a1
+        .commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "value-a"))
+        .expect("the isolated writer commits locally");
+    // The lane clock advances and the second writer observes the instant, so
+    // its write is deterministically the later one.
+    network.pump();
+    m_b1.observe_instant(network.now());
+    let scope_b = scope(&m_b1, "tenant-a");
+    m_b1
+        .commit_write(&scope_b, put_request("main", "op-b", "doc-shared", "value-b"))
+        .expect("the isolated writer commits locally");
+
+    // Healing: both sides apply the same converged view.
+    let healed = healed_view("main");
+    m_a1.apply_view(healed.clone()).expect("the deposed side accepts the healed view");
+    m_b1.apply_view(healed).expect("the promoted side accepts the healed view");
+
+    // Catch-up runs in both directions so both writers see each other's
+    // journal and the conflict policy decides on both sides.
+    let report_into_b = synchronize(
+        &mut network,
+        &mut m_a1,
+        &scope(&m_a1, "tenant-a"),
+        &mut m_b1,
+        &scope(&m_b1, "tenant-a"),
+        4,
+    )
+    .expect("repair into the promoted owner");
+    assert!(report_into_b.caught_up());
+    let report_into_a = synchronize(
+        &mut network,
+        &mut m_b1,
+        &scope(&m_b1, "tenant-a"),
+        &mut m_a1,
+        &scope(&m_a1, "tenant-a"),
+        4,
+    )
+    .expect("repair into the deposed side");
+    assert!(report_into_a.caught_up());
+
+    let value_at = |member: &ReplicationMember| {
+        documents_of(member, "tenant-a")
+            .into_iter()
+            .find(|document| document.id().as_str() == "doc-shared")
+            .map_or_else(|| "absent".to_owned(), |document| match document.value() {
+                DocumentValue::String(text) => text.clone(),
+                _ => "non-text".to_owned(),
+            })
+    };
+    let outcomes = m_a1
+        .conflicts()
+        .iter()
+        .chain(m_b1.conflicts().iter())
+        .map(|record| record.outcome())
+        .collect::<Vec<_>>();
+
+    m_a1.close();
+    m_b1.close();
+    std::fs::remove_dir_all(&dir_a1).ok();
+    std::fs::remove_dir_all(&dir_b1).ok();
+    (value_at(&m_a1), value_at(&m_b1), outcomes)
+}
+
+#[test]
+fn isolated_concurrent_writes_converge_deterministically_after_healing() {
+    // One run establishes the outcome; the second run proves it is
+    // deterministic — the same injected instants and the same script must
+    // produce the same converged values and the same recorded outcomes.
+    let first = isolated_writers_scenario();
+    let second = isolated_writers_scenario();
+    assert_eq!(first, second, "the convergence outcome is deterministic");
+
+    let (value_at_a, value_at_b, outcomes) = first;
+    assert_eq!(value_at_a, "value-b", "the deposed side converges to the later write");
+    assert_eq!(value_at_b, "value-b", "the promoted side keeps the later write");
+    assert_eq!(value_at_a, value_at_b, "both sides hold the same value after healing");
+    assert!(
+        outcomes.iter().all(|outcome| matches!(outcome, ConflictOutcome::Winner(member)
+            if member.as_str() == "m-b1")),
+        "the recorded policy outcome names the later writer everywhere: {outcomes:?}"
+    );
+    assert!(!outcomes.is_empty(), "the losing write is retained as observable history");
+}
+
+#[test]
+fn conflicted_writes_produce_the_recorded_policy_outcome_and_a_content_free_conflict_record() {
+    let (view_a, view_b) = divergent_owner_views("main");
+    let (dir_a1, mut m_a1) = open_member("conflict-a1", "m-a1", &view_a);
+    let (dir_b1, mut m_b1) = open_member("conflict-b1", "m-b1", &view_b);
+    let mut network = ReplicationNetwork::new();
+
+    let scope_a = scope(&m_a1, "tenant-a");
+    m_a1
+        .commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "value-a"))
+        .expect("writer one commits");
+    network.pump();
+    m_b1.observe_instant(network.now());
+    let scope_b = scope(&m_b1, "tenant-a");
+    m_b1
+        .commit_write(&scope_b, put_request("main", "op-b", "doc-shared", "value-b"))
+        .expect("writer two commits");
+
+    let healed = healed_view("main");
+    m_a1.apply_view(healed.clone()).expect("healed view applies");
+    m_b1.apply_view(healed).expect("healed view applies");
+    let report_into_b = synchronize(
+        &mut network,
+        &mut m_a1,
+        &scope(&m_a1, "tenant-a"),
+        &mut m_b1,
+        &scope(&m_b1, "tenant-a"),
+        4,
+    )
+    .expect("repair into the promoted owner");
+    assert!(report_into_b.caught_up());
+    assert!(
+        report_into_b.conflicts_recorded() >= 1,
+        "the apply pass reports the conflict it recorded"
+    );
+
+    let record = m_b1
+        .conflicts()
+        .last()
+        .expect("the conflict is retained as observable history on the detecting side");
+    // The recorded policy outcome: last-writer-wins on the bounded hybrid
+    // logical clock, naming the winner.
+    assert_eq!(
+        record.outcome(),
+        ConflictOutcome::Winner(member_id("m-b1")),
+        "the policy outcome is the recorded decision"
+    );
+    let mut operations = record.operations().to_vec();
+    operations.sort();
+    assert_eq!(
+        operations.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        ["op-a", "op-b"],
+        "the record names both conflicting operation identities"
+    );
+    let mut members = record.members().to_vec();
+    members.sort();
+    assert_eq!(
+        members.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        ["m-a1", "m-b1"],
+        "the record names both writer identities"
+    );
+    assert_eq!(record.clocks().len(), 2, "the record carries both clocks");
+
+    // Content-free: no document payload, field value, or collection text
+    // appears anywhere in the record.
+    let rendered = format!("{record:?}");
+    for forbidden in ["value-a", "value-b", "users", "doc-shared", "payload"] {
+        assert!(
+            !rendered.contains(forbidden),
+            "the conflict record carries document content ({forbidden}): {rendered}"
+        );
+    }
+    let all_records = format!("{:?}", m_b1.conflicts());
+    for forbidden in ["value-a", "value-b", "doc-shared"] {
+        assert!(
+            !all_records.contains(forbidden),
+            "no retained conflict record carries document content: {all_records}"
+        );
+    }
+
+    m_a1.close();
+    m_b1.close();
+    std::fs::remove_dir_all(&dir_a1).ok();
+    std::fs::remove_dir_all(&dir_b1).ok();
+}
+
+#[test]
+fn leader_loss_stops_new_commits_until_a_new_leader_is_confirmed() {
+    let topology = two_regions_one_member_each("main");
+    let (dir_a1, mut m_a1) = open_member("leaderloss-a1", "m-a1", &topology);
+    let (dir_b1, mut m_b1) = open_member("leaderloss-b1", "m-b1", &topology);
+    let mut network = ReplicationNetwork::new();
+
+    member_put(&mut m_a1, "tenant-a", "main", "op-1", "doc-1", "v1");
+    let report = synchronize(
+        &mut network,
+        &mut m_a1,
+        &scope(&m_a1, "tenant-a"),
+        &mut m_b1,
+        &scope(&m_b1, "tenant-a"),
+        4,
+    )
+    .expect("the follower holds the range state");
+    assert!(report.caught_up());
+
+    // The leader is lost: its member closes. No surviving Member owns the
+    // range's write path under the current view, so every new commit fails
+    // admission with the typed error — there is no silent failover.
+    m_a1.close();
+    let scope_b = scope(&m_b1, "tenant-a");
+    let stopped =
+        m_b1.commit_write(&scope_b, put_request("main", "op-2", "doc-2", "v2"));
+    assert!(
+        matches!(stopped, Err(MemberError::NotOwner { ref range }) if range == "main"),
+        "new commits stop while the leader is lost: {stopped:?}"
+    );
+    assert!(documents_of(&m_b1, "tenant-a").iter().all(|d| d.id().as_str() != "doc-2"));
+
+    // A new leader is confirmed by applying the transitioned view, and only
+    // then do commits to the range resume.
+    m_b1.apply_view(healed_view("main")).expect("the promoted leader is confirmed");
+    let resumed = m_b1.commit_write(&scope_b, put_request("main", "op-2", "doc-2", "v2"));
+    assert!(
+        matches!(resumed, Ok(receipt) if receipt.durability() == LocalDurability::Synced),
+        "commits resume once the new leader is confirmed: {resumed:?}"
+    );
+    assert!(documents_of(&m_b1, "tenant-a").iter().any(|d| d.id().as_str() == "doc-2"));
+
+    m_a1.close();
+    m_b1.close();
+    std::fs::remove_dir_all(&dir_a1).ok();
+    std::fs::remove_dir_all(&dir_b1).ok();
+}
+
+#[test]
+fn old_owner_is_fenced_after_leader_transition() {
+    let topology = two_regions_one_member_each("main");
+    let (dir_a1, mut m_a1) = open_member("fence-a1", "m-a1", &topology);
+    let (dir_b1, mut m_b1) = open_member("fence-b1", "m-b1", &topology);
+    let a1 = member_id("m-a1");
+    let b1 = member_id("m-b1");
+    let mut network = ReplicationNetwork::new();
+
+    // The deposed leader writes before learning of the transition, and the
+    // new leader writes its own concurrent value after being promoted.
+    let scope_a = scope(&m_a1, "tenant-a");
+    m_a1
+        .commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "value-a"))
+        .expect("the old owner's write keeps its local receipt");
+    let transitioned = healed_view("main");
+    m_a1.apply_view(transitioned.clone()).expect("the old owner learns of the transition");
+    m_b1.apply_view(transitioned).expect("the new owner is confirmed");
+    network.pump();
+    m_b1.observe_instant(network.now());
+    let scope_b = scope(&m_b1, "tenant-a");
+    m_b1
+        .commit_write(&scope_b, put_request("main", "op-b", "doc-shared", "value-b"))
+        .expect("the new owner commits");
+
+    // Admission fencing: the deposed owner's new writes fail locally, with
+    // no cross-Member round trip.
+    let deposed_write =
+        m_a1.commit_write(&scope_a, put_request("main", "op-late", "doc-late", "late"));
+    assert!(
+        matches!(deposed_write, Err(MemberError::NotOwner { ref range }) if range == "main"),
+        "a deposed owner's new write fails admission: {deposed_write:?}"
+    );
+
+    // Apply-time fencing: a batch the deposed owner raced past its
+    // deposition is rejected by the new owner's epoch check, and its commits
+    // are retained as observable conflict history, never silently dropped.
+    let in_flight = PublishedCommit::new(
+        tenant("tenant-a"),
+        operation("op-a"),
+        StorageSequence::new(1),
+        LocalDurability::Synced,
+        vec![PublishedWrite::Put { document: text_document("users", "doc-shared", "value-a") }],
+    );
+    network
+        .send(
+            &a1,
+            &b1,
+            ReplicationFrame::Push {
+                source: a1.clone(),
+                range: "main".to_owned(),
+                epoch: 1,
+                tenant: tenant("tenant-a"),
+                commits: vec![StampedCommit::at_origin_clock(in_flight)],
+            },
+        )
+        .expect("bounded link accepts the push frame");
+    network.pump();
+    let fenced = m_b1.apply_deliveries(&mut network, &scope_b);
+    assert!(
+        matches!(&fenced, Err(MemberError::FencedBatch { range, batch_epoch, highest_epoch })
+            if range == "main" && *batch_epoch == 1 && *highest_epoch == 2),
+        "a below-epoch batch is rejected with a typed error: {fenced:?}"
+    );
+    assert_eq!(m_b1.fenced().len(), 1, "the fencing is observable");
+    assert_eq!(m_b1.fenced()[0].range(), "main");
+    assert_eq!(m_b1.fenced()[0].source().as_str(), "m-a1");
+    let retained = m_b1
+        .conflicts()
+        .iter()
+        .find(|record| matches!(record.outcome(), ConflictOutcome::DeposedOwnerRetained(_)));
+    assert!(
+        retained.is_some(),
+        "the deposed owner's write is retained as conflict history, not discarded"
+    );
+    let rendered = format!("{:?}", m_b1.conflicts());
+    assert!(!rendered.contains("value-a"), "the retained record stays content-free");
+
+    // The deposed owner's local receipt is still real locally (a local
+    // durable fact), and its write converges under D-3 once repair runs.
+    let resolution = m_a1
+        .engine()
+        .expect("engine open")
+        .resolve_commit(&scope_a, operation("op-a"))
+        .expect("durable resolution");
+    assert!(
+        matches!(&resolution, crate::engine::DurableResolution::Committed(receipt)
+            if receipt.durability() == LocalDurability::Synced),
+        "the deposed owner keeps its local receipt: {resolution:?}"
+    );
+    let into_b = synchronize(
+        &mut network,
+        &mut m_a1,
+        &scope(&m_a1, "tenant-a"),
+        &mut m_b1,
+        &scope(&m_b1, "tenant-a"),
+        4,
+    )
+    .expect("repair into the new owner");
+    assert!(into_b.caught_up());
+    let into_a = synchronize(
+        &mut network,
+        &mut m_b1,
+        &scope(&m_b1, "tenant-a"),
+        &mut m_a1,
+        &scope(&m_a1, "tenant-a"),
+        4,
+    )
+    .expect("repair into the deposed owner");
+    assert!(into_a.caught_up());
+    assert_eq!(
+        documents_of(&m_a1, "tenant-a"), documents_of(&m_b1, "tenant-a"),
+        "the deposed owner's write converges under the conflict policy after healing"
+    );
+    let shared_at_a = documents_of(&m_a1, "tenant-a")
+        .into_iter()
+        .find(|document| document.id().as_str() == "doc-shared")
+        .expect("the converged document exists");
+    assert_eq!(shared_at_a.value(), &DocumentValue::String("value-b".to_owned()));
+
+    m_a1.close();
+    m_b1.close();
+    std::fs::remove_dir_all(&dir_a1).ok();
+    std::fs::remove_dir_all(&dir_b1).ok();
+}
+
+#[test]
+fn a_peer_stamp_beyond_the_skew_bound_converges_as_a_conflict() {
+    let topology = two_regions_one_member_each("main");
+    let (dir_a1, mut m_a1) = open_member("skew-a1", "m-a1", &topology);
+    let (dir_b1, mut m_b1) = open_member("skew-b1", "m-b1", &topology);
+    let a1 = member_id("m-a1");
+    let b1 = member_id("m-b1");
+    let mut network = ReplicationNetwork::new();
+
+    // The new owner holds its own write to the key.
+    let scope_b = scope(&m_b1, "tenant-a");
+    m_b1
+        .commit_write(&scope_b, put_request("main", "op-b", "doc-1", "value-b"))
+        .expect("the local write commits");
+
+    // A peer claims a stamp far beyond the lane clock plus the skew bound:
+    // its timestamps are untrusted, so the pair converges as a conflict —
+    // not rejected, not clamped — decided by the deterministic tie-break.
+    let beyond_bound = PublishedCommit::new(
+        tenant("tenant-a"),
+        operation("op-future"),
+        StorageSequence::new(7),
+        LocalDurability::Synced,
+        vec![PublishedWrite::Put { document: text_document("users", "doc-1", "value-future") }],
+    );
+    network
+        .send(
+            &a1,
+            &b1,
+            ReplicationFrame::Push {
+                source: a1.clone(),
+                range: "main".to_owned(),
+                epoch: 1,
+                tenant: tenant("tenant-a"),
+                commits: vec![StampedCommit {
+                    stamp: ReplicationClockStamp::new(
+                        network.now().ticks().saturating_add(1_000),
+                        1,
+                    ),
+                    commit: beyond_bound,
+                }],
+            },
+        )
+        .expect("bounded link accepts the push frame");
+    network.pump();
+    let applied = m_b1.apply_deliveries(&mut network, &scope_b);
+    assert!(applied.is_ok(), "an untrusted stamp is a conflict, not a rejection: {applied:?}");
+    let record = m_b1
+        .conflicts()
+        .iter()
+        .find(|record| matches!(record.outcome(), ConflictOutcome::UntrustedClock(_)))
+        .expect("the untrusted clock is recorded as a conflict");
+    let rendered = format!("{record:?}");
+    assert!(!rendered.contains("value-future"), "the record stays content-free");
+    // The deterministic tie-break resolved the pair: both members' views are
+    // single-valued (the key holds exactly one document).
+    let view = documents_of(&m_b1, "tenant-a");
+    assert_eq!(
+        view.iter().filter(|document| document.id().as_str() == "doc-1").count(),
+        1,
+        "the key holds exactly one value after the untrusted-clock conflict"
+    );
+
+    m_a1.close();
+    m_b1.close();
+    std::fs::remove_dir_all(&dir_a1).ok();
+    std::fs::remove_dir_all(&dir_b1).ok();
+}

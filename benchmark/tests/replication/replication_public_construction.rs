@@ -99,17 +99,17 @@ fn replication_status_reports_health_separately_from_convergence() {
     );
 
     // Convergence is its own observation type, never inferred from an
-    // acknowledgement or a health status, and R-1 implements no content for
-    // it (that is R-2's phase).
+    // acknowledgement or a health status. R-2 gives it contract content —
+    // members, per-member acknowledgement state, and the observation time —
+    // through its own seam, with no path from any status value to it.
     assert_ne!(
         std::any::type_name::<ReplicationStatus>(),
         std::any::type_name::<Convergence>(),
         "health and convergence are separate types"
     );
-    assert_eq!(
-        std::mem::size_of::<Convergence>(),
-        0,
-        "R-1 adds no convergence content; the type stays reserved for R-2"
+    assert!(
+        std::mem::size_of::<Convergence>() > 0,
+        "convergence carries its observation content (R-2)"
     );
 }
 
@@ -310,4 +310,62 @@ fn replication_cursor_starts_empty_and_reports_only_progress_facts() {
             "the cursor carries a forbidden fact ({forbidden}): {rendered}"
         );
     }
+}
+
+#[test]
+fn topology_views_carry_monotonic_ownership_epochs() {
+    // D-1 fencing needs the ownership epoch to travel with the view: epoch
+    // zero is invalid, positive epochs name the transition, and the accessor
+    // reports the epoch a range is owned at.
+    let view = TopologyView::new()
+        .with_region("r-alpha")
+        .expect("valid region")
+        .with_member("m-alpha", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_owner_at_epoch("main", "m-alpha", 4)
+        .expect("valid owner")
+        .validated()
+        .expect("valid topology");
+    assert_eq!(view.owner_epoch_of("main"), Some(4));
+    assert_eq!(view.owner_of("main").map(|id| id.as_str().to_owned()), Some("m-alpha".to_owned()));
+    assert_eq!(view.owner_epoch_of("absent"), None);
+
+    // The plain builder still assigns the first epoch.
+    let first = TopologyView::new()
+        .with_region("r-alpha")
+        .expect("valid region")
+        .with_member("m-alpha", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_owner("main", "m-alpha")
+        .expect("valid owner")
+        .validated()
+        .expect("valid topology");
+    assert_eq!(first.owner_epoch_of("main"), Some(1));
+
+    // An epoch below one is not a transition.
+    let invalid = TopologyView::new()
+        .with_region("r-alpha")
+        .expect("valid region")
+        .with_member("m-alpha", "r-alpha", "fd-alpha")
+        .expect("valid member")
+        .with_owner_at_epoch("main", "m-alpha", 0);
+    assert_eq!(invalid, Err(ReplicationError::InvalidTopology));
+}
+
+#[test]
+fn lane_instants_and_clock_stamps_order_deterministically() {
+    // The lane clock and the bounded hybrid logical clock stamps are ordered
+    // values of the deterministic lane: no wall time, no sleeps.
+    let early = terrabase_v2::replication::ReplicationInstant::at_ticks(3);
+    let late = early.plus_ticks(2);
+    assert_eq!(late.ticks(), 5);
+    assert!(early < late);
+
+    let older = terrabase_v2::replication::ReplicationClockStamp::new(3, 4);
+    let newer_physical = terrabase_v2::replication::ReplicationClockStamp::new(4, 1);
+    let newer_logical = terrabase_v2::replication::ReplicationClockStamp::new(3, 5);
+    assert!(older < newer_physical, "physical time orders first");
+    assert!(older < newer_logical, "the logical counter orders within a tick");
+    assert_eq!(older.ticks(), 3);
+    assert_eq!(older.counter(), 4);
 }
