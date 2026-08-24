@@ -194,9 +194,12 @@ implementation; no public type moved, because the module had no public items.
 - Recovery reads whole WAL, ledger, and root files into memory. Segmenting,
   compaction, and incremental scans are later work.
 - The write-set digest spelling changed in this packet (a delete no longer
-  encodes its snapshot-resolved collection). Locations written by the first
-  W3-1 revision would bind pre-existing identities under the old spelling;
-  W3-1 has no released storage format, so no compatibility path is kept.
+  encodes its snapshot-resolved collection), and the private `Published`
+  operation-ledger record layout changed with it (the digest field was
+  added). Locations written by earlier W3-1 revisions would bind
+  pre-existing identities under the old spellings and misparse old ledger
+  records; W3-1 has no released storage format, so no compatibility path
+  is kept.
 
 ## Limits
 

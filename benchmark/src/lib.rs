@@ -1,9 +1,10 @@
-//! `TerraBaseV2` engine foundation.
+//! `TerraBaseV2` engine.
 //!
-//! This crate intentionally contains no database behavior yet. The public
-//! seams, parity obligations, and evidence rules live in the workspace charter
-//! and parity inventory. Feature work must add behavior behind those seams and
-//! prove it at the corresponding interface.
+//! The public seams, parity obligations, and evidence rules live in the
+//! workspace charter and parity inventory. Behavior lands behind those seams
+//! packet by packet: the storage/WAL/recovery and document/transaction
+//! engine seam is implemented and focused-tested; later seams remain
+//! declaration-only until their packets prove them.
 
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
@@ -13,7 +14,7 @@
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The current repository status. This is metadata, not a database feature.
-pub const STATUS: &str = "foundation-only";
+pub const STATUS: &str = "w3-1-storage-engine";
 
 pub mod adapters;
 pub mod engine;
@@ -58,7 +59,7 @@ mod tests {
 
     #[test]
     fn foundation_metadata_is_present() {
-        assert_eq!(STATUS, "foundation-only");
+        assert_eq!(STATUS, "w3-1-storage-engine");
         assert!(!VERSION.is_empty());
     }
 }
