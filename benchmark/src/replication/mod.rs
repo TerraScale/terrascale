@@ -32,6 +32,10 @@
 //! ```
 
 mod identifier;
+#[cfg(test)]
+mod lane;
+#[cfg(test)]
+mod lane_tests;
 mod member;
 mod status;
 mod topology;
