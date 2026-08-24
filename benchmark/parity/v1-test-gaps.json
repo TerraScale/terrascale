@@ -1,0 +1,184 @@
+{
+  "counts": {
+    "charter_backed_rows": 7,
+    "rows": 258,
+    "source_citations": 265,
+    "test_citations": 231,
+    "test_gaps": 42,
+    "v1_backed_rows": 251
+  },
+  "gaps": [
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5000"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-wal-and-recovery in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5001"
+    },
+    {
+      "reason": "the pinned extraction names the storage lifecycle, but W2 did not isolate a single focused V1 lifecycle test file",
+      "row_id": "PB-5002"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-file-headers-and-versioning in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5003"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-wal-ordering-and-sync in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5004"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-transactions-mvcc-and-concurrency in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5005"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-trees-tables-and-paging in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5006"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-scratch-buffers in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5007"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-compaction in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5008"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-restart-and-recovery in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5009"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-corruption-and-disk-full in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5010"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-encryption in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5011"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-schema-upgrade in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5012"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-full-backup-and-snapshot in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5013"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-incremental-backup-chain in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5014"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for storage-recovery-point-manifest in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5015"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for cluster-consensus-commit in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5016"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for cluster-consensus-elections in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5017"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for cluster-log-divergence-and-snapshots in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5018"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for cluster-membership-and-topology in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5019"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for cluster-failover-and-member-loss in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5020"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-change-vectors in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5021"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-conflict-resolution in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5022"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-tombstones in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5023"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-anti-entropy-and-catch-up in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5024"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-external-destinations in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5025"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-write-acknowledgement in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5026"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-pull-hub-and-sink in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5027"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-attachments in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5028"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-counters-and-time-series in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5029"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-revisions in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5030"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-local-progress in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5031"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-health-and-convergence-observations in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5032"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-restart-and-rejoin in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5033"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-active-active in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5034"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for replication-commands-and-snapshots in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5035"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for sharding-topology in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5036"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for sharding-buckets in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5037"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for sharding-resharding-and-bucket-migration in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5038"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for sharding-orchestrator-coordination in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5039"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for sharding-replication-backup-and-rejoin in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5040"
+    },
+    {
+      "reason": "W2 did not isolate an exact V1 test for sharding-failover-and-cluster-transactions in the pinned checkout; strict qualification remains blocked pending focused evidence.",
+      "row_id": "PB-5041"
+    }
+  ],
+  "mode": "strict",
+  "schema_version": "1.0",
+  "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
+  "status": "failed_unresolved_test_gaps"
+}

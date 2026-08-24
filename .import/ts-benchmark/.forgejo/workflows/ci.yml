@@ -29,6 +29,19 @@ jobs:
         run: python3 scripts/validate_parity.py --check
       - name: Parity tooling tests
         run: python3 scripts/test_parity_tooling.py
+      - name: V1 citation qualification
+        env:
+          TERRABASE_V1_ROOT: ${{ vars.TERRABASE_V1_ROOT }}
+        run: |
+          if [[ -z "${TERRABASE_V1_ROOT:-}" || ! -d "$TERRABASE_V1_ROOT" ]]; then
+            echo "V1 citation audit UNRUN: configure a pinned TerraBase V1 checkout for qualification"
+            exit 1
+          fi
+          python3 scripts/validate_v1_citations.py \
+            --mode strict \
+            --v1-root "$TERRABASE_V1_ROOT" \
+            --workspace-root "$GITHUB_WORKSPACE" \
+            --gap-report parity/v1-test-gaps.json
       - name: License metadata
         run: python3 scripts/check_license.py
       - name: Secret scan

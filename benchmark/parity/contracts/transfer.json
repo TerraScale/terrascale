@@ -7,7 +7,7 @@
       "id": "PB-6000",
       "name": "streaming",
       "classification": "core",
-      "v1_evidence": {"evidence_ids": ["E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 streaming or bulk transfer contracts [v1:src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetDocs.cs::AbstractStreamingHandlerProcessorForGetDocs]"},
+      "v1_evidence": {"evidence_ids": ["E-011"], "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee", "scope": "V1 streaming or bulk transfer contracts [v1:src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetDocs.cs::AbstractStreamingHandlerProcessorForGetDocs] [v1:src/TerraBase.Client/Documents/Session/DocumentSession.Stream.cs::DocumentSession] [v1:src/TerraBase.Client/Documents/Session/AsyncDocumentSession.Stream.cs::AsyncDocumentSession] [v1:test:test/TerraBase.EndToEndTests/Client/LoadIntoStream.cs]"},
       "v2": {"owner": "engine/streaming", "public_seam": "streaming"},
       "public_contract": {"parity_required": true, "semantics": ["Streaming backpressure, ordering, and completion need executable evidence"], "compatibility": "typed streaming contract to be defined"},
       "downstream_impact": ["protocol adapter", "backup/import", "benchmarks"],
@@ -20,7 +20,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/Backups/BackupOperation.cs, StartBackupOperation.cs, and ServerWide/Operations/RestoreBackupOperation.cs; src/TerraBase.Client/Documents/Smuggler/DatabaseSmuggler.cs; src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs, Restore/RestoreBackupTask.cs, and Smuggler/Documents/DatabaseSmuggler.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs and test/TerraBase.SlowTests/Server/Documents/PeriodicBackup [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask]"
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/BackupOperation.cs, StartBackupOperation.cs, and ServerWide/Operations/RestoreBackupOperation.cs; src/TerraBase.Client/Documents/Smuggler/DatabaseSmuggler.cs; src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs, Restore/RestoreBackupTask.cs, and Smuggler/Documents/DatabaseSmuggler.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs and test/TerraBase.SlowTests/Server/Documents/PeriodicBackup [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask] [v1:test:test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -43,7 +43,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Changes/IDatabaseChanges.cs, IDocumentChanges.cs, IIndexChanges.cs, ICounterChanges.cs, ITimeSeriesChanges.cs, IOperationChanges.cs, DatabaseChanges.cs, and AbstractDatabaseChanges.cs; src/TerraBase.Server/Documents/Changes/ChangesClientConnection.cs, AbstractChangesClientConnection.cs, DocumentsChanges.cs, and Handlers/ChangesHandler.cs; test/TerraBase.EndToEndTests/Client/Changes/BasicChangesDocumentsTests.cs, BasicChangesIndexesTests.cs, DatabaseChangesTests.cs, Operations/BasicChangesOperationsTests.cs, and test/TerraBase.SlowTests/Client/ChangesApiFailover.cs [v1:src/TerraBase.Server/Documents/Changes/ChangesClientConnection.cs::ChangesClientConnection]"
+        "scope": "src/TerraBase.Client/Documents/Changes/IDatabaseChanges.cs, IDocumentChanges.cs, IIndexChanges.cs, ICounterChanges.cs, ITimeSeriesChanges.cs, IOperationChanges.cs, DatabaseChanges.cs, and AbstractDatabaseChanges.cs; src/TerraBase.Server/Documents/Changes/ChangesClientConnection.cs, AbstractChangesClientConnection.cs, DocumentsChanges.cs, and Handlers/ChangesHandler.cs; test/TerraBase.EndToEndTests/Client/Changes/BasicChangesDocumentsTests.cs, BasicChangesIndexesTests.cs, DatabaseChangesTests.cs, Operations/BasicChangesOperationsTests.cs, and test/TerraBase.SlowTests/Client/ChangesApiFailover.cs [v1:src/TerraBase.Server/Documents/Changes/ChangesClientConnection.cs::ChangesClientConnection] [v1:test:test/TerraBase.EndToEndTests/Client/Changes/BasicChangesDocumentsTests.cs]"
       },
       "v2": {"owner": "engine/streaming", "public_seam": "streaming"},
       "public_contract": {
@@ -66,7 +66,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Subscriptions/AbstractSubscriptionWorker.cs, SubscriptionWorkerOptions.cs, SubscriptionBatch.cs, and SubscriptionWorker.cs; src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs, SubscriptionFetcher.cs, Processor/AbstractSubscriptionProcessor.cs, DocumentsDatabaseSubscriptionProcessor.cs, and RevisionsDatabaseSubscriptionProcessor.cs; test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs and SubscriptionOperationsSignaling.cs [v1:src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs::SubscriptionConnectionBase]"
+        "scope": "src/TerraBase.Client/Documents/Subscriptions/AbstractSubscriptionWorker.cs, SubscriptionWorkerOptions.cs, SubscriptionBatch.cs, and SubscriptionWorker.cs; src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs, SubscriptionFetcher.cs, Processor/AbstractSubscriptionProcessor.cs, DocumentsDatabaseSubscriptionProcessor.cs, and RevisionsDatabaseSubscriptionProcessor.cs; test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs and SubscriptionOperationsSignaling.cs [v1:src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs::SubscriptionConnectionBase] [v1:test:test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs]"
       },
       "v2": {"owner": "engine/subscriptions", "public_seam": "streaming"},
       "public_contract": {
@@ -89,7 +89,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Server/Documents/Subscriptions/Processor/AbstractSubscriptionProcessor.cs (TryRecordBatchAsync and AcknowledgeBatchAsync), DocumentsDatabaseSubscriptionProcessor.cs, SubscriptionConnectionsState.cs, ResendItem.cs, ServerWide/Commands/Subscriptions/AcknowledgeSubscriptionBatchCommand.cs, and SubscriptionStorage.cs; test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs and test/TerraBase.RachisTests/SubscriptionsFailover.cs [v1:src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs::SubscriptionConnectionBase]"
+        "scope": "src/TerraBase.Server/Documents/Subscriptions/Processor/AbstractSubscriptionProcessor.cs (TryRecordBatchAsync and AcknowledgeBatchAsync), DocumentsDatabaseSubscriptionProcessor.cs, SubscriptionConnectionsState.cs, ResendItem.cs, ServerWide/Commands/Subscriptions/AcknowledgeSubscriptionBatchCommand.cs, and SubscriptionStorage.cs; test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs and test/TerraBase.RachisTests/SubscriptionsFailover.cs [v1:src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs::SubscriptionConnectionBase] [v1:test:test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs]"
       },
       "v2": {"owner": "engine/subscriptions", "public_seam": "streaming"},
       "public_contract": {
@@ -112,7 +112,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Subscriptions/AbstractSubscriptionWorker.cs (ProcessSubscriptionAsync, CheckIfShouldReconnectWorker, TrySetRedirectNode, and SendAckAsync), SubscriptionWorker.cs, and SubscriptionWorkerOptions.cs; src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs; test/TerraBase.RachisTests/SubscriptionsFailover.cs, SubscriptionFailoverWIthWaitingChains.cs, and test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs [v1:src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs::SubscriptionConnectionBase]"
+        "scope": "src/TerraBase.Client/Documents/Subscriptions/AbstractSubscriptionWorker.cs (ProcessSubscriptionAsync, CheckIfShouldReconnectWorker, TrySetRedirectNode, and SendAckAsync), SubscriptionWorker.cs, and SubscriptionWorkerOptions.cs; src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs; test/TerraBase.RachisTests/SubscriptionsFailover.cs, SubscriptionFailoverWIthWaitingChains.cs, and test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionsBasic.cs [v1:src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs::SubscriptionConnectionBase] [v1:test:test/TerraBase.RachisTests/SubscriptionsFailover.cs]"
       },
       "v2": {"owner": "engine/subscriptions", "public_seam": "streaming"},
       "public_contract": {
@@ -135,7 +135,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Subscriptions/SubscriptionCriteria.cs, SubscriptionMode.cs, SubscriptionOpeningStrategy.cs, DocumentSubscriptions.cs, and revision subscription types; src/TerraBase.Server/Documents/Subscriptions/Processor/DocumentsDatabaseSubscriptionProcessor.cs and RevisionsDatabaseSubscriptionProcessor.cs; test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionScripts.cs, SubscriptionScriptErrorHandling.cs, RevisionsSubscriptions.cs, CriteriaScript.cs, and SubscriptionsBasic.cs [v1:src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs::SubscriptionConnectionBase]"
+        "scope": "src/TerraBase.Client/Documents/Subscriptions/SubscriptionCriteria.cs, SubscriptionMode.cs, SubscriptionOpeningStrategy.cs, DocumentSubscriptions.cs, and revision subscription types; src/TerraBase.Server/Documents/Subscriptions/Processor/DocumentsDatabaseSubscriptionProcessor.cs and RevisionsDatabaseSubscriptionProcessor.cs; test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionScripts.cs, SubscriptionScriptErrorHandling.cs, RevisionsSubscriptions.cs, CriteriaScript.cs, and SubscriptionsBasic.cs [v1:src/TerraBase.Server/Documents/Subscriptions/SubscriptionConnectionBase.cs::SubscriptionConnectionBase] [v1:test:test/TerraBase.SlowTests/Client/Subscriptions/SubscriptionScripts.cs]"
       },
       "v2": {"owner": "engine/subscriptions", "public_seam": "streaming"},
       "public_contract": {
@@ -158,7 +158,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Session/DocumentSession.Stream.cs, AsyncDocumentSession.Stream.cs, Session/Operations/StreamOperation.cs, and Commands/StreamCommand.cs; src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetDocs.cs; test/TerraBase.EndToEndTests/Client/LoadIntoStream.cs, LoadIntoStreamAsync.cs, and test/TerraBase.SlowTests/Core/Streaming/DocumentStreaming.cs [v1:src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetDocs.cs::AbstractStreamingHandlerProcessorForGetDocs]"
+        "scope": "src/TerraBase.Client/Documents/Session/DocumentSession.Stream.cs, AsyncDocumentSession.Stream.cs, Session/Operations/StreamOperation.cs, and Commands/StreamCommand.cs; src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetDocs.cs; test/TerraBase.EndToEndTests/Client/LoadIntoStream.cs, LoadIntoStreamAsync.cs, and test/TerraBase.SlowTests/Core/Streaming/DocumentStreaming.cs [v1:src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetDocs.cs::AbstractStreamingHandlerProcessorForGetDocs] [v1:test:test/TerraBase.EndToEndTests/Client/LoadIntoStream.cs]"
       },
       "v2": {"owner": "engine/streaming", "public_seam": "streaming"},
       "public_contract": {
@@ -180,7 +180,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Session/AsyncDocumentSession.Stream.cs, DocumentSession.Stream.cs, Session/Operations/StreamOperation.cs, and Commands/QueryStreamCommand.cs; src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetStreamQuery.cs; test/TerraBase.EndToEndTests/Client/QueryIntoStream.cs and test/TerraBase.SlowTests/Core/Streaming/QueryStreaming.cs [v1:src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetStreamQuery.cs::AbstractStreamingHandlerProcessorForGetStreamQuery]"
+        "scope": "src/TerraBase.Client/Documents/Session/AsyncDocumentSession.Stream.cs, DocumentSession.Stream.cs, Session/Operations/StreamOperation.cs, and Commands/QueryStreamCommand.cs; src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetStreamQuery.cs; test/TerraBase.EndToEndTests/Client/QueryIntoStream.cs and test/TerraBase.SlowTests/Core/Streaming/QueryStreaming.cs [v1:src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetStreamQuery.cs::AbstractStreamingHandlerProcessorForGetStreamQuery] [v1:test:test/TerraBase.EndToEndTests/Client/QueryIntoStream.cs]"
       },
       "v2": {"owner": "engine/streaming", "public_seam": "streaming"},
       "public_contract": {
@@ -202,7 +202,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Session/AsyncDocumentSession.TimeSeriesStream.cs, DocumentSession.TimeSeriesStream.cs, Session/Operations/StreamOperation.cs, and time-series stream result types; src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetTimeSeries.cs; test/TerraBase.SlowTests/Client/TimeSeries/Session/TimeSeriesStreamingTests.cs and test/TerraBase.SlowTests/Client/Indexing/TimeSeries/TimeSeriesIndexStreamTests.cs [v1:src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetTimeSeries.cs::AbstractStreamingHandlerProcessorForGetTimeSeries]"
+        "scope": "src/TerraBase.Client/Documents/Session/AsyncDocumentSession.TimeSeriesStream.cs, DocumentSession.TimeSeriesStream.cs, Session/Operations/StreamOperation.cs, and time-series stream result types; src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetTimeSeries.cs; test/TerraBase.SlowTests/Client/TimeSeries/Session/TimeSeriesStreamingTests.cs and test/TerraBase.SlowTests/Client/Indexing/TimeSeries/TimeSeriesIndexStreamTests.cs [v1:src/TerraBase.Server/Documents/Handlers/Processors/Streaming/AbstractStreamingHandlerProcessorForGetTimeSeries.cs::AbstractStreamingHandlerProcessorForGetTimeSeries] [v1:test:test/TerraBase.SlowTests/Client/TimeSeries/Session/TimeSeriesStreamingTests.cs]"
       },
       "v2": {"owner": "engine/streaming", "public_seam": "streaming"},
       "public_contract": {
@@ -224,7 +224,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/Backups/BackupConfiguration.cs, BackupType.cs, SnapshotSettings.cs, BackupOperation.cs, and src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs, BackupExtensions.cs, BackupKind.cs; test/TerraBase.EndToEndTests/Voron/Backups/Full.cs, BackupToOneZipFile.cs, IncrementalBackupTestUtils.cs, and test/TerraBase.SlowTests/Voron/Backups/Incremental.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask]"
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/BackupConfiguration.cs, BackupType.cs, SnapshotSettings.cs, BackupOperation.cs, and src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs, BackupExtensions.cs, BackupKind.cs; test/TerraBase.EndToEndTests/Voron/Backups/Full.cs, BackupToOneZipFile.cs, IncrementalBackupTestUtils.cs, and test/TerraBase.SlowTests/Voron/Backups/Incremental.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask] [v1:test:test/TerraBase.EndToEndTests/Voron/Backups/Full.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -246,7 +246,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/Backups/PeriodicBackupConfiguration.cs, PeriodicBackupStatus.cs, UpdatePeriodicBackupOperation.cs, StartBackupOperation.cs, and GetPeriodicBackupStatusOperation.cs; src/TerraBase.Server/Documents/PeriodicBackup/PeriodicBackup.cs and PeriodicBackupRunner.cs, Utils/BackupUtils.cs, and Documents/Handlers/Processors/OngoingTasks; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/ClusterBackupTests.cs, ServerWideBackup.cs, and Retention.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask]"
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/PeriodicBackupConfiguration.cs, PeriodicBackupStatus.cs, UpdatePeriodicBackupOperation.cs, StartBackupOperation.cs, and GetPeriodicBackupStatusOperation.cs; src/TerraBase.Server/Documents/PeriodicBackup/PeriodicBackup.cs and PeriodicBackupRunner.cs, Utils/BackupUtils.cs, and Documents/Handlers/Processors/OngoingTasks; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/ClusterBackupTests.cs, ServerWideBackup.cs, and Retention.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask] [v1:test:test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/ClusterBackupTests.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -268,7 +268,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/Backups/BackupConfiguration.cs, BackupSettings.cs, BackupUploadMode.cs, and IAzureSettings.cs/IS3Settings.cs; src/TerraBase.Server/Documents/PeriodicBackup/FileUploaderBase.cs, BackupUploader.cs, DirectUpload/DirectUploadBackupTask.cs, Aws/TerraBaseAwsS3Client.cs, Azure/TerraBaseAzureClient.cs, GoogleCloud/TerraBaseGoogleCloudClient.cs, TerraBaseFtpClient.cs, and restore source providers; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/Aws.cs, Azure.cs, GoogleCloud.cs, CustomS3.cs, FtpBasicTests.cs, and Restore/RestoreFromAwsS3.cs, RestoreFromAzure.cs, RestoreFromGoogleCloud.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask]"
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/BackupConfiguration.cs, BackupSettings.cs, BackupUploadMode.cs, and IAzureSettings.cs/IS3Settings.cs; src/TerraBase.Server/Documents/PeriodicBackup/FileUploaderBase.cs, BackupUploader.cs, DirectUpload/DirectUploadBackupTask.cs, Aws/TerraBaseAwsS3Client.cs, Azure/TerraBaseAzureClient.cs, GoogleCloud/TerraBaseGoogleCloudClient.cs, TerraBaseFtpClient.cs, and restore source providers; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/Aws.cs, Azure.cs, GoogleCloud.cs, CustomS3.cs, FtpBasicTests.cs, and Restore/RestoreFromAwsS3.cs, RestoreFromAzure.cs, RestoreFromGoogleCloud.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask] [v1:test:test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/Aws.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -290,7 +290,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/Backups/BackupEncryptionSettings.cs, BackupConfiguration.cs, and RestoreBackupConfiguration.cs; src/TerraBase.Server/Documents/PeriodicBackup/EncryptedBackup.cs, BackupCompressionAlgorithmExtensions.cs, and ServerWide/TempCryptoStream.cs; docs/implementation/encrypted-backup-key-integrity.md and docs/implementation/incremental-backup-chain-integrity.md; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/EncryptedBackupTest.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask]"
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/BackupEncryptionSettings.cs, BackupConfiguration.cs, and RestoreBackupConfiguration.cs; src/TerraBase.Server/Documents/PeriodicBackup/EncryptedBackup.cs, BackupCompressionAlgorithmExtensions.cs, and ServerWide/TempCryptoStream.cs; docs/implementation/encrypted-backup-key-integrity.md and docs/implementation/incremental-backup-chain-integrity.md; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/EncryptedBackupTest.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask] [v1:test:test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/EncryptedBackupTest.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -312,7 +312,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/Backups/RetentionPolicy.cs and PeriodicBackupConfiguration.cs; src/TerraBase.Server/Documents/PeriodicBackup/Retention/RetentionHelper.cs, RetentionPolicyRunnerBase.cs, LocalRetentionPolicyRunner.cs, S3RetentionPolicyRunner.cs, AzureRetentionPolicyRunner.cs, GlacierRetentionPolicyRunner.cs, GoogleCloudRetentionPolicyRunner.cs, and FtpRetentionPolicyRunner.cs; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/Retention.cs and test/TerraBase.StressTests/Server/Documents/PeriodicBackup/RetentionStress.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask]"
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/RetentionPolicy.cs and PeriodicBackupConfiguration.cs; src/TerraBase.Server/Documents/PeriodicBackup/Retention/RetentionHelper.cs, RetentionPolicyRunnerBase.cs, LocalRetentionPolicyRunner.cs, S3RetentionPolicyRunner.cs, AzureRetentionPolicyRunner.cs, GlacierRetentionPolicyRunner.cs, GoogleCloudRetentionPolicyRunner.cs, and FtpRetentionPolicyRunner.cs; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/Retention.cs and test/TerraBase.StressTests/Server/Documents/PeriodicBackup/RetentionStress.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask] [v1:test:test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/Retention.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -334,7 +334,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Server/Documents/PeriodicBackup/Restore/RecoveryPointManifest.cs, ManifestRestoreSource.cs, RemoteRecoveryPointDiscovery.cs, LocalRestorePoints.cs, and RestoreUtils.cs; src/TerraBase.Client/Documents/Operations/Backups/RestoreBackupConfiguration.cs (RecoveryPointManifestReference); docs/implementation/2026-08-07-recovery-point-manifests.md and docs/agentic-delivery/2026-08-07/recovery-manifest-production-proof.md; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/RecoveryPointManifestTests.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask]"
+        "scope": "src/TerraBase.Server/Documents/PeriodicBackup/Restore/RecoveryPointManifest.cs, ManifestRestoreSource.cs, RemoteRecoveryPointDiscovery.cs, LocalRestorePoints.cs, and RestoreUtils.cs; src/TerraBase.Client/Documents/Operations/Backups/RestoreBackupConfiguration.cs (RecoveryPointManifestReference); docs/implementation/2026-08-07-recovery-point-manifests.md and docs/agentic-delivery/2026-08-07/recovery-manifest-production-proof.md; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/RecoveryPointManifestTests.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask] [v1:test:test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/RecoveryPointManifestTests.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -357,7 +357,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/Backups/RestoreBackupConfiguration.cs, ServerWide/Operations/RestoreBackupOperation.cs, RestoreProgress.cs, and RestoreResult.cs; src/TerraBase.Server/Documents/PeriodicBackup/Restore/IRestoreSource.cs, RestoreFromLocal.cs, RestoreFromS3.cs, RestoreFromAzure.cs, RestoreFromGoogleCloud.cs, RestoreBackupTask.cs, RestoreSnapshotTask.cs, and RestoreUtils.cs; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/Restore/RestoreFromAwsS3.cs, RestoreFromAzure.cs, RestoreFromGoogleCloud.cs and test/TerraBase.SlowTests/Sharding/Backup/ShardedRestoreBackupTests.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask]"
+        "scope": "src/TerraBase.Client/Documents/Operations/Backups/RestoreBackupConfiguration.cs, ServerWide/Operations/RestoreBackupOperation.cs, RestoreProgress.cs, and RestoreResult.cs; src/TerraBase.Server/Documents/PeriodicBackup/Restore/IRestoreSource.cs, RestoreFromLocal.cs, RestoreFromS3.cs, RestoreFromAzure.cs, RestoreFromGoogleCloud.cs, RestoreBackupTask.cs, RestoreSnapshotTask.cs, and RestoreUtils.cs; test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/Restore/RestoreFromAwsS3.cs, RestoreFromAzure.cs, RestoreFromGoogleCloud.cs and test/TerraBase.SlowTests/Sharding/Backup/ShardedRestoreBackupTests.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask] [v1:test:test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/Restore/RestoreFromAwsS3.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -379,7 +379,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Server/Documents/PeriodicBackup/ConcurrentBackupsCounter.cs, BackupDelayException.cs, BackupHelper.cs, BackupTask.cs, Utils/BackupUtils.cs, Exceptions/PeriodicBackup/StorageException.cs, and Client/Exceptions/Database/BackupAlreadyRunningException.cs; src/TerraBase.Client/Documents/Operations/Backups/BackupConfiguration.cs (MaxReadOpsPerSecond); test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/TerraBase-20544.cs and test/TerraBase.StressTests/Server/Documents/PeriodicBackup/MaxReadOpsPerSecOptionTests.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask]"
+        "scope": "src/TerraBase.Server/Documents/PeriodicBackup/ConcurrentBackupsCounter.cs, BackupDelayException.cs, BackupHelper.cs, BackupTask.cs, Utils/BackupUtils.cs, Exceptions/PeriodicBackup/StorageException.cs, and Client/Exceptions/Database/BackupAlreadyRunningException.cs; src/TerraBase.Client/Documents/Operations/Backups/BackupConfiguration.cs (MaxReadOpsPerSecond); test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/TerraBase-20544.cs and test/TerraBase.StressTests/Server/Documents/PeriodicBackup/MaxReadOpsPerSecOptionTests.cs [v1:src/TerraBase.Server/Documents/PeriodicBackup/BackupTask.cs::BackupTask] [v1:test:test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/TerraBase-20544.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -401,7 +401,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Smuggler/DatabaseSmuggler.cs, DatabaseSmugglerExportOptions.cs, DatabaseSmugglerImportOptions.cs, DatabaseSmugglerOptions.cs, SmugglerResult.cs, and SmugglerProgressBase.cs; src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs, DatabaseSource.cs, DatabaseDestination.cs, StreamSource.cs, StreamDestination.cs, and Handlers/SmugglerHandler.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs and test/TerraBase.EmbeddedTests/SmugglerTests.cs [v1:src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs::DatabaseSmuggler]"
+        "scope": "src/TerraBase.Client/Documents/Smuggler/DatabaseSmuggler.cs, DatabaseSmugglerExportOptions.cs, DatabaseSmugglerImportOptions.cs, DatabaseSmugglerOptions.cs, SmugglerResult.cs, and SmugglerProgressBase.cs; src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs, DatabaseSource.cs, DatabaseDestination.cs, StreamSource.cs, StreamDestination.cs, and Handlers/SmugglerHandler.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs and test/TerraBase.EmbeddedTests/SmugglerTests.cs [v1:src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs::DatabaseSmuggler] [v1:test:test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -423,7 +423,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Smuggler/DatabaseItemType.cs and DatabaseSmugglerOptions.cs; src/TerraBase.Server/Smuggler/Documents/StreamSource.cs, StreamDestination.cs, CsvStreamSource.cs, and Actions/DatabaseRecordActions.cs, DatabaseIndexActions.cs, DatabaseCompareExchangeActions.cs, DatabaseSubscriptionActions.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs, SmugglerConflicts.cs, and test/TerraBase.SlowTests/Server/Documents/DataArchival/DataArchivalSmugglerTests.cs [v1:src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs::DatabaseSmuggler]"
+        "scope": "src/TerraBase.Client/Documents/Smuggler/DatabaseItemType.cs and DatabaseSmugglerOptions.cs; src/TerraBase.Server/Smuggler/Documents/StreamSource.cs, StreamDestination.cs, CsvStreamSource.cs, and Actions/DatabaseRecordActions.cs, DatabaseIndexActions.cs, DatabaseCompareExchangeActions.cs, DatabaseSubscriptionActions.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs, SmugglerConflicts.cs, and test/TerraBase.SlowTests/Server/Documents/DataArchival/DataArchivalSmugglerTests.cs [v1:src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs::DatabaseSmuggler] [v1:test:test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -445,7 +445,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Smuggler/DatabaseSmugglerExportOptions.cs and DatabaseSmugglerImportOptions.cs (TransformScript, MaxStepsForTransformScript, SkipRevisionCreation); src/TerraBase.Server/Smuggler/Documents/Data/DatabaseSmugglerOptionsServerSide.cs and SmugglerPatcher.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs (revision and max-read cases) [v1:src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs::DatabaseSmuggler]"
+        "scope": "src/TerraBase.Client/Documents/Smuggler/DatabaseSmugglerExportOptions.cs and DatabaseSmugglerImportOptions.cs (TransformScript, MaxStepsForTransformScript, SkipRevisionCreation); src/TerraBase.Server/Smuggler/Documents/Data/DatabaseSmugglerOptionsServerSide.cs and SmugglerPatcher.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs (revision and max-read cases) [v1:src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs::DatabaseSmuggler] [v1:test:test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -467,7 +467,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Server/Smuggler/Documents/Iteration/DocumentsIterationState.cs, CollectionAwareIterationState.cs, CountersIterationState.cs, TimeSeriesIterationState.cs, TombstonesIterationState.cs, and DatabaseSmuggler.cs; src/TerraBase.Client/Documents/Smuggler/SmugglerProgressBase.cs and SmugglerResult.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs (repeat imports and limits) and SmugglerConflicts.cs [v1:src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs::DatabaseSmuggler]"
+        "scope": "src/TerraBase.Server/Smuggler/Documents/Iteration/DocumentsIterationState.cs, CollectionAwareIterationState.cs, CountersIterationState.cs, TimeSeriesIterationState.cs, TombstonesIterationState.cs, and DatabaseSmuggler.cs; src/TerraBase.Client/Documents/Smuggler/SmugglerProgressBase.cs and SmugglerResult.cs; test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs (repeat imports and limits) and SmugglerConflicts.cs [v1:src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs::DatabaseSmuggler] [v1:test:test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -489,7 +489,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/ServerWide/Operations/Migration/OfflineMigrationConfiguration.cs and OfflineMigrationOperation.cs; src/TerraBase.Server/Smuggler/Migration/AbstractLegacyMigrator.cs, AbstractMigrator.cs, Migrator.cs, Migrator_V2.cs, Migrator_V3.cs, Importer.cs, MigrationConfiguration.cs, and LegacyMigrationJson.cs; test/TerraBase.EndToEndTests/Server/Smuggler/LegacyMigrationJsonTests.cs and test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs [v1:src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs::DatabaseSmuggler]"
+        "scope": "src/TerraBase.Client/ServerWide/Operations/Migration/OfflineMigrationConfiguration.cs and OfflineMigrationOperation.cs; src/TerraBase.Server/Smuggler/Migration/AbstractLegacyMigrator.cs, AbstractMigrator.cs, Migrator.cs, Migrator_V2.cs, Migrator_V3.cs, Importer.cs, MigrationConfiguration.cs, and LegacyMigrationJson.cs; test/TerraBase.EndToEndTests/Server/Smuggler/LegacyMigrationJsonTests.cs and test/TerraBase.SlowTests/Smuggler/SmugglerApiTests.cs [v1:src/TerraBase.Server/Smuggler/Documents/DatabaseSmuggler.cs::DatabaseSmuggler] [v1:test:test/TerraBase.EndToEndTests/Server/Smuggler/LegacyMigrationJsonTests.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -511,7 +511,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Server/SqlMigration/GenericDatabaseMigrator.cs, DatabaseDriverDispatcher.cs, MigrationProvider.cs, JsPatcher.cs, Model/MigrationRequest.cs, MigrationSettings.cs, MigrationResult.cs, and MsSQL/MySQL/NpgSQL/Oracle providers; test/TerraBase.SlowTests/Server/Documents/Migration/BasicMigrationTests.cs, AttachmentsTest.cs, PatchTest.cs, and provider schema tests [v1:src/TerraBase.Server/SqlMigration/GenericDatabaseMigrator.cs::GenericDatabaseMigrator]"
+        "scope": "src/TerraBase.Server/SqlMigration/GenericDatabaseMigrator.cs, DatabaseDriverDispatcher.cs, MigrationProvider.cs, JsPatcher.cs, Model/MigrationRequest.cs, MigrationSettings.cs, MigrationResult.cs, and MsSQL/MySQL/NpgSQL/Oracle providers; test/TerraBase.SlowTests/Server/Documents/Migration/BasicMigrationTests.cs, AttachmentsTest.cs, PatchTest.cs, and provider schema tests [v1:src/TerraBase.Server/SqlMigration/GenericDatabaseMigrator.cs::GenericDatabaseMigrator] [v1:test:test/TerraBase.SlowTests/Server/Documents/Migration/BasicMigrationTests.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -533,7 +533,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/ETL/EtlConfiguration.cs, Transformation.cs, EtlType.cs, AddEtlOperation.cs, UpdateEtlOperation.cs, and ResetEtlOperation.cs; src/TerraBase.Server/Documents/ETL/EtlLoader.cs, EtlProcess.cs, EtlTransformer.cs, ExtractedItemsEnumerator.cs, and Handlers/EtlHandler.cs; test/TerraBase.SlowTests/Server/Documents/ETL/EtlTasksManagement_TerraBase_7276.cs, BasicTerraBaseEtlTests.cs, and EtlLoaderTests.cs [v1:src/TerraBase.Server/Documents/ETL/EtlProcess.cs::EtlProcess]"
+        "scope": "src/TerraBase.Client/Documents/Operations/ETL/EtlConfiguration.cs, Transformation.cs, EtlType.cs, AddEtlOperation.cs, UpdateEtlOperation.cs, and ResetEtlOperation.cs; src/TerraBase.Server/Documents/ETL/EtlLoader.cs, EtlProcess.cs, EtlTransformer.cs, ExtractedItemsEnumerator.cs, and Handlers/EtlHandler.cs; test/TerraBase.SlowTests/Server/Documents/ETL/EtlTasksManagement_TerraBase_7276.cs, BasicTerraBaseEtlTests.cs, and EtlLoaderTests.cs [v1:src/TerraBase.Server/Documents/ETL/EtlProcess.cs::EtlProcess] [v1:test:test/TerraBase.SlowTests/Server/Documents/ETL/EtlTasksManagement_TerraBase_7276.cs]"
       },
       "v2": {"owner": "engine/etl", "public_seam": "streaming"},
       "public_contract": {
@@ -555,7 +555,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Server/Documents/ETL/EtlProcess.cs (Extract, ExtractDocuments, ExtractCounters, ExtractTimeSeries, tombstone and attachment enumerators), EtlLoader.cs, and Providers/TerraBase/Enumerators/DocumentsToTerraBaseEtlItems.cs, CountersToTerraBaseEtlItems.cs, TimeSeriesToTerraBaseEtlItems.cs, and AttachmentTombstonesToTerraBaseEtlItems.cs; test/TerraBase.SlowTests/Server/Documents/ETL/EtlCountersTests.cs, EtlTimeSeriesTests.cs, Server/Documents/Attachments/S3RemoteAttachmentsSqlEtlTests.cs, and TerraBase/BasicTerraBaseEtlTests.cs [v1:src/TerraBase.Server/Documents/ETL/EtlProcess.cs::EtlProcess]"
+        "scope": "src/TerraBase.Server/Documents/ETL/EtlProcess.cs (Extract, ExtractDocuments, ExtractCounters, ExtractTimeSeries, tombstone and attachment enumerators), EtlLoader.cs, and Providers/TerraBase/Enumerators/DocumentsToTerraBaseEtlItems.cs, CountersToTerraBaseEtlItems.cs, TimeSeriesToTerraBaseEtlItems.cs, and AttachmentTombstonesToTerraBaseEtlItems.cs; test/TerraBase.SlowTests/Server/Documents/ETL/EtlCountersTests.cs, EtlTimeSeriesTests.cs, Server/Documents/Attachments/S3RemoteAttachmentsSqlEtlTests.cs, and TerraBase/BasicTerraBaseEtlTests.cs [v1:src/TerraBase.Server/Documents/ETL/EtlProcess.cs::EtlProcess] [v1:test:test/TerraBase.SlowTests/Server/Documents/ETL/EtlCountersTests.cs]"
       },
       "v2": {"owner": "engine/etl", "public_seam": "streaming"},
       "public_contract": {
@@ -577,7 +577,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/ETL/EtlType.cs and configuration classes TerraBaseEtlConfiguration.cs, SQL/SqlEtlConfiguration.cs, OLAP/OlapEtlConfiguration.cs, Elasticsearch/ElasticSearchEtlConfiguration.cs, Queue/QueueEtlConfiguration.cs, and Snowflake/SnowflakeEtlConfiguration.cs; src/TerraBase.Server/Documents/ETL/Providers; test/TerraBase.SlowTests/Server/Documents/ETL/Elasticsearch/ElasticSearchEtlTests.cs, OLAP/LocalTests.cs, SQL/SqlEtlTests.cs, Snowflake/SnowflakeEtlTests.cs, Queue/KafkaEtlTests.cs, Queue/RabbitMqEtlTests.cs, Queue/AmazonSqs/AmazonSqsEtlTests.cs, Queue/AzureQueueStorageEtlTests.cs, and TerraBase/BasicTerraBaseEtlTests.cs [v1:src/TerraBase.Server/Documents/ETL/EtlProcess.cs::EtlProcess]"
+        "scope": "src/TerraBase.Client/Documents/Operations/ETL/EtlType.cs and configuration classes TerraBaseEtlConfiguration.cs, SQL/SqlEtlConfiguration.cs, OLAP/OlapEtlConfiguration.cs, Elasticsearch/ElasticSearchEtlConfiguration.cs, Queue/QueueEtlConfiguration.cs, and Snowflake/SnowflakeEtlConfiguration.cs; src/TerraBase.Server/Documents/ETL/Providers; test/TerraBase.SlowTests/Server/Documents/ETL/Elasticsearch/ElasticSearchEtlTests.cs, OLAP/LocalTests.cs, SQL/SqlEtlTests.cs, Snowflake/SnowflakeEtlTests.cs, Queue/KafkaEtlTests.cs, Queue/RabbitMqEtlTests.cs, Queue/AmazonSqs/AmazonSqsEtlTests.cs, Queue/AzureQueueStorageEtlTests.cs, and TerraBase/BasicTerraBaseEtlTests.cs [v1:src/TerraBase.Server/Documents/ETL/EtlProcess.cs::EtlProcess] [v1:test:test/TerraBase.SlowTests/Server/Documents/ETL/Elasticsearch/ElasticSearchEtlTests.cs]"
       },
       "v2": {"owner": "engine/etl", "public_seam": "streaming"},
       "public_contract": {
@@ -599,7 +599,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Server/Documents/ETL/EtlProcess.cs (Load, ForceBatchRetry, EnterFallbackMode, UpdateEtlProcessState, RecordLoadError, RecordConfigurationError, RecordUnknownError, GetPerformanceStats, and GetConnectionStatus), EtlProcessHealthStatus.cs, EtlProcessStatistics.cs, ETL/Handlers/Processors/AbstractEtlHandlerProcessorForRetryBatch.cs and task-error processors; test/TerraBase.SlowTests/Server/Documents/ETL/SQL/SqlEtlTests.cs, Elasticsearch/ElasticSearchEtlTests.cs, Queue/TerraBase_21530.cs, and EtlTasksManagement_TerraBase_7276.cs [v1:src/TerraBase.Server/Documents/ETL/EtlProcess.cs::EtlProcess]"
+        "scope": "src/TerraBase.Server/Documents/ETL/EtlProcess.cs (Load, ForceBatchRetry, EnterFallbackMode, UpdateEtlProcessState, RecordLoadError, RecordConfigurationError, RecordUnknownError, GetPerformanceStats, and GetConnectionStatus), EtlProcessHealthStatus.cs, EtlProcessStatistics.cs, ETL/Handlers/Processors/AbstractEtlHandlerProcessorForRetryBatch.cs and task-error processors; test/TerraBase.SlowTests/Server/Documents/ETL/SQL/SqlEtlTests.cs, Elasticsearch/ElasticSearchEtlTests.cs, Queue/TerraBase_21530.cs, and EtlTasksManagement_TerraBase_7276.cs [v1:src/TerraBase.Server/Documents/ETL/EtlProcess.cs::EtlProcess] [v1:test:test/TerraBase.SlowTests/Server/Documents/ETL/SQL/SqlEtlTests.cs]"
       },
       "v2": {"owner": "engine/etl", "public_seam": "streaming"},
       "public_contract": {
@@ -621,7 +621,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/ETL/Queue/QueueEtlConfiguration.cs, QueueConnectionString.cs, QueueBrokerType.cs, and provider connection settings for Amazon SQS, Azure Queue Storage, Azure Service Bus, Kafka, and RabbitMQ; src/TerraBase.Server/Documents/ETL/Providers/Queue/QueueEtl.cs, Kafka/KafkaEtl.cs, RabbitMq/RabbitMqEtl.cs, AmazonSqs/AmazonSqsEtl.cs, AzureQueueStorage/AzureQueueStorageEtl.cs, and CloudEventConverter.cs; test/TerraBase.SlowTests/Server/Documents/ETL/Queue [v1:src/TerraBase.Server/Documents/ETL/Providers/Queue/QueueEtl.cs::QueueEtl]"
+        "scope": "src/TerraBase.Client/Documents/Operations/ETL/Queue/QueueEtlConfiguration.cs, QueueConnectionString.cs, QueueBrokerType.cs, and provider connection settings for Amazon SQS, Azure Queue Storage, Azure Service Bus, Kafka, and RabbitMQ; src/TerraBase.Server/Documents/ETL/Providers/Queue/QueueEtl.cs, Kafka/KafkaEtl.cs, RabbitMq/RabbitMqEtl.cs, AmazonSqs/AmazonSqsEtl.cs, AzureQueueStorage/AzureQueueStorageEtl.cs, and CloudEventConverter.cs; test/TerraBase.SlowTests/Server/Documents/ETL/Queue [v1:src/TerraBase.Server/Documents/ETL/Providers/Queue/QueueEtl.cs::QueueEtl] [v1:test:test/TerraBase.SlowTests/Server/Documents/ETL/Queue/KafkaEtlTests.cs]"
       },
       "v2": {"owner": "engine/etl", "public_seam": "streaming"},
       "public_contract": {
@@ -643,7 +643,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/QueueSink/QueueSinkConfiguration.cs, QueueSinkScript.cs, AddQueueSinkOperation.cs, and UpdateQueueSinkOperation.cs; src/TerraBase.Server/Documents/QueueSink/QueueSinkLoader.cs, QueueSinkProcess.cs, Test/TestQueueSinkScript.cs, ServerWide/Commands/QueueSink/AddQueueSinkCommand.cs and UpdateQueueSinkCommand.cs; test/TerraBase.SlowTests/Server/Documents/QueueSink/QueueSinkTestBase.cs, KafkaQueueSinkTests.cs, RabbitMqSinkTests.cs, AzureServiceBusSinkTests.cs, and Issues/TerraBase_22105.cs [v1:src/TerraBase.Server/Documents/QueueSink/QueueSinkProcess.cs::QueueSinkProcess]"
+        "scope": "src/TerraBase.Client/Documents/Operations/QueueSink/QueueSinkConfiguration.cs, QueueSinkScript.cs, AddQueueSinkOperation.cs, and UpdateQueueSinkOperation.cs; src/TerraBase.Server/Documents/QueueSink/QueueSinkLoader.cs, QueueSinkProcess.cs, Test/TestQueueSinkScript.cs, ServerWide/Commands/QueueSink/AddQueueSinkCommand.cs and UpdateQueueSinkCommand.cs; test/TerraBase.SlowTests/Server/Documents/QueueSink/QueueSinkTestBase.cs, KafkaQueueSinkTests.cs, RabbitMqSinkTests.cs, AzureServiceBusSinkTests.cs, and Issues/TerraBase_22105.cs [v1:src/TerraBase.Server/Documents/QueueSink/QueueSinkProcess.cs::QueueSinkProcess] [v1:test:test/TerraBase.SlowTests/Server/Documents/QueueSink/QueueSinkTestBase.cs]"
       },
       "v2": {"owner": "engine/queue-sink", "public_seam": "streaming"},
       "public_contract": {
@@ -665,7 +665,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Server/Documents/QueueSink/KafkaQueueSink.cs, RabbitMqQueueSink.cs, AzureServiceBusQueueSink.cs, QueueSinkProcess.cs, and QueueSinkLoader.cs; src/TerraBase.Client/Documents/Operations/QueueSink/AzureServiceBusSinkSource.cs; test/TerraBase.EndToEndTests/Server/Documents/QueueSink/AzureServiceBusSinkSourceTests.cs and test/TerraBase.SlowTests/Server/Documents/QueueSink/AzureServiceBusSinkTests.cs, KafkaQueueSinkTests.cs, RabbitMqSinkTests.cs, AzureServiceBusClusterSinkTests.cs [v1:src/TerraBase.Server/Documents/QueueSink/QueueSinkProcess.cs::QueueSinkProcess]"
+        "scope": "src/TerraBase.Server/Documents/QueueSink/KafkaQueueSink.cs, RabbitMqQueueSink.cs, AzureServiceBusQueueSink.cs, QueueSinkProcess.cs, and QueueSinkLoader.cs; src/TerraBase.Client/Documents/Operations/QueueSink/AzureServiceBusSinkSource.cs; test/TerraBase.EndToEndTests/Server/Documents/QueueSink/AzureServiceBusSinkSourceTests.cs and test/TerraBase.SlowTests/Server/Documents/QueueSink/AzureServiceBusSinkTests.cs, KafkaQueueSinkTests.cs, RabbitMqSinkTests.cs, AzureServiceBusClusterSinkTests.cs [v1:src/TerraBase.Server/Documents/QueueSink/QueueSinkProcess.cs::QueueSinkProcess] [v1:test:test/TerraBase.EndToEndTests/Server/Documents/QueueSink/AzureServiceBusSinkSourceTests.cs]"
       },
       "v2": {"owner": "engine/queue-sink", "public_seam": "streaming"},
       "public_contract": {
@@ -687,7 +687,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/ConnectionStrings/ConnectionString.cs, GetConnectionStringsOperation.cs, PutConnectionStringOperation.cs, RemoveConnectionStringOperation.cs, ETL provider connection-string classes, and Queue/QueueConnectionString.cs; test/TerraBase.SlowTests/Server/Documents/ETL/ConnectionStringTests.cs and Snowflake/SnowflakeEtlTests.cs (audit JSON credential checks) [v1:src/TerraBase.Client/Documents/Operations/ConnectionStrings/ConnectionString.cs::ConnectionString]"
+        "scope": "src/TerraBase.Client/Documents/Operations/ConnectionStrings/ConnectionString.cs, GetConnectionStringsOperation.cs, PutConnectionStringOperation.cs, RemoveConnectionStringOperation.cs, ETL provider connection-string classes, and Queue/QueueConnectionString.cs; test/TerraBase.SlowTests/Server/Documents/ETL/ConnectionStringTests.cs and Snowflake/SnowflakeEtlTests.cs (audit JSON credential checks) [v1:src/TerraBase.Client/Documents/Operations/ConnectionStrings/ConnectionString.cs::ConnectionString] [v1:test:test/TerraBase.SlowTests/Server/Documents/ETL/ConnectionStringTests.cs]"
       },
       "v2": {"owner": "adapter/platform", "public_seam": "Platform Adapter"},
       "public_contract": {
@@ -709,7 +709,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Operations/OngoingTasks/GetOngoingTaskInfoOperation.cs, ToggleOngoingTaskStateOperation.cs, DeleteOngoingTaskOperation.cs, and OngoingTask types; src/TerraBase.Server/Documents/OngoingTasks/AbstractOngoingTasks.cs, OngoingTasks.cs, Commands/OngoingTasks/GetOngoingTasksCommand.cs, and Dashboard/Cluster/Notifications/OngoingTasksNotificationSender.cs; test/TerraBase.RachisTests/DatabaseCluster/OngoingTasks.cs, test/TerraBase.SlowTests/Server/Documents/OngoingTasks/PinOnGoingTaskToMentorNode.cs, and ETL task-management tests [v1:src/TerraBase.Server/Documents/OngoingTasks/OngoingTasks.cs::OngoingTasks]"
+        "scope": "src/TerraBase.Client/Documents/Operations/OngoingTasks/GetOngoingTaskInfoOperation.cs, ToggleOngoingTaskStateOperation.cs, DeleteOngoingTaskOperation.cs, and OngoingTask types; src/TerraBase.Server/Documents/OngoingTasks/AbstractOngoingTasks.cs, OngoingTasks.cs, Commands/OngoingTasks/GetOngoingTasksCommand.cs, and Dashboard/Cluster/Notifications/OngoingTasksNotificationSender.cs; test/TerraBase.RachisTests/DatabaseCluster/OngoingTasks.cs, test/TerraBase.SlowTests/Server/Documents/OngoingTasks/PinOnGoingTaskToMentorNode.cs, and ETL task-management tests [v1:src/TerraBase.Server/Documents/OngoingTasks/OngoingTasks.cs::OngoingTasks] [v1:test:test/TerraBase.RachisTests/DatabaseCluster/OngoingTasks.cs]"
       },
       "v2": {"owner": "adapter/platform", "public_seam": "Platform Adapter"},
       "public_contract": {
@@ -731,7 +731,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Server/Documents/Replication/BucketMigrationReplication.cs, Incoming/IncomingMigrationReplicationHandler.cs, Outgoing/OutgoingMigrationReplicationHandler.cs, Senders/MigrationReplicationDocumentSender.cs, ServerWide/Commands/Sharding/StartBucketMigrationCommand.cs and migration completion commands; test/TerraBase.RachisTests/DatabaseCluster/EtlFailover.cs, SubscriptionsFailover.cs, test/TerraBase.SlowTests/Sharding/ETL/ShardedEtlFailoverTests.cs, and Sharding/Subscriptions/SubscriptionsWithReshardingTests.cs [v1:src/TerraBase.Server/Documents/Replication/BucketMigrationReplication.cs::BucketMigrationReplication]"
+        "scope": "src/TerraBase.Server/Documents/Replication/BucketMigrationReplication.cs, Incoming/IncomingMigrationReplicationHandler.cs, Outgoing/OutgoingMigrationReplicationHandler.cs, Senders/MigrationReplicationDocumentSender.cs, ServerWide/Commands/Sharding/StartBucketMigrationCommand.cs and migration completion commands; test/TerraBase.RachisTests/DatabaseCluster/EtlFailover.cs, SubscriptionsFailover.cs, test/TerraBase.SlowTests/Sharding/ETL/ShardedEtlFailoverTests.cs, and Sharding/Subscriptions/SubscriptionsWithReshardingTests.cs [v1:src/TerraBase.Server/Documents/Replication/BucketMigrationReplication.cs::BucketMigrationReplication] [v1:test:test/TerraBase.RachisTests/DatabaseCluster/EtlFailover.cs]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -754,7 +754,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Server/Documents/Sharding/Handlers/Processors/Streaming, Subscriptions, Smuggler, and OngoingTasks; src/TerraBase.Server/Documents/Sharding/Streaming/CombinedReadContinuationState.cs::CombinedReadContinuationState, CombinedStreamResult.cs::CombinedStreamResult, ReadContinuationState.cs::ReadContinuationState, and Subscriptions/ShardedSubscriptionWorker.cs::ShardedSubscriptionWorker; src/TerraBase.Client/Documents/Operations/Backups/Sharding/ShardRestoreSettings.cs::ShardedRestoreSettings; test/TerraBase.SlowTests/Sharding/Backup/ShardedBackupTests .cs, ShardedRestoreBackupTests.cs, ShardedSmugglerTests.cs, ETL/ShardedEtlTests.cs, Subscriptions/ShardedSubscriptionClusterTests.cs, ShardedSubscriptionConcurrentTests.cs, and ShardedSubscriptionSlowTests.cs [v1:src/TerraBase.Server/Documents/Sharding/Streaming/CombinedReadContinuationState.cs::CombinedReadContinuationState]"
+        "scope": "src/TerraBase.Server/Documents/Sharding/Handlers/Processors/Streaming, Subscriptions, Smuggler, and OngoingTasks; src/TerraBase.Server/Documents/Sharding/Streaming/CombinedReadContinuationState.cs::CombinedReadContinuationState, CombinedStreamResult.cs::CombinedStreamResult, ReadContinuationState.cs::ReadContinuationState, and Subscriptions/ShardedSubscriptionWorker.cs::ShardedSubscriptionWorker; src/TerraBase.Client/Documents/Operations/Backups/Sharding/ShardRestoreSettings.cs::ShardedRestoreSettings; test/TerraBase.SlowTests/Sharding/Backup/ShardedBackupTests .cs, ShardedRestoreBackupTests.cs, ShardedSmugglerTests.cs, ETL/ShardedEtlTests.cs, Subscriptions/ShardedSubscriptionClusterTests.cs, ShardedSubscriptionConcurrentTests.cs, and ShardedSubscriptionSlowTests.cs [v1:src/TerraBase.Server/Documents/Sharding/Streaming/CombinedReadContinuationState.cs::CombinedReadContinuationState] [v1:test:test/TerraBase.SlowTests/Sharding/ETL/ShardedEtlTests.cs]"
       },
       "v2": {"owner": "engine/backup-import", "public_seam": "backup and import"},
       "public_contract": {
@@ -776,7 +776,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Client/Documents/Smuggler/SmugglerProgressBase.cs, SmugglerResult.cs, OfflineMigrationProgress.cs, OfflineMigrationResult.cs, Backups/BackupProgress.cs, BackupResult.cs, PeriodicBackupStatus.cs, ETL/EtlProcessState.cs, and QueueSink/QueueSinkProcessState.cs; src/TerraBase.Server/Documents/ETL/Stats, QueueSink/Stats, PeriodicBackup/Progress.cs, and Dashboard/DatabasesOngoingTasksInfo.cs; src/TerraBase.Server/Documents/Commands/ETL and OngoingTasks; test/TerraBase.SlowTests/Server/Documents/ETL and PeriodicBackup status and progress tests [v1:src/TerraBase.Client/Documents/Smuggler/SmugglerProgressBase.cs::SmugglerProgressBase]"
+        "scope": "src/TerraBase.Client/Documents/Smuggler/SmugglerProgressBase.cs, SmugglerResult.cs, OfflineMigrationProgress.cs, OfflineMigrationResult.cs, Backups/BackupProgress.cs, BackupResult.cs, PeriodicBackupStatus.cs, ETL/EtlProcessState.cs, and QueueSink/QueueSinkProcessState.cs; src/TerraBase.Server/Documents/ETL/Stats, QueueSink/Stats, PeriodicBackup/Progress.cs, and Dashboard/DatabasesOngoingTasksInfo.cs; src/TerraBase.Server/Documents/Commands/ETL and OngoingTasks; test/TerraBase.SlowTests/Server/Documents/ETL and PeriodicBackup status and progress tests [v1:src/TerraBase.Client/Documents/Smuggler/SmugglerProgressBase.cs::SmugglerProgressBase] [v1:test:test/TerraBase.SlowTests/Server/Documents/ETL/SQL/SqlEtlTests.cs]"
       },
       "v2": {"owner": "adapter/platform", "public_seam": "Platform Adapter"},
       "public_contract": {
@@ -798,7 +798,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "src/TerraBase.Server/Smuggler/Documents/Actions/DatabaseRecordActions.cs permission-gated imports, src/TerraBase.Server/Documents/Handlers/Processors/Smuggler, OngoingTasks, ETL, and Subscriptions, client operation classes for typed requests, and audit serializers in backup, ETL, queue-sink, and connection-string configuration; test/TerraBase.SlowTests/Server/Documents/ETL/ConnectionStringTests.cs and authorization-sensitive Smuggler tests [v1:src/TerraBase.Server/Smuggler/Documents/Actions/DatabaseRecordActions.cs::DatabaseRecordActions]"
+        "scope": "src/TerraBase.Server/Smuggler/Documents/Actions/DatabaseRecordActions.cs permission-gated imports, src/TerraBase.Server/Documents/Handlers/Processors/Smuggler, OngoingTasks, ETL, and Subscriptions, client operation classes for typed requests, and audit serializers in backup, ETL, queue-sink, and connection-string configuration; test/TerraBase.SlowTests/Server/Documents/ETL/ConnectionStringTests.cs and authorization-sensitive Smuggler tests [v1:src/TerraBase.Server/Smuggler/Documents/Actions/DatabaseRecordActions.cs::DatabaseRecordActions] [v1:test:test/TerraBase.SlowTests/Server/Documents/ETL/ConnectionStringTests.cs]"
       },
       "v2": {"owner": "adapter/platform", "public_seam": "approved protocol adapter"},
       "public_contract": {

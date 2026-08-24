@@ -37,9 +37,11 @@ This branch is the bounded correction assignment
 `A-INT-CONTRACT-FIX-001`; it does not mark W2 verified.
 
 The correction adds an explicit, reproducible citation to all 258 scopes. The
-audit resolves 251 citations against the exact V1 checkout and treats seven
-rows (PB-5042 through PB-5048) as charter-backed V2 additions with an explicit
-`No claim that V1` non-claim. Citation syntax is:
+audit resolves 251 rows against the exact V1 checkout and treats seven rows
+(PB-5042 through PB-5048) as charter-backed V2 additions with an explicit
+`No claim that V1` non-claim. The final audit counts are 265 source citations,
+231 exact test citations, and 42 unresolved replication/storage test gaps.
+Citation syntax is:
 
 ```text
 [v1:src/path/file.cs::Symbol]
@@ -47,14 +49,20 @@ rows (PB-5042 through PB-5048) as charter-backed V2 additions with an explicit
 [charter:specs/2026-08-23-terrabase-v2-goal.md::Section heading]
 ```
 
-The validator checks path containment, file existence, symbol presence, test
-glob unambiguity, and the pinned V1 commit. The corrected representative rows
-are PB-1014, PB-1031, PB-1032, PB-2003, PB-3007, PB-3015, PB-3020, PB-3040,
-PB-3045, PB-6000, and PB-6034. The pathless ranges PB-4000 through PB-4062
-and PB-5000 through PB-5048 now have source anchors; PB-5042 through PB-5048
-remain charter non-claims rather than V1 parity claims. The citations are
-evidence anchors only; they do not imply that V2 behavior has been built or
-qualified.
+The validator checks safe path containment, file existence, declaration shape,
+test path or declaration shape, and the pinned V1 commit. The corrected
+representative rows include PB-1014, PB-1031, PB-1032, PB-2003, PB-3007,
+PB-3015, PB-3020, PB-3040, PB-3045, PB-6000, and PB-6034. Query and index
+rows now point to the exact V1 test files named by their contract prose. The
+remaining 42 gaps are structured in `parity/v1-test-gaps.json`, each naming
+the replication/storage contract and the focused evidence still required.
+The citations are evidence anchors only; they do not imply that V2 behavior
+has been built or qualified.
+
+Contract-audit mode is allowed to complete with those explicit obligations
+and prints `CONTRACT AUDIT COMPLETE WITH 42 UNRESOLVED TEST GAPS`. Strict mode
+is the qualification gate and fails closed. It must not be reported as a
+pass while the report contains gaps.
 
 ## Canonical ranges and classification counts
 
@@ -170,14 +178,20 @@ The following commands ran in this worktree:
   `91cae0275d847bc7270b2c6a59aea54ebbc01bde3e1c2a4211f0dacbd3c0163f`.
 - Tooling tests: `uv run --no-project --python 3.14.7 python3
   scripts/test_parity_tooling.py`, 9 tests passed.
-- Citation black-box tests: `uv run --no-project --python 3.14.7 python3
-  scripts/test_v1_citations.py`, 4 tests passed.
-- Citation audit: `uv run --no-project --python 3.14.7 python3
-  scripts/validate_v1_citations.py --v1-root
-  "$TERRASCALE_WORKSPACE_ROOT/TerraBase" --workspace-root
-  "$TERRASCALE_WORKSPACE_ROOT"`, passed with 258 rows (251 V1-backed, 7
-  charter-backed). `TERRASCALE_WORKSPACE_ROOT` names the local workspace root
-  and is intentionally not recorded here.
+- Citation black-box tests: `python3 scripts/test_v1_citations.py`, 10 tests
+  passed, including declaration versus incidental substring checks, paths with
+  spaces, Git worktrees, wrong/non-Git roots, contract versus strict mode,
+  missing-root fail-closed behavior, and the machine-readable gap report.
+- Contract audit: `TERRABASE_V1_ROOT=/path/to/TerraBase python3
+  scripts/validate_v1_citations.py --mode contract --v1-root
+  /path/to/TerraBase --workspace-root /path/to/TerraScale
+  --gap-report parity/v1-test-gaps.json`, passed the citation checks with 258
+  rows, 251 V1-backed rows, 265 source citations, 231 test citations, and 42
+  unresolved test gaps. The report is an audit result, not qualification.
+- Strict audit: the same command with `--strict` failed as required because
+  42 unresolved test gaps remain. `./scripts/check.sh` uses this strict mode,
+  so it is also expected to fail until those obligations are closed. With no
+  pinned V1 checkout it reports `UNRUN` and fails closed.
 - Secret-scan black-box tests: `uv run --no-project --python 3.14.7 python3
   scripts/test_secret_scan.py`, 4 tests passed. `./scripts/check_secrets.sh`
   passed and honestly reported that this repository has no `tests/` root; the
@@ -185,10 +199,11 @@ The following commands ran in this worktree:
   distinguishes no-match, match, and scanner-error exit codes.
 - Direct Draft 2020-12 validation through the optional `jsonschema` package:
   unrun because the package is unavailable.
-- Full repository check: `./scripts/check.sh`, passed. Rust format, check,
-  release tests, clippy, documentation, parity, citation, secret, and license
-  checks passed. The optional `cargo-deny` advisory check was unavailable and
-  recorded as unrun.
+- Full repository check: `./scripts/check.sh`, not a pass while strict V1
+  gaps remain. Rust format, check, release tests, clippy, documentation,
+  parity, secret, and license checks were run separately where available; the
+  strict citation gate correctly stopped qualification on the 42 gaps. The
+  optional `cargo-deny` advisory check was unavailable and recorded as unrun.
 - No push, merge, issue, pull request, sibling-repository edit, or database
   implementation was performed.
 

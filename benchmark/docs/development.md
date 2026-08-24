@@ -25,6 +25,25 @@ state transitions. Draft 2020-12 direct validation is optional. The command
 reports it as unrun when `jsonschema` is unavailable and never requires a
 global install.
 
+The V1 citation audit requires a real Git worktree at the manifest commit.
+Run the W2 contract audit with:
+
+```bash
+python3 scripts/validate_v1_citations.py \
+  --mode contract \
+  --v1-root /path/to/TerraBase \
+  --workspace-root /path/to/TerraScale \
+  --gap-report parity/v1-test-gaps.json
+```
+
+Contract mode may finish with explicit unresolved test obligations. It must
+print `CONTRACT AUDIT COMPLETE WITH N UNRESOLVED TEST GAPS`; it never treats
+those gaps as passed. Release and qualification checks use `--strict`, which
+fails closed for every unresolved gap. `scripts/check.sh` reads
+`TERRABASE_V1_ROOT` or resolves a safe TerraBase sibling and invokes that
+strict gate. If no pinned checkout is available, the audit reports `UNRUN`
+and the check fails.
+
 Feature work starts with an inventory row and a public seam. A test must cross
 the same seam that a caller uses. A row changes status only when the required
 V1 evidence, V2 behavior, and Proof IDs exist. Optional, legacy, and admin

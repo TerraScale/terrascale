@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""Validate explicit V1 citations in TerraBaseV2 parity contract scopes.
+"""Audit reproducible V1 and charter evidence in parity contract scopes.
 
-The contract scope remains readable prose, but every source-backed row must
-also carry machine-checkable citations in this form::
+The audit has two phases. ``contract`` mode validates the pinned checkout,
+source anchors, test anchors, and explicit test-gap accounting. It completes
+with unresolved gaps so W2 can record the work still owed. ``strict`` mode is
+the release/qualification gate and fails closed while any gap remains.
 
-    [v1:src/path/file.cs::Symbol]
-    [v1:test/path/file.cs::TestName]
+Citation tokens are deliberately small and unambiguous::
 
-Paths are resolved against a caller-supplied exact V1 checkout. A test path
-may contain a glob, but it must resolve to exactly one file so the citation
-cannot silently become ambiguous. V2-only rows use a charter citation::
+    [v1:src/path/file.cs::TypeOrMember]
+    [v1:src/path/file.cs]
+    [v1:test:test/path/file.cs#TestTypeOrMethod]
+    [v1:test:test/path/file.cs]
+    [v1:test-gap:concrete reason]
 
-    [charter:specs/2026-08-23-terrabase-v2-goal.md::Section heading]
-
-This validator does not treat a discovery evidence ID as a source citation.
+Source and test symbols are checked as declarations, not incidental
+substrings. A path-only token is an explicit file anchor and still requires
+the exact file to exist. Paths may contain spaces; they may not escape the
+supplied root.
 """
 
 from __future__ import annotations
@@ -24,12 +28,13 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
-PINNED_V1_COMMIT = "fa99b9257776dbe625e6a2388c74c9ce916637ee"
-V1_CITATION = re.compile(r"\[v1:([^\]]+?)::([^\]]+)\]")
-CHARTER_CITATION = re.compile(r"\[charter:([^\]]+?)::([^\]]+)\]")
+SOURCE_CITATION = "source"
+TEST_CITATION = "test"
+TEST_GAP = "test-gap"
+CHARTER_CITATION = "charter"
 GLOB_CHARS = set("*?[")
 
 
@@ -44,15 +49,45 @@ def read_json(path: Path) -> Any:
         raise CitationError(f"unable to read JSON {path}: {error}") from error
 
 
+def run_git(root: Path, *arguments: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), *arguments],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        raise CitationError(f"unable to inspect V1 Git worktree: {error}") from error
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise CitationError(f"V1 root is not a Git worktree ({' '.join(arguments)}): {detail}")
+    return result.stdout.strip()
+
+
+def verify_pinned_commit(v1_root: Path, expected_commit: str) -> None:
+    """Require an actual worktree at the exact commit, including ``.git`` files."""
+
+    if not v1_root.is_dir():
+        raise CitationError(f"V1 root is not a directory: {v1_root}")
+    git_top = Path(run_git(v1_root, "rev-parse", "--show-toplevel")).resolve()
+    if git_top != v1_root.resolve():
+        raise CitationError(f"V1 root must be the Git worktree root: {v1_root} (Git root: {git_top})")
+    actual = run_git(v1_root, "rev-parse", "HEAD")
+    if actual != expected_commit:
+        raise CitationError(f"V1 root is {actual}, expected pinned commit {expected_commit}")
+
+
 def resolve_one(root: Path, relative: str, *, allow_glob: bool, label: str) -> Path:
     if not relative or Path(relative).is_absolute():
         raise CitationError(f"{label} must be a relative path")
-    if ".." in Path(relative).parts:
+    path = Path(relative)
+    if ".." in path.parts:
         raise CitationError(f"{label} must stay inside its supplied root")
     if any(character in relative for character in GLOB_CHARS):
         if not allow_glob:
-            raise CitationError(f"{label} source citations may not use globs")
-        matches = sorted(root.glob(relative))
+            raise CitationError(f"{label} may not use globs")
+        matches = sorted(candidate for candidate in root.glob(relative) if candidate.is_file())
         if len(matches) != 1:
             raise CitationError(f"{label} glob matched {len(matches)} files: {relative}")
         candidate = matches[0]
@@ -63,38 +98,204 @@ def resolve_one(root: Path, relative: str, *, allow_glob: bool, label: str) -> P
     return candidate
 
 
-def validate_v1_citation(root: Path, relative: str, symbol: str, row_id: str) -> None:
-    if not relative.startswith(("src/", "test/")):
-        raise CitationError(f"{row_id} V1 citation must start with src/ or test/: {relative}")
-    candidate = resolve_one(root, relative, allow_glob=relative.startswith("test/"), label=f"{row_id} V1 citation")
+def citation_tokens(scope: str) -> Iterator[tuple[str, str, str | None]]:
+    """Yield ``(kind, path-or-reason, symbol)`` from bracketed scope tokens."""
+
+    for match in re.finditer(r"\[([^\]\r\n]+)\]", scope):
+        body = match.group(1)
+        if body.startswith("v1:src/"):
+            value = body[len("v1:") :]
+            path, separator, symbol = value.partition("::")
+            yield SOURCE_CITATION, path, symbol if separator else None
+        elif body.startswith("v1:test:"):
+            value = body[len("v1:test:") :]
+            path, separator, symbol = value.partition("#")
+            yield TEST_CITATION, path, symbol if separator else None
+        elif body.startswith("v1:test-gap:"):
+            reason = body[len("v1:test-gap:") :].strip()
+            if not reason:
+                raise CitationError("V1 test-gap citation must include a concrete reason")
+            yield TEST_GAP, reason, None
+        elif body.startswith("charter:"):
+            value = body[len("charter:") :]
+            path, separator, heading = value.partition("::")
+            if not separator or not path or not heading.strip():
+                raise CitationError(f"malformed charter citation: [{body}]")
+            yield CHARTER_CITATION, path, heading
+        elif body.startswith("v1:") or body.startswith("charter"):
+            raise CitationError(f"malformed citation token: [{body}]")
+
+
+def mask_non_code(contents: str) -> str:
+    """Mask comments and quoted literals while preserving line/column shape."""
+
+    output: list[str] = []
+    index = 0
+    state = "code"
+    while index < len(contents):
+        current = contents[index]
+        following = contents[index + 1] if index + 1 < len(contents) else ""
+        if state == "code":
+            if current == "/" and following == "/":
+                output.extend((" ", " "))
+                index += 2
+                state = "line-comment"
+                continue
+            if current == "/" and following == "*":
+                output.extend((" ", " "))
+                index += 2
+                state = "block-comment"
+                continue
+            if current == '"':
+                output.append(" ")
+                index += 1
+                state = "string"
+                continue
+            if current == "'":
+                output.append(" ")
+                index += 1
+                state = "char"
+                continue
+            output.append(current)
+            index += 1
+            continue
+        if state == "line-comment":
+            if current in "\r\n":
+                output.append(current)
+                state = "code"
+            else:
+                output.append(" ")
+            index += 1
+            continue
+        if state == "block-comment":
+            if current == "*" and following == "/":
+                output.extend((" ", " "))
+                index += 2
+                state = "code"
+            else:
+                output.append(current if current in "\r\n" else " ")
+                index += 1
+            continue
+        if state in {"string", "char"}:
+            if current in "\r\n":
+                output.append(current)
+                # Regular C# literals cannot span a line. Resetting here
+                # prevents a malformed fixture from hiding later declarations.
+                state = "code"
+                index += 1
+            elif current == "\\":
+                output.append(" ")
+                if following:
+                    output.append(" " if following not in "\r\n" else following)
+                    index += 2
+                else:
+                    index += 1
+            elif (state == "string" and current == '"') or (state == "char" and current == "'"):
+                output.append(" ")
+                index += 1
+                state = "code"
+            else:
+                output.append(" ")
+                index += 1
+    return "".join(output)
+
+
+def declaration_exists(contents: str, symbol: str) -> bool:
+    """Match a declared C# type/member, rejecting comments, literals, and calls."""
+
+    pieces = [piece.strip().split("<", 1)[0].strip() for piece in symbol.split(".") if piece.strip()]
+    if not pieces or any(not re.fullmatch(r"@?[A-Za-z_][A-Za-z0-9_]*", piece) for piece in pieces):
+        return False
+
+    code = mask_non_code(contents)
+    type_declaration = re.compile(
+        rf"\b(?:class|interface|struct|enum|record(?:\s+(?:class|struct))?)\s+@?{re.escape(pieces[0])}\b"
+    )
+    if len(pieces) > 1 and not type_declaration.search(code):
+        return False
+
+    # Splitting at declaration delimiters keeps matching linear even for the
+    # very large V1 source files. It also makes one-line fixture declarations
+    # behave like their formatted counterparts.
+    statements = re.sub(r"[{};]", "\n", code).splitlines()
+    modifiers = {
+        "public",
+        "protected",
+        "private",
+        "internal",
+        "static",
+        "virtual",
+        "override",
+        "abstract",
+        "sealed",
+        "async",
+        "unsafe",
+        "new",
+        "partial",
+        "readonly",
+        "extern",
+        "ref",
+        "out",
+        "in",
+        "required",
+    }
+    for piece in pieces if len(pieces) == 1 else pieces[1:]:
+        name = re.escape(piece)
+        found = False
+        for statement in statements:
+            statement = statement.strip()
+            match = re.search(rf"(?<![A-Za-z0-9_])@?{name}(?![A-Za-z0-9_])", statement)
+            if match is None:
+                continue
+            before = statement[: match.start()].strip()
+            after = statement[match.end() :].lstrip()
+            # A type declaration is valid on its own, including a single
+            # symbol citation. The type check above already handles dotted
+            # symbols, but this branch keeps constructors and nested types
+            # useful too.
+            if re.search(rf"\b(?:class|interface|struct|enum|record)\s+@?{name}\b", statement):
+                found = True
+                break
+            # Methods need a return type/modifier before the name and an
+            # opening parenthesis after it. ``obj.Name()`` has a dotted
+            # receiver in the before text and is not a declaration.
+            if after.startswith("(") or re.match(r"<[^>\r\n]+>\s*\(", after):
+                words = before.replace("@", "").split()
+                if before and (any(word in modifiers for word in words) or len(words) >= 1) and not before.endswith("."):
+                    found = True
+                    break
+            # Properties and fields have a type or modifier before the name
+            # and a declaration delimiter, expression body, or initializer
+            # after it. A bare prose occurrence has neither shape.
+            if after.startswith(("=>", "=", ":", ",")) or not after:
+                words = before.replace("@", "").split()
+                if before and (any(word in modifiers for word in words) or len(words) >= 1) and not before.endswith("."):
+                    found = True
+                    break
+            if re.match(r"^(?:,|=|$)", after) and not before.endswith("."):
+                found = True
+                break
+        if not found:
+            return False
+    return True
+
+
+def validate_declaration(root: Path, relative: str, symbol: str | None, row_id: str, kind: str) -> None:
+    label = f"{row_id} V1 {kind} citation"
+    prefix = "src/" if kind == SOURCE_CITATION else "test/"
+    if not relative.startswith(prefix):
+        raise CitationError(f"{label} must start with {prefix}: {relative}")
+    candidate = resolve_one(root, relative, allow_glob=kind == TEST_CITATION, label=label)
+    if symbol is None:
+        return
+    if not symbol.strip():
+        raise CitationError(f"{label} symbol is empty: {relative}")
     try:
         contents = candidate.read_text(encoding="utf-8")
     except UnicodeDecodeError as error:
-        raise CitationError(f"{row_id} V1 citation is not UTF-8 text: {relative}") from error
-    if not symbol.strip():
-        raise CitationError(f"{row_id} V1 citation symbol is empty: {relative}")
-    if symbol not in contents:
-        raise CitationError(f"{row_id} V1 symbol is absent from {relative}: {symbol}")
-
-
-def verify_pinned_commit(v1_root: Path) -> None:
-    git_dir = v1_root / ".git"
-    if not git_dir.exists():
-        return
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(v1_root), "rev-parse", "HEAD"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except OSError as error:
-        raise CitationError(f"unable to inspect V1 commit: {error}") from error
-    if result.returncode != 0:
-        raise CitationError(f"unable to inspect V1 commit: {result.stderr.strip()}")
-    actual = result.stdout.strip()
-    if actual != PINNED_V1_COMMIT:
-        raise CitationError(f"V1 root is {actual}, expected pinned commit {PINNED_V1_COMMIT}")
+        raise CitationError(f"{label} is not UTF-8 text: {relative}") from error
+    if not declaration_exists(contents, symbol):
+        raise CitationError(f"{row_id} V1 {kind} declaration is absent from {relative}: {symbol}")
 
 
 def iter_contract_items(root: Path) -> list[dict[str, Any]]:
@@ -109,23 +310,81 @@ def iter_contract_items(root: Path) -> list[dict[str, Any]]:
     return items
 
 
-def validate(root: Path, v1_root: Path, workspace_root: Path | None) -> int:
-    verify_pinned_commit(v1_root)
+def expected_commit_from_manifest(root: Path) -> str:
+    manifest = read_json(root / "parity" / "contracts" / "manifest.json")
+    expected = manifest.get("source_commit")
+    if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{40}", expected):
+        raise CitationError("parity/contracts/manifest.json has no valid source_commit")
+    return expected
+
+
+def write_report(path: Path | None, report: dict[str, Any]) -> None:
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError as error:
+        raise CitationError(f"unable to write V1 test-gap report {path}: {error}") from error
+
+
+def validate(
+    root: Path,
+    v1_root: Path | None,
+    workspace_root: Path | None,
+    expected_commit: str | None,
+    mode: str,
+    gap_report: Path | None,
+) -> int:
+    if v1_root is None:
+        report = {"schema_version": "1.0", "status": "UNRUN", "reason": "no pinned V1 checkout supplied"}
+        write_report(gap_report, report)
+        print("V1 citation audit UNRUN: no pinned V1 checkout supplied", file=sys.stderr)
+        return 1
+
+    try:
+        pinned = expected_commit or expected_commit_from_manifest(root)
+        verify_pinned_commit(v1_root, pinned)
+    except CitationError as error:
+        report = {"schema_version": "1.0", "status": "UNRUN", "reason": str(error)}
+        write_report(gap_report, report)
+        raise
+
     errors: list[str] = []
+    gaps: list[dict[str, str]] = []
     total = 0
-    v1_rows = 0
+    source_citations = 0
+    test_citations = 0
     charter_rows = 0
+    v1_rows = 0
     for item in iter_contract_items(root):
         total += 1
         row_id = item.get("id", "<missing-id>")
         scope = item.get("v1_evidence", {}).get("scope", "")
-        v1_matches = list(V1_CITATION.finditer(scope))
-        charter_matches = list(CHARTER_CITATION.finditer(scope))
-        if v1_matches:
+        source_matches: list[tuple[str, str, str | None]] = []
+        test_matches: list[tuple[str, str, str | None]] = []
+        charter_matches: list[tuple[str, str, str | None]] = []
+        row_gaps: list[str] = []
+        try:
+            for kind, value, symbol in citation_tokens(scope):
+                if kind == SOURCE_CITATION:
+                    source_matches.append((kind, value, symbol))
+                elif kind == TEST_CITATION:
+                    test_matches.append((kind, value, symbol))
+                elif kind == TEST_GAP:
+                    row_gaps.append(value)
+                elif kind == CHARTER_CITATION:
+                    charter_matches.append((kind, value, symbol))
+        except CitationError as error:
+            errors.append(f"{row_id} {error}")
+            continue
+
+        if source_matches:
             v1_rows += 1
-            for match in v1_matches:
+            for _, relative, symbol in source_matches:
+                source_citations += 1
                 try:
-                    validate_v1_citation(v1_root, match.group(1), match.group(2), row_id)
+                    validate_declaration(v1_root, relative, symbol, row_id, SOURCE_CITATION)
                 except CitationError as error:
                     errors.append(str(error))
         elif charter_matches:
@@ -133,14 +392,11 @@ def validate(root: Path, v1_root: Path, workspace_root: Path | None) -> int:
             if workspace_root is None:
                 errors.append(f"{row_id} charter citation requires --workspace-root")
             else:
-                for match in charter_matches:
+                for _, relative, heading in charter_matches:
                     try:
-                        resolve_one(workspace_root, match.group(1), allow_glob=False, label=f"{row_id} charter citation")
-                        charter_path = workspace_root / match.group(1)
-                        if match.group(2) not in charter_path.read_text(encoding="utf-8"):
-                            raise CitationError(
-                                f"{row_id} charter symbol is absent from {match.group(1)}: {match.group(2)}"
-                            )
+                        charter_path = resolve_one(workspace_root, relative, allow_glob=False, label=f"{row_id} charter citation")
+                        if heading not in charter_path.read_text(encoding="utf-8"):
+                            raise CitationError(f"{row_id} charter heading is absent from {relative}: {heading}")
                     except (CitationError, OSError) as error:
                         errors.append(str(error))
             if "No claim that V1" not in scope:
@@ -148,22 +404,77 @@ def validate(root: Path, v1_root: Path, workspace_root: Path | None) -> int:
         else:
             errors.append(f"{row_id} requires an explicit V1 or charter citation")
 
+        for _, relative, symbol in test_matches:
+            test_citations += 1
+            try:
+                validate_declaration(v1_root, relative, symbol, row_id, TEST_CITATION)
+            except CitationError as error:
+                errors.append(str(error))
+        for reason in row_gaps:
+            gaps.append({"row_id": str(row_id), "reason": reason})
+        if source_matches and not test_matches and not row_gaps:
+            errors.append(f"{row_id} V1-backed row requires an exact test citation or [v1:test-gap:reason]")
+
+    status = "complete_with_gaps" if gaps else "complete"
+    if errors:
+        status = "failed_invalid_citations"
+    elif mode == "strict" and gaps:
+        status = "failed_unresolved_test_gaps"
+    report = {
+        "schema_version": "1.0",
+        "status": status,
+        "mode": mode,
+        "source_commit": pinned,
+        "counts": {
+            "rows": total,
+            "v1_backed_rows": v1_rows,
+            "charter_backed_rows": charter_rows,
+            "source_citations": source_citations,
+            "test_citations": test_citations,
+            "test_gaps": len(gaps),
+        },
+        "gaps": gaps,
+    }
+    write_report(gap_report, report)
+
+    print(
+        f"V1 citation audit: {total} rows, {v1_rows} V1-backed, {charter_rows} charter-backed, "
+        f"{source_citations} source citations, {test_citations} test citations, {len(gaps)} test gaps"
+    )
     if errors:
         for error in errors:
             print(f"citation invalid: {error}", file=sys.stderr)
         return 1
-    print(f"V1 citation audit passed: {total} rows, {v1_rows} V1-backed, {charter_rows} charter-backed")
+    if gaps:
+        if mode == "strict":
+            print(f"STRICT V1 QUALIFICATION FAILED: {len(gaps)} UNRESOLVED TEST GAPS", file=sys.stderr)
+            return 1
+        print(f"CONTRACT AUDIT COMPLETE WITH {len(gaps)} UNRESOLVED TEST GAPS")
+        return 0
+    if mode == "strict":
+        print("STRICT V1 QUALIFICATION PASSED")
+    else:
+        print("CONTRACT AUDIT COMPLETE WITH 0 UNRESOLVED TEST GAPS")
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--v1-root", type=Path, required=True)
+    parser.add_argument("--v1-root", type=Path)
     parser.add_argument("--workspace-root", type=Path)
+    parser.add_argument("--expected-commit", help="override the manifest commit for an isolated fixture")
+    parser.add_argument("--mode", choices=("contract", "strict"), default="contract")
+    parser.add_argument("--strict", action="store_true", help="alias for --mode strict")
+    parser.add_argument("--gap-report", type=Path, help="write a deterministic machine-readable audit/gap report")
     args = parser.parse_args()
+    mode = "strict" if args.strict else args.mode
     try:
-        return validate(args.root.resolve(), args.v1_root.resolve(), args.workspace_root.resolve() if args.workspace_root else None)
+        root = args.root.resolve()
+        v1_root = args.v1_root.resolve() if args.v1_root else None
+        workspace_root = args.workspace_root.resolve() if args.workspace_root else None
+        gap_report = args.gap_report.resolve() if args.gap_report else None
+        return validate(root, v1_root, workspace_root, args.expected_commit, mode, gap_report)
     except CitationError as error:
         print(f"citation invalid: {error}", file=sys.stderr)
         return 1

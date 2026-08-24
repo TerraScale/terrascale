@@ -33,9 +33,29 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo doc --workspace --no-deps --locked
 python3 scripts/validate_parity.py --check
 python3 scripts/test_parity_tooling.py
+python3 scripts/test_v1_citations.py
 python3 scripts/check_license.py
 ./scripts/check_secrets.sh
 ```
+
+The V1 contract audit is a separate qualification input because it needs an
+exact TerraBase V1 checkout. Set `TERRABASE_V1_ROOT` and run
+`./scripts/check.sh` to execute the strict gate. Without that checkout the
+gate reports `UNRUN` and fails. W2 contract review can use the non-release
+audit command below, which records unresolved test obligations in
+`parity/v1-test-gaps.json`:
+
+```bash
+python3 scripts/validate_v1_citations.py \
+  --mode contract \
+  --v1-root /path/to/TerraBase \
+  --workspace-root /path/to/TerraScale \
+  --gap-report parity/v1-test-gaps.json
+```
+
+The current extraction has 258 rows, 251 V1-backed rows, 265 source
+citations, 231 exact test citations, and 42 unresolved replication/storage
+test gaps. Those numbers are accounting evidence, not a V2 parity claim.
 
 Optional dependency and vulnerability checks use `cargo-deny` when it is
 installed. The CI workflow records the check as unavailable when it is not.
