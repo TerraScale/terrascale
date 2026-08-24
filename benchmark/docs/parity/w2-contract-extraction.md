@@ -34,12 +34,13 @@ The independent contract review returned NO-GO `A-REV-CONTRACT-001` because
 the first integration had pathless query and replication scopes, stale V1
 paths/symbols, and a secret scanner that assumed a `tests/` directory existed.
 This branch is the bounded correction assignment
-`A-INT-CONTRACT-FIX-001`; it does not mark W2 verified.
+`A-INT-CONTRACT-FIX-001`; it does not mark W2 verified. A later bounded
+validator-hardening correction is recorded below as `A-INT-CONTRACT-FIX-004`.
 
 The correction adds an explicit, reproducible citation to all 258 scopes. The
 audit resolves 251 rows against the exact V1 checkout and treats seven rows
 (PB-5042 through PB-5048) as charter-backed V2 additions with an explicit
-`No claim that V1` non-claim. The final audit counts are 265 source citations,
+`No claim that V1` non-claim. The final audit counts are 267 source citations,
 231 exact test citations, and 42 unresolved replication/storage test gaps.
 Citation syntax is:
 
@@ -58,6 +59,20 @@ remaining 42 gaps are structured in `parity/v1-test-gaps.json`, each naming
 the replication/storage contract and the focused evidence still required.
 The citations are evidence anchors only; they do not imply that V2 behavior
 has been built or qualified.
+
+The `A-INT-CONTRACT-FIX-004` hardening pass requires the supplied V1 root to
+be a clean Git worktree at the pinned commit; tracked, staged, and untracked
+changes are rejected, while linked Git worktrees remain supported. Every root
+and cited path is canonicalized before containment is checked. In-root
+symlinks are accepted when their real target remains inside the root, and
+escaping symlinks, parent paths, and absolute citation tokens are rejected.
+Declaration anchors remain deliberately non-semantic: the matcher accepts
+types, constructors, methods, properties/fields, and test declarations while
+rejecting calls, assignments, member access, comments, literals, and
+incidental substrings. PB-3007 and PB-3045 now cite the exact
+`DatabaseSmuggler` declaration in addition to their existing evidence. This
+correction is pending independent re-review and does not change IDs, overlays,
+statuses, Proof IDs, or the 42 gaps.
 
 Contract-audit mode is allowed to complete with those explicit obligations
 and prints `CONTRACT AUDIT COMPLETE WITH 42 UNRESOLVED TEST GAPS`. Strict mode
@@ -178,15 +193,17 @@ The following commands ran in this worktree:
   `91cae0275d847bc7270b2c6a59aea54ebbc01bde3e1c2a4211f0dacbd3c0163f`.
 - Tooling tests: `uv run --no-project --python 3.14.7 python3
   scripts/test_parity_tooling.py`, 9 tests passed.
-- Citation black-box tests: `python3 scripts/test_v1_citations.py`, 10 tests
-  passed, including declaration versus incidental substring checks, paths with
-  spaces, Git worktrees, wrong/non-Git roots, contract versus strict mode,
-  missing-root fail-closed behavior, and the machine-readable gap report.
+- Citation black-box tests: `python3 scripts/test_v1_citations.py`, 18 tests
+  passed, including clean/dirty/staged/untracked Git worktrees, linked
+  worktrees, wrong/non-Git roots, realpath containment, in-root and escaping
+  symlinks, parent/absolute paths, declaration versus expression-context
+  checks, contract versus strict mode, missing-root fail-closed behavior, and
+  the machine-readable gap report.
 - Contract audit: `TERRABASE_V1_ROOT=/path/to/TerraBase python3
   scripts/validate_v1_citations.py --mode contract --v1-root
   /path/to/TerraBase --workspace-root /path/to/TerraScale
   --gap-report parity/v1-test-gaps.json`, passed the citation checks with 258
-  rows, 251 V1-backed rows, 265 source citations, 231 test citations, and 42
+  rows, 251 V1-backed rows, 267 source citations, 231 test citations, and 42
   unresolved test gaps. The report is an audit result, not qualification.
 - Strict audit: the same command with `--strict` failed as required because
   42 unresolved test gaps remain. `./scripts/check.sh` uses this strict mode,
@@ -207,6 +224,6 @@ The following commands ran in this worktree:
 - No push, merge, issue, pull request, sibling-repository edit, or database
   implementation was performed.
 
-The next gate is independent correction re-review of `A-INT-CONTRACT-FIX-001`,
-followed by the W3 behavior builders if that gate passes. This record does not
-mark W2 as independently verified.
+The next gate is independent re-review of `A-INT-CONTRACT-FIX-004`, followed by
+the W3 behavior builders if that gate passes. This record does not mark W2 as
+independently verified.

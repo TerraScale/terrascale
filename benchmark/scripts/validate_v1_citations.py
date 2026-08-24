@@ -65,17 +65,50 @@ def run_git(root: Path, *arguments: str) -> str:
     return result.stdout.strip()
 
 
-def verify_pinned_commit(v1_root: Path, expected_commit: str) -> None:
-    """Require an actual worktree at the exact commit, including ``.git`` files."""
+def verify_pinned_commit(v1_root: Path, expected_commit: str) -> Path:
+    """Require a clean worktree rooted at the exact commit.
 
-    if not v1_root.is_dir():
+    ``.git`` may be a file for a linked Git worktree, so Git is the authority
+    for worktree identity.  The canonical path is returned so later file
+    resolution cannot escape through a symlinked root.
+    """
+
+    try:
+        canonical_root = v1_root.resolve(strict=True)
+    except OSError as error:
+        raise CitationError(f"unable to resolve V1 root {v1_root}: {error}") from error
+    if not canonical_root.is_dir():
         raise CitationError(f"V1 root is not a directory: {v1_root}")
-    git_top = Path(run_git(v1_root, "rev-parse", "--show-toplevel")).resolve()
-    if git_top != v1_root.resolve():
+    git_top = Path(run_git(canonical_root, "rev-parse", "--show-toplevel")).resolve()
+    if git_top != canonical_root:
         raise CitationError(f"V1 root must be the Git worktree root: {v1_root} (Git root: {git_top})")
-    actual = run_git(v1_root, "rev-parse", "HEAD")
+    actual = run_git(canonical_root, "rev-parse", "HEAD")
     if actual != expected_commit:
         raise CitationError(f"V1 root is {actual}, expected pinned commit {expected_commit}")
+    status = run_git(canonical_root, "status", "--porcelain=v1", "--untracked-files=all")
+    if status:
+        changed = "; ".join(status.splitlines()[:3])
+        if len(status.splitlines()) > 3:
+            changed += "; ..."
+        raise CitationError(f"V1 root must be a clean Git worktree; changes found: {changed}")
+    return canonical_root
+
+
+def canonical_file(root: Path, candidate: Path, label: str) -> Path:
+    """Resolve a citation and require its real path to remain under ``root``."""
+
+    try:
+        canonical_root = root.resolve(strict=True)
+        # Keep a canonical path for containment even when the final file is
+        # absent; resolve_one then emits its stable missing-file diagnostic.
+        canonical_candidate = candidate.resolve(strict=False)
+    except OSError as error:
+        raise CitationError(f"{label} cannot be resolved: {error}") from error
+    try:
+        canonical_candidate.relative_to(canonical_root)
+    except ValueError as error:
+        raise CitationError(f"{label} resolves outside its supplied root: {candidate}") from error
+    return canonical_candidate
 
 
 def resolve_one(root: Path, relative: str, *, allow_glob: bool, label: str) -> Path:
@@ -87,12 +120,17 @@ def resolve_one(root: Path, relative: str, *, allow_glob: bool, label: str) -> P
     if any(character in relative for character in GLOB_CHARS):
         if not allow_glob:
             raise CitationError(f"{label} may not use globs")
-        matches = sorted(candidate for candidate in root.glob(relative) if candidate.is_file())
+        matches: list[Path] = []
+        for candidate in sorted(root.glob(relative)):
+            canonical_candidate = canonical_file(root, candidate, label)
+            if canonical_candidate.is_file():
+                matches.append(canonical_candidate)
         if len(matches) != 1:
             raise CitationError(f"{label} glob matched {len(matches)} files: {relative}")
         candidate = matches[0]
     else:
         candidate = root / relative
+        candidate = canonical_file(root, candidate, label)
     if not candidate.is_file():
         raise CitationError(f"{label} does not name an existing file: {relative}")
     return candidate
@@ -201,7 +239,12 @@ def mask_non_code(contents: str) -> str:
 
 
 def declaration_exists(contents: str, symbol: str) -> bool:
-    """Match a declared C# type/member, rejecting comments, literals, and calls."""
+    """Match a declaration-shaped C# type/member anchor.
+
+    This is intentionally a declaration-shape check, not a C# parser.  The
+    prefix rules reject expression contexts that commonly produce incidental
+    matches while accepting the type/member forms used by the V1 contracts.
+    """
 
     pieces = [piece.strip().split("<", 1)[0].strip() for piece in symbol.split(".") if piece.strip()]
     if not pieces or any(not re.fullmatch(r"@?[A-Za-z_][A-Za-z0-9_]*", piece) for piece in pieces):
@@ -209,7 +252,7 @@ def declaration_exists(contents: str, symbol: str) -> bool:
 
     code = mask_non_code(contents)
     type_declaration = re.compile(
-        rf"\b(?:class|interface|struct|enum|record(?:\s+(?:class|struct))?)\s+@?{re.escape(pieces[0])}\b"
+        rf"\b(?:class|interface|struct|enum|record(?:\s+(?:class|struct))?|delegate)\s+@?{re.escape(pieces[0])}\b"
     )
     if len(pieces) > 1 and not type_declaration.search(code):
         return False
@@ -218,27 +261,74 @@ def declaration_exists(contents: str, symbol: str) -> bool:
     # very large V1 source files. It also makes one-line fixture declarations
     # behave like their formatted counterparts.
     statements = re.sub(r"[{};]", "\n", code).splitlines()
-    modifiers = {
-        "public",
-        "protected",
-        "private",
-        "internal",
-        "static",
-        "virtual",
-        "override",
-        "abstract",
-        "sealed",
-        "async",
-        "unsafe",
+    expression_keywords = {
+        "as",
+        "await",
+        "break",
+        "case",
+        "catch",
+        "continue",
+        "default",
+        "do",
+        "else",
+        "finally",
+        "fixed",
+        "for",
+        "foreach",
+        "goto",
+        "if",
+        "is",
+        "lock",
+        "nameof",
         "new",
-        "partial",
-        "readonly",
-        "extern",
-        "ref",
-        "out",
-        "in",
-        "required",
+        "return",
+        "sizeof",
+        "stackalloc",
+        "switch",
+        "throw",
+        "try",
+        "typeof",
+        "unchecked",
+        "using",
+        "var",
+        "when",
+        "while",
+        "yield",
     }
+
+    def declaration_prefix(before: str) -> str | None:
+        # Attributes and preprocessor directives may precede a declaration;
+        # they do not make an expression into a declaration.
+        cleaned = re.sub(r"\[[^\]\r\n]*\]", " ", before)
+        cleaned = re.sub(r"(?:^|\n)\s*#.*(?:\n|$)", " ", cleaned)
+        cleaned = cleaned.strip()
+        if not cleaned or "=" in cleaned or cleaned.endswith((".", "?.", "::", "->")):
+            return None
+        if re.search(r"[()]", cleaned):
+            # Tuple return types are parenthesized in the declaration prefix,
+            # e.g. ``(T Entity, string ChangeVector) ConditionalLoad<T>``.
+            # Calls and control-flow expressions do not have a balanced
+            # parenthesized suffix before the referenced name.
+            depth = 0
+            suffix_start: int | None = None
+            for index in range(len(cleaned) - 1, -1, -1):
+                character = cleaned[index]
+                if character == ")":
+                    depth += 1
+                elif character == "(":
+                    depth -= 1
+                    if depth == 0:
+                        suffix_start = index
+                        break
+                    if depth < 0:
+                        return None
+            if suffix_start is None or re.search(r"[()]", cleaned[:suffix_start]):
+                return None
+        words = re.findall(r"@?[A-Za-z_][A-Za-z0-9_]*", cleaned)
+        if not words or any(word.lstrip("@").lower() in expression_keywords for word in words):
+            return None
+        return cleaned
+
     for piece in pieces if len(pieces) == 1 else pieces[1:]:
         name = re.escape(piece)
         found = False
@@ -253,28 +343,28 @@ def declaration_exists(contents: str, symbol: str) -> bool:
             # symbol citation. The type check above already handles dotted
             # symbols, but this branch keeps constructors and nested types
             # useful too.
-            if re.search(rf"\b(?:class|interface|struct|enum|record)\s+@?{name}\b", statement):
+            if re.search(
+                rf"\b(?:class|interface|struct|enum|record(?:\s+(?:class|struct))?|delegate)\s+@?{name}\b",
+                statement,
+            ):
                 found = True
                 break
+            prefix = declaration_prefix(before)
             # Methods need a return type/modifier before the name and an
-            # opening parenthesis after it. ``obj.Name()`` has a dotted
-            # receiver in the before text and is not a declaration.
+            # opening parenthesis after it. Calls have an expression keyword,
+            # assignment, receiver, or no declaration prefix and are rejected.
             if after.startswith("(") or re.match(r"<[^>\r\n]+>\s*\(", after):
-                words = before.replace("@", "").split()
-                if before and (any(word in modifiers for word in words) or len(words) >= 1) and not before.endswith("."):
+                if prefix is not None:
                     found = True
                     break
-            # Properties and fields have a type or modifier before the name
-            # and a declaration delimiter, expression body, or initializer
-            # after it. A bare prose occurrence has neither shape.
+            # Properties and fields have a type/modifier prefix before the
+            # name and a declaration delimiter, expression body, initializer,
+            # or statement boundary after it. A bare prose occurrence has no
+            # such prefix.
             if after.startswith(("=>", "=", ":", ",")) or not after:
-                words = before.replace("@", "").split()
-                if before and (any(word in modifiers for word in words) or len(words) >= 1) and not before.endswith("."):
+                if prefix is not None:
                     found = True
                     break
-            if re.match(r"^(?:,|=|$)", after) and not before.endswith("."):
-                found = True
-                break
         if not found:
             return False
     return True
@@ -344,7 +434,7 @@ def validate(
 
     try:
         pinned = expected_commit or expected_commit_from_manifest(root)
-        verify_pinned_commit(v1_root, pinned)
+        v1_root = verify_pinned_commit(v1_root, pinned)
     except CitationError as error:
         report = {"schema_version": "1.0", "status": "UNRUN", "reason": str(error)}
         write_report(gap_report, report)

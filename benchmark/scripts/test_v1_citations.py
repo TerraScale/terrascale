@@ -46,13 +46,34 @@ def git_fixture(root: Path) -> str:
     (root / "src" / "folder with space").mkdir(parents=True)
     (root / "test" / "known").mkdir(parents=True)
     (root / "src" / "folder with space" / "source.cs").write_text(
-        "public interface IFoo { void KnownMember(); }\npublic class KnownSymbol {}\n",
+        """public interface IFoo { void KnownMember(); }
+public class KnownSymbol
+{
+    public KnownSymbol() { }
+    public void DeclaredMethod() { }
+    public string DeclaredProperty { get; set; }
+    private int DeclaredField = 1;
+    public void CallSites()
+    {
+        return CalledOnly();
+        var value = AssignedOnly;
+        receiver.MemberOnly();
+        // CommentOnly
+        var literal = \"LiteralOnly\";
+    }
+}
+public sealed class FixtureTests { public void KnownTest() {} }
+""",
         encoding="utf-8",
     )
     (root / "test" / "known" / "known.cs").write_text(
         "public sealed class FixtureTests { public void KnownTest() {} }\n",
         encoding="utf-8",
     )
+    outside = root.parent / "outside.cs"
+    outside.write_text("public class EscapingSymbol {}\n", encoding="utf-8")
+    (root / "src" / "in-root-alias.cs").symlink_to(Path("folder with space/source.cs"))
+    (root / "src" / "escape.cs").symlink_to(outside)
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
     subprocess.run(["git", "-C", str(root), "commit", "--quiet", "-m", "fixture"], check=True)
     return subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
@@ -83,11 +104,49 @@ class V1CitationTests(unittest.TestCase):
                 root,
                 "[v1:src/folder with space/source.cs::IFoo.KnownMember] "
                 "[v1:src/folder with space/source.cs] "
+                "[v1:src/in-root-alias.cs::KnownSymbol] "
                 "[v1:test:test/known/known.cs#KnownTest]",
             )
             result = self.run_cli(root, v1, expected)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("1 test citations", result.stdout)
+
+    def test_declaration_anchors_accept_types_constructors_members_and_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            accepted = (
+                "[v1:src/folder with space/source.cs::KnownSymbol]",
+                "[v1:src/folder with space/source.cs::KnownSymbol.KnownSymbol]",
+                "[v1:src/folder with space/source.cs::KnownSymbol.DeclaredMethod]",
+                "[v1:src/folder with space/source.cs::KnownSymbol.DeclaredProperty]",
+                "[v1:src/folder with space/source.cs::KnownSymbol.DeclaredField]",
+                "[v1:src/folder with space/source.cs] [v1:test:test/known/known.cs#FixtureTests.KnownTest]",
+            )
+            for scope in accepted:
+                fixture(root, f"{scope} [v1:test:test/known/known.cs]")
+                result = self.run_cli(root, v1, expected)
+                self.assertEqual(result.returncode, 0, f"{scope}: {result.stderr}")
+
+    def test_declaration_anchors_reject_calls_assignments_access_comments_literals(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            rejected = (
+                "CalledOnly",
+                "AssignedOnly",
+                "MemberOnly",
+                "CommentOnly",
+                "LiteralOnly",
+                "IncidentalOnly",
+            )
+            for symbol in rejected:
+                fixture(root, f"[v1:src/folder with space/source.cs::{symbol}]")
+                result = self.run_cli(root, v1, expected)
+                self.assertNotEqual(result.returncode, 0, symbol)
+                self.assertIn("declaration is absent", result.stderr, symbol)
 
     def test_incidental_substring_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -109,6 +168,42 @@ class V1CitationTests(unittest.TestCase):
             result = self.run_cli(root, v1, "0" * 40)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("not a Git worktree", result.stderr)
+
+    def test_tracked_dirty_v1_root_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            source = v1 / "src" / "folder with space" / "source.cs"
+            source.write_text(source.read_text(encoding="utf-8") + "\n// tracked edit\n", encoding="utf-8")
+            fixture(root, "[v1:src/folder with space/source.cs::KnownSymbol]")
+            result = self.run_cli(root, v1, expected)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("clean Git worktree", result.stderr)
+
+    def test_staged_dirty_v1_root_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            source = v1 / "src" / "folder with space" / "source.cs"
+            source.write_text(source.read_text(encoding="utf-8") + "\n// staged edit\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(v1), "add", str(source)], check=True)
+            fixture(root, "[v1:src/folder with space/source.cs::KnownSymbol]")
+            result = self.run_cli(root, v1, expected)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("clean Git worktree", result.stderr)
+
+    def test_untracked_v1_root_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            (v1 / "untracked.cs").write_text("class Untracked {}\n", encoding="utf-8")
+            fixture(root, "[v1:src/folder with space/source.cs::KnownSymbol]")
+            result = self.run_cli(root, v1, expected)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("clean Git worktree", result.stderr)
 
     def test_wrong_commit_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -143,6 +238,36 @@ class V1CitationTests(unittest.TestCase):
             result = self.run_cli(root, v1, expected)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("does not name an existing file", result.stderr)
+
+    def test_parent_path_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, "[v1:src/../src/folder with space/source.cs::KnownSymbol]")
+            result = self.run_cli(root, v1, expected)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("stay inside", result.stderr)
+
+    def test_absolute_path_token_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, "[v1:/etc/passwd::KnownSymbol]")
+            result = self.run_cli(root, v1, expected)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("malformed citation token", result.stderr)
+
+    def test_escaping_symlink_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "v2"
+            v1 = Path(temporary) / "v1"
+            expected = git_fixture(v1)
+            fixture(root, "[v1:src/escape.cs::EscapingSymbol]")
+            result = self.run_cli(root, v1, expected)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("outside its supplied root", result.stderr)
 
     def test_contract_mode_reports_gap_and_strict_mode_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
