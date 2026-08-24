@@ -54,11 +54,14 @@ dropped in this packet's cleanup commit.
 snapshot's Engine identity, the requested scope's Engine identity, the
 snapshot tenant against the scope tenant, and the operation identity. The
 operation-identity check rejects an identity already in use by another live
-transaction of the same Engine with `EngineError::OperationIdReuse`;
-`OperationId` is validated at construction, so "invalid at begin" can only
-mean "already bound to another live request". Committing or dropping the
-transaction releases that reservation; the durable operation ledger remains
-the binding for any committed identity.
+transaction of the same Engine **and tenant** with
+`EngineError::OperationIdReuse`; the reservation is keyed by (tenant,
+operation), so two tenants may run the same operation identity concurrently
+(`same_operation_id_in_two_tenants_both_proceed`). `OperationId` is validated
+at construction, so "invalid at begin" can only mean "already bound to another
+live request". Committing or dropping the transaction releases that
+reservation; the durable operation ledger remains the binding for any
+committed identity.
 
 `Transaction` stages `put` and `delete` operations. Reads inside the
 transaction observe the staged writes and otherwise the transaction's
@@ -71,6 +74,19 @@ whole write set atomically under one storage sequence
 (`one_transaction_publishes_all_writes_atomically`). The tenant scope is
 captured at `begin` and has no mutation path
 (`tenant_scope_cannot_change_during_a_transaction`).
+
+A staged `delete` resolves the document's collection from the snapshot for
+conflict checking, but that resolved collection is snapshot state, not part of
+the logical request: the operation-identity digest excludes it, so retrying
+the same delete against a newer snapshot — where the document may already be
+absent — keeps its identity and replays the recorded commit
+(`delete_digest_is_independent_of_snapshot_state`).
+
+Storage sequences are allocated monotonically past every sequence the location
+has ever named, including sequences of commits that failed mid-publication, so
+a later committed operation can never be shadowed by an earlier failed one
+during WAL replay
+(`mid_publication_failure_never_reuses_a_storage_sequence`).
 
 An empty write set and duplicate targets are validation rejections; documents
 beyond one megabyte or sixty-four levels of nesting are rejected as
@@ -166,6 +182,12 @@ no commit-outcome variants, so the shared-file exception was not used.
 - `EnginePort` remains an unimplemented declaration owned by the Platform
   Adapter packets.
 - No query, index, family, replication, or backup behavior exists here.
+- **Accepted identity-binding limit (parent-adjudicated deferral).** The
+  operation-identity binding that decides idempotent retry versus
+  `OperationIdReuse` is the storage codec's private 64-bit FNV-1a checksum,
+  not a collision-resistant digest. Under the std-only constraint the parent
+  deferred the stronger digest to a later packet, so W3-1 claims no
+  same-tenant collision resistance for that binding.
 
 ## What is not claimed
 

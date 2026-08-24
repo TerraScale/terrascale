@@ -50,6 +50,10 @@ pub(crate) struct FileStorage {
     ledger_index: LedgerIndex,
     published: StorageRoot,
     history: BTreeMap<u64, Arc<RootTable>>,
+    /// The highest storage sequence ever named in this location, whether or
+    /// not its commit published. New commits allocate past it, so a sequence
+    /// is never reused after a mid-publication failure.
+    sequence_watermark: u64,
     faults: FaultPlan,
 }
 
@@ -70,7 +74,7 @@ impl FileStorage {
             root::sync_dir(dir).map_err(|_| StorageOpenError::Unavailable)?;
         }
         let ledger_index = LedgerIndex::scan(&ledger_path);
-        let wal_commits = wal::scan(&wal_path).map_err(|_| StorageOpenError::FormatMismatch)?;
+        let report = wal::scan(&wal_path).map_err(|_| StorageOpenError::FormatMismatch)?;
         let mut storage = Self {
             dir: dir.to_path_buf(),
             wal: wal_writer,
@@ -78,9 +82,15 @@ impl FileStorage {
             ledger_index,
             published: StorageRoot::empty(),
             history: BTreeMap::new(),
+            sequence_watermark: 0,
             faults: FaultPlan::empty(),
         };
-        storage.recover(wal_commits)?;
+        if report.torn_tail {
+            // The trailing frame was an interrupted append: drop it so the
+            // store opens on its verified prefix.
+            let _ = storage.wal.truncate(report.good_bytes);
+        }
+        storage.recover(report.commits)?;
         Ok(storage)
     }
 
@@ -105,6 +115,16 @@ impl FileStorage {
                 sequence = manifest_sequence;
                 id = manifest_id;
             }
+        }
+        // The watermark starts past every sequence any durable record names,
+        // so a fresh commit never reuses the sequence of a failed or
+        // half-published group.
+        self.sequence_watermark = sequence;
+        for entry in self.ledger_index.entries() {
+            self.sequence_watermark = self.sequence_watermark.max(entry.sequence);
+        }
+        for commit in &commits {
+            self.sequence_watermark = self.sequence_watermark.max(commit.sequence);
         }
         for commit in commits {
             if commit.sequence <= sequence {
@@ -214,8 +234,12 @@ impl FileStorage {
         }
 
         // Step 2: encode the write set into private frames. Raw bytes exist
-        // only from here through the private writers below.
-        let sequence = self.published.sequence.saturating_add(1);
+        // only from here through the private writers below. The sequence is
+        // allocated past every sequence this location has ever named and the
+        // watermark advances immediately, so a later failure in this commit
+        // can never let another commit reuse this sequence.
+        let sequence = self.sequence_watermark + 1;
+        self.sequence_watermark = sequence;
         let durable_frames = intent.durability != LocalDurability::Buffered;
         let new_table = self.published.table.apply(&intent.tenant, &intent.writes);
         let root_id = root::root_identity_of(sequence, &new_table);
@@ -566,6 +590,9 @@ impl super::StoragePort for FileStorage {
 
     #[cfg(test)]
     fn arm_test_fault(&mut self, point: FaultPoint) {
+        if point == FaultPoint::WalAppend {
+            self.wal.fail_next_append_partially();
+        }
         self.faults.arm(point);
     }
 }

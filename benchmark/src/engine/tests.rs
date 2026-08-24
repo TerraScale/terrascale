@@ -244,56 +244,288 @@ fn recovery_discards_prepare_frames_without_a_valid_commit_marker() {
 
 #[test]
 fn recovery_rejects_bad_checksum_and_truncated_frame() {
+    // Mid-file corruption fails closed: commit twice, then damage a byte
+    // inside the first commit's frames so an intact frame still follows it.
     let (dir, engine) = open_engine("reject-damage");
-    commit_put(
-        &engine,
-        "tenant-a",
-        "op-1",
-        "doc-1",
-        "value",
-        ExpectedVersion::New,
-        LocalDurability::Synced,
-    );
+    for index in 0..2 {
+        commit_put(
+            &engine,
+            "tenant-a",
+            &format!("op-{index}"),
+            &format!("doc-{index}"),
+            "value",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        );
+    }
     engine.shutdown().expect("shuts down");
-    // Damage is injected by rewriting the tail of the write-ahead log; the
-    // assertions observe only the typed open result.
     let wal = dir.join("wal");
     let mut bytes = std::fs::read(&wal).expect("wal reads");
-    let last = bytes.len().saturating_sub(1);
-    bytes[last] = bytes[last].wrapping_add(1);
+    bytes[5] = bytes[5].wrapping_add(1);
     std::fs::write(&wal, bytes).expect("wal rewrites");
     assert_eq!(
         Engine::open(EngineConfig::durable(&dir).expect("durable")).err(),
         Some(EngineOpenError::FormatMismatch),
-        "a bad checksum must fail closed"
+        "a checksum failure in a non-trailing frame must fail closed"
     );
 
+    // A frame cut through while bytes still follow it is the same mid-file
+    // corruption.
     let (second_dir, second) = open_engine("reject-truncation");
-    commit_put(
-        &second,
-        "tenant-a",
-        "op-1",
-        "doc-1",
-        "value",
-        ExpectedVersion::New,
-        LocalDurability::Synced,
-    );
+    for index in 0..2 {
+        commit_put(
+            &second,
+            "tenant-a",
+            &format!("op-{index}"),
+            &format!("doc-{index}"),
+            &format!("value-{index}"),
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        );
+    }
     second.shutdown().expect("shuts down");
     let wal = second_dir.join("wal");
-    let length = std::fs::metadata(&wal).expect("wal exists").len();
-    std::fs::OpenOptions::new()
-        .write(true)
-        .open(&wal)
-        .expect("wal opens")
-        .set_len(length - 3)
-        .expect("truncates mid-frame");
+    let mut bytes = std::fs::read(&wal).expect("wal reads");
+    let cut = bytes.len() / 2;
+    bytes.truncate(cut);
+    bytes.extend_from_slice(&[3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+    std::fs::write(&wal, bytes).expect("wal rewrites");
     assert_eq!(
         Engine::open(EngineConfig::durable(&second_dir).expect("durable")).err(),
         Some(EngineOpenError::FormatMismatch),
-        "a truncated frame must fail closed"
+        "a truncated frame with bytes behind it must fail closed"
     );
     std::fs::remove_dir_all(&dir).ok();
     std::fs::remove_dir_all(&second_dir).ok();
+}
+
+#[test]
+fn torn_trailing_wal_frame_is_truncated_at_recovery_and_data_survives() {
+    let (dir, engine) = open_engine("torn-tail");
+    commit_put(
+        &engine,
+        "tenant-a",
+        "op-first",
+        "doc-1",
+        "v1",
+        ExpectedVersion::New,
+        LocalDurability::Written,
+    );
+    commit_put(
+        &engine,
+        "tenant-a",
+        "op-second",
+        "doc-2",
+        "v2",
+        ExpectedVersion::New,
+        LocalDurability::Written,
+    );
+    engine.shutdown().expect("shuts down");
+
+    // Flip the last byte of the log: an interrupted append of the final frame.
+    let wal = dir.join("wal");
+    let mut bytes = std::fs::read(&wal).expect("wal reads");
+    let last = bytes.len() - 1;
+    bytes[last] = bytes[last].wrapping_add(1);
+    std::fs::write(&wal, bytes).expect("wal rewrites");
+
+    let reopened = reopen_engine(&dir);
+    assert!(
+        read_document(&reopened, "tenant-a", "doc-1").is_some(),
+        "the commit before the torn tail must survive recovery"
+    );
+    let scope = tenant_scope(&reopened, "tenant-a");
+    match reopened.resolve_commit(&scope, operation("op-first")).expect("resolves") {
+        DurableResolution::Committed(receipt) => {
+            assert_eq!(receipt.sequence().get(), 1);
+        }
+        other => panic!("the surviving commit must resolve as committed, got {other:?}"),
+    }
+    reopened.shutdown().expect("shuts down");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn failed_wal_append_rolls_back_to_the_last_good_offset() {
+    let (dir, engine) = open_engine("append-rollback");
+    commit_put(
+        &engine,
+        "tenant-a",
+        "op-seed",
+        "doc-1",
+        "v1",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    );
+    engine.arm_storage_fault(FaultPoint::WalAppend);
+    assert_eq!(
+        rejected(commit_put(
+            &engine,
+            "tenant-a",
+            "op-torn",
+            "doc-2",
+            "v2",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        )),
+        CommitError::StorageFailure
+    );
+    engine.shutdown().expect("shuts down");
+
+    // The engine still opens on the clean log, and a later commit works.
+    let reopened = reopen_engine(&dir);
+    assert!(read_document(&reopened, "tenant-a", "doc-2").is_none());
+    let receipt = committed(commit_put(
+        &reopened,
+        "tenant-a",
+        "op-after",
+        "doc-3",
+        "v3",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    assert_eq!(receipt.sequence().get(), 2);
+    assert!(read_document(&reopened, "tenant-a", "doc-3").is_some());
+    reopened.shutdown().expect("shuts down");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn mid_publication_failure_never_reuses_a_storage_sequence() {
+    let (dir, engine) = open_engine("sequence-reuse");
+    // Commit A fails after its WAL commit group is durable (step 6 fault), so
+    // the log already names sequence 1 while nothing published.
+    engine.arm_storage_fault(FaultPoint::ReadyLedgerSync);
+    assert_eq!(
+        rejected(commit_put(
+            &engine,
+            "tenant-a",
+            "op-a",
+            "doc-a",
+            "a",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        )),
+        CommitError::StorageFailure
+    );
+    // Commit B then succeeds and must not reuse sequence 1.
+    let receipt = committed(commit_put(
+        &engine,
+        "tenant-a",
+        "op-b",
+        "doc-b",
+        "b",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    assert_eq!(receipt.sequence().get(), 2, "a failed group's sequence is never reused");
+    engine.shutdown().expect("shuts down");
+
+    // Reopen with the manifest gone: the published state is rebuilt from the
+    // write-ahead log, where both groups live. Replay must apply both in
+    // sequence order and serve B's root, never first-wins.
+    std::fs::remove_file(dir.join("manifest")).expect("manifest removes");
+    let reopened = reopen_engine(&dir);
+    assert!(
+        read_document(&reopened, "tenant-a", "doc-b").is_some(),
+        "the later committed operation must survive replay, not be shadowed by the failed one"
+    );
+    let scope = tenant_scope(&reopened, "tenant-a");
+    match reopened.resolve_commit(&scope, operation("op-b")).expect("resolves") {
+        DurableResolution::Committed(resolved) => {
+            assert_eq!(resolved.sequence().get(), 2);
+        }
+        other => panic!("op-b must resolve as committed, got {other:?}"),
+    }
+    // op-a's verified WAL group rolls forward, so its identity resolves too.
+    assert!(matches!(
+        reopened.resolve_commit(&scope, operation("op-a")).expect("resolves"),
+        DurableResolution::Committed(_)
+    ));
+    reopened.shutdown().expect("shuts down");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn same_operation_id_in_two_tenants_both_proceed() {
+    let (dir, engine) = open_engine("tenant-scoped-reservation");
+    let first_scope = tenant_scope(&engine, "tenant-a");
+    let second_scope = tenant_scope(&engine, "tenant-b");
+    let first_snapshot = engine.read_snapshot(&first_scope).expect("snapshot");
+    let second_snapshot = engine.read_snapshot(&second_scope).expect("snapshot");
+    let shared = operation("op-shared");
+
+    let mut first = engine
+        .begin(&first_scope, first_snapshot, shared.clone())
+        .expect("the first tenant begins");
+    let mut second = engine
+        .begin(&second_scope, second_snapshot, shared.clone())
+        .expect("the same operation identity in another tenant must not be blocked");
+
+    first.put(document("doc-1", "users", "a"), ExpectedVersion::New).expect("stages");
+    second.put(document("doc-1", "users", "b"), ExpectedVersion::New).expect("stages");
+    assert!(matches!(first.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    assert!(matches!(second.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    assert_eq!(
+        read_document(&engine, "tenant-a", "doc-1").expect("present").value(),
+        &DocumentValue::String("a".to_owned())
+    );
+    assert_eq!(
+        read_document(&engine, "tenant-b", "doc-1").expect("present").value(),
+        &DocumentValue::String("b".to_owned())
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn delete_digest_is_independent_of_snapshot_state() {
+    let (dir, engine) = open_engine("delete-digest");
+    // Snapshot the tenant before the document exists: a delete staged from
+    // this view resolves no collection.
+    let absent_scope = tenant_scope(&engine, "tenant-a");
+    let absent_snapshot = engine.read_snapshot(&absent_scope).expect("snapshot");
+    let mut absent =
+        engine.begin(&absent_scope, absent_snapshot, operation("op-probe")).expect("begins");
+    absent.delete(document_id("doc-1"), ExpectedVersion::Any).expect("stages");
+
+    // Seed the document, then stage the same logical delete from a snapshot
+    // that contains it: this view resolves the collection.
+    commit_put(
+        &engine,
+        "tenant-a",
+        "op-seed",
+        "doc-1",
+        "v1",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    );
+    let existing_scope = tenant_scope(&engine, "tenant-a");
+    let existing_snapshot = engine.read_snapshot(&existing_scope).expect("snapshot");
+    let mut existing =
+        engine.begin(&existing_scope, existing_snapshot, operation("op-delete")).expect("begins");
+    existing.delete(document_id("doc-1"), ExpectedVersion::Any).expect("stages");
+    assert_eq!(
+        crate::storage::write_set_digest(&tenant("tenant-a"), &absent.staged_writes()),
+        crate::storage::write_set_digest(&tenant("tenant-a"), &existing.staged_writes()),
+        "a delete's digest must not depend on the snapshot-resolved collection"
+    );
+    drop(absent);
+
+    // The retry half: after the delete commits, retrying the same operation
+    // identity against a snapshot where the document is now absent must
+    // resolve to the one recorded commit instead of OperationIdReuse.
+    assert!(matches!(existing.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    let retry_scope = tenant_scope(&engine, "tenant-a");
+    let retry_snapshot = engine.read_snapshot(&retry_scope).expect("snapshot");
+    let mut retry =
+        engine.begin(&retry_scope, retry_snapshot, operation("op-delete")).expect("begins");
+    retry.delete(document_id("doc-1"), ExpectedVersion::Any).expect("stages");
+    let replayed = committed(retry.commit(LocalDurability::Synced));
+    assert_eq!(replayed.sequence().get(), 2, "the retry replays the recorded commit");
+    assert!(read_document(&engine, "tenant-a", "doc-1").is_none());
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]

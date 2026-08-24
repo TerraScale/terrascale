@@ -95,10 +95,19 @@ Open verifies the format identity, scans the ledger, and scans the WAL:
 - A prepare group without a structurally complete, checksum-valid commit
   marker is discarded. It never publishes anything
   (`recovery_discards_prepare_frames_without_a_valid_commit_marker`).
-- Any truncated frame or checksum mismatch anywhere in the WAL fails the open
-  with `FormatMismatch` (`recovery_rejects_bad_checksum_and_truncated_frame`).
-  This is deliberately fail-closed: the design mandates rejection, so a torn
-  WAL tail makes the location unopenable rather than silently lossy.
+- A torn or checksum-failing frame in the **trailing** position is the
+  interrupted-append case: recovery treats it as absent, truncates the log to
+  the verified prefix, and opens on that prefix. The commit before the torn
+  tail remains readable
+  (`torn_trailing_wal_frame_is_truncated_at_recovery_and_data_survives`).
+- The same damage at any **non-trailing** position is mid-file corruption and
+  fails the open with `FormatMismatch`
+  (`recovery_rejects_bad_checksum_and_truncated_frame`). This is deliberately
+  fail-closed: the design mandates rejection of frames that do not verify, and
+  replaying around a hole in the middle of the log cannot be justified.
+- `WalWriter::append` rolls back to the last-good offset whenever a write
+  cannot complete, so a partially written frame never persists
+  (`failed_wal_append_rolls_back_to_the_last_good_offset`).
 - A manifest whose checksum or root identity does not verify is ignored, and
   the published state is rebuilt from the verified WAL commits
   (`manifests_that_do_not_verify_are_ignored_during_recovery`).
@@ -139,6 +148,17 @@ second commit; a different digest under the same identity is
   operation.
 - Every durability level follows the same marker, pointer, ledger, lock
   release, and event order; only the byte-level actions differ.
+- Storage sequences are allocated past a watermark that starts above every
+  sequence the manifest, the WAL, and the operation ledger name, and advances
+  as soon as a commit allocates its sequence — including a commit that later
+  fails. A sequence is therefore never reused inside one location, so WAL
+  replay can order groups by sequence without a failed group shadowing a
+  later committed one
+  (`mid_publication_failure_never_reuses_a_storage_sequence`).
+- The write-set digest binds an operation identity to the logical request: a
+  delete contributes its identifier and expected version, not the collection
+  the delete happened to resolve against in the caller's snapshot
+  (`delete_digest_is_independent_of_snapshot_state`).
 
 ## Deviations corrected against the declaration tree
 
@@ -159,6 +179,10 @@ implementation; no public type moved, because the module had no public items.
   a u32 length.
 - Recovery reads whole WAL, ledger, and root files into memory. Segmenting,
   compaction, and incremental scans are later work.
+- The write-set digest spelling changed in this packet (a delete no longer
+  encodes its snapshot-resolved collection). Locations written by the first
+  W3-1 revision would bind pre-existing identities under the old spelling;
+  W3-1 has no released storage format, so no compatibility path is kept.
 
 ## Limits
 
@@ -168,8 +192,20 @@ implementation; no public type moved, because the module had no public items.
 - `Buffered` publication is in-memory only, so its data is lost on process
   exit by design; only its resolution metadata survives.
 - No lock file, no concurrent-Engine protocol, no encryption, no compaction,
-  no backup or restore, and no crash-tail tolerance in the WAL (a torn tail
-  fails closed).
+  and no backup or restore.
+- The torn-tail rule classifies damage by position: a corrupted length field
+  inside an early frame can make the remainder of the log look like one
+  trailing torn frame, in which case recovery truncates at that frame and the
+  commits behind it are dropped. Verified-prefix recovery cannot distinguish
+  that case from an interrupted append; the fail-closed mid-file rule covers
+  every damage shape that leaves readable bytes behind the damaged frame.
+- **Accepted identity-binding limit (parent-adjudicated deferral).** The
+  operation-identity binding and the root identity are both derived from the
+  private 64-bit FNV-1a checksum, not from a collision-resistant digest. W3-1
+  claims no collision resistance: within one tenant, two distinct write sets
+  deliberately constructed to collide on this checksum would share one
+  operation-identity binding or one root identity. Replacing it with a
+  stronger std-only digest is deferred to a later packet.
 
 ## What is not claimed
 

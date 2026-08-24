@@ -228,6 +228,11 @@ impl LedgerIndex {
         self.entries.get(&(tenant.to_owned(), operation.to_owned()))
     }
 
+    /// Returns the durable entries, in canonical key order.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = &OperationEntry> {
+        self.entries.values()
+    }
+
     /// Applies one record to the index.
     pub(crate) fn apply(&mut self, record: LedgerRecord) {
         match record {
