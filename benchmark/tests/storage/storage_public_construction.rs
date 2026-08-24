@@ -33,6 +33,12 @@ fn every_durable_location_is_its_own_store() {
 fn relative_locations_are_accepted_as_durable_directories() {
     // A path below the temporary directory still exercises the relative-path
     // form of a location without creating anything in the working directory.
+    //
+    // Safety of the temporary `set_current_dir` below depends on the sibling
+    // test in this file (`every_durable_location_is_its_own_store`) using
+    // absolute temp-dir paths only. If a test here ever adopts a
+    // working-directory-relative path, it would break under this chdir; keep
+    // every other fixture absolute.
     let relative = format!("tbv2-w31-relative-{}", std::process::id());
     let base = std::env::temp_dir().join(&relative);
     std::fs::remove_dir_all(&base).ok();

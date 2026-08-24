@@ -87,8 +87,9 @@ impl FileStorage {
         };
         if report.torn_tail {
             // The trailing frame was an interrupted append: drop it so the
-            // store opens on its verified prefix.
-            let _ = storage.wal.truncate(report.good_bytes);
+            // store opens on its verified prefix. A truncation that cannot
+            // complete fails the open instead of masking the damage.
+            storage.wal.truncate(report.good_bytes).map_err(|_| StorageOpenError::Unavailable)?;
         }
         storage.recover(report.commits)?;
         Ok(storage)
@@ -143,6 +144,7 @@ impl FileStorage {
             self.record_publication(
                 &commit.tenant,
                 &commit.operation,
+                commit.digest,
                 &published_id,
                 sequence,
                 false,
@@ -161,6 +163,7 @@ impl FileStorage {
         &mut self,
         tenant: &str,
         operation: &str,
+        digest: u64,
         id: &StorageRootId,
         sequence: u64,
         post_publish_synced: bool,
@@ -175,6 +178,7 @@ impl FileStorage {
         let record = LedgerRecord::Published(Published {
             tenant: tenant.to_owned(),
             operation: operation.to_owned(),
+            digest,
             root: id.as_str().to_owned(),
             sequence,
             post_publish_synced,
@@ -357,6 +361,7 @@ impl FileStorage {
         let published = LedgerRecord::Published(Published {
             tenant: intent.tenant.as_str().to_owned(),
             operation: intent.operation.as_str().to_owned(),
+            digest: intent.digest,
             root: root_id.as_str().to_owned(),
             sequence,
             post_publish_synced: intent.durability == LocalDurability::Synced,

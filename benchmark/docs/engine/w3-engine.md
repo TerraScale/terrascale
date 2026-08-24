@@ -3,7 +3,10 @@
 Status: implementation record for the W3-1 Storage plus Engine packet,
 2026-08-24. Source identity: the W3-1 worktree branch
 `fleet/w3-storage-engine`, based on commit `2775b24` (W3-0 preparation
-`c21a85f` included). This record describes focused-test evidence only. It is
+`c21a85f` included). Repair history pinned on this record: loop 1 (a3)
+applied at commit `1898653`; loop 2 (a4) applies on top of `1898653`, and the
+parent records the resulting tip hash in the packet report (a commit cannot
+embed its own hash). This record describes focused-test evidence only. It is
 not a parity qualification and makes no V1 comparison.
 
 ## Scope and ownership
@@ -167,7 +170,12 @@ no commit-outcome variants, so the shared-file exception was not used.
   a record cannot prove rejection, and the caller must not retry under a new
   identity.
 - Same-identity, same-digest retries replay the recorded resolution,
-  including a recorded rejection, so retries are deterministic.
+  including a recorded rejection, so retries are deterministic. This also
+  holds after recovery roll-forward: the `Published` record recovery appends
+  for a verified WAL commit carries the operation's digest, so a commit
+  interrupted between its durable WAL group and its `ReadyToPublish` record
+  still replays one commit rather than being rejected as identity reuse
+  (`roll_forward_digest_lets_a_same_identity_retry_replay_after_reopen`).
 - In-crate tests use `pub(crate) TenantScope::from_parts`, mirroring
   Platform's production role of creating a validated scope. Integration tests
   cover only public construction paths.

@@ -248,6 +248,101 @@ fn open_rejects_a_foreign_storage_format() {
 }
 
 #[test]
+fn failed_torn_tail_truncation_fails_the_open() {
+    let (dir, mut storage) = open_storage("truncate-fails");
+    assert!(matches!(
+        storage.commit(intent(
+            "op-1",
+            vec![put(document("doc-1", "users", "value"), ExpectedVersion::New)],
+            LocalDurability::Written,
+        )),
+        CommitResult::Committed(_)
+    ));
+    drop(storage);
+
+    // Tear the trailing frame, then poison the truncation of exactly this
+    // log. The open must fail loudly rather than hand back a writer whose
+    // append offset still spans the torn bytes.
+    let wal = dir.join("wal");
+    let mut bytes = std::fs::read(&wal).expect("wal reads");
+    let last = bytes.len() - 1;
+    bytes[last] = bytes[last].wrapping_add(1);
+    std::fs::write(&wal, bytes).expect("wal rewrites");
+    super::wal::fail_truncate_for(wal.clone());
+    assert_eq!(
+        FileStorage::open(&dir).err(),
+        Some(StorageOpenError::Unavailable),
+        "a truncation that cannot complete must fail the open instead of masking the damage"
+    );
+
+    // The poison is one-shot and consumed: the same location opens once the
+    // truncation can run, and the verified prefix survives.
+    let reopened = FileStorage::open(&dir).expect("opens once the truncation succeeds");
+    let tenant = tenant();
+    assert!(
+        reopened
+            .read_document_at(
+                StorageSequence::new(1),
+                &tenant,
+                &DocumentId::try_new("doc-1").expect("valid identifier")
+            )
+            .is_some()
+    );
+    drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn roll_forward_keeps_the_operation_digest_for_a_same_identity_retry() {
+    // A commit that fails after its WAL group is durable but before its
+    // Ready ledger record leaves no prior entry, so recovery's roll-forward
+    // Published record must itself carry the digest from the WAL commit.
+    let (dir, mut storage) = open_storage("roll-forward-digest");
+    storage.arm_test_fault(FaultPoint::ReadyLedgerSync);
+    assert!(matches!(
+        storage.commit(intent(
+            "op-a",
+            vec![put(document("doc-a", "users", "a"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        )),
+        CommitResult::Rejected(_)
+    ));
+    drop(storage);
+
+    let mut reopened = FileStorage::open(&dir).expect("rolls the durable group forward");
+    let tenant = tenant();
+    let operation = OperationId::try_new("op-a").expect("valid identifier");
+    match reopened.resolve_operation(&tenant, &operation).expect("resolves") {
+        super::intent::OperationResolution::Committed { sequence, durability } => {
+            assert_eq!(sequence.get(), 1);
+            assert_ne!(durability, LocalDurability::Synced);
+        }
+        other => panic!("the rolled-forward commit must resolve as committed, got {other:?}"),
+    }
+    // Same identity, same write set: the recorded resolution replays instead
+    // of colliding as identity reuse.
+    assert!(matches!(
+        reopened.commit(intent(
+            "op-a",
+            vec![put(document("doc-a", "users", "a"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        )),
+        CommitResult::Committed(_)
+    ));
+    // A different write set under the same identity is still reuse.
+    assert!(matches!(
+        reopened.commit(intent(
+            "op-a",
+            vec![put(document("doc-a", "users", "mutated"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        )),
+        CommitResult::Rejected(super::intent::CommitRejection::OperationIdReuse)
+    ));
+    drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn recovery_replays_a_verified_commit_that_was_never_published() {
     // A written commit marker that never reached pointer publication is rolled
     // forward at reopen, without claiming the post-publication syncs.

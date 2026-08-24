@@ -579,6 +579,72 @@ fn retrying_the_same_operation_id_returns_one_commit() {
 }
 
 #[test]
+fn roll_forward_digest_lets_a_same_identity_retry_replay_after_reopen() {
+    // Commit A fails at the ReadyLedgerSync fault: its WAL commit group is
+    // durable but no Ready record landed. Recovery roll-forward publishes it
+    // without a prior ledger entry, so the Published record itself must carry
+    // the digest and the identity must stay bound for a same-digest retry.
+    let (dir, engine) = open_engine("roll-forward-digest");
+    engine.arm_storage_fault(FaultPoint::ReadyLedgerSync);
+    assert_eq!(
+        rejected(commit_put(
+            &engine,
+            "tenant-a",
+            "op-a",
+            "doc-a",
+            "a",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        )),
+        CommitError::StorageFailure
+    );
+    drop(engine);
+
+    let reopened = reopen_engine(&dir);
+    let scope = tenant_scope(&reopened, "tenant-a");
+    match reopened.resolve_commit(&scope, operation("op-a")).expect("resolves") {
+        DurableResolution::Committed(receipt) => {
+            assert_eq!(receipt.operation_id(), &operation("op-a"));
+            assert_eq!(receipt.sequence().get(), 1);
+            assert_ne!(receipt.durability(), LocalDurability::Synced);
+        }
+        other => panic!("the rolled-forward commit must resolve as committed, got {other:?}"),
+    }
+    // Retrying the exact same operation must replay the recorded resolution,
+    // not be rejected as identity reuse.
+    let replayed = committed(commit_put(
+        &reopened,
+        "tenant-a",
+        "op-a",
+        "doc-a",
+        "a",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    assert_eq!(replayed.sequence().get(), 1, "the same identity and write set replay one commit");
+    assert_eq!(
+        read_document(&reopened, "tenant-a", "doc-a").expect("present").metadata().version(),
+        1,
+        "one commit means one version"
+    );
+    // A different write set under the same identity is still reuse.
+    assert_eq!(
+        rejected(commit_put(
+            &reopened,
+            "tenant-a",
+            "op-a",
+            "doc-a",
+            "mutated",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        )),
+        CommitError::OperationIdReuse
+    );
+    reopened.shutdown().expect("shuts down");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn different_payload_with_same_operation_id_is_rejected() {
     let (dir, engine) = open_engine("reuse-rejected");
     commit_put(

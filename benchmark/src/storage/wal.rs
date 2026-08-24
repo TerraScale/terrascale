@@ -3,8 +3,11 @@
 use std::{
     fs::{File, OpenOptions},
     io::{self, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
+
+#[cfg(test)]
+use std::sync::Mutex;
 
 use super::{
     codec::{self, Reader},
@@ -66,6 +69,9 @@ pub(crate) struct ScanReport {
 /// An append-only WAL writer.
 pub(crate) struct WalWriter {
     file: File,
+    /// The location of the log, used only by the test-only fault injection.
+    #[cfg_attr(not(test), allow(dead_code))]
+    path: PathBuf,
     fresh: bool,
     /// The file offset after the last fully appended frame. Every append
     /// rolls back to this offset if it cannot complete.
@@ -73,6 +79,18 @@ pub(crate) struct WalWriter {
     /// Test-only: fail the next append after writing half of its frame.
     #[cfg(test)]
     partial_append_next: bool,
+}
+
+/// Test-only, one-shot, path-keyed poison: the next `truncate` on exactly this
+/// log fails. Keying by path keeps parallel tests that truncate their own
+/// logs unaffected.
+#[cfg(test)]
+static FAIL_TRUNCATE_FOR: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Arms the test-only truncate failure for one log path.
+#[cfg(test)]
+pub(crate) fn fail_truncate_for(path: PathBuf) {
+    *FAIL_TRUNCATE_FOR.lock().expect("truncate poison lock") = Some(path);
 }
 
 impl WalWriter {
@@ -83,6 +101,7 @@ impl WalWriter {
         let offset = file.metadata()?.len();
         Ok(Self {
             file,
+            path: path.to_path_buf(),
             fresh,
             offset,
             #[cfg(test)]
@@ -133,7 +152,24 @@ impl WalWriter {
 
     /// Truncates the file to a verified prefix length, dropping a torn
     /// trailing frame.
+    ///
+    /// A failure here must reach the caller: opening with a torn tail still
+    /// on disk would leave the append offset spanning it, so the next append
+    /// lands behind torn bytes and a later open classifies the damage as
+    /// mid-file corruption.
     pub(crate) fn truncate(&mut self, good_bytes: u64) -> io::Result<()> {
+        #[cfg(test)]
+        {
+            let mut poison = FAIL_TRUNCATE_FOR.lock().expect("truncate poison lock");
+            if let Some(path) = poison.take()
+                && path == self.path
+            {
+                return Err(io::Error::other("injected truncate failure"));
+            } else if let Some(path) = poison.as_ref().cloned() {
+                // Not this log: leave the poison armed for its owner.
+                *poison = Some(path);
+            }
+        }
         self.file.set_len(good_bytes)?;
         self.offset = good_bytes;
         Ok(())

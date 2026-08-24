@@ -3,7 +3,10 @@
 Status: implementation record for the W3-1 Storage plus Engine packet,
 2026-08-24. Source identity: the W3-1 worktree branch
 `fleet/w3-storage-engine`, based on commit `2775b24` (W3-0 preparation
-`c21a85f` included). This record describes focused-test evidence only. It is
+`c21a85f` included). Repair history pinned on this record: loop 1 (a3)
+applied at commit `1898653`; loop 2 (a4) applies on top of `1898653`, and the
+parent records the resulting tip hash in the packet report (a commit cannot
+embed its own hash). This record describes focused-test evidence only. It is
 not a Recovery Receipt, not a parity qualification, and not a performance
 claim.
 
@@ -107,7 +110,18 @@ Open verifies the format identity, scans the ledger, and scans the WAL:
   replaying around a hole in the middle of the log cannot be justified.
 - `WalWriter::append` rolls back to the last-good offset whenever a write
   cannot complete, so a partially written frame never persists
-  (`failed_wal_append_rolls_back_to_the_last_good_offset`).
+  (`failed_wal_append_rolls_back_to_the_last_good_offset`). If the
+  recovery-time truncation of a torn tail itself fails, the open fails with
+  the typed unavailable error rather than returning a writer whose append
+  offset still spans the torn bytes
+  (`failed_torn_tail_truncation_fails_the_open`).
+- Recovery roll-forward appends a `Published` record for every verified WAL
+  commit, and that record carries the operation's write-set digest taken from
+  the WAL commit. A commit interrupted after its WAL group was durable but
+  before its `ReadyToPublish` record therefore keeps its identity bound, so a
+  same-identity same-write-set retry replays the recorded resolution instead
+  of colliding as identity reuse
+  (`roll_forward_digest_lets_a_same_identity_retry_replay_after_reopen`).
 - A manifest whose checksum or root identity does not verify is ignored, and
   the published state is rebuilt from the verified WAL commits
   (`manifests_that_do_not_verify_are_ignored_during_recovery`).
@@ -191,6 +205,19 @@ implementation; no public type moved, because the module had no public items.
 - The root history grows without garbage collection.
 - `Buffered` publication is in-memory only, so its data is lost on process
   exit by design; only its resolution metadata survives.
+- **Explicit operational limit: a `Buffered` commit interrupted between the
+  `ReadyToPublish` record and the `Published` record resolves `Pending`
+  forever.** A `Buffered` commit writes no WAL group, so there is nothing for
+  recovery to roll forward: its durable `Ready` record names a root identity
+  that never reaches disk, and the reopened published root can never match it.
+  `resolve_commit` therefore returns `Pending` (never a silent rejection, per
+  contract), and a same-identity retry keeps returning
+  `Unknown(ResponseInterrupted)`. The escape is a new operation identity: the
+  data never persisted, so re-issuing the logical write under a new identity
+  succeeds. `Written` and `Synced` commits do not have this window, because
+  their durable WAL group is rolled forward at reopen and a `Published`
+  record is appended for it. This is the "retain `Pending` with an explicit
+  operational limit" clause of the durable-resolution contract.
 - No lock file, no concurrent-Engine protocol, no encryption, no compaction,
   and no backup or restore.
 - The torn-tail rule classifies damage by position: a corrupted length field
