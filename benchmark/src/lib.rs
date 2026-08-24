@@ -17,12 +17,16 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const STATUS: &str = "w3-1-storage-engine";
 
 pub mod adapters;
+pub mod backup;
 pub mod engine;
 pub mod families;
 pub mod index;
+pub mod migration;
 pub mod operations;
 pub mod query;
+pub mod replication;
 pub mod storage;
+pub mod streaming;
 pub mod types;
 
 pub use adapters::platform::{PlatformAdapter, PlatformError};
@@ -30,6 +34,10 @@ pub use adapters::protocol::{
     CallerContext, CallerContextError, CallerEvidence, CredentialInput, CredentialKind, PrincipalId,
 };
 pub use adapters::protocol::{ProtocolAdapter, ProtocolError};
+pub use backup::{
+    BackupArchive, BackupError, BackupKind, BackupManifest, BackupPlan, BackupProgress,
+    BackupResult, RestorePlan, RestoreResult,
+};
 pub use engine::{
     CommitError, CommitOutcome, CommitReceipt, DurableResolution, Engine, EngineClosed,
     EngineConfig, EngineError, EngineOpenError, EngineShutdownError, Transaction, UnknownCommit,
@@ -39,6 +47,10 @@ pub use families::{
     FamilyError, FamilyKind, FamilyReadContext, FamilyReadRequest, FamilyReadResult, FamilyStore,
     FamilyWriteRequest,
 };
+pub use migration::{
+    MigrationError, MigrationLossMatrix, MigrationManifest, MigrationOptions, MigrationRecord,
+    MigrationReport,
+};
 pub use operations::{
     DocumentReadRequest, DocumentWriteRequest, FamilyOperation, MAX_QUERY_TEXT_BYTES,
     PublicOperation, PublicResponse, QueryInput, QueryInputError, QueryOperation,
@@ -47,6 +59,17 @@ pub use operations::{
 pub use query::{
     QueryError, QueryOrdering, QueryPaging, QueryPlan, QueryPredicate, QueryProjection,
     QueryResult, QuerySource, QuerySpec, QueryStore, StalenessPolicy,
+};
+pub use replication::{
+    AcknowledgementLevel, AcknowledgementReport, ConflictRecord, Convergence, MemberId, RegionId,
+    ReplicationConfig, ReplicationCursor, ReplicationError, ReplicationOutcome, ReplicationReceipt,
+    ReplicationStatus, TopologyView,
+};
+pub use streaming::{
+    ChangeEvent, ChangeFilter, ChangeKind, DocumentStreamSelector, StreamBatch, StreamCompletion,
+    StreamCursor, StreamError, StreamItem, StreamPosition, StreamSource, StreamStore,
+    SubscriptionAcknowledgement, SubscriptionBatch, SubscriptionCheckpoint, SubscriptionSpec,
+    SubscriptionStatus,
 };
 pub use types::{
     Cancellation, Deadline, Document, DocumentId, DocumentMetadata, DocumentValue, ExpectedVersion,
