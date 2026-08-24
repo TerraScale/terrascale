@@ -16,8 +16,29 @@
 //! identity, not authorization; tenant isolation is enforced at every seam;
 //! and no transport frame, leader term, message codec, or leader/shard state
 //! crosses this seam.
+//!
+//! ```compile_fail
+//! // A local commit receipt carries no acknowledgement fact, so no such
+//! // accessor can exist on it.
+//! let receipt: terrabase_v2::CommitReceipt = unimplemented!();
+//! let _ = receipt.acknowledgement();
+//! ```
+//!
+//! ```compile_fail
+//! // Health is never a convergence fact: a `ReplicationStatus` cannot be
+//! // turned into a `Convergence` observation (R-2 owns convergence content).
+//! let status = terrabase_v2::ReplicationStatus::Active;
+//! let _ = status.convergence();
+//! ```
 
-#![allow(dead_code)]
+mod identifier;
+mod member;
+mod status;
+mod topology;
+mod transport;
+
+#[cfg(test)]
+mod tests;
 
 use std::{fmt, marker::PhantomData};
 
