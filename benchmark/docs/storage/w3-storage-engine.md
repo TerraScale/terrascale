@@ -164,8 +164,7 @@ implementation; no public type moved, because the module had no public items.
 
 - Roots are full tables: every commit rewrites the complete document set of
   the tenant's root. There is no delta or segment format and no compaction.
-- The root history and the Engine's snapshot registry grow without garbage
-  collection.
+- The root history grows without garbage collection.
 - `Buffered` publication is in-memory only, so its data is lost on process
   exit by design; only its resolution metadata survives.
 - No lock file, no concurrent-Engine protocol, no encryption, no compaction,

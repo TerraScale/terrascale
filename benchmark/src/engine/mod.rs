@@ -7,7 +7,7 @@
 //! [`EngineConfig::durable`] location is the only production path.
 
 use std::{
-    collections::{BTreeSet, VecDeque},
+    collections::BTreeSet,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -332,7 +332,6 @@ struct StorageState {
 pub struct Engine {
     identity: u128,
     storage: Arc<Mutex<StorageState>>,
-    snapshots: Mutex<VecDeque<(ReadSnapshot, StorageSequence)>>,
     in_flight: Mutex<BTreeSet<String>>,
     sink: Mutex<Option<CommitPublicationSink>>,
 }
@@ -360,7 +359,6 @@ impl Engine {
         Ok(Self {
             identity: EngineIdentity::next().0,
             storage: Arc::new(Mutex::new(StorageState { port: Box::new(storage) })),
-            snapshots: Mutex::new(VecDeque::new()),
             in_flight: Mutex::new(BTreeSet::new()),
             sink: Mutex::new(None),
         })
@@ -392,10 +390,6 @@ impl Engine {
             sequence,
             IndexGenerationSet::default(),
         );
-        self.snapshots
-            .lock()
-            .map_err(|_| EngineError::StorageFailure)?
-            .push_back((snapshot.clone(), sequence));
         Ok(snapshot)
     }
 
@@ -435,19 +429,12 @@ impl Engine {
         if !reserved {
             return Err(EngineError::OperationIdReuse { operation_id: operation });
         }
-        let snapshot_sequence = self
-            .snapshots
-            .lock()
-            .map_err(|_| EngineError::StorageFailure)?
-            .iter()
-            .rev()
-            .find(|(issued, _)| *issued == snapshot)
-            .map(|(_, sequence)| *sequence);
+        let snapshot_sequence = snapshot.sequence();
         Ok(Transaction {
             engine: self,
             scope: scope.clone(),
             snapshot,
-            snapshot_sequence: snapshot_sequence.unwrap_or_default(),
+            snapshot_sequence,
             operation,
             writes: Vec::new(),
         })

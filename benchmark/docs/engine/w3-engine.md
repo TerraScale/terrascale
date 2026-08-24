@@ -40,12 +40,13 @@ what makes cross-Engine snapshots and scopes rejectable
 separate from the persistent storage-format identity on disk; a location whose
 format bytes do not verify opens as `EngineOpenError::FormatMismatch`.
 
-Because `ReadSnapshot` keeps its storage sequence private to `src/types.rs`,
-which this packet does not own, the Engine records the sequence of every
-snapshot it issues and recovers it by value equality when a transaction
-begins. A `pub(crate) fn sequence()` accessor on `ReadSnapshot` in
-`src/types.rs` would remove that registry; that exact collision action is
-proposed to the parent at the end of this record.
+`ReadSnapshot` exposes its storage sequence through the crate-private
+`ReadSnapshot::sequence()` accessor that the integrator added to
+`src/types.rs`, so `Engine::begin` binds a transaction to its snapshot's
+sequence directly. An earlier revision of this packet kept an equality-keyed
+snapshot registry in the Engine because the accessor did not yet exist; the
+integrator's collision action removed the need for it and the registry was
+dropped in this packet's cleanup commit.
 
 ## Transaction semantics
 
@@ -157,8 +158,9 @@ no commit-outcome variants, so the shared-file exception was not used.
 
 ## Limits
 
-- The snapshot registry and root history grow without bound; there is no
-  garbage collection.
+- The Engine's retained root history grows without bound; there is no garbage
+  collection. (The snapshot registry an earlier revision kept was removed with
+  the direct accessor; snapshots are no longer retained by the Engine.)
 - Conflict detection is first-committer-wins through expected versions; a
   write staged with `ExpectedVersion::Any` deliberately overwrites.
 - `EnginePort` remains an unimplemented declaration owned by the Platform
@@ -175,11 +177,14 @@ no commit-outcome variants, so the shared-file exception was not used.
   claim; `CommitReceipt` is strictly local.
 - No concurrency, throughput, or latency claim; no benchmark ran.
 
-## Proposed collision action for the parent
+## Resolved collision action
 
-`src/types.rs` (integrator-owned) would ideally add
-`impl ReadSnapshot { pub(crate) fn sequence(&self) -> StorageSequence }` so
-the Engine can bind a snapshot to its storage sequence directly and the
-equality-keyed snapshot registry can be removed. This packet did not edit that
-file; the registry is a documented in-scope workaround. The parent should
-assign that exact one-line collision action to the integrator if accepted.
+The parent assigned the exact one-line collision action proposed in the a1
+handoff, and the integrator added
+`impl ReadSnapshot { pub(crate) fn sequence(&self) -> StorageSequence }` to
+`src/types.rs` (commit `3cf2540`). This packet consumed it in its cleanup
+commit: the equality-keyed snapshot registry in `src/engine/mod.rs` is removed
+and `Engine::begin` reads the sequence from the snapshot itself. No behavior
+changed, because a registry match always returned the snapshot's own sequence
+and the fallback branch was unreachable for snapshots that passed the
+identity checks.
