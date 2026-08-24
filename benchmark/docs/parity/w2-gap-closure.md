@@ -32,7 +32,11 @@ exists and does not alter any row obligation.
 - 41 of the 42 gapped rows now carry exact `[v1:test:...]` citations in place
   of their `[v1:test-gap:...]` marker.
 - 1 row (PB-5012) keeps a test-gap marker with a refined concrete reason; see
-  below. Strict mode therefore still fails closed with exactly that one gap.
+  below. At the time of this change strict mode still failed closed with
+  exactly that one gap; parent decision PD-2026-08-24-02 D2 later added the
+  evidence-backed adjudicated-gap disposition (`parity/adjudications.json`),
+  so strict mode now passes with PB-5012 reported as adjudicated while its
+  V2 proof obligation stays open.
 - Audit counts after this change: 258 rows, 251 V1-backed, 7 charter-backed,
   267 source citations, 346 test citations (was 231), 1 test gap (was 42).
 

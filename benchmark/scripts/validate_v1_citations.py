@@ -457,6 +457,9 @@ def load_adjudications(root: Path, errors: list[str]) -> dict[str, dict[str, str
     unknown_top = sorted(set(payload) - {"schema_version", "adjudications"})
     if unknown_top:
         errors.append(f"{path} has unknown top-level field(s): {', '.join(unknown_top)}")
+    schema_version = payload.get("schema_version")
+    if schema_version != "1.0":
+        errors.append(f"{path} schema_version must be \"1.0\" (found: {schema_version!r})")
     entries = payload.get("adjudications")
     if not isinstance(entries, dict):
         errors.append(f"{path} must map row ids under 'adjudications'")
@@ -500,8 +503,13 @@ def load_adjudications(root: Path, errors: list[str]) -> dict[str, dict[str, str
                         raise CitationError(
                             f"{row_id} adjudication search record section is absent from {record_path}: {section.strip()}"
                         )
-                except (CitationError, OSError) as error:
-                    errors.append(str(error))
+                except (CitationError, OSError, UnicodeDecodeError) as error:
+                    if isinstance(error, UnicodeDecodeError):
+                        errors.append(
+                            f"{row_id} adjudication search record is not valid UTF-8: {record_path}"
+                        )
+                    else:
+                        errors.append(str(error))
 
         if missing or unknown:
             continue
