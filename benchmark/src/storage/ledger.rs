@@ -8,9 +8,11 @@ use std::{
 };
 
 use super::{
+    PublishedCommit,
     codec::{self, Reader},
     intent::CommitRejection,
 };
+use crate::types::{OperationId, StorageSequence, TenantId};
 
 /// Record kind: intent to publish, durably synced before pointer replacement.
 const RECORD_READY: u8 = 1;
@@ -381,4 +383,194 @@ fn decode_rejection(code: u8) -> Option<CommitRejection> {
         3 => Some(CommitRejection::Storage),
         _ => None,
     }
+}
+
+// ---------------------------------------------------------------------------
+// The durable publication-history journal (W4-CA-4)
+// ---------------------------------------------------------------------------
+
+/// Record kind: one published commit's reconstructable write set.
+const HISTORY_RECORD_COMMIT: u8 = 1;
+
+/// The append-only publication-history journal (W4-CA-4).
+///
+/// This side structure answers the inspector facts recorded with the
+/// collision action: the operation ledger binds identities to digests but
+/// records no document identities, so a ledger-derived read cannot
+/// reconstruct a write set; and the ledger index is keyed
+/// `(tenant, operation)` in canonical key order, not storage-sequence order.
+/// The journal therefore records, per published commit, the tenant, the
+/// operation identity, the global storage sequence, the digest binding, and
+/// the reconstructable write set itself — full documents for puts,
+/// identifier plus version for deletes — in its own sequence-ordered index.
+///
+/// The journal is appended after the root pointer has been published and its
+/// post-publication syncs completed, and before the `Published` ledger
+/// record: an entry can therefore only ever describe an already published
+/// commit, and the common uncertain path (a failed published-ledger sync)
+/// still leaves the entry durably recorded. The append is best-effort: a
+/// failed append or sync leaves a sequence gap that a consumer detects by
+/// sequence discontinuity, never an entry for an unpublished commit.
+///
+/// Torn-tail truncation and any later compaction bound the servable window;
+/// [`HistoryIndex::scan`] stops at the first record that does not verify, so
+/// the index serves exactly the verified prefix and the window start is
+/// reported to consumers instead of silently skipping a gap.
+pub(crate) struct HistoryWriter {
+    file: File,
+    fresh: bool,
+}
+
+impl HistoryWriter {
+    /// Opens or creates the journal at `path`.
+    pub(crate) fn open(path: &Path) -> io::Result<Self> {
+        let fresh = !path.exists();
+        let file = OpenOptions::new().create(true).append(true).read(true).open(path)?;
+        Ok(Self { file, fresh })
+    }
+
+    /// Reports whether this open created the file.
+    pub(crate) fn is_fresh(&self) -> bool {
+        self.fresh
+    }
+
+    /// Appends one checksummed publication record.
+    #[allow(clippy::cast_possible_truncation)]
+    pub(crate) fn append(&mut self, commit: &PublishedCommit) -> io::Result<()> {
+        let mut payload = Vec::new();
+        codec::push_u8(&mut payload, HISTORY_RECORD_COMMIT);
+        codec::push_str(&mut payload, commit.tenant().as_str());
+        codec::push_str(&mut payload, commit.operation_id().as_str());
+        codec::push_u64(&mut payload, commit.sequence().get());
+        codec::push_u32(&mut payload, commit.writes().len() as u32);
+        for write in commit.writes() {
+            codec::encode_published_write(&mut payload, write);
+        }
+        let mut frame = Vec::with_capacity(HEADER_BYTES.saturating_add(payload.len()));
+        codec::push_u32(&mut frame, payload.len() as u32);
+        codec::push_u64(&mut frame, codec::fnv1a(&payload));
+        frame.extend_from_slice(&payload);
+        self.file.write_all(&frame)
+    }
+
+    /// Flushes the appended bytes to the device.
+    pub(crate) fn sync(&mut self) -> io::Result<()> {
+        self.file.sync_data()
+    }
+}
+
+/// The in-memory, sequence-ordered index over the publication-history
+/// journal (W4-CA-4).
+///
+/// The index is the secondary iteration path the operation-ledger index
+/// cannot provide: per tenant, entries are keyed by global storage sequence,
+/// so `tenant_commits` pages in publication order without scanning the
+/// `(tenant, operation)` ledger order.
+#[derive(Default)]
+pub(crate) struct HistoryIndex {
+    tenants: BTreeMap<String, BTreeMap<u64, PublishedCommit>>,
+}
+
+impl HistoryIndex {
+    /// Scans the durable journal and builds the sequence-ordered index.
+    ///
+    /// A torn or checksum-failing record stops the scan: everything after it
+    /// is unservable, which is exactly the servable-window bound the seam
+    /// reports.
+    pub(crate) fn scan(path: &Path) -> Self {
+        let mut bytes = Vec::new();
+        let Ok(mut file) = File::open(path) else {
+            return Self::default();
+        };
+        if file.read_to_end(&mut bytes).is_err() {
+            return Self::default();
+        }
+        let mut index = Self::default();
+        let mut reader = Reader::new(&bytes);
+        while reader.remaining() > 0 {
+            let Some(commit) = read_history_record(&mut reader) else {
+                break;
+            };
+            index.upsert(commit);
+        }
+        index
+    }
+
+    /// Records one published commit.
+    pub(crate) fn upsert(&mut self, commit: PublishedCommit) {
+        self.tenants
+            .entry(commit.tenant().as_str().to_owned())
+            .or_default()
+            .insert(commit.sequence().get(), commit);
+    }
+
+    /// Reports whether one tenant and sequence pair is already recorded.
+    pub(crate) fn contains(&self, tenant: &str, sequence: u64) -> bool {
+        self.tenants.get(tenant).is_some_and(|entries| entries.contains_key(&sequence))
+    }
+
+    /// Returns one tenant's commits after `after`, in sequence order.
+    pub(crate) fn tenant_commits(
+        &self,
+        tenant: &TenantId,
+        after: StorageSequence,
+        limit: u32,
+    ) -> Vec<PublishedCommit> {
+        let Some(entries) = self.tenants.get(tenant.as_str()) else {
+            return Vec::new();
+        };
+        entries
+            .range((std::ops::Bound::Excluded(after.get()), std::ops::Bound::Unbounded))
+            .take(usize::try_from(limit).unwrap_or(usize::MAX))
+            .map(|(_, commit)| commit.clone())
+            .collect()
+    }
+
+    /// Returns every tenant with recorded commits, in canonical order.
+    pub(crate) fn committed_tenants(&self) -> Vec<TenantId> {
+        self.tenants.keys().filter_map(|tenant| TenantId::try_new(tenant).ok()).collect()
+    }
+
+    /// Returns the tenant's latest recorded sequence at or below `at`.
+    pub(crate) fn tenant_sequence(
+        &self,
+        tenant: &TenantId,
+        at: StorageSequence,
+    ) -> Option<StorageSequence> {
+        let entries = self.tenants.get(tenant.as_str())?;
+        entries.range(..=at.get()).next_back().map(|(sequence, _)| StorageSequence::new(*sequence))
+    }
+
+    /// Returns the oldest sequence the journal can serve, when it can serve
+    /// anything.
+    pub(crate) fn servable_start(&self) -> Option<StorageSequence> {
+        self.tenants
+            .values()
+            .filter_map(|entries| entries.keys().next().copied())
+            .min()
+            .map(StorageSequence::new)
+    }
+}
+
+/// Reads one framed publication-history record.
+fn read_history_record(reader: &mut Reader<'_>) -> Option<PublishedCommit> {
+    let length = reader.read_u32()? as usize;
+    let checksum = reader.read_u64()?;
+    let payload = reader.take(length)?;
+    if codec::fnv1a(payload) != checksum {
+        return None;
+    }
+    let mut payload_reader = Reader::new(payload);
+    if payload_reader.read_u8()? != HISTORY_RECORD_COMMIT {
+        return None;
+    }
+    let tenant = TenantId::try_new(&payload_reader.read_string()?).ok()?;
+    let operation_id = OperationId::try_new(&payload_reader.read_string()?).ok()?;
+    let sequence = StorageSequence::new(payload_reader.read_u64()?);
+    let count = payload_reader.read_u32()? as usize;
+    let mut writes = Vec::with_capacity(count.min(1024));
+    for _ in 0..count {
+        writes.push(codec::decode_published_write(&mut payload_reader)?);
+    }
+    Some(PublishedCommit::new(tenant, operation_id, sequence, writes))
 }

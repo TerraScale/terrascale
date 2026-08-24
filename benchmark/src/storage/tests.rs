@@ -17,7 +17,7 @@ use crate::types::{
 };
 
 use super::{
-    FileStorage, StorageOpenError, StoragePort,
+    FileStorage, PublishedCommit, PublishedWrite, StorageOpenError, StoragePort,
     faults::FaultPoint,
     intent::{CommitIntent, CommitResult, StagedWrite},
     write_set_digest,
@@ -55,6 +55,19 @@ fn intent(operation: &str, writes: Vec<StagedWrite>, durability: LocalDurability
         durability,
         writes,
     }
+}
+
+/// Builds one intent whose snapshot is the store's current published
+/// sequence, so replaces and deletes pass the conflict check.
+fn fresh_intent(
+    storage: &FileStorage,
+    operation: &str,
+    writes: Vec<StagedWrite>,
+    durability: LocalDurability,
+) -> CommitIntent {
+    let mut intent = intent(operation, writes, durability);
+    intent.snapshot_sequence = storage.published_state().0;
+    intent
 }
 
 fn open_storage(tag: &str) -> (PathBuf, FileStorage) {
@@ -556,6 +569,387 @@ fn documents_at_from_resumes_strictly_after_the_cursor_identifier() {
         "another tenant's window is empty"
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// W4-CA-4: the durable publication-history journal
+// ---------------------------------------------------------------------------
+
+/// Stages one delete of a document the snapshot locates.
+fn delete(collection: &str, id: &str, expected: ExpectedVersion) -> StagedWrite {
+    StagedWrite::Delete {
+        collection: Some(CollectionName::try_new(collection).expect("valid identifier")),
+        id: DocumentId::try_new(id).expect("valid identifier"),
+        expected,
+    }
+}
+
+/// Builds one intent for a named tenant.
+fn intent_for(
+    tenant_name: &str,
+    operation: &str,
+    writes: Vec<StagedWrite>,
+    durability: LocalDurability,
+) -> CommitIntent {
+    let tenant = TenantId::try_new(tenant_name).expect("valid tenant");
+    CommitIntent {
+        digest: write_set_digest(&tenant, &writes),
+        tenant,
+        operation: OperationId::try_new(operation).expect("valid identifier"),
+        snapshot_sequence: StorageSequence::new(0),
+        durability,
+        writes,
+    }
+}
+
+#[test]
+fn tenant_commits_reconstruct_puts_and_deletes_with_versions() {
+    // Obligation 1: the ledger binds identities to digests and records no
+    // document identities, so the publication history must carry the write
+    // set itself. Puts travel as the published document — the version the
+    // commit assigned — and deletes travel as identifier plus the version
+    // that existed at the delete, including `0` for an absent identifier.
+    let (dir, mut storage) = open_storage("history-reconstruct");
+    let outcomes = [
+        storage.commit(fresh_intent(
+            &storage,
+            "op-1",
+            vec![put(document("doc-1", "users", "v1"), ExpectedVersion::New)],
+            LocalDurability::Written,
+        )),
+        storage.commit(fresh_intent(
+            &storage,
+            "op-2",
+            vec![put(document("doc-1", "users", "v2"), ExpectedVersion::Any)],
+            LocalDurability::Written,
+        )),
+        storage.commit(fresh_intent(
+            &storage,
+            "op-3",
+            vec![delete("users", "doc-1", ExpectedVersion::Exact(2))],
+            LocalDurability::Written,
+        )),
+        storage.commit(fresh_intent(
+            &storage,
+            "op-4",
+            vec![
+                delete("users", "doc-9", ExpectedVersion::Any),
+                put(document("doc-2", "users", "v1"), ExpectedVersion::New),
+            ],
+            LocalDurability::Synced,
+        )),
+    ];
+    for outcome in outcomes {
+        assert!(matches!(outcome, CommitResult::Committed(_)));
+    }
+    let tenant = tenant();
+    let commits = storage.tenant_commits(&tenant, StorageSequence::new(0), 10);
+    assert_eq!(commits.len(), 4, "every published commit is recorded");
+    assert_eq!(commits[0].operation_id().as_str(), "op-1");
+    assert_eq!(commits[0].sequence().get(), 1);
+    assert_eq!(commits[0].tenant(), &tenant);
+    match &commits[0].writes()[0] {
+        PublishedWrite::Put { document } => {
+            assert_eq!(document.id().as_str(), "doc-1");
+            assert_eq!(document.metadata().version(), 1, "the put carries the published version");
+            assert_eq!(document.value(), &DocumentValue::String("v1".to_owned()));
+        }
+        other @ PublishedWrite::Delete { .. } => panic!("expected a put, got {other:?}"),
+    }
+    match &commits[1].writes()[0] {
+        PublishedWrite::Put { document } => {
+            assert_eq!(document.metadata().version(), 2, "a replacement carries its new version");
+        }
+        other @ PublishedWrite::Delete { .. } => panic!("expected a put, got {other:?}"),
+    }
+    match &commits[2].writes()[0] {
+        PublishedWrite::Delete { id, version_at_delete } => {
+            assert_eq!(id.as_str(), "doc-1");
+            assert_eq!(*version_at_delete, 2, "the delete carries the version it removed");
+        }
+        other @ PublishedWrite::Put { .. } => panic!("expected a delete, got {other:?}"),
+    }
+    assert_eq!(commits[3].writes().len(), 2);
+    match &commits[3].writes()[0] {
+        PublishedWrite::Delete { id, version_at_delete } => {
+            assert_eq!(id.as_str(), "doc-9");
+            assert_eq!(*version_at_delete, 0, "an absent identifier records version zero");
+        }
+        other @ PublishedWrite::Put { .. } => panic!("expected a delete, got {other:?}"),
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn tenant_commits_page_in_global_sequence_order_across_the_limit() {
+    // Obligation 2: the operation-ledger index is keyed (tenant, operation)
+    // in canonical key order; the journal's own index pages by global
+    // storage sequence, so `after` plus `limit` walks publication order.
+    let (dir, mut storage) = open_storage("history-paging");
+    for index in 0..5 {
+        let outcome = storage.commit(intent(
+            &format!("op-{index}"),
+            vec![put(document(&format!("doc-{index}"), "users", "value"), ExpectedVersion::New)],
+            LocalDurability::Written,
+        ));
+        assert!(matches!(outcome, CommitResult::Committed(_)));
+    }
+    let tenant = tenant();
+    let sequences = |after: u64, limit: u32| {
+        storage
+            .tenant_commits(&tenant, StorageSequence::new(after), limit)
+            .iter()
+            .map(|commit| commit.sequence().get())
+            .collect::<Vec<u64>>()
+    };
+    assert_eq!(sequences(0, 10), [1, 2, 3, 4, 5]);
+    assert_eq!(sequences(0, 2), [1, 2]);
+    assert_eq!(sequences(2, 2), [3, 4]);
+    assert_eq!(sequences(4, 2), [5]);
+    assert!(sequences(5, 2).is_empty(), "nothing is served past the published sequence");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn committed_tenants_and_tenant_sequence_map_a_global_cursor_per_tenant() {
+    // The seam's tenant mappings: enumeration in canonical order, and the
+    // global-cursor entry that names one tenant's own progress.
+    let (dir, mut storage) = open_storage("history-tenants");
+    let first = intent_for(
+        "tenant-a",
+        "op-1",
+        vec![put(document("doc-1", "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Written,
+    );
+    let second = intent_for(
+        "tenant-b",
+        "op-1",
+        vec![put(document("doc-1", "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Written,
+    );
+    let third = intent_for(
+        "tenant-a",
+        "op-2",
+        vec![put(document("doc-2", "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Written,
+    );
+    for intent in [first, second, third] {
+        assert!(matches!(storage.commit(intent), CommitResult::Committed(_)));
+    }
+    let tenant_a = TenantId::try_new("tenant-a").expect("valid tenant");
+    let tenant_b = TenantId::try_new("tenant-b").expect("valid tenant");
+    let tenant_c = TenantId::try_new("tenant-c").expect("valid tenant");
+    assert_eq!(storage.committed_tenants(), vec![tenant_a.clone(), tenant_b.clone()]);
+    assert_eq!(
+        storage.tenant_sequence(&tenant_a, StorageSequence::new(2)),
+        Some(StorageSequence::new(1)),
+        "a global cursor below the tenant's second commit maps to the first"
+    );
+    assert_eq!(
+        storage.tenant_sequence(&tenant_a, StorageSequence::new(3)),
+        Some(StorageSequence::new(3))
+    );
+    assert_eq!(
+        storage.tenant_sequence(&tenant_b, StorageSequence::new(1)),
+        None,
+        "tenant-b committed nothing at or below sequence one"
+    );
+    assert_eq!(storage.tenant_sequence(&tenant_c, StorageSequence::new(9)), None);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn publication_history_survives_reopen_and_serves_the_same_commits() {
+    let (dir, mut storage) = open_storage("history-reopen");
+    for index in 0..3 {
+        let outcome = storage.commit(intent(
+            &format!("op-{index}"),
+            vec![put(document(&format!("doc-{index}"), "users", "value"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        ));
+        assert!(matches!(outcome, CommitResult::Committed(_)));
+    }
+    let tenant = tenant();
+    let before = storage.tenant_commits(&tenant, StorageSequence::new(0), 10);
+    drop(storage);
+
+    let reopened = FileStorage::open(&dir).expect("reopens with its journal");
+    let after = reopened.tenant_commits(&tenant, StorageSequence::new(0), 10);
+    assert_eq!(before, after, "the journal serves the identical records after a reopen");
+    assert_eq!(reopened.committed_tenants().len(), 1);
+    assert_eq!(reopened.servable_history_start(), Some(StorageSequence::new(1)));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_torn_publication_history_tail_bounds_the_servable_window() {
+    // Obligation 3: torn-tail truncation bounds the servable window. The
+    // scan keeps only the verified prefix, reports the window start, and a
+    // consumer detects the truncated end by comparing the last served
+    // sequence with the published sequence instead of assuming completeness.
+    let (dir, mut storage) = open_storage("history-torn-tail");
+    for index in 0..3 {
+        let outcome = storage.commit(intent(
+            &format!("op-{index}"),
+            vec![put(document(&format!("doc-{index}"), "users", "value"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        ));
+        assert!(matches!(outcome, CommitResult::Committed(_)));
+    }
+    drop(storage);
+
+    let history = dir.join("history");
+    let mut bytes = std::fs::read(&history).expect("journal reads");
+    bytes.truncate(bytes.len() - 4);
+    std::fs::write(&history, bytes).expect("journal rewrites");
+
+    let reopened = FileStorage::open(&dir).expect("a torn journal tail still opens");
+    let tenant = tenant();
+    let served = reopened.tenant_commits(&tenant, StorageSequence::new(0), 10);
+    assert_eq!(served.len(), 2, "the verified prefix is served");
+    assert_eq!(
+        reopened.servable_history_start(),
+        Some(StorageSequence::new(1)),
+        "the window start is reported, never silently skipped"
+    );
+    let last_served = served.last().expect("prefix served").sequence().get();
+    let (published, _) = reopened.published_state();
+    assert!(
+        last_served < published.get(),
+        "the consumer sees the truncated end: {last_served} served, {} published",
+        published.get()
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn an_unservable_publication_history_reports_no_window_instead_of_a_gap() {
+    // Obligation 3's fallback: when the oldest records are gone or the whole
+    // journal is absent, the seam reports no servable window rather than
+    // serving from a fabricated start. Data remains readable through the
+    // ordinary snapshot path either way.
+    let (dir, mut storage) = open_storage("history-absent");
+    let outcome = storage.commit(intent(
+        "op-1",
+        vec![put(document("doc-1", "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Synced,
+    ));
+    assert!(matches!(outcome, CommitResult::Committed(_)));
+    drop(storage);
+
+    let history = dir.join("history");
+    let mut bytes = std::fs::read(&history).expect("journal reads");
+    bytes[13] = bytes[13].wrapping_add(1);
+    std::fs::write(&history, bytes).expect("journal rewrites");
+    let damaged = FileStorage::open(&dir).expect("opens with an unservable journal");
+    let tenant = tenant();
+    assert_eq!(
+        damaged.servable_history_start(),
+        None,
+        "a damaged first record makes nothing servable; no silent gap is served"
+    );
+    assert!(damaged.tenant_commits(&tenant, StorageSequence::new(0), 10).is_empty());
+    drop(damaged);
+
+    std::fs::remove_file(&history).expect("journal removes");
+    let absent = FileStorage::open(&dir).expect("opens without a journal");
+    assert_eq!(absent.servable_history_start(), None);
+    assert!(absent.committed_tenants().is_empty());
+    let id = DocumentId::try_new("doc-1").expect("valid identifier");
+    assert!(
+        absent.read_document_at(StorageSequence::new(1), &tenant, &id).is_some(),
+        "snapshot reads do not depend on the journal"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn publication_history_lets_a_follower_replay_puts_and_deletes_idempotently() {
+    // The reconstructability contract: a follower that applies every served
+    // commit through the storage seam, by the source's operation identity,
+    // reproduces the source's view — and replaying the same delivery again
+    // changes nothing.
+    let (dir, mut source) = open_storage("history-replay-source");
+    // Each intent takes a fresh snapshot of the moment it commits, so the
+    // delete sees the state it conflict-checks against.
+    for (operation, writes) in [
+        (
+            "op-1",
+            vec![put(document("doc-1", "users", "v1"), ExpectedVersion::New)] as Vec<StagedWrite>,
+        ),
+        ("op-2", vec![put(document("doc-2", "users", "v2"), ExpectedVersion::New)]),
+        ("op-3", vec![delete("users", "doc-1", ExpectedVersion::Exact(1))]),
+    ] {
+        let intent = fresh_intent(&source, operation, writes, LocalDurability::Written);
+        assert!(matches!(source.commit(intent), CommitResult::Committed(_)), "{operation} commits");
+    }
+    let tenant = tenant();
+    let delivery = source.tenant_commits(&tenant, StorageSequence::new(0), 10);
+
+    let (follower_dir, mut follower) = open_storage("history-replay-follower");
+    let replay = |follower: &mut FileStorage, commit: &PublishedCommit| {
+        let snapshot_sequence = follower.published_state().0;
+        // A delete stages the collection the follower's own view resolves,
+        // exactly as the Engine transaction seam does; the digest binding
+        // excludes that resolution, so redelivery stays deterministic.
+        let writes: Vec<StagedWrite> = commit
+            .writes()
+            .iter()
+            .map(|write| match write {
+                PublishedWrite::Put { document } => {
+                    StagedWrite::Put { document: document.clone(), expected: ExpectedVersion::Any }
+                }
+                PublishedWrite::Delete { id, .. } => {
+                    let collection = follower
+                        .documents_at(snapshot_sequence, commit.tenant())
+                        .into_iter()
+                        .find(|document| document.id() == id)
+                        .map(|document| document.collection().clone());
+                    StagedWrite::Delete {
+                        collection,
+                        id: id.clone(),
+                        expected: ExpectedVersion::Any,
+                    }
+                }
+            })
+            .collect();
+        follower.commit(CommitIntent {
+            digest: write_set_digest(commit.tenant(), &writes),
+            tenant: commit.tenant().clone(),
+            operation: commit.operation_id().clone(),
+            snapshot_sequence,
+            durability: LocalDurability::Written,
+            writes,
+        })
+    };
+    for commit in &delivery {
+        assert!(
+            matches!(replay(&mut follower, commit), CommitResult::Committed(_)),
+            "the follower applies the delivery"
+        );
+    }
+    let source_documents = source.documents_at(source.published_state().0, &tenant);
+    let follower_documents = follower.documents_at(follower.published_state().0, &tenant);
+    assert_eq!(
+        follower_documents, source_documents,
+        "replaying the served commits reproduces the source view, deletes included"
+    );
+
+    // At-least-once redelivery: the same operation identities replay through
+    // the follower's ledger without changing its state.
+    for commit in &delivery {
+        assert!(
+            matches!(replay(&mut follower, commit), CommitResult::Committed(_)),
+            "a redelivered commit resolves idempotently"
+        );
+    }
+    assert_eq!(
+        follower.documents_at(follower.published_state().0, &tenant),
+        source_documents,
+        "redelivery changes nothing"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&follower_dir).ok();
 }
 
 #[test]

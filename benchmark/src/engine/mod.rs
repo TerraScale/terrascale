@@ -23,11 +23,14 @@ use crate::{
     families::FamilyStore,
     operations::{EngineRequest, EngineResponse},
     query::QueryStore,
-    storage::{self, CommitIntent, CommitPublicationEvent, CommitResult, StagedWrite, StoragePort},
+    storage::{
+        self, CommitIntent, CommitPublicationEvent, CommitResult, PublishedCommit, StagedWrite,
+        StoragePort,
+    },
     streaming::StreamStore,
     types::{
         Document, DocumentId, ExpectedVersion, IndexGenerationSet, LocalDurability, OperationId,
-        ReadSnapshot, RetryDisposition, StorageSequence, TenantScope,
+        ReadSnapshot, RetryDisposition, StorageSequence, TenantId, TenantScope,
     },
 };
 
@@ -730,6 +733,63 @@ impl Engine {
             )
         };
         Ok(documents)
+    }
+
+    /// Returns one tenant's published commits after `after`, in global
+    /// storage-sequence order, up to `limit` entries (W4-CA-4).
+    ///
+    /// This is the durable publication-history read replication catch-up and
+    /// backup boundaries consume: the write set travels reconstructed — full
+    /// documents for puts, identifier plus version for deletes — never as a
+    /// digest.
+    #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
+    pub(crate) fn tenant_commits(
+        &self,
+        tenant: &TenantId,
+        after: StorageSequence,
+        limit: u32,
+    ) -> Vec<PublishedCommit> {
+        let storage = self.lock_storage();
+        match storage {
+            Ok(storage) => storage.port.tenant_commits(tenant, after, limit),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Returns every tenant that has at least one recorded published commit,
+    /// in canonical tenant order (W4-CA-4).
+    #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
+    pub(crate) fn committed_tenants(&self) -> Vec<TenantId> {
+        let storage = self.lock_storage();
+        match storage {
+            Ok(storage) => storage.port.committed_tenants(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Returns the tenant's latest recorded sequence at or below `at`
+    /// (W4-CA-4): the mapping entry that turns one global storage-sequence
+    /// cursor into this tenant's own progress.
+    #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
+    pub(crate) fn tenant_sequence(
+        &self,
+        tenant: &TenantId,
+        at: StorageSequence,
+    ) -> Option<StorageSequence> {
+        let storage = self.lock_storage().ok()?;
+        storage.port.tenant_sequence(tenant, at)
+    }
+
+    /// Returns the oldest sequence the durable publication history can
+    /// serve, or `None` when no history is servable (W4-CA-4).
+    ///
+    /// A cursor older than this bound cannot be served incrementally: the
+    /// caller must fall back to a full catch-up or backup rather than
+    /// silently skip the gap.
+    #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
+    pub(crate) fn servable_history_start(&self) -> Option<StorageSequence> {
+        let storage = self.lock_storage().ok()?;
+        storage.port.servable_history_start()
     }
 
     fn lock_storage(&self) -> Result<std::sync::MutexGuard<'_, StorageState>, EngineError> {

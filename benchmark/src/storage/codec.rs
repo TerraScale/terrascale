@@ -14,7 +14,7 @@ use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, TenantId,
 };
 
-use super::intent::StagedWrite;
+use super::{PublishedWrite, intent::StagedWrite};
 
 /// Maximum nesting depth accepted for one document value.
 pub(super) const MAX_VALUE_DEPTH: usize = 64;
@@ -373,6 +373,38 @@ pub(super) fn decode_staged_write(reader: &mut Reader<'_>) -> Option<StagedWrite
             let id = DocumentId::try_new(&reader.read_string()?).ok()?;
             let expected = decode_expected(reader)?;
             Some(StagedWrite::Delete { collection: None, id, expected })
+        }
+        _ => None,
+    }
+}
+
+/// Appends one encoded reconstructable publication write (W4-CA-4).
+///
+/// The put form is the published document — the same encoding the root table
+/// stores — and the delete form is the identifier plus the version that
+/// existed at the delete.
+pub(super) fn encode_published_write(out: &mut Vec<u8>, write: &PublishedWrite) {
+    match write {
+        PublishedWrite::Put { document } => {
+            push_u8(out, 1);
+            encode_document(out, document);
+        }
+        PublishedWrite::Delete { id, version_at_delete } => {
+            push_u8(out, 2);
+            push_str(out, id.as_str());
+            push_u64(out, *version_at_delete);
+        }
+    }
+}
+
+/// Reads one encoded reconstructable publication write.
+pub(super) fn decode_published_write(reader: &mut Reader<'_>) -> Option<PublishedWrite> {
+    match reader.read_u8()? {
+        1 => Some(PublishedWrite::Put { document: decode_document(reader)? }),
+        2 => {
+            let id = DocumentId::try_new(&reader.read_string()?).ok()?;
+            let version_at_delete = reader.read_u64()?;
+            Some(PublishedWrite::Delete { id, version_at_delete })
         }
         _ => None,
     }

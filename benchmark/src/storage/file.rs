@@ -12,6 +12,7 @@ use crate::types::{
     Document, DocumentId, ExpectedVersion, LocalDurability, OperationId, StorageSequence, TenantId,
 };
 
+use super::{PublishedCommit, PublishedWrite};
 use super::{
     codec::{self, LocalDurabilityCode, StorageKey},
     faults::{FaultPlan, FaultPoint},
@@ -20,8 +21,8 @@ use super::{
         StorageReceipt, UnknownCause,
     },
     ledger::{
-        LedgerIndex, LedgerRecord, LedgerState, LedgerWriter, OperationEntry, Published,
-        ReadyToPublish, RejectedRecord,
+        HistoryIndex, HistoryWriter, LedgerIndex, LedgerRecord, LedgerState, LedgerWriter,
+        OperationEntry, Published, ReadyToPublish, RejectedRecord,
     },
     root::{self, RootTable, StorageRoot, StorageRootId},
     wal::{self, WalCommit, WalWriter},
@@ -48,6 +49,10 @@ pub(crate) struct FileStorage {
     wal: WalWriter,
     ledger: LedgerWriter,
     ledger_index: LedgerIndex,
+    /// The durable publication-history journal and its sequence-ordered
+    /// index (W4-CA-4).
+    journal: HistoryWriter,
+    journal_index: HistoryIndex,
     published: StorageRoot,
     history: BTreeMap<u64, Arc<RootTable>>,
     /// The highest storage sequence ever named in this location, whether or
@@ -67,19 +72,25 @@ impl FileStorage {
         }
         let wal_path = dir.join("wal");
         let ledger_path = dir.join("ledger");
+        let journal_path = dir.join("history");
         let wal_writer = WalWriter::open(&wal_path).map_err(|_| StorageOpenError::Unavailable)?;
         let ledger_writer =
             LedgerWriter::open(&ledger_path).map_err(|_| StorageOpenError::Unavailable)?;
-        if wal_writer.is_fresh() || ledger_writer.is_fresh() {
+        let journal_writer =
+            HistoryWriter::open(&journal_path).map_err(|_| StorageOpenError::Unavailable)?;
+        if wal_writer.is_fresh() || ledger_writer.is_fresh() || journal_writer.is_fresh() {
             root::sync_dir(dir).map_err(|_| StorageOpenError::Unavailable)?;
         }
         let ledger_index = LedgerIndex::scan(&ledger_path);
+        let journal_index = HistoryIndex::scan(&journal_path);
         let report = wal::scan(&wal_path).map_err(|_| StorageOpenError::FormatMismatch)?;
         let mut storage = Self {
             dir: dir.to_path_buf(),
             wal: wal_writer,
             ledger: ledger_writer,
             ledger_index,
+            journal: journal_writer,
+            journal_index,
             published: StorageRoot::empty(),
             history: BTreeMap::new(),
             sequence_watermark: 0,
@@ -133,7 +144,24 @@ impl FileStorage {
             }
             let tenant =
                 TenantId::try_new(&commit.tenant).map_err(|_| StorageOpenError::FormatMismatch)?;
-            table = table.apply(&tenant, &commit.writes);
+            let applied = table.apply(&tenant, &commit.writes);
+            // W4-CA-4: recovery re-derives the reconstructable write set from
+            // the tables the roll-forward moved and appends the missing
+            // journal record, so a crash between pointer publication and the
+            // journal append still leaves the entry durable.
+            if !self.journal_index.contains(commit.tenant.as_str(), commit.sequence) {
+                let record = PublishedCommit::new(
+                    tenant.clone(),
+                    OperationId::try_new(&commit.operation)
+                        .map_err(|_| StorageOpenError::FormatMismatch)?,
+                    StorageSequence::new(commit.sequence),
+                    published_writes(&table, &applied, &tenant, &commit.writes),
+                );
+                if self.journal.append(&record).and_then(|()| self.journal.sync()).is_ok() {
+                    self.journal_index.upsert(record);
+                }
+            }
+            table = applied;
             sequence = commit.sequence;
             let published_id = root::write_root_file(&self.dir, sequence, &table, false)
                 .map_err(|_| StorageOpenError::Unavailable)?;
@@ -354,6 +382,28 @@ impl FileStorage {
             }
         }
 
+        // W4-CA-4: durably record the reconstructable write set in the
+        // publication-history journal. The commit has already published, so
+        // the entry can only ever describe published state; the append runs
+        // before the `Published` ledger record so the uncertain path of a
+        // failed published-ledger sync still leaves the entry recorded. A
+        // failed append leaves a detectable sequence gap and no entry — it
+        // never delays or fails the published commit.
+        let journal_record = PublishedCommit::new(
+            intent.tenant.clone(),
+            intent.operation.clone(),
+            StorageSequence::new(sequence),
+            published_writes(
+                &published_table,
+                &self.published.table,
+                &intent.tenant,
+                &intent.writes,
+            ),
+        );
+        if self.journal.append(&journal_record).and_then(|()| self.journal.sync()).is_ok() {
+            self.journal_index.upsert(journal_record);
+        }
+
         // Step 8: append and durably sync the Published record.
         if self.faults.fire(FaultPoint::PublishedLedgerSync).is_err() {
             return CommitResult::Unknown(UnknownCause::PublishedLedgerSync);
@@ -520,6 +570,38 @@ fn matches_expectation(version: Option<u64>, expected: ExpectedVersion) -> bool 
     }
 }
 
+/// Derives the reconstructable published write set of one commit from the
+/// tables that commit moved (W4-CA-4).
+///
+/// A put carries the published document — the after-table's form, with the
+/// version the commit assigned — and a delete carries the identifier with
+/// the version the before-table held (`0` when the identifier was absent).
+/// Both the commit path and the recovery roll-forward call this, so the
+/// journal records one shape regardless of which path wrote it.
+fn published_writes(
+    before: &RootTable,
+    after: &RootTable,
+    tenant: &TenantId,
+    writes: &[StagedWrite],
+) -> Vec<PublishedWrite> {
+    writes
+        .iter()
+        .map(|write| match write {
+            StagedWrite::Put { document, .. } => {
+                let key = StorageKey::new(tenant, document.collection(), document.id());
+                let published = after.document(&key).unwrap_or_else(|| document.clone());
+                PublishedWrite::Put { document: published }
+            }
+            StagedWrite::Delete { id, .. } => {
+                let version_at_delete = before
+                    .find_by_document_id(tenant, id)
+                    .map_or(0, |(_, deleted)| deleted.metadata().version());
+                PublishedWrite::Delete { id: id.clone(), version_at_delete }
+            }
+        })
+        .collect()
+}
+
 /// Returns the weaker of two local durability levels.
 pub(crate) fn min_level(first: LocalDurability, second: LocalDurability) -> LocalDurability {
     use LocalDurability::{Buffered, Synced, Written};
@@ -598,13 +680,35 @@ impl super::StoragePort for FileStorage {
         self.table_at(sequence).tenant_documents_from(tenant, after, limit)
     }
 
+    fn tenant_commits(
+        &self,
+        tenant: &TenantId,
+        after: StorageSequence,
+        limit: u32,
+    ) -> Vec<PublishedCommit> {
+        self.journal_index.tenant_commits(tenant, after, limit)
+    }
+
+    fn committed_tenants(&self) -> Vec<TenantId> {
+        self.journal_index.committed_tenants()
+    }
+
+    fn tenant_sequence(&self, tenant: &TenantId, at: StorageSequence) -> Option<StorageSequence> {
+        self.journal_index.tenant_sequence(tenant, at)
+    }
+
+    fn servable_history_start(&self) -> Option<StorageSequence> {
+        self.journal_index.servable_start()
+    }
+
     fn published_state(&self) -> (StorageSequence, StorageRootId) {
         (StorageSequence::new(self.published.sequence), self.published.id.clone())
     }
 
     fn flush(&mut self) -> Result<(), ()> {
         self.wal.sync().map_err(|_| ())?;
-        self.ledger.sync().map_err(|_| ())
+        self.ledger.sync().map_err(|_| ())?;
+        self.journal.sync().map_err(|_| ())
     }
 
     #[cfg(test)]

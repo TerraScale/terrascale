@@ -72,6 +72,32 @@ pub(crate) trait StoragePort: Send {
         limit: u32,
     ) -> Vec<Document>;
 
+    /// Returns one tenant's published commits after `after`, in global
+    /// storage-sequence order, up to `limit` entries (W4-CA-4).
+    fn tenant_commits(
+        &self,
+        tenant: &TenantId,
+        after: StorageSequence,
+        limit: u32,
+    ) -> Vec<PublishedCommit>;
+
+    /// Returns every tenant that has at least one recorded published commit,
+    /// in canonical tenant order (W4-CA-4).
+    fn committed_tenants(&self) -> Vec<TenantId>;
+
+    /// Returns the tenant's latest recorded sequence at or below `at`
+    /// (W4-CA-4): the mapping entry that turns one global
+    /// storage-sequence cursor into this tenant's own progress.
+    fn tenant_sequence(&self, tenant: &TenantId, at: StorageSequence) -> Option<StorageSequence>;
+
+    /// Returns the oldest sequence the durable publication history can
+    /// serve, or `None` when no history is servable (W4-CA-4).
+    ///
+    /// A cursor older than this bound cannot be served incrementally: the
+    /// caller must fall back to a full catch-up or backup instead of
+    /// silently skipping the gap.
+    fn servable_history_start(&self) -> Option<StorageSequence>;
+
     /// Returns the currently published sequence and root identity.
     fn published_state(&self) -> (StorageSequence, StorageRootId);
 
@@ -81,6 +107,77 @@ pub(crate) trait StoragePort: Send {
     /// Arms one test fault inside the publication order. Test-only.
     #[cfg(test)]
     fn arm_test_fault(&mut self, point: FaultPoint);
+}
+
+/// One published commit reconstructed from the durable publication history
+/// (W4-CA-4).
+///
+/// The commit carries the logical write set itself — full documents for puts
+/// and identifier-plus-version for deletes — never a digest: a digest is not
+/// invertible, and a follower must be able to replay both puts and deletes
+/// idempotently by operation identity.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PublishedCommit {
+    tenant: TenantId,
+    operation_id: OperationId,
+    sequence: StorageSequence,
+    writes: Vec<PublishedWrite>,
+}
+
+impl PublishedCommit {
+    /// Creates one commit record from the published facts.
+    pub(crate) fn new(
+        tenant: TenantId,
+        operation_id: OperationId,
+        sequence: StorageSequence,
+        writes: Vec<PublishedWrite>,
+    ) -> Self {
+        Self { tenant, operation_id, sequence, writes }
+    }
+
+    /// Returns the tenant that owns the commit.
+    pub(crate) fn tenant(&self) -> &TenantId {
+        &self.tenant
+    }
+
+    /// Returns the stable operation identity of the commit.
+    pub(crate) fn operation_id(&self) -> &OperationId {
+        &self.operation_id
+    }
+
+    /// Returns the global storage sequence of the publication.
+    pub(crate) fn sequence(&self) -> StorageSequence {
+        self.sequence
+    }
+
+    /// Returns the reconstructable write set of the commit.
+    pub(crate) fn writes(&self) -> &[PublishedWrite] {
+        &self.writes
+    }
+}
+
+/// One reconstructable write of a published commit (W4-CA-4).
+///
+/// A put carries the published document — the form the commit assigned,
+/// version included. A delete carries the document identifier and the
+/// version that existed at the delete (`0` when the identifier was absent),
+/// because a snapshot read cannot distinguish a deleted identifier from one
+/// that never existed.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum PublishedWrite {
+    /// Insert or replace one document in its published form.
+    Put {
+        /// The document as the publication stored it, version included.
+        document: Document,
+    },
+    /// Delete one document by identifier.
+    Delete {
+        /// The deleted document's identifier.
+        id: DocumentId,
+        /// The version that existed at the delete; `0` when the identifier
+        /// was absent from the published view.
+        version_at_delete: u64,
+    },
 }
 
 /// An immutable event emitted after storage locks release for one published

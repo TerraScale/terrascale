@@ -1834,6 +1834,57 @@ fn engine_index_catalog_receives_publication_events_in_production() {
 }
 
 #[test]
+fn engine_publication_history_serves_reconstructable_commits_across_tenants() {
+    // W4-CA-4 at the Engine seam: the wrappers serve the journal's
+    // reconstructable commits per tenant, map a global cursor to per-tenant
+    // progress, and the history survives a reopen of the durable location.
+    let (dir, engine) = open_engine("engine-history");
+    for (tenant_name, operation_name, id) in [
+        ("tenant-a", "op-1", "doc-1"),
+        ("tenant-b", "op-2", "doc-1"),
+        ("tenant-a", "op-3", "doc-2"),
+    ] {
+        let scope = tenant_scope(&engine, tenant_name);
+        let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+        let mut transaction =
+            engine.begin(&scope, snapshot, operation(operation_name)).expect("begins");
+        transaction.put(document(id, "users", "value"), ExpectedVersion::New).expect("stages");
+        let receipt = match transaction.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(receipt) => receipt,
+            other => panic!("commit did not succeed: {other:?}"),
+        };
+        assert!(receipt.sequence().get() <= 3, "the three commits publish in order");
+    }
+    // The published sequence names the third commit; the journal serves up
+    // to it.
+    let scope = tenant_scope(&engine, "tenant-a");
+    let published = engine.read_snapshot(&scope).expect("snapshot").sequence();
+    assert_eq!(published.get(), 3);
+    let tenant_a = tenant("tenant-a");
+    let tenant_b = tenant("tenant-b");
+    assert_eq!(engine.committed_tenants(), vec![tenant_a.clone(), tenant_b.clone()]);
+    let commits = engine.tenant_commits(&tenant_a, crate::types::StorageSequence::new(0), 10);
+    assert_eq!(
+        commits.iter().map(|commit| commit.sequence().get()).collect::<Vec<u64>>(),
+        [1, 3],
+        "one tenant sees only its own commits, in global sequence order"
+    );
+    assert_eq!(
+        engine.tenant_sequence(&tenant_b, crate::types::StorageSequence::new(3)),
+        Some(crate::types::StorageSequence::new(2))
+    );
+    assert_eq!(engine.servable_history_start(), Some(crate::types::StorageSequence::new(1)));
+    drop(engine);
+
+    let reopened = reopen_engine(&dir);
+    let reopened_commits =
+        reopened.tenant_commits(&tenant_a, crate::types::StorageSequence::new(0), 10);
+    assert_eq!(reopened_commits, commits, "the journal serves the same records after a reopen");
+    drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn snapshot_documents_from_serves_bounded_windows_and_validates_the_view() {
     // W4-CA-7: the Engine's bounded windowed read pages exactly the view the
     // full snapshot read materializes, and rejects a foreign snapshot, scope,
