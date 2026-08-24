@@ -230,3 +230,6 @@ impl<'platform> ProtocolAdapter<'platform> {
         unimplemented!("Protocol forwarding belongs to W3-3")
     }
 }
+
+#[cfg(test)]
+mod tests;
