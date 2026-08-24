@@ -13,10 +13,13 @@ seam design integrator packets, the cross-seam coherence review, and the
 reliability corrections accepted by the parent. Those inputs are design
 evidence. They are not behavior Proof IDs.
 
-The governing records are the workspace execution charter at the
-repository-relative path `../specs/2026-08-23-terrabase-v2-goal.md`, the
-[W2 contract extraction](../parity/w2-contract-extraction.md), and the
+The governing records are the workspace-root execution charter resolved in
+this workspace as `/home/mariogk/Projects/TerraScale/specs/2026-08-23-terrabase-v2-goal.md`,
+the [W2 contract extraction](../parity/w2-contract-extraction.md), and the
 [accepted storage-format ADR](../adr/0001-independent-rust-repository-and-storage-format.md).
+The parent dispatch passes that resolved charter path into every worktree. A
+builder must not assume that a relative `../specs` path resolves from an
+arbitrary worktree.
 
 ## Decision summary
 
@@ -101,7 +104,7 @@ contract rules for W3, not suggestions for a later pass:
 | Correction | Required contract |
 | --- | --- |
 | Ambiguous commit responses | Return `Unknown` with the original `OperationId`; resolve it from the durable operation ledger before retrying or reporting an outcome. |
-| Publication visibility | Publish a new root only after a valid commit marker and the requested local durability action. Never expose an uncommitted root during recovery. |
+| Publication visibility | Publish a new root only after a valid commit marker and the requested pre-publication writes. It may become visible to live reads at atomic pointer publication; `Synced` and durable recoverability require post-publication pointer and directory sync. A post-publication sync failure returns `Unknown` and is resolved through the operation ledger. Never expose an uncommitted root during recovery. |
 | Index/storage coupling | Release storage locks before index work. Publish only immutable-root deltas with a monotonic `IndexGeneration`. |
 | Snapshot mutation | `ReadSnapshot` is immutable and tenant-scoped. A later commit creates a new snapshot. |
 | Durability vocabulary | Use only `Buffered`, `Written`, and `Synced` for local durability, and keep them separate from `Acknowledgement Level` and `Convergence`. |
@@ -467,28 +470,43 @@ packet. Each builder uses a worktree based on the preceding accepted commit.
 
 The documentation gate is followed by one small executable preparation packet
 before behavior work. The parent dispatches `W3-0-TYPE-EXPORT-PREP` in
-worktree `terrabasev2-w3-type-prep`, based on commit `ad3e52c`. Its purpose is
-to materialize the shared logical types and exports named in this document,
-then prove that all later packets can compile against one vocabulary.
+worktree `terrabasev2-w3-type-prep`, based on the integrated W3-0 docs tip. The
+dispatch must record the exact current docs tip by running
+`git rev-parse fleet/w3-core-design` after the docs commits are integrated. Its
+purpose is to materialize the shared logical types and exports named in this
+document, then prove that all later packets can compile against one vocabulary.
+The docs history leading to that dispatch includes the initial contract commit
+`ad3e52c` and the first reliability correction commit `74d5473`.
 
 The packet owns exactly these shared files:
 
 - `src/lib.rs`, for the public re-exports and crate module declarations;
-- `src/types.rs`, if the integrator chooses a separate shared-type module;
-- `Cargo.toml`, only when a dependency is required by those shared types;
-- `Cargo.lock`, only when `Cargo.toml` changes require its lockfile update.
+- `src/types.rs`, if the integrator chooses a separate shared-type module.
 
-The W3-0 integrator owns those files exclusively for this preparation commit.
-It may add compile-only type/export checks, but it must not implement Storage,
-Engine, Query, Index, or Protocol behavior. It must not edit generated parity
-output, overlays, or any W3 behavior path. The packet reports a clean locked
-check, format, clippy, and docs result, and then commits the preparation. The
-parent records that commit hash and W3-1 must base on that hash, never directly
-on `8771f13`.
+`Cargo.toml`, `Cargo.lock`, root CI, generated output, parity overlays, and all
+other root/shared files remain integrator-owned collision paths. If shared
+types require a dependency, the parent integrator makes that exact manifest
+change as a separate named action; W3-0 does not take ownership of the Cargo
+files.
+
+W3-0 owns the shared declarations in `src/lib.rs`; after the preparation
+commit, W3-1 has a narrow, named exception to that file only for declaring and
+re-exporting the Storage and Engine modules it implements. This exception does
+not transfer ownership of shared logical types or the rest of `src/lib.rs`.
+
+The W3-0 integrator owns those shared source files exclusively for this
+preparation commit.
+It materializes only the exact shared logical types and their exports. It must
+not implement Storage, Engine, Query, Index, Protocol, or Platform behavior.
+It may add compile-only type/export checks, but it must not edit generated
+parity output, overlays, or any W3 behavior path. The packet reports a clean
+locked check, format, clippy, and docs result, and then commits the preparation.
+The parent records that preparation commit hash and W3-1 must base on that
+hash, never directly on `8771f13` or on an unrecorded docs tip.
 
 | Packet | Worktree and base | Write scope | Collision owner |
 | --- | --- | --- | --- |
-| W3-1 Storage plus Engine | `terrabasev2-w3-storage-engine`, based on the W3-0 type/export preparation commit | `src/storage/**`, `src/engine/**`, `tests/storage/**`, `tests/engine/**`, and explicitly named storage/engine docs or receipts | W3-1 owns those paths only; integrator retains `src/lib.rs`, shared types, Cargo files, generated outputs, overlays, and shared logical types |
+| W3-1 Storage plus Engine | `terrabasev2-w3-storage-engine`, based on the recorded W3-0 type/export preparation commit | `src/storage/**`, `src/engine/**`, `tests/storage/**`, `tests/engine/**`, and explicitly named storage/engine docs or receipts, plus the narrow `src/lib.rs` module declaration/re-export edit described below | W3-1 owns those paths only; integrator retains shared type declarations, Cargo files, generated outputs, overlays, and all other `src/lib.rs` content |
 | W3-2 Query | `terrabasev2-w3-query`, based on the accepted W3-1 commit | `src/query/**`, `src/index/**`, `tests/query/**`, `tests/index/**`, and explicitly named query/index docs | W3-2 owns query/index paths; it does not edit W3-1 paths or shared files |
 | W3-3 Protocol | `terrabasev2-w3-protocol`, based on the accepted W3-2 commit | `src/adapters/protocol/**`, named protocol tests, and named protocol docs | W3-3 owns protocol paths; Platform implementation remains a later adapter packet |
 
@@ -500,7 +518,7 @@ Collision ownership is explicit:
 
 | Path family | Owner during W3 | Rule |
 | --- | --- | --- |
-| `src/lib.rs` and shared logical type declarations | later integrator | Builders may request an exact export change but do not edit the file in parallel |
+| `src/lib.rs` and shared logical type declarations | later integrator, with a W3-1 narrow exception | W3-1 may edit only the exact lines needed to declare and re-export its newly implemented Storage and Engine modules. It may not change shared logical types or any other export. |
 | `Cargo.toml`, `Cargo.lock`, toolchain, format, and root CI files | later integrator | No dependency or manifest edits in W3 seam packets unless the dispatch names one exact file |
 | `parity/inventory.json` and `parity/overlays/**` | later integrator | Builders provide test/evidence handoffs; they do not regenerate or change status |
 | `docs/design/w3-core-contract.md` | W3-0 contract writer | This document is the durable W3 design record; behavior builders do not rewrite it |
@@ -548,10 +566,11 @@ proved that this operation was not published. The error is typed and includes
 whether the operation may be retried with a new identity.
 
 `Unknown` is returned when the caller cannot know whether publication finished,
-for example a deadline or transport interruption after WAL publication. It
-always carries the original `OperationId`. It is not a successful commit and
-not a rejection. The caller must use the same identity and call the durable
-resolution method before deciding whether to retry:
+including a deadline or transport interruption after WAL publication, or a
+post-publication pointer/directory sync failure. It always carries the original
+`OperationId`. It is not a successful commit and not a rejection. The caller
+must use the same identity and call the durable resolution method before
+deciding whether to retry:
 
 ```rust
 pub enum DurableResolution {
@@ -591,9 +610,10 @@ The storage implementation must use this order for every accepted write:
    the WAL frames, commit marker, referenced data, and temporary manifest. The
    temporary manifest names the complete new root but is not visible yet.
 6. Atomically rename or otherwise publish the manifest/root pointer. For
-   `Synced`, sync the published pointer and the containing directory after that
-   publication. Only after this post-publish sync may the Engine return a
-   `Committed` receipt claiming `Synced`.
+   `Synced`, the new root may now be visible to live reads, but sync the
+   published pointer and the containing directory after that publication.
+   Only after this post-publish sync may the Engine return a `Committed` receipt
+   claiming `Synced` or claim that the root is durably recoverable.
 7. For `Buffered` and `Written`, return only the guarantees defined below,
    after the pointer publication that makes the root visible to this process.
    No level may report visibility before the commit marker and pointer
@@ -603,12 +623,15 @@ The storage implementation must use this order for every accepted write:
    separate W3-2 concern and may lag.
 
 Recovery ignores prepare frames without a valid commit marker and ignores
-manifests whose checksums or root identity do not verify. For `Synced`, the
-published manifest is never visible before its referenced data, commit marker,
-temporary manifest, post-publish pointer sync, and containing-directory sync
-complete. Lower levels may lose bytes after a crash, but they still follow the
-same logical marker, pointer, lock-release, and event order. The implementation
-may use a different file arrangement, but it may not change this order.
+manifests whose checksums or root identity do not verify. After atomic pointer
+publication, the new root may be visible to live reads. If the post-publish
+pointer or containing-directory sync fails, the operation returns `Unknown`,
+the operation ledger remains authoritative, and resolution must determine
+whether the publication is committed. The result must not claim `Synced` or
+durable recoverability until those syncs complete. Lower levels may lose bytes
+after a crash, but they still follow the same logical marker, pointer,
+lock-release, and event order. The implementation may use a different file
+arrangement, but it may not change this order.
 
 ### Local durability
 
@@ -892,10 +915,12 @@ sequential integration.
 
 Required checks for this contract document and W2 synchronization are:
 
-- Markdown syntax and every repository-relative link resolves from the
-  repository root. The workspace charter path `../specs/...` is an intentional
-  sibling-workspace path from the TerraBaseV2 root and is checked by the parent
-  workspace. The design's in-repository ADR and W2 links resolve locally.
+- Markdown syntax and every in-repository link resolves from the repository
+  root. The workspace charter is the external workspace-root resource at
+  `/home/mariogk/Projects/TerraScale/specs/2026-08-23-terrabase-v2-goal.md`.
+  The parent passes that resolved path into every worktree; no arbitrary
+  worktree-relative path is assumed. The design's in-repository ADR and W2
+  links resolve locally.
 - JSON syntax, parity generation, parity `--check`, deterministic inventory,
   parity tooling tests, and the pinned V1 citation audit.
 - Secret scan over declared existing roots.
