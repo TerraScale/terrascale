@@ -30,7 +30,8 @@ the parity owner records dispositions.
   notification ingress, journal-driven delivery, checkpoint/acknowledge/
   resend state, and the reconnect lifecycle.
 - `tests.rs` — the 22 scope-bound red tests of the contract's list (they
-  use `TenantScope::from_parts`, which is `pub(crate)`); the 2
+  use `TenantScope::from_parts`, which is `pub(crate)`), plus the three
+  repair-loop proofs; the 2
   public-construction red tests live in `tests/streaming/`
   (`engine_streams_returns_store_bound_to_durable_engine`,
   `stream_store_borrow_prevents_engine_shutdown_while_live`) with one
@@ -91,9 +92,18 @@ the source and deliberately excludes deadlines and cancellation signals —
 would reject every legitimate continuation. A cursor from another source,
 engine, or snapshot is `StreamError::InvalidCursor`
 (`stream_cursors_resume_exactly_where_the_previous_batch_ended`). The
-document resume rule inherits the storage seam's documented
-at-least-once caveat for an identifier reused across collections:
-duplicates only, never losses.
+document resume rule inherits the storage seam's documented caveats for an
+identifier reused across collections: duplicates only, never losses — and,
+because the seam's cursor is identifier-only, a *cycle*: with a small batch
+bound (the extreme is `limit = 1`) and the same identifier stored in an
+earlier collection and the streamed one, each resume resolves to the
+identifier's first canonical key and re-serves the later occurrence, so
+the stream can redeliver that document indefinitely and never report
+`EndOfStream`. Collection-scoped selectors do not avoid this, because the
+streaming cursor is identifier-only even when the selector is scoped; the
+structural fix is the collection-aware cursor already proposed as
+W4-SCA-5. A tenant-stream caller that reuses identifiers across
+collections should not use bound 1.
 
 ## Delivery design and the overflow policy
 
@@ -106,28 +116,53 @@ queue):
 1. **Ingress.** One streaming-owned sink per subscribed Engine registers
    through `Engine::subscribe_publications` on the first `subscribe` and
    detaches when the engine's last subscription closes. The sink clones
-   two small identifiers, takes the subscription's own mutex, pushes into
-   a bounded drop-oldest queue, and returns. **Overflow policy:
-   DROP-OLDEST with a counted drop.** The bound is
-   `MAX_SUBSCRIPTION_NOTIFICATIONS` (64 pairs); what a subscriber sees
-   when it falls behind is a growing cumulative `dropped_notifications`
-   count on its batches, never a blocked commit and never a lost event.
-   A lock the sink cannot take is skipped the same way.
+   two small identifiers and then takes every lock with `try_lock`
+   **only** — it never waits. **Overflow policy: DROP with a counted
+   drop.** Two drop kinds exist, both observable as the batch's cumulative
+   `dropped_notifications` count:
+   - *queue-full* — the consumer has not drained
+     `MAX_SUBSCRIPTION_NOTIFICATIONS` (64) identifier pairs, so the oldest
+     is dropped (drop-oldest) and counted in the guarded state;
+   - *lock contention* — the subscription's lock is busy because a
+     consumer is mid-poll (a poll holds its lock across the journal
+     read), or the engine's core map is busy in a concurrent
+     open/close/lookup, so the notification is dropped and counted in a
+     lock-free counter that the committing thread can increment without
+     waiting. An engine-level drop is attributed to every subscription of
+     that engine, which is exactly what it means: no subscription
+     received the notification.
+
+   What a subscriber sees when it falls behind is therefore a growing
+   cumulative drop count on its batches, never a blocked commit and never
+   a lost event. The repair-loop red test
+   (`publication_sink_never_blocks_a_commit_behind_a_wedged_poll`) wedges
+   a consumer inside a poll — holding the subscription lock — and asserts
+   a concurrent commit returns in milliseconds with the contention drop
+   counted and the event still delivered from the journal; against the
+   previous blocking-lock sink the same commit waited out the wedge
+   (~5 s) and the test failed.
 2. **Delivery.** `next_subscription_batch` resolves events on the
    consumer's thread from the durable publication journal after the
    checkpoint. Because the journal is the source of truth, a dropped
-   notification costs latency, never correctness: unacknowledged and
-   never-polled events remain servable, which is also the resend source
-   after reconnect.
+   notification — either drop kind — costs latency, never correctness:
+   unacknowledged and never-polled events remain servable, which is also
+   the resend source after reconnect.
 3. **Lock order.** The consumer takes the subscription lock, then the
    storage lock (inside `tenant_commits`). The commit path takes the
    storage lock, releases it, and only then emits to the sink, which
-   takes the subscription lock. Because the W3 publication order emits
-   after lock release, the two orders never hold both locks at once and
-   cannot deadlock. `stream_backpressure_never_blocks_an_engine_commit`
-   runs 72 publications past a never-draining consumer and asserts every
-   commit completed, the batch stayed bounded, and the overflow was
-   observable.
+   takes no lock it could wait on and no storage lock at all. Because the
+   W3 publication order emits after lock release and the sink never
+   waits, the two paths cannot deadlock and a poll can never stall a
+   commit. `stream_backpressure_never_blocks_an_engine_commit` runs 72
+   publications past a never-draining consumer and asserts every commit
+   completed, the batch stayed bounded, and the overflow was observable.
+4. **Collective ingress cost.** The sink fans each publication of an
+   engine into each of its live subscriptions, so the per-commit ingress
+   cost grows with the subscription count. The count is bounded at
+   `MAX_SUBSCRIPTIONS_PER_ENGINE` (64): a subscribe beyond it is the
+   typed `StreamError::InvalidSource` refusal, mirroring the engine's own
+   `MAX_PUBLICATION_SINKS` rule, and closing a subscription frees its
+   slot (`engine_bound_subscriptions_are_bounded_and_refused`).
 
 `StreamCompletion::SlowConsumer` remains the terminal observation a
 future push-based transport reports when its own bounded buffer forces a
@@ -144,29 +179,36 @@ acknowledged publication, `write_index` the write within that commit (so
 one batch boundary may split a commit without acknowledging writes the
 consumer never saw), and `epoch` the incarnation counter so a
 closed-and-reopened subscription never accepts a stale checkpoint.
-Batches are built commit-by-commit and stop before a commit whose
-deliverable events would exceed the spec bound; the recorded boundary is
-the position of the last delivered event. The boundary is recorded before
-the call returns; the durable checkpoint advances only in `acknowledge`,
-which is idempotent for the current checkpoint and returns
+The scan pages the journal after the checkpoint within the scan budget
+(`MAX_SUBSCRIPTION_SCAN_EVENTS`, 4096 examined writes per poll) until the
+batch is full, the journal is drained, or the budget is exhausted, so an
+accepted event beyond a run of filtered events is reachable in one poll
+(`subscription_reaches_events_beyond_a_long_filtered_run`; against the
+previous single-window scan the same fixture delivered nothing
+permanently). The recorded boundary is the position of the last event the
+batch **delivered or reported as a filtered drop**. The boundary is
+recorded before the call returns; the durable checkpoint advances only in
+`acknowledge`, which is idempotent for the current checkpoint and returns
 `StreamError::InvalidCursor` for a stale one. An unacknowledged batch is
 redelivered verbatim on the next poll and after a
 disconnect/reconnect/subscribe cycle — at-least-once, with stable
 (`OperationId`, `StorageSequence`) identity so duplicates are
 identifiable.
 
-Filtered events are progress facts (`filtered_dropped`) and never move
-the boundary by themselves: an all-filtered batch reports its drops and
-returns the checkpoint unchanged, which is what
-`stream_filters_report_drops_without_advancing_the_checkpoint` asserts.
-The honest cost: a filtered event before the next delivered event is
-re-examined on every poll until a delivery passes over it, and a prefix
-of filtered events longer than the scan budget
-(`MAX_SUBSCRIPTION_SCAN_EVENTS`, 4096 examined writes per poll) is
-reported as drops and re-examined without delivering — a bounded-work
-liveness limit, not a correctness gap. The contract's own rule forces
-this choice ("Filtered or skipped items do not silently advance a
-checkpoint").
+Filtered events are progress facts (`filtered_dropped`), and the recorded
+boundary covers exactly the drops a batch reports: the advance is
+*reported*, never silent, and the durable checkpoint still moves only at
+the acknowledgement seam — the reading of the contract's "Filtered or
+skipped items do not silently advance a checkpoint" that preserves
+liveness. Without it, a filtered run longer than the fetch window stalled
+delivery permanently, because the boundary moved only on delivered events
+(the repair-loop S2 defect). Consequences: a compliant consumer that
+acknowledges its batches never re-examines acknowledged drops (the
+amended `stream_filters_report_drops_without_advancing_the_checkpoint`
+asserts the reported advance, the verbatim redelivery before the ack, and
+the no-re-scan after it), and a filtered run longer than the scan budget
+is delivered as successive partial batches — each reporting its drops —
+rather than one batch.
 
 ### Change-kind mapping
 
@@ -250,6 +292,46 @@ the parity owner may record.
 - A fixed notification bound (64) is the W4-STREAM configuration;
   per-deployment configurability is a later disposition.
 
+## Deviations and additive surface (S5)
+
+The frozen W4-0 names and shapes are unchanged. The implementation adds
+surface the declarations did not enumerate, listed here for the parent's
+adjudication:
+
+- **Types and variants:** `StreamSourceKind` (public, re-exported from
+  `streaming`) is the public observation of a cursor's source kind that
+  `StreamPosition` carries.
+- **Module constants:** `MAX_STREAM_BATCH_ITEMS`,
+  `MAX_SUBSCRIPTION_BATCH_ITEMS`, `MAX_EXCLUDED_IDS` (in `streaming`),
+  and `MAX_SUBSCRIPTION_NOTIFICATIONS`, `MAX_SUBSCRIPTIONS_PER_ENGINE`,
+  `MAX_SUBSCRIPTION_SCAN_EVENTS` (in the crate-private `subscription`
+  module). Each is the configured bound its section names.
+- **Constructors and methods:** `SubscriptionSpec::from_beginning`;
+  `DocumentStreamSelector::{try_new, with_id, with_prefix, with_match,
+  excluding}` and its accessors; `TimeSeriesStreamRange::try_new` and its
+  accessors; `FamilyStreamSelector::try_new` and `request`;
+  `ChangeFilter::try_new/kinds/collections/accepts`;
+  `SubscriptionAcknowledgement::confirming`; `StreamBatch`'s accessors
+  (including `index_generation`); `StreamPosition::{kind, sequence}`;
+  `ChangeEvent`'s accessors; and the `StreamStore` methods
+  `open/next_batch/position/subscribe/next_subscription_batch/acknowledge/
+  subscription_status/disconnect_subscription/close_subscription`.
+- **Signature adjustment:** `next_batch` takes a per-call
+  `&Cancellation` in addition to the contract's sketched
+  `(cursor, bound)` shape — the shared `Cancellation` severs on clone, so
+  only a per-call reference observes a live cancel; this is how the
+  cancellation-liveness red test is honestly satisfiable.
+- **Derived-trait adjustments:** `TimeSeriesStreamRange` and
+  `FamilyStreamSelector` keep their declared `Eq`/`PartialEq` via manual
+  structural implementations (the declared derives are unsound over the
+  wrapped family payloads' `f64` fields); semantics are documented at
+  each impl.
+- **Dead state:** `SubscriptionStatus::Opening` is named by the public
+  vocabulary but never observed: the synchronous W4-STREAM open completes
+  the negotiation inside `subscribe` (which returns `Active` directly).
+  The private state enum carries the variant with a documented
+  dead-code allowance; a transport-async open would occupy it.
+
 ## Limits
 
 - **Checkpoint durability is engine-lifetime.** Subscription state lives
@@ -260,11 +342,25 @@ the parity owner may record.
 - **Notification-registry retention.** The registry entry of an engine
   dropped with open subscriptions persists until process end (bounded by
   abandoned subscriptions; removed on normal close).
+- **Per-poll materialization is bounded in commits, not writes (S3).**
+  `tenant_commits` returns whole commits, so a poll transiently clones
+  full write sets — complete `Document` values — for one journal page at
+  a time: at most `max_events + 1` commits of the tenant, plus the ≤
+  `max_events` delivered events the batch retains. The paging loop bounds
+  the *peak* to one page (pages are processed and dropped, not
+  accumulated), and a single commit's write set is itself bounded by the
+  engine's per-transaction document limits; but a poll over commits with
+  large write sets transiently materializes their documents without a
+  writes-level bound. A write-windowed journal read
+  (`commits_after`-style, paged by writes) is proposed as W4-SCA-7.
 - **No per-document storage sequence.** Document cursors position by
   document identity within the snapshot, so `StreamPosition` reports the
   snapshot's publication sequence, not a per-item sequence. The windowed
   read's id-only cursor also means a collection-scoped stream may
-  re-scan non-matching documents between batches (bounded, at-least-once).
+  re-scan non-matching documents between batches (bounded,
+  at-least-once), and — per the cursor-resume disclosure above — can
+  cycle indefinitely at small batch bounds when an identifier is reused
+  across collections (W4-SCA-5).
 - **Exact-id existence probes** page in canonical order up to
   `MAX_WINDOW_READS_PER_BATCH` windows per probe at `open` time; a tenant
   with more than that many documents before the target in canonical
@@ -276,12 +372,30 @@ the parity owner may record.
 - **Family and time-series streams read whole records** per call
   (series are retention-bounded); page-by-page family streaming awaits a
   family-seam capability.
-- **Filter-drop liveness.** As described above, an all-filtered prefix is
-  re-examined per poll within the scan budget.
+- **Scan-budget chunking.** A filtered run longer than
+  `MAX_SUBSCRIPTION_SCAN_EVENTS` (4096 examined writes) is delivered as
+  successive partial batches, each reporting its own drops, instead of
+  one batch; delivery never stalls, but one poll cannot cross the budget.
 - **`StreamError` has no storage-failure variant** (frozen set): an
   unreachable or poisoned storage lock reports `EngineClosed`, and family
   or query rejections report `InvalidSource`, each documented at the
   mapping site.
+- **Close/cancel conflation (S6).** `close_subscription` reports
+  `Closed(StreamCompletion::Cancelled)` because the frozen
+  `StreamCompletion` set has no dedicated close distinction, while
+  PB-6005 names an explicit close reason distinct from cancellation.
+  Recorded as tracked parent decision **W4-SD-1** (below); a later
+  `StreamCompletion` widening or a close-reason parameter resolves it.
+
+## Tracked parent decisions
+
+- **W4-SD-1 (from S6):** distinguish an explicit subscription close from
+  cancellation at the terminal status. Today both observations report
+  `Closed(Cancelled)`. Options: widen `StreamCompletion` with a close
+  distinction (a frozen-contract change), or add a close-reason input to
+  `close_subscription`. No builder may pick silently; W4-STREAM records
+  the conflation and its test (`subscription_close_reports_an_explicit_
+  terminal_status`) asserts today's honest shape.
 
 ## Proposed collision actions
 
@@ -291,16 +405,59 @@ the parity owner may record.
 | W4-SCA-2 | `src/engine/mod.rs`, `src/storage/mod.rs` | A per-id snapshot read (`read_document_at` surfaced on the Engine) so exact-id selectors probe existence in one call instead of paging canonical order. | Same freeze. |
 | W4-SCA-3 | `src/streaming/mod.rs` after parent adjudication | Add a storage-failure (or internal) variant to `StreamError` so poisoned locks and family/query rejections stop mapping onto `EngineClosed`/`InvalidSource`. | The variant set is the frozen W4-0 contract; widening it is a parent decision. |
 | W4-SCA-4 | `src/query/mod.rs` or `src/engine/mod.rs` | Bind `QueryStore` execution to the Engine's live index catalog (the W4-CA-3 catalog) so query streams can report a used generation other than `None`. | `src/query/**` and `src/engine/**` are frozen. |
-| W4-SCA-5 | `src/storage/root.rs`, `src/engine/mod.rs` | A collection-aware window cursor (resume at (collection, id) instead of id-only) so collection-scoped document streams stop re-scanning foreign collections. | `src/storage/**` and `src/engine/**` are frozen. |
+| W4-SCA-5 | `src/storage/root.rs`, `src/engine/mod.rs` | A collection-aware window cursor (resume at (collection, id) instead of id-only) so collection-scoped document streams stop re-scanning foreign collections and cannot cycle on a cross-collection reused identifier. | `src/storage/**` and `src/engine/**` are frozen. |
 | W4-SCA-6 | `src/families/mod.rs` | Expose `RESERVED_COLLECTION` crate-wide (one `pub(crate) use`) so streaming and query stop mirroring the literal. | `src/families/**` is frozen. |
+| W4-SCA-7 (from S3) | `src/storage/mod.rs`, `src/storage/ledger.rs`, `src/engine/mod.rs` | A write-windowed publication-history read: page `tenant_commits` by reconstructed writes (or return write stubs resolvable per write) so a subscription poll's transient materialization is bounded in events, not in commits × write-set size. | `src/storage/**` and `src/engine/**` are frozen. |
 | — | `src/engine/mod.rs:604` (doc-only) | The integrator's W4-CA-2 doc link `[`StreamStore`](crate::streaming::StreamStore)` triggers a `redundant explicit link target` rustdoc warning; simplify to `[`StreamStore`]`. Pre-existing at the base commit; recorded, not fixed (read-only file). | Same freeze. |
+
+## Repair history
+
+- **a1** (commit `9791d49`): initial W4-STREAM implementation. Inspector
+  GO (finding 1 strongly recommended); warden NO-GO on the same defect.
+- **a2** (tip of `fleet/w4-stream` after `9791d49`; the parent's mission
+  report records the exact hash, which a commit cannot contain of
+  itself): parent adjudication of both gates. Fixes applied:
+  - **S1 (blocking, HIGH):** the publication sink now takes every lock
+    with `try_lock`, dropping and counting the notification on
+    contention (engine-level counter for the core map, per-subscription
+    counter for a consumer mid-poll, both lock-free). Red test
+    `publication_sink_never_blocks_a_commit_behind_a_wedged_poll`:
+    against the old blocking sink the concurrent commit measured
+    ~5.0 s (wedged) and failed; with the fix it passes with the drop
+    counted and delivery intact.
+  - **S2 (medium):** the scan pages the journal within the 4096-event
+    budget, and the recorded boundary covers exactly the drops a batch
+    reports, so a filtered run longer than the fetch window no longer
+    stalls delivery. Durable checkpoints still advance only at
+    acknowledgement. Red test
+    `subscription_reaches_events_beyond_a_long_filtered_run`: against
+    the old single-window scan the accepted event was never delivered
+    (0 events, assertion failed); with the fix it is delivered in one
+    poll with the run reported as drops. The amended contract test
+    `stream_filters_report_drops_without_advancing_the_checkpoint`
+    asserts the reported (non-silent) advance, verbatim redelivery
+    before the ack, and no re-scan after it.
+  - **S3:** disclosed precisely under Limits (peak = one journal page of
+    full write sets; per-commit write sets bounded by engine limits);
+    proposed W4-SCA-7.
+  - **S4:** the cursor-resume disclosure now includes the seam's cycling
+    caveat (structural fix W4-SCA-5).
+  - **S5:** additive module-public surface and the `Opening` dead state
+    enumerated under "Deviations and additive surface".
+  - **S6:** close/cancel conflation recorded as tracked parent decision
+    W4-SD-1.
+  - **S7:** per-commit collective ingress cost bounded by
+    `MAX_SUBSCRIPTIONS_PER_ENGINE` (64), refused beyond, slot freed on
+    close; test
+    `engine_bound_subscriptions_are_bounded_and_refused`.
 
 ## Checks
 
-Run at the packet tip (exit codes in the mission report): `cargo fmt
---all -- --check`, `cargo check --workspace --locked`, `cargo test
---workspace --locked --release` (223 passing: 198 baseline + 24 contract
-tests + 1 focused extra), `cargo clippy --workspace --all-targets
---all-features --locked -- -D warnings`, `cargo doc --workspace
---no-deps --locked` (one pre-existing warning in `src/engine/mod.rs`,
-see the collision table), `python3 scripts/validate_parity.py --check`.
+Run at the a1 tip and re-run at the a2 tip (exit codes in the mission
+report): `cargo fmt --all -- --check`, `cargo check --workspace
+--locked`, `cargo test --workspace --locked --release` (a2: 226 passing
+= 198 baseline + 24 contract tests + 4 focused extras), `cargo clippy
+--workspace --all-targets --all-features --locked -- -D warnings`,
+`cargo doc --workspace --no-deps --locked` (one pre-existing warning in
+`src/engine/mod.rs`, see the collision table), `python3
+scripts/validate_parity.py --check`.

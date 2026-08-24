@@ -11,7 +11,7 @@ use std::{
     collections::BTreeSet,
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::engine::{CommitOutcome, Engine, EngineConfig};
@@ -1479,8 +1479,8 @@ fn stream_filters_report_drops_without_advancing_the_checkpoint() {
     );
     assert_eq!(first.events().len(), 3);
     // The three `orders` publications the scan examined were dropped and
-    // reported; the trailing one sits after the boundary, so it will be
-    // re-examined on the next poll — the no-advance rule's cost.
+    // reported; the batch's recorded boundary covers exactly the events it
+    // delivered or reported, so the advance is reported, never silent.
     assert_eq!(first.filtered_dropped(), 3, "dropped events are reported");
     let acknowledged_checkpoint = first.checkpoint();
     store
@@ -1490,8 +1490,8 @@ fn stream_filters_report_drops_without_advancing_the_checkpoint() {
         )
         .expect("acknowledges");
 
-    // A batch whose events are all filtered reports the drops and keeps
-    // the checkpoint exactly where the acknowledgement left it.
+    // A batch whose events are all filtered reports the drops as progress
+    // facts, and its recorded boundary covers exactly those reported drops.
     for index in 3..5 {
         commit_document(
             &engine,
@@ -1506,11 +1506,179 @@ fn stream_filters_report_drops_without_advancing_the_checkpoint() {
         .next_subscription_batch(&tenant_scope, "filtered", &Cancellation::new())
         .expect("batch");
     assert!(dropped.events().is_empty());
-    assert_eq!(dropped.filtered_dropped(), 3, "the drops are progress facts");
-    assert_eq!(
+    assert_eq!(dropped.filtered_dropped(), 2, "the drops are progress facts");
+    assert_ne!(
         dropped.checkpoint(),
         acknowledged_checkpoint,
-        "a filter drop never advances the checkpoint"
+        "the recorded boundary covers the reported drops"
+    );
+    // The durable checkpoint still advances only at the acknowledgement
+    // seam: without the acknowledgement, the recorded batch is redelivered
+    // verbatim (at-least-once), never skipped past.
+    let redelivered = store
+        .next_subscription_batch(&tenant_scope, "filtered", &Cancellation::new())
+        .expect("redelivery");
+    assert_eq!(redelivered, dropped, "an unacknowledged batch is not skipped past");
+    store
+        .acknowledge(&tenant_scope, SubscriptionAcknowledgement::confirming(dropped.checkpoint()))
+        .expect("acknowledges");
+    // After the acknowledgement, the next poll starts past the reported
+    // drops: they are not re-examined and no event was lost.
+    let next = store
+        .next_subscription_batch(&tenant_scope, "filtered", &Cancellation::new())
+        .expect("batch");
+    assert!(next.events().is_empty());
+    assert_eq!(next.filtered_dropped(), 0, "acknowledged drops are not re-examined");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// Repair-loop proofs (a2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn publication_sink_never_blocks_a_commit_behind_a_wedged_poll() {
+    let (dir, engine) = open_engine("sink-nonblocking");
+    let tenant_scope = scope(&engine, "t1");
+    commit_document(&engine, "t1", "op-seed", "users", "doc-seed", "v");
+    let store = engine.streams();
+    let spec = subscription("wedged-poll", 8).from_beginning();
+    store.subscribe(&tenant_scope, &spec).expect("subscribes");
+
+    // Wedge one consumer poll while it holds the subscription lock - the
+    // exact contention the committing thread's sink must survive without
+    // waiting - and commit from another thread while it is held.
+    streaming::subscription::arm_poll_wedge("wedged-poll");
+    let (committed, commit_elapsed, wedged_batch) = std::thread::scope(|scope_thread| {
+        let consumer = scope_thread.spawn(|| {
+            store
+                .next_subscription_batch(&tenant_scope, "wedged-poll", &Cancellation::new())
+                .expect("the wedged poll completes after release")
+        });
+        // Wait for the poll to actually enter the wedge (bounded).
+        let entered_by = Instant::now() + Duration::from_secs(5);
+        while !streaming::subscription::wedge_entered() {
+            assert!(Instant::now() < entered_by, "the consumer poll never wedged");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        // The measured commit runs while the wedge is held: its emit must
+        // not wait on the subscriber's lock.
+        let started = Instant::now();
+        let committed =
+            commit_document(&engine, "t1", "op-during-wedge", "users", "doc-wedge", "v");
+        let commit_elapsed = started.elapsed();
+        streaming::subscription::release_poll_wedge();
+        let batch = consumer.join().expect("the consumer thread does not panic");
+        (committed, commit_elapsed, batch)
+    });
+
+    // The commit returned while the poll was still wedged: the sink never
+    // waited on the subscriber's lock. The bound is generous (a synced
+    // commit takes milliseconds), while a blocking sink would wait out the
+    // wedge's own five-second deadline and fail this bound.
+    assert!(committed.get() > 0, "the commit published");
+    assert!(
+        commit_elapsed < Duration::from_secs(1),
+        "the commit blocked {commit_elapsed:?} behind a wedged subscriber poll"
+    );
+    assert!(
+        wedged_batch.events().iter().any(|event| event.operation_id().as_str() == "op-seed"),
+        "the wedged poll delivered its own batch after release"
+    );
+
+    // The notification the sink dropped on contention is counted, and the
+    // delivery itself was never lost: the next poll serves the committed
+    // event from the journal.
+    let batch = store
+        .next_subscription_batch(&tenant_scope, "wedged-poll", &Cancellation::new())
+        .expect("batch serves");
+    assert!(batch.dropped_notifications() > 0, "the contention drop is counted and observable");
+    assert!(
+        batch.events().iter().any(|event| event.operation_id().as_str() == "op-during-wedge"),
+        "delivery is journal-driven, so the dropped notification cost latency only"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn subscription_reaches_events_beyond_a_long_filtered_run() {
+    let (dir, engine) = open_engine("filtered-run");
+    let tenant_scope = scope(&engine, "t1");
+    // A filtered run longer than the fetch window (max_events + 1 = 4
+    // commits per page) precedes the accepted event.
+    for index in 0..5 {
+        commit_document(
+            &engine,
+            "t1",
+            &format!("audit-{index}"),
+            "audit",
+            &format!("entry-{index}"),
+            "v",
+        );
+    }
+    commit_document(&engine, "t1", "op-users", "users", "user-0", "v");
+    let store = engine.streams();
+    let filter = ChangeFilter::try_new(None, Some(vec![collection("users")])).expect("filter");
+    let spec = SubscriptionSpec::try_new("tail", filter, 3).expect("spec").from_beginning();
+    store.subscribe(&tenant_scope, &spec).expect("subscribes");
+
+    let batch =
+        store.next_subscription_batch(&tenant_scope, "tail", &Cancellation::new()).expect("batch");
+    assert_eq!(
+        batch.events().len(),
+        1,
+        "the accepted event beyond the filtered run is delivered in one poll"
+    );
+    assert_eq!(batch.events()[0].collection().as_str(), "users");
+    assert_eq!(batch.events()[0].operation_id().as_str(), "op-users");
+    assert_eq!(batch.filtered_dropped(), 5, "the filtered run is reported as drops");
+    store
+        .acknowledge(&tenant_scope, SubscriptionAcknowledgement::confirming(batch.checkpoint()))
+        .expect("acknowledges");
+
+    // The boundary covers the reported drops, so a later filtered run
+    // continues from there instead of re-scanning the acknowledged prefix.
+    for index in 5..7 {
+        commit_document(
+            &engine,
+            "t1",
+            &format!("audit-{index}"),
+            "audit",
+            &format!("entry-{index}"),
+            "v",
+        );
+    }
+    let tail =
+        store.next_subscription_batch(&tenant_scope, "tail", &Cancellation::new()).expect("batch");
+    assert!(tail.events().is_empty());
+    assert_eq!(tail.filtered_dropped(), 2, "only the new filtered run is examined");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn engine_bound_subscriptions_are_bounded_and_refused() {
+    let (dir, engine) = open_engine("subscription-bound");
+    let tenant_scope = scope(&engine, "t1");
+    let store = engine.streams();
+    for index in 0..streaming::subscription::MAX_SUBSCRIPTIONS_PER_ENGINE {
+        let spec = subscription(&format!("sub-{index}"), 4);
+        store.subscribe(&tenant_scope, &spec).expect("subscribes within the bound");
+    }
+    let beyond = subscription("sub-beyond", 4);
+    assert_eq!(
+        store.subscribe(&tenant_scope, &beyond).unwrap_err(),
+        StreamError::InvalidSource,
+        "the per-commit ingress cost is bounded by refusing beyond the bound"
+    );
+    // Closing one subscription frees its slot.
+    store.close_subscription(&tenant_scope, "sub-0").expect("closes");
+    let refill = subscription("sub-refill", 4);
+    assert_eq!(
+        store.subscribe(&tenant_scope, &refill).expect("resubscribes into the freed slot"),
+        SubscriptionStatus::Active
     );
 
     std::fs::remove_dir_all(&dir).ok();

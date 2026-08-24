@@ -7,26 +7,31 @@
 //! - **Notification ingress.** One streaming-owned sink per subscribed
 //!   `Engine` is registered through
 //!   [`Engine::subscribe_publications`](crate::engine::Engine::subscribe_publications).
-//!   The sink runs synchronously on the committing thread, so it does four
-//!   things only: clone two small identifiers, take the subscription's own
-//!   mutex, push into a bounded drop-oldest queue, and return. It never
-//!   blocks, never takes a storage lock, and never grows an unbounded
-//!   queue. A subscription whose consumer has not drained its queue drops
-//!   the oldest notification and counts the drop — the observable overflow
-//!   policy. A dropped notification costs latency, never correctness,
-//!   because delivery itself is journal-driven.
+//!   The sink runs synchronously on the committing thread, so it takes
+//!   every lock with `try_lock` only: a busy lock — a consumer mid-poll
+//!   holding its subscription lock, or a concurrent open or close — drops
+//!   the notification and counts the drop in a lock-free counter. It never
+//!   blocks, never waits, never takes a storage lock, and never grows an
+//!   unbounded queue. A subscription whose consumer has not drained its
+//!   queue drops the oldest notification and counts that drop too. Both
+//!   drop kinds are the observable overflow policy, and both cost latency
+//!   only, never correctness, because delivery itself is journal-driven.
 //! - **Delivery.** Batches are resolved on the consumer's thread from the
 //!   durable publication-history journal
 //!   ([`Engine::tenant_commits`](crate::engine::Engine::tenant_commits)),
 //!   which contains only published commits. The consumer's lock order —
 //!   subscription lock, then storage lock — cannot deadlock with the commit
 //!   path, because the W3 publication order releases every storage lock
-//!   before the event is emitted.
+//!   before the event is emitted, and the sink never waits on either.
 //!
 //! The durable checkpoint advances only at the acknowledgement seam.
 //! Unacknowledged batches are redelivered verbatim — delivery is
 //! at-least-once, and every event carries stable operation identity plus
-//! storage sequence so duplicates are identifiable.
+//! storage sequence so duplicates are identifiable. A batch's *recorded
+//! boundary* may cover events its filter dropped, because the batch
+//! reports those drops as progress facts: the advance is reported, never
+//! silent, and the durable checkpoint still moves only when the caller
+//! acknowledges the boundary.
 
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -34,6 +39,12 @@ use std::{
         Arc, Mutex, MutexGuard, OnceLock, PoisonError,
         atomic::{AtomicU64, Ordering as AtomicOrdering},
     },
+};
+
+#[cfg(test)]
+use std::{
+    sync::atomic::AtomicBool,
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -63,14 +74,26 @@ use super::{
 /// because a dropped notification costs latency, never correctness.
 pub const MAX_SUBSCRIPTION_NOTIFICATIONS: usize = 64;
 
+/// The bound of one engine's simultaneously live subscriptions.
+///
+/// The sink fans every publication of an engine into each of its live
+/// subscriptions, so the per-commit ingress cost grows with the
+/// subscription count. This bound caps that collective cost: a subscribe
+/// beyond it is refused with [`StreamError::InvalidSource`], the same
+/// typed refusal the engine's own sink registry uses at
+/// [`MAX_PUBLICATION_SINKS`](crate::engine::MAX_PUBLICATION_SINKS).
+pub const MAX_SUBSCRIPTIONS_PER_ENGINE: usize = 64;
+
 /// How many committed writes one subscription batch may examine before it
 /// returns short.
 ///
-/// The bound keeps an all-filtered prefix's rescan bounded per poll; a
-/// prefix of filtered writes longer than this budget is reported as drops
-/// and re-examined on the next poll. A tracer-scale limit, recorded with
-/// its liveness consequence in the design record.
-const MAX_SUBSCRIPTION_SCAN_EVENTS: usize = 4096;
+/// The scan pages the journal within this budget so an accepted event
+/// beyond a run of filtered events is reachable; a filtered run longer
+/// than the budget is reported as drops in partial batches and continues
+/// on the next poll, because each batch's boundary covers the drops it
+/// reported. A tracer-scale limit, recorded with its semantics in the
+/// design record.
+pub const MAX_SUBSCRIPTION_SCAN_EVENTS: usize = 4096;
 
 /// The reserved family collection, mirrored from the W3 family contract
 /// (`src/query/spec.rs` mirrors it the same way).
@@ -108,7 +131,13 @@ struct Notification {
 }
 
 /// The private state of one live subscription.
+///
+/// The state sits behind the handle's mutex; the handle's lock-free
+/// contention counter lives beside it so the committing thread can count a
+/// dropped notification without ever waiting for the mutex.
 struct SubscriptionCore {
+    #[cfg(test)]
+    name: String,
     tenant: TenantId,
     engine_identity: u128,
     filter: ChangeFilter,
@@ -117,7 +146,7 @@ struct SubscriptionCore {
     checkpoint: CheckpointInner,
     pending: Option<SubscriptionBatch>,
     notifications: VecDeque<Notification>,
-    dropped_notifications: u64,
+    queue_full_drops: u64,
 }
 
 /// The private negotiation states; `Closed` is terminal and removes the
@@ -150,10 +179,34 @@ impl SubscriptionState {
     }
 }
 
-/// Every live subscription of one `Engine`, plus its sink registration.
+/// One engine's live subscriptions: the guarded core map, the sink
+/// registration, and the lock-free ingress counters.
+///
+/// The counters live outside `inner` so the committing thread can count a
+/// notification it had to drop on lock contention without taking any lock.
+/// An engine-level count is attributed to every subscription of that
+/// engine, which is exactly what a dropped ingress means: no subscription
+/// received the notification.
 struct EngineSubscriptions {
+    inner: Mutex<EngineSubscriptionsInner>,
+    /// Notifications dropped because `inner` was busy at emit time.
+    contention_drops: AtomicU64,
+}
+
+/// The guarded part of one engine's subscription set.
+struct EngineSubscriptionsInner {
     sink_guard: Option<SubscriptionGuard>,
-    cores: BTreeMap<(String, String), Arc<Mutex<SubscriptionCore>>>,
+    cores: BTreeMap<(String, String), Arc<SubscriptionHandle>>,
+}
+
+/// One subscription's lockable state plus its lock-free contention
+/// counter.
+struct SubscriptionHandle {
+    state: Mutex<SubscriptionCore>,
+    /// Notifications dropped because `state` was busy at emit time —
+    /// typically a consumer mid-poll, which holds its lock across the
+    /// journal read.
+    contention_drops: AtomicU64,
 }
 
 /// The process-wide index of engine subscription sets, keyed by the
@@ -168,18 +221,77 @@ struct EngineSubscriptions {
 /// dropped with open subscriptions retains its entry until process end —
 /// bounded by the number of abandoned subscriptions and recorded as a
 /// limit with a proposed collision action in the design record.
-static ENGINE_SUBSCRIPTIONS: OnceLock<Mutex<BTreeMap<u128, Arc<Mutex<EngineSubscriptions>>>>> =
+static ENGINE_SUBSCRIPTIONS: OnceLock<Mutex<BTreeMap<u128, Arc<EngineSubscriptions>>>> =
     OnceLock::new();
 
 /// The monotonic incarnation counter for subscription checkpoints.
 static CHECKPOINT_EPOCHS: AtomicU64 = AtomicU64::new(1);
 
+// ---------------------------------------------------------------------------
+// Test-only poll wedge (repair S1)
+// ---------------------------------------------------------------------------
+
+/// Requests that the next poll of the named subscription wedge while
+/// holding its lock. Test-only.
+#[cfg(test)]
+static WEDGE_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Signals that a poll has entered the wedge. Test-only.
+#[cfg(test)]
+static WEDGE_ENTERED: AtomicBool = AtomicBool::new(false);
+
+/// The name of the subscription whose polls wedge. Test-only.
+#[cfg(test)]
+static WEDGE_NAME: OnceLock<String> = OnceLock::new();
+
+/// Arms the poll wedge for the named subscription and clears the entered
+/// flag. Test-only.
+#[cfg(test)]
+pub(crate) fn arm_poll_wedge(name: &str) {
+    WEDGE_ENTERED.store(false, AtomicOrdering::Release);
+    let _ = WEDGE_NAME.set(name.to_owned());
+    WEDGE_REQUESTED.store(true, AtomicOrdering::Release);
+}
+
+/// Reports whether a poll has entered the wedge. Test-only.
+#[cfg(test)]
+pub(crate) fn wedge_entered() -> bool {
+    WEDGE_ENTERED.load(AtomicOrdering::Acquire)
+}
+
+/// Releases the wedge. Test-only.
+#[cfg(test)]
+pub(crate) fn release_poll_wedge() {
+    WEDGE_REQUESTED.store(false, AtomicOrdering::Release);
+}
+
+/// The wedge point itself: sleeps while requested, with a hard deadline so
+/// a forgotten release can never hang a build. Test-only.
+///
+/// The caller invokes this while holding the subscription's state lock, so
+/// a wedged poll is exactly the contention the sink must survive without
+/// waiting.
+#[cfg(test)]
+fn wedge_point(core: &SubscriptionCore) {
+    if WEDGE_REQUESTED.load(AtomicOrdering::Acquire)
+        && core.name == *WEDGE_NAME.get_or_init(String::new)
+    {
+        WEDGE_ENTERED.store(true, AtomicOrdering::Release);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while WEDGE_REQUESTED.load(AtomicOrdering::Acquire) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+
 /// Locks one mutex, recovering from poisoning.
 ///
 /// Streaming state is advisory — correctness lives in the durable journal —
 /// so a lock poisoned by a panicked consumer is recovered rather than
-/// propagated, and the sink uses the same rule so a panic can never reach
-/// the committing thread.
+/// propagated. Only consumer threads use this rule: the sink never waits on
+/// a lock at all, so a panic can never reach the committing thread.
 fn lock_recovered<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -197,17 +309,16 @@ pub(crate) fn validate_spec_name(name: &str) -> Result<(), RequestValidationErro
 
 /// Returns the subscription set of one Engine, registering its sink on
 /// first use.
-fn engine_set(
-    engine: &Engine,
-    identity: u128,
-) -> Result<Arc<Mutex<EngineSubscriptions>>, StreamError> {
+fn engine_set(engine: &Engine, identity: u128) -> Result<Arc<EngineSubscriptions>, StreamError> {
     let registry = ENGINE_SUBSCRIPTIONS.get_or_init(|| Mutex::new(BTreeMap::new()));
     let mut engines = lock_recovered(registry);
     if let Some(set) = engines.get(&identity) {
         return Ok(Arc::clone(set));
     }
-    let set =
-        Arc::new(Mutex::new(EngineSubscriptions { sink_guard: None, cores: BTreeMap::new() }));
+    let set = Arc::new(EngineSubscriptions {
+        inner: Mutex::new(EngineSubscriptionsInner { sink_guard: None, cores: BTreeMap::new() }),
+        contention_drops: AtomicU64::new(0),
+    });
     let sink_set = Arc::clone(&set);
     let sink: CommitPublicationSink =
         Arc::new(move |event: &CommitPublicationEvent| deliver_notification(&sink_set, event));
@@ -217,7 +328,7 @@ fn engine_set(
         // cannot be established for this engine.
         return Err(StreamError::InvalidSource);
     }
-    lock_recovered(&set).sink_guard = Some(guard);
+    lock_recovered(&set.inner).sink_guard = Some(guard);
     engines.insert(identity, Arc::clone(&set));
     Ok(set)
 }
@@ -227,8 +338,8 @@ fn engine_set(
 ///
 /// The registry lock is always taken before the set lock, the same order
 /// every other path uses.
-fn release_engine_set_if_empty(identity: u128, set: &Arc<Mutex<EngineSubscriptions>>) {
-    let empty = lock_recovered(set).cores.is_empty();
+fn release_engine_set_if_empty(identity: u128, set: &Arc<EngineSubscriptions>) {
+    let empty = lock_recovered(&set.inner).cores.is_empty();
     if !empty {
         return;
     }
@@ -236,7 +347,7 @@ fn release_engine_set_if_empty(identity: u128, set: &Arc<Mutex<EngineSubscriptio
     let mut engines = lock_recovered(registry);
     if engines
         .get(&identity)
-        .is_some_and(|live| Arc::ptr_eq(live, set) && lock_recovered(live).cores.is_empty())
+        .is_some_and(|live| Arc::ptr_eq(live, set) && lock_recovered(&live.inner).cores.is_empty())
     {
         engines.remove(&identity);
     }
@@ -245,27 +356,38 @@ fn release_engine_set_if_empty(identity: u128, set: &Arc<Mutex<EngineSubscriptio
 /// Fans one publication event into every subscription's bounded queue.
 ///
 /// The committing thread runs this closure, so it is strictly
-/// non-blocking: a lock that cannot be taken is skipped, the queue is
-/// bounded with drop-oldest, and no storage lock is ever taken here.
-fn deliver_notification(set: &Arc<Mutex<EngineSubscriptions>>, event: &CommitPublicationEvent) {
-    let cores: Vec<Arc<Mutex<SubscriptionCore>>> = {
-        let Ok(set) = set.lock() else {
-            // An unreachable set lock drops this notification; delivery is
-            // journal-driven, so the drop costs latency only.
+/// non-blocking: every lock is taken with `try_lock`, and a busy lock
+/// drops the notification and counts the drop in the lock-free contention
+/// counter — engine-level for the core map, per-subscription for a
+/// consumer mid-poll. The queue is bounded with drop-oldest, counted in
+/// the guarded state. No path here ever waits or takes a storage lock;
+/// every dropped notification is reported through
+/// [`SubscriptionBatch::dropped_notifications`] and costs latency only,
+/// because delivery is journal-driven.
+fn deliver_notification(set: &Arc<EngineSubscriptions>, event: &CommitPublicationEvent) {
+    let handles: Vec<Arc<SubscriptionHandle>> = {
+        let Ok(inner) = set.inner.try_lock() else {
+            // The core map is busy (a concurrent open, close, or lookup):
+            // drop the notification for every subscription of this engine
+            // and count the drop without waiting.
+            set.contention_drops.fetch_add(1, AtomicOrdering::Relaxed);
             return;
         };
-        set.cores.values().map(Arc::clone).collect()
+        inner.cores.values().map(Arc::clone).collect()
     };
-    for core in cores {
-        let Ok(mut core) = core.lock() else {
-            // A consumer holding its core lock never blocks the commit.
+    for handle in handles {
+        let Ok(mut state) = handle.state.try_lock() else {
+            // A consumer is mid-poll and holds its subscription lock across
+            // the journal read: drop the notification for this
+            // subscription and count the drop without waiting.
+            handle.contention_drops.fetch_add(1, AtomicOrdering::Relaxed);
             continue;
         };
-        if core.notifications.len() >= MAX_SUBSCRIPTION_NOTIFICATIONS {
-            core.notifications.pop_front();
-            core.dropped_notifications = core.dropped_notifications.saturating_add(1);
+        if state.notifications.len() >= MAX_SUBSCRIPTION_NOTIFICATIONS {
+            state.notifications.pop_front();
+            state.queue_full_drops = state.queue_full_drops.saturating_add(1);
         }
-        core.notifications.push_back(Notification {
+        state.notifications.push_back(Notification {
             sequence: event.sequence(),
             operation: event.operation_id().clone(),
         });
@@ -279,10 +401,10 @@ fn validated_identity(engine: &Engine, scope: &TenantScope) -> Result<u128, Stre
 }
 
 /// The located handle of one subscription: its engine identity, its
-/// engine's set, and the core itself.
-type LocatedCore = (u128, Arc<Mutex<EngineSubscriptions>>, Arc<Mutex<SubscriptionCore>>);
+/// engine's set, and the handle itself.
+type LocatedCore = (u128, Arc<EngineSubscriptions>, Arc<SubscriptionHandle>);
 
-/// Looks up one subscription core under its engine, tenant, and name.
+/// Looks up one subscription handle under its engine, tenant, and name.
 fn find_core(engine: &Engine, scope: &TenantScope, name: &str) -> Result<LocatedCore, StreamError> {
     let identity = validated_identity(engine, scope)?;
     let registry = ENGINE_SUBSCRIPTIONS.get_or_init(|| Mutex::new(BTreeMap::new()));
@@ -293,10 +415,10 @@ fn find_core(engine: &Engine, scope: &TenantScope, name: &str) -> Result<Located
     let set = Arc::clone(set);
     drop(engines);
     let key = (scope.tenant().as_str().to_owned(), name.to_owned());
-    let Some(core) = lock_recovered(&set).cores.get(&key).map(Arc::clone) else {
+    let Some(handle) = lock_recovered(&set.inner).cores.get(&key).map(Arc::clone) else {
         return Err(StreamError::InvalidSource);
     };
-    Ok((identity, set, core))
+    Ok((identity, set, handle))
 }
 
 /// Opens or reattaches one named subscription.
@@ -308,38 +430,49 @@ pub(crate) fn subscribe(
     let identity = validated_identity(engine, scope)?;
     let set = engine_set(engine, identity)?;
     let key = (scope.tenant().as_str().to_owned(), spec.name().to_owned());
-    let mut set_guard = lock_recovered(&set);
-    if let Some(core) = set_guard.cores.get(&key).map(Arc::clone) {
+    let mut set_guard = lock_recovered(&set.inner);
+    if let Some(handle) = set_guard.cores.get(&key).map(Arc::clone) {
         drop(set_guard);
-        let mut core = lock_recovered(&core);
-        if core.state == SubscriptionState::Reconnecting {
+        let mut state = lock_recovered(&handle.state);
+        if state.state == SubscriptionState::Reconnecting {
             // Reattach: the preserved checkpoint and any unacknowledged
             // recorded batch survive, so delivery resends exactly what the
             // consumer never acknowledged.
-            core.state = if core.pending.is_some() {
+            state.state = if state.pending.is_some() {
                 SubscriptionState::AwaitingAcknowledgement
             } else {
                 SubscriptionState::Active
             };
-            return Ok(core.state.status());
+            return Ok(state.state.status());
         }
         // Exactly one active consumer owns a subscription at a time.
         return Err(StreamError::InvalidSource);
     }
+    if set_guard.cores.len() >= MAX_SUBSCRIPTIONS_PER_ENGINE {
+        // The per-commit ingress cost grows with the live subscription
+        // count, so the count is bounded like the engine's own sink
+        // registry.
+        return Err(StreamError::InvalidSource);
+    }
     let epoch = CHECKPOINT_EPOCHS.fetch_add(1, AtomicOrdering::Relaxed);
     let checkpoint = initial_checkpoint(engine, spec, epoch)?;
-    let core = Arc::new(Mutex::new(SubscriptionCore {
-        tenant: scope.tenant().clone(),
-        engine_identity: identity,
-        filter: spec.filter().clone(),
-        max_events: spec.max_events(),
-        state: SubscriptionState::Active,
-        checkpoint,
-        pending: None,
-        notifications: VecDeque::new(),
-        dropped_notifications: 0,
-    }));
-    set_guard.cores.insert(key, core);
+    let handle = Arc::new(SubscriptionHandle {
+        state: Mutex::new(SubscriptionCore {
+            #[cfg(test)]
+            name: spec.name().to_owned(),
+            tenant: scope.tenant().clone(),
+            engine_identity: identity,
+            filter: spec.filter().clone(),
+            max_events: spec.max_events(),
+            state: SubscriptionState::Active,
+            checkpoint,
+            pending: None,
+            notifications: VecDeque::new(),
+            queue_full_drops: 0,
+        }),
+        contention_drops: AtomicU64::new(0),
+    });
+    set_guard.cores.insert(key, handle);
     Ok(SubscriptionStatus::Active)
 }
 
@@ -375,91 +508,121 @@ pub(crate) fn next_batch(
     name: &str,
     cancellation: &Cancellation,
 ) -> Result<SubscriptionBatch, StreamError> {
-    let (identity, set, core) = find_core(engine, scope, name)?;
+    let (identity, set, handle) = find_core(engine, scope, name)?;
     if cancellation.is_cancelled() {
         // Cancellation closes promptly: the core and its buffers are
         // released and the subscription reports Closed(Cancelled) from
         // then on.
-        drop(core);
+        drop(handle);
         remove_core(identity, &set, scope, name);
         return Err(StreamError::Cancelled);
     }
-    let mut core = lock_recovered(&core);
-    if core.state == SubscriptionState::Reconnecting {
+    let mut state = lock_recovered(&handle.state);
+    #[cfg(test)]
+    wedge_point(&state);
+    if state.state == SubscriptionState::Reconnecting {
         // A reconnecting subscription must reattach through subscribe.
         return Err(StreamError::InvalidSource);
     }
-    if let Some(recorded) = &core.pending {
+    if let Some(recorded) = &state.pending {
         // At-least-once: the recorded boundary is redelivered verbatim
         // until the caller acknowledges it.
         return Ok(recorded.clone());
     }
-    let batch = build_batch(engine, &core)?;
-    core.pending = Some(batch.clone());
-    core.state = SubscriptionState::AwaitingAcknowledgement;
+    // The ingress counters are read outside the durable state: they are
+    // lock-free, and an engine-level drop applies to every subscription of
+    // the engine because no subscription received the notification.
+    let ingress_drops = handle.contention_drops.load(AtomicOrdering::Relaxed)
+        + set.contention_drops.load(AtomicOrdering::Relaxed);
+    let batch = build_batch(engine, &state, ingress_drops)?;
+    state.pending = Some(batch.clone());
+    state.state = SubscriptionState::AwaitingAcknowledgement;
     Ok(batch)
 }
 
 /// Builds one bounded batch from the durable publication journal.
 ///
-/// The scan walks commits after the checkpoint in storage-sequence order,
-/// expands every reconstructable write into one change event, keeps the
-/// events the filter accepts up to the spec's bound, and records as the
-/// boundary the position of the last delivered event. Filtered events are
-/// counted as progress facts and never move the boundary by themselves.
-fn build_batch(engine: &Engine, core: &SubscriptionCore) -> Result<SubscriptionBatch, StreamError> {
+/// The scan pages the journal after the checkpoint in storage-sequence
+/// order, expanding every reconstructable write into one change event,
+/// until the batch is full, the journal is drained, or the scan budget is
+/// exhausted. The recorded boundary is the position of the last event the
+/// batch either delivered or reported as a filtered drop — the advance is
+/// reported, never silent — so a poll always makes progress past a run of
+/// filtered events, and the durable checkpoint still moves only when the
+/// caller acknowledges the boundary. An accepted event that would exceed
+/// the spec's bound stops the scan without moving the boundary past
+/// itself, so it is delivered by the next batch.
+fn build_batch(
+    engine: &Engine,
+    core: &SubscriptionCore,
+    ingress_drops: u64,
+) -> Result<SubscriptionBatch, StreamError> {
     let checkpoint = core.checkpoint.clone();
-    let after = if checkpoint.write_index > 0 {
+    let mut after = if checkpoint.write_index > 0 {
         // Re-read the commit the checkpoint splits so its tail is served.
         StorageSequence::new(checkpoint.sequence.get() - 1)
     } else {
         checkpoint.sequence
     };
-    let commits = engine
-        .tenant_commits(&core.tenant, after, core.max_events.saturating_add(1))
-        .map_err(|error| sources::map_engine_error(&error))?;
+    let page_limit = core.max_events.saturating_add(1);
     let max_events = usize::try_from(core.max_events).unwrap_or(usize::MAX);
     let mut events: Vec<ChangeEvent> = Vec::new();
     let mut boundary = checkpoint.clone();
     let mut filtered_dropped = 0_u64;
     let mut examined = 0_usize;
-    'scan: for commit in &commits {
-        for (write_index, (kind, collection, event)) in
-            expand_commit(core, commit).into_iter().enumerate()
-        {
-            if checkpoint.covers(commit.sequence(), u32::try_from(write_index).unwrap_or(u32::MAX))
+    'pages: while examined < MAX_SUBSCRIPTION_SCAN_EVENTS {
+        let page = engine
+            .tenant_commits(&core.tenant, after, page_limit)
+            .map_err(|error| sources::map_engine_error(&error))?;
+        let Some(last) = page.last() else {
+            // The journal is drained past the checkpoint.
+            break;
+        };
+        for commit in &page {
+            for (write_index, (kind, collection, event)) in
+                expand_commit(core, commit).into_iter().enumerate()
             {
-                continue;
-            }
-            examined += 1;
-            if core.filter.accepts(kind, &collection) {
-                if events.len() >= max_events {
-                    break 'scan;
+                let index = u32::try_from(write_index).unwrap_or(u32::MAX);
+                if checkpoint.covers(commit.sequence(), index) {
+                    continue;
                 }
-                events.push(event);
-                boundary = CheckpointInner {
+                examined += 1;
+                let position = CheckpointInner {
                     sequence: commit.sequence(),
-                    write_index: u32::try_from(write_index + 1).unwrap_or(u32::MAX),
+                    write_index: index.saturating_add(1),
                     epoch: checkpoint.epoch,
                 };
-            } else {
-                // The drop is a progress fact. It never moves the
-                // boundary by itself, so an event the filter rejected is
-                // re-examined on the next poll until a delivered event
-                // passes over it — the no-advance rule's liveness cost,
-                // recorded in the design record.
-                filtered_dropped += 1;
-            }
-            if examined >= MAX_SUBSCRIPTION_SCAN_EVENTS {
-                break 'scan;
+                if core.filter.accepts(kind, &collection) {
+                    if events.len() >= max_events {
+                        // The batch is full at an accepted event: leave it
+                        // for the next batch, with the boundary exactly at
+                        // the last accounted event.
+                        break 'pages;
+                    }
+                    events.push(event);
+                    boundary = position;
+                } else {
+                    // The drop is a reported progress fact, so the
+                    // boundary may cover it: the advance is reported in
+                    // this batch and the durable checkpoint still moves
+                    // only at the acknowledgement seam.
+                    filtered_dropped += 1;
+                    boundary = position;
+                }
+                if examined >= MAX_SUBSCRIPTION_SCAN_EVENTS {
+                    break 'pages;
+                }
             }
         }
+        // The page was exhausted without filling the batch: page the
+        // journal forward and keep scanning within the budget.
+        after = last.sequence();
     }
     Ok(SubscriptionBatch::new(
         events,
         SubscriptionCheckpoint { inner: boundary },
         filtered_dropped,
-        core.dropped_notifications,
+        core.queue_full_drops.saturating_add(ingress_drops),
     ))
 }
 
@@ -522,30 +685,31 @@ pub(crate) fn acknowledge(
     scope: &TenantScope,
     acknowledgement: &SubscriptionAcknowledgement,
 ) -> Result<SubscriptionStatus, StreamError> {
-    let (_identity, _set, core) = find_core_by_epoch(engine, scope, acknowledgement)?;
-    let mut core = lock_recovered(&core);
+    let (_identity, _set, handle) = find_core_by_epoch(engine, scope, acknowledgement)?;
+    let mut state = lock_recovered(&handle.state);
     let confirmed = acknowledgement.confirmed().inner.clone();
-    if let Some(recorded) = &core.pending
+    if let Some(recorded) = &state.pending
         && recorded.checkpoint().inner == confirmed
     {
         // The acknowledgement seam is the only place the durable
-        // checkpoint advances.
-        core.checkpoint = confirmed;
-        core.pending = None;
-        core.state = SubscriptionState::Active;
-        return Ok(core.state.status());
+        // checkpoint advances — over delivered events and reported drops
+        // alike, because a reported drop was accounted to the consumer.
+        state.checkpoint = confirmed;
+        state.pending = None;
+        state.state = SubscriptionState::Active;
+        return Ok(state.state.status());
     }
-    if core.pending.is_none() && core.checkpoint == confirmed {
+    if state.pending.is_none() && state.checkpoint == confirmed {
         // An idempotent re-acknowledgement of the current checkpoint.
         return Ok(SubscriptionStatus::Active);
     }
     Err(StreamError::InvalidCursor)
 }
 
-/// Resolves the core an acknowledgement addresses.
+/// Resolves the handle an acknowledgement addresses.
 ///
 /// The acknowledgement carries an opaque checkpoint whose epoch is unique
-/// per subscription incarnation, so the epoch alone identifies the core.
+/// per subscription incarnation, so the epoch alone identifies the handle.
 fn find_core_by_epoch(
     engine: &Engine,
     scope: &TenantScope,
@@ -560,12 +724,12 @@ fn find_core_by_epoch(
     let set = Arc::clone(set);
     drop(engines);
     let epoch = acknowledgement.confirmed().inner.epoch;
-    let cores = lock_recovered(&set);
-    for core in cores.cores.values() {
-        let locked = lock_recovered(core);
-        if locked.tenant == *scope.tenant() && locked.checkpoint.epoch == epoch {
-            drop(locked);
-            return Ok((identity, Arc::clone(&set), Arc::clone(core)));
+    let inner = lock_recovered(&set.inner);
+    for handle in inner.cores.values() {
+        let state = lock_recovered(&handle.state);
+        if state.tenant == *scope.tenant() && state.checkpoint.epoch == epoch {
+            drop(state);
+            return Ok((identity, Arc::clone(&set), Arc::clone(handle)));
         }
     }
     Err(StreamError::InvalidSource)
@@ -577,9 +741,9 @@ pub(crate) fn status(
     scope: &TenantScope,
     name: &str,
 ) -> Result<SubscriptionStatus, StreamError> {
-    let (_identity, _set, core) = find_core(engine, scope, name)?;
-    let core = lock_recovered(&core);
-    Ok(core.state.status())
+    let (_identity, _set, handle) = find_core(engine, scope, name)?;
+    let state = lock_recovered(&handle.state);
+    Ok(state.state.status())
 }
 
 /// Marks one subscription reconnecting.
@@ -588,31 +752,31 @@ pub(crate) fn disconnect(
     scope: &TenantScope,
     name: &str,
 ) -> Result<SubscriptionStatus, StreamError> {
-    let (_identity, _set, core) = find_core(engine, scope, name)?;
-    let mut core = lock_recovered(&core);
-    core.state = SubscriptionState::Reconnecting;
-    Ok(core.state.status())
+    let (_identity, _set, handle) = find_core(engine, scope, name)?;
+    let mut state = lock_recovered(&handle.state);
+    state.state = SubscriptionState::Reconnecting;
+    Ok(state.state.status())
 }
 
 /// Closes one subscription terminally and releases its buffers.
+///
+/// The W4-STREAM close reason is conflated with cancellation
+/// (`Closed(Cancelled)`) because the frozen `StreamCompletion` set has no
+/// dedicated close distinction; recorded as a tracked parent decision in
+/// the design record.
 pub(crate) fn close(
     engine: &Engine,
     scope: &TenantScope,
     name: &str,
 ) -> Result<SubscriptionStatus, StreamError> {
-    let (identity, set, _core) = find_core(engine, scope, name)?;
+    let (identity, set, _handle) = find_core(engine, scope, name)?;
     remove_core(identity, &set, scope, name);
     Ok(SubscriptionStatus::Closed(StreamCompletion::Cancelled))
 }
 
 /// Removes one core from its engine set, releasing the notification queue.
-fn remove_core(
-    identity: u128,
-    set: &Arc<Mutex<EngineSubscriptions>>,
-    scope: &TenantScope,
-    name: &str,
-) {
+fn remove_core(identity: u128, set: &Arc<EngineSubscriptions>, scope: &TenantScope, name: &str) {
     let key = (scope.tenant().as_str().to_owned(), name.to_owned());
-    lock_recovered(set).cores.remove(&key);
+    lock_recovered(&set.inner).cores.remove(&key);
     release_engine_set_if_empty(identity, set);
 }
