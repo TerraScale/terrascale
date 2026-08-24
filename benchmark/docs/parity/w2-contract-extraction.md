@@ -190,7 +190,7 @@ The following commands ran in this worktree:
 - Parity check: `uv run --no-project --python 3.14.7 python3
   scripts/validate_parity.py --check`, passed with 258 rows.
 - Determinism: two inventory hashes matched at
-  `91cae0275d847bc7270b2c6a59aea54ebbc01bde3e1c2a4211f0dacbd3c0163f`.
+  `70f9e65755c9169f3fafa93775a5dd0b9d8f2f2d5c5c4fafd7bf63271d18f004`.
 - Tooling tests: `uv run --no-project --python 3.14.7 python3
   scripts/test_parity_tooling.py`, 9 tests passed.
 - Citation black-box tests: `python3 scripts/test_v1_citations.py`, 18 tests

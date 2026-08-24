@@ -53,7 +53,7 @@ python3 scripts/validate_v1_citations.py \
   --gap-report parity/v1-test-gaps.json
 ```
 
-The current extraction has 258 rows, 251 V1-backed rows, 265 source
+The current extraction has 258 rows, 251 V1-backed rows, 267 source
 citations, 231 exact test citations, and 42 unresolved replication/storage
 test gaps. Those numbers are accounting evidence, not a V2 parity claim.
 
