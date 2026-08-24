@@ -24,25 +24,25 @@ macro_rules! family_value {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FamilyKind {
     /// Attachment metadata and mutations.
-    Attachment,
+    Attachments,
     /// Counter groups and batches.
-    Counter,
+    Counters,
     /// Time-series ranges and batches.
     TimeSeries,
-    /// Revision pages and commands.
-    Revision,
+    /// Revisions pages and commands.
+    Revisions,
     /// Compare-and-exchange values and conditions.
     CompareExchange,
     /// Identity ranges and allocations.
-    Identity,
-    /// Lifecycle state and updates.
-    Lifecycle,
+    Identities,
+    /// Expiration-refresh state and updates.
+    ExpirationRefresh,
     /// Archival state and updates.
     Archival,
-    /// Validation rules and updates.
-    Validation,
-    /// Tombstone state and operations.
-    Tombstone,
+    /// Schema-validation rules and updates.
+    SchemaValidation,
+    /// Conflict-tombstone state and operations.
+    ConflictTombstones,
 }
 
 /// Tenant and snapshot context for a family read.
@@ -259,7 +259,7 @@ pub enum FamilyReadResult {
     /// Counter group result.
     CounterGroup(CounterGroupResult),
     /// Time-series page result.
-    TimeSeriesRange(TimeSeriesPage),
+    TimeSeriesPage(TimeSeriesPage),
     /// Revision page result.
     RevisionPage(RevisionPage),
     /// Compare-exchange result.
