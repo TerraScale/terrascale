@@ -28,7 +28,7 @@ use super::{
 };
 use crate::{
     engine::{CommitOutcome, Engine, EngineConfig},
-    operations::{QueryInput, QueryInputError, RequestValidationError},
+    operations::{QueryInput, QueryInputError, RequestValidationError, V1QueryText},
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
         ExpectedVersion, IndexGenerationSet, LocalDurability, OperationId, ReadSnapshot,
@@ -553,10 +553,14 @@ fn query_input_normalizes_typed_and_v1_text_through_one_compile_seam() {
     );
     let typed_plan = store.compile(QueryInput::typed(typed)).expect("compiles");
     // The same query as supported V1-compatible text, through the same seam.
+    // The public constructor validates the text before it reaches the seam.
     let text_plan = store
-        .compile_v1_text(
-            "from users where age >= 30 order by age desc limit 2 offset 0 select name, age",
-        )
+        .compile(QueryInput::v1_compatible(
+            V1QueryText::try_new(
+                "from users where age >= 30 order by age desc limit 2 offset 0 select name, age",
+            )
+            .expect("public constructor accepts the supported subset"),
+        ))
         .expect("parses the supported subset");
     assert_eq!(text_plan.tenant_claim(), None, "the grammar carries no tenant claim");
 
@@ -599,6 +603,11 @@ fn query_input_rejects_unsupported_or_generic_query_text() {
             "unsupported grammar must be rejected: {text}"
         );
         assert_eq!(v1::validate(text).unwrap_err(), QueryInputError::UnsupportedGrammar, "{text}");
+        assert_eq!(
+            V1QueryText::try_new(text).unwrap_err(),
+            QueryInputError::UnsupportedGrammar,
+            "the public constructor rejects the same text before the seam: {text}"
+        );
     }
     assert_eq!(v1::validate("   ").unwrap_err(), QueryInputError::EmptyText);
     assert_eq!(

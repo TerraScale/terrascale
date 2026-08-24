@@ -160,11 +160,34 @@ impl DocumentWriteRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct V1QueryText(String);
 
+/// The maximum accepted V1-compatible query text length.
+///
+/// The bound keeps parsing cost proportional to a bounded input before the
+/// text reaches the public constructor.
+pub const MAX_QUERY_TEXT_BYTES: usize = 16 * 1024;
+
 impl V1QueryText {
-    /// Creates a non-empty typed query input.
+    /// Creates a validated V1-compatible query text.
+    ///
+    /// The text must be non-empty, at most [`MAX_QUERY_TEXT_BYTES`] bytes,
+    /// and use only the supported V1-compatible grammar; anything else is a
+    /// typed [`QueryInputError`] and never reaches the compile seam.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryInputError::EmptyText`] for empty text,
+    /// [`QueryInputError::UnsupportedGrammar`] for text that is too long or
+    /// does not use the supported grammar, and
+    /// [`QueryInputError::InvalidIdentifier`] for invalid identifiers.
     pub fn try_new(text: &str) -> Result<Self, QueryInputError> {
-        let _ = text;
-        unimplemented!("V1 query parsing belongs to a later behavior packet")
+        if text.is_empty() {
+            return Err(QueryInputError::EmptyText);
+        }
+        if text.len() > MAX_QUERY_TEXT_BYTES {
+            return Err(QueryInputError::UnsupportedGrammar);
+        }
+        crate::query::validate_v1_text(text)?;
+        Ok(Self(text.to_owned()))
     }
 
     /// Returns the validated query text.

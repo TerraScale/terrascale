@@ -300,6 +300,11 @@ impl ReadSnapshot {
     pub(crate) fn sequence(&self) -> StorageSequence {
         self.sequence
     }
+
+    /// Returns the immutable set of index generations this snapshot observed.
+    pub(crate) fn indexes(&self) -> &IndexGenerationSet {
+        &self.indexes
+    }
 }
 
 /// The generation of one named index.
@@ -310,9 +315,57 @@ pub struct IndexGeneration {
     sequence: StorageSequence,
 }
 
+impl IndexGeneration {
+    /// Creates a generation from its namespace, persisted epoch, and
+    /// monotonic sequence.
+    pub(crate) fn new(namespace: String, persisted_epoch: u64, sequence: StorageSequence) -> Self {
+        Self { namespace, persisted_epoch, sequence }
+    }
+
+    /// Returns the index namespace, which identifies the tenant and logical
+    /// index definition.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Returns the persisted epoch of this generation.
+    ///
+    /// The epoch is created with the namespace and persists in the index
+    /// manifest; a new epoch is allowed only when the namespace is explicitly
+    /// recreated under its migration contract.
+    pub fn epoch(&self) -> u64 {
+        self.persisted_epoch
+    }
+
+    /// Returns the monotonic non-wrapping sequence of this generation.
+    pub fn sequence(&self) -> StorageSequence {
+        self.sequence
+    }
+}
+
 /// The immutable set of index generations visible to a read snapshot.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct IndexGenerationSet(Vec<IndexGeneration>);
+
+impl IndexGenerationSet {
+    /// Creates a set from its generations.
+    pub(crate) fn from_generations(generations: Vec<IndexGeneration>) -> Self {
+        Self(generations)
+    }
+
+    /// Returns the generation recorded for one namespace and epoch, if any.
+    pub fn generation(&self, namespace: &str, epoch: u64) -> Option<IndexGeneration> {
+        self.0
+            .iter()
+            .find(|generation| generation.namespace() == namespace && generation.epoch() == epoch)
+            .cloned()
+    }
+
+    /// Returns every recorded generation.
+    pub fn generations(&self) -> impl Iterator<Item = &IndexGeneration> {
+        self.0.iter()
+    }
+}
 
 /// The local durability point requested for a commit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

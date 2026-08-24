@@ -18,6 +18,7 @@ generation-accessor wording, the conservative snapshot-observation
 assumption, the grammar identifier note, a corrected `compile_fail` example,
 temp-directory cleanup, and the test-only gating of the `with_index_catalog`
 seam; loop a3 — the Q1b residual — landed at `1a561c9` on top of `a2ee067`
+with the record pin commit `0a2c78d` closing the loop
 and replaces the
 mixed Integer↔Number comparison with an exact cross-type comparison (sign
 gates at 2^63, `i128` whole parts, symmetric fractional tie-break) so the

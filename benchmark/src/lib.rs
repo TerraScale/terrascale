@@ -40,8 +40,9 @@ pub use families::{
     FamilyWriteRequest,
 };
 pub use operations::{
-    DocumentReadRequest, DocumentWriteRequest, FamilyOperation, PublicOperation, PublicResponse,
-    QueryInput, QueryInputError, QueryOperation, RequestValidationError, V1QueryText,
+    DocumentReadRequest, DocumentWriteRequest, FamilyOperation, MAX_QUERY_TEXT_BYTES,
+    PublicOperation, PublicResponse, QueryInput, QueryInputError, QueryOperation,
+    RequestValidationError, V1QueryText,
 };
 pub use query::{
     QueryError, QueryOrdering, QueryPaging, QueryPlan, QueryPredicate, QueryProjection,
