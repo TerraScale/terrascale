@@ -17,7 +17,13 @@ bounded checkpoint after the sort and per materialized rows, softened
 generation-accessor wording, the conservative snapshot-observation
 assumption, the grammar identifier note, a corrected `compile_fail` example,
 temp-directory cleanup, and the test-only gating of the `with_index_catalog`
-seam.
+seam; loop a3 — the Q1b residual — landed at `1a561c9` on top of `a2ee067`
+and replaces the
+mixed Integer↔Number comparison with an exact cross-type comparison (sign
+gates at 2^63, `i128` whole parts, symmetric fractional tie-break) so the
+numeric order is genuinely total across the two encodings above 2^53, and
+extends the totality property with the substitution axiom, the 2^53/i64
+extremes value set, and nested array/object values.
 
 ## Scope and ownership
 
@@ -117,13 +123,21 @@ before any row is produced, so a bound that expires during the sort still
 stops the query.
 
 The W3-2 document order used by `order by` is a defined total order: missing
-first, then null, booleans, finite numbers (`Integer` and `Number` compare
-numerically), non-finite numbers (`NaN` and the infinities, ordered by the
-float total order so `NaN` consistently equals `NaN`), strings, arrays,
-objects (arrays element-wise, objects by sorted field names then values).
-The order is a true total order — antisymmetric and transitive over the whole
-domain including `NaN` — so the stable sort can never observe an inconsistent
-comparator. Predicate comparisons are defined inside the
+first, then null, booleans, finite numbers, non-finite numbers (`NaN` and the
+infinities, ordered by the float total order so `NaN` consistently equals
+`NaN`), strings, arrays, objects (arrays element-wise, objects by sorted
+field names then values). The unified numeric rank compares `Integer` and
+finite `Number` by **exact mathematical value across the two encodings**: a
+number at or beyond 2^63 in magnitude is decided by sign against the whole
+`i64` range, and every other pair compares exact whole parts through `i128`
+with a symmetric fractional tie-break. No integer is widened into `f64`,
+which rounds above 2^53 and would collapse one-apart integers (snowflake
+identifiers, nanosecond timestamps) onto one float.
+The order is a true total order — antisymmetric, transitive, and
+substitution-consistent (values that compare equal are interchangeable)
+over the whole domain including `NaN` and every mixed Integer/Number pair —
+so the stable sort can never observe an inconsistent comparator.
+Predicate comparisons are defined inside the
 numeric, text, and boolean domains only; any other pair, including a cross-type
 pair, a `NaN` operand, or an absent field, makes the comparison
 conditions false rather than error. `Equals` matches a present value
@@ -207,8 +221,12 @@ other's staleness gate, which
   boundary, and every 64 materialized rows — and a cancelled or expired query
   leaves the storage lock free.
 - The document order used by `order by` is a true total order over the whole
-  value domain including `NaN`, so the stable sort never observes an
-  inconsistent comparator (`nan_and_non_finite_numbers_keep_a_total_deterministic_order`).
+  value domain including `NaN` and every mixed Integer/Number pair — the
+  property is checked for antisymmetry, transitivity, and the substitution
+  axiom over a value set spanning the 2^53 boundary, the `i64` extremes, the
+  float extremes, nested arrays, and nested objects — so the stable sort
+  never observes an inconsistent comparator
+  (`nan_and_non_finite_numbers_keep_a_total_deterministic_order`).
 - One namespace's generation never opens another namespace's staleness gate,
   including tenant names that end where another tenant's key would begin
   (`tenant_and_name_separator_cannot_alias_a_namespace`).
@@ -272,7 +290,7 @@ status and empty Proof ID list until its parity test and Proof ID exist.
 | PB-4000 | Result shape, ordering, and typed rejection classes through one seam: `query_store_compiles_and_executes_against_supplied_snapshot`, `query_plan_preserves_result_ordering_on_an_immutable_snapshot`, `query_input_rejects_unsupported_or_generic_query_text` |
 | PB-4004 | Null/missing/exists distinction: `null_missing_and_exists_have_distinct_results` (V2 tracer semantics; V1's exact equality-null rule is not claimed) |
 | PB-4006 | Range operators over the numeric and text domains in the condition set and grammar (`v1_grammar_parses_the_supported_subset_into_typed_clauses`) |
-| PB-4013 | A defined total order with missing-first, numeric unification, and a NaN-safe non-finite slot: `query_plan_preserves_result_ordering_on_an_immutable_snapshot`, `total_document_order_ranks_missing_and_types_deterministically`, `nan_and_non_finite_numbers_keep_a_total_deterministic_order` |
+| PB-4013 | A defined total order with missing-first, unified numerics compared exactly across the Integer and Number encodings, and a NaN-safe non-finite slot: `query_plan_preserves_result_ordering_on_an_immutable_snapshot`, `total_document_order_ranks_missing_and_types_deterministically`, `nan_and_non_finite_numbers_keep_a_total_deterministic_order` |
 | PB-4014 | Typed paging boundaries: `projection_and_paging_have_typed_errors_and_boundaries` |
 | PB-4015 | Whole-document and named-field projection: `projection_and_paging_have_typed_errors_and_boundaries` |
 | PB-4026 | Strict versus allow-stale selection and the used-generation report: `strict_generation_rejects_an_index_that_is_too_old`, `allowed_stale_query_reports_the_generation_it_used` |
@@ -376,6 +394,21 @@ seam.
 - Fields are top-level only; there are no nested paths, aliases, parameters,
   aggregations, grouping, distinct, includes, suggestions, spatial, vector, or
   streaming forms, and no query explanation, timing, or statistics output.
+- The a3 exact comparison covers the `order by` comparator only. Range
+  predicate evaluation (`>`, `>=`, `<`, `<=`) still widens an `Integer`
+  operand into `f64` when the other operand is a `Number`, so a predicate can
+  answer from the rounded value above 2^53 — for example
+  `Integer(2^53 + 1) > Number(2^53.0)` evaluates false where the exact order
+  says greater. This affects predicate truth at that boundary, not ordering
+  and not totality (the predicate path returns an optional ordering and never
+  feeds a sort). Reusing the exact helper there changes observable predicate
+  results and is left for a focused follow-up with its own tests.
+- The totality property is exhaustive over its listed value set (the 2^53
+  neighborhood, the `i64` and finite-`f64` extremes, the smallest magnitudes,
+  the two zeroes, and nested containers), not over every representable float
+  bit pattern; the construction itself (exact cross-type comparison plus
+  rank-gated `total_cmp` for the non-finite slot) is total by argument, with
+  the property set as the sampled witness.
 - The too-old strict rejection is proved through the `GenerationView` seam
   with independent observed and supplied generations, because a single
   monotonic catalog can never supply less than it observed. The live catalog
