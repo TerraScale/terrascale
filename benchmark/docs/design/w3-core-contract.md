@@ -3,7 +3,7 @@
 Status: accepted implementation contract for W3, recorded 2026-08-23.
 
 This document turns the W3 design review into rules that builders and tests can
-use. It covers the Storage, Engine, Query, and Protocol seams. It does not
+use. It covers the Storage, Engine, Data Family, Query, and Protocol seams. It does not
 claim that any TerraBaseV2 behavior has been implemented or qualified. The
 first implementation packet is W3-1, one sequential builder for Storage plus
 Engine because their first durable commit contract cannot be split safely.
@@ -13,13 +13,13 @@ seam design integrator packets, the cross-seam coherence review, and the
 reliability corrections accepted by the parent. Those inputs are design
 evidence. They are not behavior Proof IDs.
 
-The governing records are the workspace-root execution charter resolved in
-this workspace as `/home/mariogk/Projects/TerraScale/specs/2026-08-23-terrabase-v2-goal.md`,
-the [W2 contract extraction](../parity/w2-contract-extraction.md), and the
+The governing records are the workspace-root execution charter identified as
+`workspace-root:specs/2026-08-23-terrabase-v2-goal.md`, the
+[W2 contract extraction](../parity/w2-contract-extraction.md), and the
 [accepted storage-format ADR](../adr/0001-independent-rust-repository-and-storage-format.md).
-The parent dispatch passes that resolved charter path into every worktree. A
-builder must not assume that a relative `../specs` path resolves from an
-arbitrary worktree.
+The parent dispatch resolves that identifier to an absolute path in assignment
+metadata and passes it into every worktree. A builder must not infer a path
+from its worktree location.
 
 ## Decision summary
 
@@ -32,6 +32,7 @@ for local database behavior and for remote adapters.
 | --- | --- | --- | --- |
 | Storage | One commit/recovery port with immutable published roots and a private WAL adapter | A single publication rule can govern restart, durability, and commit resolution | File layout, codec, WAL records, manifest files, locks, checksums, and recovery replay |
 | Engine | Opaque `Transaction`, immutable `ReadSnapshot`, and operation-identified commit | The common document/session case is short while conflict and retry behavior remains centralized | MVCC, write-set validation, storage calls, index notifications, and conflict details |
+| Data Family | Closed typed family requests/results with transaction-bound writes | Family-specific rules stay explicit while document transactions can remain atomic across families | Attachment, counter, time-series, revision, lifecycle, validation, identity, and tombstone details |
 | Query and Index | Typed `QuerySpec`, compiled `QueryPlan`, and snapshot execution | Plans can be reused without making callers know index generations or storage roots | Planner, index choice, stale handling, reduction, and index publication |
 | Protocol | Typed operation envelope over a synchronous adapter port | Every operation has an explicit identity and error mapping; no generic escape hatch | Wire framing, headers, compression, cancellation, and transport-specific status |
 
@@ -407,6 +408,8 @@ layout types are plain private declarations.
 | `CommitOutcome`, `CommitReceipt` | `src/engine/` | Distinguishes committed, rejected, and unknown acceptance |
 | `DurableResolution` | `src/engine/` | Resolves an unknown operation from the durable operation ledger |
 | `QuerySpec`, `QueryPlan`, `QueryResult` | `src/query/` | Typed query clauses, immutable plan, result metadata and generation |
+| `FamilyKind`, `FamilyReadRequest`, `FamilyWriteRequest` | `src/families/` | Closed typed family operations with no generic family escape hatch |
+| `FamilyReadResult`, `FamilyReadContext`, `FamilyStore` | `src/families/` | Tenant-scoped family reads and transaction-bound family writes |
 | `ProtocolAdapter`, `PublicOperation`, `PublicResponse` | `src/adapters/protocol/` | Typed approved operations and transport-neutral errors |
 | `PlatformGrant`, `PlatformAdapter` | `src/adapters/platform/` | Platform-only authorization, tenant isolation, confirmation, audit, and secret handling |
 
@@ -435,7 +438,9 @@ The following types and modules must remain `pub(crate)` or private:
 | `StoragePort`, `FileStorage`, `FixtureStorage` | `src/storage/` | Internal adapters; fixture construction is test-only |
 | `Manifest`, `StorageRoot`, `RecoveryState` | `src/storage/` | Manifest verification and root publication details |
 | `CommitIntent`, `PreparedCommit`, `StorageReceipt` | `src/storage/` | Engine receives typed receipts, not mutable preparation handles |
+| `OperationLedgerRecord`, `ReadyToPublish`, `Published` | `src/storage/` and `src/engine/` | Durable retry-resolution metadata; never a public storage or byte representation |
 | `MvccVersion`, write-set index, conflict detector | `src/engine/` | Internal transaction implementation |
+| family physical records, retention workers, `FamilyProjectionInput` | `src/families/` | Family implementation details; projection inputs are typed and read-only at the Query adapter seam |
 | `IndexSegment`, `IndexDelta`, `IndexBuilder`, index lock | `src/index/` | Internal index publication and generation machinery |
 | planner AST, reducer state, scorer, wire codec | `src/query/` and adapters | Never expose implementation or raw transport bytes |
 | `PlatformGrant` validation internals and audit sink | `src/adapters/platform/` | Authorization policy stays at Platform boundary |
@@ -449,17 +454,21 @@ contract.
 The intended dependency direction is:
 
 ```text
-Protocol Adapter -> Platform Adapter -> Engine -> Query -> Index
-                                      \\-> Storage -> private codec/WAL/filesystem
+Protocol Adapter -> Platform Adapter -> Engine -> Families -> Query -> Index
+                                      |          \\-> Storage -> private codec/WAL/filesystem
+                                      \\-> Storage
 ```
 
 The arrows mean calls and typed data flow, not ownership of authorization.
 `Platform Adapter` can construct `TenantScope` only after validating a
 `PlatformGrant`. `Protocol Adapter` can call Platform Adapter or a trusted
 in-process Engine adapter, but it never grants permission. `Query` consumes a
-`ReadSnapshot`; it does not open storage or mutate an index. `Index` consumes
+`ReadSnapshot`; it does not open storage or mutate an index. `Families` owns
+family value and lifecycle rules and exposes typed projection inputs to Query;
+it does not implement query planning, index publication, replication, or
+backup. `Index` consumes
 published storage roots and emits a new `IndexGeneration`; it cannot publish a
-storage root. Storage never depends on Protocol or Platform.
+storage root. Storage never depends on Protocol, Platform, Query, or Families.
 
 Shared logical types, `src/lib.rs`, root Cargo files, `Cargo.lock`, generated
 parity output, overlays, and root CI manifests are integrator-owned. A builder
@@ -507,7 +516,8 @@ hash, never directly on `8771f13` or on an unrecorded docs tip.
 | Packet | Worktree and base | Write scope | Collision owner |
 | --- | --- | --- | --- |
 | W3-1 Storage plus Engine | `terrabasev2-w3-storage-engine`, based on the recorded W3-0 type/export preparation commit | `src/storage/**`, `src/engine/**`, `tests/storage/**`, `tests/engine/**`, and explicitly named storage/engine docs or receipts, plus the narrow `src/lib.rs` module declaration/re-export edit described below | W3-1 owns those paths only; integrator retains shared type declarations, Cargo files, generated outputs, overlays, and all other `src/lib.rs` content |
-| W3-2 Query | `terrabasev2-w3-query`, based on the accepted W3-1 commit | `src/query/**`, `src/index/**`, `tests/query/**`, `tests/index/**`, and explicitly named query/index docs | W3-2 owns query/index paths; it does not edit W3-1 paths or shared files |
+| W3-F Data Families | `terrabasev2-w3-families`, based on the accepted W3-1 commit | `src/families/**`, `tests/families/**`, and explicitly named `docs/families/**` | W3-F owns family paths only; it does not edit Storage, Engine, Query, Index, replication, backup, migration, adapter, shared, or generated paths |
+| W3-2 Query | `terrabasev2-w3-query`, based on the accepted W3-F Families commit | `src/query/**`, `src/index/**`, `tests/query/**`, `tests/index/**`, and explicitly named query/index docs | W3-2 owns query/index paths; it does not edit W3-1, W3-F, or shared files |
 | W3-3 Protocol | `terrabasev2-w3-protocol`, based on the accepted W3-2 commit | `src/adapters/protocol/**`, named protocol tests, and named protocol docs | W3-3 owns protocol paths; Platform implementation remains a later adapter packet |
 
 The parent integrates each packet in sequence. Generated inventory and parity
@@ -522,7 +532,7 @@ Collision ownership is explicit:
 | `Cargo.toml`, `Cargo.lock`, toolchain, format, and root CI files | later integrator | No dependency or manifest edits in W3 seam packets unless the dispatch names one exact file |
 | `parity/inventory.json` and `parity/overlays/**` | later integrator | Builders provide test/evidence handoffs; they do not regenerate or change status |
 | `docs/design/w3-core-contract.md` | W3-0 contract writer | This document is the durable W3 design record; behavior builders do not rewrite it |
-| `docs/storage/**`, `docs/engine/**`, `docs/query/**`, `docs/index/**`, and `docs/adapters/protocol/**` | the packet named in the dispatch | A packet may create only its named documentation path; there is no residual `docs/**` ownership |
+| `docs/storage/**`, `docs/engine/**`, `docs/families/**`, `docs/query/**`, `docs/index/**`, and `docs/adapters/protocol/**` | the packet named in the dispatch | A packet may create only its named documentation path; there is no residual `docs/**` ownership |
 
 If a builder discovers a required change outside its row, it records the exact
 path and asks the parent to assign that collision. It does not opportunistically
@@ -594,6 +604,39 @@ eventually return `Committed` or `Rejected`, or retain `Pending` with an
 explicit operational limit. An unknown response never permits a new identity
 for the same logical write.
 
+### Stable operation-ledger ordering
+
+The operation ledger is a private append-only resolution record, not a second
+document store. A `ReadyToPublish` record contains the `OperationId`, request
+digest, storage sequence, commit-marker identity, new-root identity, and
+requested local durability. The record is written and durably synced before
+the atomic root-pointer replacement. A later `Published` record is appended
+after pointer publication and its required syncs. Neither record exposes WAL
+frames or raw storage bytes.
+
+The ledger record is the durable resolution anchor for every local durability
+level. `Buffered` and `Written` may lose data bytes after a fault, but the
+resolution metadata is still persisted so reopen can distinguish a committed
+root, an unpublished intent, and a rejected operation. This metadata guarantee
+does not upgrade the operation's local data durability.
+
+After reopen, resolution follows the same deterministic rules:
+
+1. A matching published root and `ReadyToPublish` or `Published` record resolve
+   to `Committed` with the strongest durability actually proven. If the
+   post-publication pointer or directory sync was not confirmed, the result
+   cannot claim `Synced`.
+2. A durable `ReadyToPublish` record without its matching root remains
+   `Pending` while recovery checks whether publication can be completed. It is
+   never silently reported as `Rejected`.
+3. A durable rejection record resolves to `Rejected`. A request with the same
+   `OperationId` and a different digest is always `OperationIdReuse`.
+
+The operation ledger, WAL, pointer replacement, pointer sync, and directory
+sync therefore have one order. The ledger records intent before publication,
+the pointer makes a generation visible, post-publication sync establishes the
+`Synced` claim, and the ledger records the final published state afterward.
+
 ### Storage publication ordering
 
 The storage implementation must use this order for every accepted write:
@@ -609,23 +652,31 @@ The storage implementation must use this order for every accepted write:
 5. Apply the requested local durability action. For `Synced`, write and sync
    the WAL frames, commit marker, referenced data, and temporary manifest. The
    temporary manifest names the complete new root but is not visible yet.
-6. Atomically rename or otherwise publish the manifest/root pointer. For
-   `Synced`, the new root may now be visible to live reads, but sync the
-   published pointer and the containing directory after that publication.
-   Only after this post-publish sync may the Engine return a `Committed` receipt
-   claiming `Synced` or claim that the root is durably recoverable.
-7. For `Buffered` and `Written`, return only the guarantees defined below,
-   after the pointer publication that makes the root visible to this process.
-   No level may report visibility before the commit marker and pointer
-   publication sequence completes.
-8. Release storage locks. Emit a private immutable commit-publication event
+6. Append the `ReadyToPublish` operation-ledger record and durably sync the
+   ledger record. This sync is required even when the requested data durability
+   is `Buffered` or `Written`; it persists resolution metadata, not data bytes.
+7. Atomically rename or otherwise publish the manifest/root pointer. The new
+   root may now be visible to live reads. For `Synced`, sync the published
+   pointer and the containing directory after that publication. Only after this
+   post-publish sync may the Engine return a `Committed` receipt claiming
+   `Synced` or claim that the root is durably recoverable.
+8. Append and durably sync the `Published` operation-ledger record. If pointer
+   or directory sync, or this final ledger sync, fails after publication, the
+   caller receives `Unknown`; reopen resolves the operation by its identity and
+   root identity without claiming `Synced`.
+9. For `Buffered` and `Written`, return only the guarantees defined below,
+   after pointer publication and the resolution record complete. No level may
+   report visibility before the commit marker and pointer publication sequence
+   completes.
+10. Release storage locks. Emit a private immutable commit-publication event
    carrying the committed root and storage sequence. Index publication is a
    separate W3-2 concern and may lag.
 
 Recovery ignores prepare frames without a valid commit marker and ignores
 manifests whose checksums or root identity do not verify. After atomic pointer
 publication, the new root may be visible to live reads. If the post-publish
-pointer or containing-directory sync fails, the operation returns `Unknown`,
+pointer or containing-directory sync, or the final `Published` ledger sync,
+fails, the operation returns `Unknown`,
 the operation ledger remains authoritative, and resolution must determine
 whether the publication is committed. The result must not claim `Synced` or
 durable recoverability until those syncs complete. Lower levels may lose bytes
@@ -754,6 +805,187 @@ reuse with an immutable snapshot, cancellation at a bounded point, and typed
 authorization rejection. These are contract tests, not an assertion that V1
 parity already exists.
 
+## Data Family contract
+
+A Data Family is a V1-named group of related capabilities whose public rules
+remain explicit even when storage, query, replication, and transfer later
+reuse its values. W3 gives families a typed logical seam. It does not turn
+family handling into a generic command channel or move another seam's
+ownership into `src/families/**`.
+
+### Public logical interface
+
+The public interface is a closed registry of typed requests and typed results.
+The exact variant fields follow the corresponding contract fragment, but the
+shape and ownership are fixed here:
+
+```rust
+pub enum FamilyKind {
+    Attachments,
+    Counters,
+    TimeSeries,
+    Revisions,
+    CompareExchange,
+    Identities,
+    ExpirationRefresh,
+    Archival,
+    SchemaValidation,
+    ConflictTombstones,
+}
+
+pub struct FamilyReadContext {
+    pub tenant: TenantScope,
+    pub snapshot: ReadSnapshot,
+}
+
+pub enum FamilyReadRequest {
+    AttachmentMetadata(AttachmentRead),
+    CounterGroup(CounterRead),
+    TimeSeriesRange(TimeSeriesRead),
+    RevisionPage(RevisionRead),
+    CompareExchangeValue(CompareExchangeRead),
+    IdentityRange(IdentityRead),
+    Lifecycle(LifecycleRead),
+    Validation(ValidationRead),
+    Tombstones(TombstoneRead),
+}
+
+pub enum FamilyWriteRequest {
+    AttachmentMutation(AttachmentWrite),
+    CounterBatch(CounterBatchWrite),
+    TimeSeriesBatch(TimeSeriesBatchWrite),
+    RevisionCommand(RevisionWrite),
+    CompareExchangeCondition(CompareExchangeWrite),
+    IdentityAllocation(IdentityWrite),
+    LifecycleUpdate(LifecycleWrite),
+    ArchivalUpdate(ArchivalWrite),
+    SchemaValidationUpdate(ValidationWrite),
+    TombstoneOperation(TombstoneWrite),
+}
+
+pub struct FamilyStore { /* Engine-owned implementation */ }
+
+impl FamilyStore {
+    pub fn read(
+        &self,
+        context: FamilyReadContext,
+        request: FamilyReadRequest,
+    ) -> Result<FamilyReadResult, FamilyError>;
+
+    pub fn stage(
+        &self,
+        transaction: &mut Transaction,
+        request: FamilyWriteRequest,
+    ) -> Result<(), FamilyError>;
+}
+```
+
+`FamilyReadResult` is a closed typed result set for attachment metadata and
+bounded readers, counter groups, time-series pages, revision pages,
+compare-exchange values, identity ranges, lifecycle state, validation state,
+and tombstone views. Attachment content uses an opaque bounded reader and
+typed chunks. It never exposes a storage page, WAL frame, codec buffer, or
+generic byte escape hatch. `FamilyStore` is obtained from the durable Engine;
+it has no independent durable or in-memory production constructor.
+
+Family writes can only be staged into an Engine `Transaction`. The transaction
+supplies the single `OperationId`, snapshot, conflict check, and commit
+outcome. A family operation cannot commit independently or return a remote
+`Acknowledgement Level`. Local `Buffered`, `Written`, and `Synced` outcomes
+come from Engine storage. Replication `Convergence`, backup/import receipts,
+and Protocol authorization belong to their later seams.
+
+### Family invariants and internal seams
+
+- Every read and staged write carries one validated `TenantScope`; family
+  values, attachment metadata, cursors, and errors cannot cross tenants.
+- A transaction that changes documents and one or more families publishes one
+  transaction marker. Validation, conflict, abort, retry, and commit never
+  expose a partial family result.
+- Family-specific rules remain typed. Counter overflow, invalid time-series
+  arity or ranges, invalid revision references, malformed validation policy,
+  duplicate attachment names, and invalid lifecycle values are distinct
+  `FamilyError` cases.
+- Family reads use the immutable `ReadSnapshot`. A later Engine commit creates
+  a later snapshot; no family reader mutates or silently advances its snapshot.
+- Large attachment and time-series reads use bounded readers and cursors with
+  explicit range, cancellation, disposal, and backpressure behavior. W3-F
+  proves the logical limits; W4 owns the full streaming qualification.
+- Families emit typed, read-only projection inputs for Query and Index through
+  a crate-private adapter. Family code does not plan queries, choose indexes,
+  publish `IndexGeneration`, or edit `src/query/**` or `src/index/**`.
+- Storage owns WAL, manifest, pointer publication, recovery, and local
+  durability. Families do not inspect raw storage bytes or implement recovery.
+- Replication, sharding, backup/import, logical migration, Protocol, and
+  Platform authorization consume the family seam through later adapters. W3-F
+  leaves those concerns as explicit unresolved handoffs.
+
+### W3-F data-family packet
+
+`W3-F` is the W3 family implementation packet. It starts from the accepted W3-1
+Storage plus Engine commit in worktree `terrabasev2-w3-families` and owns only:
+
+- `src/families/**`;
+- `tests/families/**`;
+- explicitly named family documentation under `docs/families/**`.
+
+It depends on the W3-1 public Engine transaction and immutable snapshot
+contract. It must not edit `src/storage/**`, `src/engine/**`, `src/query/**`,
+`src/index/**`, `src/replication/**`, `src/backup/**`, `src/migration/**`,
+`src/adapters/**`, or their tests. It does not edit `src/lib.rs`; the W3-1
+narrow declaration/re-export exception remains the only behavior-module
+export exception. Cargo files, root CI, generated parity output, overlays,
+and shared manifests remain integrator-owned.
+
+W3-F must finish before W3-2 Query and Index starts. Query's family-aware
+projection and index-source tests depend on the typed family result contract.
+This is a safe sequential order, not accidental serialization. W3-F has no
+query or index implementation authority, and W3-2 has no family mutation
+authority. W3-3 Protocol starts only after both W3-F and W3-2 are accepted.
+
+The public-seam red tests begin red at `FamilyStore::read` and
+`FamilyStore::stage`:
+
+- `attachment_metadata_round_trip_is_tenant_scoped`;
+- `counter_crud_preserves_signed_values_and_missing_errors`;
+- `counter_batch_is_atomic_across_increment_delete_and_recreate`;
+- `counter_overflow_rejects_without_partial_state`;
+- `time_series_append_and_delete_preserve_timestamp_order`;
+- `revision_page_and_revert_keep_snapshot_identity`;
+- `expiration_and_refresh_updates_do_not_resurrect_deleted_documents`;
+- `schema_validation_rejects_invalid_writes_without_mutation`;
+- `family_tombstone_blocks_stale_local_resurrection`;
+- `family_transaction_abort_hides_all_staged_family_changes`;
+- `family_read_snapshot_remains_immutable_after_engine_commit`;
+- `family_scope_rejects_cross_tenant_reads_and_writes`.
+
+These tests observe typed results, errors, atomicity, isolation, and snapshot
+behavior through the family seam. They do not assert V1 parity or create
+Recovery, Replication, Benchmark, or migration receipts. Family streaming,
+query/index, replication, backup/import, and remote-adapter tests remain in
+their named packets.
+
+### Family parity-row mapping and handoffs
+
+All 46 family rows remain `unresolved` with empty Proof ID lists. The mapping
+below assigns the first owner and prevents a family worker from swallowing a
+neighboring seam:
+
+| Owner packet | Family rows | Scope |
+| --- | --- | --- |
+| W3-F Families | PB-3000, PB-3001, PB-3003, PB-3005, PB-3009, PB-3015, PB-3016, PB-3019, PB-3024, PB-3025, PB-3026, PB-3029, PB-3030, PB-3031, PB-3033, PB-3036, PB-3038, PB-3039, PB-3042 | Initial typed family CRUD, lifecycle, validation, identity, transaction, and tenant-isolation behavior |
+| W3-2 Query/Index | PB-3010, PB-3020, PB-3040 | Family query sources, projections, index maintenance, staleness, and ordering. Query owns the query/index code. |
+| W4 Streaming | PB-3002, PB-3014, PB-3017, PB-3023, PB-3041, PB-3043 | Bounded family readers, changes, subscriptions, cancellation, acknowledgement, and backpressure |
+| W4 Replication/qualification | PB-3004, PB-3006, PB-3011, PB-3012, PB-3018, PB-3021, PB-3027, PB-3028, PB-3032, PB-3034, PB-3035, PB-3037, PB-3044 | Family replication, conflicts, tombstones, sharding, archival interactions, and Region/Member behavior |
+| W4 Backup/migration | PB-3007, PB-3013, PB-3022, PB-3045 | Family backup, import/export, restore, Logical Migration, manifests, and checksums |
+| W5 adapters | PB-3008 | Remote attachment destination and typed credential/authorization behavior |
+
+The W3-F handoff to W3-2 contains the accepted W3-F commit, public type
+exports, family projection-input contract, redacted focused-test output,
+changed paths, and unresolved row list. The W3-2 handoff returns query/index
+evidence without changing family ownership. Later packets add Proof IDs only
+after their tests and required receipts exist.
+
 ## Protocol and Platform contract
 
 `PublicOperation` is a closed typed set of approved public operations. Every
@@ -796,6 +1028,45 @@ seam, receives the smallest implementation that makes it green, and then
 refactors only after the behavior is observed. Private helper tests do not
 replace these seam tests.
 
+### W3 dependency graph and implementation sequence
+
+The W3 behavior sequence is explicit:
+
+```text
+W3-0 type/export preparation
+          |
+W3-1 Storage + Engine, exclusive recovery lane
+          |
+W3-F Data Families
+          |
+W3-2 Query + Index
+          |
+W3-3 Protocol Adapter
+```
+
+W3-F follows W3-1 because it needs the durable Engine transaction and
+immutable `ReadSnapshot`, but it does not need Query or Index implementation.
+W3-2 follows W3-F because its family-query and family-index tracer slices
+consume the typed family result and projection-input contract. The disjoint
+path ownership is still enforced at every step. W3-1 remains the only packet
+allowed to modify or qualify Storage/WAL/recovery behavior, and W3-F cannot
+pull Query, Index, replication, Protocol, or backup code into its scope.
+
+The sequence handoffs are:
+
+1. W3-0 returns the shared logical types and exports, with an exact prep
+   commit recorded by the parent.
+2. W3-1 returns the Storage plus Engine commit, operation-ledger and
+   publication-event contract, redacted recovery/storage evidence, and its
+   unresolved PB obligations.
+3. W3-F returns the family public types, transaction-bound implementation,
+   family projection-input contract, redacted family tests, and the complete
+   PB-3000 through PB-3045 ownership map.
+4. W3-2 returns Query/Index behavior and family-aware query evidence without
+   taking ownership of `src/families/**`.
+5. W3-3 returns typed Protocol evidence. Every public call still passes the
+   Platform Adapter later, in its own adapter packet.
+
 ### W3-1, Storage plus Engine
 
 W3-1 is one sequential packet. The Storage and Engine contracts are inseparable
@@ -813,6 +1084,8 @@ The initial red test names are:
 - `different_payload_with_same_operation_id_is_rejected`;
 - `unknown_commit_resolves_from_the_durable_operation_ledger`;
 - `pending_resolution_is_not_reported_as_rejection`;
+- `ready_to_publish_ledger_record_is_durable_before_pointer_replacement`;
+- `reopen_resolves_a_ready_to_publish_record_by_operation_id`;
 - `transaction_conflict_returns_rejected_without_partial_writes`;
 - `one_transaction_publishes_all_writes_atomically`;
 - `buffered_written_and_synced_have_distinct_loss_windows`;
@@ -820,6 +1093,8 @@ The initial red test names are:
 - `commit_publication_event_is_emitted_after_storage_locks_release`;
 - `commit_publication_event_carries_an_immutable_root_and_storage_sequence`;
 - `commit_publication_event_is_not_emitted_before_pointer_publication`;
+- `post_publication_pointer_sync_failure_returns_unknown_and_reopens_deterministically`;
+- `post_publication_directory_sync_failure_returns_unknown_and_reopens_deterministically`;
 - `tenant_scope_cannot_change_during_a_transaction`;
 - `production_api_has_no_ephemeral_durable_engine_constructor`.
 
@@ -838,9 +1113,21 @@ integration tests. Formal Recovery Receipts come only from the exclusive
 recovery qualification lane after crash, restart, restore, migration, and
 fault scenarios have run with the required redaction and source identity.
 
+The two post-publication fault tests inject failures through a private,
+test-only faulting storage adapter at the public Engine commit seam. One fails
+the pointer-file sync after atomic replacement; the other fails the containing
+directory sync after pointer publication. Each test asserts `Unknown` with the
+original `OperationId`, permits the controlled fixture's live-read visibility,
+asserts that no `Synced` claim is returned, reopens the Engine, and resolves
+the same operation deterministically from the persisted ledger and root
+identity. Retrying the same logical request with that `OperationId` returns the
+same resolution, while a different digest is rejected as `OperationIdReuse`.
+The tests do not inspect raw pages, WAL frames, codec bytes, or private lock
+state. They prove the public outcome and durable-resolution rule.
+
 ### W3-2, Query and Index
 
-W3-2 starts only from an accepted W3-1 commit. Its red tests are:
+W3-2 starts only from an accepted W3-F Families commit. Its red tests are:
 
 - `query_plan_preserves_result_ordering_on_an_immutable_snapshot`;
 - `null_missing_and_exists_have_distinct_results`;
@@ -900,7 +1187,8 @@ The broader packet mapping is:
 | Packet | Rows it may exercise | Claim allowed in the packet |
 | --- | --- | --- |
 | W3-1 | document/transaction rows needed for the tracer, plus PB-5000 through PB-5041 | Contract and focused-test evidence only; no parity qualification |
-| W3-2 | query and index rows PB-4000 through PB-4061 that its tests cover | Contract and focused-test evidence only; no parity qualification |
+| W3-F | family rows PB-3000 through PB-3045 assigned by the family mapping | Contract and focused-test evidence only; no parity qualification |
+| W3-2 | query and index rows PB-4000 through PB-4061 that its tests cover, including family query rows only after W3-F | Contract and focused-test evidence only; no parity qualification |
 | W3-3 | approved protocol rows PB-1000 through PB-1033 that its tests cover | Typed adapter evidence only; no Platform authorization claim until the Platform packet |
 
 Every later overlay update is integrator-owned and must name the exact test,
@@ -916,9 +1204,9 @@ sequential integration.
 Required checks for this contract document and W2 synchronization are:
 
 - Markdown syntax and every in-repository link resolves from the repository
-  root. The workspace charter is the external workspace-root resource at
-  `/home/mariogk/Projects/TerraScale/specs/2026-08-23-terrabase-v2-goal.md`.
-  The parent passes that resolved path into every worktree; no arbitrary
+  root. The workspace charter uses the portable identifier
+  `workspace-root:specs/2026-08-23-terrabase-v2-goal.md`; the parent resolves it
+  to an absolute path in assignment metadata for every worktree. No arbitrary
   worktree-relative path is assumed. The design's in-repository ADR and W2
   links resolve locally.
 - JSON syntax, parity generation, parity `--check`, deterministic inventory,
@@ -972,9 +1260,12 @@ true:
   confused with `Acknowledgement Level` or `Convergence`.
 - `PlatformGrant` stays at the Platform Adapter seam, and Protocol has no
   generic or private operation escape hatch.
+- Data Families have a closed typed logical seam, a W3-F packet, explicit
+  family-row ownership, and no authority over Query, Storage, replication,
+  backup, Protocol, or Platform behavior.
 - Production has no public durable in-memory Engine constructor, and raw bytes
   stay in private storage codec/WAL code.
-- The W3-1, W3-2, and W3-3 worktrees and collision ownership are explicit.
+- The W3-1, W3-F, W3-2, and W3-3 worktrees and collision ownership are explicit.
 - The 42 PB-5000 through PB-5041 obligations remain visible and unresolved
   until their required tests and receipts exist.
 - W2 is reviewed GO at integrated and pushed commit `8771f13`; strict
