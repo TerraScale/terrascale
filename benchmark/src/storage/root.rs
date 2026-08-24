@@ -82,6 +82,20 @@ impl RootTable {
             .map(|(key, document)| (key.clone(), document.clone()))
     }
 
+    /// Returns every document of one tenant at this table's state, in
+    /// canonical key order.
+    ///
+    /// Documents carry their collection, value, and metadata, so callers can
+    /// filter and order without a second lookup. The full-table scan is a
+    /// tracer-scale implementation limit, not a contract limit.
+    pub(crate) fn tenant_documents(&self, tenant: &TenantId) -> Vec<Document> {
+        self.documents
+            .iter()
+            .filter(|(key, _)| key.tenant() == tenant.as_str())
+            .map(|(_, document)| document.clone())
+            .collect()
+    }
+
     /// Applies a validated write set and returns the resulting new table.
     ///
     /// The source table is not modified. Replacement documents receive the

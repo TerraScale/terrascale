@@ -57,6 +57,10 @@ pub(crate) trait StoragePort: Send {
         id: &DocumentId,
     ) -> Option<Document>;
 
+    /// Returns every document of one tenant as the given read snapshot
+    /// observed them, in canonical key order.
+    fn documents_at(&self, sequence: StorageSequence, tenant: &TenantId) -> Vec<Document>;
+
     /// Returns the currently published sequence and root identity.
     fn published_state(&self) -> (StorageSequence, StorageRootId);
 

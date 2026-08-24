@@ -445,12 +445,10 @@ impl Engine {
 
     /// Returns a query store borrowed from this Engine.
     ///
-    /// Query behavior belongs to the W3-2 packet; the borrowed store is wired
-    /// but not implemented here.
-    #[allow(clippy::missing_panics_doc)]
+    /// The store is bound to this Engine's lifetime; query behavior is
+    /// implemented in the query module.
     pub fn queries(&self) -> QueryStore<'_> {
-        let _store = QueryStore::from_engine(self);
-        unimplemented!("query behavior belongs to W3-2")
+        QueryStore::from_engine(self)
     }
 
     /// Returns a family store borrowed from this Engine.
@@ -506,6 +504,41 @@ impl Engine {
             return Err(EngineError::ScopeMismatch);
         }
         Ok(())
+    }
+
+    /// Returns every document of one tenant as the supplied read snapshot
+    /// observed them, in canonical key order.
+    ///
+    /// This is the crate-private snapshot view the query module executes
+    /// against. It performs the same validation as [`Engine::begin`] — the
+    /// snapshot's Engine identity, the scope's Engine identity, and the
+    /// snapshot tenant against the scope — before touching storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::SnapshotEngineMismatch`] for a snapshot from
+    /// another Engine, [`EngineError::ScopeMismatch`] for a scope from another
+    /// Engine, [`EngineError::SnapshotTenantMismatch`] when the snapshot and
+    /// scope name different tenants, and
+    /// [`EngineError::StorageFailure`] when storage cannot be reached.
+    #[allow(dead_code, reason = "consumed by the query module in W3-2")]
+    pub(crate) fn snapshot_documents(
+        &self,
+        scope: &TenantScope,
+        snapshot: &ReadSnapshot,
+    ) -> Result<Vec<Document>, EngineError> {
+        if snapshot.engine_identity() != self.identity {
+            return Err(EngineError::SnapshotEngineMismatch);
+        }
+        self.validate_scope(scope)?;
+        if snapshot.tenant() != scope.tenant() {
+            return Err(EngineError::SnapshotTenantMismatch);
+        }
+        let documents = {
+            let storage = self.lock_storage()?;
+            storage.port.documents_at(snapshot.sequence(), scope.tenant())
+        };
+        Ok(documents)
     }
 
     fn lock_storage(&self) -> Result<std::sync::MutexGuard<'_, StorageState>, EngineError> {

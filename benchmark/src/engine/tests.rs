@@ -1504,3 +1504,104 @@ fn storage_sequence_is_monotonic_across_commits_and_reopens() {
     reopened.shutdown().expect("shuts down");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// Integrator seam tests for the snapshot document view (W3-2 collision
+// action). They observe only typed outcomes at the crate-private seam.
+
+#[test]
+fn snapshot_documents_returns_only_the_snapshot_tenants_documents() {
+    let (dir, engine) = open_engine("snapshot-view-tenant");
+    assert!(matches!(
+        commit_put(
+            &engine,
+            "tenant-a",
+            "op-a1",
+            "doc-1",
+            "a-one",
+            ExpectedVersion::New,
+            LocalDurability::Synced
+        ),
+        CommitOutcome::Committed(_)
+    ));
+    assert!(matches!(
+        commit_put(
+            &engine,
+            "tenant-b",
+            "op-b1",
+            "doc-1",
+            "b-one",
+            ExpectedVersion::New,
+            LocalDurability::Synced
+        ),
+        CommitOutcome::Committed(_)
+    ));
+    let scope = tenant_scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    let documents = engine.snapshot_documents(&scope, &snapshot).expect("view");
+    assert_eq!(documents.len(), 1, "only the snapshot tenant is visible");
+    assert_eq!(documents[0].id().as_str(), "doc-1");
+    assert_eq!(documents[0].value(), &crate::types::DocumentValue::String("a-one".to_owned()));
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn snapshot_documents_stay_immutable_after_a_later_commit() {
+    let (dir, engine) = open_engine("snapshot-view-immutable");
+    assert!(matches!(
+        commit_put(
+            &engine,
+            "tenant-a",
+            "op-1",
+            "doc-1",
+            "v1",
+            ExpectedVersion::New,
+            LocalDurability::Synced
+        ),
+        CommitOutcome::Committed(_)
+    ));
+    let scope = tenant_scope(&engine, "tenant-a");
+    let held = engine.read_snapshot(&scope).expect("snapshot");
+    assert!(matches!(
+        commit_put(
+            &engine,
+            "tenant-a",
+            "op-2",
+            "doc-2",
+            "v2",
+            ExpectedVersion::New,
+            LocalDurability::Synced
+        ),
+        CommitOutcome::Committed(_)
+    ));
+    let held_view = engine.snapshot_documents(&scope, &held).expect("held view");
+    assert_eq!(held_view.len(), 1, "held snapshot excludes the later write");
+    let fresh = engine.read_snapshot(&scope).expect("fresh snapshot");
+    let fresh_view = engine.snapshot_documents(&scope, &fresh).expect("fresh view");
+    assert_eq!(fresh_view.len(), 2, "fresh snapshot sees both documents");
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn snapshot_documents_rejects_cross_tenant_and_foreign_seams() {
+    let (dir, engine) = open_engine("snapshot-view-validation");
+    let scope_a = tenant_scope(&engine, "tenant-a");
+    let snapshot_a = engine.read_snapshot(&scope_a).expect("snapshot");
+    let scope_b = tenant_scope(&engine, "tenant-b");
+    assert_eq!(
+        engine.snapshot_documents(&scope_b, &snapshot_a),
+        Err(EngineError::SnapshotTenantMismatch),
+        "a scope naming another tenant is rejected before data access"
+    );
+    drop(engine);
+    let other = reopen_engine(&dir);
+    let scope = tenant_scope(&other, "tenant-a");
+    assert_eq!(
+        other.snapshot_documents(&scope, &snapshot_a),
+        Err(EngineError::SnapshotEngineMismatch),
+        "a snapshot from the closed instance is rejected"
+    );
+    drop(other);
+    std::fs::remove_dir_all(&dir).ok();
+}

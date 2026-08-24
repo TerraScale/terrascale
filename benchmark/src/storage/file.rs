@@ -584,6 +584,10 @@ impl super::StoragePort for FileStorage {
         table.find_by_document_id(tenant, id).map(|(_, document)| document)
     }
 
+    fn documents_at(&self, sequence: StorageSequence, tenant: &TenantId) -> Vec<Document> {
+        self.table_at(sequence).tenant_documents(tenant)
+    }
+
     fn published_state(&self) -> (StorageSequence, StorageRootId) {
         (StorageSequence::new(self.published.sequence), self.published.id.clone())
     }
