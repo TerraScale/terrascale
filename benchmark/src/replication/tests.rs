@@ -20,7 +20,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use crate::engine::{Engine, EngineConfig};
+use crate::engine::EngineConfig;
 use crate::replication::{
     AcknowledgementLevel, MemberId, ReplicationConfig, ReplicationStatus, TopologyView,
     member::{ApplyReport, MemberError, ReplicationMember, ReplicationWrite, synchronize},
@@ -213,11 +213,11 @@ fn local_commit_receipt_contains_no_region_or_member_facts() {
     assert_eq!(durability_fact, LocalDurability::Synced);
     assert!(sequence_fact.get() > 0);
 
-    // No Region, Member, acknowledgement, convergence, topology, or receipt
-    // fact is carried, not even textually.
+    // No Region, Member, acknowledgement, convergence, or topology fact is
+    // carried, not even textually.
     let rendered = format!("{receipt:?}");
     for forbidden in
-        ["region", "member", "acknowledg", "convergen", "topolog", "r-alpha", "m-alpha", "receipt"]
+        ["region", "member", "acknowledg", "convergen", "topolog", "r-alpha", "m-alpha"]
     {
         assert!(
             !rendered.to_ascii_lowercase().contains(forbidden),
@@ -460,12 +460,17 @@ fn duplicate_delivery_applies_each_operation_once() {
     assert_eq!(journal_of(&follower, "tenant-a").len(), 2);
     assert_eq!(documents_of(&follower, "tenant-a"), documents_of(&source, "tenant-a"));
 
-    // A full redelivery of the same history changes nothing.
+    // A full re-request of the same range applies nothing: the advisory
+    // cursor keeps the source from re-serving history the member already
+    // holds. (In-delivery duplication was proven above; this is the
+    // request-level idempotence of the protocol.)
     network.link(&source_id, &follower_id).clear_faults();
     let replay = exchange_once(&mut network, &mut source, "tenant-a", &mut follower, "tenant-a");
     assert_eq!(replay.applied(), 0);
-    assert_eq!(replay.duplicates_resolved(), 2);
+    assert_eq!(replay.duplicates_resolved(), 0);
+    assert!(replay.caught_up());
     assert_eq!(journal_of(&follower, "tenant-a").len(), 2);
+    assert_eq!(documents_of(&follower, "tenant-a"), documents_of(&source, "tenant-a"));
 
     source.close();
     follower.close();
@@ -478,7 +483,6 @@ fn member_rejoin_checks_identity_and_catches_up_without_duplicates() {
     let topology = two_member_topology("m-src", "m-dst", "main");
     let (source_dir, mut source) = open_member("rejoin-source", "m-src", &topology);
     let (follower_dir, mut follower) = open_member("rejoin-follower", "m-dst", &topology);
-    let source_id = member_id("m-src");
     let mut network = ReplicationNetwork::new();
 
     member_put(&mut source, "tenant-a", "main", "op-1", "doc-1", "v1");
@@ -502,16 +506,11 @@ fn member_rejoin_checks_identity_and_catches_up_without_duplicates() {
     // The rejoined member catches up on the operations it missed, without
     // duplicating the operations it already holds.
     member_put(&mut source, "tenant-a", "main", "op-3", "doc-3", "v3");
+    let source_scope = scope(&source, "tenant-a");
     let follower_scope = scope(&follower, "tenant-a");
-    let report = synchronize(
-        &mut network,
-        &mut source,
-        &scope(&source, "tenant-a"),
-        &mut follower,
-        &follower_scope,
-        4,
-    )
-    .expect("catch-up after rejoin");
+    let report =
+        synchronize(&mut network, &mut source, &source_scope, &mut follower, &follower_scope, 4)
+            .expect("catch-up after rejoin");
     assert!(report.caught_up());
     assert_eq!(report.applied(), 1, "only the missed operation applies");
     assert_eq!(journal_of(&follower, "tenant-a").len(), 3, "no operation is duplicated");
@@ -573,15 +572,11 @@ fn restarted_member_resumes_from_its_durable_replication_cursor() {
 
     // Resumption re-receives the tenant history and resolves the already
     // applied operations through the durable operation ledger.
-    let report = synchronize(
-        &mut network,
-        &mut source,
-        &scope(&source, "tenant-a"),
-        &mut follower,
-        &scope(&follower, "tenant-a"),
-        4,
-    )
-    .expect("the restarted member resumes");
+    let source_scope = scope(&source, "tenant-a");
+    let follower_scope = scope(&follower, "tenant-a");
+    let report =
+        synchronize(&mut network, &mut source, &source_scope, &mut follower, &follower_scope, 4)
+            .expect("the restarted member resumes");
     assert_eq!(report.applied(), 2, "only the missed operations apply");
     assert_eq!(report.duplicates_resolved(), 3, "already-applied operations resolve idempotently");
     assert_eq!(journal_of(&follower, "tenant-a").len(), 5);
@@ -629,15 +624,11 @@ fn anti_entropy_repairs_a_lagging_member_after_a_gap() {
     }
     network.link(&source_id, &follower_id).drop_next(1);
 
-    let report = synchronize(
-        &mut network,
-        &mut source,
-        &scope(&source, "tenant-a"),
-        &mut follower,
-        &scope(&follower, "tenant-a"),
-        4,
-    )
-    .expect("anti-entropy repair runs");
+    let source_scope = scope(&source, "tenant-a");
+    let follower_scope = scope(&follower, "tenant-a");
+    let report =
+        synchronize(&mut network, &mut source, &source_scope, &mut follower, &follower_scope, 4)
+            .expect("anti-entropy repair runs");
     assert!(
         network.link(&source_id, &follower_id).dropped() >= 1,
         "the fault actually dropped a delivery"

@@ -40,40 +40,26 @@ mod transport;
 #[cfg(test)]
 mod tests;
 
-use std::{fmt, marker::PhantomData};
+use std::marker::PhantomData;
 
-use crate::types::OperationId;
+use crate::types::{OperationId, StorageSequence, TenantId};
 
 /// A validated logical Region identifier (CONTEXT: Region).
 ///
-/// `Display` renders the canonical identifier. Validation belongs to
-/// W4-REPLICATION.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+/// `Display` renders the canonical identifier. Validation follows the
+/// crate's logical-identifier rules; see [`RegionId::try_new`].
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RegionId {
-    identifier: PhantomData<String>,
-}
-
-impl fmt::Display for RegionId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _ = (self, formatter);
-        todo!("w4 implementation packet")
-    }
+    identifier: String,
 }
 
 /// A validated logical Member identifier (CONTEXT: Member).
 ///
-/// `Display` renders the canonical identifier. Validation belongs to
-/// W4-REPLICATION.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+/// `Display` renders the canonical identifier. Validation follows the
+/// crate's logical-identifier rules; see [`MemberId::try_new`].
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MemberId {
-    identifier: PhantomData<String>,
-}
-
-impl fmt::Display for MemberId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _ = (self, formatter);
-        todo!("w4 implementation packet")
-    }
+    identifier: String,
 }
 
 /// A caller-supplied membership view: Regions, Members, Failure Domain
@@ -83,10 +69,32 @@ impl fmt::Display for MemberId {
 /// not a decision: provisioning, placement, routing, lifecycle, membership
 /// policy, and control-plane replication of topology itself stay with the
 /// Platform/Orchestrator control plane (ADR-0004 D-1: one Member owns each
-/// data range's write path).
+/// data range's write path). A view is built through the validated
+/// [`TopologyView::new`] builder chain and becomes servable only after
+/// [`TopologyView::validated`] accepts it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TopologyView {
-    view: PhantomData<()>,
+    /// The Regions named by the view, in canonical order.
+    regions: Vec<RegionId>,
+    /// Every Member's seat: its Region and its Failure Domain.
+    members: Vec<MemberSeat>,
+    /// The data ranges with an admitted owner, in canonical order.
+    owners: Vec<RangeOwnership>,
+}
+
+/// One Member's seat in a [`TopologyView`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MemberSeat {
+    member: MemberId,
+    region: RegionId,
+    failure_domain: String,
+}
+
+/// One data range's write-path ownership in a [`TopologyView`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RangeOwnership {
+    range: String,
+    owner: MemberId,
 }
 
 /// The strongest state a Region or Member has confirmed for a replicated
@@ -125,14 +133,28 @@ pub enum AcknowledgementLevel {
     AllRegions,
 }
 
+impl Default for AcknowledgementLevel {
+    /// Returns [`AcknowledgementLevel::Local`]: V1 parity keeps the local
+    /// save as the default and every stronger level an explicit per-request
+    /// input (ADR-0004 D-2).
+    fn default() -> Self {
+        Self::Local
+    }
+}
+
 /// The observed acknowledgement for one replicated operation.
 ///
 /// Carries the observed level, the Region and Member set that contributed,
 /// and the observation time; it names Members explicitly (PB-5026, PB-5042).
 /// Any normalization of a degenerate level request is recorded here, so
 /// reports stay comparable across topologies.
+///
+/// R-1 implements no report content: the acknowledgement lattice above
+/// `Local`, the contributing sets, and the observation facts belong to the
+/// R-2 phase of W4-REPLICATION.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcknowledgementReport {
+    #[allow(dead_code, reason = "reserved for R-2: acknowledgement observation content")]
     report: PhantomData<()>,
 }
 
@@ -142,8 +164,13 @@ pub struct AcknowledgementReport {
 /// Names which Members hold the operation, at which acknowledgement state,
 /// and when it was observed. `Convergence` is reported as its own observation
 /// and is never inferred from an acknowledgement.
+///
+/// R-1 implements no convergence content and adds no way to derive a
+/// `Convergence` value from any health observation; that belongs to the R-2
+/// phase of W4-REPLICATION.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Convergence {
+    #[allow(dead_code, reason = "reserved for R-2: convergence observation content")]
     observation: PhantomData<()>,
 }
 
@@ -198,8 +225,12 @@ pub enum ReplicationStatus {
 /// convergence observation and its condition, measured RPO/RTO/convergence/
 /// lag with their definitions, and explicit limits. It carries no document
 /// content, credential, connection string, or private host path.
+///
+/// R-1 implements no receipt content: the qualification lane and its
+/// artifacts belong to the R-3 phase of W4-REPLICATION.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplicationReceipt {
+    #[allow(dead_code, reason = "reserved for R-3: qualification lane artifacts")]
     receipt: PhantomData<()>,
 }
 
@@ -209,8 +240,12 @@ pub struct ReplicationReceipt {
 /// under ADR-0004 D-3, deterministic last-writer-wins on a bounded hybrid
 /// logical clock, with losers retained as observable history. No conflicting
 /// document payload crosses this type.
+///
+/// R-1 implements no conflict content: the D-3 conflict policy belongs to
+/// the R-2 phase of W4-REPLICATION.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConflictRecord {
+    #[allow(dead_code, reason = "reserved for R-2: conflict policy observations")]
     record: PhantomData<()>,
 }
 
@@ -220,18 +255,36 @@ pub struct ConflictRecord {
 /// A lagging or restarted Member resumes from its cursor, validates storage
 /// identity and format before rejoining, and catches up without duplicating
 /// committed mutations.
+///
+/// R-1 derives the cursor from the Member's own publication-history journal
+/// (the ground truth of what that Member durably applied), so the cursor is
+/// expressed in the Member's own storage sequence space and survives an
+/// engine restart unchanged.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplicationCursor {
-    cursor: PhantomData<()>,
+    /// The Member whose durable progress this cursor reports.
+    member: MemberId,
+    /// The last sequence the Member's own journal durably recorded.
+    high_water: Option<StorageSequence>,
+    /// Each committed tenant's latest journaled sequence at or below the
+    /// high water, in canonical tenant order.
+    tenants: Vec<(TenantId, StorageSequence)>,
 }
 
 /// A validated topology and policy request input.
 ///
 /// `ReplicationConfig` does not authorize, provision, or route; the control
 /// plane owns those concerns. It carries no credential or connection string.
+/// The acknowledgement level is an explicit request input with a `Local`
+/// default (ADR-0004 D-2); R-1 evaluates no stronger level.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplicationConfig {
-    config: PhantomData<()>,
+    /// The validated membership view this configuration applies.
+    topology: TopologyView,
+    /// The acknowledgement level the caller names for its requests.
+    acknowledgement: AcknowledgementLevel,
+    /// The bounded number of commits one catch-up round requests.
+    catch_up_batch: u32,
 }
 
 /// Typed replication failure categories.
