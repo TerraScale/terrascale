@@ -66,6 +66,9 @@ validation happens at this seam — and one closed `PublicOperation`:
    signal is refused before dispatch as `ProtocolError::Deadline` /
    `Cancelled`, preserving the mutating `OperationId` when present (reads
    carry none). The deadline is checked first when both bounds are violated.
+   A deadline that elapses *during* dispatch is not rechecked at this seam;
+   Platform and Engine own execution-time enforcement and surface it as the
+   mapped `PlatformError::Deadline` row.
 2. The operation is dispatched unchanged to the private `PlatformPort`
    together with the caller reference.
 3. Any `PlatformError` is mapped to its `ProtocolError` row.
