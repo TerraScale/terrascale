@@ -266,3 +266,389 @@ fn single_region_single_member_write_reads_back_and_survives_restart() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[test]
+fn tenant_isolation_probe_denies_cross_tenant_replication_and_is_observable() {
+    let topology = two_member_topology("m-src", "m-dst", "main");
+    let (source_dir, mut source) = open_member("isolation-source", "m-src", &topology);
+    let (follower_dir, mut follower) = open_member("isolation-follower", "m-dst", &topology);
+    let source_id = member_id("m-src");
+    let follower_id = member_id("m-dst");
+    let mut network = ReplicationNetwork::new();
+
+    let source_scope_a = scope(&source, "tenant-a");
+    source
+        .commit_write(&source_scope_a, put_request("main", "op-1", "doc-a", "tenant-a-value"))
+        .expect("source writes tenant-a");
+
+    // A hostile requester asks for tenant-a's history while the serving scope
+    // names tenant-b: the serve seam denies the attempt with a typed error.
+    network
+        .send(
+            &follower_id,
+            &source_id,
+            ReplicationFrame::CatchUpRequest {
+                requester: follower_id.clone(),
+                tenant: tenant("tenant-a"),
+                after: None,
+                limit: 8,
+            },
+        )
+        .expect("bounded link accepts the request frame");
+    let denied = source.serve_catch_up(&mut network, &scope(&source, "tenant-b"));
+    assert!(
+        matches!(&denied, Err(MemberError::CrossTenant { scope, attempted })
+            if scope.as_str() == "tenant-b" && attempted.as_str() == "tenant-a"),
+        "cross-tenant serve is denied with a typed error: {denied:?}"
+    );
+    assert!(
+        network.receive(&follower_id, FrameSelector::Deliveries).is_empty(),
+        "no batch crossed the seam for the denied tenant"
+    );
+    assert_eq!(source.denials().len(), 1, "the denial is observable on the source");
+    assert_eq!(source.denials()[0].scope_tenant().as_str(), "tenant-b");
+    assert_eq!(source.denials()[0].attempted_tenant().as_str(), "tenant-a");
+    assert_eq!(source.denials()[0].counterparty().as_str(), "m-dst");
+    assert_eq!(
+        source.health(),
+        ReplicationStatus::Degraded,
+        "the denial degrades the serving member's health observation"
+    );
+
+    // A hostile delivery names tenant-a while the applying scope names
+    // tenant-b: the apply seam denies it and nothing of tenant-a crosses.
+    let hostile = PublishedCommit::new(
+        tenant("tenant-a"),
+        operation("op-1"),
+        StorageSequence::new(1),
+        LocalDurability::Synced,
+        vec![PublishedWrite::Put { document: text_document("users", "doc-a", "hostile") }],
+    );
+    network
+        .send(
+            &source_id,
+            &follower_id,
+            ReplicationFrame::CatchUpBatch {
+                source: source_id.clone(),
+                tenant: tenant("tenant-a"),
+                commits: vec![hostile],
+                through: Some(StorageSequence::new(1)),
+                tenant_high_water: Some(StorageSequence::new(1)),
+                servable_from: Some(StorageSequence::new(1)),
+                gap_below: None,
+            },
+        )
+        .expect("bounded link accepts the batch frame");
+    let denied_apply = follower.apply_deliveries(&mut network, &scope(&follower, "tenant-b"));
+    assert!(
+        matches!(&denied_apply, Err(MemberError::CrossTenant { scope, attempted })
+            if scope.as_str() == "tenant-b" && attempted.as_str() == "tenant-a"),
+        "cross-tenant apply is denied with a typed error: {denied_apply:?}"
+    );
+    assert_eq!(follower.denials().len(), 1, "the denial is observable on the follower");
+    assert!(
+        follower
+            .engine()
+            .expect("engine open")
+            .committed_tenants()
+            .expect("tenant enumeration")
+            .is_empty(),
+        "no cross-tenant data reached the follower's journal"
+    );
+    assert!(documents_of(&follower, "tenant-b").is_empty());
+
+    // Positive control: the same exchange under matching tenant scopes works,
+    // so the denials above are tenant isolation, not a broken path.
+    let report = exchange_once(&mut network, &mut source, "tenant-a", &mut follower, "tenant-a");
+    assert_eq!(report.applied(), 1);
+    assert_eq!(documents_of(&follower, "tenant-a"), documents_of(&source, "tenant-a"));
+
+    source.close();
+    follower.close();
+    std::fs::remove_dir_all(&source_dir).ok();
+    std::fs::remove_dir_all(&follower_dir).ok();
+}
+
+#[test]
+fn delayed_and_reordered_replication_replays_idempotently_to_the_contract_outcome() {
+    let topology = two_member_topology("m-src", "m-dst", "main");
+    let (source_dir, mut source) = open_member("reorder-source", "m-src", &topology);
+    let (follower_dir, mut follower) = open_member("reorder-follower", "m-dst", &topology);
+    let source_id = member_id("m-src");
+    let follower_id = member_id("m-dst");
+    let mut network = ReplicationNetwork::new();
+
+    member_put(&mut source, "tenant-a", "main", "op-1", "doc-a", "one");
+    member_put(&mut source, "tenant-a", "main", "op-2", "doc-b", "two");
+    let tenant_scope = scope(&source, "tenant-a");
+    source
+        .commit_write(&tenant_scope, delete_request("main", "op-3", "doc-a"))
+        .expect("delete commits");
+
+    // Delay models an ordered hold-back released only by explicit pumps, and
+    // reorder releases the held frames newest-first: the follower observes
+    // the publications out of publication order.
+    let response_link = network.link(&source_id, &follower_id);
+    response_link.delay();
+    response_link.reorder();
+
+    // Two pipelined requests overlap, so two batch frames are in flight when
+    // the pump releases them in reverse order.
+    let follower_scope = scope(&follower, "tenant-a");
+    follower
+        .request_catch_up(&mut network, &source_id, &follower_scope)
+        .expect("first request sent");
+    follower
+        .request_catch_up(&mut network, &source_id, &follower_scope)
+        .expect("second request sent");
+    network.pump();
+    let source_scope = scope(&source, "tenant-a");
+    source.serve_catch_up(&mut network, &source_scope).expect("requests served");
+    assert_eq!(network.link(&source_id, &follower_id).held(), 2, "the batches are held back");
+    network.pump();
+    assert!(
+        network.link(&source_id, &follower_id).reordered() > 0,
+        "the release order was actually reversed"
+    );
+    let report = follower
+        .apply_deliveries(&mut network, &follower_scope)
+        .expect("deliveries apply");
+
+    assert_eq!(report.applied(), 3, "every operation applies exactly once");
+    assert_eq!(report.duplicates_resolved(), 3, "the overlapping delivery resolves idempotently");
+    assert_eq!(
+        documents_of(&follower, "tenant-a"),
+        documents_of(&source, "tenant-a"),
+        "the follower reaches the contract outcome"
+    );
+    assert_eq!(journal_of(&follower, "tenant-a").len(), 3);
+    let follower_view = documents_of(&follower, "tenant-a");
+    assert!(
+        follower_view.iter().all(|document| document.id().as_str() != "doc-a"),
+        "doc-a stays deleted after the out-of-order replay"
+    );
+    assert_eq!(follower_view.len(), 1, "doc-b survives");
+
+    source.close();
+    follower.close();
+    std::fs::remove_dir_all(&source_dir).ok();
+    std::fs::remove_dir_all(&follower_dir).ok();
+}
+
+#[test]
+fn duplicate_delivery_applies_each_operation_once() {
+    let topology = two_member_topology("m-src", "m-dst", "main");
+    let (source_dir, mut source) = open_member("duplicate-source", "m-src", &topology);
+    let (follower_dir, mut follower) = open_member("duplicate-follower", "m-dst", &topology);
+    let source_id = member_id("m-src");
+    let follower_id = member_id("m-dst");
+    let mut network = ReplicationNetwork::new();
+
+    member_put(&mut source, "tenant-a", "main", "op-1", "doc-1", "v1");
+    member_put(&mut source, "tenant-a", "main", "op-2", "doc-2", "v2");
+
+    // The link duplicates every delivered frame: one batch becomes two
+    // identical deliveries of the same operations.
+    network.link(&source_id, &follower_id).duplicate();
+    let report = exchange_once(&mut network, &mut source, "tenant-a", &mut follower, "tenant-a");
+
+    assert!(
+        network.link(&source_id, &follower_id).delivered() >= 2,
+        "the fault actually duplicated the delivery"
+    );
+    assert_eq!(report.applied(), 2, "each operation applies once");
+    assert_eq!(report.duplicates_resolved(), 2, "the duplicate resolves through the ledger");
+    assert_eq!(journal_of(&follower, "tenant-a").len(), 2);
+    assert_eq!(documents_of(&follower, "tenant-a"), documents_of(&source, "tenant-a"));
+
+    // A full redelivery of the same history changes nothing.
+    network.link(&source_id, &follower_id).clear_faults();
+    let replay = exchange_once(&mut network, &mut source, "tenant-a", &mut follower, "tenant-a");
+    assert_eq!(replay.applied(), 0);
+    assert_eq!(replay.duplicates_resolved(), 2);
+    assert_eq!(journal_of(&follower, "tenant-a").len(), 2);
+
+    source.close();
+    follower.close();
+    std::fs::remove_dir_all(&source_dir).ok();
+    std::fs::remove_dir_all(&follower_dir).ok();
+}
+
+#[test]
+fn member_rejoin_checks_identity_and_catches_up_without_duplicates() {
+    let topology = two_member_topology("m-src", "m-dst", "main");
+    let (source_dir, mut source) = open_member("rejoin-source", "m-src", &topology);
+    let (follower_dir, mut follower) = open_member("rejoin-follower", "m-dst", &topology);
+    let source_id = member_id("m-src");
+    let mut network = ReplicationNetwork::new();
+
+    member_put(&mut source, "tenant-a", "main", "op-1", "doc-1", "v1");
+    member_put(&mut source, "tenant-a", "main", "op-2", "doc-2", "v2");
+    let first = exchange_once(&mut network, &mut source, "tenant-a", &mut follower, "tenant-a");
+    assert!(first.caught_up());
+
+    let cursor_before = follower.cursor().expect("cursor derives from the journal");
+    let rejoined = follower.rejoin(&cursor_before);
+    assert!(
+        rejoined.is_ok(),
+        "a member whose durable history is intact rejoins after validation: {rejoined:?}"
+    );
+    assert_eq!(follower.health(), ReplicationStatus::Active, "the rejoining member is admitted");
+    assert_eq!(
+        follower.cursor().expect("cursor derives from the journal"),
+        cursor_before,
+        "rejoin validation is anchored in the journal-derived cursor"
+    );
+
+    // The rejoined member catches up on the operations it missed, without
+    // duplicating the operations it already holds.
+    member_put(&mut source, "tenant-a", "main", "op-3", "doc-3", "v3");
+    let follower_scope = scope(&follower, "tenant-a");
+    let report = synchronize(
+        &mut network,
+        &mut source,
+        &scope(&source, "tenant-a"),
+        &mut follower,
+        &follower_scope,
+        4,
+    )
+    .expect("catch-up after rejoin");
+    assert!(report.caught_up());
+    assert_eq!(report.applied(), 1, "only the missed operation applies");
+    assert_eq!(journal_of(&follower, "tenant-a").len(), 3, "no operation is duplicated");
+    assert_eq!(documents_of(&follower, "tenant-a"), documents_of(&source, "tenant-a"));
+
+    // A member whose durable history went backwards is reported, not
+    // admitted: its journal-derived cursor regressed below the cursor it
+    // rejoined with.
+    let cursor_now = follower.cursor().expect("cursor derives from the journal");
+    follower.close();
+    std::fs::remove_dir_all(&follower_dir).ok();
+    let rejected = follower.rejoin(&cursor_now);
+    assert!(
+        matches!(rejected, Err(MemberError::RejoinRejected(_))),
+        "a regressed durable cursor is reported, not admitted: {rejected:?}"
+    );
+    assert_ne!(follower.health(), ReplicationStatus::Active);
+    assert!(follower.last_rejection().is_some(), "the rejection is observable");
+
+    source.close();
+    std::fs::remove_dir_all(&source_dir).ok();
+}
+
+#[test]
+fn restarted_member_resumes_from_its_durable_replication_cursor() {
+    let topology = two_member_topology("m-src", "m-dst", "main");
+    let (source_dir, mut source) = open_member("resume-source", "m-src", &topology);
+    let (follower_dir, mut follower) = open_member("resume-follower", "m-dst", &topology);
+    let mut network = ReplicationNetwork::new();
+
+    for (name, text) in [("op-1", "v1"), ("op-2", "v2"), ("op-3", "v3")] {
+        member_put(&mut source, "tenant-a", "main", name, "doc-1", text);
+    }
+    let caught_up = exchange_once(&mut network, &mut source, "tenant-a", &mut follower, "tenant-a");
+    assert!(caught_up.caught_up());
+    assert_eq!(journal_of(&follower, "tenant-a").len(), 3);
+
+    // The source advances while the follower is down.
+    member_put(&mut source, "tenant-a", "main", "op-4", "doc-1", "v4");
+    member_put(&mut source, "tenant-a", "main", "op-5", "doc-2", "v5");
+
+    let cursor_before = follower.cursor().expect("cursor derives from the journal");
+    assert_eq!(
+        cursor_before.tenant_progress(&tenant("tenant-a")),
+        Some(StorageSequence::new(3)),
+        "the durable cursor names the follower's own journal progress"
+    );
+    follower.restart().expect("the member reopens its Engine");
+    assert_eq!(
+        follower.cursor().expect("cursor derives from the journal"),
+        cursor_before,
+        "the durable cursor is journal ground truth and survives the restart"
+    );
+    assert_eq!(
+        follower.advisory_progress(&tenant("tenant-a")),
+        None,
+        "advisory in-memory progress does not survive the restart"
+    );
+
+    // Resumption re-receives the tenant history and resolves the already
+    // applied operations through the durable operation ledger.
+    let report = synchronize(
+        &mut network,
+        &mut source,
+        &scope(&source, "tenant-a"),
+        &mut follower,
+        &scope(&follower, "tenant-a"),
+        4,
+    )
+    .expect("the restarted member resumes");
+    assert_eq!(report.applied(), 2, "only the missed operations apply");
+    assert_eq!(report.duplicates_resolved(), 3, "already-applied operations resolve idempotently");
+    assert_eq!(journal_of(&follower, "tenant-a").len(), 5);
+    assert_eq!(documents_of(&follower, "tenant-a"), documents_of(&source, "tenant-a"));
+
+    source.close();
+    follower.close();
+    std::fs::remove_dir_all(&source_dir).ok();
+    std::fs::remove_dir_all(&follower_dir).ok();
+}
+
+#[test]
+fn anti_entropy_repairs_a_lagging_member_after_a_gap() {
+    let topology = two_member_topology("m-src", "m-dst", "main");
+    let (source_dir, mut source) = open_member("anti-entropy-source", "m-src", &topology);
+    let (follower_dir, mut follower) = open_member("anti-entropy-follower", "m-dst", &topology);
+    let source_id = member_id("m-src");
+    let follower_id = member_id("m-dst");
+    let mut network = ReplicationNetwork::new();
+
+    for index in 1..=5 {
+        member_put(
+            &mut source,
+            "tenant-a",
+            "main",
+            &format!("op-{index}"),
+            "doc-1",
+            "advancing",
+        );
+    }
+    let caught_up = exchange_once(&mut network, &mut source, "tenant-a", &mut follower, "tenant-a");
+    assert!(caught_up.caught_up());
+
+    // The source advances while the follower is idle, and the next delivery
+    // in transit is dropped: the follower is left with a gap.
+    for index in 6..=8 {
+        member_put(
+            &mut source,
+            "tenant-a",
+            "main",
+            &format!("op-{index}"),
+            &format!("doc-{index}"),
+            "advancing",
+        );
+    }
+    network.link(&source_id, &follower_id).drop_next(1);
+
+    let report = synchronize(
+        &mut network,
+        &mut source,
+        &scope(&source, "tenant-a"),
+        &mut follower,
+        &scope(&follower, "tenant-a"),
+        4,
+    )
+    .expect("anti-entropy repair runs");
+    assert!(
+        network.link(&source_id, &follower_id).dropped() >= 1,
+        "the fault actually dropped a delivery"
+    );
+    assert!(report.caught_up(), "the gap is repaired");
+    assert_eq!(journal_of(&follower, "tenant-a").len(), 8, "every operation applies exactly once");
+    assert_eq!(documents_of(&follower, "tenant-a"), documents_of(&source, "tenant-a"));
+    assert_ne!(follower.health(), ReplicationStatus::Stale, "the repaired member is not lagging");
+
+    source.close();
+    follower.close();
+    std::fs::remove_dir_all(&source_dir).ok();
+    std::fs::remove_dir_all(&follower_dir).ok();
+}
