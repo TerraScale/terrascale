@@ -3,7 +3,7 @@
 No production claim: lane-scoped facts from the deterministic in-process
 qualification lane only.
 
-- Commit: `f6082d7` (branch `fleet/w4-replication`)
+- Commit: `f70a5d8` (branch `fleet/w4-replication`)
 - Producing test: `lane_duplicate_replay_applies_each_operation_once`
 - Run command: `cargo test --offline --locked --lib lane_duplicate_replay -- --nocapture`
 

@@ -4,8 +4,13 @@ No production claim: this file records lane-scoped facts from the
 deterministic in-process qualification lane only. Nothing here states a
 production topology, timing, performance, or durability capability.
 
-- Commit that produced this receipt: `f6082d7` (branch `fleet/w4-replication`,
-  worktree `terrabasev2-w4-replication`)
+- Commit that produced this receipt: `f70a5d8` (branch `fleet/w4-replication`,
+  worktree `terrabasev2-w4-replication`) — the repair-loop-1 revision; the
+  measurements are unchanged from the first emission at `f6082d7` (the
+  repairs fixed correctness paths the composite's script did not alter: the
+  acknowledgement home-Region derivation, source-matched resumption, and
+  remote-vs-remote conflict resolution — the convergence observed here now
+  rests on genuinely applied commits rather than a masked skip)
 - Producing test: `three_region_fault_lane_reports_measured_rpo_rto_convergence_and_lag`
 - Run command: `cargo test --offline --locked --lib three_region_fault_lane -- --nocapture`
 - Determinism: `lane_composite_scenario_is_deterministic` runs the same script

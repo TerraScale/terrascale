@@ -3,7 +3,7 @@
 No production claim: lane-scoped facts from the deterministic in-process
 qualification lane only.
 
-- Commit: `f6082d7` (branch `fleet/w4-replication`)
+- Commit: `f70a5d8` (branch `fleet/w4-replication`)
 - Producing tests: `lane_region_partition_with_isolated_concurrent_writes_converges`
   and act E of `run_composite_lane`
 - Run command: `cargo test --offline --locked --lib lane_region_partition -- --nocapture`

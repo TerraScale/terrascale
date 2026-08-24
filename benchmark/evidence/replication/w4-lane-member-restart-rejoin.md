@@ -3,7 +3,7 @@
 No production claim: lane-scoped facts from the deterministic in-process
 qualification lane only.
 
-- Commit: `f6082d7` (branch `fleet/w4-replication`)
+- Commit: `f70a5d8` (branch `fleet/w4-replication`)
 - Producing test: acts D of `run_composite_lane`, asserted by
   `three_region_fault_lane_reports_measured_rpo_rto_convergence_and_lag`
   and the R-1 suite's `member_rejoin_checks_identity_and_catches_up_without_duplicates`

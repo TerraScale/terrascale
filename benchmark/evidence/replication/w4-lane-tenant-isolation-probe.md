@@ -3,7 +3,7 @@
 No production claim: lane-scoped facts from the deterministic in-process
 qualification lane only.
 
-- Commit: `f6082d7` (branch `fleet/w4-replication`)
+- Commit: `f70a5d8` (branch `fleet/w4-replication`)
 - Producing test: `lane_tenant_isolation_probe_denies_cross_tenant_and_is_observable`
 - Run command: `cargo test --offline --locked --lib lane_tenant_isolation -- --nocapture`
 
