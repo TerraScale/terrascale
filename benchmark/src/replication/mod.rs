@@ -36,6 +36,8 @@ mod identifier;
 mod lane;
 #[cfg(test)]
 mod lane_tests;
+#[cfg(test)]
+mod repair_tests;
 mod member;
 mod status;
 mod topology;
