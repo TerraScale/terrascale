@@ -1,5 +1,8 @@
 # W2 contract extraction and integration
 
+Status: reviewed GO and integrated/pushed at `8771f13`. Strict qualification
+remains blocked by the same 42 unresolved PB-5000 through PB-5041 test gaps.
+
 Date: 2026-08-23
 
 This record covers the W2 contract freeze integration. It joins six approved
@@ -30,11 +33,11 @@ The six fragments contain 258 rows. No row was dropped or merged.
 
 ## Correction pass after independent review
 
-The independent contract review returned NO-GO `A-REV-CONTRACT-001` because
+The first independent contract review returned NO-GO `A-REV-CONTRACT-001` because
 the first integration had pathless query and replication scopes, stale V1
 paths/symbols, and a secret scanner that assumed a `tests/` directory existed.
-This branch is the bounded correction assignment
-`A-INT-CONTRACT-FIX-001`; it does not mark W2 verified. A later bounded
+The bounded corrections resolved those findings. This branch records the
+bounded correction assignment `A-INT-CONTRACT-FIX-001`; the later bounded
 validator-hardening correction is recorded below as `A-INT-CONTRACT-FIX-004`.
 
 The correction adds an explicit, reproducible citation to all 258 scopes. The
@@ -71,8 +74,9 @@ types, constructors, methods, properties/fields, and test declarations while
 rejecting calls, assignments, member access, comments, literals, and
 incidental substrings. PB-3007 and PB-3045 now cite the exact
 `DatabaseSmuggler` declaration in addition to their existing evidence. This
-correction is pending independent re-review and does not change IDs, overlays,
-statuses, Proof IDs, or the 42 gaps.
+correction changed no IDs, overlays, statuses, Proof IDs, or the 42 gaps. The
+independent reliability review accepted the corrected W2 tree as GO, and the
+integrator pushed it as `8771f13`.
 
 Contract-audit mode is allowed to complete with those explicit obligations
 and prints `CONTRACT AUDIT COMPLETE WITH 42 UNRESOLVED TEST GAPS`. Strict mode
@@ -181,7 +185,7 @@ not treat a discovery note as implementation proof.
 
 ## Validation commands and results
 
-The following commands ran in this worktree:
+The following checks and dispatch commands are recorded for this worktree:
 
 - JSON syntax: `find parity -type f -name '*.json' -print0 | xargs -0 -n1
   jq empty`, passed for 267 JSON files.
@@ -199,16 +203,32 @@ The following commands ran in this worktree:
   symlinks, parent/absolute paths, declaration versus expression-context
   checks, contract versus strict mode, missing-root fail-closed behavior, and
   the machine-readable gap report.
-- Contract audit: `TERRABASE_V1_ROOT=/path/to/TerraBase python3
-  scripts/validate_v1_citations.py --mode contract --v1-root
-  /path/to/TerraBase --workspace-root /path/to/TerraScale
-  --gap-report parity/v1-test-gaps.json`, passed the citation checks with 258
-  rows, 251 V1-backed rows, 267 source citations, 231 test citations, and 42
-  unresolved test gaps. The report is an audit result, not qualification.
-- Strict audit: the same command with `--strict` failed as required because
-  42 unresolved test gaps remain. `./scripts/check.sh` uses this strict mode,
-  so it is also expected to fail until those obligations are closed. With no
-  pinned V1 checkout it reports `UNRUN` and fails closed.
+- Contract citation audit dispatch command, requiring the parent to provide a
+  clean pinned V1 checkout through `TERRABASE_V1_ROOT` and the TerraScale
+  workspace through `TERRASCALE_WORKSPACE_ROOT`:
+
+  ```sh
+  : "${TERRABASE_V1_ROOT:?dispatch must provide the clean pinned V1 root}" &&
+  : "${TERRASCALE_WORKSPACE_ROOT:?dispatch must provide the TerraScale workspace root}" &&
+  workspace_charter="${TERRASCALE_WORKSPACE_ROOT}/specs/2026-08-23-terrabase-v2-goal.md" &&
+  test -f "$workspace_charter" &&
+  v2_root="$(git rev-parse --show-toplevel)" &&
+  python3 scripts/validate_v1_citations.py \
+    --mode contract \
+    --v1-root "$TERRABASE_V1_ROOT" \
+    --workspace-root "$TERRASCALE_WORKSPACE_ROOT" \
+    --gap-report "$v2_root/parity/v1-test-gaps.json"
+  ```
+
+  The charter path is `${TERRASCALE_WORKSPACE_ROOT}/specs/2026-08-23-terrabase-v2-goal.md`;
+  the explicit file check fails closed before validation. With both dispatch
+  roots supplied, the contract audit must report 258 rows, 251 V1-backed rows,
+  267 source citations, 231 test citations, and 42 unresolved test gaps. The
+  report is an audit result, not qualification.
+- Strict audit: the dispatch command above with `--strict` is the qualification
+  gate. It must fail while 42 unresolved test gaps remain, and `./scripts/check.sh`
+  must fail closed until those obligations are closed. This worktree does not
+  claim a strict audit run without the dispatch-provided pinned V1 checkout.
 - Secret-scan black-box tests: `uv run --no-project --python 3.14.7 python3
   scripts/test_secret_scan.py`, 4 tests passed. `./scripts/check_secrets.sh`
   passed and honestly reported that this repository has no `tests/` root; the
@@ -216,14 +236,18 @@ The following commands ran in this worktree:
   distinguishes no-match, match, and scanner-error exit codes.
 - Direct Draft 2020-12 validation through the optional `jsonschema` package:
   unrun because the package is unavailable.
-- Full repository check: `./scripts/check.sh`, not a pass while strict V1
-  gaps remain. Rust format, check, release tests, clippy, documentation,
-  parity, secret, and license checks were run separately where available; the
-  strict citation gate correctly stopped qualification on the 42 gaps. The
-  optional `cargo-deny` advisory check was unavailable and recorded as unrun.
+- Full repository check: `./scripts/check.sh` is not a qualification pass while
+  strict V1 gaps remain. Rust format, check, release tests, clippy,
+  documentation, parity, secret, and license checks were run separately where
+  available; the strict citation gate must stop qualification on the 42 gaps.
+  The optional `cargo-deny` advisory check was unavailable and recorded as
+  unrun.
 - No push, merge, issue, pull request, sibling-repository edit, or database
-  implementation was performed.
+  implementation was performed from this W2 extraction worktree. The later
+  integrator pushed the corrected tree as `8771f13`.
 
-The next gate is independent re-review of `A-INT-CONTRACT-FIX-004`, followed by
-the W3 behavior builders if that gate passes. This record does not mark W2 as
-independently verified.
+The next gate is W3 core design and behavior work. W2 is independently reviewed
+GO and remains a contract freeze only. It does not claim V2 implementation,
+parity qualification, recovery safety, multi-region convergence, or benchmark
+validity. Strict qualification correctly remains closed until the same 42
+PB-5000 through PB-5041 test gaps are resolved with the required evidence.
