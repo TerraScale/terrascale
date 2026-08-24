@@ -255,7 +255,7 @@ export const en = {
           a: 'Yes. Your data is yours. Export through the dashboard or API. Rate limits protect cluster stability, but there is no exit fee for leaving TerraScale.',
         },
         {
-          q: 'Do you offer larger custom deployments?',
+          q: 'What does the Enterprise plan include?',
           a: 'Enterprise has a $500 monthly support base plus metered usage, but it is unavailable during Public Alpha.',
         },
         {

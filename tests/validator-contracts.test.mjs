@@ -184,13 +184,15 @@ test('localized source scans reject every translated prohibited claim category',
   assertLocalizedClaimCategories(files, localizedClaimsFixtureRoot, 'source')
 })
 
-test('localized Enterprise questions are not availability claims', () => {
+test('Enterprise availability wording is prohibited in every source and rendered context', () => {
   for (const question of [
     '¿Enterprise está disponible?',
     'O Enterprise está disponível?',
     'Enterprise está disponível?',
     'Enterprise is available?',
     'Enterprise remains available?',
+    'Enterprise available?',
+    'Enterprise: is available?',
     'Enterprise está disponible ?',
     'O Enterprise está disponível ?',
     "label: 'Enterprise está disponible ?',",
@@ -198,7 +200,7 @@ test('localized Enterprise questions are not availability claims', () => {
     '<span>O Enterprise está disponível ?</span>',
   ]) {
     const mode = question.startsWith('<') ? 'rendered' : 'source'
-    assert.equal(findProhibitedClaims(question, { mode }).some(({ id }) => id === 'positive-enterprise-availability'), false)
+    assert.equal(findProhibitedClaims(question, { mode }).some(({ id }) => id === 'positive-enterprise-availability'), true)
   }
 
   for (const declaration of [
@@ -220,7 +222,7 @@ test('localized Enterprise questions are not availability claims', () => {
   }
 })
 
-test('malformed HTML never earns an Enterprise question exemption', () => {
+test('malformed rendered markup fails closed while optional end tags remain valid', () => {
   for (const malformed of [
     '<p class="x>Enterprise is available?</p>',
     "<p title='x>Enterprise está disponible?</p>",
@@ -229,12 +231,16 @@ test('malformed HTML never earns an Enterprise question exemption', () => {
     '<p>Enterprise está disponível?</div>',
     '<p>Enterprise is available?',
     '<p>Enterprise is available?</p',
+    '<span>Enterprise is available?',
+    '<strong>Enterprise is available?',
   ]) {
     assert.equal(findProhibitedClaims(malformed, { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability'), true)
   }
+
+  assert.deepEqual(findProhibitedClaims('<ul><li>Enterprise support<li>Contact sales</ul>', { mode: 'rendered' }), [])
 })
 
-test('normal rendered HTML exempts exact Enterprise FAQ nodes but not nearby claims', () => {
+test('rendered Enterprise availability wording is prohibited regardless of document context', () => {
   const questions = ['Enterprise is available?', '¿Enterprise está disponible?', 'O Enterprise está disponível?']
   for (const document of [
     ...questions.map((question) => `<!doctype html><html><head><title>${question}</title></head><body></body></html>`),
@@ -242,8 +248,9 @@ test('normal rendered HTML exempts exact Enterprise FAQ nodes but not nearby cla
     ...questions.map((question) => `<!doctype html><html><head><meta name="description" content="${question}"></head><body></body></html>`),
     '<!doctype html><html><head><meta name="description" content="x &quot; y"></head><body><p>Enterprise is available?</p></body></html>',
     '<!doctype html><html><head></head><body><p><span>Enterprise is <strong>available?</strong></span></p></body></html>',
+    '<!doctype html><html><body><h1>Pricing</h1><p>Enterprise is available?</p></body></html>',
   ]) {
-    assert.equal(findProhibitedClaims(document, { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability'), false)
+    assert.equal(findProhibitedClaims(document, { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability'), true)
   }
 
   for (const document of [
@@ -258,7 +265,7 @@ test('normal rendered HTML exempts exact Enterprise FAQ nodes but not nearby cla
   }
 })
 
-test('rendered scans use complete decoded blocks and keep source exemptions out', () => {
+test('rendered scans use complete decoded blocks and source text stays lexical', () => {
   for (const rendered of [
     '<p>Enterprise is available?\n<span> for everyone.</span></p>',
     '<span>Enterprise is available?<strong> for everyone.</strong></span>',
@@ -274,7 +281,7 @@ test('rendered scans use complete decoded blocks and keep source exemptions out'
     assert.equal(findProhibitedClaims(rendered, { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability' || id === 'positive-paid-overages'), true)
   }
 
-  assert.equal(findProhibitedClaims("const faq = 'Enterprise is available?'", { mode: 'source' }).some(({ id }) => id === 'positive-enterprise-availability'), false)
+  assert.equal(findProhibitedClaims("const faq = 'Enterprise is available?'", { mode: 'source' }).some(({ id }) => id === 'positive-enterprise-availability'), true)
   assert.equal(findProhibitedClaims("const faq = 'Enterprise is available?'", { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability'), true)
 })
 
@@ -285,13 +292,15 @@ test('rendered claim streams preserve document order and raw structural claims',
     '<div>Enterprise is available?</div><div> for everyone.</div>',
     '<p>Enterprise is</p><p> available?</p>',
     '<p>Excedentes pagados</p><p> disponibles</p>',
+    '<span>Enterprise is<br>available?</span>',
+    '<p>Excedentes pagados<br>disponibles</p>',
   ]) {
     assert.equal(findProhibitedClaims(rendered, { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability' || id === 'positive-paid-overages'), true, rendered)
   }
 
   assert.equal(
     findProhibitedClaims('<h1>Pricing</h1><p>Enterprise is available?</p>', { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability'),
-    false,
+    true,
   )
   assert.equal(
     findProhibitedClaims('<a href="/terms">Terms</a>', { mode: 'rendered' }).some(({ id }) => id === 'unpublished-terms-route'),
@@ -299,15 +308,45 @@ test('rendered claim streams preserve document order and raw structural claims',
   )
 })
 
-test('source Enterprise exemptions require a complete corpus or narrow quoted value', () => {
+test('source Enterprise wording remains prohibited in complete and multiline values', () => {
   assert.equal(
     findProhibitedClaims('Enterprise is available?\nContact sales.', { mode: 'source' }).some(({ id }) => id === 'positive-enterprise-availability'),
     true,
   )
   assert.equal(
     findProhibitedClaims("const faq = 'Enterprise is available?'\nconst sales = 'Contact sales.'", { mode: 'source' }).some(({ id }) => id === 'positive-enterprise-availability'),
-    false,
+    true,
   )
+})
+
+test('rendered terms routes are detected from normalized href attributes', () => {
+  for (const rendered of [
+    '<a href="/terms">Terms</a>',
+    '<a href=/terms?from=footer>Terms</a>',
+    '<a href="/terms/#privacy">Terms</a>',
+    '<a href="&#x2f;terms">Terms</a>',
+  ]) {
+    assert.equal(findProhibitedClaims(rendered, { mode: 'rendered' }).some(({ id }) => id === 'unpublished-terms-route'), true, rendered)
+  }
+  assert.equal(findProhibitedClaims('<a href="/terms-of-service">Terms</a>', { mode: 'rendered' }).some(({ id }) => id === 'unpublished-terms-route'), false)
+})
+
+test('availability percentages are rejected in natural and localized wording', () => {
+  for (const sample of ['99.9% uptime', '99,9 % disponibilidad', '99,9% disponibilidade']) {
+    assert.equal(findProhibitedClaims(sample).some(({ id }) => id === 'unsupported-availability'), true, sample)
+  }
+})
+
+test('neutral localized Enterprise FAQ copy contains no positive availability wording', () => {
+  for (const [file, phrase] of [
+    ['src/lib/i18n/messages/en.ts', 'What does the Enterprise plan include?'],
+    ['src/lib/i18n/messages/es.ts', '¿Qué incluye el plan Enterprise?'],
+    ['src/lib/i18n/messages/pt-br.ts', 'O que inclui o plano Enterprise?'],
+  ]) {
+    const source = readFileSync(path.join(root, file), 'utf8')
+    assert.ok(source.includes(`q: '${phrase}'`), `${file} is missing neutral FAQ copy`)
+    assert.equal(findProhibitedClaims(phrase).some(({ id }) => id === 'positive-enterprise-availability'), false, file)
+  }
 })
 
 test('rendered claim scans inspect metadata and structured data', () => {

@@ -242,7 +242,7 @@ export const ptBr: Messages = {
           a: 'Sim. Leituras, exportação, exclusão e redução de uso permanecem disponíveis durante limites e períodos de leitura.',
         },
         {
-          q: 'O Enterprise está disponível?',
+          q: 'O que inclui o plano Enterprise?',
           a: 'Enterprise tem uma base mensal de suporte de US$ 500 mais uso medido, mas está indisponível durante o Public Alpha.',
         },
         {
