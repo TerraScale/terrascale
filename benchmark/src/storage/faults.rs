@@ -24,6 +24,11 @@ pub(crate) enum FaultPoint {
     DirectorySync,
     /// Fail the durable sync of the `Published` operation-ledger record.
     PublishedLedgerSync,
+    /// Fail the next publication-history journal append. The commit still
+    /// publishes: journaling is best-effort, so the injected failure leaves
+    /// only the observable divergence between the journaled high-water mark
+    /// and the published sequence (repair F2).
+    JournalAppend,
 }
 
 /// The armed plan. `None` means no fault fires, which is the only state

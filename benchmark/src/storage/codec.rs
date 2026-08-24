@@ -381,16 +381,24 @@ pub(super) fn decode_staged_write(reader: &mut Reader<'_>) -> Option<StagedWrite
 /// Appends one encoded reconstructable publication write (W4-CA-4).
 ///
 /// The put form is the published document — the same encoding the root table
-/// stores — and the delete form is the identifier plus the version that
-/// existed at the delete.
+/// stores. The delete form is its exact key — the collection (an explicit
+/// flag, absent exactly for the provable no-op delete), the identifier, and
+/// the version that existed at that key.
 pub(super) fn encode_published_write(out: &mut Vec<u8>, write: &PublishedWrite) {
     match write {
         PublishedWrite::Put { document } => {
             push_u8(out, 1);
             encode_document(out, document);
         }
-        PublishedWrite::Delete { id, version_at_delete } => {
+        PublishedWrite::Delete { collection, id, version_at_delete } => {
             push_u8(out, 2);
+            match collection {
+                Some(collection) => {
+                    push_u8(out, 1);
+                    push_str(out, collection.as_str());
+                }
+                None => push_u8(out, 0),
+            }
             push_str(out, id.as_str());
             push_u64(out, *version_at_delete);
         }
@@ -402,9 +410,14 @@ pub(super) fn decode_published_write(reader: &mut Reader<'_>) -> Option<Publishe
     match reader.read_u8()? {
         1 => Some(PublishedWrite::Put { document: decode_document(reader)? }),
         2 => {
+            let collection = match reader.read_u8()? {
+                0 => None,
+                1 => Some(CollectionName::try_new(&reader.read_string()?).ok()?),
+                _ => return None,
+            };
             let id = DocumentId::try_new(&reader.read_string()?).ok()?;
             let version_at_delete = reader.read_u64()?;
-            Some(PublishedWrite::Delete { id, version_at_delete })
+            Some(PublishedWrite::Delete { collection, id, version_at_delete })
         }
         _ => None,
     }

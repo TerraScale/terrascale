@@ -31,7 +31,9 @@ pub(crate) use file::{FileStorage, StorageOpenError};
 pub(crate) use intent::{CommitIntent, CommitResult, OperationResolution, StagedWrite};
 pub(crate) use root::StorageRootId;
 
-use crate::types::{Document, DocumentId, OperationId, StorageSequence, TenantId};
+use crate::types::{
+    CollectionName, Document, DocumentId, LocalDurability, OperationId, StorageSequence, TenantId,
+};
 
 /// The private storage adapter seam the Engine depends on.
 ///
@@ -98,6 +100,17 @@ pub(crate) trait StoragePort: Send {
     /// silently skipping the gap.
     fn servable_history_start(&self) -> Option<StorageSequence>;
 
+    /// Returns the last global storage sequence durably recorded in the
+    /// publication-history journal (W4-CA-4 repair F2).
+    ///
+    /// Sequences have legitimate holes, so a consumer cannot detect a
+    /// skipped journal append by discontinuity; this durable high-water
+    /// mark is the real signal. `journaled_high_water() <
+    /// published_state().0` means at least one published commit is not
+    /// servable from the journal, and the consumer must fall back instead
+    /// of assuming completeness.
+    fn journaled_high_water(&self) -> Option<StorageSequence>;
+
     /// Returns the currently published sequence and root identity.
     fn published_state(&self) -> (StorageSequence, StorageRootId);
 
@@ -115,12 +128,17 @@ pub(crate) trait StoragePort: Send {
 /// The commit carries the logical write set itself — full documents for puts
 /// and identifier-plus-version for deletes — never a digest: a digest is not
 /// invertible, and a follower must be able to replay both puts and deletes
-/// idempotently by operation identity.
+/// idempotently by operation identity. Each entry is annotated with the
+/// commit's achieved [`LocalDurability`] (repair F4): a `Buffered` or
+/// `Written` entry may describe data the source lost after a restart, and a
+/// consumer must reconcile that disclosure rather than assume the entry's
+/// bytes are recoverable.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PublishedCommit {
     tenant: TenantId,
     operation_id: OperationId,
     sequence: StorageSequence,
+    durability: LocalDurability,
     writes: Vec<PublishedWrite>,
 }
 
@@ -130,9 +148,10 @@ impl PublishedCommit {
         tenant: TenantId,
         operation_id: OperationId,
         sequence: StorageSequence,
+        durability: LocalDurability,
         writes: Vec<PublishedWrite>,
     ) -> Self {
-        Self { tenant, operation_id, sequence, writes }
+        Self { tenant, operation_id, sequence, durability, writes }
     }
 
     /// Returns the tenant that owns the commit.
@@ -150,6 +169,12 @@ impl PublishedCommit {
         self.sequence
     }
 
+    /// Returns the local durability the commit had achieved when the entry
+    /// was journaled (repair F4).
+    pub(crate) fn durability(&self) -> LocalDurability {
+        self.durability
+    }
+
     /// Returns the reconstructable write set of the commit.
     pub(crate) fn writes(&self) -> &[PublishedWrite] {
         &self.writes
@@ -159,10 +184,14 @@ impl PublishedCommit {
 /// One reconstructable write of a published commit (W4-CA-4).
 ///
 /// A put carries the published document — the form the commit assigned,
-/// version included. A delete carries the document identifier and the
-/// version that existed at the delete (`0` when the identifier was absent),
-/// because a snapshot read cannot distinguish a deleted identifier from one
-/// that never existed.
+/// version included. A delete carries the exact key it removed — the
+/// collection, the document identifier, and the version that existed at that
+/// key (`0` when nothing existed there) — because a snapshot read cannot
+/// distinguish a deleted identifier from one that never existed, and an
+/// identifier alone is ambiguous when one tenant reuses it across
+/// collections. The `None` collection case is exactly the provable no-op
+/// delete: nothing existed at any key for that identifier, so
+/// `version_at_delete` is `0` and a replay removes nothing.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PublishedWrite {
     /// Insert or replace one document in its published form.
@@ -170,12 +199,15 @@ pub(crate) enum PublishedWrite {
         /// The document as the publication stored it, version included.
         document: Document,
     },
-    /// Delete one document by identifier.
+    /// Delete one document by its exact key.
     Delete {
+        /// The collection of the deleted key, or `None` exactly when the
+        /// identifier was absent from every collection of the tenant.
+        collection: Option<CollectionName>,
         /// The deleted document's identifier.
         id: DocumentId,
-        /// The version that existed at the delete; `0` when the identifier
-        /// was absent from the published view.
+        /// The version that existed at the deleted key; `0` when nothing
+        /// existed there.
         version_at_delete: u64,
     },
 }

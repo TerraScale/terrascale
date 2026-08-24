@@ -740,44 +740,56 @@ impl Engine {
     ///
     /// This is the durable publication-history read replication catch-up and
     /// backup boundaries consume: the write set travels reconstructed — full
-    /// documents for puts, identifier plus version for deletes — never as a
+    /// documents for puts, the exact deleted key for deletes — never as a
     /// digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when storage cannot be
+    /// reached. The mirrors deliberately fail closed on an unreachable
+    /// storage lock instead of collapsing to an empty answer: an empty
+    /// result here would read as "nothing to catch up" (repair F5).
     #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
     pub(crate) fn tenant_commits(
         &self,
         tenant: &TenantId,
         after: StorageSequence,
         limit: u32,
-    ) -> Vec<PublishedCommit> {
-        let storage = self.lock_storage();
-        match storage {
-            Ok(storage) => storage.port.tenant_commits(tenant, after, limit),
-            Err(_) => Vec::new(),
-        }
+    ) -> Result<Vec<PublishedCommit>, EngineError> {
+        let storage = self.lock_storage()?;
+        Ok(storage.port.tenant_commits(tenant, after, limit))
     }
 
     /// Returns every tenant that has at least one recorded published commit,
     /// in canonical tenant order (W4-CA-4).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when storage cannot be
+    /// reached; the enumeration fails closed rather than collapsing to an
+    /// empty list (repair F5).
     #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
-    pub(crate) fn committed_tenants(&self) -> Vec<TenantId> {
-        let storage = self.lock_storage();
-        match storage {
-            Ok(storage) => storage.port.committed_tenants(),
-            Err(_) => Vec::new(),
-        }
+    pub(crate) fn committed_tenants(&self) -> Result<Vec<TenantId>, EngineError> {
+        let storage = self.lock_storage()?;
+        Ok(storage.port.committed_tenants())
     }
 
     /// Returns the tenant's latest recorded sequence at or below `at`
     /// (W4-CA-4): the mapping entry that turns one global storage-sequence
     /// cursor into this tenant's own progress.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when storage cannot be
+    /// reached (repair F5).
     #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
     pub(crate) fn tenant_sequence(
         &self,
         tenant: &TenantId,
         at: StorageSequence,
-    ) -> Option<StorageSequence> {
-        let storage = self.lock_storage().ok()?;
-        storage.port.tenant_sequence(tenant, at)
+    ) -> Result<Option<StorageSequence>, EngineError> {
+        let storage = self.lock_storage()?;
+        Ok(storage.port.tenant_sequence(tenant, at))
     }
 
     /// Returns the oldest sequence the durable publication history can
@@ -786,10 +798,33 @@ impl Engine {
     /// A cursor older than this bound cannot be served incrementally: the
     /// caller must fall back to a full catch-up or backup rather than
     /// silently skip the gap.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when storage cannot be
+    /// reached (repair F5).
     #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
-    pub(crate) fn servable_history_start(&self) -> Option<StorageSequence> {
-        let storage = self.lock_storage().ok()?;
-        storage.port.servable_history_start()
+    pub(crate) fn servable_history_start(&self) -> Result<Option<StorageSequence>, EngineError> {
+        let storage = self.lock_storage()?;
+        Ok(storage.port.servable_history_start())
+    }
+
+    /// Returns the last global storage sequence durably recorded in the
+    /// publication-history journal (W4-CA-4 repair F2).
+    ///
+    /// `journaled_high_water() < read_snapshot(...).sequence()` is the
+    /// observable signal that at least one published commit is not servable
+    /// from the journal: sequences have legitimate holes, so no consumer may
+    /// infer completeness from discontinuity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when storage cannot be
+    /// reached (repair F5).
+    #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
+    pub(crate) fn journaled_high_water(&self) -> Result<Option<StorageSequence>, EngineError> {
+        let storage = self.lock_storage()?;
+        Ok(storage.port.journaled_high_water())
     }
 
     fn lock_storage(&self) -> Result<std::sync::MutexGuard<'_, StorageState>, EngineError> {

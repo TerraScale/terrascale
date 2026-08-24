@@ -50,9 +50,10 @@ pub(crate) struct FileStorage {
     ledger: LedgerWriter,
     ledger_index: LedgerIndex,
     /// The durable publication-history journal and its sequence-ordered
-    /// index (W4-CA-4).
+    /// index (W4-CA-4), with the durable high-water mark (repair F2).
     journal: HistoryWriter,
     journal_index: HistoryIndex,
+    journal_high_water: Option<u64>,
     published: StorageRoot,
     history: BTreeMap<u64, Arc<RootTable>>,
     /// The highest storage sequence ever named in this location, whether or
@@ -82,7 +83,7 @@ impl FileStorage {
             root::sync_dir(dir).map_err(|_| StorageOpenError::Unavailable)?;
         }
         let ledger_index = LedgerIndex::scan(&ledger_path);
-        let journal_index = HistoryIndex::scan(&journal_path);
+        let journal_scan = HistoryIndex::scan(&journal_path);
         let report = wal::scan(&wal_path).map_err(|_| StorageOpenError::FormatMismatch)?;
         let mut storage = Self {
             dir: dir.to_path_buf(),
@@ -90,7 +91,8 @@ impl FileStorage {
             ledger: ledger_writer,
             ledger_index,
             journal: journal_writer,
-            journal_index,
+            journal_index: journal_scan.index,
+            journal_high_water: journal_scan.high_water,
             published: StorageRoot::empty(),
             history: BTreeMap::new(),
             sequence_watermark: 0,
@@ -101,6 +103,18 @@ impl FileStorage {
             // store opens on its verified prefix. A truncation that cannot
             // complete fails the open instead of masking the damage.
             storage.wal.truncate(report.good_bytes).map_err(|_| StorageOpenError::Unavailable)?;
+        }
+        if journal_scan.total_bytes > journal_scan.good_bytes {
+            // Repair F1: the journal's trailing record is torn or does not
+            // verify. Truncate to the verified prefix exactly as the WAL is
+            // truncated, so later appends land where a scan can see them
+            // instead of freezing the servable window forever. The window
+            // bound and the journaled high-water mark keep reporting the
+            // divergence. A truncation that cannot complete fails the open.
+            storage
+                .journal
+                .truncate(journal_scan.good_bytes)
+                .map_err(|_| StorageOpenError::Unavailable)?;
         }
         storage.recover(report.commits)?;
         Ok(storage)
@@ -149,16 +163,22 @@ impl FileStorage {
             // the tables the roll-forward moved and appends the missing
             // journal record, so a crash between pointer publication and the
             // journal append still leaves the entry durable.
+            //
+            // F4: a roll-forward entry is annotated `Written`: this path
+            // wrote and verified the root bytes but never observed the
+            // commit's own post-publication syncs, so it cannot prove more.
             if !self.journal_index.contains(commit.tenant.as_str(), commit.sequence) {
                 let record = PublishedCommit::new(
                     tenant.clone(),
                     OperationId::try_new(&commit.operation)
                         .map_err(|_| StorageOpenError::FormatMismatch)?,
                     StorageSequence::new(commit.sequence),
+                    LocalDurability::Written,
                     published_writes(&table, &applied, &tenant, &commit.writes),
                 );
                 if self.journal.append(&record).and_then(|()| self.journal.sync()).is_ok() {
                     self.journal_index.upsert(record);
+                    self.advance_journal_high_water(commit.sequence);
                 }
             }
             table = applied;
@@ -386,13 +406,19 @@ impl FileStorage {
         // publication-history journal. The commit has already published, so
         // the entry can only ever describe published state; the append runs
         // before the `Published` ledger record so the uncertain path of a
-        // failed published-ledger sync still leaves the entry recorded. A
-        // failed append leaves a detectable sequence gap and no entry — it
-        // never delays or fails the published commit.
+        // failed published-ledger sync still leaves the entry recorded.
+        //
+        // Repair F2: the append is best-effort and injectably fallible. A
+        // failed append must never delay or fail the published commit; it
+        // leaves the divergence observable instead — the durable high-water
+        // mark stays at the last successful append while the published
+        // sequence advances, and no consumer can mistake that for a legal
+        // sequence hole.
         let journal_record = PublishedCommit::new(
             intent.tenant.clone(),
             intent.operation.clone(),
             StorageSequence::new(sequence),
+            intent.durability,
             published_writes(
                 &published_table,
                 &self.published.table,
@@ -400,8 +426,12 @@ impl FileStorage {
                 &intent.writes,
             ),
         );
-        if self.journal.append(&journal_record).and_then(|()| self.journal.sync()).is_ok() {
+        if self.faults.fire(FaultPoint::JournalAppend).is_err() {
+            // Injected append failure (test-only): skip journaling entirely
+            // and let the high-water mark report the skipped sequence.
+        } else if self.journal.append(&journal_record).and_then(|()| self.journal.sync()).is_ok() {
             self.journal_index.upsert(journal_record);
+            self.advance_journal_high_water(sequence);
         }
 
         // Step 8: append and durably sync the Published record.
@@ -560,6 +590,18 @@ impl FileStorage {
             .next_back()
             .map_or_else(|| Arc::clone(&self.published.table), |(_, table)| Arc::clone(table))
     }
+
+    /// Durably records and advances the journal high-water mark (repair F2).
+    ///
+    /// The mark record is best-effort: a failed mark append leaves the
+    /// in-memory mark advanced — the commit record itself is already durable
+    /// — and the next open re-derives the same value from the verified
+    /// commit records, so the mark never over-reports completeness.
+    fn advance_journal_high_water(&mut self, sequence: u64) {
+        self.journal_high_water =
+            Some(self.journal_high_water.map_or(sequence, |mark| mark.max(sequence)));
+        let _ = self.journal.append_high_water(sequence).and_then(|()| self.journal.sync());
+    }
 }
 
 fn matches_expectation(version: Option<u64>, expected: ExpectedVersion) -> bool {
@@ -592,11 +634,24 @@ fn published_writes(
                 let published = after.document(&key).unwrap_or_else(|| document.clone());
                 PublishedWrite::Put { document: published }
             }
-            StagedWrite::Delete { id, .. } => {
-                let version_at_delete = before
-                    .find_by_document_id(tenant, id)
-                    .map_or(0, |(_, deleted)| deleted.metadata().version());
-                PublishedWrite::Delete { id: id.clone(), version_at_delete }
+            // Repair F3: the version comes from the exact key the delete
+            // removes, never from the first canonical occurrence of the
+            // identifier. A collection-carrying delete names its key
+            // directly; a collection-less delete can only commit when the
+            // identifier is absent everywhere, so its version is zero and a
+            // replay removes nothing.
+            StagedWrite::Delete { collection, id, .. } => {
+                let version_at_delete = match collection {
+                    Some(collection) => before
+                        .document(&StorageKey::new(tenant, collection, id))
+                        .map_or(0, |deleted| deleted.metadata().version()),
+                    None => 0,
+                };
+                PublishedWrite::Delete {
+                    collection: collection.clone(),
+                    id: id.clone(),
+                    version_at_delete,
+                }
             }
         })
         .collect()
@@ -699,6 +754,10 @@ impl super::StoragePort for FileStorage {
 
     fn servable_history_start(&self) -> Option<StorageSequence> {
         self.journal_index.servable_start()
+    }
+
+    fn journaled_high_water(&self) -> Option<StorageSequence> {
+        self.journal_high_water.map(StorageSequence::new)
     }
 
     fn published_state(&self) -> (StorageSequence, StorageRootId) {

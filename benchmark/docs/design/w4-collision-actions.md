@@ -84,9 +84,14 @@ acknowledgement from a local commit.
   - `fn servable_history_start(&self) -> Option<StorageSequence>` (added per
     obligation 3 below, so a cursor older than servable history is
     detectable);
-  - `PublishedCommit { tenant, operation_id, sequence, writes }` with
-    `enum PublishedWrite { Put { document }, Delete { id, version_at_delete } }`;
-  - Engine mirrors all four reads `pub(crate)`.
+  - `fn journaled_high_water(&self) -> Option<StorageSequence>` (repair F2:
+    the last global sequence durably recorded in the journal);
+  - `PublishedCommit { tenant, operation_id, sequence, durability, writes }`
+    with `enum PublishedWrite { Put { document }, Delete { collection, id,
+    version_at_delete } }` (the a2-amended shapes: the durability annotation
+    is repair F4, the delete's collection is repair F3);
+  - Engine mirrors all five reads `pub(crate)`, returning
+    `Result<_, EngineError>` (repair F5).
 - **Design choice.** A durable side structure (`history` beside `wal` and
   `ledger`), not an operation-ledger schema extension: the ledger's binding
   role stays byte-for-byte unchanged, so resolution, idempotency, and digest
@@ -99,20 +104,59 @@ acknowledgement from a local commit.
   record: an entry can only describe an already published commit, and the
   uncertain path of a failed published-ledger sync still leaves the entry
   recorded. Recovery roll-forward appends entries for commits whose journal
-  record is missing. The append is best-effort — a failed append leaves a
-  sequence gap a consumer detects by discontinuity, never an entry for an
-  unpublished commit. The write set is derived from the tables the commit
-  moved: puts carry the published document (version included), deletes carry
-  the identifier plus the version the before-table held (`0` for an absent
-  identifier).
+  record is missing (annotated `Written`: that path never observed the
+  commit's own post-publication syncs). The append is best-effort and never
+  delays or fails the publication path. The write set is derived from the
+  tables the commit moved: puts carry the published document (version
+  included); deletes carry their exact key — the collection, the identifier,
+  and the version that existed at that key (`0` when nothing did) — so an
+  identifier reused across collections can never replay to a different
+  occurrence than the source removed. The journal records no digest: the
+  operation ledger already binds identity to write set, and this structure
+  exists to be inverted, not to bind.
+- **Failure observability (repair F2).** Sequences have legitimate holes —
+  the allocation watermark advances before the durable write and other
+  tenants consume interleaved sequences — so no consumer may detect a
+  skipped journal append by discontinuity (the a1 record claimed exactly
+  that and was wrong). The journal therefore carries a durable high-water
+  mark: a checksummed mark record appended after every successful commit
+  append, with the in-memory mark advanced to the newest verified commit
+  record on open. `journaled_high_water() < published_state().0` (or a
+  `None` mark against a nonzero published sequence) is the observable
+  signal that at least one published commit is not servable from the
+  journal; a consumer must fall back rather than assume completeness. A
+  failed mark append leaves the mark conservative — behind a commit whose
+  own record is durable — which never over-reports completeness.
+- **Torn-tail truncation (repair F1).** The a1 open never truncated a torn
+  journal tail, so every later append landed behind the torn bytes where no
+  scan could see it and the servable window froze permanently. The scan now
+  reports the verified-prefix length, and `FileStorage::open` truncates the
+  journal to it exactly as the WAL is truncated; a truncation that cannot
+  complete fails the open instead of masking the damage. The window bound
+  and the high-water mark keep reporting the divergence that remains.
+- **Durability annotation (repair F4).** Each entry carries its commit's
+  achieved `LocalDurability`, so the phantom-history disclosure is
+  per-entry and machine-readable: a `Buffered` **or `Written`** entry may
+  describe document bytes the source lost after a restart (a `Buffered`
+  commit writes no WAL/root bytes at all; a `Written` commit's are not
+  synced), because the journal's own append is synced like the ledger's
+  resolution records. **Registered obligation for W4-REPLICATION:** its
+  dispatch must filter or reconcile journal entries by the durability
+  annotation under the D-2 acknowledgement wiring — the engine records the
+  disclosure and the annotation; the policy belongs to the replication
+  packet.
 - **Verification obligations.**
   1. *Recoverability cannot come from the ledger alone* — proven by
      `tenant_commits_reconstruct_puts_and_deletes_with_versions` (puts carry
-     assigned versions; deletes carry the removed version; an absent
-     identifier records `0`) and by
+     assigned versions; deletes carry their exact key's collection and the
+     removed version; an absent key records `0` while keeping the requested
+     collection) and by
      `publication_history_lets_a_follower_replay_puts_and_deletes_idempotently`
      (replaying the served commits through the storage seam reproduces the
-     source view and redelivery is idempotent by operation identity).
+     source view and redelivery is idempotent by operation identity; since
+     repair F3 the replay stages each delete against the recorded key with
+     `ExpectedVersion::Exact(version_at_delete)`, or mirrors the no-op when
+     the recorded version is zero).
   2. *Sequence order needs a different iteration path* — the journal index
      is per-tenant keyed by global storage sequence;
      `tenant_commits_page_in_global_sequence_order_across_the_limit` pages
@@ -122,7 +166,9 @@ acknowledgement from a local commit.
      the verified prefix:
      `a_torn_publication_history_tail_bounds_the_servable_window` (a torn
      tail keeps the prefix, reports the start, and leaves the truncated end
-     detectable against `published_state`) and
+     detectable against `published_state`; the fixture walks the framed
+     records to tear inside a commit record, because the interleaved
+     high-water marks would otherwise absorb a fixed-length tear) and
      `an_unservable_publication_history_reports_no_window_instead_of_a_gap`
      (a damaged first record or an absent journal reports no window; data
      stays readable through the ordinary snapshot path).
@@ -130,14 +176,30 @@ acknowledgement from a local commit.
   `committed_tenants_and_tenant_sequence_map_a_global_cursor_per_tenant`;
   `engine_publication_history_serves_reconstructable_commits_across_tenants`
   at the Engine seam.
+- **Repair-loop tests (a2).**
+  `a_torn_journal_tail_is_truncated_so_later_appends_stay_servable` (F1:
+  post-tear commits stay servable across a reopen — fails without the
+  truncation);
+  `a_failed_journal_append_leaves_the_divergence_observable` (F2: an
+  injected `JournalAppend` fault skips journaling, the commit still
+  publishes, the mark stays at the last successful append, and the
+  divergence survives a reopen — fails if the mark never advances);
+  `journal_deletes_resolve_the_exact_key_across_duplicate_identifiers`
+  (F3: the deleted beta occurrence's own collection and version are
+  recorded — not the first canonical alpha occurrence's — and an exact-key
+  follower replay removes exactly the beta occurrence; fails under the
+  first-occurrence derivation);
+  `journal_records_the_achieved_local_durability_of_each_commit` (F4:
+  Buffered, Synced, and Written entries carry their annotations across a
+  reopen). Each repair test was mutation-checked against its bug before
+  landing.
 - **Limits.** No compaction exists yet; when one lands it must move
-  `servable_history_start`. A `Buffered` commit's journal record is synced
-  like the ledger's resolution records, while its data root is not durable
-  — after a restart the journal may serve a `Buffered` commit whose data the
-  source lost; that asymmetry is the pre-existing W3 durability-level
-  property and is W4-REPLICATION's disposition. The journal append adds one
-  durable append+sync per commit beside the ledger's (no performance claim;
-  batching is a later optimization).
+  `servable_history_start` and the high-water mark. The phantom-history
+  disclosure above is recorded, not resolved: W4-REPLICATION owns the
+  filtering policy. The journal adds two durable append+sync rounds per
+  commit beside the ledger's — the commit record and its high-water mark
+  (no performance claim; batching or a periodic mark is a later
+  optimization).
 
 ## W4-CA-5 — the family-record enumeration
 
@@ -205,4 +267,71 @@ with the pinned toolchain and `Cargo.lock`: `cargo fmt --all -- --check`,
 --release`, `cargo clippy --workspace --all-targets --all-features --locked
 -- -D warnings`, `cargo doc --workspace --no-deps --locked`, and
 `python3 scripts/validate_parity.py --check`. Exit codes are recorded in the
-packet report; the release test count is 194 with 0 failures.
+packet report; the a1 release count was 194 and the a2 count is 198, both
+with 0 failures.
+
+## Repair history
+
+### a1 — initial execution
+
+Base `235ea6d`; five commits ending at `505e93c`; 194 tests green. The
+quality gate returned NO-GO; the findings and their dispositions are
+recorded in the CA-4 amendments above and below.
+
+### a2 — quality-gate repair loop
+
+Base `505e93c` (quiescent); one repair loop; no push. Findings and
+dispositions:
+
+- **F1 (major, fixed).** A torn journal tail was never truncated, so every
+  post-tear append landed behind the torn bytes and the servable window
+  froze permanently. The scan now reports the verified-prefix length and
+  open truncates to it, mirroring the WAL. Proven by
+  `a_torn_journal_tail_is_truncated_so_later_appends_stay_servable`
+  (mutation-checked).
+- **F2 (major, fixed per parent adjudication).** The a1 record claimed a
+  failed append left "a sequence gap a consumer detects by discontinuity" —
+  false, because sequences have legitimate holes. The journal now records a
+  durable high-water mark (a mark record after every successful commit
+  append; the scan folds it with the newest verified commit record),
+  exposed as `journaled_high_water()` on the port and the Engine seam, so
+  `high_water < published` is observable. Proven by
+  `a_failed_journal_append_leaves_the_divergence_observable` with the new
+  test-only `FaultPoint::JournalAppend` (mutation-checked); the doc claim
+  was rewritten to describe the real mechanism.
+- **F3 (major, fixed per parent contract amendment).**
+  `PublishedWrite::Delete` now carries the collection (shape: `collection +
+  id + version_at_delete`; the `None` collection is exactly the provable
+  no-op delete, where `version_at_delete == 0` and nothing existed at any
+  key for the identifier). The version is derived from the exact keyed
+  removal, never from the first canonical occurrence of the identifier, and
+  a follower replay resolves the exact key with
+  `ExpectedVersion::Exact(version_at_delete)`. Proven by
+  `journal_deletes_resolve_the_exact_key_across_duplicate_identifiers`
+  (mutation-checked) and by the updated replay test (also covering F7).
+- **F4 (assessment, fixed per parent disposition).** Each journal entry is
+  annotated with its commit's achieved `LocalDurability` (schema addition;
+  no released format), exposed as `PublishedCommit::durability()`. The
+  phantom-history disclosure now names `Written` alongside `Buffered`, and
+  the W4-REPLICATION dispatch obligation — filter or reconcile entries by
+  the annotation under the D-2 wiring — is registered in the CA-4 section
+  above. Proven by
+  `journal_records_the_achieved_local_durability_of_each_commit`.
+- **F5 (rider, fixed).** The four Engine history wrappers no longer collapse
+  a poisoned storage lock into empty/None answers, which a replication
+  consumer would read as "nothing to catch up"; they return
+  `Result<_, EngineError>` and fail closed as
+  `EngineError::StorageFailure`. The frozen `StoragePort` spelling is
+  unchanged.
+- **F6 (rider, fixed).** The journal doc comment claimed it recorded "the
+  digest binding"; it records none. The comment now states the journal
+  deliberately carries no digest — the operation ledger already binds
+  identity to write set, and this structure exists to be inverted, not to
+  bind.
+- **F7 (rider).** Covered by F3's exact-version replay.
+
+Schema notes (no released format, per W3 precedent): the journal commit
+record gained a durability field and its delete form gained a collection;
+both are additive within the unreleased journal format. An older-format
+journal cannot exist in any released artifact; a record that fails to parse
+bounds the servable window exactly as a torn tail does.

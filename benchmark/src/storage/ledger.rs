@@ -392,6 +392,9 @@ fn decode_rejection(code: u8) -> Option<CommitRejection> {
 /// Record kind: one published commit's reconstructable write set.
 const HISTORY_RECORD_COMMIT: u8 = 1;
 
+/// Record kind: the durable journal high-water mark (repair F2).
+const HISTORY_RECORD_HIGH_WATER: u8 = 2;
+
 /// The append-only publication-history journal (W4-CA-4).
 ///
 /// This side structure answers the inspector facts recorded with the
@@ -400,22 +403,29 @@ const HISTORY_RECORD_COMMIT: u8 = 1;
 /// reconstruct a write set; and the ledger index is keyed
 /// `(tenant, operation)` in canonical key order, not storage-sequence order.
 /// The journal therefore records, per published commit, the tenant, the
-/// operation identity, the global storage sequence, the digest binding, and
-/// the reconstructable write set itself — full documents for puts,
-/// identifier plus version for deletes — in its own sequence-ordered index.
+/// operation identity, the global storage sequence, the achieved local
+/// durability, and the reconstructable write set itself — full documents for
+/// puts, the exact deleted key for deletes — in its own sequence-ordered
+/// index. It records no digest: the operation ledger already binds identity
+/// to write set, and this structure exists to be inverted, not to bind.
 ///
 /// The journal is appended after the root pointer has been published and its
 /// post-publication syncs completed, and before the `Published` ledger
 /// record: an entry can therefore only ever describe an already published
 /// commit, and the common uncertain path (a failed published-ledger sync)
-/// still leaves the entry durably recorded. The append is best-effort: a
-/// failed append or sync leaves a sequence gap that a consumer detects by
-/// sequence discontinuity, never an entry for an unpublished commit.
+/// still leaves the entry durably recorded. The append is best-effort and
+/// never delays or fails the publication path. Because sequences have
+/// legitimate holes — the allocation watermark advances before the durable
+/// write, and other tenants consume interleaved sequences — a consumer
+/// cannot detect a skipped append by discontinuity; the journal therefore
+/// also carries a durable high-water mark, updated with each successful
+/// append, so `journaled_high_water() < published_state().0` is observable
+/// (repair F2).
 ///
-/// Torn-tail truncation and any later compaction bound the servable window;
-/// [`HistoryIndex::scan`] stops at the first record that does not verify, so
-/// the index serves exactly the verified prefix and the window start is
-/// reported to consumers instead of silently skipping a gap.
+/// A torn or checksum-failing trailing record ends the servable window, and
+/// [`FileStorage::open`] truncates the file to the verified prefix so later
+/// appends stay scannable (repair F1); the window bound and the high-water
+/// mark keep reporting the divergence instead of silently skipping a gap.
 pub(crate) struct HistoryWriter {
     file: File,
     fresh: bool,
@@ -442,6 +452,7 @@ impl HistoryWriter {
         codec::push_str(&mut payload, commit.tenant().as_str());
         codec::push_str(&mut payload, commit.operation_id().as_str());
         codec::push_u64(&mut payload, commit.sequence().get());
+        codec::encode_durability(&mut payload, codec::LocalDurabilityCode::of(commit.durability()));
         codec::push_u32(&mut payload, commit.writes().len() as u32);
         for write in commit.writes() {
             codec::encode_published_write(&mut payload, write);
@@ -453,10 +464,59 @@ impl HistoryWriter {
         self.file.write_all(&frame)
     }
 
+    /// Appends one checksummed high-water-mark record (repair F2).
+    ///
+    /// The mark is written after each successful commit append, so the last
+    /// durably recorded mark names the last successfully journaled sequence.
+    /// A failed mark append leaves the mark conservative — behind a commit
+    /// whose own record is durable — which is safe: the signal never
+    /// over-reports completeness.
+    #[allow(clippy::cast_possible_truncation)]
+    pub(crate) fn append_high_water(&mut self, sequence: u64) -> io::Result<()> {
+        let mut payload = Vec::new();
+        codec::push_u8(&mut payload, HISTORY_RECORD_HIGH_WATER);
+        codec::push_u64(&mut payload, sequence);
+        let mut frame = Vec::with_capacity(HEADER_BYTES.saturating_add(payload.len()));
+        codec::push_u32(&mut frame, payload.len() as u32);
+        codec::push_u64(&mut frame, codec::fnv1a(&payload));
+        frame.extend_from_slice(&payload);
+        self.file.write_all(&frame)
+    }
+
+    /// Truncates the journal to its verified prefix length (repair F1).
+    ///
+    /// Called at open when the scan stopped before the file's end: without
+    /// it, every later append lands behind the torn or damaged bytes where
+    /// no scan can see it, and the servable window freezes permanently.
+    pub(crate) fn truncate(&mut self, good_bytes: u64) -> io::Result<()> {
+        self.file.set_len(good_bytes)
+    }
+
     /// Flushes the appended bytes to the device.
     pub(crate) fn sync(&mut self) -> io::Result<()> {
         self.file.sync_data()
     }
+}
+
+/// One entry of the journal's durable byte stream.
+enum HistoryEntry {
+    /// One published commit's reconstructable write set.
+    Commit(PublishedCommit),
+    /// One durable high-water-mark observation.
+    HighWater(u64),
+}
+
+/// The verified scan outcome of the publication-history journal.
+pub(crate) struct HistoryScan {
+    /// The sequence-ordered index over the verified prefix.
+    pub(crate) index: HistoryIndex,
+    /// The byte length of the verified prefix.
+    pub(crate) good_bytes: u64,
+    /// The total byte length of the journal file.
+    pub(crate) total_bytes: u64,
+    /// The last durably journaled global sequence: the newest verified
+    /// commit record or high-water mark, whichever is later.
+    pub(crate) high_water: Option<u64>,
 }
 
 /// The in-memory, sequence-ordered index over the publication-history
@@ -472,28 +532,60 @@ pub(crate) struct HistoryIndex {
 }
 
 impl HistoryIndex {
-    /// Scans the durable journal and builds the sequence-ordered index.
+    /// Scans the durable journal and builds the sequence-ordered index, the
+    /// verified-prefix length, and the durable high-water mark.
     ///
     /// A torn or checksum-failing record stops the scan: everything after it
     /// is unservable, which is exactly the servable-window bound the seam
-    /// reports.
-    pub(crate) fn scan(path: &Path) -> Self {
+    /// reports, and the caller truncates the trailing bytes so later
+    /// appends stay scannable (repair F1).
+    #[allow(clippy::cast_possible_truncation)]
+    pub(crate) fn scan(path: &Path) -> HistoryScan {
         let mut bytes = Vec::new();
         let Ok(mut file) = File::open(path) else {
-            return Self::default();
+            return HistoryScan {
+                index: Self::default(),
+                good_bytes: 0,
+                total_bytes: 0,
+                high_water: None,
+            };
         };
         if file.read_to_end(&mut bytes).is_err() {
-            return Self::default();
+            return HistoryScan {
+                index: Self::default(),
+                good_bytes: 0,
+                total_bytes: 0,
+                high_water: None,
+            };
         }
+        let total_bytes = bytes.len() as u64;
         let mut index = Self::default();
+        let mut high_water: Option<u64> = None;
+        let mut good_bytes: u64 = 0;
         let mut reader = Reader::new(&bytes);
         while reader.remaining() > 0 {
-            let Some(commit) = read_history_record(&mut reader) else {
+            let before = reader.remaining();
+            let Some(entry) = read_history_entry(&mut reader) else {
                 break;
             };
-            index.upsert(commit);
+            // A record is verified only when the reader consumed a whole
+            // frame; a partial or failing frame leaves the tail unservable.
+            let consumed = before.saturating_sub(reader.remaining());
+            match entry {
+                HistoryEntry::Commit(commit) => {
+                    high_water =
+                        Some(high_water.map_or(commit.sequence().get(), |mark| {
+                            mark.max(commit.sequence().get())
+                        }));
+                    index.upsert(commit);
+                }
+                HistoryEntry::HighWater(mark) => {
+                    high_water = Some(high_water.map_or(mark, |recorded| recorded.max(mark)));
+                }
+            }
+            good_bytes += consumed as u64;
         }
-        index
+        HistoryScan { index, good_bytes, total_bytes, high_water }
     }
 
     /// Records one published commit.
@@ -552,8 +644,8 @@ impl HistoryIndex {
     }
 }
 
-/// Reads one framed publication-history record.
-fn read_history_record(reader: &mut Reader<'_>) -> Option<PublishedCommit> {
+/// Reads one framed publication-history entry.
+fn read_history_entry(reader: &mut Reader<'_>) -> Option<HistoryEntry> {
     let length = reader.read_u32()? as usize;
     let checksum = reader.read_u64()?;
     let payload = reader.take(length)?;
@@ -561,16 +653,26 @@ fn read_history_record(reader: &mut Reader<'_>) -> Option<PublishedCommit> {
         return None;
     }
     let mut payload_reader = Reader::new(payload);
-    if payload_reader.read_u8()? != HISTORY_RECORD_COMMIT {
-        return None;
+    match payload_reader.read_u8()? {
+        HISTORY_RECORD_COMMIT => {
+            let tenant = TenantId::try_new(&payload_reader.read_string()?).ok()?;
+            let operation_id = OperationId::try_new(&payload_reader.read_string()?).ok()?;
+            let sequence = StorageSequence::new(payload_reader.read_u64()?);
+            let durability = codec::decode_durability(&mut payload_reader)?.to_level();
+            let count = payload_reader.read_u32()? as usize;
+            let mut writes = Vec::with_capacity(count.min(1024));
+            for _ in 0..count {
+                writes.push(codec::decode_published_write(&mut payload_reader)?);
+            }
+            Some(HistoryEntry::Commit(PublishedCommit::new(
+                tenant,
+                operation_id,
+                sequence,
+                durability,
+                writes,
+            )))
+        }
+        HISTORY_RECORD_HIGH_WATER => Some(HistoryEntry::HighWater(payload_reader.read_u64()?)),
+        _ => None,
     }
-    let tenant = TenantId::try_new(&payload_reader.read_string()?).ok()?;
-    let operation_id = OperationId::try_new(&payload_reader.read_string()?).ok()?;
-    let sequence = StorageSequence::new(payload_reader.read_u64()?);
-    let count = payload_reader.read_u32()? as usize;
-    let mut writes = Vec::with_capacity(count.min(1024));
-    for _ in 0..count {
-        writes.push(codec::decode_published_write(&mut payload_reader)?);
-    }
-    Some(PublishedCommit::new(tenant, operation_id, sequence, writes))
 }

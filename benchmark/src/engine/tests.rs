@@ -1862,24 +1862,46 @@ fn engine_publication_history_serves_reconstructable_commits_across_tenants() {
     assert_eq!(published.get(), 3);
     let tenant_a = tenant("tenant-a");
     let tenant_b = tenant("tenant-b");
-    assert_eq!(engine.committed_tenants(), vec![tenant_a.clone(), tenant_b.clone()]);
-    let commits = engine.tenant_commits(&tenant_a, crate::types::StorageSequence::new(0), 10);
+    assert_eq!(
+        engine.committed_tenants().expect("enumerates"),
+        vec![tenant_a.clone(), tenant_b.clone()]
+    );
+    let commits = engine
+        .tenant_commits(&tenant_a, crate::types::StorageSequence::new(0), 10)
+        .expect("serves the tenant's commits");
     assert_eq!(
         commits.iter().map(|commit| commit.sequence().get()).collect::<Vec<u64>>(),
         [1, 3],
         "one tenant sees only its own commits, in global sequence order"
     );
     assert_eq!(
-        engine.tenant_sequence(&tenant_b, crate::types::StorageSequence::new(3)),
+        engine
+            .tenant_sequence(&tenant_b, crate::types::StorageSequence::new(3))
+            .expect("maps the cursor"),
         Some(crate::types::StorageSequence::new(2))
     );
-    assert_eq!(engine.servable_history_start(), Some(crate::types::StorageSequence::new(1)));
+    assert_eq!(
+        engine.servable_history_start().expect("reports the window"),
+        Some(crate::types::StorageSequence::new(1))
+    );
+    // Repair F2: the journaled high-water mark names the newest journaled
+    // sequence, so a consumer can compare it with the published sequence.
+    assert_eq!(
+        engine.journaled_high_water().expect("reports the mark"),
+        Some(crate::types::StorageSequence::new(3))
+    );
     drop(engine);
 
     let reopened = reopen_engine(&dir);
-    let reopened_commits =
-        reopened.tenant_commits(&tenant_a, crate::types::StorageSequence::new(0), 10);
+    let reopened_commits = reopened
+        .tenant_commits(&tenant_a, crate::types::StorageSequence::new(0), 10)
+        .expect("serves after the reopen");
     assert_eq!(reopened_commits, commits, "the journal serves the same records after a reopen");
+    assert_eq!(
+        reopened.journaled_high_water().expect("reports the mark"),
+        Some(crate::types::StorageSequence::new(3)),
+        "the durable mark survives the reopen"
+    );
     drop(reopened);
     std::fs::remove_dir_all(&dir).ok();
 }

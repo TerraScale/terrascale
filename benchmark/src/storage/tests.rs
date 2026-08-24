@@ -663,7 +663,12 @@ fn tenant_commits_reconstruct_puts_and_deletes_with_versions() {
         other @ PublishedWrite::Delete { .. } => panic!("expected a put, got {other:?}"),
     }
     match &commits[2].writes()[0] {
-        PublishedWrite::Delete { id, version_at_delete } => {
+        PublishedWrite::Delete { collection, id, version_at_delete } => {
+            assert_eq!(
+                collection.as_ref().map(|name| name.as_str().to_owned()),
+                Some("users".to_owned()),
+                "the delete carries its exact key's collection"
+            );
             assert_eq!(id.as_str(), "doc-1");
             assert_eq!(*version_at_delete, 2, "the delete carries the version it removed");
         }
@@ -671,9 +676,14 @@ fn tenant_commits_reconstruct_puts_and_deletes_with_versions() {
     }
     assert_eq!(commits[3].writes().len(), 2);
     match &commits[3].writes()[0] {
-        PublishedWrite::Delete { id, version_at_delete } => {
+        PublishedWrite::Delete { collection, id, version_at_delete } => {
             assert_eq!(id.as_str(), "doc-9");
-            assert_eq!(*version_at_delete, 0, "an absent identifier records version zero");
+            assert_eq!(
+                collection.as_ref().map(|name| name.as_str().to_owned()),
+                Some("users".to_owned()),
+                "an absent key keeps the requested collection"
+            );
+            assert_eq!(*version_at_delete, 0, "an absent key records version zero");
         }
         other @ PublishedWrite::Put { .. } => panic!("expected a delete, got {other:?}"),
     }
@@ -799,9 +809,37 @@ fn a_torn_publication_history_tail_bounds_the_servable_window() {
     drop(storage);
 
     let history = dir.join("history");
-    let mut bytes = std::fs::read(&history).expect("journal reads");
-    bytes.truncate(bytes.len() - 4);
-    std::fs::write(&history, bytes).expect("journal rewrites");
+    // Tear inside the third commit record specifically. Since repair F2 the
+    // journal interleaves a durable high-water-mark record after every commit
+    // record, so a fixed-length tear from the end would only clip the
+    // trailing mark; walking the frames keeps the fixture aimed at the
+    // record whose loss must bound the window.
+    let bytes = std::fs::read(&history).expect("journal reads");
+    let mut offset = 0_usize;
+    let mut commits_seen = 0_usize;
+    let mut cut = None;
+    while offset + 12 <= bytes.len() {
+        let length =
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("length")) as usize;
+        let payload_start = offset + 12;
+        let kind = bytes[payload_start];
+        if kind == 1 {
+            commits_seen += 1;
+            if commits_seen == 3 {
+                cut = Some((payload_start + 2).min(bytes.len()));
+                break;
+            }
+        }
+        let frame_end = payload_start + length;
+        if frame_end > bytes.len() {
+            break;
+        }
+        offset = frame_end;
+    }
+    let cut = cut.expect("the third commit record exists in the journal");
+    let mut torn = bytes;
+    torn.truncate(cut);
+    std::fs::write(&history, torn).expect("journal rewrites");
 
     let reopened = FileStorage::open(&dir).expect("a torn journal tail still opens");
     let tenant = tenant();
@@ -888,10 +926,12 @@ fn publication_history_lets_a_follower_replay_puts_and_deletes_idempotently() {
 
     let (follower_dir, mut follower) = open_storage("history-replay-follower");
     let replay = |follower: &mut FileStorage, commit: &PublishedCommit| {
-        let snapshot_sequence = follower.published_state().0;
-        // A delete stages the collection the follower's own view resolves,
-        // exactly as the Engine transaction seam does; the digest binding
-        // excludes that resolution, so redelivery stays deterministic.
+        // Repair F3: a delete replays against the exact recorded key — the
+        // journal's own collection — with the recorded version as its
+        // expected version, so an identifier reused across collections can
+        // never make the follower remove a different occurrence than the
+        // source removed. A zero version means nothing existed at any key
+        // for the identifier, so the replay mirrors the source's no-op.
         let writes: Vec<StagedWrite> = commit
             .writes()
             .iter()
@@ -899,20 +939,20 @@ fn publication_history_lets_a_follower_replay_puts_and_deletes_idempotently() {
                 PublishedWrite::Put { document } => {
                     StagedWrite::Put { document: document.clone(), expected: ExpectedVersion::Any }
                 }
-                PublishedWrite::Delete { id, .. } => {
-                    let collection = follower
-                        .documents_at(snapshot_sequence, commit.tenant())
-                        .into_iter()
-                        .find(|document| document.id() == id)
-                        .map(|document| document.collection().clone());
+                PublishedWrite::Delete { collection, id, version_at_delete } => {
                     StagedWrite::Delete {
-                        collection,
+                        collection: collection.clone(),
                         id: id.clone(),
-                        expected: ExpectedVersion::Any,
+                        expected: if *version_at_delete == 0 {
+                            ExpectedVersion::Any
+                        } else {
+                            ExpectedVersion::Exact(*version_at_delete)
+                        },
                     }
                 }
             })
             .collect();
+        let snapshot_sequence = follower.published_state().0;
         follower.commit(CommitIntent {
             digest: write_set_digest(commit.tenant(), &writes),
             tenant: commit.tenant().clone(),
@@ -975,5 +1015,274 @@ fn manifests_that_do_not_verify_are_ignored_during_recovery() {
     let tenant = tenant();
     let id = DocumentId::try_new("doc-1").expect("valid identifier");
     assert!(reopened.read_document_at(StorageSequence::new(1), &tenant, &id).is_some());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// W4-CA-4 repair loop a2 (quality-gate findings F1..F4)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_torn_journal_tail_is_truncated_so_later_appends_stay_servable() {
+    // F1: a torn journal tail must be truncated at open exactly as the WAL
+    // is. Without truncation, every post-tear append lands behind the torn
+    // bytes where no scan can see it, and the servable window freezes
+    // forever. With truncation, commits made after the tear on the reopened
+    // store stay servable.
+    let (dir, mut storage) = open_storage("history-torn-truncate");
+    for index in 0..2 {
+        let outcome = storage.commit(fresh_intent(
+            &storage,
+            &format!("op-{index}"),
+            vec![put(document(&format!("doc-{index}"), "users", "value"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        ));
+        assert!(matches!(outcome, CommitResult::Committed(_)));
+    }
+    drop(storage);
+
+    // Crash mid-journal-append: the trailing record is incomplete.
+    let history = dir.join("history");
+    let mut bytes = std::fs::read(&history).expect("journal reads");
+    bytes.truncate(bytes.len() - 4);
+    std::fs::write(&history, bytes).expect("journal rewrites");
+
+    let tenant = tenant();
+    let mut reopened = FileStorage::open(&dir).expect("opens and truncates the torn tail");
+    let served = reopened.tenant_commits(&tenant, StorageSequence::new(0), 10);
+    assert_eq!(served.len(), 2, "the verified prefix is served");
+
+    // New commits land after the truncation point and must stay servable —
+    // this is the assertion the untruncated tail used to fail permanently.
+    let outcome = reopened.commit(fresh_intent(
+        &reopened,
+        "op-after-tear",
+        vec![put(document("doc-9", "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Synced,
+    ));
+    assert!(matches!(outcome, CommitResult::Committed(_)));
+    let after_tear = reopened.tenant_commits(&tenant, StorageSequence::new(0), 10);
+    assert_eq!(after_tear.len(), 3, "the post-tear commit is servable immediately");
+    assert_eq!(after_tear.last().expect("served").operation_id().as_str(), "op-after-tear");
+    drop(reopened);
+
+    // And it survives the next reopen: the truncation persisted.
+    let reopened_again = FileStorage::open(&dir).expect("reopens");
+    let served_again = reopened_again.tenant_commits(&tenant, StorageSequence::new(0), 10);
+    assert_eq!(served_again.len(), 3, "the post-tear commit stays servable after a reopen");
+    assert_eq!(
+        reopened_again.servable_history_start(),
+        Some(StorageSequence::new(1)),
+        "the window keeps reporting its start"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_failed_journal_append_leaves_the_divergence_observable() {
+    // F2: sequences have legitimate holes, so a consumer cannot detect a
+    // failed journal append by discontinuity. The durable journal
+    // high-water mark is the real signal: after a failed append it stays at
+    // the last successfully journaled sequence while the published sequence
+    // is ahead, and the divergence survives a reopen.
+    let (dir, mut storage) = open_storage("history-high-water");
+    let outcome = storage.commit(fresh_intent(
+        &storage,
+        "op-1",
+        vec![put(document("doc-1", "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Synced,
+    ));
+    assert!(matches!(outcome, CommitResult::Committed(_)));
+    assert_eq!(storage.journaled_high_water(), Some(StorageSequence::new(1)));
+
+    // Inject a transient journal-append failure. The commit itself must
+    // still publish: journaling is best-effort and never delays or fails
+    // the publication path.
+    storage.arm_test_fault(FaultPoint::JournalAppend);
+    let outcome = storage.commit(fresh_intent(
+        &storage,
+        "op-2",
+        vec![put(document("doc-2", "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Synced,
+    ));
+    assert!(matches!(outcome, CommitResult::Committed(_)), "the commit still publishes");
+    let (published, _) = storage.published_state();
+    assert_eq!(published.get(), 2);
+    assert_eq!(
+        storage.journaled_high_water(),
+        Some(StorageSequence::new(1)),
+        "the high-water mark names the last successful append"
+    );
+    assert!(
+        storage.journaled_high_water().is_none_or(|mark| mark < published),
+        "the divergence is observable: the journaled mark is behind the published sequence"
+    );
+
+    // The mark is durable: the divergence survives a reopen.
+    drop(storage);
+    let reopened = FileStorage::open(&dir).expect("reopens");
+    assert_eq!(
+        reopened.journaled_high_water(),
+        Some(StorageSequence::new(1)),
+        "the durable mark still names the last journaled commit"
+    );
+    let (republished, _) = reopened.published_state();
+    assert_eq!(republished.get(), 2, "the published sequence is still ahead");
+    // A later healthy commit advances the mark again past the skipped one.
+    drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn journal_deletes_resolve_the_exact_key_across_duplicate_identifiers() {
+    // F3: one identifier reused across collections. The delete names the
+    // beta occurrence while the alpha occurrence sorts first canonically and
+    // carries a higher version. The journal record must carry the deleted
+    // key's own collection and version — not the first canonical
+    // occurrence's — and a follower replaying by that exact key removes
+    // exactly the occurrence the source removed.
+    let (dir, mut source) = open_storage("history-exact-key");
+    for (operation, writes) in [
+        (
+            "op-1",
+            vec![put(document("doc-1", "alpha", "v1"), ExpectedVersion::New)] as Vec<StagedWrite>,
+        ),
+        ("op-2", vec![put(document("doc-1", "alpha", "v2"), ExpectedVersion::Any)]),
+        ("op-3", vec![put(document("doc-1", "beta", "v1"), ExpectedVersion::New)]),
+        ("op-4", vec![delete("beta", "doc-1", ExpectedVersion::Exact(1))]),
+    ] {
+        let intent = fresh_intent(&source, operation, writes, LocalDurability::Written);
+        assert!(matches!(source.commit(intent), CommitResult::Committed(_)), "{operation} commits");
+    }
+    let tenant = tenant();
+    let delivery = source.tenant_commits(&tenant, StorageSequence::new(0), 10);
+    let delete = match delivery.last().expect("four commits served").writes() {
+        [PublishedWrite::Delete { collection, id, version_at_delete }] => {
+            (collection.clone(), id.clone(), *version_at_delete)
+        }
+        other => panic!("expected one delete, got {other:?}"),
+    };
+    // The deleted key is (beta, doc-1) at version one; the alpha occurrence
+    // is first canonically and at version two, and neither fact may leak
+    // into the record.
+    assert_eq!(
+        delete,
+        (
+            Some(CollectionName::try_new("beta").expect("valid identifier")),
+            DocumentId::try_new("doc-1").expect("valid identifier"),
+            1
+        ),
+        "the delete carries its exact key's collection and version"
+    );
+
+    // Exact-key replay: the follower applies the delete against the recorded
+    // key with the recorded version, so only the beta occurrence disappears.
+    let (follower_dir, mut follower) = open_storage("history-exact-key-follower");
+    for commit in &delivery {
+        let writes: Vec<StagedWrite> = commit
+            .writes()
+            .iter()
+            .map(|write| match write {
+                PublishedWrite::Put { document } => {
+                    StagedWrite::Put { document: document.clone(), expected: ExpectedVersion::Any }
+                }
+                PublishedWrite::Delete { collection, id, version_at_delete } => {
+                    StagedWrite::Delete {
+                        collection: collection.clone(),
+                        id: id.clone(),
+                        // A recorded version means the key existed at it; a
+                        // zero version means nothing existed to remove.
+                        expected: if *version_at_delete == 0 {
+                            ExpectedVersion::Any
+                        } else {
+                            ExpectedVersion::Exact(*version_at_delete)
+                        },
+                    }
+                }
+            })
+            .collect();
+        let snapshot_sequence = follower.published_state().0;
+        let outcome = follower.commit(CommitIntent {
+            digest: write_set_digest(commit.tenant(), &writes),
+            tenant: commit.tenant().clone(),
+            operation: commit.operation_id().clone(),
+            snapshot_sequence,
+            durability: LocalDurability::Written,
+            writes,
+        });
+        assert!(matches!(outcome, CommitResult::Committed(_)), "the follower applies the commit");
+    }
+    let follower_documents = follower.documents_at(follower.published_state().0, &tenant);
+    let source_documents = source.documents_at(source.published_state().0, &tenant);
+    assert_eq!(follower_documents, source_documents, "the views match");
+    let alpha = CollectionName::try_new("alpha").expect("valid identifier");
+    let beta = CollectionName::try_new("beta").expect("valid identifier");
+    let id = DocumentId::try_new("doc-1").expect("valid identifier");
+    let key_of = |documents: &[Document]| {
+        documents
+            .iter()
+            .map(|document| (document.collection().clone(), document.id().clone()))
+            .collect::<Vec<_>>()
+    };
+    let keys = key_of(&follower_documents);
+    assert_eq!(keys, vec![(alpha, id)], "exactly the alpha occurrence survives");
+    assert!(
+        follower_documents.iter().all(|document| document.collection() != &beta),
+        "the beta occurrence is gone and only it"
+    );
+    assert_eq!(
+        follower_documents[0].metadata().version(),
+        2,
+        "the surviving alpha occurrence keeps its own version"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&follower_dir).ok();
+}
+
+#[test]
+fn journal_records_the_achieved_local_durability_of_each_commit() {
+    // F4: each journal entry is annotated with its commit's achieved local
+    // durability so a consumer can reconcile the phantom-history disclosure
+    // (a Buffered or Written entry may describe data the source lost after
+    // a restart); W4-REPLICATION owns the filtering policy.
+    let (dir, mut storage) = open_storage("history-durability");
+    let buffered = storage.commit(fresh_intent(
+        &storage,
+        "op-buffered",
+        vec![put(document("doc-1", "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Buffered,
+    ));
+    assert!(matches!(buffered, CommitResult::Committed(_)));
+    let synced = storage.commit(fresh_intent(
+        &storage,
+        "op-synced",
+        vec![put(document("doc-2", "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Synced,
+    ));
+    assert!(matches!(synced, CommitResult::Committed(_)));
+    let written = storage.commit(fresh_intent(
+        &storage,
+        "op-written",
+        vec![put(document("doc-3", "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Written,
+    ));
+    assert!(matches!(written, CommitResult::Committed(_)));
+
+    let tenant = tenant();
+    let commits = storage.tenant_commits(&tenant, StorageSequence::new(0), 10);
+    assert_eq!(commits.len(), 3);
+    assert_eq!(commits[0].durability(), LocalDurability::Buffered);
+    assert_eq!(commits[1].durability(), LocalDurability::Synced);
+    assert_eq!(commits[2].durability(), LocalDurability::Written);
+
+    // The annotation is durable: it survives a reopen.
+    drop(storage);
+    let reopened = FileStorage::open(&dir).expect("reopens");
+    let reopened_commits = reopened.tenant_commits(&tenant, StorageSequence::new(0), 10);
+    assert_eq!(
+        reopened_commits.iter().map(PublishedCommit::durability).collect::<Vec<_>>(),
+        vec![LocalDurability::Buffered, LocalDurability::Synced, LocalDurability::Written],
+        "the durability annotation survives a reopen"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
