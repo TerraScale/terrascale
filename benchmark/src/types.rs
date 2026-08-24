@@ -296,6 +296,10 @@ impl ReadSnapshot {
     pub(crate) fn tenant(&self) -> &TenantId {
         &self.tenant
     }
+
+    pub(crate) fn sequence(&self) -> StorageSequence {
+        self.sequence
+    }
 }
 
 /// The generation of one named index.

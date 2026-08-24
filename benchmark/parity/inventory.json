@@ -6493,7 +6493,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 asynchronous internal, external, pull, and family replication behavior and compatibility obligations [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader] [v1:test-gap:W2 did not isolate an exact V1 test for replication in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 asynchronous internal, external, pull, and family replication behavior and compatibility obligations [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader] ReplicationDocuments, ReplicationBasicTestsSlow, and ExternalReplicationTests are the exact V1 replication tests. [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationDocuments.cs] [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationBasicTestsSlow.cs] [v1:test:test/TerraBase.SlowTests/Server/Replication/ExternalReplicationTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -6534,7 +6534,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 durable storage environment, journals, transactions, backup, restart, corruption handling, and recovery obligations [v1:src/TerraBase.Voron/Impl/FileHeaders/FileHeader.cs::FileHeader] [v1:test-gap:W2 did not isolate an exact V1 test for storage-wal-and-recovery in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 durable storage environment, journals, transactions, backup, restart, corruption handling, and recovery obligations [v1:src/TerraBase.Voron/Impl/FileHeaders/FileHeader.cs::FileHeader] Voron/Recovery and RecoveryMultipleJournals are the exact V1 journal replay and recovery tests. [v1:test:test/TerraBase.SlowTests/Voron/Recovery.cs] [v1:test:test/TerraBase.SlowTests/Voron/RecoveryMultipleJournals.cs]"
       },
       "v2": {
         "owner": "engine/storage",
@@ -6573,7 +6573,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 storage environment open, configure, restart, stop, dispose, and persistent-path behavior [v1:src/TerraBase.Voron/StorageEnvironmentOptions.cs::StorageEnvironmentOptions] [v1:test-gap:the pinned extraction names the storage lifecycle, but W2 did not isolate a single focused V1 lifecycle test file]"
+        "scope": "V1 storage environment open, configure, restart, stop, dispose, and persistent-path behavior [v1:src/TerraBase.Voron/StorageEnvironmentOptions.cs::StorageEnvironmentOptions] StorageTest.StartDatabase, RestartDatabase, and StopDatabase and the Voron/Recovery restart cases are the exact V1 lifecycle tests. [v1:test:test/TerraBase.EndToEndTests/Voron/StorageTest.cs] [v1:test:test/TerraBase.SlowTests/Voron/Recovery.cs]"
       },
       "v2": {
         "owner": "engine/storage",
@@ -6610,7 +6610,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 file headers, root metadata, journal metadata, backup pointers, magic markers, page size, and format version [v1:src/TerraBase.Voron/Impl/FileHeaders/FileHeader.cs::FileHeader] [v1:test-gap:W2 did not isolate an exact V1 test for storage-file-headers-and-versioning in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 file headers, root metadata, journal metadata, backup pointers, magic markers, page size, and format version [v1:src/TerraBase.Voron/Impl/FileHeaders/FileHeader.cs::FileHeader] ValidHeaders.FileHeader, TransactionHeader, and ValidateNoOverlap are the exact V1 file-header tests. [v1:test:test/TerraBase.EndToEndTests/Voron/ValidHeaders.cs]"
       },
       "v2": {
         "owner": "engine/storage",
@@ -6648,7 +6648,7 @@
           "E-011"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 write-ahead journal ordering, commit markers, flush-to-data-file, sync state, and uncommitted visibility [v1:src/TerraBase.Voron/Impl/Journal/WriteAheadJournal.cs::WriteAheadJournal] [v1:test-gap:W2 did not isolate an exact V1 test for storage-wal-ordering-and-sync in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 write-ahead journal ordering, commit markers, flush-to-data-file, sync state, and uncommitted visibility [v1:src/TerraBase.Voron/Impl/Journal/WriteAheadJournal.cs::WriteAheadJournal] BasicActions.CanUseMultipleLogFiles, ShouldNotReadUncommittedTransaction, and CanFlushDataFromLogToDataFile and Journal/UncommittedTransactions are the exact V1 journal ordering tests. [v1:test:test/TerraBase.EndToEndTests/Voron/Journal/BasicActions.cs] [v1:test:test/TerraBase.EndToEndTests/Voron/Journal/UncommittedTransactions.cs]"
       },
       "v2": {
         "owner": "engine/storage",
@@ -6686,7 +6686,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 low-level transactions, MVCC snapshots, reader and writer concurrency, persistence modes, and lock behavior [v1:src/TerraBase.Voron/Impl/LowLevelTransaction.cs::LowLevelTransaction] [v1:test-gap:W2 did not isolate an exact V1 test for storage-transactions-mvcc-and-concurrency in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 low-level transactions, MVCC snapshots, reader and writer concurrency, persistence modes, and lock behavior [v1:src/TerraBase.Voron/Impl/LowLevelTransaction.cs::LowLevelTransaction] Journal/Mvcc, ReaderWriterLockTests, and ClonedReadTransactions are the exact V1 MVCC and concurrency tests. [v1:test:test/TerraBase.EndToEndTests/Voron/Journal/Mvcc.cs] [v1:test:test/TerraBase.EndToEndTests/Voron/ReaderWriterLockTests.cs] [v1:test:test/TerraBase.EndToEndTests/Voron/ClonedReadTransactions.cs]"
       },
       "v2": {
         "owner": "engine/storage",
@@ -6723,7 +6723,7 @@
           "E-006"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 B-trees, compact trees, fixed-size trees, tables, raw data, pages, allocation, iteration, and compression [v1:src/TerraBase.Voron/Data/BTrees/Tree.cs::Tree] [v1:test-gap:W2 did not isolate an exact V1 test for storage-trees-tables-and-paging in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 B-trees, compact trees, fixed-size trees, tables, raw data, pages, allocation, iteration, and compression [v1:src/TerraBase.Voron/Data/BTrees/Tree.cs::Tree] Voron/Trees Basic and CanIterateBackward, Tables BasicUsage, FixedSize SimpleFixedSizeTrees, Containers ContainerTests, and RawData SmallDataSection are the exact V1 tree, table, and paging tests. [v1:test:test/TerraBase.EndToEndTests/Voron/Trees/Basic.cs] [v1:test:test/TerraBase.EndToEndTests/Voron/Trees/CanIterateBackward.cs] [v1:test:test/TerraBase.EndToEndTests/Voron/Tables/BasicUsage.cs] [v1:test:test/TerraBase.EndToEndTests/Voron/FixedSize/SimpleFixedSizeTrees.cs] [v1:test:test/TerraBase.EndToEndTests/Voron/Containers/ContainerTests.cs] [v1:test:test/TerraBase.EndToEndTests/Voron/RawData/SmallDataSection.cs]"
       },
       "v2": {
         "owner": "engine/storage",
@@ -6760,7 +6760,7 @@
           "E-006"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 scratch buffer files, page ownership, active-byte accounting, and forced flush behavior [v1:src/TerraBase.Voron/Impl/Scratch/ScratchBufferPool.cs::ScratchBufferPool] [v1:test-gap:W2 did not isolate an exact V1 test for storage-scratch-buffers in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 scratch buffer files, page ownership, active-byte accounting, and forced flush behavior [v1:src/TerraBase.Voron/Impl/Scratch/ScratchBufferPool.cs::ScratchBufferPool] ScratchBuffer ActivelyUsedBytesTracking and ScratchCanForceToFlushOldPages and Journal UncommittedTransactions are the exact V1 scratch-buffer tests. [v1:test:test/TerraBase.EndToEndTests/Voron/ScratchBuffer/ActivelyUsedBytesTracking.cs] [v1:test:test/TerraBase.EndToEndTests/Voron/ScratchBuffer/ScratchCanForceToFlushOldPages.cs] [v1:test:test/TerraBase.EndToEndTests/Voron/Journal/UncommittedTransactions.cs]"
       },
       "v2": {
         "owner": "engine/storage",
@@ -6798,7 +6798,7 @@
           "E-011"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 storage compaction, journal handling, table preservation, progress reporting, and backup interaction [v1:src/TerraBase.Voron/Impl/Compaction/StorageCompaction.cs::StorageCompaction] [v1:test-gap:W2 did not isolate an exact V1 test for storage-compaction in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 storage compaction, journal handling, table preservation, progress reporting, and backup interaction [v1:src/TerraBase.Voron/Impl/Compaction/StorageCompaction.cs::StorageCompaction] StorageCompactionTests is the exact V1 compaction test set. [v1:test:test/TerraBase.EndToEndTests/Voron/Compaction/StorageCompactionTests.cs]"
       },
       "v2": {
         "owner": "engine/storage",
@@ -6837,7 +6837,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 startup journal replay, restart persistence, committed and uncommitted transaction recovery, and logical data recovery [v1:src/TerraBase.Voron/Impl/Journal/WriteAheadJournal.cs::WriteAheadJournal] [v1:test-gap:W2 did not isolate an exact V1 test for storage-restart-and-recovery in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 startup journal replay, restart persistence, committed and uncommitted transaction recovery, and logical data recovery [v1:src/TerraBase.Voron/Impl/Journal/WriteAheadJournal.cs::WriteAheadJournal] Voron/Recovery, RecoveryMultipleJournals, TerraBase_3115, and SampleDatabaseRecovery are the exact V1 restart and recovery tests. [v1:test:test/TerraBase.SlowTests/Voron/Recovery.cs] [v1:test:test/TerraBase.SlowTests/Voron/RecoveryMultipleJournals.cs] [v1:test:test/TerraBase.EndToEndTests/Voron/Backups/TerraBase_3115.cs] [v1:test:test/TerraBase.SlowTests.Tools/RecoveryTests/SampleDatabaseRecovery.cs]"
       },
       "v2": {
         "owner": "engine/storage",
@@ -6876,7 +6876,7 @@
           "E-011"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 journal corruption, partial recovery, missing journals, unrecoverable errors, quota exhaustion, and recovery limits [v1:src/TerraBase.Voron/Impl/Journal/RecoveryOverflowDetector.cs::RecoveryOverflowDetector] [v1:test-gap:W2 did not isolate an exact V1 test for storage-corruption-and-disk-full in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 journal corruption, partial recovery, missing journals, unrecoverable errors, quota exhaustion, and recovery limits [v1:src/TerraBase.Voron/Impl/Journal/RecoveryOverflowDetector.cs::RecoveryOverflowDetector] RecoveryMultipleJournals corruption cases, Quotas.ShouldThrowQuotaException, and TerraBase_19278 are the exact V1 fault tests. [v1:test:test/TerraBase.SlowTests/Voron/RecoveryMultipleJournals.cs] [v1:test:test/TerraBase.SlowTests/Voron/Storage/Quotas.cs] [v1:test:test/TerraBase.StressTests/Voron/Issues/TerraBase_19278.cs]"
       },
       "v2": {
         "owner": "engine/storage",
@@ -6915,7 +6915,7 @@
           "E-011"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 encrypted pager and temporary-stream behavior, encrypted journal recovery, and encrypted backup restore [v1:src/TerraBase.Voron/Impl/Paging/CryptoPager.cs::CryptoPager] [v1:test-gap:W2 did not isolate an exact V1 test for storage-encryption in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 encrypted pager and temporary-stream behavior, encrypted journal recovery, and encrypted backup restore [v1:src/TerraBase.Voron/Impl/Paging/CryptoPager.cs::CryptoPager] EncryptionTests.WriteAndReadPageUsingCryptoPager, TerraBase_13940, and EncryptedBackupTest are the exact V1 encryption tests. [v1:test:test/TerraBase.EndToEndTests/Sparrow/EncryptionTests.cs] [v1:test:test/TerraBase.SlowTests/Voron/TerraBase_13940.cs] [v1:test:test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/EncryptedBackupTest.cs]"
       },
       "v2": {
         "owner": "engine/storage",
@@ -6954,7 +6954,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 Voron and database schema upgrade steps, version checks, and upgrade recovery behavior [v1:src/TerraBase.Voron/Schema/VoronSchemaUpdater.cs::VoronSchemaUpdater] [v1:test-gap:W2 did not isolate an exact V1 test for storage-schema-upgrade in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 Voron and database schema upgrade steps, version checks, and upgrade recovery behavior [v1:src/TerraBase.Voron/Schema/VoronSchemaUpdater.cs::VoronSchemaUpdater] [v1:test-gap:the pinned checkout ships the SchemaUpgrade fixtures (DocumentsVersion schema_9/schema_999, VoronCurrentVersion schema_999, and SystemVersion archives) as csproj content items, but no test class references them and no V1 test exercises VoronSchemaUpdater or SchemaUpgrader; the only schema-upgrade reference is the skipped TerraBase_19152 revision test.]"
       },
       "v2": {
         "owner": "engine/storage",
@@ -6990,7 +6990,7 @@
           "E-011"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 full backup, snapshot, archive contents, compression, flush ordering, restore, and post-restore visibility [v1:src/TerraBase.Voron/Impl/Backup/FullBackup.cs::FullBackup] [v1:test-gap:W2 did not isolate an exact V1 test for storage-full-backup-and-snapshot in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 full backup, snapshot, archive contents, compression, flush ordering, restore, and post-restore visibility [v1:src/TerraBase.Voron/Impl/Backup/FullBackup.cs::FullBackup] Voron/Backups Full.CanBackupAndRestoreSmall and BackupToOneZipFile.FullBackupToOneZipFile are the exact V1 full-backup tests. [v1:test:test/TerraBase.EndToEndTests/Voron/Backups/Full.cs] [v1:test:test/TerraBase.EndToEndTests/Voron/Backups/BackupToOneZipFile.cs]"
       },
       "v2": {
         "owner": "engine/backup-import",
@@ -7028,7 +7028,7 @@
           "E-011"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 incremental journal backup cursor, archive ordering, restart behavior, missing archive detection, and restore chain [v1:src/TerraBase.Voron/Impl/Backup/IncrementalBackup.cs::IncrementalBackup] [v1:test-gap:W2 did not isolate an exact V1 test for storage-incremental-backup-chain in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 incremental journal backup cursor, archive ordering, restart behavior, missing archive detection, and restore chain [v1:src/TerraBase.Voron/Impl/Backup/IncrementalBackup.cs::IncrementalBackup] TerraBase_3115, TerraBase_12725_2, TerraBase_12725_4, and Backups/Incremental.RestoreRejectsIncrementalBackupChainWithMissingArchive are the exact V1 incremental-backup tests. [v1:test:test/TerraBase.EndToEndTests/Voron/Backups/TerraBase_3115.cs] [v1:test:test/TerraBase.SlowTests/Voron/TerraBase_12725_2.cs] [v1:test:test/TerraBase.SlowTests/Voron/TerraBase_12725_4.cs] [v1:test:test/TerraBase.SlowTests/Voron/Backups/Incremental.cs]"
       },
       "v2": {
         "owner": "engine/backup-import",
@@ -7067,7 +7067,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 recovery-point archive selection, checksum and length validation, path binding, ordering, staging, and restore rejection [v1:src/TerraBase.Server/Documents/PeriodicBackup/Restore/RecoveryPointManifest.cs::RecoveryPointManifest] [v1:test-gap:W2 did not isolate an exact V1 test for storage-recovery-point-manifest in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 recovery-point archive selection, checksum and length validation, path binding, ordering, staging, and restore rejection [v1:src/TerraBase.Server/Documents/PeriodicBackup/Restore/RecoveryPointManifest.cs::RecoveryPointManifest] RecoveryPointManifestTests.Can_discover_and_reject_tampered_or_missing_recovery_point_archives, Recovery_manifest_parser_and_remote_root_binding_reject_tampering_and_traversal, Remote_manifest_discovery_requires_every_listed_archive, and Recovery_staging_reclaims_only_stale_unowned_directories_and_dispose_is_idempotent are the exact V1 recovery-point tests. [v1:test:test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/RecoveryPointManifestTests.cs]"
       },
       "v2": {
         "owner": "engine/backup-import",
@@ -7105,7 +7105,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 Rachis consensus log append, quorum commit, state-machine apply, and cluster transaction wait behavior [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus] [v1:test-gap:W2 did not isolate an exact V1 test for cluster-consensus-commit in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 Rachis consensus log append, quorum commit, state-machine apply, and cluster transaction wait behavior [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus] BasicTests.CanApplyCommitAcrossAllCluster, BasicCluster, AtomicClusterReadWriteTests, and ClusterTransactionTests are the exact V1 consensus-commit tests. [v1:test:test/TerraBase.RachisTests/BasicTests.cs] [v1:test:test/TerraBase.RachisTests/BasicCluster.cs] [v1:test:test/TerraBase.RachisTests/DatabaseCluster/AtomicClusterReadWriteTests.cs] [v1:test:test/TerraBase.SlowTests/Cluster/ClusterTransactionTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7142,7 +7142,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 Rachis leader election, terms, votes, state transitions, step-down, and single-member startup [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus] [v1:test-gap:W2 did not isolate an exact V1 test for cluster-consensus-elections in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 Rachis leader election, terms, votes, state transitions, step-down, and single-member startup [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus] ElectionTests including Follower_as_a_single_node_becomes_leader_automatically, ForceStepDownAndElectNewLeader, and OnNetworkDisconnectionANewLeaderIsElectedAfterReconnectOldLeaderStepsDownAndRollBackHisLog and BasicCluster.ClusterWithThreeNodesAndElections are the exact V1 election tests. [v1:test:test/TerraBase.RachisTests/ElectionTests.cs] [v1:test:test/TerraBase.RachisTests/BasicCluster.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7180,7 +7180,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 Rachis append repair, divergent-log rollback, late-member snapshot installation, and snapshot reader behavior [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus] [v1:test-gap:W2 did not isolate an exact V1 test for cluster-log-divergence-and-snapshots in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 Rachis append repair, divergent-log rollback, late-member snapshot installation, and snapshot reader behavior [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus] BasicCluster.ClusterWithLateJoiningNodeRequiringSnapshot, ElectionTests.CanElectOnDivergence, and LogDivergenceTests are the exact V1 log-divergence and snapshot tests. [v1:test:test/TerraBase.RachisTests/BasicCluster.cs] [v1:test:test/TerraBase.RachisTests/ElectionTests.cs] [v1:test:test/TerraBase.RachisTests/LogDivergenceTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7217,7 +7217,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 cluster membership roles, topology changes, node add/remove, promotable and rehabilitating states, and topology concurrency [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus] [v1:test-gap:W2 did not isolate an exact V1 test for cluster-membership-and-topology in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 cluster membership roles, topology changes, node add/remove, promotable and rehabilitating states, and topology concurrency [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus] TopologyChangesTests, AddNodeToClusterTests, RemoveNodeFromCluster, and ClusterDemotePromoteTests are the exact V1 membership and topology tests. [v1:test:test/TerraBase.RachisTests/TopologyChangesTests.cs] [v1:test:test/TerraBase.RachisTests/AddNodeToClusterTests.cs] [v1:test:test/TerraBase.RachisTests/DatabaseCluster/RemoveNodeFromCluster.cs] [v1:test:test/TerraBase.RachisTests/ClusterDemotePromoteTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7255,7 +7255,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 leader loss, member loss, network disconnection, failover, re-election, and survivor state behavior [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus] [v1:test-gap:W2 did not isolate an exact V1 test for cluster-failover-and-member-loss in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 leader loss, member loss, network disconnection, failover, re-election, and survivor state behavior [v1:src/TerraBase.Server/Rachis/RachisConsensus.cs::RachisConsensus] ElectionTests.OnNetworkDisconnectionANewLeaderIsElectedAfterReconnectOldLeaderStepsDownAndRollBackHisLog, PlatformConsistencyContractTests.LocalReplicaProgressSurvivesRestartAndLeaderFailover, and ClusterDatabaseMaintenance are the exact V1 failover tests. [v1:test:test/TerraBase.RachisTests/ElectionTests.cs] [v1:test:test/TerraBase.RachisTests/DatabaseCluster/PlatformConsistencyContractTests.cs] [v1:test:test/TerraBase.RachisTests/DatabaseCluster/ClusterDatabaseMaintenance.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7293,7 +7293,7 @@
           "E-011"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 change-vector parsing, comparison, ordering, replication identity, conditional mutations, and progress cursors [v1:src/TerraBase.Server/Utils/ChangeVector.cs::ChangeVector] [v1:test-gap:W2 did not isolate an exact V1 test for replication-change-vectors in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 change-vector parsing, comparison, ordering, replication identity, conditional mutations, and progress cursors [v1:src/TerraBase.Server/Utils/ChangeVector.cs::ChangeVector] ReplicationConflictsTests and PlatformConsistencyContractTests are the exact V1 change-vector tests. [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationConflictsTests.cs] [v1:test:test/TerraBase.RachisTests/DatabaseCluster/PlatformConsistencyContractTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7331,7 +7331,7 @@
           "E-011"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 document conflicts, conflict visibility, automatic and scripted resolution, tombstone winners, and revision preservation [v1:src/TerraBase.Server/Documents/ConflictsStorage.cs::ConflictsStorage] [v1:test-gap:W2 did not isolate an exact V1 test for replication-conflict-resolution in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 document conflicts, conflict visibility, automatic and scripted resolution, tombstone winners, and revision preservation [v1:src/TerraBase.Server/Documents/ConflictsStorage.cs::ConflictsStorage] ReplicationConflictsTests, AutomaticConflictResolution, and PlatformReplicationObservationTests are the exact V1 conflict-resolution tests. [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationConflictsTests.cs] [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationAutomaticConflictResolution.cs] [v1:test:test/TerraBase.RachisTests/DatabaseCluster/PlatformReplicationObservationTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7370,7 +7370,7 @@
           "E-011"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 document, attachment, revision, counter, and time-series tombstone creation, replication, retention, and cleanup [v1:src/TerraBase.Server/Documents/Replication/ReplicationItems/AttachmentReplicationItem.cs::AttachmentReplicationItem] [v1:test-gap:W2 did not isolate an exact V1 test for replication-tombstones in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 document, attachment, revision, counter, and time-series tombstone creation, replication, retention, and cleanup [v1:src/TerraBase.Server/Documents/Replication/ReplicationItems/AttachmentReplicationItem.cs::AttachmentReplicationItem] ReplicationTombstoneTests, ReplicationCleanTombstones, PullReplicationPreventDeletionsTests, and ReshardingTombstoneRepickLoop are the exact V1 tombstone tests. [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationTombstoneTests.cs] [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationCleanTombstones.cs] [v1:test:test/TerraBase.SlowTests/Server/Replication/PullReplicationPreventDeletionsTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/Cluster/ReshardingTombstoneRepickLoop.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7409,7 +7409,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 replication progress, reconnect queues, catch-up batches, change-vector waits, and convergence observations [v1:src/TerraBase.Server/Documents/Replication/Stats/ReplicationTaskProgress.cs::ReplicationTaskProgress] [v1:test-gap:W2 did not isolate an exact V1 test for replication-anti-entropy-and-catch-up in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 replication progress, reconnect queues, catch-up batches, change-vector waits, and convergence observations [v1:src/TerraBase.Server/Documents/Replication/Stats/ReplicationTaskProgress.cs::ReplicationTaskProgress] PlatformConsistencyContractTests and PlatformActiveActiveContractTests are the exact V1 catch-up and convergence tests. [v1:test:test/TerraBase.RachisTests/DatabaseCluster/PlatformConsistencyContractTests.cs] [v1:test:test/TerraBase.RachisTests/DatabaseCluster/PlatformActiveActiveContractTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7448,7 +7448,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 external replication configuration, delayed links, destination failure, reconnection, forwarding, and progress statistics [v1:src/TerraBase.Client/Documents/Operations/Replication/ExternalReplication.cs::ExternalReplication] [v1:test-gap:W2 did not isolate an exact V1 test for replication-external-destinations in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 external replication configuration, delayed links, destination failure, reconnection, forwarding, and progress statistics [v1:src/TerraBase.Client/Documents/Operations/Replication/ExternalReplication.cs::ExternalReplication] ExternalReplicationTests including ExternalReplicationShouldWorkWithSmallTimeoutStress, ReplicatedCommitWakesNextHopWithoutWaitingForHeartbeat, DelayedExternalReplication, UpdatingFailedExternalReplicationRestartsImmediately, ExternalReplicationToNonExistingDatabase, and ExternalReplicationToNonExistingNode is the exact V1 external-destination test set. [v1:test:test/TerraBase.SlowTests/Server/Replication/ExternalReplicationTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7487,7 +7487,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 local save acknowledgement, WaitForReplicationAfterSaveChanges, WaitForReplicas, Majority, timeout, and replica visibility [v1:src/TerraBase.Client/Documents/Operations/Replication/ExternalReplication.cs::ExternalReplication] [v1:test-gap:W2 did not isolate an exact V1 test for replication-write-acknowledgement in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 local save acknowledgement, WaitForReplicationAfterSaveChanges, WaitForReplicas, Majority, timeout, and replica visibility [v1:src/TerraBase.Client/Documents/Operations/Replication/ExternalReplication.cs::ExternalReplication] ReplicationWriteAssurance.ServerSideWriteAssurance is the exact V1 write-acknowledgement test. [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationWriteAssurance.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7526,7 +7526,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 pull replication hub and sink roles, bidirectional modes, access registration, authentication, idle state, and deletion policy [v1:src/TerraBase.Client/Documents/Operations/Replication/PullReplicationDefinition.cs::PullReplicationDefinition] [v1:test-gap:W2 did not isolate an exact V1 test for replication-pull-hub-and-sink in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 pull replication hub and sink roles, bidirectional modes, access registration, authentication, idle state, and deletion policy [v1:src/TerraBase.Client/Documents/Operations/Replication/PullReplicationDefinition.cs::PullReplicationDefinition] PullReplicationTests and PullReplicationPreventDeletionsTests are the exact V1 pull hub and sink tests. [v1:test:test/TerraBase.SlowTests/Server/Replication/PullReplicationTests.cs] [v1:test:test/TerraBase.SlowTests/Server/Replication/PullReplicationPreventDeletionsTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7565,7 +7565,7 @@
           "E-011"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 attachment replication items, metadata, streams, tombstones, failover, and conflict resolution [v1:src/TerraBase.Server/Documents/Replication/ReplicationItems/AttachmentReplicationItem.cs::AttachmentReplicationItem] [v1:test-gap:W2 did not isolate an exact V1 test for replication-attachments in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 attachment replication items, metadata, streams, tombstones, failover, and conflict resolution [v1:src/TerraBase.Server/Documents/Replication/ReplicationItems/AttachmentReplicationItem.cs::AttachmentReplicationItem] AttachmentsReplication, AttachmentFailover, ReplicationConflictsTests.ResolveToLatestInClusterWithAttachment, and PullReplicationPreventDeletionsTests are the exact V1 attachment-replication tests. [v1:test:test/TerraBase.SlowTests/Client/Attachments/AttachmentsReplication.cs] [v1:test:test/TerraBase.SlowTests/Client/Attachments/AttachmentFailover.cs] [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationConflictsTests.cs] [v1:test:test/TerraBase.SlowTests/Server/Replication/PullReplicationPreventDeletionsTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7603,7 +7603,7 @@
           "E-011"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 counter and time-series replication items, ordering, conflict behavior, tombstones, and backup interaction [v1:src/TerraBase.Server/Documents/Replication/ReplicationItems/CounterReplicationItem.cs::CounterReplicationItem] [v1:test-gap:W2 did not isolate an exact V1 test for replication-counters-and-time-series in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 counter and time-series replication items, ordering, conflict behavior, tombstones, and backup interaction [v1:src/TerraBase.Server/Documents/Replication/ReplicationItems/CounterReplicationItem.cs::CounterReplicationItem] CountersReplication, TimeSeriesReplicationTests, TimeSeriesAndDocumentConflicts, BackupAndRestoreForIncrementalTimeSeries, and ReplicationConflictsTests.ResolveToLatestInClusterWithCounter are the exact V1 counter and time-series replication tests. [v1:test:test/TerraBase.SlowTests/Client/Counters/CountersReplication.cs] [v1:test:test/TerraBase.SlowTests/Client/TimeSeries/Replication/TimeSeriesReplicationTests.cs] [v1:test:test/TerraBase.SlowTests/Client/TimeSeries/TimeSeriesAndDocumentConflicts.cs] [v1:test:test/TerraBase.SlowTests/Server/Documents/PeriodicBackup/BackupAndRestoreForIncrementalTimeSeries.cs] [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationConflictsTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7641,7 +7641,7 @@
           "E-011"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 revision replication, revision tombstones, conflict resolution, rejoin, and retention behavior [v1:src/TerraBase.Server/Documents/Replication/ReplicationItems/RevisionTombstoneReplicationItem.cs::RevisionTombstoneReplicationItem] [v1:test-gap:W2 did not isolate an exact V1 test for replication-revisions in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 revision replication, revision tombstones, conflict resolution, rejoin, and retention behavior [v1:src/TerraBase.Server/Documents/Replication/ReplicationItems/RevisionTombstoneReplicationItem.cs::RevisionTombstoneReplicationItem] ReplicationRevisionsTests, ReplicationWithRevisions, RevisionsReplication, RevisionsReplicationTransactionMarker, and ReplicationConflictsTests.ModifyResolvedDocumentShouldKeepTheRevisions are the exact V1 revision-replication tests. [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationRevisionsTests.cs] [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationWithRevisions.cs] [v1:test:test/TerraBase.SlowTests/Server/Documents/Revisions/RevisionsReplication.cs] [v1:test:test/TerraBase.SlowTests/Server/Documents/Revisions/RevisionsReplicationTransactionMarker.cs] [v1:test:test/TerraBase.SlowTests/Server/Replication/ReplicationConflictsTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7680,7 +7680,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 node-local change-vector progress checks, malformed and future vector errors, conditional mutation races, restart, failover, and compaction [v1:src/TerraBase.Server/Utils/ChangeVector.cs::ChangeVector] [v1:test-gap:W2 did not isolate an exact V1 test for replication-local-progress in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 node-local change-vector progress checks, malformed and future vector errors, conditional mutation races, restart, failover, and compaction [v1:src/TerraBase.Server/Utils/ChangeVector.cs::ChangeVector] PlatformConsistencyContractTests is the exact V1 local-progress test set. [v1:test:test/TerraBase.RachisTests/DatabaseCluster/PlatformConsistencyContractTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7719,7 +7719,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 content-safe replication health, heartbeat, pending-count, convergence, conflict-history, and observation limitations [v1:src/TerraBase.Server/Documents/Replication/Stats/ReplicationTaskProgress.cs::ReplicationTaskProgress] [v1:test-gap:W2 did not isolate an exact V1 test for replication-health-and-convergence-observations in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 content-safe replication health, heartbeat, pending-count, convergence, conflict-history, and observation limitations [v1:src/TerraBase.Server/Documents/Replication/Stats/ReplicationTaskProgress.cs::ReplicationTaskProgress] PlatformReplicationObservationTests is the exact V1 replication-observation test set. [v1:test:test/TerraBase.RachisTests/DatabaseCluster/PlatformReplicationObservationTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7758,7 +7758,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 replication handler restart, destination reconnection, late member snapshot catch-up, and local progress after leader loss [v1:src/TerraBase.Server/Documents/Replication/ReplicationItems/AttachmentReplicationItem.cs::AttachmentReplicationItem] [v1:test-gap:W2 did not isolate an exact V1 test for replication-restart-and-rejoin in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 replication handler restart, destination reconnection, late member snapshot catch-up, and local progress after leader loss [v1:src/TerraBase.Server/Documents/Replication/ReplicationItems/AttachmentReplicationItem.cs::AttachmentReplicationItem] ExternalReplicationTests.UpdatingFailedExternalReplicationRestartsImmediately, BasicCluster.ClusterWithLateJoiningNodeRequiringSnapshot, and PlatformConsistencyContractTests.LocalReplicaProgressSurvivesRestartAndLeaderFailover are the exact V1 restart and rejoin tests. [v1:test:test/TerraBase.SlowTests/Server/Replication/ExternalReplicationTests.cs] [v1:test:test/TerraBase.RachisTests/BasicCluster.cs] [v1:test:test/TerraBase.RachisTests/DatabaseCluster/PlatformConsistencyContractTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7797,7 +7797,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 process-local asynchronous active-active observations, disconnected writers, deterministic conflict outcome, and stated qualification limits [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader] [v1:test-gap:W2 did not isolate an exact V1 test for replication-active-active in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 process-local asynchronous active-active observations, disconnected writers, deterministic conflict outcome, and stated qualification limits [v1:src/TerraBase.Server/Documents/Replication/ReplicationLoader.cs::ReplicationLoader] PlatformActiveActiveContractTests is the exact V1 active-active test set. [v1:test:test/TerraBase.RachisTests/DatabaseCluster/PlatformActiveActiveContractTests.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7836,7 +7836,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 typed replication progress, conflict, tombstone, connection, failure, and Rachis snapshot command observations [v1:src/TerraBase.Server/Documents/Replication/Stats/ReplicationTaskProgress.cs::ReplicationTaskProgress] [v1:test-gap:W2 did not isolate an exact V1 test for replication-commands-and-snapshots in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 typed replication progress, conflict, tombstone, connection, failure, and Rachis snapshot command observations [v1:src/TerraBase.Server/Documents/Replication/Stats/ReplicationTaskProgress.cs::ReplicationTaskProgress] ReplicationOngoingTaskProgressTests exercises the typed progress operations, GetDocumentConflictsTests exercises GetConflictsOperation, and BasicCluster.ClusterWithLateJoiningNodeRequiringSnapshot exercises snapshot catch-up. [v1:test:test/TerraBase.SlowTests/Server/Documents/OngoingTasks/ReplicationOngoingTaskProgressTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/Client/Operations/GetDocumentConflictsTests.cs] [v1:test:test/TerraBase.RachisTests/BasicCluster.cs]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -7874,7 +7874,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 sharded database topology, shard member lists, replication factors, request executor topology, and client routing [v1:src/TerraBase.Server/Documents/Sharding/ShardedDatabaseContext.cs::ShardedDatabaseContext] [v1:test-gap:W2 did not isolate an exact V1 test for sharding-topology in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 sharded database topology, shard member lists, replication factors, request executor topology, and client routing [v1:src/TerraBase.Server/Documents/Sharding/ShardedDatabaseContext.cs::ShardedDatabaseContext] BasicSharding, ShardingTopologyTests, and ShardedClusterObserverTests.AddingNewNodeToShardShouldUpdateShardRequestExecutorTopology_TerraBase_20702 are the exact V1 sharding-topology tests. [v1:test:test/TerraBase.EndToEndTests/Sharding/BasicSharding.cs] [v1:test:test/TerraBase.SlowTests/Sharding/ShardingTopologyTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/Cluster/ShardedClusterObserverTests.cs]"
       },
       "v2": {
         "owner": "engine/sharding",
@@ -7912,7 +7912,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 bucket identity, bucket-to-shard mapping, bucket statistics, and bucket-scoped storage accounting [v1:src/TerraBase.Server/Documents/Sharding/BucketStatsHolder.cs::BucketStatsHolder] [v1:test-gap:W2 did not isolate an exact V1 test for sharding-buckets in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 bucket identity, bucket-to-shard mapping, bucket statistics, and bucket-scoped storage accounting [v1:src/TerraBase.Server/Documents/Sharding/BucketStatsHolder.cs::BucketStatsHolder] BucketStatsTests.CanGetBucketStats, CanGetBucketStats2, CanGetBucketStatsForRange, BucketStatsShouldAccountAttachmentStreamSizePerBucket, and CanGetBucketStats_ManyDocs are the exact V1 bucket tests. [v1:test:test/TerraBase.SlowTests/Sharding/Cluster/BucketStatsTests.cs]"
       },
       "v2": {
         "owner": "engine/sharding",
@@ -7951,7 +7951,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 bucket migration, resharding orchestration, source and destination completion, idempotence, and optimistic concurrency after movement [v1:src/TerraBase.Server/Documents/Sharding/Background/ShardedDocumentsMigrator.cs::ShardedDocumentsMigrator] [v1:test-gap:W2 did not isolate an exact V1 test for sharding-resharding-and-bucket-migration in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 bucket migration, resharding orchestration, source and destination completion, idempotence, and optimistic concurrency after movement [v1:src/TerraBase.Server/Documents/Sharding/Background/ShardedDocumentsMigrator.cs::ShardedDocumentsMigrator] ReshardingTests.CanMoveOneBucket and CanMoveOneBucketToNewShard, BucketsMigratorTests, DocumentsMigrationTests, ReshardingTombstoneRepickLoop, and OptimisticConcurrencyAfterResharding are the exact V1 bucket-migration tests. [v1:test:test/TerraBase.SlowTests/Sharding/Cluster/ReshardingTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/BucketMigration/BucketsMigratorTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/BucketMigration/DocumentsMigrationTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/Cluster/ReshardingTombstoneRepickLoop.cs] [v1:test:test/TerraBase.SlowTests/Sharding/Client/OptimisticConcurrencyAfterResharding.cs]"
       },
       "v2": {
         "owner": "engine/sharding",
@@ -7989,7 +7989,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 sharded orchestrator topology, dynamic distribution, observer decisions, shard lifecycle, and topology concurrency [v1:src/TerraBase.Server/Documents/Sharding/Background/ShardedDocumentsMigrator.cs::ShardedDocumentsMigrator] [v1:test-gap:W2 did not isolate an exact V1 test for sharding-orchestrator-coordination in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 sharded orchestrator topology, dynamic distribution, observer decisions, shard lifecycle, and topology concurrency [v1:src/TerraBase.Server/Documents/Sharding/Background/ShardedDocumentsMigrator.cs::ShardedDocumentsMigrator] ShardedClusterObserverTests.DynamicNodeDistributionForOrchestrator and ClusterObserverWillSkipCommandIfChangingTheSameDatabaseRecordTwiceInOneIteration and ShardingTopologyTests are the exact V1 orchestrator-coordination tests. [v1:test:test/TerraBase.SlowTests/Sharding/Cluster/ShardedClusterObserverTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/ShardingTopologyTests.cs]"
       },
       "v2": {
         "owner": "engine/sharding",
@@ -8027,7 +8027,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 sharded external replication, per-shard backup and restore, shard member rejoin, and tombstone or backup progress coordination [v1:src/TerraBase.Server/Documents/Sharding/Handlers/ReshardingHandler.cs::ReshardingHandler] [v1:test-gap:W2 did not isolate an exact V1 test for sharding-replication-backup-and-rejoin in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 sharded external replication, per-shard backup and restore, shard member rejoin, and tombstone or backup progress coordination [v1:src/TerraBase.Server/Documents/Sharding/Handlers/ReshardingHandler.cs::ReshardingHandler] ShardedExternalReplicationTests, ShardedBackupTests, ShardedRestoreBackupTests, SnapshotBackupTests, and ShardedClusterObserverTests.CompareExchangeTombstonesCleaner_ShouldBeClean_IfSomeShardsNeverBackedUp are the exact V1 sharded replication and backup tests. [v1:test:test/TerraBase.SlowTests/Sharding/Replication/ShardedExternalReplicationTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/Backup/ShardedBackupTests .cs] [v1:test:test/TerraBase.SlowTests/Sharding/Backup/ShardedRestoreBackupTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/Backup/SnapshotBackupTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/Cluster/ShardedClusterObserverTests.cs]"
       },
       "v2": {
         "owner": "engine/sharding",
@@ -8066,7 +8066,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V1 sharded cluster transaction routing, shard member failover, subscriptions during resharding, and cross-shard state visibility [v1:src/TerraBase.Server/Documents/Sharding/Subscriptions/SubscriptionConnectionsStateOrchestrator.cs::SubscriptionConnectionsStateOrchestrator] [v1:test-gap:W2 did not isolate an exact V1 test for sharding-failover-and-cluster-transactions in the pinned checkout; strict qualification remains blocked pending focused evidence.]"
+        "scope": "V1 sharded cluster transaction routing, shard member failover, subscriptions during resharding, and cross-shard state visibility [v1:src/TerraBase.Server/Documents/Sharding/Subscriptions/SubscriptionConnectionsStateOrchestrator.cs::SubscriptionConnectionsStateOrchestrator] ShardedClusterTransactionTests, ShardedClusterObserverTests, SubscriptionsWithReshardingTests, ShardedSubscriptionClusterTests, and ShardedExternalReplicationTests are the exact V1 sharded failover and cluster-transaction tests. [v1:test:test/TerraBase.SlowTests/Cluster/ShardedClusterTransactionTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/Cluster/ShardedClusterObserverTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/Cluster/SubscriptionsWithReshardingTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/Subscriptions/ShardedSubscriptionClusterTests.cs] [v1:test:test/TerraBase.SlowTests/Sharding/Replication/ShardedExternalReplicationTests.cs]"
       },
       "v2": {
         "owner": "engine/sharding",
