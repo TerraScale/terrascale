@@ -242,7 +242,7 @@ export const es: Messages = {
           a: 'Sí. Las lecturas, exportación, eliminación y reducción de uso siguen disponibles durante límites y períodos de solo lectura.',
         },
         {
-          q: '¿Enterprise está disponible?',
+          q: '¿Qué incluye el plan Enterprise?',
           a: 'Enterprise tiene una base mensual de soporte de $500 más uso medido, pero no está disponible durante Public Alpha.',
         },
         {
