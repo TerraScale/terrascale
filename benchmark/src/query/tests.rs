@@ -576,7 +576,7 @@ fn query_input_normalizes_typed_and_v1_text_through_one_compile_seam() {
 
 #[test]
 fn query_input_rejects_unsupported_or_generic_query_text() {
-    let (_dir, engine) = open_engine("reject-text");
+    let (dir, engine) = open_engine("reject-text");
     let store = engine.queries();
     let unsupported = [
         "SELECT * FROM users",
@@ -620,6 +620,8 @@ fn query_input_rejects_unsupported_or_generic_query_text() {
         RequestValidationError::InvalidQuery,
         "the reserved family collection is not a query source"
     );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -1083,8 +1085,10 @@ fn typed_clause_validations_are_typed_and_bounded() {
 
 #[test]
 fn staleness_selection_reports_every_required_namespace() {
-    let engine = Engine::open(EngineConfig::durable(location("selection")).expect("durable"))
-        .expect("engine opens");
+    let dir = location("selection");
+    std::fs::remove_dir_all(&dir).ok();
+    let engine =
+        Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine opens");
     let first = namespace("tenant-a", "by-age");
     let second = namespace("tenant-a", "by-name");
     let mut view = ForgedView::with(&first, Some((1, 2)), Some((1, 2)));
@@ -1108,6 +1112,127 @@ fn staleness_selection_reports_every_required_namespace() {
         QueryError::IndexNotReady
     );
     drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn materialization_checkpoint_stops_a_query_whose_bound_expired_after_the_scan() {
+    // Deterministic proof of the post-scan checkpoint: the cancellation
+    // signal becomes cancelled after the scan and sort have produced their
+    // input, which is simulated exactly by calling the bounded
+    // materialization step directly with an already-cancelled model. The
+    // query must stop with Cancelled before it produces any row, and the
+    // signal is checked with no lock held.
+    let (dir, engine) = open_engine("post-sort-cancel");
+    let signal = Cancellation::new();
+    let query = QuerySpec::try_new(
+        tenant("tenant-a"),
+        source("users"),
+        predicate(Vec::new()),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(0, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+        deadline(),
+        signal,
+    )
+    .expect("valid specification");
+    let plan = engine.queries().compile(QueryInput::typed(query)).expect("compiles");
+    let model = plan.model().clone();
+    // The scan and sort have finished by the time this fires.
+    model.cancellation_signal().expect("bound signal").cancel();
+    let ordered: Vec<Document> = (0..300)
+        .map(|index| {
+            object_document(
+                &format!("doc-{index:03}"),
+                "users",
+                &[("age", DocumentValue::Integer(index))],
+            )
+        })
+        .collect();
+    assert_eq!(
+        super::execute::materialize(&model, &ordered).unwrap_err(),
+        QueryError::Cancelled,
+        "the first materialization checkpoint must stop the query before any row"
+    );
+
+    // A live signal still materializes the bounded page through the same
+    // checkpoints, proving the step did not simply stop unconditionally.
+    let live = QuerySpec::try_new(
+        tenant("tenant-a"),
+        source("users"),
+        predicate(Vec::new()),
+        ordering(vec![("age", OrderDirection::Ascending)]),
+        QueryProjection::whole_document(),
+        paging(10, Some(55)),
+        staleness(StalenessMode::Strict, Vec::new()),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid specification");
+    let live_plan = engine.queries().compile(QueryInput::typed(live)).expect("compiles");
+    let ordered: Vec<Document> = (0..300)
+        .map(|index| {
+            object_document(
+                &format!("doc-{index:03}"),
+                "users",
+                &[("age", DocumentValue::Integer(index))],
+            )
+        })
+        .collect();
+    let rows = super::execute::materialize(live_plan.model(), &ordered).expect("materializes");
+    assert_eq!(rows.len(), 55, "the offset skips and the limit caps");
+    assert_eq!(rows[0].document().id().as_str(), "doc-010");
+    assert_eq!(rows[54].document().id().as_str(), "doc-064");
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_large_corpus_stays_bounded_and_leaks_no_lock_after_cancellation() {
+    // End-to-end at scale: a signal cancelled after compilation on a corpus
+    // far larger than the checkpoint interval still returns the typed
+    // Cancelled error, and the storage lock is free afterwards. Any one of
+    // the bounded checkpoints catching it satisfies the contract; the test
+    // above pins the post-scan checkpoint specifically.
+    let (dir, engine) = open_engine("cancel-at-scale");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let documents: Vec<Document> = (0..2500)
+        .map(|index| {
+            object_document(
+                &format!("doc-{index:04}"),
+                "users",
+                &[("age", DocumentValue::Integer(index))],
+            )
+        })
+        .collect();
+    commit_documents(&engine, &tenant_scope, "op-1", documents);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let signal = Cancellation::new();
+    let query = QuerySpec::try_new(
+        tenant("tenant-a"),
+        source("users"),
+        predicate(Vec::new()),
+        ordering(vec![("age", OrderDirection::Ascending)]),
+        QueryProjection::whole_document(),
+        paging(0, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+        deadline(),
+        signal,
+    )
+    .expect("valid specification");
+    let plan = engine.queries().compile(QueryInput::typed(query)).expect("compiles");
+    plan.model().cancellation_signal().expect("bound signal").cancel();
+    assert_eq!(engine.queries().execute(&plan, &snapshot).unwrap_err(), QueryError::Cancelled);
+    engine.read_snapshot(&tenant_scope).expect("storage lock is free");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-2",
+        vec![object_document("doc-new", "users", &[("age", DocumentValue::Integer(1))])],
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -1138,4 +1263,174 @@ fn total_document_order_ranks_missing_and_types_deterministically() {
         std::cmp::Ordering::Equal,
         "integer and float compare numerically"
     );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // one property block plus one end-to-end block, split would blur the proof
+fn nan_and_non_finite_numbers_keep_a_total_deterministic_order() {
+    use crate::query::model::{compare_documents, compare_values};
+
+    // The comparator is a true total order over the full value domain,
+    // including NaN and the infinities: antisymmetric, transitive, and with
+    // NaN consistently equal to NaN. An inconsistent comparator can make the
+    // standard library's sort panic, so this is checked as a property.
+    let owned = [
+        None,
+        Some(DocumentValue::Null),
+        Some(DocumentValue::Boolean(false)),
+        Some(DocumentValue::Boolean(true)),
+        Some(DocumentValue::Integer(-7)),
+        Some(DocumentValue::Integer(3)),
+        Some(DocumentValue::Number(-1.5)),
+        Some(DocumentValue::Number(f64::NEG_INFINITY)),
+        Some(DocumentValue::Number(f64::NAN)),
+        Some(DocumentValue::Number(f64::INFINITY)),
+        Some(DocumentValue::Number(1.0e308)),
+        Some(DocumentValue::String("a".to_owned())),
+    ];
+    let values: Vec<Option<&DocumentValue>> = owned.iter().map(|value| value.as_ref()).collect();
+    for (index, left) in values.iter().enumerate() {
+        for (other_index, right) in values.iter().enumerate() {
+            let forward = compare_values(*left, *right);
+            let backward = compare_values(*right, *left).reverse();
+            assert_eq!(forward, backward, "{left:?} vs {right:?} must be antisymmetric");
+            if index == other_index {
+                assert_eq!(forward, std::cmp::Ordering::Equal);
+            }
+        }
+    }
+    assert_eq!(
+        compare_values(
+            Some(&DocumentValue::Number(f64::NAN)),
+            Some(&DocumentValue::Number(f64::NAN))
+        ),
+        std::cmp::Ordering::Equal,
+        "NaN must equal NaN"
+    );
+    for left in &values {
+        for middle in &values {
+            for right in &values {
+                let first = compare_values(*left, *middle);
+                let second = compare_values(*middle, *right);
+                if first == std::cmp::Ordering::Less && second == std::cmp::Ordering::Less {
+                    assert_eq!(
+                        compare_values(*left, *right),
+                        std::cmp::Ordering::Less,
+                        "order must be transitive over {left:?} < {middle:?} < {right:?}"
+                    );
+                }
+            }
+        }
+    }
+    // Non-finite numbers rank after every finite number and before strings.
+    let finite = Some(&DocumentValue::Number(1.0e308));
+    let nan = Some(&DocumentValue::Number(f64::NAN));
+    let text = Some(&DocumentValue::String("a".to_owned()));
+    assert_eq!(compare_values(finite, nan), std::cmp::Ordering::Less);
+    assert_eq!(compare_values(nan, text), std::cmp::Ordering::Less);
+
+    // End to end: a corpus with several NaN documents sorts deterministically
+    // through the public path, and every NaN document lands after every
+    // finite number. NaN survives the storage codec bit-exactly, so the
+    // ordering is exercised over real committed documents.
+    let (dir, engine) = open_engine("nan-order");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let scores = [
+        DocumentValue::Number(f64::NAN),
+        DocumentValue::Integer(4),
+        DocumentValue::Number(f64::NAN),
+        DocumentValue::Number(f64::INFINITY),
+        DocumentValue::Number(-2.5),
+        DocumentValue::Number(f64::NAN),
+        DocumentValue::Integer(10),
+        DocumentValue::String("text".to_owned()),
+        DocumentValue::Number(f64::NEG_INFINITY),
+    ];
+    let documents = scores
+        .iter()
+        .enumerate()
+        .map(|(index, score)| {
+            object_document(&format!("doc-{index:02}"), "users", &[("score", score.clone())])
+        })
+        .collect();
+    commit_documents(&engine, &tenant_scope, "op-1", documents);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let query = spec(
+        "tenant-a",
+        "users",
+        predicate(Vec::new()),
+        ordering(vec![("score", OrderDirection::Ascending)]),
+        QueryProjection::whole_document(),
+        paging(0, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+    );
+    let plan = engine.queries().compile(QueryInput::typed(query)).expect("compiles");
+    let first = engine.queries().execute(&plan, &snapshot).expect("sorts");
+    let second = engine.queries().execute(&plan, &snapshot).expect("sorts again");
+    assert_eq!(row_ids(&first), row_ids(&second), "repeated sorts must be identical");
+    let ordered_scores: Vec<&DocumentValue> =
+        first.rows().iter().map(|row| &row.projected()[0].1).collect();
+    // Ascending: finite numbers first, then the non-finite slot, then text.
+    let nan_count = ordered_scores
+        .iter()
+        .take_while(|value| !matches!(value, DocumentValue::Number(number) if !number.is_finite()))
+        .count();
+    let finite_count = scores
+        .iter()
+        .filter(|value| match value {
+            DocumentValue::Integer(_) => true,
+            DocumentValue::Number(number) => number.is_finite(),
+            _ => false,
+        })
+        .count();
+    assert_eq!(nan_count, finite_count, "every NaN document must land after every finite number");
+    assert!(ordered_scores.iter().any(|value| matches!(
+        value,
+        DocumentValue::Number(number) if number.is_nan()
+    )));
+
+    // Sort stress: the same matched documents under many pseudo-random input
+    // permutations must all sort without panicking, and every output must be
+    // consistent with the comparator (no later element orders before an
+    // earlier one). Equal-key documents — here the three NaN documents,
+    // which are equal by design — may keep their shuffled input order under
+    // a stable sort, so convergence is asserted on the comparator's order,
+    // not on the equal-key arrangement.
+    let key = OrderingKey::try_new("score", OrderDirection::Ascending).expect("valid key");
+    let ordering = QueryOrdering::try_new(vec![key]).expect("valid ordering");
+    let mut source: Vec<Document> = first.rows().iter().map(|row| row.document().clone()).collect();
+    let mut members: Vec<String> = source.iter().map(|doc| doc.id().as_str().to_owned()).collect();
+    members.sort();
+    let mut state: u64 = 0x2545_f491_4f6c_dd1d;
+    for _ in 0..32 {
+        // Deterministic Fisher-Yates driven by a splitmix step; no external
+        // dependency is allowed in this crate.
+        for position in (1..source.len()).rev() {
+            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut mixed = state;
+            mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            mixed ^= mixed >> 31;
+            let swap = usize::try_from(mixed % u64::try_from(position + 1).expect("small"))
+                .expect("bounded by the vector length");
+            source.swap(position, swap);
+        }
+        source.sort_by(|left, right| compare_documents(&ordering, left, right));
+        let mut ids: Vec<String> = source.iter().map(|doc| doc.id().as_str().to_owned()).collect();
+        ids.sort();
+        assert_eq!(ids, members, "sorting never loses or duplicates a document");
+        for (position, left) in source.iter().enumerate() {
+            for right in source.iter().skip(position + 1) {
+                assert_ne!(
+                    compare_documents(&ordering, left, right),
+                    std::cmp::Ordering::Greater,
+                    "{:?} orders after {:?} in a sorted output",
+                    left.id(),
+                    right.id()
+                );
+            }
+        }
+    }
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
 }

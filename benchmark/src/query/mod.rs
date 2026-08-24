@@ -148,11 +148,14 @@ pub(crate) trait GenerationView {
 /// production acquisition path.
 ///
 /// ```compile_fail
-/// // No store may outlive its Engine. This must not compile.
-/// let engine = terrabase_v2::engine::Engine::open(config)?;
+/// // No store may outlive its Engine. This must not compile: `shutdown`
+/// // consumes the Engine while the borrowed store is still live. The example
+/// // fails on exactly that borrow rule — every other line is valid.
+/// use terrabase_v2::{Engine, EngineConfig};
+/// let engine = Engine::open(EngineConfig::durable("/tmp/tbv2-docstore").unwrap()).unwrap();
 /// let store = engine.queries();
-/// engine.shutdown()?;
-/// let _ = store;
+/// engine.shutdown().unwrap();
+/// drop(store);
 /// ```
 ///
 /// ```compile_fail
@@ -174,10 +177,11 @@ impl<'engine> QueryStore<'engine> {
 
     /// Binds one index catalog to this store.
     ///
-    /// Crate-only: the Engine does not own an index catalog yet, so the
-    /// wiring that installs the catalog's publication-event sink on the
-    /// Engine is the integrator action recorded in the design record.
-    #[allow(dead_code, reason = "used by the in-crate tests and the later engine wiring")]
+    /// Test-only. The Engine does not own an index catalog yet, so this seam
+    /// lets the in-crate tests observe a live catalog through the public
+    /// execute path until the integrator action installs the catalog's
+    /// publication-event sink on the Engine; that action removes this seam.
+    #[cfg(test)]
     pub(crate) fn with_index_catalog(mut self, indexes: Arc<IndexCatalog>) -> Self {
         self.indexes = indexes;
         self

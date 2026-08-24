@@ -105,6 +105,12 @@ impl StaleIndexObservation {
     }
 
     /// Returns the generation execution accepted for the namespace.
+    ///
+    /// This is the generation the staleness gate let through, not a claim
+    /// that index data served the query: W3-2 execution is index-less, and no
+    /// segment content is consulted. Under an allow-stale policy the accepted
+    /// generation may be older than, absent from, or from a different epoch
+    /// than the snapshot's observation.
     #[must_use]
     pub const fn used(&self) -> Option<ObservedGeneration> {
         self.used
@@ -145,8 +151,11 @@ impl StalenessReport {
 
 /// The namespace/epoch/generation of the index a query used.
 ///
-/// This is the primary generation of the query: the used generation of the
-/// first namespace the plan required. An index-less query reports `None`.
+/// This is the primary generation of the query: the generation the staleness
+/// gate accepted for the first namespace the plan required. It records which
+/// generation the gate allowed through, not which segment served the query —
+/// W3-2 execution is index-less and consults no index data. An index-less
+/// query reports `None`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndexGenerationRef {
     namespace: IndexNamespace,
@@ -159,13 +168,13 @@ impl IndexGenerationRef {
         Self { namespace, observed }
     }
 
-    /// Returns the namespace of the used index.
+    /// Returns the namespace of the index the gate selected.
     #[must_use]
     pub const fn namespace(&self) -> &IndexNamespace {
         &self.namespace
     }
 
-    /// Returns the epoch and generation of the used index.
+    /// Returns the epoch and generation the gate accepted.
     #[must_use]
     pub const fn generation(&self) -> ObservedGeneration {
         self.observed
@@ -218,8 +227,9 @@ impl QueryResult {
         &self.staleness
     }
 
-    /// Returns the generation of the index this query used, or `None` for an
-    /// index-less execution.
+    /// Returns the generation the staleness gate accepted for this query, or
+    /// `None` for an index-less execution. The value names the accepted
+    /// generation; it does not claim index data served the query.
     #[must_use]
     pub const fn index_generation(&self) -> Option<&IndexGenerationRef> {
         self.index_generation.as_ref()

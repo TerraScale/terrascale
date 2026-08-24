@@ -154,21 +154,13 @@ pub(crate) fn execute_with_view(
             matched.push(document);
         }
     }
+    // Bounded checkpoint at the scan/sort boundary: a bound that expired
+    // during the scan stops the query before the sort starts.
     check_bounds(query.deadline(), query.cancellation_signal())?;
     let mut ordered: Vec<Document> = matched.into_iter().cloned().collect();
     ordered.sort_by(|left, right| model::compare_documents(query.ordering(), left, right));
     let matched_count = u64::try_from(ordered.len()).unwrap_or(u64::MAX);
-    let offset = usize::try_from(query.paging().offset()).unwrap_or(usize::MAX);
-    let limit = query
-        .paging()
-        .limit()
-        .map_or(usize::MAX, |limit| usize::try_from(limit).unwrap_or(usize::MAX));
-    let rows = ordered
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .map(|document| QueryRow::new(document.clone(), project(query, &document)))
-        .collect::<Vec<_>>();
+    let rows = materialize(query, &ordered)?;
 
     let index_generation = staleness
         .observations()
@@ -180,6 +172,39 @@ pub(crate) fn execute_with_view(
                 .map(|used| IndexGenerationRef::new(observation.namespace().clone(), used))
         });
     Ok(QueryResult::new(rows, matched_count, query.ordering().clone(), staleness, index_generation))
+}
+
+/// Sorts nothing and reads no data: this is the bounded materialization step
+/// after the stable sort.
+///
+/// The first checkpoint fires before any row is produced, so a deadline that
+/// expired during the sort still stops the query, and one further checkpoint
+/// runs every [`CHECKPOINT_INTERVAL`] materialized rows so a large page
+/// cannot outlive its bounds either. Materializing clones documents and
+/// projected fields only; it holds no lock.
+pub(crate) fn materialize(
+    query: &NormalizedQuery,
+    ordered: &[Document],
+) -> Result<Vec<QueryRow>, QueryError> {
+    let offset = usize::try_from(query.paging().offset()).unwrap_or(usize::MAX);
+    let limit = query
+        .paging()
+        .limit()
+        .map_or(usize::MAX, |limit| usize::try_from(limit).unwrap_or(usize::MAX));
+    let mut rows = Vec::new();
+    for (position, document) in ordered.iter().enumerate() {
+        if position % CHECKPOINT_INTERVAL == 0 {
+            check_bounds(query.deadline(), query.cancellation_signal())?;
+        }
+        if position < offset {
+            continue;
+        }
+        if rows.len() >= limit {
+            break;
+        }
+        rows.push(QueryRow::new(document.clone(), project(query, document)));
+    }
+    Ok(rows)
 }
 
 /// Projects one matched document into its row fields.

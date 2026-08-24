@@ -19,10 +19,15 @@ use std::{
 use super::{IndexBuilder, IndexCatalog, IndexDelta, IndexError, RebuildOutcome};
 use crate::{
     engine::{CommitOutcome, CommitPublicationSink, Engine, EngineConfig},
+    operations::QueryInput,
+    query::{
+        IndexNamespace, QueryError, QueryOrdering, QueryPaging, QueryPredicate, QueryProjection,
+        QuerySource, QuerySpec, StalenessMode, StalenessPolicy,
+    },
     storage::{CommitPublicationEvent, StorageRootId},
     types::{
-        CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
-        OperationId, StorageSequence, TenantId, TenantScope,
+        Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
+        ExpectedVersion, LocalDurability, OperationId, StorageSequence, TenantId, TenantScope,
     },
 };
 
@@ -377,7 +382,11 @@ fn segments_index_the_registered_field_of_their_own_tenant() {
         (1, 1, 3)
     );
     let segment = catalog.segment(&index_namespace).expect("published");
-    assert_eq!(segment.namespace_key(), "tenant-a/by-age");
+    // The catalog key joins the two parts with the unit separator, which
+    // neither part may contain, so a tenant named like a prefix of another
+    // tenant's key cannot alias this namespace's entry.
+    assert_eq!(segment.namespace_key(), index_namespace.catalog_key());
+    assert_ne!(segment.namespace_key(), "tenant-a/by-age");
     assert_eq!(segment.field(), "age");
     let entry = segment.entries().get("integer:1").expect("indexed values");
     assert_eq!(entry.len(), 2);
@@ -431,6 +440,91 @@ fn index_lock_holders_never_block_storage_reads() {
         engine.read_snapshot(&tenant_scope).expect("a storage read does not need the index lock")
     });
     let _ = read;
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Builds a strict typed specification for one tenant claiming one required
+/// index namespace, the smallest query that can hit a staleness gate.
+fn strict_spec(claim: &str, required: IndexNamespace) -> QuerySpec {
+    QuerySpec::try_new(
+        TenantId::try_new(claim).expect("valid tenant"),
+        QuerySource::try_new(CollectionName::try_new("users").expect("valid identifier"))
+            .expect("user collection"),
+        QueryPredicate::all(Vec::new()).expect("valid conjunction"),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        QueryPaging::try_new(0, None).expect("valid paging"),
+        StalenessPolicy::try_new(StalenessMode::Strict, vec![required]).expect("valid policy"),
+        Deadline::after(Duration::from_secs(30)).expect("valid deadline"),
+        Cancellation::new(),
+    )
+    .expect("valid specification")
+}
+
+#[test]
+fn tenant_and_name_separator_cannot_alias_a_namespace() {
+    let (dir, engine) = open_engine("namespace-aliasing");
+    let catalog = Arc::new(IndexCatalog::new());
+    engine.set_publication_sink(catalog.sink());
+    // Both tenants commit, so both namespaces can build from real events.
+    commit_one(&engine, "a", "op-1", "doc-a1", 1);
+    commit_one(&engine, "a/b", "op-2", "doc-b1", 1);
+
+    let aliased_left = IndexNamespace::try_new(tenant("a"), "b/c").expect("valid namespace");
+    let aliased_right = IndexNamespace::try_new(tenant("a/b"), "c").expect("valid namespace");
+    // A plain '/' join collapses these two namespaces into one catalog key,
+    // because both validators admit '/' inside tenant and name text. The
+    // real key joins with a byte neither validator admits, so the pair stays
+    // injective and a namespace keeps identifying one tenant and one
+    // definition.
+    assert_ne!(aliased_left.catalog_key(), aliased_right.catalog_key());
+    assert_eq!(aliased_left.catalog_key(), "a\u{1f}b/c");
+
+    assert_eq!(catalog.ensure_namespace(&aliased_left, "age"), 1);
+    assert_eq!(catalog.ensure_namespace(&aliased_right, "age"), 1);
+    let builder = IndexBuilder::new(&catalog, &engine);
+    // Only the right namespace publishes.
+    let delta = catalog.delta().expect("event observed");
+    assert!(matches!(
+        builder.rebuild_from(&aliased_right, &delta, engine.identity()),
+        Ok(RebuildOutcome::Published { generation: 1, .. })
+    ));
+    // The two namespaces are independent entries: the left one has no
+    // segment of its own.
+    assert!(catalog.segment(&aliased_left).is_none());
+    assert!(catalog.segment(&aliased_right).is_some());
+
+    // Neither can satisfy the other's staleness gate. A strict query for
+    // tenant "a" requiring ("a", "b/c") must fail with IndexNotReady even
+    // though ("a/b", "c") has a fresh published generation: under a '/'
+    // join, that alias would have opened this gate.
+    let store = engine.queries().with_index_catalog(Arc::clone(&catalog));
+    let scope_left = TenantScope::from_parts(tenant("a"), engine.identity());
+    let snapshot = engine.read_snapshot(&scope_left).expect("snapshot");
+    let plan =
+        store.compile(QueryInput::typed(strict_spec("a", aliased_left.clone()))).expect("compiles");
+    assert_eq!(
+        store.execute(&plan, &snapshot).unwrap_err(),
+        QueryError::IndexNotReady,
+        "another namespace's generation must never open this gate"
+    );
+
+    // Once the left namespace publishes its own generation, its gate opens,
+    // and the two generation sequences advance independently.
+    assert!(matches!(
+        builder.rebuild(&aliased_left, engine.identity()),
+        Ok(RebuildOutcome::Published { generation: 1, .. })
+    ));
+    commit_one(&engine, "a", "op-3", "doc-a2", 2);
+    assert!(matches!(
+        builder.rebuild(&aliased_left, engine.identity()),
+        Ok(RebuildOutcome::Published { generation: 2, .. })
+    ));
+    let fresh = engine.read_snapshot(&scope_left).expect("snapshot");
+    assert!(store.execute(&plan, &fresh).is_ok(), "its own generation opens its gate");
+    assert_eq!(catalog.segment(&aliased_left).expect("published").generation(), 2);
+    assert_eq!(catalog.segment(&aliased_right).expect("published").generation(), 1);
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
 }

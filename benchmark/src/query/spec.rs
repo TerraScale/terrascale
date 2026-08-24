@@ -379,8 +379,17 @@ impl IndexNamespace {
 
     /// Returns the catalog key of this namespace. Crate-only: the key shape is
     /// an implementation detail of the private index catalog.
+    ///
+    /// The key joins the tenant and the definition name with the unit
+    /// separator `'\u{1f}'`. Both parts reject control characters — the
+    /// tenant through the shared identifier rules and the name through the
+    /// field-name rules — so the separator cannot occur inside either part
+    /// and the pair is injective: the namespace `("a", "b/c")` and the
+    /// namespace `("a/b", "c")`, which a plain `'/'` join would collapse into
+    /// one key, stay distinct catalog entries. A namespace identifies the
+    /// tenant and the logical definition; the key must not blur that.
     pub(crate) fn catalog_key(&self) -> String {
-        format!("{}/{}", self.tenant.as_str(), self.name)
+        format!("{}\u{1f}{}", self.tenant.as_str(), self.name)
     }
 }
 

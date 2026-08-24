@@ -217,20 +217,31 @@ fn ordered_f64(left: f64, right: f64) -> Option<Ordering> {
 /// The type rank of the total document order used by `order by`.
 ///
 /// Missing fields sort first, then null, then every value type in a fixed
-/// rank. The rank order is a W3-2 tracer rule, not a V1 parity claim.
+/// rank. Non-finite numbers (`NaN` and the infinities) get their own rank
+/// slot after every finite number, because `f64::partial_cmp` cannot order
+/// `NaN` and a comparator built on it is not a total order. The rank order is
+/// a W3-2 tracer rule, not a V1 parity claim.
 fn rank(value: Option<&DocumentValue>) -> u8 {
     match value {
         None => 0,
         Some(DocumentValue::Null) => 1,
         Some(DocumentValue::Boolean(_)) => 2,
-        Some(DocumentValue::Integer(_) | DocumentValue::Number(_)) => 3,
-        Some(DocumentValue::String(_)) => 4,
-        Some(DocumentValue::Array(_)) => 5,
-        Some(DocumentValue::Object(_)) => 6,
+        // Integers and finite numbers share one unified numeric rank.
+        Some(DocumentValue::Integer(_)) => 3,
+        Some(DocumentValue::Number(number)) if number.is_finite() => 3,
+        Some(DocumentValue::Number(_)) => 4,
+        Some(DocumentValue::String(_)) => 5,
+        Some(DocumentValue::Array(_)) => 6,
+        Some(DocumentValue::Object(_)) => 7,
     }
 }
 
 /// Compares two document values by the total document order.
+///
+/// The order is a true total order over every [`DocumentValue`], including
+/// `NaN`: same-type operands compare consistently, `NaN` equals `NaN`, and
+/// antisymmetry and transitivity hold, so the stable sort in the execution
+/// path can never observe an inconsistent comparator.
 pub(crate) fn compare_values(
     left: Option<&DocumentValue>,
     right: Option<&DocumentValue>,
@@ -251,6 +262,8 @@ pub(crate) fn compare_values(
         (Some(DocumentValue::Integer(left)), Some(DocumentValue::Integer(right))) => {
             left.cmp(right)
         }
+        // Equal ranks mean a `Number` here is finite, so widening an integer
+        // against it stays inside the total finite domain.
         (Some(DocumentValue::Integer(left)), Some(DocumentValue::Number(right))) => {
             widen(*left).partial_cmp(right).unwrap_or(Ordering::Equal)
         }
@@ -258,7 +271,16 @@ pub(crate) fn compare_values(
             left.partial_cmp(&widen(*right)).unwrap_or(Ordering::Equal)
         }
         (Some(DocumentValue::Number(left)), Some(DocumentValue::Number(right))) => {
-            left.partial_cmp(right).unwrap_or(Ordering::Equal)
+            if left.is_finite() && right.is_finite() {
+                // Both finite: `partial_cmp` is total over this domain, so
+                // the `unwrap_or` arm is unreachable.
+                left.partial_cmp(right).unwrap_or(Ordering::Equal)
+            } else {
+                // Equal ranks put both operands in the non-finite slot, so
+                // they compare by the float total order: infinities and NaNs
+                // order consistently and NaN equals NaN.
+                left.total_cmp(right)
+            }
         }
         (Some(DocumentValue::String(left)), Some(DocumentValue::String(right))) => left.cmp(right),
         (Some(DocumentValue::Array(left)), Some(DocumentValue::Array(right))) => {
