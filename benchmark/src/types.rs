@@ -1,20 +1,41 @@
 //! Shared logical values used by the `TerraBaseV2` public seams.
 
 #![allow(dead_code)]
-#![allow(
-    clippy::doc_markdown,
-    clippy::missing_errors_doc,
-    clippy::must_use_candidate,
-    clippy::unimplemented
-)]
+#![allow(clippy::doc_markdown, clippy::missing_errors_doc, clippy::must_use_candidate)]
 
 use std::{
     collections::BTreeMap,
     fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use crate::operations::RequestValidationError;
+
+/// The maximum byte length of a logical identifier.
+const MAX_IDENTIFIER_BYTES: usize = 255;
+
+/// Validates one logical identifier text: non-empty, at most
+/// [`MAX_IDENTIFIER_BYTES`] bytes, no control characters, and no leading or
+/// trailing whitespace.
+fn validate_identifier_text(value: &str) -> Result<(), RequestValidationError> {
+    if value.is_empty() {
+        return Err(RequestValidationError::EmptyField);
+    }
+    if value.len() > MAX_IDENTIFIER_BYTES {
+        return Err(RequestValidationError::InvalidIdentifier);
+    }
+    if value.chars().any(char::is_control) {
+        return Err(RequestValidationError::InvalidIdentifier);
+    }
+    if value != value.trim() {
+        return Err(RequestValidationError::InvalidIdentifier);
+    }
+    Ok(())
+}
 
 macro_rules! logical_identifier {
     ($name:ident, $error:ident, $description:literal) => {
@@ -24,9 +45,12 @@ macro_rules! logical_identifier {
 
         impl $name {
             /// Creates a validated logical identifier.
+            ///
+            /// The text must be non-empty, at most 255 bytes, free of control
+            /// characters, and carry no leading or trailing whitespace.
             pub fn try_new(value: &str) -> Result<Self, RequestValidationError> {
-                let _ = (value, RequestValidationError::$error);
-                unimplemented!("logical identifier validation belongs to a later behavior packet")
+                validate_identifier_text(value)?;
+                Ok(Self(value.to_owned()))
             }
 
             /// Returns the canonical identifier text.
@@ -109,6 +133,17 @@ pub struct DocumentMetadata {
     version: u64,
 }
 
+impl DocumentMetadata {
+    pub(crate) fn with_version(version: u64) -> Self {
+        Self { version }
+    }
+
+    /// Returns the document's current version.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+}
+
 /// A logical document independent of its durable representation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Document {
@@ -116,6 +151,40 @@ pub struct Document {
     collection: CollectionName,
     value: DocumentValue,
     metadata: DocumentMetadata,
+}
+
+impl Document {
+    /// Creates a logical document from validated parts.
+    ///
+    /// The document starts at version zero; the Engine assigns the published
+    /// version when the containing transaction commits.
+    pub fn new(id: DocumentId, collection: CollectionName, value: DocumentValue) -> Self {
+        Self { id, collection, value, metadata: DocumentMetadata::default() }
+    }
+
+    /// Returns the document identity.
+    pub fn id(&self) -> &DocumentId {
+        &self.id
+    }
+
+    /// Returns the owning collection name.
+    pub fn collection(&self) -> &CollectionName {
+        &self.collection
+    }
+
+    /// Returns the structured document value.
+    pub fn value(&self) -> &DocumentValue {
+        &self.value
+    }
+
+    /// Returns the document metadata.
+    pub fn metadata(&self) -> &DocumentMetadata {
+        &self.metadata
+    }
+
+    pub(crate) fn set_version(&mut self, version: u64) {
+        self.metadata = DocumentMetadata::with_version(version);
+    }
 }
 
 /// A requested upper bound for a typed operation.
@@ -126,38 +195,78 @@ pub struct Deadline {
 
 impl Deadline {
     /// Creates a deadline after a positive duration.
+    ///
+    /// A zero or negative duration is invalid because every typed operation
+    /// must retain a non-empty execution window.
     pub fn after(duration: Duration) -> Result<Self, RequestValidationError> {
-        let _ = duration;
-        unimplemented!("deadline validation belongs to a later behavior packet")
+        if duration.is_zero() {
+            return Err(RequestValidationError::InvalidDeadline);
+        }
+        Ok(Self { instant: Instant::now() + duration })
     }
 
     pub(crate) fn instant(self) -> Instant {
         self.instant
     }
+
+    /// Reports whether the deadline has passed.
+    pub fn is_expired(&self) -> bool {
+        Instant::now() >= self.instant
+    }
 }
 
 /// A shareable cancellation signal for a typed operation.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+///
+/// Cloning a cancellation creates an independent signal: cancelling one clone
+/// never cancels another. `PartialEq` and `Eq` compare signal identity, so two
+/// distinct signals are never equal even when both remain uncancelled.
 pub struct Cancellation {
-    marker: std::marker::PhantomData<()>,
+    flag: Arc<AtomicBool>,
 }
+
+impl Clone for Cancellation {
+    fn clone(&self) -> Self {
+        Self { flag: Arc::new(AtomicBool::new(self.is_cancelled())) }
+    }
+}
+
+impl fmt::Debug for Cancellation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Cancellation")
+            .field("cancelled", &self.is_cancelled())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for Cancellation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for Cancellation {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.flag, &other.flag)
+    }
+}
+
+impl Eq for Cancellation {}
 
 impl Cancellation {
     /// Creates a cancellation signal in the not-cancelled state.
     pub fn new() -> Self {
-        unimplemented!("cancellation behavior belongs to a later behavior packet")
+        Self { flag: Arc::new(AtomicBool::new(false)) }
     }
 
     /// Marks this signal as cancelled.
     pub fn cancel(&self) {
-        let _ = self;
-        unimplemented!("cancellation behavior belongs to a later behavior packet")
+        self.flag.store(true, Ordering::Release);
     }
 
     /// Reports whether cancellation has been requested.
     pub fn is_cancelled(&self) -> bool {
-        let _ = self;
-        unimplemented!("cancellation behavior belongs to a later behavior packet")
+        self.flag.load(Ordering::Acquire)
     }
 }
 
@@ -234,4 +343,95 @@ pub enum RetryDisposition {
     NewOperation,
     /// Resolve the durable outcome before deciding how to retry.
     AfterRecovery,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue, OperationId,
+        RequestValidationError, TenantId, validate_identifier_text,
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn identifiers_reject_empty_text() {
+        assert_eq!(TenantId::try_new(""), Err(RequestValidationError::EmptyField));
+    }
+
+    #[test]
+    fn identifiers_reject_text_over_255_bytes() {
+        let long = "a".repeat(256);
+        assert_eq!(TenantId::try_new(&long), Err(RequestValidationError::InvalidIdentifier));
+        let boundary = "a".repeat(255);
+        assert!(TenantId::try_new(&boundary).is_ok());
+    }
+
+    #[test]
+    fn identifiers_reject_control_characters_and_surrounding_whitespace() {
+        assert_eq!(
+            TenantId::try_new("tenant\u{7}"),
+            Err(RequestValidationError::InvalidIdentifier)
+        );
+        assert_eq!(TenantId::try_new(" tenant"), Err(RequestValidationError::InvalidIdentifier));
+        assert_eq!(TenantId::try_new("tenant "), Err(RequestValidationError::InvalidIdentifier));
+        assert!(TenantId::try_new("tenant-a").is_ok());
+        assert_eq!(
+            validate_identifier_text("tenant\t"),
+            Err(RequestValidationError::InvalidIdentifier)
+        );
+    }
+
+    #[test]
+    fn operation_identity_reports_its_own_error_category() {
+        assert_eq!(OperationId::try_new(""), Err(RequestValidationError::EmptyField));
+        assert!(OperationId::try_new("op-1").is_ok());
+    }
+
+    #[test]
+    fn identifiers_keep_canonical_text() {
+        let document = DocumentId::try_new("doc-42").expect("valid identifier");
+        assert_eq!(document.as_str(), "doc-42");
+        assert_eq!(document.to_string(), "doc-42");
+        let collection = CollectionName::try_new("users").expect("valid identifier");
+        assert_eq!(collection.as_str(), "users");
+    }
+
+    #[test]
+    fn deadline_rejects_zero_duration() {
+        assert_eq!(Deadline::after(Duration::ZERO), Err(RequestValidationError::InvalidDeadline));
+        let deadline = Deadline::after(Duration::from_secs(30)).expect("valid deadline");
+        assert!(!deadline.is_expired());
+    }
+
+    #[test]
+    fn cancellation_clone_is_independent_and_identity_compared() {
+        let signal = Cancellation::new();
+        assert!(!signal.is_cancelled());
+        let clone = signal.clone();
+        assert_ne!(
+            signal, clone,
+            "equality compares signal identity, so a clone is a distinct signal"
+        );
+        signal.cancel();
+        assert!(signal.is_cancelled());
+        assert!(!clone.is_cancelled(), "clones must not share cancellation");
+        assert_ne!(signal, Cancellation::new());
+    }
+
+    #[test]
+    fn document_starts_at_version_zero_and_reports_parts() {
+        let document = Document::new(
+            DocumentId::try_new("doc-1").expect("valid identifier"),
+            CollectionName::try_new("users").expect("valid identifier"),
+            DocumentValue::Object(
+                [("name".to_owned(), DocumentValue::String("ada".to_owned()))]
+                    .into_iter()
+                    .collect(),
+            ),
+        );
+        assert_eq!(document.metadata().version(), 0);
+        assert_eq!(document.id().as_str(), "doc-1");
+        assert_eq!(document.collection().as_str(), "users");
+        assert!(matches!(document.value(), DocumentValue::Object(_)));
+    }
 }
