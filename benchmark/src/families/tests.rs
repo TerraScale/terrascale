@@ -1,0 +1,2823 @@
+//! In-crate family seam tests for the W3-F packet.
+//!
+//! Each contract test reads as one end-to-end scenario, so the module allows
+//! the line-count lint rather than splitting a scenario across helpers.
+//!
+//! These tests use `TenantScope::from_parts`, which mirrors Platform's
+//! production role of creating a validated scope, because `TenantScope` has
+//! no public constructor by design. They observe typed results, errors,
+//! atomicity, isolation, and snapshot behavior through the family seam only.
+//! They make no V1 parity claim and create no Recovery, Replication, or
+//! Benchmark receipt.
+
+#![allow(clippy::too_many_lines)]
+
+use std::{
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
+
+use super::{
+    Aggregation, ArchivalCommand, ArchivalReadRequest, ArchivalState, ArchivalWrite,
+    AttachmentMetadata, AttachmentMutation, AttachmentRead, AttachmentWrite,
+    CompareExchangeCondition, CompareExchangeEntry, CompareExchangeRead,
+    CompareExchangeValueResult, CompareExchangeWrite, CounterBatchWrite, CounterEntry,
+    CounterGroupResult, CounterOperation, CounterRead, FamilyError, FamilyKind, FamilyReadContext,
+    FamilyReadRequest, FamilyReadResult, FamilyWriteRequest, IdentityCommand, IdentityRangeResult,
+    IdentityRead, IdentityWrite, LifecycleCommand, LifecycleRead, LifecycleResult, LifecycleWrite,
+    RevisionCommand, RevisionPaging, RevisionPolicy, RevisionRead, RevisionWrite, RollupPolicy,
+    SchemaDefinition, SchemaFieldType, SchemaRule, TimeSeriesAppend, TimeSeriesBatchWrite,
+    TimeSeriesDelete, TimeSeriesEntry, TimeSeriesPolicy, TimeSeriesRange, TimeSeriesRead,
+    TombstoneCommand, TombstoneRead, TombstoneWrite, ValidationRead, ValidationResult,
+    ValidationWrite, state::now_millis,
+};
+
+use crate::{
+    engine::{CommitOutcome, Engine, EngineConfig, Transaction},
+    types::{
+        Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
+        ExpectedVersion, IndexGenerationSet, LocalDurability, OperationId, ReadSnapshot, TenantId,
+        TenantScope,
+    },
+};
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+fn location(tag: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let index = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("tbv2-w3f-family-{tag}-{}-{index}", std::process::id()))
+}
+
+fn open_engine(tag: &str) -> (PathBuf, Engine) {
+    let dir = location(tag);
+    let engine =
+        Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine opens");
+    (dir, engine)
+}
+
+fn tenant(name: &str) -> TenantId {
+    TenantId::try_new(name).expect("valid tenant")
+}
+
+fn document_id(name: &str) -> DocumentId {
+    DocumentId::try_new(name).expect("valid identifier")
+}
+
+fn collection(name: &str) -> CollectionName {
+    CollectionName::try_new(name).expect("valid identifier")
+}
+
+fn operation(name: &str) -> OperationId {
+    OperationId::try_new(name).expect("valid identifier")
+}
+
+/// Mints a never-reused operation identity for repeated helper commits.
+fn unique_operation(prefix: &str) -> OperationId {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let index = COUNTER.fetch_add(1, Ordering::Relaxed);
+    OperationId::try_new(&format!("{prefix}-{index}")).expect("valid identifier")
+}
+
+fn scope(engine: &Engine, tenant_name: &str) -> TenantScope {
+    TenantScope::from_parts(tenant(tenant_name), engine.identity())
+}
+
+fn deadline() -> Deadline {
+    Deadline::after(Duration::from_secs(45)).expect("valid deadline")
+}
+
+fn cancellation() -> Cancellation {
+    Cancellation::new()
+}
+
+fn object_user_value(fields: &[(&str, &str)]) -> DocumentValue {
+    DocumentValue::Object(
+        fields
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), DocumentValue::String((*value).to_owned())))
+            .collect(),
+    )
+}
+
+/// Commits one transaction after staging documents and family writes in it.
+///
+/// The closure receives the Engine-borrowed family store, the open
+/// transaction, the tenant scope, and the transaction operation identity.
+fn commit_transaction<'engine>(
+    engine: &'engine Engine,
+    tenant_name: &str,
+    operation_name: &str,
+    stage: impl FnOnce(
+        &super::FamilyStore<'engine>,
+        &mut Transaction<'engine>,
+        &TenantScope,
+        &OperationId,
+    ),
+) -> CommitOutcome {
+    let tenant_scope = scope(engine, tenant_name);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let identity = operation(operation_name);
+    let store = engine.families();
+    let mut transaction = engine.begin(&tenant_scope, snapshot, identity.clone()).expect("begins");
+    stage(&store, &mut transaction, &tenant_scope, &identity);
+    transaction.commit(LocalDurability::Synced)
+}
+
+/// Puts one user document through the document seam.
+fn put_user_document(
+    engine: &Engine,
+    tenant_name: &str,
+    operation_name: &str,
+    id: &str,
+    value: DocumentValue,
+) -> CommitOutcome {
+    commit_transaction(
+        engine,
+        tenant_name,
+        unique_operation(operation_name).as_str(),
+        |_store, transaction, _, _| {
+            transaction
+                .put(
+                    Document::new(document_id(id), collection("users"), value),
+                    ExpectedVersion::Any,
+                )
+                .expect("stages document");
+        },
+    )
+}
+
+/// Deletes one user document through the document seam.
+fn delete_user_document(
+    engine: &Engine,
+    tenant_name: &str,
+    operation_name: &str,
+    id: &str,
+) -> CommitOutcome {
+    commit_transaction(
+        engine,
+        tenant_name,
+        unique_operation(operation_name).as_str(),
+        |_store, transaction, _, _| {
+            transaction.delete(document_id(id), ExpectedVersion::Any).expect("stages delete");
+        },
+    )
+}
+
+/// Reads one family capability through the family seam.
+fn read_family(
+    engine: &Engine,
+    tenant_name: &str,
+    request: FamilyReadRequest,
+) -> Result<FamilyReadResult, FamilyError> {
+    let tenant_scope = scope(engine, tenant_name);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let context = FamilyReadContext::new(tenant_scope, snapshot);
+    engine.families().read(context, request)
+}
+
+fn counter_read(document: &str, names: &[&str]) -> FamilyReadRequest {
+    FamilyReadRequest::counter_group(
+        CounterRead::try_new(
+            document_id(document),
+            names.iter().map(|name| (*name).to_owned()).collect(),
+            deadline(),
+            cancellation(),
+        )
+        .expect("valid counter read"),
+    )
+}
+
+fn counter_write(
+    tenant_scope: &TenantScope,
+    operation_name: &str,
+    document: &str,
+    operations: Vec<CounterOperation>,
+) -> FamilyWriteRequest {
+    FamilyWriteRequest::counter_batch(
+        CounterBatchWrite::try_new(
+            tenant_scope.clone(),
+            document_id(document),
+            operations,
+            ExpectedVersion::Any,
+            operation(operation_name),
+            deadline(),
+            cancellation(),
+        )
+        .expect("valid counter batch"),
+    )
+}
+
+fn counter_group(
+    result: Result<FamilyReadResult, FamilyError>,
+) -> Result<CounterGroupResult, FamilyError> {
+    match result {
+        Ok(FamilyReadResult::CounterGroup(group)) => Ok(group),
+        Ok(other) => panic!("expected a counter group, got {other:?}"),
+        Err(error) => Err(error),
+    }
+}
+
+fn counter_value(group: &CounterGroupResult, name: &str) -> Option<i64> {
+    group.entries().iter().find(|entry| entry.name() == name).and_then(CounterEntry::value)
+}
+
+fn attachment_write(
+    tenant_scope: &TenantScope,
+    operation_name: &str,
+    document: &str,
+    mutation: AttachmentMutation,
+) -> FamilyWriteRequest {
+    FamilyWriteRequest::attachment_mutation(
+        AttachmentWrite::try_new(
+            tenant_scope.clone(),
+            document_id(document),
+            mutation,
+            ExpectedVersion::Any,
+            operation(operation_name),
+            deadline(),
+            cancellation(),
+        )
+        .expect("valid attachment write"),
+    )
+}
+
+/// Stages one lifecycle update through the passed store.
+fn stage_lifecycle<'engine>(
+    store: &super::FamilyStore<'engine>,
+    transaction: &mut Transaction<'engine>,
+    tenant_scope: &TenantScope,
+    identity: &str,
+    document: &str,
+    command: LifecycleCommand,
+) -> Result<(), FamilyError> {
+    store.stage(
+        transaction,
+        FamilyWriteRequest::lifecycle_update(
+            LifecycleWrite::try_new(
+                tenant_scope.clone(),
+                document_id(document),
+                command,
+                ExpectedVersion::Any,
+                operation(identity),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid lifecycle write"),
+        ),
+    )
+}
+
+/// Stages one identity command through the passed store.
+fn stage_identity<'engine>(
+    store: &super::FamilyStore<'engine>,
+    transaction: &mut Transaction<'engine>,
+    tenant_scope: &TenantScope,
+    identity: &str,
+    command: IdentityCommand,
+) -> Result<(), FamilyError> {
+    store.stage(
+        transaction,
+        FamilyWriteRequest::identity_allocation(
+            IdentityWrite::try_new(
+                tenant_scope.clone(),
+                command.name().to_owned(),
+                command,
+                operation(identity),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid identity write"),
+        ),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// The W3-F contract tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn engine_families_returns_store_bound_to_durable_engine() {
+    let (dir, engine) = open_engine("durable-store");
+    let tenant_scope = scope(&engine, "tenant-a");
+    put_user_document(
+        &engine,
+        "tenant-a",
+        "put-doc",
+        "doc-1",
+        object_user_value(&[("name", "ada")]),
+    );
+
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let identity = operation("counter-1");
+    let mut transaction = engine.begin(&tenant_scope, snapshot, identity.clone()).expect("begins");
+    engine
+        .families()
+        .stage(
+            &mut transaction,
+            counter_write(
+                &tenant_scope,
+                "counter-1",
+                "doc-1",
+                vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 7 }],
+            ),
+        )
+        .expect("stages through the borrowed store");
+    assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    engine.shutdown().expect("shuts down");
+
+    let reopened = Engine::open(EngineConfig::durable(&dir).expect("durable location"))
+        .expect("engine reopens");
+    let reopened_scope = scope(&reopened, "tenant-a");
+    let snapshot = reopened.read_snapshot(&reopened_scope).expect("snapshot");
+    let context = FamilyReadContext::new(reopened_scope, snapshot);
+    let result = reopened
+        .families()
+        .read(context, counter_read("doc-1", &["hits"]))
+        .expect("reads through the reopened store");
+    match result {
+        FamilyReadResult::CounterGroup(group) => {
+            assert_eq!(counter_value(&group, "hits"), Some(7));
+        }
+        other => panic!("expected a counter group, got {other:?}"),
+    }
+    reopened.shutdown().expect("shuts down");
+}
+
+#[test]
+fn family_store_borrow_prevents_engine_shutdown_while_live() {
+    let (_dir, engine) = open_engine("borrowed-store");
+    {
+        let store = engine.families();
+        let tenant_scope = scope(&engine, "tenant-a");
+        let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+        let context = FamilyReadContext::new(tenant_scope, snapshot);
+        // The live store keeps the Engine borrowed; a read through it works
+        // and `engine.shutdown()` cannot run while the store is held.
+        let _ = store.read(context, counter_read("missing", &["hits"]));
+    }
+    engine.shutdown().expect("shutdown runs after the store is released");
+}
+
+#[test]
+fn family_stage_rejects_transaction_from_another_engine() {
+    let (_dir_a, engine_a) = open_engine("engine-a");
+    let (_dir_b, engine_b) = open_engine("engine-b");
+    let scope_b = scope(&engine_b, "tenant-a");
+    let snapshot_b = engine_b.read_snapshot(&scope_b).expect("snapshot");
+    let mut transaction =
+        engine_b.begin(&scope_b, snapshot_b, operation("counter-1")).expect("begins");
+    let error = engine_a.families().stage(
+        &mut transaction,
+        counter_write(
+            &scope_b,
+            "counter-1",
+            "doc-1",
+            vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+        ),
+    );
+    assert_eq!(error, Err(FamilyError::TransactionEngineMismatch));
+    drop(transaction);
+    engine_a.shutdown().expect("shuts down");
+    engine_b.shutdown().expect("shuts down");
+}
+
+#[test]
+fn family_stage_rejects_transaction_with_a_different_operation_identity() {
+    let (_dir, engine) = open_engine("operation-identity");
+    let tenant_scope = scope(&engine, "tenant-a");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let mut transaction =
+        engine.begin(&tenant_scope, snapshot, operation("tx-op-1")).expect("begins");
+    let error = engine.families().stage(
+        &mut transaction,
+        counter_write(
+            &tenant_scope,
+            "request-op-2",
+            "doc-1",
+            vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+        ),
+    );
+    assert_eq!(error, Err(FamilyError::TransactionIdentityMismatch));
+    drop(transaction);
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn attachment_metadata_round_trip_is_tenant_scoped() {
+    let (_dir, engine) = open_engine("attachments");
+    put_user_document(&engine, "tenant-a", "put-a", "doc-1", object_user_value(&[("n", "v")]));
+    put_user_document(&engine, "tenant-b", "put-b", "doc-1", object_user_value(&[("n", "v")]));
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "attach-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    attachment_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        AttachmentMutation::Store {
+                            name: "logo".to_owned(),
+                            content_type: "image/png".to_owned(),
+                            size: 4096,
+                            hash: "digest-1".to_owned(),
+                            replace: false,
+                        },
+                    ),
+                )
+                .expect("stages attachment metadata");
+        },
+    );
+
+    let result = read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::attachment_metadata(
+            AttachmentRead::try_new(document_id("doc-1"), deadline(), cancellation())
+                .expect("valid attachment read"),
+        ),
+    )
+    .expect("reads attachment metadata");
+    match result {
+        FamilyReadResult::AttachmentMetadata(metadata) => {
+            assert_eq!(metadata.entries().len(), 1);
+            let entry: &AttachmentMetadata = &metadata.entries()[0];
+            assert_eq!(entry.name(), "logo");
+            assert_eq!(entry.content_type(), "image/png");
+            assert_eq!(entry.size(), 4096);
+            assert_eq!(entry.hash(), "digest-1");
+            assert_eq!(entry.document().as_str(), "doc-1");
+        }
+        other => panic!("expected attachment metadata, got {other:?}"),
+    }
+
+    let other = read_family(
+        &engine,
+        "tenant-b",
+        FamilyReadRequest::attachment_metadata(
+            AttachmentRead::try_new(document_id("doc-1"), deadline(), cancellation())
+                .expect("valid attachment read"),
+        ),
+    )
+    .expect("reads the other tenant's document");
+    match other {
+        FamilyReadResult::AttachmentMetadata(metadata) => {
+            assert!(metadata.entries().is_empty(), "tenant B must not see tenant A metadata");
+        }
+        other => panic!("expected attachment metadata, got {other:?}"),
+    }
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn counter_crud_preserves_signed_values_and_missing_errors() {
+    let (_dir, engine) = open_engine("counters-crud");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "inc-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![
+                            CounterOperation::Increment { name: "hits".to_owned(), delta: 5 },
+                            CounterOperation::Increment { name: "hits".to_owned(), delta: -3 },
+                            CounterOperation::Increment { name: "Hits".to_owned(), delta: 2 },
+                        ],
+                    ),
+                )
+                .expect("stages one batch of signed increments");
+        },
+    );
+
+    let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &[])))
+        .expect("reads the group");
+    assert_eq!(counter_value(&group, "hits"), Some(2));
+    assert_eq!(counter_value(&group, "Hits"), Some(2), "casing is significant");
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "delete-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![CounterOperation::Delete { name: "hits".to_owned() }],
+                    ),
+                )
+                .expect("stages the delete");
+        },
+    );
+    let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &["hits"])))
+        .expect("reads after the delete");
+    assert_eq!(counter_value(&group, "hits"), None, "a deleted counter is missing");
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "recreate-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 9 }],
+                    ),
+                )
+                .expect("recreates the counter from zero");
+        },
+    );
+    let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &["hits"])))
+        .expect("reads the recreated counter");
+    assert_eq!(counter_value(&group, "hits"), Some(9));
+
+    let missing_document = read_family(&engine, "tenant-a", counter_read("doc-404", &["hits"]));
+    assert_eq!(missing_document, Err(FamilyError::DocumentMissing));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "missing-write",
+        |store, transaction, tenant_scope, identity| {
+            let staged = store.stage(
+                transaction,
+                counter_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-404",
+                    vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::DocumentMissing));
+        },
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn counter_batch_is_atomic_across_increment_delete_and_recreate() {
+    let (_dir, engine) = open_engine("counter-batch");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "seed-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![
+                            CounterOperation::Increment { name: "keep".to_owned(), delta: 1 },
+                            CounterOperation::Increment { name: "drop".to_owned(), delta: 4 },
+                        ],
+                    ),
+                )
+                .expect("seeds two counters");
+        },
+    );
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "batch-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![
+                            CounterOperation::Increment { name: "keep".to_owned(), delta: 2 },
+                            CounterOperation::Delete { name: "drop".to_owned() },
+                            CounterOperation::Increment { name: "reborn".to_owned(), delta: 10 },
+                        ],
+                    ),
+                )
+                .expect("stages one atomic batch");
+        },
+    );
+    let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &[])))
+        .expect("reads the batched group");
+    assert_eq!(counter_value(&group, "keep"), Some(3));
+    assert_eq!(counter_value(&group, "drop"), None);
+    assert_eq!(counter_value(&group, "reborn"), Some(10));
+
+    // A batch that fails partway stages nothing, so committing the same
+    // transaction cannot publish a partial counter group.
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "batch-2",
+        |store, transaction, tenant_scope, identity| {
+            let staged = store.stage(
+                transaction,
+                counter_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    vec![
+                        CounterOperation::Increment { name: "keep".to_owned(), delta: 100 },
+                        CounterOperation::Increment { name: "drop".to_owned(), delta: i64::MAX },
+                        CounterOperation::Increment { name: "drop".to_owned(), delta: i64::MAX },
+                    ],
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::CounterOverflow));
+        },
+    );
+    let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &[])))
+        .expect("reads after the rejected batch");
+    assert_eq!(counter_value(&group, "keep"), Some(3), "no partial state");
+    assert_eq!(counter_value(&group, "drop"), None, "no partial state");
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn counter_overflow_rejects_without_partial_state() {
+    let (_dir, engine) = open_engine("counter-overflow");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "max-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![CounterOperation::Increment {
+                            name: "total".to_owned(),
+                            delta: i64::MAX,
+                        }],
+                    ),
+                )
+                .expect("stages the maximum value");
+        },
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "overflow-1",
+        |store, transaction, tenant_scope, identity| {
+            let staged = store.stage(
+                transaction,
+                counter_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    vec![CounterOperation::Increment { name: "total".to_owned(), delta: 1 }],
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::CounterOverflow));
+        },
+    );
+    let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &["total"])))
+        .expect("reads the unmodified counter");
+    assert_eq!(counter_value(&group, "total"), Some(i64::MAX));
+    engine.shutdown().expect("shuts down");
+}
+
+fn time_series_write(
+    tenant_scope: &TenantScope,
+    operation_name: &str,
+    document: &str,
+    name: &str,
+    appends: Vec<(i64, Vec<f64>)>,
+    deletes: Vec<TimeSeriesDelete>,
+    policy: Option<TimeSeriesPolicy>,
+) -> FamilyWriteRequest {
+    FamilyWriteRequest::time_series_batch(
+        TimeSeriesBatchWrite::try_new(
+            tenant_scope.clone(),
+            document_id(document),
+            name.to_owned(),
+            appends
+                .into_iter()
+                .map(|(timestamp, values)| TimeSeriesAppend::new(timestamp, values, None))
+                .collect(),
+            deletes,
+            policy,
+            ExpectedVersion::Any,
+            operation(operation_name),
+            deadline(),
+            cancellation(),
+        )
+        .expect("valid time-series batch"),
+    )
+}
+
+fn time_series_entries(
+    engine: &Engine,
+    document: &str,
+    name: &str,
+    range: Option<TimeSeriesRange>,
+) -> Vec<i64> {
+    let result = read_family(
+        engine,
+        "tenant-a",
+        FamilyReadRequest::time_series_range(
+            TimeSeriesRead::try_new(
+                document_id(document),
+                name.to_owned(),
+                range,
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid time-series read"),
+        ),
+    )
+    .expect("reads the series");
+    match result {
+        FamilyReadResult::TimeSeriesPage(page) => {
+            page.entries().iter().map(TimeSeriesEntry::timestamp).collect()
+        }
+        other => panic!("expected a time-series page, got {other:?}"),
+    }
+}
+
+#[test]
+fn time_series_append_and_delete_preserve_timestamp_order() {
+    let (_dir, engine) = open_engine("time-series");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "append-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    time_series_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        "cpu",
+                        vec![(30, vec![1.0]), (10, vec![2.0]), (20, vec![3.0])],
+                        vec![],
+                        None,
+                    ),
+                )
+                .expect("stages out-of-order appends");
+        },
+    );
+    assert_eq!(time_series_entries(&engine, "doc-1", "cpu", None), vec![10, 20, 30]);
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "delete-range",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    time_series_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        "cpu",
+                        vec![],
+                        vec![TimeSeriesDelete::Range { start: 15, end: 25 }],
+                        None,
+                    ),
+                )
+                .expect("stages a range delete");
+        },
+    );
+    assert_eq!(time_series_entries(&engine, "doc-1", "cpu", None), vec![10, 30]);
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "delete-at",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    time_series_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        "cpu",
+                        vec![],
+                        vec![TimeSeriesDelete::At { timestamp: 10 }],
+                        None,
+                    ),
+                )
+                .expect("stages a point delete");
+        },
+    );
+    assert_eq!(time_series_entries(&engine, "doc-1", "cpu", None), vec![30]);
+    assert_eq!(
+        time_series_entries(
+            &engine,
+            "doc-1",
+            "cpu",
+            Some(TimeSeriesRange::try_new(0, 20).expect("valid range"))
+        ),
+        Vec::<i64>::new()
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn revision_page_and_revert_keep_snapshot_identity() {
+    let (_dir, engine) = open_engine("revisions");
+    put_user_document(&engine, "tenant-a", "put-1", "doc-1", object_user_value(&[("v", "one")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "rev-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    FamilyWriteRequest::revision_command(
+                        RevisionWrite::try_new(
+                            tenant_scope.clone(),
+                            document_id("doc-1"),
+                            RevisionCommand::ForceCreate { expected: ExpectedVersion::Any },
+                            operation(identity.as_str()),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid revision write"),
+                    ),
+                )
+                .expect("stages the first revision");
+        },
+    );
+    put_user_document(&engine, "tenant-a", "put-2", "doc-1", object_user_value(&[("v", "two")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "rev-2",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    FamilyWriteRequest::revision_command(
+                        RevisionWrite::try_new(
+                            tenant_scope.clone(),
+                            document_id("doc-1"),
+                            RevisionCommand::ForceCreate { expected: ExpectedVersion::Any },
+                            operation(identity.as_str()),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid revision write"),
+                    ),
+                )
+                .expect("stages the second revision");
+        },
+    );
+
+    let read = || {
+        read_family(
+            &engine,
+            "tenant-a",
+            FamilyReadRequest::revision_page(
+                RevisionRead::try_new(
+                    document_id("doc-1"),
+                    RevisionPaging::try_new(0, 10).expect("valid paging"),
+                    deadline(),
+                    cancellation(),
+                )
+                .expect("valid revision read"),
+            ),
+        )
+    };
+    let context_snapshot = {
+        let tenant_scope = scope(&engine, "tenant-a");
+        engine.read_snapshot(&tenant_scope).expect("snapshot").sequence()
+    };
+    match read().expect("pages the revisions") {
+        FamilyReadResult::RevisionPage(page) => {
+            assert_eq!(page.total(), 2);
+            assert_eq!(page.entries().len(), 2);
+            assert_eq!(page.entries()[0].revision(), 1);
+            assert_eq!(page.entries()[1].revision(), 2);
+            assert_eq!(
+                page.entries()[0].value(),
+                &object_user_value(&[("v", "one")]),
+                "revision one keeps its own value"
+            );
+        }
+        other => panic!("expected a revision page, got {other:?}"),
+    }
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "revert-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    FamilyWriteRequest::revision_command(
+                        RevisionWrite::try_new(
+                            tenant_scope.clone(),
+                            document_id("doc-1"),
+                            RevisionCommand::Revert { to_revision: 1 },
+                            operation(identity.as_str()),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid revert"),
+                    ),
+                )
+                .expect("stages the revert");
+        },
+    );
+    match read().expect("reads after the revert") {
+        FamilyReadResult::RevisionPage(page) => {
+            assert_eq!(page.total(), 3, "the revert appends one revision");
+            assert_eq!(
+                page.entries()[2].value(),
+                &object_user_value(&[("v", "one")]),
+                "the revert restores the referenced value"
+            );
+        }
+        other => panic!("expected a revision page, got {other:?}"),
+    }
+
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    assert!(snapshot.sequence() > context_snapshot, "the revert published a later sequence");
+    let older = ReadSnapshot::new(
+        engine.identity(),
+        tenant("tenant-a"),
+        context_snapshot,
+        IndexGenerationSet::default(),
+    );
+    let result = engine.families().read(
+        FamilyReadContext::new(scope(&engine, "tenant-a"), older),
+        FamilyReadRequest::revision_page(
+            RevisionRead::try_new(
+                document_id("doc-1"),
+                RevisionPaging::try_new(0, 10).expect("valid paging"),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid revision read"),
+        ),
+    );
+    match result.expect("reads the older snapshot") {
+        FamilyReadResult::RevisionPage(page) => {
+            assert_eq!(page.total(), 2, "the older snapshot keeps its own identity");
+        }
+        other => panic!("expected a revision page, got {other:?}"),
+    }
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn expiration_and_refresh_updates_do_not_resurrect_deleted_documents() {
+    let (_dir, engine) = open_engine("lifecycle");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    let lifecycle_read = |engine: &Engine| match read_family(
+        engine,
+        "tenant-a",
+        FamilyReadRequest::lifecycle(
+            LifecycleRead::try_new(document_id("doc-1"), deadline(), cancellation())
+                .expect("valid lifecycle read"),
+        ),
+    )
+    .expect("reads lifecycle state")
+    {
+        FamilyReadResult::Lifecycle(result) => result,
+        other => panic!("expected a lifecycle result, got {other:?}"),
+    };
+
+    let now = now_millis();
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "expire-1",
+        |store, transaction, tenant_scope, identity| {
+            stage_lifecycle(
+                store,
+                transaction,
+                tenant_scope,
+                identity.as_str(),
+                "doc-1",
+                LifecycleCommand::SetExpiration { at: Some(now + 60_000) },
+            )
+            .expect("stages a future expiry");
+        },
+    );
+    let future: LifecycleResult = lifecycle_read(&engine);
+    assert!(future.present());
+    assert!(!future.expired());
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "expire-2",
+        |store, transaction, tenant_scope, identity| {
+            stage_lifecycle(
+                store,
+                transaction,
+                tenant_scope,
+                identity.as_str(),
+                "doc-1",
+                LifecycleCommand::SetExpiration { at: Some(now - 1) },
+            )
+            .expect("stages an elapsed expiry");
+        },
+    );
+    let expired = lifecycle_read(&engine);
+    assert!(expired.expired(), "an elapsed expiry is observable");
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "refresh-1",
+        |store, transaction, tenant_scope, identity| {
+            stage_lifecycle(
+                store,
+                transaction,
+                tenant_scope,
+                identity.as_str(),
+                "doc-1",
+                LifecycleCommand::SetRefresh { at: Some(now + 60_000) },
+            )
+            .expect("stages a refresh on an expired document");
+        },
+    );
+    let refreshed = lifecycle_read(&engine);
+    assert!(refreshed.expired(), "a refresh does not clear an elapsed expiry");
+    assert_eq!(refreshed.refresh_at(), Some(now + 60_000));
+
+    delete_user_document(&engine, "tenant-a", "delete-doc", "doc-1");
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "refresh-2",
+        |store, transaction, tenant_scope, identity| {
+            let staged = stage_lifecycle(
+                store,
+                transaction,
+                tenant_scope,
+                identity.as_str(),
+                "doc-1",
+                LifecycleCommand::SetRefresh { at: Some(now + 60_000) },
+            );
+            assert_eq!(staged, Err(FamilyError::DocumentMissing));
+        },
+    );
+    let deleted = lifecycle_read(&engine);
+    assert!(!deleted.present(), "a deleted document is not resurrected");
+    assert!(!deleted.expired());
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn schema_validation_rejects_invalid_writes_without_mutation() {
+    let (_dir, engine) = open_engine("schema-validation");
+    put_user_document(
+        &engine,
+        "tenant-a",
+        "put-doc",
+        "doc-1",
+        object_user_value(&[("name", "ada")]),
+    );
+
+    let schema = SchemaDefinition::try_new(vec![
+        SchemaRule::Required { field: "email".to_owned() },
+        SchemaRule::FieldType { field: "name".to_owned(), kind: SchemaFieldType::Text },
+    ])
+    .expect("valid schema");
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "configure-schema",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    FamilyWriteRequest::schema_validation_update(
+                        ValidationWrite::try_new(
+                            tenant_scope.clone(),
+                            collection("users"),
+                            Some(schema.clone()),
+                            operation(identity.as_str()),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid validation write"),
+                    ),
+                )
+                .expect("stages the collection policy");
+        },
+    );
+
+    let policy = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::validation(
+            ValidationRead::try_new(
+                collection("users"),
+                Some(document_id("doc-1")),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid validation read"),
+        ),
+    )
+    .expect("reads the policy and the on-demand report")
+    {
+        FamilyReadResult::Validation(result) => result,
+        other => panic!("expected a validation result, got {other:?}"),
+    };
+    assert_eq!(policy.violations().len(), 1, "the stored document violates the policy");
+    assert_eq!(policy.violations()[0].field(), "email");
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "reject-1",
+        |store, transaction, tenant_scope, identity| {
+            let staged = store.stage(
+                transaction,
+                attachment_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    AttachmentMutation::Store {
+                        name: "logo".to_owned(),
+                        content_type: "image/png".to_owned(),
+                        size: 1,
+                        hash: "digest".to_owned(),
+                        replace: false,
+                    },
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::SchemaViolation));
+        },
+    );
+    let after_reject = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::attachment_metadata(
+            AttachmentRead::try_new(document_id("doc-1"), deadline(), cancellation())
+                .expect("valid attachment read"),
+        ),
+    )
+    .expect("reads attachment metadata")
+    {
+        FamilyReadResult::AttachmentMetadata(metadata) => metadata,
+        other => panic!("expected attachment metadata, got {other:?}"),
+    };
+    assert!(after_reject.entries().is_empty(), "the rejected write staged nothing");
+
+    put_user_document(
+        &engine,
+        "tenant-a",
+        "put-doc-2",
+        "doc-1",
+        object_user_value(&[("name", "ada"), ("email", "ada@example")]),
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "accept-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    attachment_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        AttachmentMutation::Store {
+                            name: "logo".to_owned(),
+                            content_type: "image/png".to_owned(),
+                            size: 1,
+                            hash: "digest".to_owned(),
+                            replace: false,
+                        },
+                    ),
+                )
+                .expect("a valid document accepts family writes");
+        },
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn family_tombstone_blocks_stale_local_resurrection() {
+    let (_dir, engine) = open_engine("tombstones");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "counter-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 2 }],
+                    ),
+                )
+                .expect("stages a counter");
+        },
+    );
+
+    delete_user_document(&engine, "tenant-a", "delete-doc", "doc-1");
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "tombstone-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    FamilyWriteRequest::tombstone_operation(
+                        TombstoneWrite::try_new(
+                            tenant_scope.clone(),
+                            document_id("doc-1"),
+                            TombstoneCommand::Record {
+                                family: FamilyKind::Counters,
+                                deletion_version: 1,
+                            },
+                            operation(identity.as_str()),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid tombstone write"),
+                    ),
+                )
+                .expect("stages the family tombstone");
+        },
+    );
+    let tombstones = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::tombstones(
+            TombstoneRead::try_new(document_id("doc-1"), deadline(), cancellation())
+                .expect("valid tombstone read"),
+        ),
+    )
+    .expect("reads the tombstones")
+    {
+        FamilyReadResult::Tombstones(result) => result,
+        other => panic!("expected a tombstone result, got {other:?}"),
+    };
+    assert_eq!(tombstones.entries().len(), 1);
+    assert_eq!(tombstones.entries()[0].family(), FamilyKind::Counters);
+    assert_eq!(tombstones.entries()[0].deletion_version(), 1);
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "stale-write",
+        |store, transaction, tenant_scope, identity| {
+            // A writer whose document view is older than the recorded deletion
+            // must not resurrect the family state; the tombstone answer wins
+            // over the missing-document answer.
+            let staged = store.stage(
+                transaction,
+                counter_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::TombstoneConflict));
+        },
+    );
+
+    put_user_document(
+        &engine,
+        "tenant-a",
+        "recreate-doc",
+        "doc-1",
+        object_user_value(&[("n", "v")]),
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "clear-tombstone",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    FamilyWriteRequest::tombstone_operation(
+                        TombstoneWrite::try_new(
+                            tenant_scope.clone(),
+                            document_id("doc-1"),
+                            TombstoneCommand::Clear { family: FamilyKind::Counters },
+                            operation(identity.as_str()),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid tombstone write"),
+                    ),
+                )
+                .expect("clears the tombstone");
+        },
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "fresh-write",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+                    ),
+                )
+                .expect("a cleared tombstone no longer blocks writes");
+        },
+    );
+    let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &["hits"])))
+        .expect("reads the counter");
+    // W3-F has no document-deletion cascade: the counter record survives the
+    // document delete, so the fresh write lands on the surviving value.
+    assert_eq!(counter_value(&group, "hits"), Some(3));
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn family_transaction_abort_hides_all_staged_family_changes() {
+    let (_dir, engine) = open_engine("abort");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let identity = operation("aborted-1");
+    let mut transaction = engine.begin(&tenant_scope, snapshot, identity.clone()).expect("begins");
+    let store = engine.families();
+    store
+        .stage(
+            &mut transaction,
+            counter_write(
+                &tenant_scope,
+                identity.as_str(),
+                "doc-1",
+                vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 4 }],
+            ),
+        )
+        .expect("stages a counter");
+    store
+        .stage(
+            &mut transaction,
+            attachment_write(
+                &tenant_scope,
+                identity.as_str(),
+                "doc-1",
+                AttachmentMutation::Store {
+                    name: "logo".to_owned(),
+                    content_type: "image/png".to_owned(),
+                    size: 8,
+                    hash: "digest".to_owned(),
+                    replace: false,
+                },
+            ),
+        )
+        .expect("stages attachment metadata");
+    store
+        .stage(
+            &mut transaction,
+            time_series_write(
+                &tenant_scope,
+                identity.as_str(),
+                "doc-1",
+                "cpu",
+                vec![(1, vec![5.0])],
+                vec![],
+                None,
+            ),
+        )
+        .expect("stages a time-series append");
+    drop(transaction);
+
+    let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &["hits"])))
+        .expect("reads the counters");
+    assert_eq!(counter_value(&group, "hits"), None);
+    let metadata = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::attachment_metadata(
+            AttachmentRead::try_new(document_id("doc-1"), deadline(), cancellation())
+                .expect("valid attachment read"),
+        ),
+    )
+    .expect("reads attachment metadata")
+    {
+        FamilyReadResult::AttachmentMetadata(metadata) => metadata,
+        other => panic!("expected attachment metadata, got {other:?}"),
+    };
+    assert!(metadata.entries().is_empty());
+    assert_eq!(time_series_entries(&engine, "doc-1", "cpu", None), Vec::<i64>::new());
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn family_read_snapshot_remains_immutable_after_engine_commit() {
+    let (_dir, engine) = open_engine("snapshot");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "counter-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 5 }],
+                    ),
+                )
+                .expect("stages the first value");
+        },
+    );
+
+    let tenant_scope = scope(&engine, "tenant-a");
+    let first = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let first_context = FamilyReadContext::new(tenant_scope.clone(), first.clone());
+    let before = counter_group(
+        engine.families().read(first_context.clone(), counter_read("doc-1", &["hits"])),
+    )
+    .expect("reads the first snapshot");
+    assert_eq!(counter_value(&before, "hits"), Some(5));
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "counter-2",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 5 }],
+                    ),
+                )
+                .expect("stages the second value");
+        },
+    );
+
+    let after =
+        counter_group(engine.families().read(first_context, counter_read("doc-1", &["hits"])))
+            .expect("the held snapshot still reads");
+    assert_eq!(counter_value(&after, "hits"), Some(5), "the held snapshot does not advance");
+
+    let second = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let current = counter_group(
+        engine
+            .families()
+            .read(FamilyReadContext::new(tenant_scope, second), counter_read("doc-1", &["hits"])),
+    )
+    .expect("reads the new snapshot");
+    assert_eq!(counter_value(&current, "hits"), Some(10));
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn family_read_context_rejects_tenant_mismatch_without_data_access() {
+    let (_dir, engine) = open_engine("context-mismatch");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let forged = ReadSnapshot::new(
+        engine.identity(),
+        tenant("tenant-b"),
+        snapshot.sequence(),
+        IndexGenerationSet::default(),
+    );
+
+    let mismatched = FamilyReadContext::try_new(tenant_scope.clone(), forged.clone());
+    assert_eq!(mismatched, Err(FamilyError::TenantMismatch));
+
+    let read = engine
+        .families()
+        .read(FamilyReadContext::new(tenant_scope, forged), counter_read("doc-1", &["hits"]));
+    assert_eq!(
+        read,
+        Err(FamilyError::TenantMismatch),
+        "the store rejects a mismatched context before any family data access"
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn family_scope_rejects_cross_tenant_reads_and_writes() {
+    let (_dir, engine) = open_engine("cross-tenant");
+    put_user_document(&engine, "tenant-a", "put-a", "doc-1", object_user_value(&[("n", "v")]));
+    put_user_document(&engine, "tenant-b", "put-b", "doc-1", object_user_value(&[("n", "v")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "counter-a",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 3 }],
+                    ),
+                )
+                .expect("stages tenant A's counter");
+        },
+    );
+
+    let tenant_b =
+        counter_group(read_family(&engine, "tenant-b", counter_read("doc-1", &["hits"])))
+            .expect("tenant B reads its own group");
+    assert_eq!(counter_value(&tenant_b, "hits"), None, "tenant B sees no tenant A value");
+
+    let writer_scope = scope(&engine, "tenant-a");
+    let claimed_scope = scope(&engine, "tenant-b");
+    let snapshot = engine.read_snapshot(&writer_scope).expect("snapshot");
+    let identity = operation("cross-write");
+    let mut transaction = engine.begin(&writer_scope, snapshot, identity.clone()).expect("begins");
+    let staged = engine.families().stage(
+        &mut transaction,
+        counter_write(
+            &claimed_scope,
+            identity.as_str(),
+            "doc-1",
+            vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+        ),
+    );
+    assert_eq!(
+        staged,
+        Err(FamilyError::TenantMismatch),
+        "a write whose tenant scope differs from the transaction is rejected"
+    );
+    drop(transaction);
+
+    let tenant_a =
+        counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &["hits"])))
+            .expect("tenant A reads its own group");
+    assert_eq!(counter_value(&tenant_a, "hits"), Some(3));
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn family_payload_constructors_validate_typed_fields_before_access() {
+    use crate::operations::RequestValidationError;
+
+    let scope = TenantScope::from_parts(tenant("tenant-a"), 1);
+
+    assert_eq!(
+        AttachmentWrite::try_new(
+            scope.clone(),
+            document_id("doc-1"),
+            AttachmentMutation::Store {
+                name: String::new(),
+                content_type: "image/png".to_owned(),
+                size: 1,
+                hash: "digest".to_owned(),
+                replace: false,
+            },
+            ExpectedVersion::Any,
+            operation("op-1"),
+            deadline(),
+            cancellation(),
+        ),
+        Err(RequestValidationError::InvalidFamilyPayload)
+    );
+    assert_eq!(
+        CounterRead::try_new(
+            document_id("doc-1"),
+            vec!["bad\u{7}name".to_owned()],
+            deadline(),
+            cancellation(),
+        ),
+        Err(RequestValidationError::InvalidFamilyPayload)
+    );
+    assert_eq!(
+        CounterBatchWrite::try_new(
+            scope.clone(),
+            document_id("doc-1"),
+            vec![],
+            ExpectedVersion::Any,
+            operation("op-1"),
+            deadline(),
+            cancellation(),
+        ),
+        Err(RequestValidationError::InvalidFamilyPayload)
+    );
+    assert_eq!(TimeSeriesRange::try_new(20, 10), Err(RequestValidationError::InvalidRange));
+    assert_eq!(RevisionPaging::try_new(0, 0), Err(RequestValidationError::InvalidRange));
+    assert_eq!(
+        IdentityRead::try_new(vec!["seq".to_owned(), "seq".to_owned()], deadline(), cancellation()),
+        Err(RequestValidationError::InvalidFamilyPayload)
+    );
+    assert_eq!(
+        CompareExchangeWrite::try_new(
+            scope.clone(),
+            "lock".to_owned(),
+            CompareExchangeCondition::PutIfMissing {
+                value: DocumentValue::Integer(1),
+                expires_at: Some(-1),
+            },
+            operation("op-1"),
+            deadline(),
+            cancellation(),
+        )
+        .map(|_| ()),
+        Err(RequestValidationError::InvalidFamilyPayload)
+    );
+
+    let expired = Deadline::after(Duration::from_secs(45)).expect("valid deadline");
+    std::thread::sleep(Duration::from_millis(5));
+    let elapsed = Deadline::after(Duration::from_nanos(1)).expect("valid deadline");
+    std::thread::sleep(Duration::from_millis(5));
+    assert!(elapsed.is_expired());
+    let _ = expired;
+    assert_eq!(
+        LifecycleWrite::try_new(
+            scope,
+            document_id("doc-1"),
+            LifecycleCommand::Clear,
+            ExpectedVersion::Any,
+            operation("op-1"),
+            elapsed,
+            cancellation(),
+        )
+        .map(|_| ()),
+        Err(RequestValidationError::InvalidDeadline)
+    );
+
+    let cancelled = Cancellation::new();
+    cancelled.cancel();
+    assert_eq!(
+        TombstoneRead::try_new(document_id("doc-1"), deadline(), cancelled),
+        Err(RequestValidationError::InvalidCancellation)
+    );
+
+    // A validated payload exposes its typed fields before any access.
+    let counter = CounterBatchWrite::try_new(
+        TenantScope::from_parts(tenant("tenant-a"), 1),
+        document_id("doc-1"),
+        vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+        ExpectedVersion::Any,
+        operation("op-1"),
+        deadline(),
+        cancellation(),
+    )
+    .expect("valid batch");
+    assert_eq!(counter.document().as_str(), "doc-1");
+    assert_eq!(counter.operation_id().as_str(), "op-1");
+    assert_eq!(counter.operations().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Focused extras for the remaining W3-F rows
+// ---------------------------------------------------------------------------
+
+fn compare_exchange_read(
+    engine: &Engine,
+    key: &str,
+) -> Result<CompareExchangeValueResult, FamilyError> {
+    match read_family(
+        engine,
+        "tenant-a",
+        FamilyReadRequest::compare_exchange_value(
+            CompareExchangeRead::try_new(key.to_owned(), deadline(), cancellation())
+                .expect("valid compare-exchange read"),
+        ),
+    ) {
+        Ok(FamilyReadResult::CompareExchangeValue(value)) => Ok(value),
+        Ok(other) => panic!("expected a compare-exchange value, got {other:?}"),
+        Err(error) => Err(error),
+    }
+}
+
+fn compare_exchange_write(
+    tenant_scope: &TenantScope,
+    operation_name: &str,
+    key: &str,
+    condition: CompareExchangeCondition,
+) -> FamilyWriteRequest {
+    FamilyWriteRequest::compare_exchange_condition(
+        CompareExchangeWrite::try_new(
+            tenant_scope.clone(),
+            key.to_owned(),
+            condition,
+            operation(operation_name),
+            deadline(),
+            cancellation(),
+        )
+        .expect("valid compare-exchange write"),
+    )
+}
+
+#[test]
+fn compare_exchange_conditions_require_the_current_index() {
+    let (_dir, engine) = open_engine("compare-exchange");
+    let _tenant_scope = scope(&engine, "tenant-a");
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "cx-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    compare_exchange_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "leader",
+                        CompareExchangeCondition::PutIfMissing {
+                            value: DocumentValue::String("first".to_owned()),
+                            expires_at: None,
+                        },
+                    ),
+                )
+                .expect("stages the first value");
+        },
+    );
+    let first = compare_exchange_read(&engine, "leader").expect("reads the key");
+    assert_eq!(first.entry().map(CompareExchangeEntry::index), Some(1));
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "cx-2",
+        |_store, transaction, tenant_scope, identity| {
+            let stale = engine.families().stage(
+                transaction,
+                compare_exchange_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "leader",
+                    CompareExchangeCondition::PutIfIndex {
+                        index: 0,
+                        value: DocumentValue::String("stale".to_owned()),
+                        expires_at: None,
+                    },
+                ),
+            );
+            assert_eq!(stale, Err(FamilyError::CompareExchangeIndexStale));
+        },
+    );
+    let unchanged = compare_exchange_read(&engine, "leader").expect("reads the key");
+    assert_eq!(
+        unchanged.entry().map(|entry| entry.value().clone()),
+        Some(DocumentValue::String("first".to_owned()))
+    );
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "cx-3",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    compare_exchange_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "leader",
+                        CompareExchangeCondition::PutIfIndex {
+                            index: 1,
+                            value: DocumentValue::String("second".to_owned()),
+                            expires_at: None,
+                        },
+                    ),
+                )
+                .expect("stages a matching index");
+        },
+    );
+    let second = compare_exchange_read(&engine, "leader").expect("reads the key");
+    assert_eq!(second.entry().map(CompareExchangeEntry::index), Some(2));
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "cx-4",
+        |_store, transaction, tenant_scope, identity| {
+            let missing = engine.families().stage(
+                transaction,
+                compare_exchange_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "leader",
+                    CompareExchangeCondition::PutIfMissing {
+                        value: DocumentValue::String("third".to_owned()),
+                        expires_at: None,
+                    },
+                ),
+            );
+            assert_eq!(missing, Err(FamilyError::CompareExchangeIndexStale));
+        },
+    );
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "cx-5",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    compare_exchange_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "leader",
+                        CompareExchangeCondition::DeleteIfIndex { index: 2 },
+                    ),
+                )
+                .expect("stages a matching delete");
+        },
+    );
+    let deleted = compare_exchange_read(&engine, "leader").expect("reads the key");
+    assert!(deleted.entry().is_none());
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "cx-6",
+        |_store, transaction, tenant_scope, identity| {
+            let stale_delete = engine.families().stage(
+                transaction,
+                compare_exchange_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "leader",
+                    CompareExchangeCondition::DeleteIfIndex { index: 1 },
+                ),
+            );
+            assert_eq!(stale_delete, Err(FamilyError::CompareExchangeIndexStale));
+        },
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn compare_exchange_expiry_hides_expired_values() {
+    let (_dir, engine) = open_engine("compare-exchange-expiry");
+    let now = now_millis();
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "cx-exp-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    compare_exchange_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "lease",
+                        CompareExchangeCondition::PutIfMissing {
+                            value: DocumentValue::Integer(7),
+                            expires_at: Some(now - 1),
+                        },
+                    ),
+                )
+                .expect("stages an already expired value");
+        },
+    );
+    let expired = compare_exchange_read(&engine, "lease").expect("reads the key");
+    assert!(expired.entry().is_none(), "an expired value is not live");
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "cx-exp-2",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    compare_exchange_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "lease",
+                        CompareExchangeCondition::PutIfMissing {
+                            value: DocumentValue::Integer(8),
+                            expires_at: Some(now + 60_000),
+                        },
+                    ),
+                )
+                .expect("an expired value accepts a fresh put");
+        },
+    );
+    let live = compare_exchange_read(&engine, "lease").expect("reads the key");
+    assert!(live.entry().is_some());
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn identity_allocation_is_monotonic_and_backwards_seeding_requires_force() {
+    let (_dir, engine) = open_engine("identities");
+    let identity_read = |names: &[&str]| match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::identity_range(
+            IdentityRead::try_new(
+                names.iter().map(|name| (*name).to_owned()).collect(),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid identity read"),
+        ),
+    )
+    .expect("reads the identity range")
+    {
+        FamilyReadResult::IdentityRange(result) => result,
+        other => panic!("expected an identity range, got {other:?}"),
+    };
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "id-1",
+        |store, transaction, tenant_scope, identity| {
+            stage_identity(
+                store,
+                transaction,
+                tenant_scope,
+                identity.as_str(),
+                IdentityCommand::Allocate { name: "orders".to_owned(), count: 10 },
+            )
+            .expect("stages the first allocation");
+        },
+    );
+    let first: IdentityRangeResult = identity_read(&["orders"]);
+    assert_eq!(first.entries()[0].next(), 10);
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "id-2",
+        |store, transaction, tenant_scope, identity| {
+            stage_identity(
+                store,
+                transaction,
+                tenant_scope,
+                identity.as_str(),
+                IdentityCommand::Allocate { name: "orders".to_owned(), count: 5 },
+            )
+            .expect("stages the second allocation");
+        },
+    );
+    let second = identity_read(&["orders"]);
+    assert_eq!(second.entries()[0].next(), 15, "allocation never moves backwards");
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "id-3",
+        |store, transaction, tenant_scope, identity| {
+            let staged = stage_identity(
+                store,
+                transaction,
+                tenant_scope,
+                identity.as_str(),
+                IdentityCommand::Seed { name: "orders".to_owned(), value: 3, force: false },
+            );
+            assert_eq!(staged, Err(FamilyError::IdentitySeedInvalid));
+        },
+    );
+    let unchanged = identity_read(&["orders"]);
+    assert_eq!(unchanged.entries()[0].next(), 15);
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "id-4",
+        |store, transaction, tenant_scope, identity| {
+            stage_identity(
+                store,
+                transaction,
+                tenant_scope,
+                identity.as_str(),
+                IdentityCommand::Seed { name: "orders".to_owned(), value: 3, force: true },
+            )
+            .expect("an explicit force seeds backwards");
+        },
+    );
+    let seeded = identity_read(&["orders"]);
+    assert_eq!(seeded.entries()[0].next(), 3);
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "id-5",
+        |store, transaction, tenant_scope, identity| {
+            stage_identity(
+                store,
+                transaction,
+                tenant_scope,
+                identity.as_str(),
+                IdentityCommand::Seed { name: "orders".to_owned(), value: 99, force: false },
+            )
+            .expect("seeding forwards is always allowed");
+        },
+    );
+    let advanced = identity_read(&["orders"]);
+    assert_eq!(advanced.entries()[0].next(), 99);
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn revision_policy_trims_the_oldest_revisions() {
+    let (_dir, engine) = open_engine("revision-policy");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("v", "one")]));
+    let policy = RevisionPolicy::try_new(1, Some(2)).expect("valid policy");
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "configure-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    FamilyWriteRequest::revision_command(
+                        RevisionWrite::try_new(
+                            tenant_scope.clone(),
+                            document_id("doc-1"),
+                            RevisionCommand::Configure { policy },
+                            operation(identity.as_str()),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid revision write"),
+                    ),
+                )
+                .expect("stages the retention policy");
+        },
+    );
+    for (name, value) in [("one", "one"), ("two", "two"), ("three", "three")] {
+        put_user_document(
+            &engine,
+            "tenant-a",
+            "put-doc",
+            "doc-1",
+            object_user_value(&[("v", value)]),
+        );
+        commit_transaction(
+            &engine,
+            "tenant-a",
+            name,
+            |store, transaction, tenant_scope, identity| {
+                store
+                    .stage(
+                        transaction,
+                        FamilyWriteRequest::revision_command(
+                            RevisionWrite::try_new(
+                                tenant_scope.clone(),
+                                document_id("doc-1"),
+                                RevisionCommand::ForceCreate { expected: ExpectedVersion::Any },
+                                operation(identity.as_str()),
+                                deadline(),
+                                cancellation(),
+                            )
+                            .expect("valid revision write"),
+                        ),
+                    )
+                    .expect("stages one revision");
+            },
+        );
+    }
+    let page = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::revision_page(
+            RevisionRead::try_new(
+                document_id("doc-1"),
+                RevisionPaging::try_new(0, 10).expect("valid paging"),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid revision read"),
+        ),
+    )
+    .expect("pages the log")
+    {
+        FamilyReadResult::RevisionPage(page) => page,
+        other => panic!("expected a revision page, got {other:?}"),
+    };
+    assert_eq!(page.total(), 2, "the policy trims the oldest revisions");
+    assert_eq!(page.entries()[0].value(), &object_user_value(&[("v", "two")]));
+    assert_eq!(page.entries()[1].value(), &object_user_value(&[("v", "three")]));
+    assert_eq!(page.policy(), Some(policy));
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn revision_revert_rejects_unknown_references() {
+    let (_dir, engine) = open_engine("revision-references");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("v", "one")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "revert-1",
+        |store, transaction, tenant_scope, identity| {
+            let staged = store.stage(
+                transaction,
+                FamilyWriteRequest::revision_command(
+                    RevisionWrite::try_new(
+                        tenant_scope.clone(),
+                        document_id("doc-1"),
+                        RevisionCommand::Revert { to_revision: 404 },
+                        operation(identity.as_str()),
+                        deadline(),
+                        cancellation(),
+                    )
+                    .expect("valid revision write"),
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::RevisionReferenceInvalid));
+        },
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn time_series_arity_and_policy_rules_are_typed() {
+    let (_dir, engine) = open_engine("time-series-rules");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "append-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    time_series_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        "cpu",
+                        vec![(10, vec![1.0, 2.0])],
+                        vec![],
+                        None,
+                    ),
+                )
+                .expect("establishes an arity of two");
+        },
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "append-2",
+        |_store, transaction, tenant_scope, identity| {
+            let mismatched = engine.families().stage(
+                transaction,
+                time_series_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    "cpu",
+                    vec![(20, vec![1.0])],
+                    vec![],
+                    None,
+                ),
+            );
+            assert_eq!(mismatched, Err(FamilyError::TimeSeriesArityInvalid));
+            let empty = engine.families().stage(
+                transaction,
+                time_series_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    "cpu",
+                    vec![(20, vec![])],
+                    vec![],
+                    None,
+                ),
+            );
+            assert_eq!(empty, Err(FamilyError::TimeSeriesArityInvalid));
+        },
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "delete-1",
+        |_store, transaction, tenant_scope, identity| {
+            let inverted = engine.families().stage(
+                transaction,
+                time_series_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    "cpu",
+                    vec![],
+                    vec![TimeSeriesDelete::Range { start: 20, end: 10 }],
+                    None,
+                ),
+            );
+            assert_eq!(inverted, Err(FamilyError::TimeSeriesRangeInvalid));
+        },
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "policy-1",
+        |store, transaction, tenant_scope, identity| {
+            let malformed = TimeSeriesPolicy::try_new(
+                Some(1000),
+                vec![
+                    RollupPolicy::new("hourly".to_owned(), Aggregation::Mean, 3_600_000),
+                    RollupPolicy::new("hourly".to_owned(), Aggregation::Max, 60_000),
+                ],
+            )
+            .expect("structurally valid policy");
+            let staged = store.stage(
+                transaction,
+                time_series_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    "cpu",
+                    vec![],
+                    vec![],
+                    Some(malformed),
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::TimeSeriesPolicyInvalid));
+        },
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn time_series_policy_reports_retention_bounds() {
+    let (_dir, engine) = open_engine("time-series-retention");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    let policy = TimeSeriesPolicy::try_new(
+        Some(1_000),
+        vec![RollupPolicy::new("hourly".to_owned(), Aggregation::Mean, 3_600_000)],
+    )
+    .expect("valid policy");
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "configure-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    time_series_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        "cpu",
+                        vec![(5_000, vec![1.0])],
+                        vec![],
+                        Some(policy.clone()),
+                    ),
+                )
+                .expect("stages the policy and one point");
+        },
+    );
+    let page = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::time_series_range(
+            TimeSeriesRead::try_new(
+                document_id("doc-1"),
+                "cpu".to_owned(),
+                None,
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid time-series read"),
+        ),
+    )
+    .expect("reads the series")
+    {
+        FamilyReadResult::TimeSeriesPage(page) => page,
+        other => panic!("expected a time-series page, got {other:?}"),
+    };
+    assert_eq!(page.policy(), Some(&policy));
+
+    let stale = read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::time_series_range(
+            TimeSeriesRead::try_new(
+                document_id("doc-1"),
+                "cpu".to_owned(),
+                Some(TimeSeriesRange::try_new(0, 1_000).expect("valid range")),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid time-series read"),
+        ),
+    );
+    assert_eq!(
+        stale,
+        Err(FamilyError::TimeSeriesRangeInvalid),
+        "a range before the retention horizon is a typed family range error"
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn validation_policy_rejects_malformed_definitions() {
+    let (_dir, engine) = open_engine("validation-policy");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "policy-1",
+        |store, transaction, tenant_scope, identity| {
+            let duplicated = SchemaDefinition::try_new(vec![
+                SchemaRule::Required { field: "email".to_owned() },
+                SchemaRule::Required { field: "email".to_owned() },
+            ])
+            .expect("structurally valid");
+            let staged = store.stage(
+                transaction,
+                FamilyWriteRequest::schema_validation_update(
+                    ValidationWrite::try_new(
+                        tenant_scope.clone(),
+                        collection("users"),
+                        Some(duplicated),
+                        operation(identity.as_str()),
+                        deadline(),
+                        cancellation(),
+                    )
+                    .expect("valid validation write"),
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::ValidationPolicyMalformed));
+        },
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "policy-2",
+        |store, transaction, tenant_scope, identity| {
+            let inverted = SchemaDefinition::try_new(vec![SchemaRule::NumberRange {
+                field: "age".to_owned(),
+                min: Some(100),
+                max: Some(10),
+            }])
+            .expect("structurally valid");
+            let staged = store.stage(
+                transaction,
+                FamilyWriteRequest::schema_validation_update(
+                    ValidationWrite::try_new(
+                        tenant_scope.clone(),
+                        collection("users"),
+                        Some(inverted),
+                        operation(identity.as_str()),
+                        deadline(),
+                        cancellation(),
+                    )
+                    .expect("valid validation write"),
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::ValidationPolicyMalformed));
+        },
+    );
+
+    let absent: ValidationResult = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::validation(
+            ValidationRead::try_new(collection("users"), None, deadline(), cancellation())
+                .expect("valid validation read"),
+        ),
+    )
+    .expect("reads the collection policy")
+    {
+        FamilyReadResult::Validation(result) => result,
+        other => panic!("expected a validation result, got {other:?}"),
+    };
+    assert!(absent.policy().is_none(), "a rejected policy stages nothing");
+    let _ = tenant_scope;
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn attachment_rename_copy_and_duplicate_names_are_typed() {
+    let (_dir, engine) = open_engine("attachment-rules");
+    put_user_document(&engine, "tenant-a", "put-1", "doc-1", object_user_value(&[("n", "v")]));
+    put_user_document(&engine, "tenant-a", "put-2", "doc-2", object_user_value(&[("n", "v")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "store-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    attachment_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        AttachmentMutation::Store {
+                            name: "logo".to_owned(),
+                            content_type: "image/png".to_owned(),
+                            size: 8,
+                            hash: "digest".to_owned(),
+                            replace: false,
+                        },
+                    ),
+                )
+                .expect("stages the first attachment");
+        },
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "store-2",
+        |_store, transaction, tenant_scope, identity| {
+            let duplicated = engine.families().stage(
+                transaction,
+                attachment_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    AttachmentMutation::Store {
+                        name: "logo".to_owned(),
+                        content_type: "image/png".to_owned(),
+                        size: 9,
+                        hash: "digest-2".to_owned(),
+                        replace: false,
+                    },
+                ),
+            );
+            assert_eq!(duplicated, Err(FamilyError::AttachmentNameDuplicate));
+        },
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "copy-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    attachment_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        AttachmentMutation::Copy {
+                            name: "logo".to_owned(),
+                            to_document: document_id("doc-2"),
+                            to_name: "banner".to_owned(),
+                        },
+                    ),
+                )
+                .expect("copies the attachment metadata");
+        },
+    );
+    let copied = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::attachment_metadata(
+            AttachmentRead::try_new(document_id("doc-2"), deadline(), cancellation())
+                .expect("valid attachment read"),
+        ),
+    )
+    .expect("reads the copy")
+    {
+        FamilyReadResult::AttachmentMetadata(metadata) => metadata,
+        other => panic!("expected attachment metadata, got {other:?}"),
+    };
+    assert_eq!(copied.entries().len(), 1);
+    assert_eq!(copied.entries()[0].name(), "banner");
+    assert_eq!(copied.entries()[0].hash(), "digest", "the copy keeps the digest");
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "move-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    attachment_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        AttachmentMutation::Move {
+                            name: "logo".to_owned(),
+                            to_document: document_id("doc-2"),
+                            to_name: "hero".to_owned(),
+                        },
+                    ),
+                )
+                .expect("moves the attachment metadata");
+        },
+    );
+    let moved_source = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::attachment_metadata(
+            AttachmentRead::try_new(document_id("doc-1"), deadline(), cancellation())
+                .expect("valid attachment read"),
+        ),
+    )
+    .expect("reads the source")
+    {
+        FamilyReadResult::AttachmentMetadata(metadata) => metadata,
+        other => panic!("expected attachment metadata, got {other:?}"),
+    };
+    assert!(moved_source.entries().is_empty(), "a move leaves the source empty");
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn family_writes_compose_with_documents_in_one_transaction_marker() {
+    let (_dir, engine) = open_engine("compose");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let identity = operation("compose-1");
+    let mut transaction = engine.begin(&tenant_scope, snapshot, identity.clone()).expect("begins");
+    transaction
+        .put(
+            Document::new(
+                document_id("doc-1"),
+                collection("users"),
+                object_user_value(&[("n", "v")]),
+            ),
+            ExpectedVersion::Any,
+        )
+        .expect("stages the document");
+    let store = engine.families();
+    store
+        .stage(
+            &mut transaction,
+            counter_write(
+                &tenant_scope,
+                identity.as_str(),
+                "doc-1",
+                vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+            ),
+        )
+        .expect("stages a counter in the same transaction");
+    store
+        .stage(
+            &mut transaction,
+            attachment_write(
+                &tenant_scope,
+                identity.as_str(),
+                "doc-1",
+                AttachmentMutation::Store {
+                    name: "logo".to_owned(),
+                    content_type: "image/png".to_owned(),
+                    size: 4,
+                    hash: "digest".to_owned(),
+                    replace: false,
+                },
+            ),
+        )
+        .expect("stages attachment metadata in the same transaction");
+    let receipt = match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(receipt) => receipt,
+        other => panic!("expected one committed marker, got {other:?}"),
+    };
+    assert_eq!(receipt.operation_id().as_str(), "compose-1");
+
+    let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &["hits"])))
+        .expect("reads the counter");
+    assert_eq!(counter_value(&group, "hits"), Some(1));
+    let metadata = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::attachment_metadata(
+            AttachmentRead::try_new(document_id("doc-1"), deadline(), cancellation())
+                .expect("valid attachment read"),
+        ),
+    )
+    .expect("reads attachment metadata")
+    {
+        FamilyReadResult::AttachmentMetadata(metadata) => metadata,
+        other => panic!("expected attachment metadata, got {other:?}"),
+    };
+    assert_eq!(metadata.entries().len(), 1);
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn family_requests_reject_cancelled_signals_and_elapsed_deadlines() {
+    use crate::operations::RequestValidationError;
+
+    let (_dir, engine) = open_engine("bounded-requests");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    let tenant_scope = scope(&engine, "tenant-a");
+
+    // A signal that is already cancelled when the request is built is a
+    // constructor rejection, so no store call is needed.
+    let cancelled = Cancellation::new();
+    cancelled.cancel();
+    assert_eq!(
+        CounterBatchWrite::try_new(
+            tenant_scope.clone(),
+            document_id("doc-1"),
+            vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+            ExpectedVersion::Any,
+            operation("cancelled-1"),
+            deadline(),
+            cancelled,
+        )
+        .map(|_| ()),
+        Err(RequestValidationError::InvalidCancellation)
+    );
+
+    // A deadline that elapses between construction and staging is a typed
+    // store rejection that stages nothing.
+    let elapsed = Deadline::after(Duration::from_millis(20)).expect("valid deadline");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let identity = operation("expired-1");
+    let mut transaction = engine.begin(&tenant_scope, snapshot, identity.clone()).expect("begins");
+    let batch = FamilyWriteRequest::counter_batch(
+        CounterBatchWrite::try_new(
+            tenant_scope.clone(),
+            document_id("doc-1"),
+            vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+            ExpectedVersion::Any,
+            identity.clone(),
+            elapsed,
+            cancellation(),
+        )
+        .expect("valid counter batch"),
+    );
+    std::thread::sleep(Duration::from_millis(40));
+    let staged = engine.families().stage(&mut transaction, batch);
+    assert_eq!(staged, Err(FamilyError::DeadlineExceeded));
+    drop(transaction);
+
+    let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &["hits"])))
+        .expect("reads the counters");
+    assert_eq!(counter_value(&group, "hits"), None, "the rejected request staged nothing");
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn archival_state_round_trips_through_the_seam() {
+    let (_dir, engine) = open_engine("archival");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    let read_state = |engine: &Engine| match read_family(
+        engine,
+        "tenant-a",
+        FamilyReadRequest::archival(
+            ArchivalReadRequest::try_new(document_id("doc-1"), deadline(), cancellation())
+                .expect("valid archival read"),
+        ),
+    ) {
+        Ok(FamilyReadResult::Archival(result)) => Ok(result),
+        Ok(other) => panic!("expected an archival result, got {other:?}"),
+        Err(error) => Err(error),
+    };
+    let present = read_state(&engine).expect("a present document reads its archival state");
+    assert!(present.state().is_none(), "no archival state is configured yet");
+    assert_eq!(
+        read_family(
+            &engine,
+            "tenant-a",
+            FamilyReadRequest::archival(
+                ArchivalReadRequest::try_new(document_id("doc-404"), deadline(), cancellation())
+                    .expect("valid archival read"),
+            ),
+        ),
+        Err(FamilyError::DocumentMissing)
+    );
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "archival-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    FamilyWriteRequest::archival_update(
+                        ArchivalWrite::try_new(
+                            tenant_scope.clone(),
+                            document_id("doc-1"),
+                            ArchivalCommand::SetPolicy { after_ms: 86_400_000 },
+                            operation(identity.as_str()),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid archival write"),
+                    ),
+                )
+                .expect("stages the archival policy");
+        },
+    );
+    let configured = read_state(&engine).expect("reads the archival state");
+    assert_eq!(configured.state().and_then(ArchivalState::after_ms), Some(86_400_000));
+
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "archival-2",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    FamilyWriteRequest::archival_update(
+                        ArchivalWrite::try_new(
+                            tenant_scope.clone(),
+                            document_id("doc-1"),
+                            ArchivalCommand::Archive { at: now_millis() },
+                            operation(identity.as_str()),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid archival write"),
+                    ),
+                )
+                .expect("stages the archival mark");
+        },
+    );
+    let archived = read_state(&engine).expect("reads the archival state");
+    assert!(archived.state().is_some_and(ArchivalState::archived));
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn family_reads_reject_snapshots_from_another_engine() {
+    let (_dir_a, engine_a) = open_engine("snapshot-engine-a");
+    let (_dir_b, engine_b) = open_engine("snapshot-engine-b");
+    let scope_b = scope(&engine_b, "tenant-a");
+    let snapshot_b = engine_b.read_snapshot(&scope_b).expect("snapshot");
+    let scope_a = scope(&engine_a, "tenant-a");
+    let read = engine_a
+        .families()
+        .read(FamilyReadContext::new(scope_a, snapshot_b), counter_read("doc-1", &["hits"]));
+    assert_eq!(read, Err(FamilyError::SnapshotEngineMismatch));
+    engine_a.shutdown().expect("shuts down");
+    engine_b.shutdown().expect("shuts down");
+}
+
+#[test]
+fn expected_version_conflicts_are_typed_at_stage_time() {
+    let (_dir, engine) = open_engine("expected-version");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let identity = operation("conflict-1");
+    let mut transaction = engine.begin(&tenant_scope, snapshot, identity.clone()).expect("begins");
+    let staged = engine.families().stage(
+        &mut transaction,
+        FamilyWriteRequest::counter_batch(
+            CounterBatchWrite::try_new(
+                tenant_scope.clone(),
+                document_id("doc-1"),
+                vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+                ExpectedVersion::Exact(99),
+                identity.clone(),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid counter batch"),
+        ),
+    );
+    assert_eq!(staged, Err(FamilyError::Conflict));
+    drop(transaction);
+    engine.shutdown().expect("shuts down");
+}
