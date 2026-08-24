@@ -54,8 +54,10 @@ python3 scripts/validate_v1_citations.py \
 ```
 
 The current extraction has 258 rows, 251 V1-backed rows, 267 source
-citations, 231 exact test citations, and 42 unresolved replication/storage
-test gaps. Those numbers are accounting evidence, not a V2 parity claim.
+citations, and 346 exact test citations. One row (PB-5012) keeps a test gap
+adjudicated by parent decision PD-2026-08-24-02 with an open V2-side proof
+obligation; the adjudication input is `parity/adjudications.json`. Those
+numbers are accounting evidence, not a V2 parity claim.
 
 Optional dependency and vulnerability checks use `cargo-deny` when it is
 installed. The CI workflow records the check as unavailable when it is not.
