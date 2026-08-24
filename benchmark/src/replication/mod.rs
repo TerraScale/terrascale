@@ -44,8 +44,6 @@ mod transport;
 #[cfg(test)]
 mod tests;
 
-use std::marker::PhantomData;
-
 use crate::types::{OperationId, StorageSequence, TenantId};
 
 /// A deterministic instant of the replication lane's clock.
@@ -393,14 +391,478 @@ pub enum ReplicationStatus {
 /// domains), fault classes, acknowledgement facts per operation, the
 /// convergence observation and its condition, measured RPO/RTO/convergence/
 /// lag with their definitions, and explicit limits. It carries no document
-/// content, credential, connection string, or private host path.
+/// content, credential, connection string, or private host path: identities,
+/// counts, sequence windows, tick counts, and verdicts only.
 ///
-/// R-1 implements no receipt content: the qualification lane and its
-/// artifacts belong to the R-3 phase of W4-REPLICATION.
+/// Every measurement is a lane-scoped fact: RPO is a count and a
+/// storage-sequence window, RTO and the convergence interval are counted in
+/// lane ticks (one per network pump), and replication lag is a sequence
+/// distance. A value that a scenario cannot observe is reported as
+/// not-measured through a limit naming the reason, never guessed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplicationReceipt {
-    #[allow(dead_code, reason = "reserved for R-3: qualification lane artifacts")]
-    receipt: PhantomData<()>,
+    /// The scenario identity.
+    scenario: String,
+    /// The Regions of the lane topology, in canonical order.
+    regions: Vec<RegionId>,
+    /// Every Member's Region seat, in canonical order.
+    members: Vec<(MemberId, RegionId)>,
+    /// Each failure domain with its Members.
+    failure_domains: Vec<(String, Vec<MemberId>)>,
+    /// The fault classes the scenario exercised.
+    faults: Vec<FaultClass>,
+    /// The acknowledgement facts per operation: identity, observed level,
+    /// and the Members that contributed.
+    acknowledgements: Vec<(OperationId, AcknowledgementLevel, Vec<MemberId>)>,
+    /// The convergence observation, when the scenario produced one.
+    convergence: Option<Convergence>,
+    /// The condition the convergence observation checked.
+    convergence_condition: String,
+    /// The measured RPO: a count of acknowledged-but-absent operations and
+    /// their storage-sequence window; `None` when not measured.
+    rpo: Option<(usize, Option<(StorageSequence, StorageSequence)>)>,
+    /// The measured RTO in lane ticks; `None` when not measured.
+    rto_ticks: Option<u64>,
+    /// The measured convergence interval in lane ticks; `None` when not
+    /// measured.
+    convergence_ticks: Option<u64>,
+    /// The observed replication lag per Member, as a sequence distance.
+    lag_distances: Vec<(MemberId, u64)>,
+    /// The explicit limits of the scenario.
+    limits: Vec<String>,
+}
+
+/// The RPO measurement definition (contract-verbatim, lane-scoped).
+pub const RPO_DEFINITION: &str = "The set of operations acknowledged at the requested level but \
+absent from every surviving Member after the recorded fault, reported as a count and a \
+storage-sequence window; never a time guess.";
+
+/// The RTO measurement definition (contract-verbatim, lane clock stated).
+pub const RTO_DEFINITION: &str = "The interval from fault injection to the first post-fault \
+successful operation satisfying the availability condition for the surviving topology, in lane \
+ticks of the lane clock (one tick per network pump); lane time only.";
+
+/// The convergence measurement definition (contract-verbatim, lane clock
+/// stated).
+pub const CONVERGENCE_DEFINITION: &str = "The interval from the last healing event to the first \
+Convergence observation naming every surviving Member, in lane ticks of the lane clock, together \
+with the condition checked.";
+
+/// The replication lag measurement definition (contract-verbatim).
+pub const LAG_DEFINITION: &str = "The storage-sequence distance between a Member's durable \
+replication cursor and the source's published sequence at observation time; a sequence distance, \
+not a latency claim.";
+
+impl ReplicationReceipt {
+    /// Starts one receipt for a scenario run over a topology view.
+    #[allow(dead_code, reason = "assembled by the R-3 lane harness under cfg(test)")]
+    pub(crate) fn new(scenario: &str, topology: &TopologyView) -> Self {
+        let members: Vec<(MemberId, RegionId)> = topology
+            .members()
+            .filter_map(|member| {
+                topology.region_of(member).map(|region| (member.clone(), region.clone()))
+            })
+            .collect();
+        let failure_domains: Vec<(String, Vec<MemberId>)> = topology
+            .failure_domains()
+            .into_iter()
+            .map(|domain| {
+                (
+                    domain.to_owned(),
+                    topology
+                        .members()
+                        .filter(|member| topology.failure_domain_of(member) == Some(domain))
+                        .cloned()
+                        .collect(),
+                )
+            })
+            .collect();
+        Self {
+            scenario: scenario.to_owned(),
+            regions: topology.regions().cloned().collect(),
+            members,
+            failure_domains,
+            faults: Vec::new(),
+            acknowledgements: Vec::new(),
+            convergence: None,
+            convergence_condition: String::new(),
+            rpo: None,
+            rto_ticks: None,
+            convergence_ticks: None,
+            lag_distances: Vec::new(),
+            limits: Vec::new(),
+        }
+    }
+
+    /// Names the fault classes the scenario exercised.
+    #[allow(dead_code, reason = "assembled by the R-3 lane harness under cfg(test)")]
+    pub(crate) fn with_faults(mut self, faults: &[FaultClass]) -> Self {
+        self.faults = faults.to_vec();
+        self
+    }
+
+    /// Records one acknowledgement fact with its contributing Members.
+    #[allow(dead_code, reason = "assembled by the R-3 lane harness under cfg(test)")]
+    pub(crate) fn with_acknowledgement(
+        mut self,
+        operation: &OperationId,
+        level: AcknowledgementLevel,
+        report: &AcknowledgementReport,
+    ) -> Self {
+        let contributing =
+            report.contributed().iter().flat_map(|(_, members)| members.iter().cloned()).collect();
+        self.acknowledgements.push((operation.clone(), level, contributing));
+        self
+    }
+
+    /// Records one acknowledgement fact from its contributing Members
+    /// directly, for acknowledgement observations that were not lattice
+    /// reports (a local publication).
+    #[allow(dead_code, reason = "assembled by the R-3 lane harness under cfg(test)")]
+    pub(crate) fn with_acknowledgement_members(
+        mut self,
+        operation: &OperationId,
+        level: AcknowledgementLevel,
+        contributing: &[MemberId],
+    ) -> Self {
+        self.acknowledgements.push((operation.clone(), level, contributing.to_vec()));
+        self
+    }
+
+    /// Records the convergence observation and the condition it checked.
+    #[allow(dead_code, reason = "assembled by the R-3 lane harness under cfg(test)")]
+    pub(crate) fn with_convergence(mut self, convergence: Convergence, condition: &str) -> Self {
+        self.convergence = Some(convergence);
+        self.convergence_condition.clear();
+        self.convergence_condition.push_str(condition);
+        self
+    }
+
+    /// Records the measured RPO as a count and an optional sequence window.
+    #[allow(dead_code, reason = "assembled by the R-3 lane harness under cfg(test)")]
+    pub(crate) fn with_rpo(
+        mut self,
+        count: usize,
+        window: Option<(StorageSequence, StorageSequence)>,
+    ) -> Self {
+        self.rpo = Some((count, window));
+        self
+    }
+
+    /// Records the measured RTO in lane ticks.
+    #[allow(dead_code, reason = "assembled by the R-3 lane harness under cfg(test)")]
+    pub(crate) fn with_rto_ticks(mut self, ticks: u64) -> Self {
+        self.rto_ticks = Some(ticks);
+        self
+    }
+
+    /// Records the measured convergence interval in lane ticks.
+    #[allow(dead_code, reason = "assembled by the R-3 lane harness under cfg(test)")]
+    pub(crate) fn with_convergence_ticks(mut self, ticks: u64) -> Self {
+        self.convergence_ticks = Some(ticks);
+        self
+    }
+
+    /// Records the observed replication lag per Member.
+    #[allow(dead_code, reason = "assembled by the R-3 lane harness under cfg(test)")]
+    pub(crate) fn with_lag(mut self, distances: Vec<(MemberId, u64)>) -> Self {
+        self.lag_distances = distances;
+        self
+    }
+
+    /// Records one explicit limit.
+    #[allow(dead_code, reason = "assembled by the R-3 lane harness under cfg(test)")]
+    pub(crate) fn with_limit(mut self, limit: &str) -> Self {
+        self.limits.push(limit.to_owned());
+        self
+    }
+
+    /// Returns the scenario identity.
+    #[must_use]
+    pub fn scenario(&self) -> &str {
+        &self.scenario
+    }
+
+    /// Returns the Regions of the recorded topology, in canonical order.
+    #[must_use]
+    pub fn regions(&self) -> &[RegionId] {
+        &self.regions
+    }
+
+    /// Returns every Member's Region seat, in canonical order.
+    #[must_use]
+    pub fn members(&self) -> &[(MemberId, RegionId)] {
+        &self.members
+    }
+
+    /// Returns each failure domain with its Members.
+    #[must_use]
+    pub fn failure_domains(&self) -> &[(String, Vec<MemberId>)] {
+        &self.failure_domains
+    }
+
+    /// Returns the fault classes the scenario exercised.
+    #[must_use]
+    pub fn faults(&self) -> &[FaultClass] {
+        &self.faults
+    }
+
+    /// Returns the acknowledgement facts: per operation, the observed level
+    /// and the Members that contributed.
+    #[must_use]
+    pub fn acknowledgements(&self) -> &[(OperationId, AcknowledgementLevel, Vec<MemberId>)] {
+        &self.acknowledgements
+    }
+
+    /// Returns the convergence observation, when the scenario produced one.
+    #[must_use]
+    pub fn convergence(&self) -> Option<&Convergence> {
+        self.convergence.as_ref()
+    }
+
+    /// Returns the condition the convergence observation checked.
+    #[must_use]
+    pub fn convergence_condition(&self) -> &str {
+        &self.convergence_condition
+    }
+
+    /// Returns the measured RPO: a count and an optional storage-sequence
+    /// window, or `None` when the scenario did not measure it.
+    #[must_use]
+    pub fn rpo(&self) -> Option<(usize, Option<(StorageSequence, StorageSequence)>)> {
+        self.rpo
+    }
+
+    /// Returns the RPO measurement definition.
+    #[must_use]
+    pub fn rpo_definition(&self) -> &'static str {
+        RPO_DEFINITION
+    }
+
+    /// Returns the measured RTO in lane ticks, or `None` when the scenario
+    /// did not measure it.
+    #[must_use]
+    pub fn rto_ticks(&self) -> Option<u64> {
+        self.rto_ticks
+    }
+
+    /// Returns the RTO measurement definition.
+    #[must_use]
+    pub fn rto_definition(&self) -> &'static str {
+        RTO_DEFINITION
+    }
+
+    /// Returns the measured convergence interval in lane ticks, or `None`
+    /// when the scenario did not measure it.
+    #[must_use]
+    pub fn convergence_ticks(&self) -> Option<u64> {
+        self.convergence_ticks
+    }
+
+    /// Returns the convergence measurement definition.
+    #[must_use]
+    pub fn convergence_definition(&self) -> &'static str {
+        CONVERGENCE_DEFINITION
+    }
+
+    /// Returns the observed replication lag per Member, as a sequence
+    /// distance.
+    #[must_use]
+    pub fn lag_distances(&self) -> &[(MemberId, u64)] {
+        &self.lag_distances
+    }
+
+    /// Returns the replication lag measurement definition.
+    #[must_use]
+    pub fn lag_definition(&self) -> &'static str {
+        LAG_DEFINITION
+    }
+
+    /// Returns the explicit limits of the scenario, including any
+    /// not-measured measurement with its reason.
+    #[must_use]
+    pub fn limits(&self) -> &[String] {
+        &self.limits
+    }
+
+    /// Renders the receipt as a secret-safe artifact summary: identities,
+    /// counts, sequence windows, tick counts, definitions, and limits only.
+    #[allow(clippy::too_many_lines, reason = "one artifact rendering, one line per fact group")]
+    #[must_use]
+    pub fn summary(&self) -> String {
+        use std::fmt::Write as _;
+        let members = self
+            .members
+            .iter()
+            .map(|(member, region)| format!("{member} {region}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let domains = self
+            .failure_domains
+            .iter()
+            .map(|(domain, members)| {
+                format!(
+                    "{} [{}]",
+                    domain,
+                    members.iter().map(MemberId::as_str).collect::<Vec<_>>().join(", ")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        let faults = self.faults.iter().map(|fault| fault.name()).collect::<Vec<_>>().join(", ");
+        let lag = self
+            .lag_distances
+            .iter()
+            .map(|(member, distance)| format!("{member} {distance}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut out = String::new();
+        writeln!(out, "scenario: {}", self.scenario).expect("writing to a String cannot fail");
+        writeln!(
+            out,
+            "regions: {}",
+            self.regions.iter().map(RegionId::as_str).collect::<Vec<_>>().join(", ")
+        )
+        .expect("writing to a String cannot fail");
+        writeln!(out, "members: {members}").expect("writing to a String cannot fail");
+        writeln!(out, "failure domains: {domains}").expect("writing to a String cannot fail");
+        writeln!(out, "faults: {faults}").expect("writing to a String cannot fail");
+        for (operation, level, members) in &self.acknowledgements {
+            writeln!(
+                out,
+                "acknowledged: {operation} at {level:?} by {}",
+                members.iter().map(MemberId::as_str).collect::<Vec<_>>().join(", ")
+            )
+            .expect("writing to a String cannot fail");
+        }
+        if let Some(convergence) = &self.convergence {
+            writeln!(
+                out,
+                "convergence: {} held by {} at lane tick {}",
+                convergence.operation(),
+                convergence
+                    .holdings()
+                    .iter()
+                    .map(|(member, _)| member.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                convergence.observed_at().ticks()
+            )
+            .expect("writing to a String cannot fail");
+            writeln!(out, "convergence condition: {}", self.convergence_condition)
+                .expect("writing to a String cannot fail");
+        } else {
+            writeln!(out, "convergence: not observed in this scenario")
+                .expect("writing to a String cannot fail");
+        }
+        match self.rpo {
+            Some((count, Some((low, high)))) => {
+                writeln!(
+                    out,
+                    "rpo: {count} lost, storage-sequence window {}..={}",
+                    low.get(),
+                    high.get()
+                )
+                .expect("writing to a String cannot fail");
+            }
+            Some((count, None)) => {
+                writeln!(out, "rpo: {count} lost, no sequence window (zero loss)")
+                    .expect("writing to a String cannot fail");
+            }
+            None => {
+                writeln!(out, "rpo: not measured in this scenario")
+                    .expect("writing to a String cannot fail");
+            }
+        }
+        writeln!(out, "rpo definition: {RPO_DEFINITION}").expect("writing to a String cannot fail");
+        match self.rto_ticks {
+            Some(ticks) => {
+                writeln!(out, "rto: {ticks} lane ticks").expect("writing to a String cannot fail");
+            }
+            None => {
+                writeln!(out, "rto: not measured in this scenario")
+                    .expect("writing to a String cannot fail");
+            }
+        }
+        writeln!(out, "rto definition: {RTO_DEFINITION}").expect("writing to a String cannot fail");
+        match self.convergence_ticks {
+            Some(ticks) => {
+                writeln!(out, "convergence interval: {ticks} lane ticks")
+                    .expect("writing to a String cannot fail");
+            }
+            None => {
+                writeln!(out, "convergence interval: not measured in this scenario")
+                    .expect("writing to a String cannot fail");
+            }
+        }
+        writeln!(out, "convergence definition: {CONVERGENCE_DEFINITION}")
+            .expect("writing to a String cannot fail");
+        if self.lag_distances.is_empty() {
+            writeln!(out, "replication lag: not measured in this scenario")
+                .expect("writing to a String cannot fail");
+        } else {
+            writeln!(out, "replication lag: {lag}").expect("writing to a String cannot fail");
+        }
+        writeln!(out, "lag definition: {LAG_DEFINITION}").expect("writing to a String cannot fail");
+        for limit in &self.limits {
+            writeln!(out, "limit: {limit}").expect("writing to a String cannot fail");
+        }
+        writeln!(out, "claim: none beyond the lane; lane-scoped facts only")
+            .expect("writing to a String cannot fail");
+        out
+    }
+}
+
+/// One fault class a lane scenario exercised (PB-5042..PB-5047).
+///
+/// The class names the fault's kind only: no member identity, link
+/// direction, instant, or payload rides on it, so a receipt naming its
+/// faults stays secret-safe by construction.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum FaultClass {
+    /// A link held frames back for several pumps.
+    LinkDelay,
+    /// A link released held frames newest-first.
+    LinkReorder,
+    /// A link lost a bounded number of frames in transit.
+    LinkDrop,
+    /// A link delivered every frame twice.
+    LinkDuplicate,
+    /// An entire Region was isolated from the others in both directions.
+    RegionPartition,
+    /// A Member's engine was closed and reopened from its directory.
+    MemberRestart,
+    /// A restarted Member validated its cursor and rejoined.
+    MemberRejoin,
+    /// The owning Member was lost, stopping new commits until a new leader
+    /// was confirmed.
+    LeaderLoss,
+    /// An entire Region was lost after a write was acknowledged in it.
+    RegionLossAfterAcknowledgedWrite,
+    /// Partitioned or faulted links were restored.
+    Healing,
+    /// A duplicated delivery was replayed idempotently.
+    DuplicateReplay,
+}
+
+impl FaultClass {
+    /// Returns the canonical fault-class name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::LinkDelay => "link-delay",
+            Self::LinkReorder => "link-reorder",
+            Self::LinkDrop => "link-drop",
+            Self::LinkDuplicate => "link-duplicate",
+            Self::RegionPartition => "region-partition",
+            Self::MemberRestart => "member-restart",
+            Self::MemberRejoin => "member-rejoin",
+            Self::LeaderLoss => "leader-loss",
+            Self::RegionLossAfterAcknowledgedWrite => "region-loss-after-acknowledged-write",
+            Self::Healing => "healing",
+            Self::DuplicateReplay => "duplicate-replay",
+        }
+    }
 }
 
 /// A content-free conflict observation (PB-5022).

@@ -762,14 +762,32 @@ impl ReplicationMember {
                 report.duplicates_resolved += 1;
                 continue;
             }
-            match self.resolve_incoming(source, stamped, &tenant) {
-                Incoming::ConflictSkipped => {
-                    report.conflicts_recorded += 1;
+            // A self round-trip: this member's own write returned to it
+            // through another member's journal, carrying the stamp it was
+            // minted with. The member's own ledger entry is authoritative,
+            // so the delivery resolves by identity instead of staging — and
+            // because the stamp must match the one this member minted, a
+            // hostile delivery reusing a live identity under a different
+            // stamp still fails the typed check below.
+            let own_stamp = self.operation_stamps.get(stamped.commit.operation_id()).copied();
+            let already_committed = self.engine.as_ref().is_some_and(|engine| {
+                matches!(
+                    engine.resolve_commit(scope, stamped.commit.operation_id().clone()),
+                    Ok(DurableResolution::Committed(_))
+                )
+            });
+            if own_stamp == Some(stamped.stamp) && already_committed {
+                report.duplicates_resolved += 1;
+            } else {
+                match self.resolve_incoming(source, stamped, &tenant) {
+                    Incoming::ConflictSkipped => {
+                        report.conflicts_recorded += 1;
+                    }
+                    Incoming::Apply => match self.apply_one(scope, stamped)? {
+                        ApplyStep::Applied => report.applied += 1,
+                        ApplyStep::Duplicate => report.duplicates_resolved += 1,
+                    },
                 }
-                Incoming::Apply => match self.apply_one(scope, stamped)? {
-                    ApplyStep::Applied => report.applied += 1,
-                    ApplyStep::Duplicate => report.duplicates_resolved += 1,
-                },
             }
             let progress = self.advisory.entry(tenant.clone()).or_insert(SourceProgress {
                 source: batches
@@ -939,7 +957,10 @@ impl ReplicationMember {
                 // The applied write now carries the incoming stamp on every
                 // key it touched; it is this member's state, not its own
                 // write, so a later competing delivery is compared against
-                // it without being a writer conflict.
+                // it without being a writer conflict. The stamp is recorded
+                // so a commit this member forwards keeps the stamp its
+                // originator minted.
+                self.operation_stamps.entry(commit.operation_id().clone()).or_insert(stamped.stamp);
                 for key in written_keys(scope.tenant(), commit) {
                     self.key_states
                         .insert(key, KeyState { stamp: stamped.stamp, own_operation: None });
@@ -956,6 +977,9 @@ impl ReplicationMember {
                     .map_err(MemberError::from)?
                 {
                     DurableResolution::Committed(_) => {
+                        self.operation_stamps
+                            .entry(commit.operation_id().clone())
+                            .or_insert(stamped.stamp);
                         for key in written_keys(scope.tenant(), commit) {
                             self.key_states.insert(
                                 key,

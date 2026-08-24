@@ -18,8 +18,8 @@ use super::lane::{LaneHarness, lane_topology_with_owner};
 use super::member::MemberError;
 use super::transport::{FrameSelector, ReplicationFrame};
 use super::{
-    AcknowledgementLevel, ConflictOutcome, FaultClass, MemberId, ReplicationOutcome,
-    ReplicationReceipt, CONVERGENCE_DEFINITION, LAG_DEFINITION, RPO_DEFINITION, RTO_DEFINITION,
+    AcknowledgementLevel, CONVERGENCE_DEFINITION, ConflictOutcome, FaultClass, LAG_DEFINITION,
+    MemberId, RPO_DEFINITION, RTO_DEFINITION, ReplicationOutcome, ReplicationReceipt,
 };
 
 use crate::types::{DocumentValue, OperationId, StorageSequence, TenantId};
@@ -36,6 +36,7 @@ const TENANT: &str = "tenant-lane";
 /// surviving Region, the loss of the entire r-alpha Region (leader loss),
 /// recovery to a confirmed new leader, healing, and the convergence
 /// observation naming every surviving Member.
+#[allow(clippy::too_many_lines, reason = "one fixed lane script, one act per fault class")]
 pub(crate) fn run_composite_lane() -> ReplicationReceipt {
     let mut h = LaneHarness::new("composite");
     let mut faults = Vec::new();
@@ -67,9 +68,14 @@ pub(crate) fn run_composite_lane() -> ReplicationReceipt {
         let report = h.replicate("m-a1", target, TENANT, 6);
         assert!(report.caught_up(), "repair reaches {target} under the link faults");
     }
-    for fault in [FaultClass::LinkDelay, FaultClass::LinkReorder, FaultClass::LinkDrop,
-        FaultClass::LinkDuplicate, FaultClass::DuplicateReplay, FaultClass::Healing]
-    {
+    for fault in [
+        FaultClass::LinkDelay,
+        FaultClass::LinkReorder,
+        FaultClass::LinkDrop,
+        FaultClass::LinkDuplicate,
+        FaultClass::DuplicateReplay,
+        FaultClass::Healing,
+    ] {
         faults.push(fault);
     }
     h.heal();
@@ -96,8 +102,7 @@ pub(crate) fn run_composite_lane() -> ReplicationReceipt {
     // transitioned view.
     h.partition_region("r-beta");
     h.partition_region("r-gamma");
-    let stopped =
-        h.try_write("m-b1", TENANT, "op-stopped", "doc-stopped", "never-commits");
+    let stopped = h.try_write("m-b1", TENANT, "op-stopped", "doc-stopped", "never-commits");
     assert!(
         matches!(stopped, Err(MemberError::NotOwner { ref range }) if range == "main"),
         "commits stop while the leader is unreachable and none is confirmed: {stopped:?}"
@@ -170,7 +175,7 @@ pub(crate) fn run_composite_lane() -> ReplicationReceipt {
     // the convergence observation naming every surviving Member.
     let survivor_lag: Vec<(MemberId, u64)> =
         survivors[1..].iter().map(|name| (h.member_id(name), h.lag("m-b1", name))).collect();
-    for target in survivors[1..] {
+    for target in &survivors[1..] {
         let report = h.replicate("m-b1", target, TENANT, 6);
         assert!(report.caught_up());
     }
@@ -183,26 +188,25 @@ pub(crate) fn run_composite_lane() -> ReplicationReceipt {
         "the observation names every surviving Member"
     );
 
-    let receipt = ReplicationReceipt::new("three-region-composite", h.topology())
+    let receipt = ReplicationReceipt::new("three-region-composite", &h.topology())
         .with_faults(&faults)
         .with_acknowledgement(&acked_op1.0, acked_op1.1.observed(), &acked_op1.1)
         .with_acknowledgement(&acked_op3.0, acked_op3.1.observed(), &acked_op3.1)
-        .with_acknowledgement(
+        .with_acknowledgement_members(
             &OperationId::try_new("op-4").expect("valid id"),
             AcknowledgementLevel::Local,
             &[h.member_id("m-b1")],
         )
-        .with_convergence(
-            convergence,
-            "every surviving Member durably holds the operation",
-        )
+        .with_convergence(convergence, "every surviving Member durably holds the operation")
         .with_rpo(rpo_count, rpo_window)
         .with_rto_ticks(rto_ticks)
         .with_convergence_ticks(convergence_ticks)
         .with_lag(lag_distances.iter().chain(survivor_lag.iter()).cloned().collect())
         .with_limit("lane-scoped facts only: no production topology, timing, or performance claim")
         .with_limit("RPO counts operations acknowledged then absent from every survivor")
-        .with_limit("RTO availability condition: first post-fault local write by the surviving owner")
+        .with_limit(
+            "RTO availability condition: first post-fault local write by the surviving owner",
+        )
         .with_limit("convergence condition names the surviving Members, not the lost Region")
         .with_limit("replication lag is a storage-sequence distance, not a latency");
     let _ = recovered;
@@ -222,7 +226,7 @@ fn three_region_fault_lane_reports_measured_rpo_rto_convergence_and_lag() {
     assert!(receipt.failure_domains().iter().all(|(_, members)| members.len() == 2));
 
     // Faults: every fault class the contract's lane lists is named.
-    let fault_names: Vec<&str> = receipt.faults().iter().map(FaultClass::name).collect();
+    let fault_names: Vec<&str> = receipt.faults().iter().map(|fault| fault.name()).collect();
     for expected in [
         "link-delay",
         "link-reorder",
@@ -241,14 +245,12 @@ fn three_region_fault_lane_reports_measured_rpo_rto_convergence_and_lag() {
 
     // Acknowledgement facts per operation, with their contributing Members.
     let acks = receipt.acknowledgements();
-    assert!(acks.iter().any(|(operation, level, members)|
-        operation.as_str() == "op-1"
-            && *level == AcknowledgementLevel::AllRegions
-            && members.len() == 6));
-    assert!(acks.iter().any(|(operation, level, members)|
-        operation.as_str() == "op-3"
-            && *level == AcknowledgementLevel::RegionQuorum
-            && members.len() == 2));
+    assert!(acks.iter().any(|(operation, level, members)| operation.as_str() == "op-1"
+        && *level == AcknowledgementLevel::AllRegions
+        && members.len() == 6));
+    assert!(acks.iter().any(|(operation, level, members)| operation.as_str() == "op-3"
+        && *level == AcknowledgementLevel::RegionQuorum
+        && members.len() == 2));
 
     // Convergence: its own observation with its condition, naming the
     // surviving Members.
@@ -279,10 +281,12 @@ fn three_region_fault_lane_reports_measured_rpo_rto_convergence_and_lag() {
 
     // Limits are explicit.
     assert!(!receipt.limits().is_empty());
-    assert!(receipt
-        .limits()
-        .iter()
-        .any(|limit| limit.contains("no production topology, timing, or performance claim")));
+    assert!(
+        receipt
+            .limits()
+            .iter()
+            .any(|limit| limit.contains("no production topology, timing, or performance claim"))
+    );
 
     // Reported as an artifact, never as a claim beyond the lane.
     eprintln!("{}", receipt.summary());
@@ -305,9 +309,13 @@ fn replication_receipt_is_secret_safe_and_names_scenario_faults_and_limits() {
     let at = h.network.now();
     let convergence = h.observe("op-1", &["m-a1", "m-a2", "m-b1", "m-b2"], "tenant-a", at);
 
-    let receipt = ReplicationReceipt::new("secret-safety-probe", h.topology())
+    let receipt = ReplicationReceipt::new("secret-safety-probe", &h.topology())
         .with_faults(&[FaultClass::LinkDelay, FaultClass::LinkReorder, FaultClass::Healing])
-        .with_acknowledgement(&OperationId::try_new("op-1").expect("valid id"), ack.observed(), &ack)
+        .with_acknowledgement(
+            &OperationId::try_new("op-1").expect("valid id"),
+            ack.observed(),
+            &ack,
+        )
         .with_convergence(convergence, "every named Member durably holds the operation")
         .with_rpo(0, None)
         .with_rto_ticks(1)
@@ -319,7 +327,7 @@ fn replication_receipt_is_secret_safe_and_names_scenario_faults_and_limits() {
 
     // The receipt names the scenario, its faults, and its limits.
     assert_eq!(receipt.scenario(), "secret-safety-probe");
-    let fault_names: Vec<&str> = receipt.faults().iter().map(FaultClass::name).collect();
+    let fault_names: Vec<&str> = receipt.faults().iter().map(|fault| fault.name()).collect();
     assert_eq!(fault_names, ["link-delay", "link-reorder", "healing"]);
     assert!(receipt.limits().len() >= 2);
 
@@ -333,17 +341,9 @@ fn replication_receipt_is_secret_safe_and_names_scenario_faults_and_limits() {
                 "document content crossed the receipt ({canary}): {rendered}"
             );
         }
-        for forbidden in [
-            "/",
-            "tmp",
-            "tbv2-w4",
-            "wal",
-            "ledger",
-            "credential",
-            "connec",
-            "password",
-            "token",
-        ] {
+        for forbidden in
+            ["/", "tmp", "tbv2-w4", "wal", "ledger", "credential", "connec", "password", "token"]
+        {
             assert!(
                 !rendered.contains(forbidden),
                 "a forbidden fact crossed the receipt ({forbidden}): {rendered}"
@@ -446,15 +446,21 @@ fn lane_region_partition_with_isolated_concurrent_writes_converges() {
         h.documents(name, TENANT)
             .into_iter()
             .find(|document| document.id().as_str() == "doc-shared")
-            .map_or_else(|| "absent".to_owned(), |document| match document.value() {
-                DocumentValue::String(text) => text.clone(),
-                _ => "non-text".to_owned(),
-            })
+            .map_or_else(
+                || "absent".to_owned(),
+                |document| match document.value() {
+                    DocumentValue::String(text) => text.clone(),
+                    _ => "non-text".to_owned(),
+                },
+            )
     };
     let (at_alpha, at_gamma) = (value_at("m-a1"), value_at("m-g1"));
     assert_eq!(at_alpha, at_gamma, "the isolated concurrent writes converge");
     assert!(
-        h.member("m-a1").conflicts().iter().chain(h.member("m-g1").conflicts().iter())
+        h.member("m-a1")
+            .conflicts()
+            .iter()
+            .chain(h.member("m-g1").conflicts().iter())
             .any(|record| matches!(record.outcome(), ConflictOutcome::Winner(_))),
         "the losing write is retained as conflict history"
     );
