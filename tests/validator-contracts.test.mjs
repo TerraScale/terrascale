@@ -17,6 +17,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const claimsValidator = path.join(root, 'scripts/validate-claims.mjs')
 const claimsFixtureRoot = path.join(root, 'tests/fixtures/claims-prohibited')
 const linksFixture = path.join(root, 'tests/fixtures/links-prohibited.html')
+const malformedLinksFixture = path.join(root, 'tests/fixtures/links-malformed.html')
+const whitespaceLinksFixture = path.join(root, 'tests/fixtures/links-whitespace.html')
 const localizedClaimsFixtureRoot = path.join(root, 'tests/fixtures/claims-localized')
 
 const localizedClaimCategories = [
@@ -353,6 +355,9 @@ test('terms validation only considers actual href attributes and canonical Terra
     '<a href="/terms">Terms</a>',
     '<a href="/foo/../terms/?ref=footer#privacy">Terms</a>',
     '<a href="https://terrascale.tech/terms/?ref=footer#privacy">Terms</a>',
+    '<a href="https://terrascale.tech./terms">Terms</a>',
+    '<a href="https://terrascale.tech:8443/terms/">Terms</a>',
+    '<a href="//terrascale.tech.:8443/terms">Terms</a>',
     '<a href="//terrascale.tech/%74erms">Terms</a>',
     '<a href="/&#x74;erms">Terms</a>',
     '<a href="/%2Fterms">Terms</a>',
@@ -375,6 +380,8 @@ test('terms validation only considers actual href attributes and canonical Terra
     '<a data-href="/terms">Terms</a>',
     '<a href="/terms">Terms</a>',
     '<a href=/terms>Terms</a>',
+    '<a title="quoted > marker" href="/terms">Terms</a>',
+    "<a title='quoted < marker' href='/terms'>Terms</a>",
   ]) {
     const result = findProhibitedClaims(sample, { mode: 'source' }).some(({ id }) => id === 'unpublished-terms-route')
     assert.equal(result, sample.includes(' href='), sample)
@@ -408,6 +415,27 @@ test('rendered claim scans inspect metadata and structured data', () => {
 
   assert.notEqual(result.status, 0)
   assert.match(`${result.stdout}\n${result.stderr}`, /99\.9|zero[- ]latency|instant replication/i)
+})
+
+test('JSON-LD claim values decode JSON escapes and malformed payloads fail closed', () => {
+  const escaped = String.raw`<script type="application/ld+json">{"description":"\u0069nstant\u0020replication"}</script>`
+  assert.equal(findProhibitedClaims(escaped, { mode: 'rendered' }).some(({ id }) => id === 'unsupported-consistency-or-latency'), true)
+
+  const malformed = '<script type="application/ld+json">{"description":}</script>'
+  assert.equal(findProhibitedClaims(malformed, { mode: 'rendered' }).some(({ id }) => id === 'malformed-json-ld'), true)
+})
+
+test('claim and link walkers traverse template content', () => {
+  const html = `
+    <template>
+      <p>Enterprise is available?</p>
+      <a href="https://preview.example.invalid/template">preview</a>
+      <script type="application/ld+json">{"url":"https://preview.example.invalid/json"}</script>
+    </template>
+  `
+  assert.equal(findProhibitedClaims(html, { mode: 'rendered' }).some(({ id }) => id === 'positive-enterprise-availability'), true)
+  assert.deepEqual(extractAttributes(html), [{ name: 'href', value: 'https://preview.example.invalid/template' }])
+  assert.deepEqual(extractStructuredDataUrls(html), ['https://preview.example.invalid/json'])
 })
 
 test('release link probes fail closed on an unavailable required endpoint', async () => {
@@ -476,6 +504,16 @@ test('rendered link scans inspect metadata and structured-data URLs', () => {
   assert.match(result.failures.join('\n'), /must use HTTPS|preview or non-canonical external host/i)
 })
 
+test('rendered link scans fail closed on material parse errors', () => {
+  const result = validateRenderedLinks({ buildRoot: root, files: [malformedLinksFixture] })
+  assert.match(result.failures.join('\n'), /malformed HTML|parse error|missing-quote/i)
+})
+
+test('metadata and JSON-LD URL checks trim surrounding whitespace', () => {
+  const result = validateRenderedLinks({ buildRoot: root, files: [whitespaceLinksFixture] })
+  assert.match(result.failures.join('\n'), /preview or non-canonical external host/i)
+})
+
 test('rendered link extraction uses actual parsed attributes and JSON-LD scripts', () => {
   const html = `
     <a data-href="https://preview.example.invalid/data" href=https://status.terrascale.tech>status</a>
@@ -503,4 +541,10 @@ test('the release profile runs the fail-closed release check before other releas
   const profile = deployConfig.releaseProfiles.find(({ name }) => name === 'release-e2e')
   assert.ok(profile)
   assert.deepEqual(profile.commands[0].arguments, ['run', 'check:release'])
+})
+
+test('entity decoding stays in validation tooling dependencies', () => {
+  const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
+  assert.equal(packageJson.dependencies?.entities, undefined)
+  assert.equal(packageJson.devDependencies.entities, '^8.0.0')
 })

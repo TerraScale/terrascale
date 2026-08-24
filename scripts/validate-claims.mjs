@@ -71,6 +71,7 @@ const htmlIgnoredElements = new Set(['script', 'style'])
 const htmlInlineElements = new Set(['a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'button', 'cite', 'code', 'data', 'del', 'dfn', 'em', 'i', 'img', 'ins', 'kbd', 'label', 'mark', 'q', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u', 'var', 'wbr'])
 
 const isElement = (node) => Boolean(node?.tagName)
+const nodeChildren = (node) => node?.content?.childNodes ?? node?.childNodes ?? []
 
 const isRangeInside = (range, offset) => range && offset >= range.startOffset && offset < range.endOffset
 
@@ -78,7 +79,7 @@ const collapseClaimWhitespace = (text) => String(text).replace(/\p{White_Space}+
 export const normalizeClaimText = (text) => collapseClaimWhitespace(decodeHTML(String(text)))
 
 const canonicalSiteOrigin = 'https://terrascale.tech'
-const canonicalSiteOrigins = new Set([new URL(canonicalSiteOrigin).origin])
+const canonicalSiteHost = new URL(canonicalSiteOrigin).hostname
 
 const normalizeRoutePath = (pathname) => {
   const decodedPath = decodeURIComponent(pathname)
@@ -101,7 +102,8 @@ const canonicalizeTermsHref = (value) => {
   } catch {
     return null
   }
-  if (url.protocol !== 'https:' || !canonicalSiteOrigins.has(url.origin)) return null
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, '')
+  if (url.protocol !== 'https:' || hostname !== canonicalSiteHost) return null
   let pathname
   try {
     pathname = normalizeRoutePath(url.pathname)
@@ -111,12 +113,32 @@ const canonicalizeTermsHref = (value) => {
   return pathname === '/terms' || pathname === '/terms/' ? url : null
 }
 
+const sourceStartTags = (html) => {
+  const tags = []
+  for (let start = 0; start < html.length; start += 1) {
+    if (html[start] !== '<' || !/[a-z]/i.test(html[start + 1] ?? '')) continue
+    let quote = null
+    for (let end = start + 1; end < html.length; end += 1) {
+      const character = html[end]
+      if (quote) {
+        if (character === quote) quote = null
+      } else if (character === '"' || character === "'") {
+        quote = character
+      } else if (character === '>') {
+        tags.push(html.slice(start, end + 1))
+        start = end
+        break
+      }
+    }
+  }
+  return tags
+}
+
 const sourceHrefValues = (html) => {
   const values = []
-  const tagPattern = /<[a-z][^<>]*>/gi
   const attributePattern = /(?:^|\s)href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/gi
-  for (const tag of html.matchAll(tagPattern)) {
-    for (const match of tag[0].matchAll(attributePattern)) values.push(match[1] ?? match[2] ?? match[3])
+  for (const tag of sourceStartTags(html)) {
+    for (const match of tag.matchAll(attributePattern)) values.push(match[1] ?? match[2] ?? match[3])
   }
   return values
 }
@@ -124,12 +146,18 @@ const sourceHrefValues = (html) => {
 const descendantText = (node) => {
   if (node.nodeName === '#text') return node.value
   if (node.nodeName === '#comment' || (isElement(node) && htmlIgnoredElements.has(node.tagName))) return ''
-  return (node.childNodes ?? []).map(descendantText).join('')
+  return nodeChildren(node).map(descendantText).join('')
 }
 
 const rawDescendantText = (node) => {
   if (node.nodeName === '#text') return node.value
-  return (node.childNodes ?? []).map(rawDescendantText).join('')
+  return nodeChildren(node).map(rawDescendantText).join('')
+}
+
+const collectJsonStrings = (value, values) => {
+  if (typeof value === 'string') values.push(value)
+  else if (Array.isArray(value)) value.forEach((item) => collectJsonStrings(item, values))
+  else if (value && typeof value === 'object') Object.values(value).forEach((item) => collectJsonStrings(item, values))
 }
 
 const parseRenderedDocument = (corpus) => {
@@ -141,6 +169,8 @@ const parseRenderedDocument = (corpus) => {
       text,
       ignored: [],
       hrefs: [],
+      jsonLdValues: [],
+      jsonLdErrors: [],
       fallback: '',
     }
   }
@@ -153,6 +183,8 @@ const parseRenderedDocument = (corpus) => {
 
   const ignored = []
   const hrefs = []
+  const jsonLdValues = []
+  const jsonLdErrors = []
   const explicitEndTags = new Set()
   const opaqueRanges = []
   let structuralError = false
@@ -178,7 +210,7 @@ const parseRenderedDocument = (corpus) => {
     if (node.sourceCodeLocation && (node.nodeName === '#text' || node.nodeName === '#comment' || node.nodeName === '#documentType')) {
       opaqueRanges.push(node.sourceCodeLocation)
     }
-    for (const child of node.childNodes ?? []) recordOpaqueDescendants(child)
+    for (const child of nodeChildren(node)) recordOpaqueDescendants(child)
   }
 
   const walk = (node, blockAncestor = null) => {
@@ -187,7 +219,7 @@ const parseRenderedDocument = (corpus) => {
     if (node.sourceCodeLocation && node.nodeName === '#documentType') opaqueRanges.push(node.sourceCodeLocation)
     if (!isElement(node)) {
       if (node.nodeName === '#text') appendText(node.value, blockAncestor)
-      for (const child of node.childNodes ?? []) walk(child, blockAncestor)
+      for (const child of nodeChildren(node)) walk(child, blockAncestor)
       return
     }
 
@@ -203,6 +235,14 @@ const parseRenderedDocument = (corpus) => {
       if (isIgnored) ignored.push({ raw: attribute.value, text: attribute.value, decoded: true })
       else appendAttribute(attribute.value)
     }
+    if (node.tagName === 'script' && node.attrs.find(({ name }) => name.toLowerCase() === 'type')?.value.trim().toLowerCase() === 'application/ld+json') {
+      const payload = rawDescendantText(node)
+      try {
+        collectJsonStrings(JSON.parse(payload), jsonLdValues)
+      } catch (error) {
+        jsonLdErrors.push(error instanceof Error ? error.message : String(error))
+      }
+    }
     const isBlock = !htmlInlineElements.has(node.tagName) && !htmlVoidElements.has(node.tagName) && !isIgnored
     if (isIgnored) {
       recordOpaqueDescendants(node)
@@ -213,13 +253,13 @@ const parseRenderedDocument = (corpus) => {
 
     const currentBlock = isBlock ? node : blockAncestor
     if (node.tagName === 'br') appendText(' ', currentBlock)
-    for (const child of node.childNodes ?? []) walk(child, currentBlock)
+    for (const child of nodeChildren(node)) walk(child, currentBlock)
   }
   walk(tree)
 
   const addIgnoredValue = (node) => {
     if (node.nodeName === '#comment') ignored.push({ raw: node.data, text: node.data, decoded: false })
-    for (const child of node.childNodes ?? []) addIgnoredValue(child)
+    for (const child of nodeChildren(node)) addIgnoredValue(child)
   }
   addIgnoredValue(tree)
 
@@ -227,7 +267,7 @@ const parseRenderedDocument = (corpus) => {
     if (!opaqueRanges.some((range) => isRangeInside(range, match.index)) && !explicitEndTags.has(match.index)) structuralError = true
   }
   structuralError ||= parseErrors.length > 0
-  return { raw: corpus, text, ignored, hrefs, fallback: structuralError ? corpus : '' }
+  return { raw: corpus, text, ignored, hrefs, jsonLdValues, jsonLdErrors, fallback: structuralError ? corpus : '' }
 }
 
 const findRenderedClaimMatch = (rendered, claim) => {
@@ -239,6 +279,7 @@ const findRenderedClaimMatch = (rendered, claim) => {
   const values = [
     [rendered.raw, false],
     [rendered.text, true],
+    ...rendered.jsonLdValues.map((value) => [value, true]),
     ...rendered.ignored.flatMap(({ raw, text, decoded }) => [[raw, false], [text, decoded]]),
     [rendered.fallback, false],
   ]
@@ -271,13 +312,18 @@ export function walk(directory, extensions) {
 export function findProhibitedClaims(text, { mode = 'source' } = {}) {
   const rendered = mode === 'rendered'
   const corpus = rendered ? parseRenderedDocument(text) : text
-  return prohibitedClaims
-    .map((claim) => {
+  const errors = rendered
+    ? corpus.jsonLdErrors.map((error) => ({ id: 'malformed-json-ld', reason: `Malformed application/ld+json payload: ${error}`, match: error }))
+    : []
+  return [
+    ...errors,
+    ...prohibitedClaims.map((claim) => {
       const match = rendered
         ? findRenderedClaimMatch(corpus, claim)
         : findClaimMatch(corpus, claim)
       return { id: claim.id, reason: claim.reason, match: match?.[0] }
-    })
+    }),
+  ]
     .filter(({ match }) => match)
 }
 

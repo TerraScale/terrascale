@@ -34,20 +34,21 @@ export function walk(directory) {
 }
 
 const isElement = (node) => Boolean(node?.tagName)
+const nodeChildren = (node) => node?.content?.childNodes ?? node?.childNodes ?? []
 
-const parseRenderedHtml = (html) => {
+const parseRenderedHtml = (html, onParseError) => {
   const isDocument = /<html(?:\s|>)/i.test(html) || /^\s*<!doctype\b/i.test(html)
-  return isDocument ? parseHtml(html) : parseFragment(html)
+  const options = onParseError ? { onParseError } : undefined
+  return isDocument ? parseHtml(html, options) : parseFragment(html, options)
 }
 
 const walkTree = (node, visit) => {
   visit(node)
-  for (const child of node.childNodes ?? []) walkTree(child, visit)
+  for (const child of nodeChildren(node)) walkTree(child, visit)
 }
 
-export function extractAttributes(html) {
+const collectAttributes = (tree) => {
   const attributes = []
-  const tree = parseRenderedHtml(html)
   walkTree(tree, (node) => {
     if (!isElement(node)) return
     for (const attribute of node.attrs) {
@@ -60,20 +61,24 @@ export function extractAttributes(html) {
   return attributes
 }
 
+export function extractAttributes(html) {
+  return collectAttributes(parseRenderedHtml(html))
+}
+
 const collectJsonUrls = (value, urls) => {
-  if (typeof value === 'string' && /^https?:\/\//i.test(value)) urls.add(value)
+  const normalized = typeof value === 'string' ? value.trim() : value
+  if (typeof normalized === 'string' && /^https?:\/\//i.test(normalized)) urls.add(normalized)
   else if (Array.isArray(value)) value.forEach((item) => collectJsonUrls(item, urls))
   else if (value && typeof value === 'object') Object.values(value).forEach((item) => collectJsonUrls(item, urls))
 }
 
-export function extractStructuredDataUrls(html) {
+const collectStructuredDataUrls = (tree) => {
   const urls = new Set()
-  const tree = parseRenderedHtml(html)
   walkTree(tree, (node) => {
     if (!isElement(node) || node.tagName !== 'script') return
     const type = node.attrs.find(({ name }) => name.toLowerCase() === 'type')?.value.trim().toLowerCase()
     if (type !== 'application/ld+json') return
-    const payload = (node.childNodes ?? []).map((child) => child.nodeName === '#text' ? child.value : '').join('')
+    const payload = nodeChildren(node).map((child) => child.nodeName === '#text' ? child.value : '').join('')
     try {
       collectJsonUrls(JSON.parse(payload), urls)
     } catch {
@@ -81,6 +86,10 @@ export function extractStructuredDataUrls(html) {
     }
   })
   return [...urls]
+}
+
+export function extractStructuredDataUrls(html) {
+  return collectStructuredDataUrls(parseRenderedHtml(html))
 }
 
 const resolveInternalTarget = (buildRoot, pathname) => {
@@ -96,7 +105,9 @@ const resolveInternalTarget = (buildRoot, pathname) => {
 const checkFragment = (target, fragment, source, failures) => {
   if (!fragment) return
   const html = fs.readFileSync(target, 'utf8')
-  const tree = parseRenderedHtml(html)
+  const parseErrors = []
+  const tree = parseRenderedHtml(html, (error) => parseErrors.push(error))
+  for (const error of parseErrors) failures.push(`${target}: malformed HTML: ${error.code}`)
   let found = false
   walkTree(tree, (node) => {
     if (!isElement(node) || found) return
@@ -105,20 +116,21 @@ const checkFragment = (target, fragment, source, failures) => {
   if (!found) failures.push(`${source}: missing internal anchor #${fragment}`)
 }
 
-const isExternalHttpUrl = (value) => /^https?:\/\//i.test(value)
+const isExternalHttpUrl = (value) => /^https?:\/\//i.test(String(value).trim())
 
 const validateExternalUrl = (value, source, failures) => {
+  const normalized = String(value).trim()
   let parsed
   try {
-    parsed = new URL(value)
+    parsed = new URL(normalized)
   } catch {
-    failures.push(`${source}: invalid external URL ${value}`)
+    failures.push(`${source}: invalid external URL ${normalized}`)
     return
   }
-  if (parsed.protocol !== 'https:') failures.push(`${source}: external URLs must use HTTPS: ${value}`)
-  if (parsed.username || parsed.password) failures.push(`${source}: external URLs must not contain credentials: ${value}`)
+  if (parsed.protocol !== 'https:') failures.push(`${source}: external URLs must use HTTPS: ${normalized}`)
+  if (parsed.username || parsed.password) failures.push(`${source}: external URLs must not contain credentials: ${normalized}`)
   if (/localhost|127\.0\.0\.1|preview|\.test$|terrascale\.(?:com|io)$/i.test(parsed.hostname)) {
-    failures.push(`${source}: preview or non-canonical external host: ${value}`)
+    failures.push(`${source}: preview or non-canonical external host: ${normalized}`)
   }
 }
 
@@ -136,18 +148,23 @@ export function validateRenderedLinks({ buildRoot, files = walk(buildRoot) } = {
   const structuredDataUrls = []
   for (const file of files) {
     const html = fs.readFileSync(file, 'utf8')
-    for (const attribute of extractAttributes(html)) {
+    const parseErrors = []
+    const tree = parseRenderedHtml(html, (error) => parseErrors.push(error))
+    for (const error of parseErrors) failures.push(`${file}: malformed HTML: ${error.code}`)
+    for (const attribute of collectAttributes(tree)) {
       links.push({ file, ...attribute })
-      if (attribute.name === 'href' || attribute.name === 'content') requiredCorpus.push(attribute.value)
-      if (attribute.name === 'content') metadataUrls.push({ file, value: attribute.value })
+      const normalized = attribute.value.trim()
+      if (attribute.name === 'href' || attribute.name === 'content') requiredCorpus.push(normalized)
+      if (attribute.name === 'content') metadataUrls.push({ file, value: normalized })
     }
-    for (const value of extractStructuredDataUrls(html)) {
+    for (const value of collectStructuredDataUrls(tree)) {
       structuredDataUrls.push({ file, value })
       requiredCorpus.push(value)
     }
   }
 
-  for (const { file, name, value: href } of links) {
+  for (const { file, name, value: rawHref } of links) {
+    const href = rawHref.trim()
     if (name !== 'href' && name !== 'action' && name !== 'src') {
       if (isExternalHttpUrl(href)) {
         validateExternalUrl(href, file, failures)
