@@ -2,7 +2,7 @@
 
 Operational guide for AI agents working in this repo. Read before making changes.
 
-- Workspace local-development invariant: in DevHost `quick` and `regional` profiles, Authentication and the product Dashboard keep fixed tailnet HTTPS URLs on ports `18445` and `18446` from startup. Landing-page work must not introduce a competing or loopback-only development endpoint contract.
+- Workspace local-development invariant: in the DevHost-managed GRU/SFO/FRA RF=1 lab, Authentication and the product Dashboard keep fixed tailnet HTTPS URLs on ports `18445` and `18446` from startup. Landing-page work must not introduce a competing or loopback-only development endpoint contract. Canonical product Dashboard rule: `https://terrascale-dev.tail057f.ts.net:18446/` is the workspace's canonical product Dashboard URL and must work correctly whenever the DevHost lab is converged (it serves the product Dashboard through Tailscale Serve port `18446` proxying `127.0.0.1:18672`; an unauthenticated request redirects to `/login`, which must return HTTP 200). A 502 is acceptable only inside the convergence window after a service (re)start or re-attestation; never leave that URL broken outside the window, and verify it before handing off any change that affects these surfaces. A scheduled check verifies this URL every 30 minutes and reports or recovers failures.
 
 ## Public URL
 
