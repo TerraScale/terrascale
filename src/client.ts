@@ -13,7 +13,6 @@ export const sdkRouteManifest = {
     accountInformation: `${apiRoot}/onboarding/account-information`,
     paymentSession: `${apiRoot}/onboarding/payment-method/checkout-session`,
     paymentValidation: `${apiRoot}/onboarding/payment-method/validate`,
-    mfaDecision: `${apiRoot}/onboarding/mfa-decision`,
     organization: `${apiRoot}/onboarding/organization`,
     project: `${apiRoot}/onboarding/project`,
   },
@@ -172,17 +171,6 @@ export class OnboardingClient {
       method: "POST",
       path: sdkRouteManifest.onboarding.paymentValidation,
       routeName: "onboarding.paymentMethod.validate",
-      body: request,
-    });
-  }
-
-  updateMfaDecision(
-    request: Models.UpdateOnboardingMfaRequest,
-  ): Promise<TerraScaleResult<Models.OnboardingState>> {
-    return this.#http.request({
-      method: "PUT",
-      path: sdkRouteManifest.onboarding.mfaDecision,
-      routeName: "onboarding.mfaDecision.update",
       body: request,
     });
   }

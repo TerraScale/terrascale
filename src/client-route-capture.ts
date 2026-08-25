@@ -250,11 +250,6 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "onboarding",
-    operation: "updateMfaDecision",
-    invoke: (client) => client.onboarding.updateMfaDecision({ configureLater: true }),
-  },
-  {
-    client: "onboarding",
     operation: "createOrganization",
     invoke: (client) => client.onboarding.createOrganization({
       name: "Analytical Engines",

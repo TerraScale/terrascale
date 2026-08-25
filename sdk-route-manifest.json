@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 160,
+  "routeCount": 159,
   "routes": [
     {
       "base": "api",
@@ -119,35 +119,6 @@
     {
       "base": "api",
       "client": "onboarding",
-      "operation": "updateMfaDecision",
-      "routeName": "onboarding.mfaDecision.update",
-      "method": "PUT",
-      "pathTemplate": "/api/v1/onboarding/mfa-decision",
-      "requestType": "UpdateOnboardingMfaRequest",
-      "responseType": "OnboardingState",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "configureLater": true
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "onboarding",
       "operation": "createOrganization",
       "routeName": "onboarding.organization.create",
       "method": "POST",
@@ -158,7 +129,8 @@
         "body": {
           "kind": "json",
           "shape": {
-            "name": "Analytical Engines"
+            "name": "Analytical Engines",
+            "plan": "developer"
           }
         },
         "headers": [
@@ -295,6 +267,10 @@
             "password": "correct horse battery staple",
             "firstName": "Ada",
             "lastName": "Lovelace",
+            "fullName": "",
+            "username": "",
+            "acceptedTerms": false,
+            "termsVersion": "",
             "verifyUrl": "https://app.example.test/verify"
           }
         },
@@ -328,6 +304,10 @@
             "password": "correct horse battery staple",
             "firstName": "Ada",
             "lastName": "Lovelace",
+            "fullName": "",
+            "username": "",
+            "acceptedTerms": false,
+            "termsVersion": "",
             "verifyUrl": "https://app.example.test/verify"
           }
         },
@@ -1517,7 +1497,8 @@
         "body": {
           "kind": "json",
           "shape": {
-            "name": "Analytical Engines"
+            "name": "Analytical Engines",
+            "plan": "developer"
           }
         },
         "headers": [
@@ -1939,6 +1920,7 @@
           "kind": "json",
           "shape": {
             "email": "grace@example.test",
+            "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
             "responseUrlTemplate": "https://app.example.test/invitations/{invitationId}?organizationId={organizationId}"
           }
         },
