@@ -115,8 +115,10 @@ Convergence is deterministic last-writer-wins on the total order
 tie, and because the comparison is a total order both sides of a pair
 decide identically. An operation publishes atomically, so one disposition
 covers all of its keys: it applies only when its stamp beats every
-competing own-write of the applying member; otherwise the whole operation
-is skipped. Either way a `ConflictRecord` is retained: the conflicting
+competing recorded key state of the applying member — regardless of
+whether that state came from the member's own write or from an applied
+remote write; otherwise the whole operation is skipped. Either way a
+`ConflictRecord` is retained: the conflicting
 operation identities (canonical order), the writer identities, the clock
 stamps, and the policy outcome (`Winner`, `DeposedOwnerRetained`, or
 `UntrustedClock`, each naming the Member converged to). The record is
@@ -198,6 +200,16 @@ no claim about what the lost Regions held (ADR-0004 D-4).
   determinism and both listed conflict tests do not cross a restart;
   a restart-crossing ordering guarantee would need the stamps persisted
   with the journal (proposed collision action below).
+- The remote-apply tie-break is delivery-forwarder-keyed: a key state
+  recorded from a remote write carries the DELIVERY SOURCE's identity as
+  its writer, because the originator identity does not travel in the
+  frozen `PublishedCommit`. The `(stamp, Member)` order stays total per
+  member, and every directly delivered path (all tested paths) breaks
+  ties exactly. But two replicas that received the same write through
+  different forwarders can record different writers for it, so an exact
+  stamp tie across such divergent forwarding paths can resolve
+  differently per replica. Closing that edge needs the originator
+  identity persisted with the stamps (see W4-CA-10 below).
 - The D-1 fencing state (`highest_epoch_seen`) is likewise in-memory:
   `reset_memory_state` deliberately KEEPS it across an engine reopen, so
   the lane's "restart" models a process that retains its fencing
@@ -217,10 +229,14 @@ no claim about what the lost Regions held (ADR-0004 D-4).
 ## Proposed collision actions (in addition to R-1's W4-CA-8/W4-CA-9)
 
 - W4-CA-10 (proposed): persist per-operation HLC stamps (and per-key last
-  stamps) alongside the publication-history journal, so a restarted
-  member preserves its D-3 ordering facts. Touches frozen
+  stamps, including the WRITER identity for each stamp — the originator,
+  not the delivery forwarder) alongside the publication-history journal,
+  so a restarted member preserves its D-3 ordering facts and every
+  replica records the same writer for one write even when it arrived
+  through different forwarders. Touches frozen
   `src/storage/**`; a builder cannot do it. Until then the cross-restart
-  ordering behavior is the documented limit above.
+  ordering behavior and the forwarder-keyed tie-break edge are the
+  documented limits above.
 - W4-CA-11 (proposed): an engine-side durable write-set digest comparison
   seam would let `wait_for_acknowledgement` verify a peer's held
   operation is the same write set (not just the same identity) before

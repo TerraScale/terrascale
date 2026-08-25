@@ -5,7 +5,9 @@ packet, 2026-08-24. Authority: `docs/design/w4-transfer-replication-contract.md`
 ("Three-Region synthetic fault lane", "Public type ownership", "Checks and
 evidence") and `docs/adr/0004` (accepted D-1..D-4). Worktree
 `terrabasev2-w4-replication`, branch `fleet/w4-replication`, based on the
-R-2 handoff `9fbf64d`; implementation commit `f6082d7`.
+R-2 handoff `9fbf64d`; original implementation commit `f6082d7`. Repair
+loop 1 later re-emitted all five receipts at `f70a5d8` (values unchanged
+except as its provenance notes state); the receipts name that revision.
 
 Phase scope: the three-Region synthetic fault lane and the
 `ReplicationReceipt` artifacts. This record completes the packet's
@@ -121,7 +123,8 @@ below on their git status):
 5. `w4-lane-region-partition-isolated-writes.md` — the full-Region
    partition with isolated concurrent writes and their D-3 convergence.
 
-Each names the producing commit (`f6082d7`), the run command, the asserted
+Each names the producing commit (originally `f6082d7`; re-emitted at
+`f70a5d8` after repair loop 1), the run command, the asserted
 facts, the measurements with their definitions or an explicit not-measured
 reason, and limits, and states it makes no production claim. The composite
 receipt's verbatim artifact is mirrored below so it is tracked in the

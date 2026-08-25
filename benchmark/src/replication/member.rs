@@ -497,6 +497,15 @@ impl ReplicationMember {
     }
 
     /// Records one operation's journal sequence for the exact lookup path.
+    /// Records the sequence for an operation into the lookup map.
+    ///
+    /// For operations this member admitted, the sequence is this member's
+    /// own journal sequence. For remote-applied operations the recorded
+    /// value is the SOURCE journal's sequence (source sequence space): the
+    /// exact-window lookup then misses and the paged fallback serves, which
+    /// is correct but slower. The acknowledgement path only looks up
+    /// admitted operations, so this stays a latency note, not a correctness
+    /// one.
     fn record_operation_sequence(&mut self, operation: &OperationId, sequence: StorageSequence) {
         self.operation_sequences.insert(operation.clone(), sequence);
     }
@@ -976,9 +985,6 @@ impl ReplicationMember {
                 .map(|state| state.writer.clone())
                 .expect("competing states are nonempty");
             let mut members = vec![source.clone(), winner.clone()];
-            for (_, state) in &competing {
-                members.push(state.writer.clone());
-            }
             for (_, state) in &competing {
                 members.push(state.writer.clone());
             }
