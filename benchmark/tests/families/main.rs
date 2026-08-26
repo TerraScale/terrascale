@@ -4,3 +4,4 @@
 //! focused files in this directory are declared as modules here.
 
 mod families_public_construction;
+mod schemas_public;

@@ -18,8 +18,9 @@
 use std::collections::BTreeMap;
 
 use super::{
-    FamilyError, RollupPolicy, SchemaDefinition, SchemaFieldType, SchemaRule, TimeSeriesAppend,
-    TimeSeriesPolicy, payloads::Aggregation, payloads::RevisionPolicy,
+    FamilyError, RollupPolicy, SchemaDefinition, SchemaFieldType, SchemaRule, SchemaVersion,
+    TimeSeriesAppend, TimeSeriesPolicy,
+    payloads::{Aggregation, RevisionPolicy, interchange_integer},
 };
 
 use crate::{
@@ -865,6 +866,12 @@ fn decode_field_type(value: &DocumentValue) -> Option<SchemaFieldType> {
 }
 
 /// The stored validation policy of one collection.
+///
+/// The record is the collection's schema metadata: it carries the enforced
+/// [`SchemaDefinition`](super::SchemaDefinition) with its
+/// [`SchemaVersion`](super::SchemaVersion) identity. A record without a
+/// positive version does not decode: the version is part of the record, not
+/// an optional annotation.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ValidationRecord {
     pub(crate) schema: SchemaDefinition,
@@ -873,6 +880,11 @@ pub(crate) struct ValidationRecord {
 impl ValidationRecord {
     /// Decodes one record value.
     pub(crate) fn decode(value: &DocumentValue) -> Result<Self, FamilyError> {
+        let version =
+            u64::try_from(integer(value, "version").ok_or(FamilyError::ReservedStateInvalid)?)
+                .map_err(|_| FamilyError::ReservedStateInvalid)?;
+        let version =
+            SchemaVersion::try_new(version).map_err(|_| FamilyError::ReservedStateInvalid)?;
         let mut rules = Vec::new();
         for encoded in array(value, "rules").ok_or(FamilyError::ReservedStateInvalid)? {
             let Some(field_name) = text(encoded, "field") else {
@@ -916,89 +928,92 @@ impl ValidationRecord {
             };
             rules.push(rule);
         }
-        let schema =
-            SchemaDefinition::try_new(rules).map_err(|_| FamilyError::ReservedStateInvalid)?;
+        let schema = SchemaDefinition::try_new(version, rules)
+            .map_err(|_| FamilyError::ReservedStateInvalid)?;
         Ok(Self { schema })
     }
 
     /// Encodes one record value.
     pub(crate) fn encode(&self) -> DocumentValue {
-        object(vec![(
-            "rules",
-            DocumentValue::Array(
-                self.schema
-                    .rules()
-                    .iter()
-                    .map(|rule| {
-                        let field = rule.field().to_owned();
-                        match rule {
-                            SchemaRule::Required { .. } => object(vec![
-                                ("rule", DocumentValue::String("required".to_owned())),
-                                ("field", DocumentValue::String(field)),
-                            ]),
-                            SchemaRule::FieldType { kind, .. } => object(vec![
-                                ("rule", DocumentValue::String("field_type".to_owned())),
-                                ("field", DocumentValue::String(field)),
-                                ("kind", encode_field_type(*kind)),
-                            ]),
-                            SchemaRule::EnumValues { values, .. } => object(vec![
-                                ("rule", DocumentValue::String("enum".to_owned())),
-                                ("field", DocumentValue::String(field)),
-                                (
-                                    "values",
-                                    DocumentValue::Array(
-                                        values
-                                            .iter()
-                                            .map(|v| DocumentValue::String(v.clone()))
-                                            .collect(),
+        object(vec![
+            ("version", DocumentValue::Integer(interchange_integer(self.schema.version().get()))),
+            (
+                "rules",
+                DocumentValue::Array(
+                    self.schema
+                        .rules()
+                        .iter()
+                        .map(|rule| {
+                            let field = rule.field().to_owned();
+                            match rule {
+                                SchemaRule::Required { .. } => object(vec![
+                                    ("rule", DocumentValue::String("required".to_owned())),
+                                    ("field", DocumentValue::String(field)),
+                                ]),
+                                SchemaRule::FieldType { kind, .. } => object(vec![
+                                    ("rule", DocumentValue::String("field_type".to_owned())),
+                                    ("field", DocumentValue::String(field)),
+                                    ("kind", encode_field_type(*kind)),
+                                ]),
+                                SchemaRule::EnumValues { values, .. } => object(vec![
+                                    ("rule", DocumentValue::String("enum".to_owned())),
+                                    ("field", DocumentValue::String(field)),
+                                    (
+                                        "values",
+                                        DocumentValue::Array(
+                                            values
+                                                .iter()
+                                                .map(|v| DocumentValue::String(v.clone()))
+                                                .collect(),
+                                        ),
                                     ),
-                                ),
-                            ]),
-                            SchemaRule::NumberRange { min, max, .. } => object(vec![
-                                ("rule", DocumentValue::String("number_range".to_owned())),
-                                ("field", DocumentValue::String(field)),
-                                (
-                                    "min",
-                                    match min {
-                                        Some(value) => DocumentValue::Integer(*value),
-                                        None => DocumentValue::Null,
-                                    },
-                                ),
-                                (
-                                    "max",
-                                    match max {
-                                        Some(value) => DocumentValue::Integer(*value),
-                                        None => DocumentValue::Null,
-                                    },
-                                ),
-                            ]),
-                            SchemaRule::TextLength { min, max, .. } => object(vec![
-                                ("rule", DocumentValue::String("text_length".to_owned())),
-                                ("field", DocumentValue::String(field)),
-                                (
-                                    "min",
-                                    match min {
-                                        Some(value) => DocumentValue::Integer(
-                                            i64::try_from(*value).unwrap_or(0),
-                                        ),
-                                        None => DocumentValue::Null,
-                                    },
-                                ),
-                                (
-                                    "max",
-                                    match max {
-                                        Some(value) => DocumentValue::Integer(
-                                            i64::try_from(*value).unwrap_or(0),
-                                        ),
-                                        None => DocumentValue::Null,
-                                    },
-                                ),
-                            ]),
-                        }
-                    })
-                    .collect(),
+                                ]),
+                                SchemaRule::NumberRange { min, max, .. } => object(vec![
+                                    ("rule", DocumentValue::String("number_range".to_owned())),
+                                    ("field", DocumentValue::String(field)),
+                                    (
+                                        "min",
+                                        match min {
+                                            Some(value) => DocumentValue::Integer(*value),
+                                            None => DocumentValue::Null,
+                                        },
+                                    ),
+                                    (
+                                        "max",
+                                        match max {
+                                            Some(value) => DocumentValue::Integer(*value),
+                                            None => DocumentValue::Null,
+                                        },
+                                    ),
+                                ]),
+                                SchemaRule::TextLength { min, max, .. } => object(vec![
+                                    ("rule", DocumentValue::String("text_length".to_owned())),
+                                    ("field", DocumentValue::String(field)),
+                                    (
+                                        "min",
+                                        match min {
+                                            Some(value) => {
+                                                DocumentValue::Integer(interchange_integer(*value))
+                                            }
+                                            None => DocumentValue::Null,
+                                        },
+                                    ),
+                                    (
+                                        "max",
+                                        match max {
+                                            Some(value) => {
+                                                DocumentValue::Integer(interchange_integer(*value))
+                                            }
+                                            None => DocumentValue::Null,
+                                        },
+                                    ),
+                                ]),
+                            }
+                        })
+                        .collect(),
+                ),
             ),
-        )])
+        ])
     }
 }
 

@@ -28,15 +28,15 @@ use super::{
     FamilyReadRequest, FamilyReadResult, FamilyWriteRequest, IdentityCommand, IdentityRangeResult,
     IdentityRead, IdentityWrite, LifecycleCommand, LifecycleRead, LifecycleResult, LifecycleWrite,
     RevisionCommand, RevisionPaging, RevisionPolicy, RevisionRead, RevisionWrite, RollupPolicy,
-    SchemaDefinition, SchemaFieldType, SchemaRule, TimeSeriesAppend, TimeSeriesBatchWrite,
-    TimeSeriesDelete, TimeSeriesEntry, TimeSeriesPolicy, TimeSeriesRange, TimeSeriesRead,
-    TombstoneCommand, TombstoneRead, TombstoneWrite, ValidationRead, ValidationResult,
-    ValidationWrite, ViolationKind,
+    SchemaDefinition, SchemaFieldType, SchemaRule, SchemaVersion, SchemaViolation,
+    TimeSeriesAppend, TimeSeriesBatchWrite, TimeSeriesDelete, TimeSeriesEntry, TimeSeriesPolicy,
+    TimeSeriesRange, TimeSeriesRead, TombstoneCommand, TombstoneRead, TombstoneWrite,
+    ValidationRead, ValidationResult, ValidationWrite, ViolationKind,
     state::{RESERVED_COLLECTION, now_millis, record_id},
 };
 
 use crate::{
-    engine::{CommitOutcome, Engine, EngineConfig, Transaction},
+    engine::{CommitOutcome, Engine, EngineConfig, EngineError, Transaction},
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
         ExpectedVersion, IndexGenerationSet, LocalDurability, OperationId, ReadSnapshot, TenantId,
@@ -1116,10 +1116,13 @@ fn schema_validation_rejects_invalid_writes_without_mutation() {
         object_user_value(&[("name", "ada")]),
     );
 
-    let schema = SchemaDefinition::try_new(vec![
-        SchemaRule::Required { field: "email".to_owned() },
-        SchemaRule::FieldType { field: "name".to_owned(), kind: SchemaFieldType::Text },
-    ])
+    let schema = SchemaDefinition::try_new(
+        SchemaVersion::try_new(1).expect("valid version"),
+        vec![
+            SchemaRule::Required { field: "email".to_owned() },
+            SchemaRule::FieldType { field: "name".to_owned(), kind: SchemaFieldType::Text },
+        ],
+    )
     .expect("valid schema");
     commit_transaction(
         &engine,
@@ -2371,10 +2374,13 @@ fn validation_policy_rejects_malformed_definitions() {
         "tenant-a",
         "policy-1",
         |store, transaction, tenant_scope, identity| {
-            let duplicated = SchemaDefinition::try_new(vec![
-                SchemaRule::Required { field: "email".to_owned() },
-                SchemaRule::Required { field: "email".to_owned() },
-            ])
+            let duplicated = SchemaDefinition::try_new(
+                SchemaVersion::try_new(1).expect("valid version"),
+                vec![
+                    SchemaRule::Required { field: "email".to_owned() },
+                    SchemaRule::Required { field: "email".to_owned() },
+                ],
+            )
             .expect("structurally valid");
             let staged = store.stage(
                 transaction,
@@ -2398,11 +2404,14 @@ fn validation_policy_rejects_malformed_definitions() {
         "tenant-a",
         "policy-2",
         |store, transaction, tenant_scope, identity| {
-            let inverted = SchemaDefinition::try_new(vec![SchemaRule::NumberRange {
-                field: "age".to_owned(),
-                min: Some(100),
-                max: Some(10),
-            }])
+            let inverted = SchemaDefinition::try_new(
+                SchemaVersion::try_new(1).expect("valid version"),
+                vec![SchemaRule::NumberRange {
+                    field: "age".to_owned(),
+                    min: Some(100),
+                    max: Some(10),
+                }],
+            )
             .expect("structurally valid");
             let staged = store.stage(
                 transaction,
@@ -2971,12 +2980,35 @@ fn malformed_reserved_record_collision_is_typed() {
 #[test]
 fn number_range_binds_float_and_integer_values() {
     let (_dir, engine) = open_engine("number-range");
-    let schema = SchemaDefinition::try_new(vec![SchemaRule::NumberRange {
-        field: "score".to_owned(),
-        min: Some(0),
-        max: Some(10),
-    }])
+    let schema = SchemaDefinition::try_new(
+        SchemaVersion::try_new(1).expect("valid version"),
+        vec![SchemaRule::NumberRange { field: "score".to_owned(), min: Some(0), max: Some(10) }],
+    )
     .expect("valid schema");
+
+    let score = |value: DocumentValue| {
+        DocumentValue::Object(
+            [
+                ("name".to_owned(), DocumentValue::String("ada".to_owned())),
+                ("score".to_owned(), value),
+            ]
+            .into_iter()
+            .collect(),
+        )
+    };
+    // The violating documents predate the declaration: adopting a schema is
+    // never retroactive, so schema-free writes land and the on-demand report
+    // is what observes them.
+    put_user_document(
+        &engine,
+        "tenant-a",
+        "put-float",
+        "doc-1",
+        score(DocumentValue::Number(99.5)),
+    );
+    put_user_document(&engine, "tenant-a", "put-int", "doc-2", score(DocumentValue::Integer(99)));
+    put_user_document(&engine, "tenant-a", "put-ok", "doc-3", score(DocumentValue::Number(5.5)));
+
     commit_transaction(
         &engine,
         "tenant-a",
@@ -3000,26 +3032,6 @@ fn number_range_binds_float_and_integer_values() {
                 .expect("stages the collection policy");
         },
     );
-
-    let score = |value: DocumentValue| {
-        DocumentValue::Object(
-            [
-                ("name".to_owned(), DocumentValue::String("ada".to_owned())),
-                ("score".to_owned(), value),
-            ]
-            .into_iter()
-            .collect(),
-        )
-    };
-    put_user_document(
-        &engine,
-        "tenant-a",
-        "put-float",
-        "doc-1",
-        score(DocumentValue::Number(99.5)),
-    );
-    put_user_document(&engine, "tenant-a", "put-int", "doc-2", score(DocumentValue::Integer(99)));
-    put_user_document(&engine, "tenant-a", "put-ok", "doc-3", score(DocumentValue::Number(5.5)));
 
     let report = |document: &str| match read_family(
         &engine,
@@ -3069,6 +3081,44 @@ fn number_range_binds_float_and_integer_values() {
             assert_eq!(staged, Err(FamilyError::SchemaViolation));
         },
     );
+
+    // New writes of out-of-range values are rejected at the engine seam in
+    // both numeric encodings; an in-range update of a stored violating
+    // document is accepted and clears the report.
+    assert_eq!(
+        stage_put(
+            &engine,
+            "tenant-a",
+            "reject-new-float",
+            "doc-4",
+            "users",
+            score(DocumentValue::Number(99.5))
+        ),
+        Err(EngineError::InvalidDocument)
+    );
+    assert_eq!(
+        stage_put(
+            &engine,
+            "tenant-a",
+            "reject-new-int",
+            "doc-4",
+            "users",
+            score(DocumentValue::Integer(99))
+        ),
+        Err(EngineError::InvalidDocument)
+    );
+    assert!(
+        stage_put(
+            &engine,
+            "tenant-a",
+            "accept-new-float",
+            "doc-1",
+            "users",
+            score(DocumentValue::Number(5.5))
+        )
+        .is_ok()
+    );
+    assert!(report("doc-1").violations().is_empty());
     engine.shutdown().expect("shuts down");
 }
 
@@ -3446,4 +3496,836 @@ fn snapshot_family_records_reject_foreign_snapshots_and_collisions() {
         "a reserved-collection collision is typed, not skipped"
     );
     engine.shutdown().expect("shuts down");
+}
+
+// ---------------------------------------------------------------------------
+// SM-02: collection schemas — definition, versioning, write validation
+// ---------------------------------------------------------------------------
+
+/// Declares (or clears) one collection's schema in its own transaction.
+fn declare_schema(
+    engine: &Engine,
+    tenant_name: &str,
+    operation_name: &str,
+    collection_name: &str,
+    schema: Option<&SchemaDefinition>,
+) -> CommitOutcome {
+    let collection = collection(collection_name);
+    commit_transaction(
+        engine,
+        tenant_name,
+        operation_name,
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    FamilyWriteRequest::schema_validation_update(
+                        ValidationWrite::try_new(
+                            tenant_scope.clone(),
+                            collection.clone(),
+                            schema.cloned(),
+                            operation(identity.as_str()),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid validation write"),
+                    ),
+                )
+                .expect("stages the schema declaration");
+        },
+    )
+}
+
+/// Reads one collection's validation result through the family seam.
+fn read_validation(engine: &Engine, tenant_name: &str, name: &str) -> ValidationResult {
+    match read_family(
+        engine,
+        tenant_name,
+        FamilyReadRequest::validation(
+            ValidationRead::try_new(collection(name), None, deadline(), cancellation())
+                .expect("valid validation read"),
+        ),
+    )
+    .expect("reads the validation state")
+    {
+        FamilyReadResult::Validation(result) => result,
+        other => panic!("expected a validation result, got {other:?}"),
+    }
+}
+
+/// Stages one document put in its own transaction and returns the put result.
+fn stage_put(
+    engine: &Engine,
+    tenant_name: &str,
+    operation_name: &str,
+    id: &str,
+    collection_name: &str,
+    value: DocumentValue,
+) -> Result<(), crate::engine::EngineError> {
+    let tenant_scope = scope(engine, tenant_name);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let mut transaction =
+        engine.begin(&tenant_scope, snapshot, unique_operation(operation_name)).expect("begins");
+    let document = Document::new(document_id(id), collection(collection_name), value);
+    let staged = transaction.put(document, ExpectedVersion::Any);
+    if staged.is_ok() {
+        assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    }
+    staged
+}
+
+#[test]
+fn engine_put_enforces_declared_schemas_without_partial_writes() {
+    let (_dir, engine) = open_engine("sm02-engine-put");
+    declare_schema(
+        &engine,
+        "tenant-a",
+        "declare-v1",
+        "users",
+        Some(
+            &SchemaDefinition::try_new(
+                SchemaVersion::try_new(1).expect("valid version"),
+                vec![
+                    SchemaRule::Required { field: "email".to_owned() },
+                    SchemaRule::FieldType { field: "name".to_owned(), kind: SchemaFieldType::Text },
+                ],
+            )
+            .expect("valid schema"),
+        ),
+    );
+
+    // A violating document is rejected at the engine seam with the typed
+    // engine validation error, and nothing is staged: the same transaction
+    // can continue and commit other writes.
+    assert_eq!(
+        stage_put(
+            &engine,
+            "tenant-a",
+            "reject-missing-email",
+            "doc-1",
+            "users",
+            object_user_value(&[("name", "ada")]),
+        ),
+        Err(EngineError::InvalidDocument)
+    );
+    // The rejected document never landed: addressing it on demand is the
+    // typed missing-document case, never a partial write.
+    assert_eq!(
+        read_family(
+            &engine,
+            "tenant-a",
+            FamilyReadRequest::validation(
+                ValidationRead::try_new(
+                    collection("users"),
+                    Some(document_id("doc-1")),
+                    deadline(),
+                    cancellation(),
+                )
+                .expect("valid validation read"),
+            ),
+        ),
+        Err(FamilyError::DocumentMissing)
+    );
+
+    // A valid document passes the same seam and commits; its on-demand
+    // report carries the enforced version and no violations.
+    assert!(
+        stage_put(
+            &engine,
+            "tenant-a",
+            "accept-valid",
+            "doc-2",
+            "users",
+            object_user_value(&[("name", "ada"), ("email", "ada@example")]),
+        )
+        .is_ok()
+    );
+    let report = match read_family(
+        &engine,
+        "tenant-a",
+        FamilyReadRequest::validation(
+            ValidationRead::try_new(
+                collection("users"),
+                Some(document_id("doc-2")),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid validation read"),
+        ),
+    )
+    .expect("reads the on-demand report")
+    {
+        FamilyReadResult::Validation(result) => result,
+        other => panic!("expected a validation result, got {other:?}"),
+    };
+    assert_eq!(report.enforced_version().map(SchemaVersion::get), Some(1));
+    assert!(report.violations().is_empty());
+
+    // A type violation is the same typed rejection with the field-and-kind
+    // report available on demand for the stored document.
+    assert_eq!(
+        stage_put(
+            &engine,
+            "tenant-a",
+            "reject-type",
+            "doc-3",
+            "users",
+            DocumentValue::Object(
+                [
+                    ("name".to_owned(), DocumentValue::Integer(7)),
+                    ("email".to_owned(), DocumentValue::String("ada@example".to_owned())),
+                ]
+                .into_iter()
+                .collect()
+            ),
+        ),
+        Err(EngineError::InvalidDocument)
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn same_transaction_schema_declaration_enforces_immediately() {
+    let (_dir, engine) = open_engine("sm02-same-transaction");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let schema = SchemaDefinition::try_new(
+        SchemaVersion::try_new(1).expect("valid version"),
+        vec![SchemaRule::Required { field: "email".to_owned() }],
+    )
+    .expect("valid schema");
+    let store = engine.families();
+    let mut transaction =
+        engine.begin(&tenant_scope, snapshot, operation("declare-and-write")).expect("begins");
+    store
+        .stage(
+            &mut transaction,
+            FamilyWriteRequest::schema_validation_update(
+                ValidationWrite::try_new(
+                    tenant_scope.clone(),
+                    collection("users"),
+                    Some(schema),
+                    operation("declare-and-write"),
+                    deadline(),
+                    cancellation(),
+                )
+                .expect("valid validation write"),
+            ),
+        )
+        .expect("stages the declaration");
+
+    // The declaration staged in this transaction already binds the puts of
+    // this transaction: there is no window where a declared schema ignores
+    // the writes that accompany it.
+    assert_eq!(
+        transaction.put(
+            Document::new(
+                document_id("doc-1"),
+                collection("users"),
+                object_user_value(&[("name", "ada")]),
+            ),
+            ExpectedVersion::Any,
+        ),
+        Err(EngineError::InvalidDocument)
+    );
+    transaction
+        .put(
+            Document::new(
+                document_id("doc-2"),
+                collection("users"),
+                object_user_value(&[("email", "ada@example")]),
+            ),
+            ExpectedVersion::Any,
+        )
+        .expect("stages a conforming document");
+    assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    let validation = read_validation(&engine, "tenant-a", "users");
+    assert_eq!(validation.enforced_version().map(SchemaVersion::get), Some(1));
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn schema_versions_evolve_forward_and_report_the_enforced_version() {
+    let (_dir, engine) = open_engine("sm02-versions");
+    let v1 = || {
+        SchemaDefinition::try_new(
+            SchemaVersion::try_new(1).expect("valid version"),
+            vec![SchemaRule::Required { field: "email".to_owned() }],
+        )
+        .expect("valid schema")
+    };
+    let v2 = || {
+        SchemaDefinition::try_new(
+            SchemaVersion::try_new(2).expect("valid version"),
+            vec![
+                SchemaRule::Required { field: "email".to_owned() },
+                SchemaRule::FieldType { field: "age".to_owned(), kind: SchemaFieldType::Integer },
+            ],
+        )
+        .expect("valid schema")
+    };
+    let v2_other = || {
+        SchemaDefinition::try_new(
+            SchemaVersion::try_new(2).expect("valid version"),
+            vec![SchemaRule::Required { field: "phone".to_owned() }],
+        )
+        .expect("valid schema")
+    };
+
+    declare_schema(&engine, "tenant-a", "declare-v1", "users", Some(&v1()));
+    assert_eq!(
+        read_validation(&engine, "tenant-a", "users").enforced_version(),
+        Some(SchemaVersion::try_new(1).expect("valid version"))
+    );
+
+    // The same version with the same rules restates idempotently: staging
+    // accepts it, the restatement commits, and the enforced identity is
+    // unchanged.
+    assert!(matches!(
+        declare_schema(&engine, "tenant-a", "restate-v1", "users", Some(&v1())),
+        CommitOutcome::Committed(_)
+    ));
+    assert_eq!(
+        read_validation(&engine, "tenant-a", "users").enforced_version(),
+        Some(SchemaVersion::try_new(1).expect("valid version"))
+    );
+
+    // A greater version evolves the collection and is reported.
+    declare_schema(&engine, "tenant-a", "declare-v2", "users", Some(&v2()));
+    assert_eq!(
+        read_validation(&engine, "tenant-a", "users").enforced_version(),
+        Some(SchemaVersion::try_new(2).expect("valid version"))
+    );
+
+    // The same version with different rules, and any lower version, conflict
+    // with the recorded version and stage nothing.
+    let expects_conflict = |schema: Option<SchemaDefinition>, name: &str| {
+        commit_transaction(
+            &engine,
+            "tenant-a",
+            name,
+            |store, transaction, tenant_scope, identity| {
+                let staged = store.stage(
+                    transaction,
+                    FamilyWriteRequest::schema_validation_update(
+                        ValidationWrite::try_new(
+                            tenant_scope.clone(),
+                            collection("users"),
+                            schema.clone(),
+                            operation(identity.as_str()),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid validation write"),
+                    ),
+                );
+                assert_eq!(staged, Err(FamilyError::Conflict));
+            },
+        );
+    };
+    expects_conflict(Some(v2_other()), "same-version-different-rules");
+    expects_conflict(Some(v1()), "lower-version");
+    assert_eq!(
+        read_validation(&engine, "tenant-a", "users").enforced_version(),
+        Some(SchemaVersion::try_new(2).expect("valid version")),
+        "rejected declarations stage nothing"
+    );
+
+    // Clearing returns the collection to schema-free; a fresh declaration
+    // starts a new version lineage.
+    declare_schema(&engine, "tenant-a", "clear", "users", None);
+    assert_eq!(read_validation(&engine, "tenant-a", "users").enforced_version(), None);
+    declare_schema(&engine, "tenant-a", "declare-fresh", "users", Some(&v1()));
+    assert_eq!(
+        read_validation(&engine, "tenant-a", "users").enforced_version(),
+        Some(SchemaVersion::try_new(1).expect("valid version"))
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn schemas_are_tenant_scoped_and_cross_tenant_application_is_refused() {
+    let (_dir, engine) = open_engine("sm02-tenant-scope");
+    declare_schema(
+        &engine,
+        "tenant-a",
+        "declare-strict",
+        "users",
+        Some(
+            &SchemaDefinition::try_new(
+                SchemaVersion::try_new(1).expect("valid version"),
+                vec![
+                    SchemaRule::Required { field: "email".to_owned() },
+                    SchemaRule::FieldType { field: "name".to_owned(), kind: SchemaFieldType::Text },
+                ],
+            )
+            .expect("valid schema"),
+        ),
+    );
+
+    // A schema write scoped to tenant A cannot be staged inside a
+    // transaction bound to tenant B: the declaration is refused before any
+    // state is touched.
+    let tenant_b_scope = scope(&engine, "tenant-b");
+    let snapshot = engine.read_snapshot(&tenant_b_scope).expect("snapshot");
+    let store = engine.families();
+    let mut transaction =
+        engine.begin(&tenant_b_scope, snapshot, operation("cross-tenant")).expect("begins");
+    let staged = store.stage(
+        &mut transaction,
+        FamilyWriteRequest::schema_validation_update(
+            ValidationWrite::try_new(
+                scope(&engine, "tenant-a"),
+                collection("users"),
+                Some(
+                    SchemaDefinition::try_new(
+                        SchemaVersion::try_new(9).expect("valid version"),
+                        vec![SchemaRule::Required { field: "email".to_owned() }],
+                    )
+                    .expect("valid schema"),
+                ),
+                operation("cross-tenant"),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid validation write"),
+        ),
+    );
+    assert_eq!(staged, Err(FamilyError::TenantMismatch));
+    drop(transaction);
+
+    // Tenant B's same-named collection is schema-free: tenant A's record is
+    // invisible to tenant B's transactions, so a document tenant A rejects
+    // is accepted for tenant B.
+    assert!(
+        stage_put(
+            &engine,
+            "tenant-b",
+            "b-accepts",
+            "doc-1",
+            "users",
+            object_user_value(&[("name", "ben")]),
+        )
+        .is_ok()
+    );
+    let foreign = read_validation(&engine, "tenant-b", "users");
+    assert_eq!(foreign.policy(), None, "another tenant's schema never applies");
+    assert_eq!(foreign.enforced_version(), None);
+
+    // Tenant A's own collection still enforces its schema.
+    assert_eq!(
+        stage_put(
+            &engine,
+            "tenant-a",
+            "a-rejects",
+            "doc-1",
+            "users",
+            object_user_value(&[("name", "ada")]),
+        ),
+        Err(EngineError::InvalidDocument)
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+/// Collects one deterministic (path, digest) fingerprint of every file under
+/// one directory tree, in sorted order.
+fn tree_fingerprint(root: &std::path::Path) -> Vec<(std::path::PathBuf, u64)> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    fn walk(
+        dir: &std::path::Path,
+        root: &std::path::Path,
+        out: &mut Vec<(std::path::PathBuf, u64)>,
+    ) {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .expect("reads the directory")
+            .map(|entry| entry.expect("reads the entry"))
+            .collect();
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, root, out);
+            } else {
+                let bytes = std::fs::read(&path).expect("reads the file");
+                let mut hasher = DefaultHasher::new();
+                bytes.hash(&mut hasher);
+                out.push((
+                    path.strip_prefix(root).expect("under the root").to_path_buf(),
+                    hasher.finish(),
+                ));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out);
+    out
+}
+
+#[test]
+fn schema_free_collections_are_byte_for_byte_unaffected() {
+    // The same schema-free script runs against two fresh engines. The probe
+    // proves three byte-level facts at once: the write path stays
+    // deterministic, no schema machinery appended a commit (sequences match
+    // step by step), and no schema state was recorded (the reserved
+    // collection stays empty). Any of those drifting turns the probe red.
+    let run = |tag: &str| -> (Vec<u64>, Vec<(std::path::PathBuf, u64)>) {
+        let (dir, engine) = open_engine(tag);
+        let mut sequences = Vec::new();
+        let mut commit = |operation_name: &str, stage: &dyn Fn(&mut Transaction<'_>)| {
+            let tenant_scope = scope(&engine, "tenant-a");
+            let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+            let mut transaction =
+                engine.begin(&tenant_scope, snapshot, operation(operation_name)).expect("begins");
+            stage(&mut transaction);
+            match transaction.commit(LocalDurability::Synced) {
+                CommitOutcome::Committed(receipt) => sequences.push(receipt.sequence().get()),
+                other => panic!("expected a commit, got {other:?}"),
+            }
+        };
+        commit("put-users", &|transaction| {
+            transaction
+                .put(
+                    Document::new(
+                        document_id("doc-1"),
+                        collection("users"),
+                        object_user_value(&[("name", "ada")]),
+                    ),
+                    ExpectedVersion::Any,
+                )
+                .expect("stages the user document");
+        });
+        commit("put-orders", &|transaction| {
+            transaction
+                .put(
+                    Document::new(
+                        document_id("order-1"),
+                        collection("orders"),
+                        object_user_value(&[("item", "bolt")]),
+                    ),
+                    ExpectedVersion::Any,
+                )
+                .expect("stages the order document");
+        });
+        commit("delete-users", &|transaction| {
+            transaction
+                .delete(document_id("doc-1"), ExpectedVersion::Any)
+                .expect("stages the deletion");
+        });
+        let tenant_scope = scope(&engine, "tenant-a");
+        let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+        let reserved = engine
+            .snapshot_documents(&tenant_scope, &snapshot)
+            .expect("reads the tenant")
+            .into_iter()
+            .filter(|document| document.collection().as_str() == RESERVED_COLLECTION)
+            .count();
+        assert_eq!(reserved, 0, "a schema-free script records no family state");
+        engine.shutdown().expect("shuts down");
+        let fingerprint = tree_fingerprint(&dir);
+        (sequences, fingerprint)
+    };
+    let (sequences_a, tree_a) = run("sm02-bytes-a");
+    let (sequences_b, tree_b) = run("sm02-bytes-b");
+    assert_eq!(sequences_a, sequences_b, "the sequences stay identical");
+    assert_eq!(tree_a, tree_b, "the durable trees stay byte-for-byte identical");
+}
+
+#[test]
+fn reserved_collection_rejects_schema_declarations() {
+    let (_dir, engine) = open_engine("sm02-reserved-declare");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.families();
+    let mut transaction =
+        engine.begin(&tenant_scope, snapshot, operation("declare-on-reserved")).expect("begins");
+    let staged = store.stage(
+        &mut transaction,
+        FamilyWriteRequest::schema_validation_update(
+            ValidationWrite::try_new(
+                tenant_scope.clone(),
+                CollectionName::try_new(RESERVED_COLLECTION).expect("reserved name"),
+                Some(
+                    SchemaDefinition::try_new(
+                        SchemaVersion::try_new(1).expect("valid version"),
+                        vec![SchemaRule::Required { field: "email".to_owned() }],
+                    )
+                    .expect("valid schema"),
+                ),
+                operation("declare-on-reserved"),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid validation write"),
+        ),
+    );
+    assert_eq!(staged, Err(FamilyError::InvalidRequest));
+    drop(transaction);
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn validation_record_collisions_fail_closed_on_put() {
+    let (_dir, engine) = open_engine("sm02-collision");
+    // A user document can still occupy the reserved validation-record
+    // address through the document seam (the W3-F collision contract); while
+    // it does, the collection's schema state cannot be read, and every put
+    // to that collection fails closed instead of skipping validation.
+    assert!(
+        stage_put(
+            &engine,
+            "tenant-a",
+            "squatter",
+            "family:validation/users",
+            "users",
+            object_user_value(&[("kind", "squatter")]),
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        stage_put(
+            &engine,
+            "tenant-a",
+            "blocked-put",
+            "doc-1",
+            "users",
+            object_user_value(&[("name", "ada")]),
+        ),
+        Err(EngineError::StorageFailure)
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+#[test]
+fn non_object_documents_fail_closed_under_declared_schemas() {
+    let (_dir, engine) = open_engine("sm02-non-object");
+    declare_schema(
+        &engine,
+        "tenant-a",
+        "declare-v1",
+        "users",
+        Some(
+            &SchemaDefinition::try_new(
+                SchemaVersion::try_new(1).expect("valid version"),
+                vec![
+                    SchemaRule::Required { field: "email".to_owned() },
+                    SchemaRule::FieldType { field: "name".to_owned(), kind: SchemaFieldType::Text },
+                ],
+            )
+            .expect("valid schema"),
+        ),
+    );
+
+    // Every non-object encoding is rejected at the engine seam: the rule set
+    // rules object fields, so a document that is not an object cannot
+    // satisfy any of them and must not slip past the evaluator.
+    let non_object: Vec<(&str, DocumentValue)> = vec![
+        ("null", DocumentValue::Null),
+        ("boolean", DocumentValue::Boolean(true)),
+        ("integer", DocumentValue::Integer(7)),
+        ("number", DocumentValue::Number(1.5)),
+        ("text", DocumentValue::String("not an object".to_owned())),
+        ("array", DocumentValue::Array(vec![DocumentValue::Integer(7)])),
+    ];
+    for (name, value) in non_object {
+        assert_eq!(
+            stage_put(&engine, "tenant-a", "reject-non-object", "doc-1", "users", value),
+            Err(EngineError::InvalidDocument),
+            "{name} is not an object document"
+        );
+    }
+
+    // The same encodings stay legal where no schema is declared: the
+    // document model carries any structured value, and only a schema'd
+    // collection rejects non-object documents.
+    assert!(
+        stage_put(
+            &engine,
+            "tenant-a",
+            "free-integer",
+            "free-1",
+            "archive",
+            DocumentValue::Integer(7)
+        )
+        .is_ok()
+    );
+    assert!(
+        stage_put(&engine, "tenant-a", "free-text", "free-2", "archive", DocumentValue::Null)
+            .is_ok()
+    );
+
+    // A non-object document stored before adoption reports the typed
+    // document-level violation on demand: one violation, an empty field
+    // name, and the document's own kind.
+    assert!(
+        stage_put(
+            &engine,
+            "tenant-a",
+            "legacy-put",
+            "legacy-1",
+            "legacy",
+            DocumentValue::Integer(7)
+        )
+        .is_ok()
+    );
+    declare_schema(
+        &engine,
+        "tenant-a",
+        "declare-legacy",
+        "legacy",
+        Some(
+            &SchemaDefinition::try_new(
+                SchemaVersion::try_new(1).expect("valid version"),
+                vec![SchemaRule::Required { field: "email".to_owned() }],
+            )
+            .expect("valid schema"),
+        ),
+    );
+    let report = read_validation_with_document(&engine, "tenant-a", "legacy", "legacy-1");
+    assert_eq!(report.enforced_version().map(SchemaVersion::get), Some(1));
+    assert_eq!(
+        report.violations(),
+        &[SchemaViolation::new(String::new(), ViolationKind::DocumentNotObject)]
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+/// Reads one collection's on-demand report for one stored document.
+fn read_validation_with_document(
+    engine: &Engine,
+    tenant_name: &str,
+    collection_name: &str,
+    id: &str,
+) -> ValidationResult {
+    match read_family(
+        engine,
+        tenant_name,
+        FamilyReadRequest::validation(
+            ValidationRead::try_new(
+                collection(collection_name),
+                Some(document_id(id)),
+                deadline(),
+                cancellation(),
+            )
+            .expect("valid validation read"),
+        ),
+    )
+    .expect("reads the on-demand report")
+    {
+        FamilyReadResult::Validation(result) => result,
+        other => panic!("expected a validation result, got {other:?}"),
+    }
+}
+
+#[test]
+fn validation_policy_rejects_duplicated_enum_values_and_inert_bounds() {
+    let (_dir, engine) = open_engine("sm02-inert-rules");
+
+    // An accepted-value set names distinct values: a repeated value carries
+    // no additional constraint and hides a declaration mistake.
+    let duplicated_enum = SchemaDefinition::try_new(
+        SchemaVersion::try_new(1).expect("valid version"),
+        vec![SchemaRule::EnumValues {
+            field: "role".to_owned(),
+            values: vec!["reader".to_owned(), "writer".to_owned(), "reader".to_owned()],
+        }],
+    )
+    .expect("structurally valid");
+    assert_eq!(
+        try_declare_schema(&engine, "tenant-a", "duplicated-enum", "users", &duplicated_enum),
+        Err(FamilyError::ValidationPolicyMalformed),
+        "a duplicated enum value is a malformed policy"
+    );
+
+    // A range bound can never bind a text-typed field, and a length bound
+    // can never bind a numeric-typed field: the evaluator would never fire
+    // them, so the declaration is rejected instead of staged as inert.
+    let inert_range = SchemaDefinition::try_new(
+        SchemaVersion::try_new(1).expect("valid version"),
+        vec![
+            SchemaRule::FieldType { field: "name".to_owned(), kind: SchemaFieldType::Text },
+            SchemaRule::NumberRange { field: "name".to_owned(), min: Some(0), max: Some(10) },
+        ],
+    )
+    .expect("structurally valid");
+    assert_eq!(
+        try_declare_schema(&engine, "tenant-a", "inert-range", "users", &inert_range),
+        Err(FamilyError::ValidationPolicyMalformed),
+        "a numeric bound on a text field is a malformed policy"
+    );
+
+    let inert_length = SchemaDefinition::try_new(
+        SchemaVersion::try_new(1).expect("valid version"),
+        vec![
+            SchemaRule::FieldType { field: "age".to_owned(), kind: SchemaFieldType::Integer },
+            SchemaRule::TextLength { field: "age".to_owned(), min: Some(1), max: Some(80) },
+        ],
+    )
+    .expect("structurally valid");
+    assert_eq!(
+        try_declare_schema(&engine, "tenant-a", "inert-length", "users", &inert_length),
+        Err(FamilyError::ValidationPolicyMalformed),
+        "a length bound on an integer field is a malformed policy"
+    );
+
+    // Nothing was staged: every rejected declaration left its collection
+    // schema-free.
+    assert!(read_validation(&engine, "tenant-a", "users").policy().is_none());
+
+    // The matching pairs stay declarable: bounds on their own type, and
+    // bounds on a field with no declared type at all.
+    let binding = SchemaDefinition::try_new(
+        SchemaVersion::try_new(1).expect("valid version"),
+        vec![
+            SchemaRule::FieldType { field: "age".to_owned(), kind: SchemaFieldType::Integer },
+            SchemaRule::NumberRange { field: "age".to_owned(), min: Some(0), max: Some(130) },
+            SchemaRule::FieldType { field: "name".to_owned(), kind: SchemaFieldType::Text },
+            SchemaRule::TextLength { field: "name".to_owned(), min: Some(1), max: Some(80) },
+            SchemaRule::EnumValues {
+                field: "role".to_owned(),
+                values: vec!["reader".to_owned(), "writer".to_owned()],
+            },
+            SchemaRule::TextLength { field: "note".to_owned(), min: Some(1), max: Some(80) },
+        ],
+    )
+    .expect("valid schema");
+    declare_schema(&engine, "tenant-a", "binding-rules", "users", Some(&binding));
+    let staged = read_validation(&engine, "tenant-a", "users");
+    assert_eq!(staged.enforced_version().map(SchemaVersion::get), Some(1));
+    assert_eq!(staged.policy().expect("staged policy").rules().len(), 6);
+    engine.shutdown().expect("shuts down");
+}
+
+/// Stages one schema declaration and returns the typed staging result.
+fn try_declare_schema(
+    engine: &Engine,
+    tenant_name: &str,
+    operation_name: &str,
+    collection_name: &str,
+    schema: &SchemaDefinition,
+) -> Result<(), FamilyError> {
+    let collection = collection(collection_name);
+    let mut staged = Ok(());
+    commit_transaction(
+        engine,
+        tenant_name,
+        operation_name,
+        |store, transaction, tenant_scope, identity| {
+            staged = store.stage(
+                transaction,
+                FamilyWriteRequest::schema_validation_update(
+                    ValidationWrite::try_new(
+                        tenant_scope.clone(),
+                        collection.clone(),
+                        Some(schema.clone()),
+                        operation(identity.as_str()),
+                        deadline(),
+                        cancellation(),
+                    )
+                    .expect("valid validation write"),
+                ),
+            );
+        },
+    );
+    staged
 }

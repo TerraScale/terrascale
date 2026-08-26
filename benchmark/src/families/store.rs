@@ -23,16 +23,16 @@ use super::payloads::{
     CounterGroupResult, CounterOperation, CounterRead, IdentityCommand, IdentityEntry,
     IdentityRangeResult, IdentityRead, IdentityWrite, LifecycleCommand, LifecycleRead,
     LifecycleResult, LifecycleWrite, MAX_IDENTITY_VALUE, RevisionCommand, RevisionEntry,
-    RevisionPage, RevisionRead, RevisionWrite, RollupPolicy, SchemaDefinition, SchemaFieldType,
-    SchemaRule, SchemaViolation, TimeSeriesAppend, TimeSeriesBatchWrite, TimeSeriesDelete,
-    TimeSeriesEntry, TimeSeriesPage, TimeSeriesPolicy, TimeSeriesRead, TombstoneCommand,
-    TombstoneEntry, TombstoneRead, TombstoneResult, TombstoneWrite, ValidationRead,
-    ValidationResult, ValidationWrite, ViolationKind,
+    RevisionPage, RevisionRead, RevisionWrite, RollupPolicy, SchemaDefinition, TimeSeriesAppend,
+    TimeSeriesBatchWrite, TimeSeriesDelete, TimeSeriesEntry, TimeSeriesPage, TimeSeriesPolicy,
+    TimeSeriesRead, TombstoneCommand, TombstoneEntry, TombstoneRead, TombstoneResult,
+    TombstoneWrite, ValidationRead, ValidationResult, ValidationWrite,
 };
+use super::schemas::{validate_schema, violations};
 use super::state::{
     ArchivalRecord, AttachmentEntry as StoredAttachment, AttachmentRecord, CompareExchangeRecord,
-    CounterRecord, IdentityRecord, LifecycleRecord, Records, RevisionRecord, TimeSeriesRecord,
-    TombstoneRecord, ValidationRecord, family_key, now_millis, record_id,
+    CounterRecord, IdentityRecord, LifecycleRecord, RESERVED_COLLECTION, Records, RevisionRecord,
+    TimeSeriesRecord, TombstoneRecord, ValidationRecord, family_key, now_millis, record_id,
 };
 use super::{FamilyError, FamilyKind, FamilyReadRequest, FamilyReadResult, FamilyWriteRequest};
 
@@ -228,108 +228,6 @@ fn configured_schema(
         None => Ok(None),
         Some(value) => Ok(Some(ValidationRecord::decode(&value)?.schema)),
     }
-}
-
-/// Reports whether one logical type matches one document value.
-fn type_matches(kind: SchemaFieldType, value: &DocumentValue) -> bool {
-    matches!(
-        (kind, value),
-        (SchemaFieldType::Boolean, DocumentValue::Boolean(_))
-            | (SchemaFieldType::Integer | SchemaFieldType::Number, DocumentValue::Integer(_))
-            | (SchemaFieldType::Number, DocumentValue::Number(_))
-            | (SchemaFieldType::Text, DocumentValue::String(_))
-            | (SchemaFieldType::Object, DocumentValue::Object(_))
-            | (SchemaFieldType::Array, DocumentValue::Array(_))
-    )
-}
-
-/// Converts one integer policy bound into the float domain.
-///
-/// A bound beyond 2^53 rounds, which can only blur a comparison at the very
-/// edge of the integer range; rule bounds sit far below that in practice.
-#[allow(clippy::cast_precision_loss)]
-fn float_bound(bound: i64) -> f64 {
-    bound as f64
-}
-
-/// Computes the policy violations of one document value.
-fn violations(schema: &SchemaDefinition, value: &DocumentValue) -> Vec<SchemaViolation> {
-    let DocumentValue::Object(fields) = value else {
-        return Vec::new();
-    };
-    let mut found = Vec::new();
-    for rule in schema.rules() {
-        let field = rule.field();
-        let present = fields.get(field);
-        match rule {
-            SchemaRule::Required { field } => {
-                if present.is_none() {
-                    found.push(SchemaViolation::new(
-                        field.clone(),
-                        ViolationKind::MissingRequiredField,
-                    ));
-                }
-            }
-            SchemaRule::FieldType { field, kind } => {
-                if let Some(value) = present
-                    && !type_matches(*kind, value)
-                {
-                    found.push(SchemaViolation::new(field.clone(), ViolationKind::TypeMismatch));
-                }
-            }
-            SchemaRule::EnumValues { field, values } => {
-                if let Some(value) = present {
-                    let allowed = match value {
-                        DocumentValue::String(text) => values.contains(text),
-                        _ => false,
-                    };
-                    if !allowed {
-                        found.push(SchemaViolation::new(
-                            field.clone(),
-                            ViolationKind::ValueNotAllowed,
-                        ));
-                    }
-                }
-            }
-            SchemaRule::NumberRange { field, min, max } => {
-                // The bound applies to every numeric encoding the type rule
-                // admits: the integer and the float domain alike.
-                if let Some(value) = present {
-                    let out_of_range = match value {
-                        DocumentValue::Integer(number) => {
-                            min.is_some_and(|bound| *number < bound)
-                                || max.is_some_and(|bound| *number > bound)
-                        }
-                        DocumentValue::Number(number) => {
-                            min.is_some_and(|bound| *number < float_bound(bound))
-                                || max.is_some_and(|bound| *number > float_bound(bound))
-                        }
-                        _ => false,
-                    };
-                    if out_of_range {
-                        found.push(SchemaViolation::new(
-                            field.clone(),
-                            ViolationKind::NumberOutOfRange,
-                        ));
-                    }
-                }
-            }
-            SchemaRule::TextLength { field, min, max } => {
-                if let Some(DocumentValue::String(text)) = present {
-                    let length = u64::try_from(text.chars().count()).unwrap_or(u64::MAX);
-                    let below = min.is_some_and(|bound| length < bound);
-                    let above = max.is_some_and(|bound| length > bound);
-                    if below || above {
-                        found.push(SchemaViolation::new(
-                            field.clone(),
-                            ViolationKind::LengthOutOfRange,
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    found
 }
 
 /// Writes one record, or clears it when it holds no state.
@@ -951,47 +849,33 @@ fn validation_read(
     Ok(ValidationResult::new(collection, policy, found))
 }
 
-/// Validates one policy semantically before it is staged.
-fn validate_schema(schema: &SchemaDefinition) -> Result<(), FamilyError> {
-    let mut keys: Vec<String> = Vec::new();
-    for rule in schema.rules() {
-        let kind = match rule {
-            SchemaRule::Required { .. } => "required",
-            SchemaRule::FieldType { .. } => "field-type",
-            SchemaRule::EnumValues { .. } => "enum",
-            SchemaRule::NumberRange { .. } => "number-range",
-            SchemaRule::TextLength { .. } => "text-length",
-        };
-        keys.push(format!("{}/{}", rule.field(), kind));
-        match rule {
-            SchemaRule::NumberRange { min: Some(min), max: Some(max), .. } if min > max => {
-                return Err(FamilyError::ValidationPolicyMalformed);
-            }
-            SchemaRule::TextLength { min: Some(min), max: Some(max), .. } if min > max => {
-                return Err(FamilyError::ValidationPolicyMalformed);
-            }
-            SchemaRule::EnumValues { values, .. } if values.is_empty() => {
-                return Err(FamilyError::ValidationPolicyMalformed);
-            }
-            _ => {}
-        }
-    }
-    keys.sort();
-    if keys.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err(FamilyError::ValidationPolicyMalformed);
-    }
-    Ok(())
-}
-
+/// Stages one schema declaration or clear for one collection.
+///
+/// A declaration is refused on the reserved family collection (family state
+/// is engine state, and a schema on the schema store itself would gate its
+/// own bootstrap), and a recorded schema evolves only forward: the same
+/// version with the same rules restates idempotently, a greater version
+/// declares the next schema, and anything else conflicts with the recorded
+/// version. The read observes the transaction's staged writes, so two
+/// declarations inside one transaction check against each other.
 fn validation_stage(
     records: &mut Records<'_, '_>,
     write: &ValidationWrite,
 ) -> Result<(), FamilyError> {
+    if write.collection().as_str() == RESERVED_COLLECTION {
+        return Err(FamilyError::InvalidRequest);
+    }
     let id = record_id("validation", &[write.collection().as_str()])?;
     match write.schema() {
         None => records.clear(&id),
         Some(schema) => {
             validate_schema(schema)?;
+            if let Some(recorded) = configured_schema(records, write.collection())? {
+                let evolves = schema.version() > recorded.version() || *schema == recorded;
+                if !evolves {
+                    return Err(FamilyError::Conflict);
+                }
+            }
             let record = ValidationRecord { schema: schema.clone() };
             records.write(id, record.encode())
         }
