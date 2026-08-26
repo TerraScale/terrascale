@@ -1,0 +1,376 @@
+//! Lowering the typed TQL AST onto the W3-2 typed compile seam.
+//!
+//! Lowering is exact or fails closed: every construct the current seam cannot
+//! express without changing results is rejected with
+//! [`TqlErrorClass::UnsupportedForPlanning`] naming the construct and its
+//! position. The lowerable surface today is the seam's own grammar: one user
+//! collection (aliased or not), a flat conjunction of top-level field
+//! comparisons and presence tests against literals or bound parameters, an
+//! ordering over top-level fields whose explicit nulls placement agrees with
+//! the seam's total document order, a top-level field projection without
+//! renaming, and the page bounds. Everything else in `tql/1.0` parses and
+//! checks, then fails closed here until the seam gains the shapes ADR 0009
+//! lists for it; that extension belongs to the seam owner, not this packet.
+
+use super::{
+    TqlError, TqlErrorClass, TqlParameters,
+    ast::{
+        BinaryOperator, Direction, Expression, ExpressionKind, Literal, LogicalOperator,
+        NullsOrder, PageBound, PageBoundKind, PathRoot, PathSegment, ProjectionKind, SourceKind,
+        TqlPath, TqlQuery,
+    },
+};
+use crate::query::spec::{
+    OrderDirection, OrderingKey, QueryCondition, QueryOrdering, QueryPaging, QueryPredicate,
+    QueryProjection, QuerySource, StalenessMode, StalenessPolicy,
+};
+use crate::query::{QueryInput, QueryPlan, QuerySpec, QueryStore};
+use crate::types::{Cancellation, CollectionName, Deadline, DocumentValue, TenantId};
+
+/// Lowers one checked TQL query into a typed query specification.
+///
+/// The specification is the seam's own input form, so the result compiles and
+/// executes exactly like a hand-built typed query; execution parity is proved
+/// against that equivalence. The tenant claim, deadline, and cancellation are
+/// request context the TQL grammar does not carry and the caller supplies.
+///
+/// # Errors
+///
+/// Returns [`TqlErrorClass::UnsupportedForPlanning`] for a construct the seam
+/// cannot express exactly, [`TqlErrorClass::InvalidIdentifier`] for a name
+/// the seam's identifier discipline rejects, and
+/// [`TqlErrorClass::InvalidRequest`] for an invalid request context.
+pub fn lower_to_spec(
+    query: &TqlQuery,
+    parameters: &TqlParameters,
+    tenant_claim: TenantId,
+    deadline: Deadline,
+    cancellation: Cancellation,
+) -> Result<QuerySpec, TqlError> {
+    lower_inner(query, parameters, tenant_claim, deadline, cancellation)
+        .map_err(|error| error.with_version(query.grammar_version))
+}
+
+/// The lowering body; the public entry attaches the artifact version to
+/// every failure, as Section 5.2 of the specification requires.
+fn lower_inner(
+    query: &TqlQuery,
+    parameters: &TqlParameters,
+    tenant_claim: TenantId,
+    deadline: Deadline,
+    cancellation: Cancellation,
+) -> Result<QuerySpec, TqlError> {
+    let source_alias = query.source.alias.as_deref();
+    let source = lower_source(query)?;
+    if let Some(load) = query.loads.first() {
+        return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "load", load.span));
+    }
+    if let Some(key) = query.grouping.first() {
+        return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "group by", key.span));
+    }
+    if let Some(include) = query.includes.first() {
+        return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "include", include.span));
+    }
+    let predicate = lower_predicate(query, source_alias, parameters)?;
+    let ordering = lower_ordering(query, source_alias)?;
+    let projection = lower_projection(query, source_alias)?;
+    let paging = lower_paging(query, parameters)?;
+    let staleness = StalenessPolicy::try_new(StalenessMode::Strict, Vec::new())
+        .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, query.span))?;
+    QuerySpec::try_new(
+        tenant_claim,
+        source,
+        predicate,
+        ordering,
+        projection,
+        paging,
+        staleness,
+        deadline,
+        cancellation,
+    )
+    .map_err(|_| TqlError::plain(TqlErrorClass::InvalidRequest, query.span))
+}
+
+/// Lowers and compiles one checked TQL query through the one compile seam.
+///
+/// # Errors
+///
+/// Returns the lowering errors of [`lower_to_spec`] plus
+/// [`TqlErrorClass::InvalidRequest`] when the seam rejects the compiled
+/// specification.
+pub fn compile(
+    store: &QueryStore<'_>,
+    query: &TqlQuery,
+    parameters: &TqlParameters,
+    tenant_claim: TenantId,
+    deadline: Deadline,
+    cancellation: Cancellation,
+) -> Result<QueryPlan, TqlError> {
+    let spec = lower_to_spec(query, parameters, tenant_claim, deadline, cancellation)?;
+    store.compile(QueryInput::typed(spec)).map_err(|_| {
+        TqlError::plain(TqlErrorClass::InvalidRequest, query.span)
+            .with_version(query.grammar_version)
+    })
+}
+
+/// Lowers the source clause; `@all_docs` is beyond the seam's
+/// single-collection source.
+fn lower_source(query: &TqlQuery) -> Result<QuerySource, TqlError> {
+    let SourceKind::Collection(name) = &query.source.kind else {
+        return Err(TqlError::at(
+            TqlErrorClass::UnsupportedForPlanning,
+            "@all_docs",
+            query.source.span,
+        ));
+    };
+    let collection = CollectionName::try_new(name)
+        .map_err(|_| TqlError::at(TqlErrorClass::InvalidIdentifier, name, query.source.span))?;
+    QuerySource::try_new(collection)
+        .map_err(|_| TqlError::at(TqlErrorClass::InvalidIdentifier, name, query.source.span))
+}
+
+/// Lowers the filter into the seam's condition conjunction.
+fn lower_predicate(
+    query: &TqlQuery,
+    source_alias: Option<&str>,
+    parameters: &TqlParameters,
+) -> Result<QueryPredicate, TqlError> {
+    let Some(filter) = &query.filter else {
+        return QueryPredicate::all(Vec::new())
+            .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, query.span));
+    };
+    let mut conjuncts = Vec::new();
+    flatten_and(filter, &mut conjuncts);
+    let mut conditions = Vec::new();
+    for conjunct in conjuncts {
+        conditions.push(lower_condition(conjunct, source_alias, parameters)?);
+    }
+    QueryPredicate::all(conditions)
+        .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, filter.span))
+}
+
+/// Flattens one `and` tree into its conjuncts.
+fn flatten_and<'expression>(
+    expression: &'expression Expression,
+    conjuncts: &mut Vec<&'expression Expression>,
+) {
+    match &expression.kind {
+        ExpressionKind::Logical { op: LogicalOperator::And, operands } => {
+            for operand in operands {
+                flatten_and(operand, conjuncts);
+            }
+        }
+        _ => conjuncts.push(expression),
+    }
+}
+
+/// Lowers one conjunct into one seam condition.
+fn lower_condition(
+    conjunct: &Expression,
+    source_alias: Option<&str>,
+    parameters: &TqlParameters,
+) -> Result<QueryCondition, TqlError> {
+    match &conjunct.kind {
+        ExpressionKind::Binary { op, left, right } => {
+            let field =
+                simple_field(left, source_alias).ok_or_else(|| unsupported_expression(left))?;
+            let value = literal_or_bound(right, parameters)?;
+            let condition = match op {
+                BinaryOperator::Equals => QueryCondition::Equals { field, value },
+                BinaryOperator::NotEquals => QueryCondition::NotEquals { field, value },
+                BinaryOperator::Less => QueryCondition::LessThan { field, value },
+                BinaryOperator::LessOrEqual => QueryCondition::LessOrEqual { field, value },
+                BinaryOperator::Greater => QueryCondition::GreaterThan { field, value },
+                BinaryOperator::GreaterOrEqual => QueryCondition::GreaterOrEqual { field, value },
+                BinaryOperator::Add
+                | BinaryOperator::Subtract
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide
+                | BinaryOperator::Modulo => {
+                    return Err(TqlError::at(
+                        TqlErrorClass::UnsupportedForPlanning,
+                        "arithmetic",
+                        conjunct.span,
+                    ));
+                }
+            };
+            Ok(condition)
+        }
+        ExpressionKind::Call(call) if call.name == "exists" || call.name == "missing" => {
+            let argument = call.args.first().ok_or_else(|| {
+                TqlError::at(TqlErrorClass::UnsupportedForPlanning, "call", conjunct.span)
+            })?;
+            let field = simple_field(argument, source_alias)
+                .ok_or_else(|| unsupported_expression(argument))?;
+            Ok(if call.name == "exists" {
+                QueryCondition::Exists { field }
+            } else {
+                QueryCondition::Missing { field }
+            })
+        }
+        _ => Err(unsupported_expression(conjunct)),
+    }
+}
+
+/// Resolves one expression to the seam's top-level field form: a bare member
+/// path, or one member under the source alias. Metadata roots, navigation
+/// segments, and non-path expressions have no seam field.
+fn simple_field(expression: &Expression, source_alias: Option<&str>) -> Option<String> {
+    let ExpressionKind::Path(TqlPath { root, segments, .. }) = &expression.kind else {
+        return None;
+    };
+    let PathRoot::Member(name) = root else {
+        return None;
+    };
+    match segments.as_slice() {
+        [] if Some(name.as_str()) != source_alias => Some(name.clone()),
+        [PathSegment::Member(field)] if Some(name.as_str()) == source_alias => Some(field.clone()),
+        _ => None,
+    }
+}
+
+/// Builds the unsupported error for one expression, naming its construct.
+fn unsupported_expression(expression: &Expression) -> TqlError {
+    let construct = match &expression.kind {
+        ExpressionKind::Logical { op: LogicalOperator::Or, .. } => "or",
+        ExpressionKind::Logical { .. } => "and",
+        ExpressionKind::Not { .. } => "not",
+        ExpressionKind::Between { .. } => "between",
+        ExpressionKind::In { .. } => "in",
+        ExpressionKind::Unary { .. } => "unary",
+        ExpressionKind::Binary { op, .. } => match op {
+            BinaryOperator::Add
+            | BinaryOperator::Subtract
+            | BinaryOperator::Multiply
+            | BinaryOperator::Divide
+            | BinaryOperator::Modulo => "arithmetic",
+            _ => "comparison",
+        },
+        ExpressionKind::Call(_) => "call",
+        ExpressionKind::ObjectCtor { .. } => "object constructor",
+        ExpressionKind::ArrayCtor { .. } => "array constructor",
+        ExpressionKind::Path(path) => match path.root {
+            PathRoot::Metadata(_) => "metadata",
+            PathRoot::Member(_) => "path",
+        },
+        ExpressionKind::Literal(_) | ExpressionKind::ParameterRef(_) => "literal",
+    };
+    TqlError::at(TqlErrorClass::UnsupportedForPlanning, construct, expression.span)
+}
+
+/// Resolves one comparison's right-hand side: a literal, or a bound
+/// parameter's value.
+fn literal_or_bound(
+    expression: &Expression,
+    parameters: &TqlParameters,
+) -> Result<DocumentValue, TqlError> {
+    match &expression.kind {
+        ExpressionKind::Literal(literal) => Ok(match literal {
+            Literal::Null => DocumentValue::Null,
+            Literal::Boolean(value) => DocumentValue::Boolean(*value),
+            Literal::Integer(value) => DocumentValue::Integer(*value),
+            Literal::Number(value) => DocumentValue::Number(*value),
+            Literal::String(value) => DocumentValue::String(value.clone()),
+        }),
+        ExpressionKind::ParameterRef(name) => parameters
+            .get(name)
+            .cloned()
+            .ok_or_else(|| TqlError::binding(TqlErrorClass::UnboundParameter, name)),
+        _ => Err(unsupported_expression(expression)),
+    }
+}
+
+/// Lowers the ordering keys and their explicit nulls placement.
+fn lower_ordering(query: &TqlQuery, source_alias: Option<&str>) -> Result<QueryOrdering, TqlError> {
+    let mut keys = Vec::new();
+    for key in &query.ordering {
+        let field = simple_field(&key.expr, source_alias)
+            .ok_or_else(|| unsupported_expression(&key.expr))?;
+        let direction = match key.direction {
+            None | Some(Direction::Ascending) => OrderDirection::Ascending,
+            Some(Direction::Descending) => OrderDirection::Descending,
+        };
+        // The seam's total document order sorts missing and null first and
+        // reverses wholesale under descending, so `asc nulls first` and
+        // `desc nulls last` are the exact spellings and any other explicit
+        // placement has no seam plan.
+        let placement_agrees = match key.nulls {
+            None => true,
+            Some(NullsOrder::First) => direction == OrderDirection::Ascending,
+            Some(NullsOrder::Last) => direction == OrderDirection::Descending,
+        };
+        if !placement_agrees {
+            return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "nulls", key.span));
+        }
+        let ordering_key = OrderingKey::try_new(&field, direction)
+            .map_err(|_| TqlError::at(TqlErrorClass::InvalidIdentifier, &field, key.span))?;
+        keys.push(ordering_key);
+    }
+    QueryOrdering::try_new(keys)
+        .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, query.span))
+}
+
+/// Lowers the projection: the whole document, or a top-level field subset
+/// without renaming.
+fn lower_projection(
+    query: &TqlQuery,
+    source_alias: Option<&str>,
+) -> Result<QueryProjection, TqlError> {
+    if query.projection.distinct {
+        return Err(TqlError::at(
+            TqlErrorClass::UnsupportedForPlanning,
+            "distinct",
+            query.projection.span,
+        ));
+    }
+    match &query.projection.kind {
+        ProjectionKind::WholeDocument => Ok(QueryProjection::whole_document()),
+        ProjectionKind::Items(items) => {
+            let mut names: Vec<String> = Vec::new();
+            for item in items {
+                if item.alias.is_some() {
+                    return Err(TqlError::at(
+                        TqlErrorClass::UnsupportedForPlanning,
+                        "alias",
+                        item.span,
+                    ));
+                }
+                let field = simple_field(&item.expr, source_alias)
+                    .ok_or_else(|| unsupported_expression(&item.expr))?;
+                names.push(field);
+            }
+            let borrowed: Vec<&str> = names.iter().map(String::as_str).collect();
+            QueryProjection::fields(&borrowed)
+                .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, query.span))
+        }
+    }
+}
+
+/// Lowers the page bounds; parameter bounds resolve through their bindings.
+fn lower_paging(query: &TqlQuery, parameters: &TqlParameters) -> Result<QueryPaging, TqlError> {
+    let bound = |page: &Option<PageBound>| -> Result<Option<u64>, TqlError> {
+        match page {
+            None => Ok(None),
+            Some(bound) => match &bound.kind {
+                PageBoundKind::Literal(value) => Ok(Some(*value)),
+                PageBoundKind::Parameter(name) => match parameters.get(name) {
+                    Some(DocumentValue::Integer(value)) if *value >= 0 => {
+                        Ok(u64::try_from(*value).ok())
+                    }
+                    _ => Err(TqlError::at(TqlErrorClass::InvalidBound, name, bound.span)),
+                },
+            },
+        }
+    };
+    let offset = bound(&query.paging.offset)?.unwrap_or(0);
+    let limit = match bound(&query.paging.limit)? {
+        None => None,
+        Some(value) => Some(
+            u32::try_from(value)
+                .ok()
+                .ok_or_else(|| TqlError::plain(TqlErrorClass::InvalidBound, query.paging.span))?,
+        ),
+    };
+    QueryPaging::try_new(offset, limit)
+        .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, query.span))
+}

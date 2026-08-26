@@ -20,6 +20,8 @@ mod result;
 mod spec;
 mod v1;
 
+pub mod tql;
+
 #[cfg(test)]
 mod tests;
 
