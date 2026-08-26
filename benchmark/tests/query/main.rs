@@ -4,3 +4,5 @@
 //! focused files in this directory are declared as modules here.
 
 mod query_public_construction;
+mod tql_golden_vectors;
+mod tql_public;
