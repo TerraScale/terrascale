@@ -59,7 +59,8 @@ impl From<IndexError> for ShardIndexError {
             | IndexError::NoPublicationObserved
             | IndexError::GenerationExhausted
             | IndexError::StorageFailure
-            | IndexError::AutoIdentityMismatch => Self::Other,
+            | IndexError::AutoIdentityMismatch
+            | IndexError::AutoRegistryFull => Self::Other,
         }
     }
 }

@@ -6,8 +6,8 @@
 //! the canonical shard identities, the explicit bucket move, and
 //! deterministic routing to the owning Member at its ownership epoch.
 //!
-//! Non-claims held here: no migration streaming exists (SH-03), no sharded
-//! query fan-out (SH-04), no failover qualification (SH-05), and no
+//! Non-claims held here: no migration streaming exists (SH-03), no
+//! failover qualification (SH-05), and no
 //! performance fact is asserted.
 
 use terrabase_v2::sharding::{
