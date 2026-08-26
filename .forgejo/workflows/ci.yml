@@ -1,6 +1,7 @@
 name: TerraScale delivery
 
 on:
+  workflow_dispatch:
   pull_request:
     branches: [develop, main]
   push:
@@ -12,7 +13,6 @@ concurrency:
 
 env:
   TERRASCALE_TOOLBOX_REVISION: "2026.07.1"
-  TERRASCALE_DEPLOY_CLI_VERSION: ${{ needs.bootstrap.outputs.version }}
   REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
   FORGEJO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
   TERRASCALE_API_BASE_URL: ${{ vars.TERRASCALE_API_BASE_URL }}
@@ -20,6 +20,7 @@ env:
 
 jobs:
   bootstrap:
+    timeout-minutes: 30
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     outputs:
@@ -35,32 +36,35 @@ jobs:
           dotnet nuget add source https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json --name terrascale --username forgejo-actions --password "${REGISTRY_TOKEN}" --store-password-in-clear-text --configfile "${config}/nuget.config" >/dev/null
           dotnet tool install TerraScale.Deploy.Cli --tool-path .tools --configfile "${config}/nuget.config"
           .tools/terrascale-deploy ci resolve-cli
-      - uses: https://data.forgejo.org/actions/upload-artifact@v3
+      - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with: { name: deploy-cli, path: .tools }
 
   pr-policy:
     name: pr/policy
     if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'develop' }}
+    timeout-minutes: 30
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     needs: bootstrap
     steps:
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: deploy-cli, path: .tools }
       - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci policy
 
   release-policy:
     name: release/policy
     if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' }}
+    timeout-minutes: 30
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     needs: bootstrap
     steps:
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: deploy-cli, path: .tools }
       - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci policy
 
   plan:
+    timeout-minutes: 30
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     needs: bootstrap
@@ -69,9 +73,9 @@ jobs:
       build_matrix: ${{ steps.plan.outputs.build_matrix }}
       tree: ${{ steps.plan.outputs.tree }}
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: deploy-cli, path: .tools }
       - id: plan
         run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci plan --repository-root . --output artifacts/plan.json
@@ -83,9 +87,9 @@ jobs:
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech" }
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: deploy-cli, path: .tools }
       - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci pr --repository-root . --profile static
 
@@ -96,9 +100,9 @@ jobs:
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech" }
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: deploy-cli, path: .tools }
       - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci pr --repository-root . --profile build
 
@@ -112,16 +116,16 @@ jobs:
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: deploy-cli, path: .tools }
       - run: |
           chmod +x .tools/terrascale-deploy
           mkdir -p artifacts/candidate/test-results
           .tools/terrascale-deploy ci release-test --repository-root . --profile "${{ matrix.profile }}" --result artifacts/candidate/test-results/release-e2e.test-result.json
       # upload-artifact@v3 receives one concrete file under one concrete artifact name.
-      - uses: https://data.forgejo.org/actions/upload-artifact@v3
+      - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with: { name: release-test-result-release-e2e, path: artifacts/candidate/test-results/release-e2e.test-result.json, if-no-files-found: error }
 
   release-artifacts:
@@ -134,16 +138,16 @@ jobs:
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: deploy-cli, path: .tools }
       - run: |
           chmod +x .tools/terrascale-deploy
           npm run build
           .tools/terrascale-deploy ci build-candidate --repository-root . --target "${{ matrix.profile }}"
           npm run candidate:stage
-      - uses: https://data.forgejo.org/actions/upload-artifact@v3
+      - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with: { name: candidate-pages, path: artifacts/candidate, if-no-files-found: error }
 
   candidate:
@@ -152,14 +156,14 @@ jobs:
     runs-on: terrascale-builder
     container: { image: "terrascale-builder:2026.07.1" }
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: deploy-cli, path: .tools }
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: candidate-pages, path: artifacts/candidate }
       # download-artifact@v3 selects the concrete name and writes it to this exact directory; no glob contract is used.
-      - uses: https://data.forgejo.org/actions/download-artifact@v3
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: release-test-result-release-e2e, path: artifacts/candidate/test-results }
       - run: |
           chmod +x .tools/terrascale-deploy
