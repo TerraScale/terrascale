@@ -23,6 +23,17 @@ jobs:
     steps:
       - run: dotnet --version
 
+  probe-tiny-creds:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    container:
+      image: git.terrascale.tech/terrascale/probe:tiny
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
+    steps:
+      - run: echo tiny-pull-ok
+
   probe-bootstrap-full:
     runs-on: terrascale-builder
     timeout-minutes: 15
