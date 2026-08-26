@@ -11,14 +11,18 @@ concurrency:
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
 env:
-  TERRASCALE_TOOLBOX_REVISION: "2026.07.1"
+  TERRASCALE_TOOLBOX_REVISION: "2026.08.26"
 
 jobs:
   bootstrap:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     timeout-minutes: 30
     runs-on: terrascale-builder
-    container: { image: "terrascale-builder:2026.07.1" }
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     outputs:
       version: ${{ steps.cli.outputs.version }}
     steps:
@@ -42,7 +46,11 @@ jobs:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     timeout-minutes: 30
     runs-on: terrascale-builder
-    container: { image: "terrascale-builder:2026.07.1" }
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     needs: bootstrap
     outputs:
       test_matrix: ${{ steps.plan.outputs.test_matrix }}
@@ -60,7 +68,11 @@ jobs:
     name: pr/static
     if: ${{ forgejo.event_name == 'pull_request' }}
     runs-on: terrascale-builder
-    container: { image: "terrascale-builder:2026.07.1" }
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -79,7 +91,11 @@ jobs:
     name: pr/build
     if: ${{ forgejo.event_name == 'pull_request' }}
     runs-on: terrascale-builder
-    container: { image: "terrascale-builder:2026.07.1" }
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -126,7 +142,11 @@ jobs:
     name: promotion/admission
     if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' }}
     runs-on: terrascale-builder
-    container: { image: "terrascale-builder:2026.07.1" }
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - run: |
           test "${{ forgejo.base_ref }}" = main
@@ -138,7 +158,11 @@ jobs:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     needs: [bootstrap, plan]
     runs-on: terrascale-builder
-    container: { image: "terrascale-builder:2026.07.1" }
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
@@ -151,7 +175,11 @@ jobs:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     needs: [bootstrap, plan]
     runs-on: terrascale-builder
-    container: { image: "terrascale-builder:2026.07.1" }
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
@@ -174,7 +202,11 @@ jobs:
       fail-fast: true
       matrix: { include: "${{ fromJSON(needs.plan.outputs.build_matrix) }}" }
     runs-on: terrascale-builder
-    container: { image: "terrascale-builder:2026.07.1" }
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
@@ -189,7 +221,11 @@ jobs:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     needs: [bootstrap, plan]
     runs-on: terrascale-builder
-    container: { image: "terrascale-builder:2026.07.1" }
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech" }
@@ -208,7 +244,11 @@ jobs:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     needs: [bootstrap, plan]
     runs-on: terrascale-builder
-    container: { image: "terrascale-builder:2026.07.1" }
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech" }
@@ -220,7 +260,11 @@ jobs:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     needs: [bootstrap, plan, runtime-matrix, browser-matrix, release-tests, release-e2e, release-artifacts, release-contract-fixture, release-version-availability]
     runs-on: terrascale-builder
-    container: { image: "terrascale-builder:2026.07.1" }
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
@@ -240,7 +284,11 @@ jobs:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     needs: [candidate]
     runs-on: terrascale-builder
-    container: { image: "terrascale-builder:2026.07.1" }
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
