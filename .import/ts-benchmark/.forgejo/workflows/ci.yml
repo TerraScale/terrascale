@@ -9,12 +9,12 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: https://data.forgejo.org/actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.97.1
-          components: rustfmt, clippy
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 -c rustfmt -c clippy
+          echo "${HOME}/.cargo/bin" >> "$GITHUB_PATH"
       - name: Format
         run: cargo fmt --all -- --check
       - name: Build
