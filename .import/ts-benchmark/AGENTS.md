@@ -21,6 +21,15 @@ hard-to-reverse decisions.
   Dashboards are Vinext (`studio/`). NATS may carry member transport lanes
   under the Orchestrator NATS spec's separation rules. C# code uses the
   workspace-pinned .NET SDK and `System.Text.Json` only for JSON surfaces.
+- Competitive objective (charter PD-2026-08-26-06): TerraBaseV2 must
+  match and exceed InstantDB and Convex. Every capability both products
+  ship is tracked in a competitive parity matrix (ticket CP-01) with
+  cited competitor evidence, a disposition, an owner, and required
+  proof. Engine rows route to engine waves; backend-platform rows
+  (serverless functions, scheduled jobs/cron, workflow, auth, permission
+  rules) belong to the Platform and control plane — the engine does not
+  grow a functions runtime. "Better than" is proven with receipts under
+  PD-2026-08-26-03, never asserted.
 - Native sync engine (charter PD-2026-08-26-05, ADR 0008): the sync
   engine is a first-class engine subsystem — state machines and delivery
   run in-process in the engine core; the commit-to-delivery hot path has
