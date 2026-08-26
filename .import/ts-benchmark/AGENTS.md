@@ -21,6 +21,15 @@ hard-to-reverse decisions.
   Dashboards are Vinext (`studio/`). NATS may carry member transport lanes
   under the Orchestrator NATS spec's separation rules. C# code uses the
   workspace-pinned .NET SDK and `System.Text.Json` only for JSON surfaces.
+- AI-agent-ready and AI-native (charter PD-2026-08-26-07): agents are
+  first-class principals alongside human developers. Every typed
+  operation this repository adds must be MCP-exposable under the same
+  authorization, tenant isolation, confirmation, and audit rules as
+  human callers — no separate agent API, no raw escape hatch.
+  Agent-native rows (semantic retrieval/vector search, agent streams,
+  idempotent confirmable mutations, agent session/memory patterns) are
+  tracked in the competitive matrix (CP-01) with verified MCP-parity
+  conformance (AI-01).
 - Competitive objective (charter PD-2026-08-26-06): TerraBaseV2 must
   match and exceed InstantDB and Convex. Every capability both products
   ship is tracked in a competitive parity matrix (ticket CP-01) with
