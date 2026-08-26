@@ -8,6 +8,15 @@ row into a conformance vector and every `accepted-difference` row
 into a WS-PARITY disposition proposal for the parent to accept.
 Date: 2026-08-26.
 
+TQL-04 update (2026-08-26): the handoff is delivered. Every row of this
+document (R01..R85) carries a conformance vector; the outcomes, the
+execution-equivalence proof for the seam-expressible subset, and the
+recorded findings live in
+[`docs/tql/rql-conformance.md`](rql-conformance.md), and the WS-PARITY
+disposition proposals in
+[`docs/parity/tql04-ws-parity-proposals.md`](../parity/tql04-ws-parity-proposals.md).
+This mapping's dispositions are unchanged by that work.
+
 Disposition legend:
 
 - **direct** — the capability exists in TQL with the same surface and
