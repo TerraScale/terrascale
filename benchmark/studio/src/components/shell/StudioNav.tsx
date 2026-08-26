@@ -6,9 +6,11 @@ const IMPLEMENTED = [
   { href: "/", label: "Home" },
   { href: "/live", label: "Live view" },
   { href: "/documents", label: "Documents" },
+  { href: "/queries", label: "Queries" },
+  { href: "/queries/indexes", label: "Indexes" },
 ] as const;
 
-const PLANNED = ["Queries", "Indexes", "Families", "Topology"] as const;
+const PLANNED = ["Families", "Topology"] as const;
 
 export function StudioNav() {
   return (
