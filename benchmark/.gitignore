@@ -8,7 +8,10 @@ __pycache__/
 # Local benchmark and recovery output. Published receipts belong under the
 # explicitly reviewed evidence paths, after redaction. The reviewed
 # replication lane receipts under evidence/replication/ are tracked
-# (integrator action W4-CA-12); all other evidence output stays local.
+# (integrator action W4-CA-12); the reviewed BK-01 focused-run recovery
+# receipts under evidence/recovery/ are tracked (integrator action,
+# 2026-08-26); all other evidence output stays local.
 /evidence/*
 !/evidence/replication/
+!/evidence/recovery/
 /benches/results/
