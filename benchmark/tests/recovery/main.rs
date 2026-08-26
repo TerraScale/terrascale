@@ -7,3 +7,4 @@
 mod backup_public_construction;
 mod migration_public_contract;
 mod restore_public;
+mod schedule_public_chain;
