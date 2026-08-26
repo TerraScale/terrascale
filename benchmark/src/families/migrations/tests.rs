@@ -1309,6 +1309,77 @@ fn rollback_restores_a_reversible_migration_and_states_its_limits() {
 }
 
 #[test]
+fn single_page_rollback_restores_documents_the_target_rules_out() {
+    // A rollback that completes in one page — a collection no larger than
+    // `MAX_MIGRATION_PAGE` rolled back straight from the forward drive's
+    // in-progress record — restores documents the migration's target
+    // schema rules out: every document's from-shape lacks the rename's
+    // target-required destination. The restoring puts must be fenced to
+    // the from-version shape, never the target, exactly as the staging
+    // contract states, or the rollback spuriously refuses.
+    let (_dir, engine) = open_engine("rollback-one-page");
+    let users = scope(&engine, "alpha");
+    let first = SchemaDefinition::try_new(
+        version(1),
+        vec![
+            SchemaRule::Required { field: "email".to_owned() },
+            SchemaRule::FieldType { field: "email".to_owned(), kind: SchemaFieldType::Text },
+            SchemaRule::FieldType { field: "nick".to_owned(), kind: SchemaFieldType::Text },
+        ],
+    )
+    .expect("valid schema");
+    declare_schema(&engine, &users, "users", first);
+    for (id, email, nick) in [("ada", "ada@example", "a"), ("linus", "linus@example", "l")] {
+        let outcome = put_document(
+            &engine,
+            &users,
+            id,
+            "users",
+            object(&[("email", text(email)), ("nick", text(nick))]),
+        );
+        assert!(outcome.is_ok(), "the from-version document stages");
+    }
+    let target = SchemaDefinition::try_new(
+        version(2),
+        vec![
+            SchemaRule::Required { field: "email".to_owned() },
+            SchemaRule::Required { field: "nickname".to_owned() },
+            SchemaRule::FieldType { field: "nickname".to_owned(), kind: SchemaFieldType::Text },
+        ],
+    )
+    .expect("valid target");
+    let contract = SchemaMigration::try_new(
+        collection("users"),
+        version(1),
+        version(2),
+        target,
+        vec![FieldTransform::RenameField { from: "nick".to_owned(), to: "nickname".to_owned() }],
+    )
+    .expect("valid contract");
+    let plan = dry_run(&engine, &users, &contract).expect("plan is ready");
+    begin(&engine, &users, &contract, &plan, MigrationOptions::default()).expect("seated");
+    // The whole collection fits one page: the drive sits in-progress with
+    // the scan complete, so the rollback below completes in one page.
+    assert_eq!(apply_page(&engine, &users, &contract, &plan), Ok(MigrationStep::ScanComplete));
+
+    assert_eq!(
+        rollback(&engine, &users, &contract),
+        Ok(RollbackStep::Complete { restored: 2 }),
+        "the one-page rollback restores documents the target rules out"
+    );
+    assert_eq!(
+        user_value(&engine, &users, "ada"),
+        object(&[("email", text("ada@example")), ("nick", text("a"))])
+    );
+    assert_eq!(
+        user_value(&engine, &users, "linus"),
+        object(&[("email", text("linus@example")), ("nick", text("l"))])
+    );
+    assert_eq!(enforced_version(&engine, &users, "users"), Some(version(1)));
+    assert_eq!(status(&engine, &users, &collection("users")), Ok(MigrationStatus::None));
+}
+
+#[test]
 fn interrupted_rollback_resumes_to_completion() {
     // A reversible migration over more than one page rolls back over more
     // than one page; the engine is dropped mid-rollback and reopened.

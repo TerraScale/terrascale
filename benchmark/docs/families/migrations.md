@@ -113,7 +113,11 @@ interpreter inside the migration engine.
   schema hook (`enforce_put`, the SM-03 evolution hook in
   `src/families/schemas.rs`) enforces the migration's target schema while
   the record reads `in-progress`, and falls through to the still-recorded
-  from-version schema while it reads `rolling-back`. A collection is never
+  from-version schema while it reads `rolling-back` — including the
+  completing rollback page, whose record clear is staged ahead of the
+  restoring puts and reads as absent to the hook (the hook reads through
+  the transaction, and staging the record write and its clear in one
+  transaction would target the same record twice). A collection is never
   unvalidated and never validated against both versions at once. The
   coordination boundary matches SH-03's: the host quiesces or writes
   target-conforming documents; the engine validates and executes. Like
@@ -214,6 +218,18 @@ write path enforced the from-version schema against the migration's own
 result. With the hook, all 23 in-crate migration tests and 18 families
 integration tests pass.
 
+Repair red-then-green (warden loop 1): a rollback completing in one page
+— a collection no larger than `MAX_MIGRATION_PAGE` rolled back straight
+from the forward drive's in-progress record — ran its restoring puts
+while the committed record still read `in-progress`, so the hook fenced
+from-version-shaped restored documents against the target and the
+rollback spuriously refused with `TargetViolation`
+(`single_page_rollback_restores_documents_the_target_rules_out` was red
+for exactly that). The completing page now stages the record's clear
+before the puts, which reads as absent to the hook and fences the puts
+to the from-version schema; the restoring puts and the clear commit
+atomically. 24 in-crate migration tests pass.
+
 ## Terminology and parity
 
 Schema Migration (this module) and Logical Migration (`src/migration/`,
@@ -237,6 +253,7 @@ document values, record absence, and enforced version all unchanged),
 kill-point and resume tests above, `finalize_refuses_before_the_scan_completes`,
 `evidence_mismatches_fail_closed`, `reserved_record_collisions_fail_closed`,
 `rollback_restores_a_reversible_migration_and_states_its_limits`,
+`single_page_rollback_restores_documents_the_target_rules_out`,
 `not_rollbackable_migrations_require_explicit_acknowledgment`,
 `migrations_are_tenant_scoped` (cross-tenant and cross-engine probes),
 `an_empty_collection_migrates_with_zero_evidence`,

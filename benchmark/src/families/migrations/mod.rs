@@ -733,35 +733,39 @@ pub fn rollback(
         },
     )?;
 
-    // Stage the rolling-back record once, before the document puts: while
-    // the record reads rolling-back inside this transaction, the write-path
-    // hook falls through to the still-recorded from-version schema — the
-    // contract restoring documents must satisfy. One transaction never
-    // writes the same record twice; the record carries the page's final
-    // cursor state.
-    record.state =
-        RecordState::RollingBack { cursor: next.cursor.clone(), exhausted: next.exhausted };
-    record.pages += 1;
-    if !next.exhausted {
-        // A later page continues; the record keeps the drive seated. The
-        // completion path below clears the record instead of updating it.
+    // Stage the drive-record change once, before the document puts: the
+    // write-path hook reads the record through this transaction, so while
+    // the record reads rolling-back — or absent on the completing page,
+    // where the clear is staged ahead of the puts — the hook falls through
+    // to the still-recorded from-version schema, the contract restoring
+    // documents must satisfy, never the target. One transaction never
+    // writes the same record twice: a page either updates the record or
+    // clears it, because staging both would target the record twice. The
+    // non-final page's record carries the page's final cursor state.
+    let collection = contract.collection().clone();
+    if next.exhausted {
+        // Final rollback page: the collection is back to its from-version
+        // state; the restoring puts and the record's clear share one
+        // commit, so an interrupted final page either lands whole or is
+        // re-served whole.
+        clear_record(&mut transaction, contract.collection())
+            .map_err(|_| MigrationError::StorageFailure)?;
+    } else {
+        // A later page continues; the record keeps the drive seated and
+        // carries the page's final cursor state.
+        record.state = RecordState::RollingBack { cursor: next.cursor, exhausted: next.exhausted };
+        record.pages += 1;
         write_record(&mut transaction, contract.collection(), &record)
             .map_err(|_| MigrationError::StorageFailure)?;
     }
-    let collection = contract.collection().clone();
     for (id, value) in staged {
         let document = Document::new(id, collection.clone(), value);
         transaction.put(document, ExpectedVersion::Any).map_err(|error| map_put_error(&error))?;
     }
+    commit_step(engine, scope, transaction, operation)?;
     if next.exhausted {
-        // Final rollback page: the collection is back to its from-version
-        // state; clear the drive record in the same transaction.
-        clear_record(&mut transaction, contract.collection())
-            .map_err(|_| MigrationError::StorageFailure)?;
-        commit_step(engine, scope, transaction, operation)?;
         Ok(RollbackStep::Complete { restored })
     } else {
-        commit_step(engine, scope, transaction, operation)?;
         Ok(RollbackStep::PageRestored { restored })
     }
 }
