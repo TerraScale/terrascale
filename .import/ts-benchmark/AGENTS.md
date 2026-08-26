@@ -21,6 +21,13 @@ hard-to-reverse decisions.
   Dashboards are Vinext (`studio/`). NATS may carry member transport lanes
   under the Orchestrator NATS spec's separation rules. C# code uses the
   workspace-pinned .NET SDK and `System.Text.Json` only for JSON surfaces.
+- Sync clients (charter PD-2026-08-26-12): SDK sync clients are
+  native-language implementations of the terrascale.sync.v2 contract —
+  no wasm/wasi, no C ABI client embeddings; the engine C ABI has no
+  client-side consumer (TBEP is the only interop). The SE-04 golden
+  vectors are the compatibility guarantee and run in every SDK's CI.
+  Mutations are server-ack-only in v2 clients (optimistic patches are
+  an accepted v1/v2 behavioral difference).
 - Local backend-only surface (charter PD-2026-08-26-11): TerraBaseV2
   communicates strictly with the TerraScale backend, locally — the host
   binds loopback/UDS, TBEP's UDS binding is the required transport
