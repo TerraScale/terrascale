@@ -200,6 +200,31 @@ A named interface at which a capability can be implemented and verified
 without exposing private implementation details.
 _Avoid_: module boundary, endpoint surface
 
+## Query language
+
+**TQL**:
+TerraBaseV2's canonical query language: an SQL-familiar,
+document-native surface for schema-optional documents, informed by
+V1's RQL, that parses to a typed, versioned AST with no arbitrary
+code execution in the language.
+_Avoid_: query syntax, SQL dialect, RQL (that is V1's language), TerraQuery
+
+**TQL AST**:
+The typed, versioned parse artifact every TQL text lowers to against
+the query seam: a closed node set carrying source spans and the TQL
+Grammar Version, with validated identifiers, resolved aliases, and
+parameter binding slots — never unvalidated strings or executable
+code.
+_Avoid_: parse tree, query object, syntax tree
+
+**TQL Grammar Version**:
+The `tql/MAJOR.MINOR` identity carried by every parsed TQL artifact —
+parse input, AST, serialized frames, stored queries, vectors, and
+error payloads. Unknown or missing versions fail closed; additive
+grammar changes bump the minor and breaking changes bump the major.
+_Avoid_: language version, dialect tag, schema version (a Document
+Schema concept)
+
 ## Data and migration
 
 **Logical Migration**:
