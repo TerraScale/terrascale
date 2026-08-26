@@ -4,35 +4,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  probe-sleep:
+  probe-public-sdk:
     runs-on: terrascale-builder
-    timeout-minutes: 5
+    timeout-minutes: 10
     container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
+      image: mcr.microsoft.com/dotnet/sdk@sha256:b8cc28b501af233e51be59583a41bf3ebde7fc8656418a7dd305b90b21a7f3f9
     steps:
-      - run: sleep 20 && echo slept
+      - run: sleep 5 && echo public-sdk-ok
 
-  probe-dotnet-only:
+  probe-public-python:
     runs-on: terrascale-builder
     timeout-minutes: 5
     container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
+      image: docker.io/library/python:3.13-slim
     steps:
-      - run: dotnet --version
-
-  probe-node-only:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - run: node --version
+      - run: sleep 5 && echo python-ok
