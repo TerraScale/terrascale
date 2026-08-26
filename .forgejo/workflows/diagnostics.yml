@@ -1,0 +1,44 @@
+name: CI diagnostics
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe-pull-creds:
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
+    steps:
+      - run: dotnet --list-sdks && node --version
+
+  probe-pull-plain:
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+    steps:
+      - run: dotnet --version
+
+  probe-bootstrap-full:
+    runs-on: terrascale-builder
+    timeout-minutes: 15
+    container:
+      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
+    env:
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+    steps:
+      - name: Resolve newest stable Deploy CLI once
+        run: |
+          set -euo pipefail
+          config="$(mktemp -d)"
+          dotnet new nugetconfig --output "${config}" --force >/dev/null
+          dotnet nuget add source https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json --name terrascale --username forgejo-actions --password "${REGISTRY_TOKEN}" --store-password-in-clear-text --configfile "${config}/nuget.config" >/dev/null
+          dotnet tool install TerraScale.Deploy.Cli --tool-path .tools --configfile "${config}/nuget.config"
+          .tools/terrascale-deploy ci resolve-cli
