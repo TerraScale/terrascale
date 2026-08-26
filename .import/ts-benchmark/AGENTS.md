@@ -21,6 +21,16 @@ hard-to-reverse decisions.
   Dashboards are Vinext (`studio/`). NATS may carry member transport lanes
   under the Orchestrator NATS spec's separation rules. C# code uses the
   workspace-pinned .NET SDK and `System.Text.Json` only for JSON surfaces.
+- Native sync engine (charter PD-2026-08-26-05, ADR 0008): the sync
+  engine is a first-class engine subsystem — state machines and delivery
+  run in-process in the engine core; the commit-to-delivery hot path has
+  no external hop. Adopted base engines (e.g. Loro via the SE-02 spike)
+  must qualify as native — in-process, bounded/low-copy hot path, no
+  external-service dependency — or the native extraction path applies.
+  Transports (TBEP, sockets, NATS) serve the engine: the
+  acknowledged-write hot path prefers native engine-owned transports,
+  and NATS is used only where its semantics fit. Speed objectives fall
+  under PD-2026-08-26-03's benchmark-mandatory rule.
 - Product model (charter PD-2026-08-26-04, ADR 0007): TerraBaseV2 is
   NoSQL with optional schemas and migrations. Documents stay schema-free
   by default; collections may declare typed, versioned schemas validated
