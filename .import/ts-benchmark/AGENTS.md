@@ -21,6 +21,25 @@ hard-to-reverse decisions.
   Dashboards are Vinext (`studio/`). NATS may carry member transport lanes
   under the Orchestrator NATS spec's separation rules. C# code uses the
   workspace-pinned .NET SDK and `System.Text.Json` only for JSON surfaces.
+- Local backend-only surface (charter PD-2026-08-26-11): TerraBaseV2
+  communicates strictly with the TerraScale backend, locally — the host
+  binds loopback/UDS, TBEP's UDS binding is the required transport
+  (QUIC deferred), and there is intentionally no authentication,
+  authorization, or user-facing surface at this boundary. Customer
+  auth and PB-3042 live exclusively at the TerraScale Platform. Tenant
+  scoping stays engine-enforced from backend-supplied context. Studio
+  and CLI are local tools without auth gates. Backup, export/import,
+  and migration operations are typed and agent-drivable through the
+  backend. No wave gating: the parent dispatches the full open frontier
+  in parallel within technical dependencies and the shared-file rules.
+- Surface compatibility (charter PD-2026-08-26-10): V2 ships exactly one
+  service surface — TBEP, the C# API host, TerraScale SDKs/MCP. No V1
+  HTTP/TCP wire compatibility, no PostgreSQL wire server, no legacy
+  multi-SDK compat, no embedded-server compat entry; those parity rows
+  disposition as accepted-difference. ETL/queue-sink rows (PB-6024..
+  PB-6030) are accepted exclusions on owner decision. Sharding is in
+  scope (SH wave). Customer migration runs through logical migration
+  (BK-03), never wire compat.
 - Automatic indexing (charter PD-2026-08-26-09): no query requires the
   user to create an index. The query optimizer creates auto-indexes on
   demand (V1 parity), selects the best index per query with measured
