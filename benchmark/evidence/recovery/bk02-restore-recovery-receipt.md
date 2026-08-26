@@ -55,6 +55,10 @@ From the worktree root, toolchain from `rust-toolchain.toml`,
 
 - `full_backup_restores_exact_values_counts_and_tenant_scopes`
 - `incremental_chain_restore_replays_updates_and_deletes_in_publication_order`
+- `a_later_chain_delete_of_the_sample_document_still_verifies_green`
+  (repair loop 1, finding 1)
+- `one_identifier_reused_across_many_collections_restores_and_verifies`
+  (repair loop 1, finding 2)
 - `snapshot_backup_restores_its_pinned_boundary_not_the_latest_state`
 - `restore_selection_by_identity_restores_an_older_chain_depth_than_latest`
 - `empty_source_full_backup_restores_an_empty_engine_location`
@@ -93,6 +97,50 @@ Public-seam integration tests (`tests/recovery/restore_public.rs`):
 There is no fault class in these drills whose result was a silent
 partial success; every failure is one of the five typed categories
 above and leaves no target directory.
+
+## Repair loop 1 (warden findings, legitimate-archive verification)
+
+Two findings, both reproduced red first and then fixed inside
+`src/backup/restore/mod.rs` only.
+
+- Finding 1 (verification false-positive). The replay retained the last
+  decoded document per tenant as the verification sample with no liveness
+  check, so a chain whose later link deleted that document failed a
+  legitimate archive with `BackupError::ChecksumMismatch`. Reproduced red by
+  `a_later_chain_delete_of_the_sample_document_still_verifies_green`
+  (full root with two documents, incremental link deleting the newest one):
+  the drill failed with `ChecksumMismatch` before the fix. Fix: a delete of
+  the sample's own key retires the sample
+  (`Replay::retire_sample`), so a retained sample is always one of the
+  tenant's final live keys. A tenant whose newest decoded document the chain
+  deleted retains no representative value for that run; the receipt's
+  `representative_values_matched` count discloses that instead of failing a
+  good archive, and the key-set read-back still covers every expected key.
+- Finding 2 (restore never terminated). The read-back window pages by a
+  document identifier alone; a tenant reusing one identifier across
+  `READBACK_PAGE` (256) or more collections made every resume land before the
+  same keys, so `verify_staging` paged forever. Reproduced red by
+  `one_identifier_reused_across_many_collections_restores_and_verifies`
+  (one identifier across 300 collections): the drill did not terminate and
+  was killed by the harness timeout before the fix. Fix: the read-back now
+  pages the full canonical key — the bounded window while it walks the
+  tenant's whole canonical range (ending on a short or empty page), with a
+  cycle guard that reports a full page yielding no unseen key as a
+  non-walkable range instead of paging again, and the expectation's own
+  collections then driving the storage seam's collection-scoped exact-key
+  read for every expected key the window could not place. The misleading
+  in-loop comment ("the resume point still advances every round") is gone,
+  replaced by the guard's honest contract on `read_back_window`.
+
+Observed results after the fixes (same command set as above, re-run):
+`cargo fmt --all -- --check` pass, `cargo +1.97.1 clippy --offline --locked
+--all-targets -- -D warnings` pass, `cargo check --offline --locked` pass,
+`cargo test --offline --locked` pass (346 lib tests — 344 plus the two new
+drills — and every integration target, 0 failures). Both new drills now
+restore to completion and verify green: the deleted-sample drill restores 1
+live document with `documents_read_back == 1`, and the reused-identifier
+drill restores 300 live documents across 300 collections with
+`documents_read_back == 300` and one representative value matched.
 
 ## Restart-after-restore proof
 
@@ -133,7 +181,10 @@ above and leaves no target directory.
   window; replay batches hold at most 256 writes; peak memory is the
   restored **live key set** — `(tenant, collection, identifier)` triples
   with no document values — plus one retained representative document
-  per tenant. Restore never materializes a tenant's document byte
+  per tenant (at most one per tenant, retired with its key when the chain
+  deletes it). The verification read-back adds one bounded window of
+  documents at a time plus one key set per tenant under verification.
+  Restore never materializes a tenant's document byte
   weight.
 
 Observed lane render (scenario: 3 documents + 1 family record across two
@@ -175,10 +226,20 @@ recounts.
   durability disclosures are the reproduced facts. A client holding
   source-side versions across a restore must re-attach with
   `ExpectedVersion::Any`.
-- Verification proves counts, live key sets, and one representative
-  value per tenant through a fresh durable reopen; it is not a
-  whole-value digest. (The committed data-bearing drills do compare
-  every restored value against the source through a real `Engine`.)
+- Verification proves counts, live key sets, and the representative value
+  the chain leaves live per tenant through a fresh durable reopen; it is not
+  a whole-value digest, and a tenant whose newest decoded document the chain
+  deleted retains no representative value for that run (disclosed by the
+  matched count, never a mismatch verdict). (The committed data-bearing
+  drills do compare every restored value against the source through a real
+  `Engine`.)
+- When one tenant reuses one identifier across a page's worth (256) or more
+  collections, the storage seam's identifier-only window cannot enumerate
+  that tenant; the key-set read-back then proves every expected key live by
+  the collection-scoped exact-key read instead of by enumeration, so a
+  document the target holds that the replay never expected is only detectable
+  inside the range the window walked. This is the read seam's documented
+  limit (W4-CA-7), not a restore-side gap restore can close alone.
 - The replay writes through the storage publication seam; the Platform's
   schema-enforcement read on client writes does not run during restore
   (the records were publishable when the source published them, and

@@ -47,8 +47,14 @@
 //! storage open path (format verification and WAL recovery — the same path
 //! `Engine::open` runs), every restored tenant's live key set and count is
 //! read back and compared against the replay's independently derived
-//! expectation, and one representative value per tenant is compared
-//! byte-exactly. Only after that does the rename publish the target.
+//! expectation, and the representative value the chain leaves live for each
+//! tenant is compared byte-exactly. Verification never fails on a legitimate
+//! archive: the value sample is one of the tenant's final live keys, and the
+//! key-set read-back pages the full canonical key — the bounded window while
+//! the tenant's identifiers are unique, and the collection-scoped exact-key
+//! read from the expectation when one identifier repeats across a page's
+//! worth of collections and the identifier-only cursor cannot walk the
+//! tenant. Only after that does the rename publish the target.
 //!
 //! # Memory bound (inheriting BK-01's disclosure)
 //!
@@ -71,8 +77,12 @@
 //! Document versions and storage sequences are re-minted by the target's
 //! own publication order; values, keys, counts, per-tenant scopes, and
 //! durability disclosures are the reproduced facts. Verification proves
-//! counts, key sets, and representative values through a fresh durable
-//! reopen — it is not a whole-value digest. The replay writes through the
+//! counts, key sets, and the live representative value of each tenant
+//! through a fresh durable reopen — it is not a whole-value digest, and a
+//! tenant whose newest decoded document the chain deletes retains no
+//! representative value for that run (the count discloses it), while the
+//! key-set read-back still covers every key the replay expects. The replay
+//! writes through the
 //! storage publication seam, so the Platform's schema-enforcement read on
 //! client writes does not run during restore: the archive's records were
 //! publishable when the source published them, and restore re-publishes
@@ -607,7 +617,7 @@ impl RecoveryReceipt {
                 .to_owned(),
         );
         lines.push(
-            "- verification proves counts, key sets, and one representative value per tenant through a fresh durable reopen; it is not a whole-value digest."
+            "- verification proves counts, key sets, and the representative value the chain leaves live per tenant through a fresh durable reopen; it is not a whole-value digest, and a tenant whose newest decoded document the chain deleted retains no representative value for that run."
                 .to_owned(),
         );
         lines.push(
@@ -832,6 +842,10 @@ struct LinkCounts {
 struct Replay {
     presence: BTreeMap<TenantId, BTreeSet<(String, String)>>,
     batches: BTreeMap<TenantId, OpenBatch>,
+    /// One retained sample document per tenant: the newest document record
+    /// the chain decoded whose key is still live. A delete of the sample's
+    /// key retires it (see [`Replay::retire_sample`]), so a retained sample
+    /// is always one of the tenant's final live keys.
     samples: BTreeMap<TenantId, Document>,
     tenant_archive_bytes: BTreeMap<TenantId, u64>,
     operation_counter: u64,
@@ -953,6 +967,12 @@ impl Replay {
                 if !keys.insert((collection.clone(), id.clone())) {
                     self.duplicate_put_replays += 1;
                 }
+                // The retained sample is the newest decoded document of this
+                // tenant, and a put makes its key live right now. A later
+                // delete retires the sample with its key (see `Delete`
+                // below), so a retained sample is always one of the tenant's
+                // final live keys and verification can never mismatch on a
+                // document the chain itself removed.
                 self.samples.insert(tenant.clone(), document.clone());
                 self.stage(
                     storage,
@@ -968,16 +988,24 @@ impl Replay {
                     counts.disclosures += 1;
                 }
                 let keys = self.presence.entry(tenant.clone()).or_default();
-                let removed = match collection {
-                    Some(name) => keys.remove(&(name.as_str().to_owned(), id.clone())),
+                let removed_key = match collection {
+                    Some(name) => {
+                        let key = (name.as_str().to_owned(), id.clone());
+                        keys.remove(&key).then_some(key)
+                    }
                     None => keys
                         .iter()
                         .find(|(_, document)| document == id)
                         .map(|(collection, document)| (collection.clone(), document.clone()))
-                        .is_some_and(|key| keys.remove(&key)),
+                        .filter(|key| keys.remove(key)),
                 };
-                if !removed {
-                    self.missing_key_deletes += 1;
+                match removed_key {
+                    // A key the chain removes takes the retained sample with
+                    // it when they name the same document: verification never
+                    // compares a value against a key the archive's own chain
+                    // deleted.
+                    Some(removed_key) => self.retire_sample(tenant, &removed_key),
+                    None => self.missing_key_deletes += 1,
                 }
                 let staged_collection = match collection {
                     Some(name) => Some(
@@ -1083,6 +1111,17 @@ impl Replay {
         Ok(())
     }
 
+    /// Retires the tenant's retained sample when the removed key is the
+    /// sample's own key, so verification only ever compares a value the
+    /// chain's final state still holds.
+    fn retire_sample(&mut self, tenant: &TenantId, removed_key: &(String, String)) {
+        if self.samples.get(tenant).is_some_and(|sample| {
+            sample.collection().as_str() == removed_key.0 && sample.id().as_str() == removed_key.1
+        }) {
+            self.samples.remove(tenant);
+        }
+    }
+
     /// Derives the final per-tenant live counts from the presence set.
     fn restored_tenants(&self) -> Vec<RestoredTenant> {
         self.presence
@@ -1145,10 +1184,94 @@ struct VerificationFacts {
     representative_values_matched: u64,
 }
 
+/// What one tenant's windowed read-back proved live in the reopened target.
+struct TenantReadBack {
+    /// The distinct live keys the bounded window observed.
+    observed: BTreeSet<(String, String)>,
+    /// Whether the window walked the tenant's complete canonical key range.
+    ///
+    /// `true` when the walk ended on a short or empty page — an identifier
+    /// that is unique across the tenant's collections pages exactly, so the
+    /// observed set is the tenant's whole live key set. `false` when a full
+    /// page resumed without producing one unseen key: one identifier is
+    /// reused across a page's worth of collections and the window's
+    /// identifier-only cursor cannot walk past it (W4-CA-7's documented
+    /// cycle), so the observed set is a prefix and the exact keys beyond it
+    /// must come from the collection-scoped read.
+    exhaustive: bool,
+}
+
+/// Reads one tenant's live keys back through the bounded window, in canonical
+/// key order, with a cycle guard so the walk always terminates.
+///
+/// The window is at-least-once (W4-CA-7): when a page boundary's identifier
+/// repeats across collections, a later page re-delivers already-seen keys.
+/// Duplicates are harmless — the observed set absorbs them — but a tenant
+/// reusing one identifier across a page's worth of collections makes every
+/// resume land before the same keys, so a full page that yields no unseen key
+/// is the honest report of a non-walkable range, never a reason to keep
+/// paging.
+fn read_back_window(
+    storage: &FileStorage,
+    sequence: StorageSequence,
+    tenant: &TenantId,
+) -> TenantReadBack {
+    let mut observed: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut after: Option<DocumentId> = None;
+    loop {
+        let page = storage.documents_at_from(sequence, tenant, after.as_ref(), READBACK_PAGE);
+        if page.is_empty() {
+            return TenantReadBack { observed, exhaustive: true };
+        }
+        let unseen_before = observed.len();
+        for document in &page {
+            observed.insert((
+                document.collection().as_str().to_owned(),
+                document.id().as_str().to_owned(),
+            ));
+            after = Some(document.id().clone());
+        }
+        if page.len() < READBACK_PAGE as usize {
+            return TenantReadBack { observed, exhaustive: true };
+        }
+        if observed.len() == unseen_before {
+            return TenantReadBack { observed, exhaustive: false };
+        }
+    }
+}
+
+/// Reads one expected key back through the collection-scoped exact-key read,
+/// the storage seam's exact selector for a full canonical key.
+///
+/// # Errors
+///
+/// Returns [`BackupError::ChecksumMismatch`] when the expected key's
+/// collection or identifier is not a valid identifier the target could hold —
+/// an archive whose decoded keys are unpublishable is a content failure.
+fn read_back_key(
+    storage: &FileStorage,
+    sequence: StorageSequence,
+    tenant: &TenantId,
+    key: &(String, String),
+) -> Result<bool, BackupError> {
+    let collection = CollectionName::try_new(&key.0).map_err(|_| BackupError::ChecksumMismatch)?;
+    let id = DocumentId::try_new(&key.1).map_err(|_| BackupError::ChecksumMismatch)?;
+    Ok(storage.read_document_in_collection_at(sequence, tenant, &collection, &id).is_some())
+}
+
 /// Reopens the staged engine location through the durable storage open path
 /// — format verification and WAL recovery, the same path `Engine::open`
 /// runs — and reads the restored state back against the replay's
 /// independently derived expectation.
+///
+/// The key-set read-back pages the full canonical key. The bounded window
+/// does it while the tenant's identifiers are unique across collections,
+/// proving the live key set in both directions. When a tenant reuses one
+/// identifier across a page's worth of collections the window cannot walk
+/// the range, so the expectation itself drives the rest: every expected
+/// collection is read through the collection-scoped exact-key selector,
+/// which names the full canonical key and so cannot confuse two collections'
+/// copies of one identifier.
 ///
 /// # Errors
 ///
@@ -1162,35 +1285,37 @@ fn verify_staging(staging: &Path, replay: &Replay) -> Result<VerificationFacts, 
     let mut documents_read_back = 0;
     let mut representative_values_matched = 0;
     for (tenant, expected_keys) in &replay.presence {
-        let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
-        let mut after: Option<DocumentId> = None;
-        loop {
-            let page = storage.documents_at_from(sequence, tenant, after.as_ref(), READBACK_PAGE);
-            if page.is_empty() {
-                break;
-            }
-            for document in &page {
-                seen.insert((
-                    document.collection().as_str().to_owned(),
-                    document.id().as_str().to_owned(),
-                ));
-                after = Some(document.id().clone());
-            }
-            // The bounded window is at-least-once (W4-CA-7): when the page
-            // boundary's identifier repeats across collections, a later page
-            // may re-deliver already-seen keys. The resume point still
-            // advances every round, so a short page is the honest stop; an
-            // empty page is the backstop.
-            if page.len() < READBACK_PAGE as usize {
-                break;
-            }
-        }
-        if &seen != expected_keys {
+        let read_back = read_back_window(&storage, sequence, tenant);
+        // Every key the target holds that the window observed must be an
+        // expected key, whatever the walk reached.
+        if !read_back.observed.is_subset(expected_keys) {
             return Err(BackupError::ChecksumMismatch);
         }
-        documents_read_back += seen.len() as u64;
-        // One representative value per tenant, compared byte-exactly: the
-        // newest document record the replay decoded for this tenant.
+        let mut proven_live = read_back.observed.len();
+        if read_back.exhaustive {
+            // The window walked the whole range, so the observed set is the
+            // tenant's exact live key set: it must match in both directions.
+            if &read_back.observed != expected_keys {
+                return Err(BackupError::ChecksumMismatch);
+            }
+        } else {
+            // One identifier repeats across a page's worth of collections, so
+            // the expectation's own collections drive the reads the window
+            // cannot place: each expected key resolves by its full canonical
+            // key, never by identifier alone.
+            for key in expected_keys.difference(&read_back.observed) {
+                if !read_back_key(&storage, sequence, tenant, key)? {
+                    return Err(BackupError::ChecksumMismatch);
+                }
+                proven_live += 1;
+            }
+        }
+        documents_read_back += proven_live as u64;
+        // The representative value per tenant, compared byte-exactly: the
+        // newest document record the replay decoded for this tenant that the
+        // chain's final state still holds. A tenant whose newest decoded
+        // document the chain deleted retains no sample for this run, and the
+        // matched count discloses that instead of failing a good archive.
         if let Some(sample) = replay.samples.get(tenant) {
             let read = storage.read_document_in_collection_at(
                 sequence,

@@ -226,6 +226,35 @@ fn reseat_point(
     forged_identity
 }
 
+/// Stages one document per named collection into a single transaction, so a
+/// drill can build a wide collection fan-out without one commit per document.
+fn put_one_per_collection(
+    engine: &Engine,
+    tenant_name: &str,
+    operation_name: &str,
+    id: &str,
+    collections: &[String],
+    value: &str,
+) -> CommitOutcome {
+    let tenant_scope = scope(engine, tenant_name);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let mut transaction =
+        engine.begin(&tenant_scope, snapshot, operation(operation_name)).expect("begins");
+    for collection in collections {
+        transaction
+            .put(
+                Document::new(
+                    document_id(id),
+                    CollectionName::try_new(collection).expect("valid identifier"),
+                    text(value),
+                ),
+                ExpectedVersion::Any,
+            )
+            .expect("stages");
+    }
+    transaction.commit(LocalDurability::Synced)
+}
+
 // ---------------------------------------------------------------------------
 // Restore from each backup kind reproduces exact counts and values
 // ---------------------------------------------------------------------------
@@ -398,6 +427,96 @@ fn incremental_chain_restore_replays_updates_and_deletes_in_publication_order() 
             ("users".to_owned(), "doc-3".to_owned(), text("three")),
         ])
     );
+}
+
+#[test]
+fn a_later_chain_delete_of_the_sample_document_still_verifies_green() {
+    let (_source, engine) = open_engine("dead-sample");
+    let destination = location("dead-sample-dest");
+    let target = location("dead-sample-target");
+
+    // The full root decodes the tenant's documents in canonical key order,
+    // so `doc-2` is the last decoded sample the replay retains for `alpha`.
+    committed(put(
+        &engine,
+        "alpha",
+        "op-1",
+        "doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
+    committed(put(
+        &engine,
+        "alpha",
+        "op-2",
+        "doc-2",
+        "users",
+        text("two"),
+        LocalDurability::Synced,
+    ));
+    let full = run_backup(&engine, BackupPlan::full(), &destination).expect("root");
+    let base = full.manifest().boundary_sequence();
+
+    // The newest decoded sample is deleted by the chain's next link: the
+    // archive is legitimate, so the restore must verify green against the
+    // final live state, not against a sample the chain removed.
+    committed(delete(&engine, "alpha", "op-3", "doc-2"));
+    run_backup(&engine, BackupPlan::incremental_since(base), &destination).expect("link");
+
+    let receipt = RestorePlan::restore_latest(&destination, &target).expect("restore verifies");
+    assert_eq!(receipt.restored_documents(), 1, "doc-1 alone survives the chain");
+    assert_eq!(receipt.tenants_verified(), 1);
+    assert_eq!(receipt.documents_read_back(), 1, "the live key set read back exactly");
+    assert_eq!(
+        sorted(read_back(&target, "alpha")),
+        sorted(vec![("users".to_owned(), "doc-1".to_owned(), text("one"))]),
+        "the surviving document keeps its source value"
+    );
+    // The retained sample retired with the deleted document, so this run has
+    // no live representative value to compare for `alpha`: the count is the
+    // honest disclosure of that, never a mismatch verdict on a good archive.
+    assert_eq!(receipt.representative_values_matched(), 0);
+}
+
+#[test]
+fn one_identifier_reused_across_many_collections_restores_and_verifies() {
+    let (_source, engine) = open_engine("reused-identifier");
+    let destination = location("reused-identifier-dest");
+    let target = location("reused-identifier-target");
+
+    // One identifier across 300 collections: the read-back window pages by a
+    // document identifier alone, and 300 canonical keys share one identifier,
+    // so an identifier-only cursor cannot walk the tenant. Restore must still
+    // terminate and verify the complete key set.
+    let collections: Vec<String> = (0..300).map(|index| format!("coll-{index:03}")).collect();
+    committed(put_one_per_collection(
+        &engine,
+        "alpha",
+        "op-1",
+        "shared",
+        &collections,
+        "reused-value",
+    ));
+    run_backup(&engine, BackupPlan::full(), &destination).expect("full backup");
+
+    let receipt = RestorePlan::restore_latest(&destination, &target).expect("restore verifies");
+    assert_eq!(receipt.restored_documents(), 300, "every collection's copy is live");
+    assert_eq!(receipt.tenants_verified(), 1);
+    assert_eq!(receipt.documents_read_back(), 300, "the whole key set read back exactly");
+    assert_eq!(receipt.representative_values_matched(), 1);
+
+    // The restored location really holds one live copy per collection.
+    let restored = sorted(read_back(&target, "alpha"));
+    assert_eq!(restored.len(), 300);
+    for collection in &collections {
+        assert!(
+            restored.iter().any(|(name, id, value)| name == collection
+                && id == "shared"
+                && *value == text("reused-value")),
+            "collection {collection} holds its own copy of the identifier"
+        );
+    }
 }
 
 #[test]
