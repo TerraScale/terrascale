@@ -4,18 +4,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  probe-dh-node22:
+  probe-own-buildpack:
     runs-on: terrascale-builder
     timeout-minutes: 10
     container:
-      image: docker.io/library/node:22
+      image: git.terrascale.tech/terrascale/probe:buildpack
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
-      - run: sleep 5 && echo node22-ok
-
-  probe-dh-buildpack:
-    runs-on: terrascale-builder
-    timeout-minutes: 10
-    container:
-      image: docker.io/library/buildpack-deps:bookworm
-    steps:
-      - run: sleep 5 && echo buildpack-ok
+      - run: sleep 5 && echo own-buildpack-ok
