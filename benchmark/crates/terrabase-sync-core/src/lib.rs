@@ -35,11 +35,18 @@
 //!   `docs/spike/se02-prototype-evidence.md` (the tracked copy; the
 //!   untracked mirror `evidence/spike/` stays local until the integrator
 //!   publishes reviewed receipts).
+//!
+//! The [`protocol`] module is the `terrascale.sync.v2` client-channel
+//! wire vocabulary (ticket SE-04) built on this substrate; its wire
+//! spec is `docs/sync/terrascale-sync-v2.md` and its golden conformance
+//! corpus lives under `vectors/terrascale.sync.v2/`.
 
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 
 use loro::{ExportMode, Frontiers, ID, IdSpan, LoroDoc, LoroMap, LoroValue};
+
+pub mod protocol;
 
 /// The contract identity every frame and checkpoint carries. Unknown
 /// versions fail closed.
@@ -704,6 +711,12 @@ impl FrameDigest {
             hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
         }
         Self(hash)
+    }
+
+    /// The numeric form of the digest.
+    #[must_use]
+    pub fn value(self) -> u64 {
+        self.0
     }
 }
 

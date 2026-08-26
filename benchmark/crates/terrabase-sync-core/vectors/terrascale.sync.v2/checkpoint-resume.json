@@ -1,0 +1,138 @@
+{
+  "category": "checkpoint-resume",
+  "description": "A resuming session presents its durable checkpoint: the server serves exactly the delta suffix after it, and the next checkpoint advances.",
+  "protocol": "terrascale.sync.v2",
+  "protocol_version": 2,
+  "schema": "terrascale.sync.v2/vector-corpus@1",
+  "server": {
+    "config": {
+      "batch_byte_budget": 8192,
+      "checkpoint_window": 128
+    },
+    "journal_before": [
+      {
+        "document": "d-01",
+        "operation_id": "op-000001",
+        "put": {
+          "f000": "v0001"
+        },
+        "sequence": 1
+      },
+      {
+        "document": "d-02",
+        "operation_id": "op-000002",
+        "put": {
+          "f000": "v0002"
+        },
+        "sequence": 2
+      }
+    ],
+    "scope": {
+      "collection": "orders",
+      "tenant": "tenant-a"
+    }
+  },
+  "steps": [
+    {
+      "client_frame": {
+        "frame": {
+          "causation": 0,
+          "collections": [
+            "orders"
+          ],
+          "correlation": 1,
+          "kind": "session_setup",
+          "resume": {
+            "ends": [
+              [
+                1,
+                4
+              ]
+            ],
+            "storage_sequence": 2
+          }
+        },
+        "wire": "0201000100000000000000000000000000000000550207350d126e1c360000000000000001000100000006000000000000006f726465727301190000000000000001020000000000000001000000010000000000000004000000"
+      }
+    },
+    {
+      "note": "the resumed session acknowledges where it stands"
+    },
+    {
+      "client_frame": {
+        "frame": {
+          "causation": 1,
+          "checkpoint": {
+            "ends": [
+              [
+                1,
+                4
+              ]
+            ],
+            "storage_sequence": 2
+          },
+          "correlation": 2,
+          "kind": "checkpoint_ack"
+        },
+        "wire": "02050002000000000000000100000000000000001ef2d84885c288bf23000000000000000500190000000000000001020000000000000001000000010000000000000004000000"
+      }
+    },
+    {
+      "note": "one further commit lands on the journal"
+    },
+    {
+      "apply": {
+        "document": "d-03",
+        "operation_id": "op-000003",
+        "put": {
+          "f000": "v0003",
+          "f001": "true"
+        },
+        "sequence": 3
+      }
+    },
+    {
+      "serve_delta": {
+        "causation": 1,
+        "correlation": 3,
+        "expect_frame": {
+          "causation": 1,
+          "codec": "loro-delta/1",
+          "commits": 1,
+          "correlation": 3,
+          "kind": "delta_batch",
+          "next": {
+            "ends": [
+              [
+                1,
+                7
+              ]
+            ],
+            "storage_sequence": 3
+          },
+          "payload": "6c6f726f000000000000000000000000f2234b7000047b04030403011101010000000000000000010100000000000501000001000b02040100000604010000082404642d30330466303030046630303104646f63730ff09fa49d3a24646f63733e642d3033001201040405000200040100040202060b02060100170608004c4d010077933a05057630303033050474727565",
+          "single_commit_oversize": false,
+          "within_budget": true
+        },
+        "expect_wire": "0207000300000000000000010000000000000000e8dd510e960d2548c80000000000000007000192000000000000006c6f726f000000000000000000000000f2234b7000047b04030403011101010000000000000000010100000000000501000001000b02040100000604010000082404642d30330466303030046630303104646f63730ff09fa49d3a24646f63733e642d3033001201040405000200040100040202060b02060100170608004c4d010077933a0505763030303305047472756519000000000000000103000000000000000100000001000000000000000700000001000100000000000000",
+        "from": {
+          "ends": [
+            [
+              1,
+              4
+            ]
+          ],
+          "storage_sequence": 2
+        }
+      }
+    },
+    {
+      "budget": {
+        "class": "delivery",
+        "envelope_overhead_bytes": 90,
+        "payload_bytes": 146,
+        "wire": "0207000300000000000000010000000000000000e8dd510e960d2548c80000000000000007000192000000000000006c6f726f000000000000000000000000f2234b7000047b04030403011101010000000000000000010100000000000501000001000b02040100000604010000082404642d30330466303030046630303104646f63730ff09fa49d3a24646f63733e642d3033001201040405000200040100040202060b02060100170608004c4d010077933a0505763030303305047472756519000000000000000103000000000000000100000001000000000000000700000001000100000000000000"
+      }
+    }
+  ]
+}
