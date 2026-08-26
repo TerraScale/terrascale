@@ -12,7 +12,7 @@ use terrabase_v2::{
     families::{
         ArchivalReadRequest, AttachmentRead, CompareExchangeRead, CounterRead, IdentityRead,
         LifecycleRead, RevisionPaging, RevisionRead, SchemaDefinition, SchemaFieldType, SchemaRule,
-        TimeSeriesRange, TimeSeriesRead, TombstoneRead, ValidationRead,
+        SchemaVersion, TimeSeriesRange, TimeSeriesRead, TombstoneRead, ValidationRead,
     },
     types::CollectionName,
 };
@@ -47,9 +47,14 @@ fn read_payloads_validate_typed_fields_before_observation() {
         Err(RequestValidationError::InvalidFamilyPayload)
     );
     assert_eq!(
-        SchemaDefinition::try_new(vec![SchemaRule::Required { field: String::new() }]),
+        SchemaDefinition::try_new(
+            SchemaVersion::try_new(1).expect("valid version"),
+            vec![SchemaRule::Required { field: String::new() }],
+        ),
         Err(RequestValidationError::InvalidFamilyPayload)
     );
+    assert_eq!(SchemaVersion::try_new(0), Err(RequestValidationError::InvalidFamilyPayload));
+    assert_eq!(SchemaVersion::try_new(1).expect("valid version").get(), 1);
 
     let cancelled = Cancellation::new();
     cancelled.cancel();
@@ -184,13 +189,19 @@ fn family_kinds_stay_closed_and_named() {
 }
 
 #[test]
-fn schema_rules_report_their_ruled_field() {
-    let schema = SchemaDefinition::try_new(vec![
-        SchemaRule::Required { field: "email".to_owned() },
-        SchemaRule::FieldType { field: "age".to_owned(), kind: SchemaFieldType::Integer },
-    ])
+fn schema_rules_report_their_ruled_field_in_canonical_order() {
+    let schema = SchemaDefinition::try_new(
+        SchemaVersion::try_new(1).expect("valid version"),
+        vec![
+            SchemaRule::Required { field: "email".to_owned() },
+            SchemaRule::FieldType { field: "age".to_owned(), kind: SchemaFieldType::Integer },
+        ],
+    )
     .expect("valid schema");
+    assert_eq!(schema.version().get(), 1);
     let rules = schema.rules();
-    assert_eq!(rules[0].field(), "email");
-    assert_eq!(rules[1].field(), "age");
+    // Rules are canonical: ordered by field name, then by rule kind, so a
+    // declaration order of (email, age) is stored as (age, email).
+    assert_eq!(rules[0].field(), "age");
+    assert_eq!(rules[1].field(), "email");
 }

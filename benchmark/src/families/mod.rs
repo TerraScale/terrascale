@@ -22,8 +22,18 @@
 //! parity rows stay unresolved and later packets own streaming, query and
 //! index projection, replication, backup and migration, and Platform
 //! authorization.
+//!
+//! SM-02 adds the Document Schema capability on the accepted
+//! [`SchemaValidation`](FamilyKind::SchemaValidation) family: typed, versioned
+//! collection schemas enforced on every staged document put at the engine
+//! seam. The model, evaluator, JSON Schema subset mapping, and write-path
+//! hook live in the crate-private `schemas` module, whose public types
+//! ([`SchemaDefinition`], [`SchemaVersion`], [`SchemaFormatError`]) surface
+//! here. Schema-free collections keep their exact prior behavior; the schema
+//! decision record is `docs/families/schemas.md`.
 
 mod payloads;
+pub(crate) mod schemas;
 mod state;
 mod store;
 #[cfg(test)]
@@ -38,11 +48,13 @@ pub use payloads::{
     IdentityEntry, IdentityRangeResult, IdentityRead, IdentityWrite, LifecycleCommand,
     LifecycleRead, LifecycleResult, LifecycleWrite, RevisionCommand, RevisionEntry, RevisionPage,
     RevisionPaging, RevisionPolicy, RevisionRead, RevisionWrite, RollupPolicy, SchemaDefinition,
-    SchemaFieldType, SchemaRule, SchemaViolation, TimeSeriesAppend, TimeSeriesBatchWrite,
-    TimeSeriesDelete, TimeSeriesEntry, TimeSeriesPage, TimeSeriesPolicy, TimeSeriesRange,
-    TimeSeriesRead, TombstoneCommand, TombstoneEntry, TombstoneRead, TombstoneResult,
-    TombstoneWrite, ValidationRead, ValidationResult, ValidationWrite, ViolationKind,
+    SchemaFieldType, SchemaRule, SchemaVersion, SchemaViolation, TimeSeriesAppend,
+    TimeSeriesBatchWrite, TimeSeriesDelete, TimeSeriesEntry, TimeSeriesPage, TimeSeriesPolicy,
+    TimeSeriesRange, TimeSeriesRead, TombstoneCommand, TombstoneEntry, TombstoneRead,
+    TombstoneResult, TombstoneWrite, ValidationRead, ValidationResult, ValidationWrite,
+    ViolationKind,
 };
+pub use schemas::SchemaFormatError;
 
 use crate::{
     engine::{Engine, EngineError, Transaction},

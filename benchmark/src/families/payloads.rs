@@ -38,7 +38,7 @@ pub(crate) const MAX_IDENTITY_VALUE: u64 = 9_223_372_036_854_775_807;
 
 /// Validates one family-local name: non-empty, bounded, free of control
 /// characters, and without surrounding whitespace.
-fn validate_name(value: &str) -> Result<(), RequestValidationError> {
+pub(crate) fn validate_name(value: &str) -> Result<(), RequestValidationError> {
     if value.is_empty()
         || value.len() > MAX_NAME_BYTES
         || value.chars().any(char::is_control)
@@ -2185,6 +2185,82 @@ pub enum SchemaFieldType {
     Array,
 }
 
+/// The recorded version identity of one Document Schema.
+///
+/// A version is a positive, tenant-scoped identity: version one is the first
+/// declaration, a strictly greater version evolves the collection's schema,
+/// and the same version with the same rules is an idempotent redeclaration.
+/// Version zero is not a schema identity.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SchemaVersion(u64);
+
+impl SchemaVersion {
+    /// Creates a validated schema version.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidFamilyPayload`] for version
+    /// zero, because a schema declaration always carries a positive version
+    /// identity, and for a version above `i64::MAX`, because the durable
+    /// record and the wire projection carry integers.
+    pub fn try_new(value: u64) -> Result<Self, RequestValidationError> {
+        if value == 0 || value > MAX_INTERCHANGE_INTEGER {
+            return Err(RequestValidationError::InvalidFamilyPayload);
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the version number.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// The maximum number of rules in one schema definition.
+///
+/// The bound keeps write validation bounded by construction: evaluation cost
+/// is linear in a bounded rule count with one bounded map lookup per rule.
+pub(crate) const MAX_SCHEMA_RULES: usize = 256;
+
+/// The maximum number of accepted values in one enum rule.
+pub(crate) const MAX_ENUM_VALUES: usize = 256;
+
+/// The largest integer the interchange domain carries.
+///
+/// Schema identities and text-length bounds live in the `u64` domain of the
+/// typed model, but the durable validation record and the JSON Schema
+/// projection carry `i64` integers. Construction rejects every value above
+/// this bound, so no bound or identity is silently loosened to zero on the
+/// wire or in storage.
+pub(crate) const MAX_INTERCHANGE_INTEGER: u64 = i64::MAX as u64;
+
+/// Converts one construction-bounded `u64` into the i64 interchange domain.
+///
+/// Construction rejects schema identities and text-length bounds above
+/// [`MAX_INTERCHANGE_INTEGER`], so the conversion cannot fail for a value
+/// that reached a record or a projection. The fallback stays strict — it
+/// clamps toward the tightest bound, never toward zero — so an unforeseen
+/// caller cannot silently weaken a staged schema.
+pub(crate) fn interchange_integer(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+/// Orders rules into the canonical storage order: by field name, then by rule
+/// kind.
+fn schema_rule_order(left: &SchemaRule, right: &SchemaRule) -> std::cmp::Ordering {
+    fn rank(rule: &SchemaRule) -> u8 {
+        match rule {
+            SchemaRule::Required { .. } => 0,
+            SchemaRule::FieldType { .. } => 1,
+            SchemaRule::EnumValues { .. } => 2,
+            SchemaRule::NumberRange { .. } => 3,
+            SchemaRule::TextLength { .. } => 4,
+        }
+    }
+    left.field().cmp(right.field()).then(rank(left).cmp(&rank(right)))
+}
+
 /// One closed schema rule of a collection's validation policy.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchemaRule {
@@ -2241,27 +2317,63 @@ impl SchemaRule {
     }
 }
 
-/// A collection's schema-validation policy.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// A collection's typed, versioned validation contract: one Document Schema.
+///
+/// The definition carries its [`SchemaVersion`] identity and one closed rule
+/// set. Rules are stored in canonical order — by field name, then by rule
+/// kind — so two declarations of the same rules in different orders are the
+/// same schema, violation reporting is deterministic, and the JSON Schema
+/// projection round-trips exactly. Adopting a schema never changes a
+/// collection's stored model: it only adds the write-path contract.
+#[derive(Clone, Debug, PartialEq)]
 pub struct SchemaDefinition {
+    version: SchemaVersion,
     rules: Vec<SchemaRule>,
 }
 
 impl SchemaDefinition {
-    /// Creates one policy from closed rules.
+    /// Creates one schema from a version identity and closed rules.
     ///
     /// # Errors
     ///
-    /// Returns [`RequestValidationError::InvalidFamilyPayload`] for an empty
-    /// field name.
-    pub fn try_new(rules: Vec<SchemaRule>) -> Result<Self, RequestValidationError> {
+    /// Returns [`RequestValidationError::InvalidFamilyPayload`] for version
+    /// zero, an invalid field name, a rule count above 256, an enum rule
+    /// with more than 256 accepted values, or a text-length bound above
+    /// `i64::MAX`.
+    pub fn try_new(
+        version: SchemaVersion,
+        rules: Vec<SchemaRule>,
+    ) -> Result<Self, RequestValidationError> {
+        if rules.len() > MAX_SCHEMA_RULES {
+            return Err(RequestValidationError::InvalidFamilyPayload);
+        }
         for rule in &rules {
             validate_name(rule.field())?;
+            match rule {
+                SchemaRule::EnumValues { values, .. } if values.len() > MAX_ENUM_VALUES => {
+                    return Err(RequestValidationError::InvalidFamilyPayload);
+                }
+                SchemaRule::TextLength { min: Some(bound), .. }
+                | SchemaRule::TextLength { max: Some(bound), .. }
+                    if *bound > MAX_INTERCHANGE_INTEGER =>
+                {
+                    return Err(RequestValidationError::InvalidFamilyPayload);
+                }
+                _ => {}
+            }
         }
-        Ok(Self { rules })
+        let mut rules = rules;
+        rules.sort_by(schema_rule_order);
+        Ok(Self { version, rules })
     }
 
-    /// Returns the policy rules.
+    /// Returns the schema's version identity.
+    #[must_use]
+    pub const fn version(&self) -> SchemaVersion {
+        self.version
+    }
+
+    /// Returns the policy rules in canonical order.
     #[must_use]
     pub fn rules(&self) -> &[SchemaRule] {
         &self.rules
@@ -2392,9 +2504,13 @@ impl ValidationWrite {
     }
 }
 
-/// Why one document field violates a policy rule.
+/// Why one document, or one document field, violates a policy rule.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ViolationKind {
+    /// The document value is not an object, so the rule set — which rules
+    /// object fields — cannot hold. This violation names the document
+    /// itself, so [`SchemaViolation::field`] is empty.
+    DocumentNotObject,
     /// A required field is missing.
     MissingRequiredField,
     /// The field carries a different logical type.
@@ -2461,6 +2577,13 @@ impl ValidationResult {
     #[must_use]
     pub fn policy(&self) -> Option<&SchemaDefinition> {
         self.policy.as_ref()
+    }
+
+    /// Returns the version identity of the enforced policy, or `None` when
+    /// the collection is schema-free.
+    #[must_use]
+    pub fn enforced_version(&self) -> Option<SchemaVersion> {
+        self.policy.as_ref().map(SchemaDefinition::version)
     }
 
     /// Returns the on-demand violations of the requested document.

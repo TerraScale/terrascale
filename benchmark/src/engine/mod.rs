@@ -921,7 +921,12 @@ impl Transaction<'_> {
     /// # Errors
     ///
     /// Returns [`EngineError::InvalidDocument`] when the document exceeds the
-    /// accepted structural limits.
+    /// accepted structural limits or violates its collection's declared
+    /// schema, and [`EngineError::StorageFailure`] when the collection's
+    /// schema state cannot be read. A rejected document stages nothing, so
+    /// the transaction keeps its prior write set and no partial write
+    /// occurs; the typed field-and-kind violation report with the enforced
+    /// schema version is available through the family validation read.
     pub fn put(
         &mut self,
         document: Document,
@@ -930,6 +935,7 @@ impl Transaction<'_> {
         if !storage::document_within_limits(&document) {
             return Err(EngineError::InvalidDocument);
         }
+        crate::families::schemas::enforce_put(self, &document)?;
         self.writes.push(StagedWrite::Put { document, expected });
         Ok(())
     }
