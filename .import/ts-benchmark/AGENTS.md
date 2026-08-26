@@ -21,6 +21,15 @@ hard-to-reverse decisions.
   Dashboards are Vinext (`studio/`). NATS may carry member transport lanes
   under the Orchestrator NATS spec's separation rules. C# code uses the
   workspace-pinned .NET SDK and `System.Text.Json` only for JSON surfaces.
+- Automatic indexing (charter PD-2026-08-26-09): no query requires the
+  user to create an index. The query optimizer creates auto-indexes on
+  demand (V1 parity), selects the best index per query with measured
+  selection quality (no query on a worse-than-available index without a
+  recorded reason), and merges/supersedes/retires auto-indexes
+  automatically. Explicit indexes take precedence where equivalent;
+  zero-configuration never weakens durability or correctness. Builds on
+  the W3-2 query/index seam and the engine-owned catalog (CA-3); the IX
+  wave owns implementation and evidence.
 - TQL query language (charter PD-2026-08-26-08): TQL is V2's canonical
   query language — SQL-familiar, document-native, informed by V1's RQL.
   It parses to a typed, versioned AST against the query seam; no
