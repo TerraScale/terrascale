@@ -1,13 +1,15 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # ADR 0010: Auto-indexing and the query optimizer
 
 Parent record of charter PD-2026-08-26-09, 2026-08-26. Status:
-**proposed** — this ADR records the design input of ticket
-TerraScale/TerraBaseV2#37 (IX-01). It becomes `accepted` when the
-parent accepts it; until then it binds nothing.
+**accepted** — the parent accepted this ADR at Phase-1 integration
+(2026-08-26) on review of the full text against PD-2026-08-26-09 D1-D4,
+the AX-1..AX-26 extraction evidence, and the inspector/warden gate
+records for IX-01. D-3's explicit-index-candidate divergence from V1
+AX-11 is charter-mandated and accepted as recorded.
 
 Owner: the IX wave (extraction and dispositions
 `docs/indexing/v1-auto-index-extraction.md`,

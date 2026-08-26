@@ -1,6 +1,6 @@
 # CP-01 proposed gap tickets (for the parent to file)
 
-Status: proposals only, per ticket TerraBase/TerraBaseV2#29 (CP-01) —
+Status: FILED 2026-08-26 by the parent — GAP-C1 = #83, GAP-C2 = #84, GAP-C3 = #85, GAP-C4 = #86 (indexes recorded in matrix.md). Historical proposal text follows. Originally: proposals only, per ticket TerraScale/TerraBaseV2#29 (CP-01) —
 "Gap-ticket FILINGS are parent-owned: propose them (titles, bodies, deps)
 in a file under docs/competitive/; do not file anything." No Forgejo
 object was created or edited by this file. Numbering follows the PS-wave
