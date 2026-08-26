@@ -123,8 +123,9 @@ table changes; a single migration is the engine operation), rebalance
 
 **Sync Engine**:
 The single state-machine core that drives client sessions, transitions,
-checkpoints, acknowledgements, and delta delivery. One engine serves the
-server delivery side and the embedded SDK cores.
+checkpoints, acknowledgements, and delta delivery. One engine owns the
+server delivery side; clients implement the Sync Protocol natively in
+their own language (PD-2026-08-26-12).
 _Avoid_: replication layer, client cache, poller
 
 **Sync Session**:
@@ -147,6 +148,14 @@ _Avoid_: message, packet, event
 The engine's public, journal-backed change-event surface that replays
 ordered change events from any checkpoint to authorized consumers.
 _Avoid_: event bus, notification center, changes API
+
+**Change Notification**:
+The small, typed, content-free trigger event the Sync Engine emits on
+commit publication to tell a Sync Session or backbone consumer that new
+change data is available; the consumer then pulls delta batches from
+its checkpoint (PD-2026-08-26-13). It never carries document data and
+never blocks a commit.
+_Avoid_: push update, invalidation message, wake-up ping, polling
 
 **Sync Checkpoint**:
 The durable resumption identity of a Sync Session, from which

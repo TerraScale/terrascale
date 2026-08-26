@@ -18,9 +18,12 @@ hard-to-reverse decisions.
   the `host/` and `cli/` project families, speaking the TerraBase Engine
   Protocol (TBEP) to the engine process — never an in-process C ABI at the
   service boundary; the C ABI exists only for SDK-side sync-core embedding.
-  Dashboards are Vinext (`studio/`). NATS may carry member transport lanes
-  under the Orchestrator NATS spec's separation rules. C# code uses the
-  workspace-pinned .NET SDK and `System.Text.Json` only for JSON surfaces.
+  Dashboards are Vinext (`studio/`). NATS serves this repository only
+  as a KV, config-sharing, and discoverability point — no database data
+  rides NATS; member transport lanes are engine-owned, under the
+  Orchestrator NATS spec's separation rules (PD-2026-08-26-13, ADR
+  0012). C# code uses the workspace-pinned .NET SDK and
+  `System.Text.Json` only for JSON surfaces.
 - Sync clients (charter PD-2026-08-26-12): SDK sync clients are
   native-language implementations of the terrascale.sync.v2 contract —
   no wasm/wasi, no C ABI client embeddings; the engine C ABI has no
@@ -88,10 +91,22 @@ hard-to-reverse decisions.
   no external hop. Adopted base engines (e.g. Loro via the SE-02 spike)
   must qualify as native — in-process, bounded/low-copy hot path, no
   external-service dependency — or the native extraction path applies.
-  Transports (TBEP, sockets, NATS) serve the engine: the
-  acknowledged-write hot path prefers native engine-owned transports,
-  and NATS is used only where its semantics fit. Speed objectives fall
-  under PD-2026-08-26-03's benchmark-mandatory rule.
+  Transports (TBEP, sockets) serve the engine: the
+  acknowledged-write hot path prefers native engine-owned transports;
+  NATS is KV/config/discovery only (PD-2026-08-26-13). Speed objectives
+  fall under PD-2026-08-26-03's benchmark-mandatory rule.
+- Sync bandwidth and trigger events (charter PD-2026-08-26-13,
+  ADR 0012): the sync engine is bandwidth-efficient on every link it
+  feeds — delta delivery, batching, and measured bytes-on-wire budgets
+  (bytes per delivered change, per-frame envelope overhead,
+  trigger-notification size) owned by SE-07/SE-15; the hard-data rule
+  applies to bandwidth claims. On commit publication the engine emits
+  small, typed, content-free trigger events (Change Notifications) so
+  clients and consumers fetch new data immediately — push the hint,
+  pull the delta; they never carry document data and never block a
+  commit. NATS is never a data store or data-plane transport for this
+  repository: KV, config sharing, and discoverability only, with
+  evidence in SE-06 that no database data rides NATS.
 - Product model (charter PD-2026-08-26-04, ADR 0007): TerraBaseV2 is
   NoSQL with optional schemas and migrations. Documents stay schema-free
   by default; collections may declare typed, versioned schemas validated
