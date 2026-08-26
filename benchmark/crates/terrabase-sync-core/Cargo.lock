@@ -1183,6 +1183,7 @@ name = "terrabase-sync-core"
 version = "0.1.0"
 dependencies = [
  "loro",
+ "serde_json",
 ]
 
 [[package]]
