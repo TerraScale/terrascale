@@ -9,6 +9,15 @@
 //! publishes under the index lock with a compare-and-publish rule that keeps
 //! the visible generation monotonic per namespace and epoch.
 //!
+//! IX-03 adds the catalog side of the auto-index lifecycle (ADR 0010 D-4):
+//! per-namespace lifecycle state and usage reports, pending supersessions
+//! with the coverage-parity and drain gates, bounded retirement tombstones,
+//! the lifecycle clock and thresholds, the bounded per-tenant auto registry,
+//! and the per-tenant selection-record stores. The policy that drives them
+//! lives in `src/query/optimizer/lifecycle.rs`; this module owns the guarded
+//! state and the mechanics, and every deletion still flows through the same
+//! compare-and-publish publication order the builder enforces.
+//!
 //! W3-2 proves this seam with in-memory segments. Nothing here persists an
 //! epoch or generation across a restart, asks Storage to publish a data root,
 //! or holds a storage lock while building or publishing.
@@ -27,8 +36,12 @@ use crate::{
     query::{
         GenerationView, IndexNamespace, ObservedGeneration,
         optimizer::{
-            IndexDefinition, IndexKind, IndexSelectionRecord, MAX_CACHED_SELECTIONS,
-            MAX_SELECTION_RECORDS, auto_index_name,
+            IndexDefinition, IndexKind, IndexSelectionRecord, MAX_AUTO_INDEXES_PER_TENANT,
+            MAX_CACHED_SELECTIONS, MAX_SELECTION_RECORDS, auto_index_name,
+            lifecycle::{
+                IndexLifecycleState, IndexTransition, LifecycleThresholds, MAX_RETAINED_RETIRED,
+                MAX_TRANSITIONS_PER_INDEX,
+            },
         },
     },
     storage::CommitPublicationEvent,
@@ -58,6 +71,9 @@ pub(crate) enum IndexError {
     /// The deterministic auto name is already occupied by different content,
     /// so creation fails closed instead of reusing or overwriting it.
     AutoIdentityMismatch,
+    /// The tenant's auto-index registry is at its bound, so a new auto
+    /// identity is refused until the retirement sweep frees a slot.
+    AutoRegistryFull,
 }
 
 /// The immutable delta derived from one commit publication event.
@@ -152,12 +168,39 @@ struct EpochState {
     history: Vec<(u64, u64)>,
 }
 
+/// The auto-index lifecycle state of one namespace: present only for
+/// optimizer-created (auto) definitions. Explicit indexes carry none, which
+/// is the structural rule that no automatic transition ever touches them.
+#[derive(Debug)]
+struct AutoLifecycle {
+    state: IndexLifecycleState,
+    idle_since: Option<Instant>,
+    transitions: VecDeque<IndexTransition>,
+}
+
+impl Default for AutoLifecycle {
+    fn default() -> Self {
+        Self { state: IndexLifecycleState::Active, idle_since: None, transitions: VecDeque::new() }
+    }
+}
+
+impl AutoLifecycle {
+    /// Records one bounded transition history entry, newest last.
+    fn record(&mut self, transition: IndexTransition) {
+        self.transitions.push_back(transition);
+        while self.transitions.len() > MAX_TRANSITIONS_PER_INDEX {
+            self.transitions.pop_front();
+        }
+    }
+}
+
 /// The state of one namespace across its epochs.
 #[derive(Debug, Default)]
 struct NamespaceState {
     fields: Vec<String>,
     definition: Option<IndexDefinition>,
     last_queried: Option<Instant>,
+    lifecycle: Option<AutoLifecycle>,
     epochs: BTreeMap<u64, EpochState>,
 }
 
@@ -189,18 +232,141 @@ struct CachedSelection {
     revision: u64,
 }
 
+/// One pending auto-index supersession: the replacement's coverage must
+/// reach the target's before the drain wait starts, and the target is
+/// deleted only after the drain has elapsed (AX-17).
+#[derive(Clone, Debug)]
+struct PendingSupersede {
+    replacement: IndexNamespace,
+    target: IndexNamespace,
+    target_covered: Option<u64>,
+    covered_since: Option<Instant>,
+}
+
+/// One retirement tombstone: the identity of a deleted auto index plus its
+/// bounded transition history ending with the recorded retirement, kept for
+/// a bounded window so retirements stay observable through the typed reads.
+#[derive(Clone, Debug)]
+pub(crate) struct RetiredRecord {
+    tenant: TenantId,
+    name: String,
+    kind: IndexKind,
+    collection: String,
+    fields: Vec<crate::query::optimizer::IndexField>,
+    transitions: Vec<IndexTransition>,
+}
+
+impl RetiredRecord {
+    /// Returns the owning tenant.
+    pub(crate) fn tenant(&self) -> &TenantId {
+        &self.tenant
+    }
+
+    /// Returns the retired index's catalog name.
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the retired index's kind.
+    pub(crate) const fn kind(&self) -> IndexKind {
+        self.kind
+    }
+
+    /// Returns the retired index's collection.
+    pub(crate) fn collection(&self) -> &str {
+        &self.collection
+    }
+
+    /// Returns the retired index's field list.
+    pub(crate) fn fields(&self) -> &[crate::query::optimizer::IndexField] {
+        &self.fields
+    }
+
+    /// Returns the bounded transition history, oldest first, ending with
+    /// the recorded retirement.
+    pub(crate) fn transitions(&self) -> &[IndexTransition] {
+        &self.transitions
+    }
+}
+
 /// The optimizer-integration state of the catalog: the kill switch, the
-/// bounded selection-record store, the bounded plan cache, and the catalog
-/// revision that invalidates cached selections when catalog truth changes.
+/// per-tenant bounded selection-record stores, the bounded plan cache, the
+/// catalog revision that invalidates cached selections when catalog truth
+/// changes, and the IX-03 lifecycle state — thresholds, pending
+/// supersessions, retirement tombstones, and the surpass pass's revision
+/// guard.
 ///
 /// The derived default is the engine default: automatic creation enabled,
-/// empty stores, revision zero.
+/// empty stores, revision zero, and V1's carried lifecycle thresholds.
 #[derive(Debug, Default)]
 struct OptimizerState {
     auto_creation_disabled: bool,
-    records: VecDeque<IndexSelectionRecord>,
+    records: BTreeMap<String, VecDeque<IndexSelectionRecord>>,
     cache: VecDeque<CachedSelection>,
     revision: u64,
+    thresholds: LifecycleThresholds,
+    pending: Vec<PendingSupersede>,
+    retired: BTreeMap<String, VecDeque<RetiredRecord>>,
+    last_surpass_revision: Option<u64>,
+}
+
+/// The lifecycle clock: the one time source the lifecycle state machine
+/// measures against. Production reads the monotonic instant; the test seam
+/// advances a frozen override so thresholds and drains are deterministic.
+#[derive(Debug, Default)]
+struct LifecycleClock {
+    frozen: Mutex<Option<Instant>>,
+}
+
+impl LifecycleClock {
+    /// Returns the current lifecycle instant.
+    fn now(&self) -> Instant {
+        self.frozen.lock().expect("lifecycle clock").unwrap_or_else(Instant::now)
+    }
+
+    /// Advances the frozen override by the given duration. Test-only: the
+    /// in-crate lifecycle tests drive the state machine through it.
+    #[cfg(test)]
+    fn advance(&self, by: std::time::Duration) {
+        let mut frozen = self.frozen.lock().expect("lifecycle clock");
+        let now = frozen.unwrap_or_else(Instant::now);
+        *frozen = Some(now + by);
+    }
+}
+
+/// The read-only view of one pending supersession the lifecycle pass acts
+/// on.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SupersedeView {
+    replacement: IndexNamespace,
+    target: IndexNamespace,
+    target_covered: Option<u64>,
+}
+
+impl SupersedeView {
+    /// Returns the replacing index.
+    pub(crate) fn replacement(&self) -> &IndexNamespace {
+        &self.replacement
+    }
+
+    /// Returns the superseded index.
+    pub(crate) fn target(&self) -> &IndexNamespace {
+        &self.target
+    }
+}
+
+/// Reports whether one pending supersession's replacement has reached the
+/// target's coverage under the guarded state.
+fn parity_of(state: &CatalogState, pending: &SupersedeView) -> bool {
+    let replacement_covered = state
+        .namespaces
+        .get(&pending.replacement.catalog_key())
+        .and_then(NamespaceState::covered_sequence);
+    match (replacement_covered, pending.target_covered) {
+        (Some(replacement), Some(target)) => replacement >= target,
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
 }
 
 /// The catalog state guarded by the index lock.
@@ -211,6 +377,24 @@ struct CatalogState {
     optimizer: OptimizerState,
 }
 
+impl CatalogState {
+    /// Returns the number of live auto-index namespaces one tenant owns:
+    /// the bounded registry's measure.
+    fn auto_count(&self, tenant: &TenantId) -> usize {
+        let prefix = format!("{}\u{1f}", tenant.as_str());
+        self.namespaces
+            .iter()
+            .filter(|(key, entry)| {
+                key.starts_with(&prefix)
+                    && entry
+                        .definition
+                        .as_ref()
+                        .is_some_and(|definition| definition.kind() == IndexKind::Auto)
+            })
+            .count()
+    }
+}
+
 /// The private index catalog and its index lock.
 ///
 /// One catalog serves one Engine. Its mutex is the index lock: building a
@@ -219,11 +403,12 @@ struct CatalogState {
 /// is never held across an Engine call.
 pub(crate) struct IndexCatalog {
     state: Mutex<CatalogState>,
+    clock: LifecycleClock,
 }
 
 impl Default for IndexCatalog {
     fn default() -> Self {
-        Self { state: Mutex::new(CatalogState::default()) }
+        Self { state: Mutex::new(CatalogState::default()), clock: LifecycleClock::default() }
     }
 }
 
@@ -310,6 +495,7 @@ impl IndexCatalog {
         entry.epochs.insert(new_epoch, EpochState { next_generation: 1, ..EpochState::default() });
         entry.fields = vec![field.to_owned()];
         entry.definition = None;
+        entry.lifecycle = None;
         state.optimizer.revision += 1;
         Ok(())
     }
@@ -355,7 +541,11 @@ impl IndexCatalog {
     /// The name is derived from the definition, so an existing namespace
     /// under that name is acceptable only when its stored definition is the
     /// same; anything else fails closed as an identity conflict rather than
-    /// reusing or overwriting the namespace.
+    /// reusing or overwriting the namespace. A registration that would grow
+    /// the tenant's live auto registry past
+    /// [`MAX_AUTO_INDEXES_PER_TENANT`](crate::query::optimizer::MAX_AUTO_INDEXES_PER_TENANT)
+    /// is refused fail-closed: the registry is bounded engine state, and the
+    /// retirement sweep of the same optimizer pass is what frees slots.
     pub(crate) fn register_auto(
         &self,
         tenant: &TenantId,
@@ -368,6 +558,11 @@ impl IndexCatalog {
         let namespace = IndexNamespace::try_new(tenant.clone(), &name)
             .map_err(|_| IndexError::AutoIdentityMismatch)?;
         let mut state = self.state.lock().expect("index lock");
+        if !state.namespaces.contains_key(&namespace.catalog_key())
+            && state.auto_count(tenant) >= MAX_AUTO_INDEXES_PER_TENANT
+        {
+            return Err(IndexError::AutoRegistryFull);
+        }
         {
             let entry = state.namespaces.entry(namespace.catalog_key()).or_default();
             if entry.epochs.is_empty() {
@@ -375,6 +570,7 @@ impl IndexCatalog {
                 entry.fields =
                     definition.fields().iter().map(|field| field.name().to_owned()).collect();
                 entry.definition = Some(definition.clone());
+                entry.lifecycle = Some(AutoLifecycle::default());
                 state.optimizer.revision += 1;
                 return Ok(AutoRegistration { namespace, created: true, epoch: 1 });
             }
@@ -387,7 +583,8 @@ impl IndexCatalog {
     }
 
     /// Returns every definition-carrying namespace of one tenant, in catalog
-    /// order, with its published state and recency for ranking.
+    /// order, with its published state, recency for ranking, and lifecycle
+    /// facts for the IX-03 state machine.
     pub(crate) fn definitions(&self, tenant: &TenantId) -> Vec<DefinitionEntry> {
         let state = self.state.lock().expect("index lock");
         state
@@ -407,24 +604,55 @@ impl IndexCatalog {
                     .map(|published| {
                         ObservedGeneration::new(published.epoch(), published.generation())
                     });
+                let lifecycle = entry.lifecycle.as_ref();
                 Some(DefinitionEntry {
                     namespace,
                     definition: definition.clone(),
                     published,
                     covered: entry.covered_sequence(),
                     queried: entry.last_queried.is_some(),
+                    last_queried: entry.last_queried,
+                    state: lifecycle.map_or(IndexLifecycleState::Active, |state| state.state),
+                    idle_since: lifecycle.and_then(|state| state.idle_since),
+                    transitions: lifecycle
+                        .map(|state| state.transitions.iter().cloned().collect())
+                        .unwrap_or_default(),
                 })
             })
             .collect()
     }
 
-    /// Marks one namespace queried by a served query (AX-20).
+    /// Marks one namespace queried by a served query (AX-20) — the usage
+    /// report that completes an auto index's reporting state — and wakes an
+    /// idle auto index back to active (AX-22): synchronous with selection,
+    /// recorded as a transition with the measured idle period.
     pub(crate) fn mark_queried(&self, namespace: &IndexNamespace) {
-        if let Some(entry) =
-            self.state.lock().expect("index lock").namespaces.get_mut(&namespace.catalog_key())
-        {
-            entry.last_queried = Some(Instant::now());
+        let now = self.clock.now();
+        let mut state = self.state.lock().expect("index lock");
+        let threshold = state.optimizer.thresholds.idle_after();
+        let Some(entry) = state.namespaces.get_mut(&namespace.catalog_key()) else {
+            return;
+        };
+        entry.last_queried = Some(now);
+        let Some(lifecycle) = entry.lifecycle.as_mut() else {
+            return;
+        };
+        if lifecycle.state != IndexLifecycleState::Idle {
+            return;
         }
+        let measured = lifecycle
+            .idle_since
+            .map(|since| now.saturating_duration_since(since))
+            .unwrap_or_default();
+        lifecycle.state = IndexLifecycleState::Active;
+        lifecycle.idle_since = None;
+        lifecycle.record(IndexTransition::new(
+            namespace.name().to_owned(),
+            IndexLifecycleState::Idle,
+            IndexLifecycleState::Active,
+            measured,
+            threshold,
+        ));
     }
 
     /// Sets the optimizer's automatic-creation kill switch. Failing closed
@@ -447,19 +675,30 @@ impl IndexCatalog {
         !self.state.lock().expect("index lock").optimizer.auto_creation_disabled
     }
 
-    /// Records one selection into the bounded record store.
+    /// Records one selection into the tenant's bounded record store.
+    ///
+    /// The store is scoped per tenant, each with the same
+    /// [`MAX_SELECTION_RECORDS`] bound, so one tenant's selection flood can
+    /// never evict another tenant's records: the observability of a
+    /// tenant's selections belongs to that tenant alone.
     pub(crate) fn record_selection(&self, record: IndexSelectionRecord) {
         let mut state = self.state.lock().expect("index lock");
-        state.optimizer.records.push_back(record);
-        while state.optimizer.records.len() > MAX_SELECTION_RECORDS {
-            state.optimizer.records.pop_front();
+        let queue = state.optimizer.records.entry(record.tenant().as_str().to_owned()).or_default();
+        queue.push_back(record);
+        while queue.len() > MAX_SELECTION_RECORDS {
+            queue.pop_front();
         }
     }
 
     /// Returns one tenant's selection records, oldest first.
     pub(crate) fn selection_records(&self, tenant: &TenantId) -> Vec<IndexSelectionRecord> {
         let state = self.state.lock().expect("index lock");
-        state.optimizer.records.iter().filter(|record| record.tenant() == tenant).cloned().collect()
+        state
+            .optimizer
+            .records
+            .get(tenant.as_str())
+            .map(|queue| queue.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Returns the cached selection of one query shape when the entry is
@@ -494,6 +733,293 @@ impl IndexCatalog {
         while state.optimizer.cache.len() > MAX_CACHED_SELECTIONS {
             state.optimizer.cache.pop_front();
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // The IX-03 lifecycle surface (ADR 0010 D-4)
+    // -----------------------------------------------------------------------
+
+    /// Returns the current lifecycle instant, the one time source the state
+    /// machine measures against.
+    pub(crate) fn now(&self) -> Instant {
+        self.clock.now()
+    }
+
+    /// Advances the lifecycle clock. Test-only: the in-crate lifecycle tests
+    /// drive thresholds and drains deterministically through it.
+    #[cfg(test)]
+    pub(crate) fn advance_lifecycle_clock(&self, by: std::time::Duration) {
+        self.clock.advance(by);
+    }
+
+    /// Sets the lifecycle thresholds.
+    ///
+    /// Test-driven at this seam, like the creation kill switch: the
+    /// production wiring from engine configuration is a recorded collision
+    /// action (the engine module is not this packet's write scope).
+    #[allow(
+        dead_code,
+        reason = "driven by the lifecycle tests; the EngineConfig wiring is a recorded collision action"
+    )]
+    pub(crate) fn set_lifecycle_thresholds(&self, thresholds: LifecycleThresholds) {
+        self.state.lock().expect("index lock").optimizer.thresholds = thresholds;
+    }
+
+    /// Returns the lifecycle thresholds.
+    pub(crate) fn lifecycle_thresholds(&self) -> LifecycleThresholds {
+        self.state.lock().expect("index lock").optimizer.thresholds
+    }
+
+    /// Schedules one auto-index supersession: the target is deleted only
+    /// after the replacement's coverage reaches the target's and the drain
+    /// wait has elapsed (AX-17). Auto indexes are the only legal targets —
+    /// an explicit index is never scheduled — and one target carries at most
+    /// one pending supersession.
+    pub(crate) fn schedule_supersede(&self, replacement: &IndexNamespace, target: &IndexNamespace) {
+        if replacement == target {
+            return;
+        }
+        let mut state = self.state.lock().expect("index lock");
+        let target_is_auto = state
+            .namespaces
+            .get(&target.catalog_key())
+            .and_then(|entry| entry.definition.as_ref())
+            .is_some_and(|definition| definition.kind() == IndexKind::Auto);
+        if !target_is_auto
+            || state.optimizer.pending.iter().any(|pending| pending.target == *target)
+        {
+            return;
+        }
+        let target_covered =
+            state.namespaces.get(&target.catalog_key()).and_then(NamespaceState::covered_sequence);
+        state.optimizer.pending.push(PendingSupersede {
+            replacement: replacement.clone(),
+            target: target.clone(),
+            target_covered,
+            covered_since: None,
+        });
+    }
+
+    /// Returns every pending supersession, in scheduling order.
+    pub(crate) fn pending_supersessions(&self) -> Vec<SupersedeView> {
+        let state = self.state.lock().expect("index lock");
+        state
+            .optimizer
+            .pending
+            .iter()
+            .map(|pending| SupersedeView {
+                replacement: pending.replacement.clone(),
+                target: pending.target.clone(),
+                target_covered: pending.target_covered,
+            })
+            .collect()
+    }
+
+    /// Reports whether one pending supersession's replacement has reached
+    /// the target's covered storage sequence (the catalog's coverage-parity
+    /// form of V1's etag parity, AX-17).
+    pub(crate) fn supersede_at_parity(&self, pending: &SupersedeView) -> bool {
+        let state = self.state.lock().expect("index lock");
+        parity_of(&state, pending)
+    }
+
+    /// Starts the drain clock of one pending supersession when coverage
+    /// parity holds and no clock has started yet. Returns whether the drain
+    /// started with this call, so the caller never treats a fresh drain as
+    /// an elapsed one.
+    pub(crate) fn note_supersede_parity(&self, pending: &SupersedeView) -> bool {
+        let now = self.clock.now();
+        let mut state = self.state.lock().expect("index lock");
+        let parity = parity_of(&state, pending);
+        let Some(record) =
+            state.optimizer.pending.iter_mut().find(|record| record.target == pending.target)
+        else {
+            return false;
+        };
+        if record.covered_since.is_some() || !parity {
+            return false;
+        }
+        record.covered_since = Some(now);
+        true
+    }
+
+    /// Returns the drain time elapsed since coverage parity started, when it
+    /// has.
+    pub(crate) fn supersede_drain_elapsed(
+        &self,
+        pending: &SupersedeView,
+    ) -> Option<std::time::Duration> {
+        let now = self.clock.now();
+        let state = self.state.lock().expect("index lock");
+        state
+            .optimizer
+            .pending
+            .iter()
+            .find(|record| record.target == pending.target)
+            .and_then(|record| record.covered_since)
+            .map(|since| now.saturating_duration_since(since))
+    }
+
+    /// Demotes one auto index to idle: still selectable, demoted in
+    /// preference (AX-21). The transition records the measured unqueried
+    /// period and the idle threshold. Fails closed without effect on an
+    /// explicit index, an unknown namespace, a non-active index, or a
+    /// namespace whose usage report is still missing.
+    pub(crate) fn demote_to_idle(
+        &self,
+        namespace: &IndexNamespace,
+        measured: std::time::Duration,
+        threshold: std::time::Duration,
+    ) -> bool {
+        let now = self.clock.now();
+        let mut state = self.state.lock().expect("index lock");
+        let Some(entry) = state.namespaces.get_mut(&namespace.catalog_key()) else {
+            return false;
+        };
+        if entry.last_queried.is_none()
+            || !entry
+                .definition
+                .as_ref()
+                .is_some_and(|definition| definition.kind() == IndexKind::Auto)
+        {
+            return false;
+        }
+        let Some(lifecycle) = entry.lifecycle.as_mut() else {
+            return false;
+        };
+        if lifecycle.state != IndexLifecycleState::Active {
+            return false;
+        }
+        lifecycle.state = IndexLifecycleState::Idle;
+        lifecycle.idle_since = Some(now);
+        lifecycle.record(IndexTransition::new(
+            namespace.name().to_owned(),
+            IndexLifecycleState::Active,
+            IndexLifecycleState::Idle,
+            measured,
+            threshold,
+        ));
+        true
+    }
+
+    /// Retires one auto index: the namespace is removed from the catalog, a
+    /// bounded tombstone keeps the recorded transition observable through
+    /// the typed reads, and every pending supersession the retirement
+    /// closes is dropped. Explicit indexes are refused; returns the recorded
+    /// transition.
+    pub(crate) fn retire(
+        &self,
+        namespace: &IndexNamespace,
+        measured: std::time::Duration,
+        threshold: std::time::Duration,
+    ) -> Option<IndexTransition> {
+        let mut state = self.state.lock().expect("index lock");
+        let entry = state.namespaces.get(&namespace.catalog_key())?;
+        let definition = entry.definition.as_ref()?;
+        if definition.kind() != IndexKind::Auto {
+            return None;
+        }
+        let from = entry
+            .lifecycle
+            .as_ref()
+            .map_or(IndexLifecycleState::Active, |lifecycle| lifecycle.state);
+        let transition = IndexTransition::new(
+            namespace.name().to_owned(),
+            from,
+            IndexLifecycleState::Retired,
+            measured,
+            threshold,
+        );
+        // The tombstone keeps the namespace's bounded history ending with
+        // the retirement, so the whole observable lifecycle of a deleted
+        // auto index survives it.
+        let mut transitions = entry
+            .lifecycle
+            .as_ref()
+            .map(|lifecycle| lifecycle.transitions.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        transitions.push(transition.clone());
+        let record = RetiredRecord {
+            tenant: namespace.tenant().clone(),
+            name: namespace.name().to_owned(),
+            kind: definition.kind(),
+            collection: definition.collection().as_str().to_owned(),
+            fields: definition.fields().to_vec(),
+            transitions,
+        };
+        state.namespaces.remove(&namespace.catalog_key());
+        let queue =
+            state.optimizer.retired.entry(namespace.tenant().as_str().to_owned()).or_default();
+        queue.push_back(record);
+        while queue.len() > MAX_RETAINED_RETIRED {
+            queue.pop_front();
+        }
+        state
+            .optimizer
+            .pending
+            .retain(|pending| pending.replacement != *namespace && pending.target != *namespace);
+        state.optimizer.revision += 1;
+        Some(transition)
+    }
+
+    /// Returns the bounded retirement tombstones of one tenant, oldest
+    /// first: the typed view reports them so retirements stay observable
+    /// after the namespace is gone.
+    pub(crate) fn retired_records(&self, tenant: &TenantId) -> Vec<RetiredRecord> {
+        let state = self.state.lock().expect("index lock");
+        state
+            .optimizer
+            .retired
+            .get(tenant.as_str())
+            .map(|queue| queue.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Returns every tenant that owns at least one definition, in tenant
+    /// order: the lifecycle pass iterates the tenants it must serve.
+    pub(crate) fn tenants_with_definitions(&self) -> Vec<TenantId> {
+        let state = self.state.lock().expect("index lock");
+        let mut tenants: Vec<TenantId> = Vec::new();
+        for key in state.namespaces.keys() {
+            let entry = state.namespaces.get(key);
+            if entry.and_then(|entry| entry.definition.as_ref()).is_none() {
+                continue;
+            }
+            let Some((tenant_key, _)) = key.split_once('\u{1f}') else {
+                continue;
+            };
+            if let Ok(tenant) = TenantId::try_new(tenant_key)
+                && !tenants.contains(&tenant)
+            {
+                tenants.push(tenant);
+            }
+        }
+        tenants.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        tenants
+    }
+
+    /// Reports whether one namespace still carries a live definition: the
+    /// bounded selection retry re-checks its subject before recording.
+    pub(crate) fn definition_exists(&self, namespace: &IndexNamespace) -> bool {
+        let state = self.state.lock().expect("index lock");
+        state
+            .namespaces
+            .get(&namespace.catalog_key())
+            .is_some_and(|entry| entry.definition.is_some())
+    }
+
+    /// Reports whether the surpass pass is due: the catalog revision moved
+    /// since the pass last ran (V1's database-record etag guard, AX-18).
+    pub(crate) fn surpass_pass_due(&self) -> bool {
+        let state = self.state.lock().expect("index lock");
+        state.optimizer.last_surpass_revision != Some(state.optimizer.revision)
+    }
+
+    /// Marks the surpass pass as run against the current catalog revision.
+    pub(crate) fn mark_surpass_pass_done(&self) {
+        let mut state = self.state.lock().expect("index lock");
+        let revision = state.optimizer.revision;
+        state.optimizer.last_surpass_revision = Some(revision);
     }
 
     /// Returns the published segment of a namespace's newest published epoch.
@@ -590,6 +1116,10 @@ pub(crate) struct DefinitionEntry {
     published: Option<ObservedGeneration>,
     covered: Option<u64>,
     queried: bool,
+    last_queried: Option<Instant>,
+    state: IndexLifecycleState,
+    idle_since: Option<Instant>,
+    transitions: Vec<IndexTransition>,
 }
 
 impl DefinitionEntry {
@@ -617,6 +1147,28 @@ impl DefinitionEntry {
     /// Reports whether any query marked the index queried.
     pub(crate) const fn queried(&self) -> bool {
         self.queried
+    }
+
+    /// Returns the instant of the last usage report, when one arrived: the
+    /// reporting state is complete exactly when this exists.
+    pub(crate) const fn last_queried(&self) -> Option<Instant> {
+        self.last_queried
+    }
+
+    /// Returns the lifecycle state. Explicit indexes report active and
+    /// never transition.
+    pub(crate) const fn state(&self) -> IndexLifecycleState {
+        self.state
+    }
+
+    /// Returns when the index was demoted to idle, when it is idle.
+    pub(crate) const fn idle_since(&self) -> Option<Instant> {
+        self.idle_since
+    }
+
+    /// Returns the bounded transition history, oldest first.
+    pub(crate) fn transitions(&self) -> &[IndexTransition] {
+        &self.transitions
     }
 }
 
