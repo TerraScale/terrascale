@@ -46,12 +46,18 @@
 //! routing-level kind — which shard owns which buckets, and how many
 //! ([`BucketRangeTable::bucket_count_of`]); per-bucket storage accounting
 //! (bytes per bucket) waits until the storage seam carries bucket identity,
-//! and is not claimed here. Migration streaming, sharded query fan-out, and
-//! failover qualification belong to SH-03..SH-05 and are not claimed here.
+//! and is not claimed here. Bucket migration — streaming the bucket's
+//! committed records over the replication plane's catch-up machinery and
+//! transferring the entry with raised epochs — is SH-03's
+//! [`BucketMigration`]. Sharded query fan-out (SH-04) and failover
+//! qualification (SH-05) are not claimed here.
 //! No sharded performance claim is made or implied.
 
 mod bucket;
 pub(crate) mod hash;
+mod migration;
+#[cfg(test)]
+mod migration_tests;
 mod routing;
 mod table;
 #[cfg(test)]
@@ -62,6 +68,11 @@ use crate::types::{CollectionName, TenantId};
 
 pub use bucket::{
     Bucket, CollectionShardKey, ShardId, ShardKey, ShardKeyField, ShardKeyKind, ShardKeySet,
+};
+pub use migration::{
+    BucketMigration, BucketMigrationState, CutOverOutcome, MAX_MIGRATION_STREAM_BATCH,
+    MigrationApplyFailure, MigrationError, MigrationProgress, MigrationStreamReport,
+    MoveConfirmation, RollBackRecord,
 };
 pub use routing::{RoutePlacement, RoutingRequest, ShardTopology};
 pub use table::{BucketRange, BucketRangeTable};

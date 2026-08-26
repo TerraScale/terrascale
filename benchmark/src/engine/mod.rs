@@ -827,6 +827,26 @@ impl Engine {
         Ok(storage.port.journaled_high_water())
     }
 
+    /// Returns the number of published commits the publication-history
+    /// journal does not serve (W4-CA-4 repair F2's divergence, as a
+    /// count).
+    ///
+    /// The count is derived from the durable operation ledger against the
+    /// journal, so it survives reopens and keeps naming every skipped
+    /// journal append even after a later successful append heals the
+    /// high-water mark. A nonzero count means the journal cannot prove
+    /// completeness: a journal-only completeness proof (the SH-03 bucket
+    /// migration's confirmation and cutover) must fail closed on it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when storage cannot be
+    /// reached (repair F5).
+    pub(crate) fn journal_divergence(&self) -> Result<u64, EngineError> {
+        let storage = self.lock_storage()?;
+        Ok(storage.port.journal_divergence())
+    }
+
     fn lock_storage(&self) -> Result<std::sync::MutexGuard<'_, StorageState>, EngineError> {
         self.storage.lock().map_err(|_| EngineError::StorageFailure)
     }

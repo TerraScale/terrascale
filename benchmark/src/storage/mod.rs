@@ -127,6 +127,22 @@ pub(crate) trait StoragePort: Send {
     /// of assuming completeness.
     fn journaled_high_water(&self) -> Option<StorageSequence>;
 
+    /// Returns the number of published commits the publication-history
+    /// journal does not serve (W4-CA-4 repair F2's divergence, as a
+    /// count).
+    ///
+    /// The count is derived, never stored: a commit counts when the
+    /// operation ledger resolves it as committed while the journal holds
+    /// no record at its sequence. Because a later successful journal
+    /// append advances the high-water mark past an earlier skipped one,
+    /// `journaled_high_water() < published_state().0` only covers the
+    /// unhealed window; this count keeps naming every skipped append,
+    /// across appends that heal the mark and across reopens. A nonzero
+    /// count means the journal cannot prove completeness for any
+    /// consumer, and such a consumer (the SH-03 bucket migration) must
+    /// fail closed instead of assuming the missing records away.
+    fn journal_divergence(&self) -> u64;
+
     /// Returns the currently published sequence and root identity.
     fn published_state(&self) -> (StorageSequence, StorageRootId);
 

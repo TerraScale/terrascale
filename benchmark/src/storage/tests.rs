@@ -1134,6 +1134,58 @@ fn a_failed_journal_append_leaves_the_divergence_observable() {
 }
 
 #[test]
+fn journal_divergence_counts_every_skip_across_healed_marks_and_reopens() {
+    // The high-water mark only covers the unhealed window: one healthy
+    // commit after a skipped append advances the mark past the hole. The
+    // derived count must keep naming the skipped commit — a consumer that
+    // proves completeness against the journal alone would otherwise strand
+    // the skipped record — and must survive a reopen unchanged.
+    let (dir, mut storage) = open_storage("history-divergence-count");
+    assert_eq!(storage.journal_divergence(), 0, "a healthy journal is not diverged");
+
+    // One skipped journal append: the commit publishes, the journal misses
+    // it, and the count names exactly it.
+    storage.arm_test_fault(FaultPoint::JournalAppend);
+    let outcome = storage.commit(fresh_intent(
+        &storage,
+        "op-skipped",
+        vec![put(document("doc-skipped", "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Synced,
+    ));
+    assert!(matches!(outcome, CommitResult::Committed(_)), "the commit still publishes");
+    assert_eq!(storage.journal_divergence(), 1, "the skipped append is counted");
+
+    // A healthy commit heals the high-water mark past the hole; the count
+    // does not drop with it.
+    let outcome = storage.commit(fresh_intent(
+        &storage,
+        "op-after",
+        vec![put(document("doc-after", "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Synced,
+    ));
+    assert!(matches!(outcome, CommitResult::Committed(_)));
+    let (published, _) = storage.published_state();
+    assert_eq!(
+        storage.journaled_high_water(),
+        Some(published),
+        "the mark healed past the skipped sequence"
+    );
+    assert_eq!(
+        storage.journal_divergence(),
+        1,
+        "the healed mark does not erase the skipped append"
+    );
+
+    // The count is derived from durable state: a reopen reports the same
+    // divergence without any new persisted counter.
+    drop(storage);
+    let reopened = FileStorage::open(&dir).expect("reopens");
+    assert_eq!(reopened.journal_divergence(), 1, "the divergence survives a reopen");
+    drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn journal_deletes_resolve_the_exact_key_across_duplicate_identifiers() {
     // F3: one identifier reused across collections. The delete names the
     // beta occurrence while the alpha occurrence sorts first canonically and

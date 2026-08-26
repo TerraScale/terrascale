@@ -771,6 +771,27 @@ impl super::StoragePort for FileStorage {
         self.journal_high_water.map(StorageSequence::new)
     }
 
+    fn journal_divergence(&self) -> u64 {
+        // Derived from the two durable indexes, never stored: every
+        // operation the ledger resolves as committed owes exactly one
+        // journal record, so an owed record the journal does not hold is
+        // one published-but-unjournaled commit (repair F2's divergence).
+        // Counting by the ledger's own committed-resolution rule (which
+        // includes a `Ready` entry whose root is the published root — a
+        // commit that published between the pointer publish and the
+        // journal append) keeps the count live in-process and identical
+        // after a reopen, with no new write-path or format surface.
+        let diverged = self
+            .ledger_index
+            .entries()
+            .filter(|entry| {
+                matches!(self.resolution_for(entry), OperationResolution::Committed { .. })
+                    && !self.journal_index.contains(&entry.tenant, entry.sequence)
+            })
+            .count();
+        u64::try_from(diverged).unwrap_or(u64::MAX)
+    }
+
     fn published_state(&self) -> (StorageSequence, StorageRootId) {
         (StorageSequence::new(self.published.sequence), self.published.id.clone())
     }
