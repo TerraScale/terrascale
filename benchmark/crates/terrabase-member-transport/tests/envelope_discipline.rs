@@ -1,0 +1,328 @@
+//! The member-envelope fail-closed discipline, exercised adversarially at
+//! the codec seam (SE-06).
+//!
+//! Every frame crossing a member lane carries the workspace
+//! message-contract discipline; these tests corrupt each field in turn and
+//! assert the typed rejection, then verify the member boundary enforces the
+//! target and expiry rules and that the measured envelope overhead stays at
+//! or under the written PD-13 D1 budget for representative lane frames.
+
+mod support;
+
+use support::{bare_commit, frame_of, hostile_envelope, open_member};
+
+use terrabase_member_transport::{
+    BUDGET_ENVELOPE_OVERHEAD_BYTES, ENVELOPE_SCHEMA, EnvelopeError, FrameKind, FrameSelector,
+    LaneInstant, MemberTransport, Payload, decode, encode, peek_kind, peek_payload_len,
+};
+
+fn base_envelope() -> terrabase_member_transport::Envelope {
+    hostile_envelope(
+        FrameKind::CatchUpBatch,
+        "m-src",
+        "m-dst",
+        Some("main".to_owned()),
+        Some(1),
+        Payload::CatchUpBatch {
+            tenant: support::tenant("tenant-a"),
+            commits: vec![bare_commit("op-1", 1, "doc-1", "v1")],
+            through: Some(1),
+            tenant_high_water: Some(1),
+            servable_from: Some(1),
+            gap_below: None,
+        },
+    )
+}
+
+#[test]
+fn every_frame_kind_round_trips_through_the_discipline() {
+    let payloads = [
+        (
+            FrameKind::CatchUpRequest,
+            Payload::CatchUpRequest {
+                tenant: support::tenant("tenant-a"),
+                after: Some(3),
+                limit: 8,
+            },
+        ),
+        (FrameKind::CatchUpBatch, base_envelope().payload),
+        (
+            FrameKind::Push,
+            Payload::Push {
+                tenant: support::tenant("tenant-a"),
+                range: "main".to_owned(),
+                epoch: 2,
+                commits: vec![bare_commit("op-9", 4, "doc-9", "v9")],
+            },
+        ),
+        (
+            FrameKind::AckReport,
+            Payload::AckReport {
+                tenant: support::tenant("tenant-a"),
+                operation: support::operation("op-1"),
+                held_synced: true,
+            },
+        ),
+    ];
+    for (kind, payload) in payloads {
+        let envelope = hostile_envelope(
+            kind,
+            "m-src",
+            "m-dst",
+            Some("main".to_owned()),
+            Some(1),
+            payload.clone(),
+        );
+        let frame = frame_of(&envelope);
+        let (decoded, encoded) = decode(&frame.bytes).expect("the frame decodes");
+        assert_eq!(decoded, envelope, "{kind:?} round-trips");
+        assert_eq!(encoded.payload_len, frame.payload_len);
+        assert_eq!(peek_kind(&frame.bytes).expect("kind peeks"), kind);
+        assert_eq!(
+            peek_payload_len(&frame.bytes),
+            Some(frame.payload_len),
+            "the payload length peeks without decoding"
+        );
+    }
+}
+
+#[test]
+fn an_unknown_schema_fails_closed() {
+    let frame = frame_of(&base_envelope());
+    let mut bytes = frame.bytes.clone();
+    // Corrupt the schema text inside its declared length (the digest would
+    // also catch this later; the schema check fails first).
+    bytes[1] = b'X';
+    assert_eq!(decode(&bytes), Err(EnvelopeError::UnknownSchema));
+}
+
+#[test]
+fn an_unsupported_version_fails_closed() {
+    let mut major = frame_of(&base_envelope()).bytes;
+    let major_at = 1 + ENVELOPE_SCHEMA.len();
+    major[major_at] = 0xff;
+    assert_eq!(decode(&major), Err(EnvelopeError::UnsupportedMajorVersion));
+
+    let mut minor = frame_of(&base_envelope()).bytes;
+    minor[major_at + 2] = minor[major_at + 2].wrapping_add(1);
+    assert_eq!(decode(&minor), Err(EnvelopeError::UnsupportedMinorVersion));
+}
+
+#[test]
+fn an_unknown_frame_kind_fails_closed() {
+    let mut bytes = frame_of(&base_envelope()).bytes;
+    let kind_at = 1 + ENVELOPE_SCHEMA.len() + 4;
+    bytes[kind_at] = 5;
+    assert_eq!(decode(&bytes), Err(EnvelopeError::UnsupportedKind));
+}
+
+#[test]
+fn truncation_trailing_bytes_and_length_lies_fail_closed() {
+    let frame = frame_of(&base_envelope());
+    let full = frame.bytes.clone();
+    // Truncation at every prefix boundary inside the frame.
+    for cut in 1..full.len() {
+        let result = decode(&full[..cut]);
+        assert!(
+            matches!(
+                result,
+                Err(EnvelopeError::Truncated
+                    | EnvelopeError::MalformedLength
+                    | EnvelopeError::Oversized)
+            ) || result.is_ok(),
+            "a truncated frame never decodes partially: {result:?} at cut {cut}"
+        );
+        assert!(result.is_err() || cut == full.len(), "only the whole frame decodes: cut {cut}");
+    }
+    // Trailing bytes past the digest.
+    let mut padded = full.clone();
+    padded.push(0);
+    assert_eq!(decode(&padded), Err(EnvelopeError::TrailingBytes));
+    // A payload-length prefix naming more than the frame holds.
+    let mut lied = full.clone();
+    let payload_len_at = lied.len() - 32 - frame.payload_len - 4;
+    lied[payload_len_at..payload_len_at + 4].copy_from_slice(
+        &u32::try_from(frame.payload_len + 1).expect("payload length fits a u32").to_le_bytes(),
+    );
+    assert!(
+        matches!(decode(&lied), Err(EnvelopeError::Truncated)),
+        "a length lie fails closed: {:?}",
+        decode(&lied)
+    );
+}
+
+#[test]
+fn a_digest_disagreement_fails_closed() {
+    let frame = frame_of(&base_envelope());
+    let mut bytes = frame.bytes.clone();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0xff;
+    assert_eq!(decode(&bytes), Err(EnvelopeError::DigestMismatch));
+}
+
+#[test]
+fn invalid_text_oversized_fields_and_payloads_fail_closed() {
+    // Invalid UTF-8 inside a header string field: the source-member text is
+    // parsed before the digest is consulted, so a corrupted byte is rejected
+    // as invalid text (a payload-text corruption is caught earlier by the
+    // digest itself).
+    let frame = frame_of(&base_envelope());
+    let mut bytes = frame.bytes.clone();
+    let source_at = bytes
+        .windows(b"m-src".len())
+        .position(|window| window == b"m-src")
+        .expect("the source member text is in the header");
+    bytes[source_at] = 0xff;
+    assert!(
+        matches!(decode(&bytes), Err(EnvelopeError::InvalidText)),
+        "invalid text fails closed: {:?}",
+        decode(&bytes)
+    );
+
+    // A field over its declared bound fails at encode time.
+    let oversized = hostile_envelope(
+        FrameKind::Push,
+        "m-src",
+        "m-dst",
+        Some("r".repeat(5000)),
+        Some(1),
+        Payload::Push {
+            tenant: support::tenant("tenant-a"),
+            range: "main".to_owned(),
+            epoch: 1,
+            commits: Vec::new(),
+        },
+    );
+    assert_eq!(
+        encode(&oversized),
+        Err(EnvelopeError::FieldTooLarge),
+        "an oversized field never encodes"
+    );
+
+    // A payload over its bound fails at encode time: many individually-valid
+    // fields whose sum crosses the payload bound (a single oversized field
+    // is the FieldTooLarge case above).
+    let commits = (0..600)
+        .map(|index| bare_commit(&format!("op-bulk-{index}"), index + 1, "doc-1", &"x".repeat(600)))
+        .collect::<Vec<_>>();
+    let huge = hostile_envelope(
+        FrameKind::Push,
+        "m-src",
+        "m-dst",
+        Some("main".to_owned()),
+        Some(1),
+        Payload::Push {
+            tenant: support::tenant("tenant-a"),
+            range: "main".to_owned(),
+            epoch: 1,
+            commits,
+        },
+    );
+    assert_eq!(encode(&huge), Err(EnvelopeError::Oversized), "an oversized payload never encodes");
+}
+
+#[test]
+fn the_member_boundary_rejects_wrong_target_and_expired_frames() {
+    let topology = support::two_member_topology("m-src", "m-dst", "main");
+    let (dir, mut member) = open_member("boundary", "m-dst", &topology);
+    let mut lane = terrabase_member_transport::InProcessLane::new();
+    let src = support::member_id("m-src");
+    let dst = support::member_id("m-dst");
+
+    // Addressed to another member: rejected at the member boundary and
+    // recorded as an observable discipline rejection.
+    let wrong_target = hostile_envelope(
+        FrameKind::CatchUpRequest,
+        "m-src",
+        "m-other",
+        None,
+        None,
+        Payload::CatchUpRequest { tenant: support::tenant("tenant-a"), after: None, limit: 4 },
+    );
+    lane.send(&src, &dst, frame_of(&wrong_target)).expect("the link accepts the frame");
+    lane.pump();
+    let report =
+        member.dispatch_under(&mut lane, &support::tenant("tenant-a")).expect("the pass completes");
+    assert_eq!(report.envelope_rejections, 1);
+    assert!(matches!(member.envelope_rejections()[0].reason, EnvelopeError::WrongTarget));
+
+    // Expired at the receiver's clock: rejected the same way.
+    let mut expired = wrong_target;
+    expired.target = dst.clone();
+    expired.issued_at = LaneInstant::at_ticks(0);
+    expired.expires_at = Some(LaneInstant::at_ticks(1));
+    lane.send(&src, &dst, frame_of(&expired)).expect("the link accepts the frame");
+    lane.pump();
+    // The lane clock is at 1; a frame expiring at 1 is expired at the
+    // receiver (expiry is inclusive of the instant).
+    let report =
+        member.dispatch_under(&mut lane, &support::tenant("tenant-a")).expect("the pass completes");
+    assert!(report.envelope_rejections >= 1, "the expired frame is rejected");
+    assert!(
+        member
+            .envelope_rejections()
+            .iter()
+            .any(|rejection| matches!(rejection.reason, EnvelopeError::Expired)),
+        "the expiry rejection is observable"
+    );
+    assert!(lane.pending(&dst) == 0 || lane.receive(&dst, FrameSelector::All).is_empty());
+
+    member.close();
+    support::clean(&dir);
+}
+
+#[test]
+fn measured_envelope_overhead_stays_within_the_written_budget() {
+    // Representative lane frames — one of each class, with lane-shaped
+    // identities — stay at or under the provisional PD-13 D1 envelope
+    // overhead budget. The budget stays provisional until SE-07 ratifies
+    // it; this is the lane's standing check, not a ratified verdict.
+    let frames = [
+        frame_of(&hostile_envelope(
+            FrameKind::CatchUpRequest,
+            "m-a1",
+            "m-b1",
+            None,
+            None,
+            Payload::CatchUpRequest {
+                tenant: support::tenant("tenant-lane"),
+                after: Some(41),
+                limit: 32,
+            },
+        )),
+        frame_of(&base_envelope()),
+        frame_of(&hostile_envelope(
+            FrameKind::Push,
+            "m-a1",
+            "m-b1",
+            Some("main".to_owned()),
+            Some(3),
+            Payload::Push {
+                tenant: support::tenant("tenant-lane"),
+                range: "main".to_owned(),
+                epoch: 3,
+                commits: vec![bare_commit("op-9d41c", 41, "doc-1", "lane-value-one")],
+            },
+        )),
+        frame_of(&hostile_envelope(
+            FrameKind::AckReport,
+            "m-b1",
+            "m-a1",
+            Some("main".to_owned()),
+            Some(3),
+            Payload::AckReport {
+                tenant: support::tenant("tenant-lane"),
+                operation: support::operation("op-9d41c"),
+                held_synced: true,
+            },
+        )),
+    ];
+    for frame in &frames {
+        assert!(
+            frame.overhead_bytes() <= BUDGET_ENVELOPE_OVERHEAD_BYTES,
+            "the {}-byte overhead exceeds the {}-byte budget",
+            frame.overhead_bytes(),
+            BUDGET_ENVELOPE_OVERHEAD_BYTES
+        );
+    }
+}
