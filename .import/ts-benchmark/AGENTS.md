@@ -21,6 +21,15 @@ hard-to-reverse decisions.
   Dashboards are Vinext (`studio/`). NATS may carry member transport lanes
   under the Orchestrator NATS spec's separation rules. C# code uses the
   workspace-pinned .NET SDK and `System.Text.Json` only for JSON surfaces.
+- Product model (charter PD-2026-08-26-04, ADR 0007): TerraBaseV2 is
+  NoSQL with optional schemas and migrations. Documents stay schema-free
+  by default; collections may declare typed, versioned schemas validated
+  at the engine seam on write (the accepted `SchemaValidation` family
+  kind); schema evolution runs through explicit, idempotent, resumable
+  migration contracts with recovery-lane evidence — distinct from the
+  V1→V2 Logical Migration. Schemas and migrations are exposed only
+  through typed operations; schema-related parity rows get WS-PARITY
+  dispositions, never silent scope changes.
 - Performance objective and hard-data rule (charter PD-2026-08-26-03):
   TerraBaseV2 must be as fast as PostgreSQL or faster on comparable
   workloads. The objective is proven only with data: performance-relevant

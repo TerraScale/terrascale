@@ -158,6 +158,23 @@ A V1-to-V2 data transformation whose input and output are checked against a
 manifest, without claiming that V1 files can be opened directly by V2.
 _Avoid_: file compatibility, in-place upgrade
 
+**Document Schema**:
+An optional, typed, versioned validation contract declared per collection
+and enforced on write. Schema-free documents remain valid V2 behavior;
+adopting a schema never changes a collection's stored model.
+_Avoid_: table definition, JSON schema, model
+
+**Schema Version**:
+The recorded version identity of a Document Schema under which a
+collection's documents are validated.
+_Avoid_: schema revision (a Data Family concept), format version
+
+**Schema Migration**:
+An explicit, idempotent engine contract that moves a collection between
+Schema Versions with manifest, checksum, count, and rollback-limit
+evidence. Distinct from Logical Migration.
+_Avoid_: Logical Migration, upgrade script, reindex
+
 **Storage Format**:
 The durable representation governed by V2's compatibility and recovery
 contract.
