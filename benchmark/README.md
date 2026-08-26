@@ -7,7 +7,7 @@ behavior, V1 parity, a migration tool, a multi-region implementation, or a
 production release.
 
 The workspace goal and acceptance criteria live at
-`../specs/2026-08-23-terrabase-v2-goal.md`. The glossary is in `CONTEXT.md`.
+`../specs/GOAL.md`. The glossary is in `CONTEXT.md`.
 Contract facts live in the domain-owned fragments under `parity/contracts/`.
 Mutable V2 status and Proof IDs live in the disjoint state overlays under
 `parity/overlays/`. The canonical `parity/inventory.json` is generated output.

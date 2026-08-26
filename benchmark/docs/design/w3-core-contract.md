@@ -15,7 +15,7 @@ reliability corrections accepted by the parent. Those inputs are design
 evidence. They are not behavior Proof IDs.
 
 The governing records are the workspace-root execution charter identified as
-`workspace-root:specs/2026-08-23-terrabase-v2-goal.md`, the
+`workspace-root:specs/GOAL.md`, the
 [W2 contract extraction](../parity/w2-contract-extraction.md), and the
 [accepted storage-format ADR](../adr/0001-independent-rust-repository-and-storage-format.md).
 The parent dispatch resolves that identifier to an absolute path in assignment
@@ -2215,7 +2215,7 @@ Required checks for this contract document and W2 synchronization are:
 
 - Markdown syntax and every in-repository link resolves from the repository
   root. The workspace charter uses the portable identifier
-  `workspace-root:specs/2026-08-23-terrabase-v2-goal.md`; the parent resolves it
+  `workspace-root:specs/GOAL.md`; the parent resolves it
   to an absolute path in assignment metadata for every worktree. No arbitrary
   worktree-relative path is assumed. The design's in-repository ADR and W2
   links resolve locally.

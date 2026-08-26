@@ -21,7 +21,7 @@ adjudicates at gate time. No builder may treat a recommendation in this
 document as an accepted decision.
 
 The governing records are the workspace charter identified as
-`workspace-root:specs/2026-08-23-terrabase-v2-goal.md` (the parent resolves
+`workspace-root:specs/GOAL.md` (the parent resolves
 that identifier to an absolute path in assignment metadata; a builder must not
 infer a path from its worktree location), the
 [W3 core contract](w3-core-contract.md), the

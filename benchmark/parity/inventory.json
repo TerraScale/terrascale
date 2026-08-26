@@ -8104,7 +8104,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. No claim that V1 defined Region-level acknowledgement levels; V1 local and replica wait observations are input only. [charter:specs/2026-08-23-terrabase-v2-goal.md::Multi-region qualification contract]"
+        "scope": "V2 charter addition. No claim that V1 defined Region-level acknowledgement levels; V1 local and replica wait observations are input only. [charter:specs/GOAL.md::Multi-region qualification contract]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -8143,7 +8143,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. No claim that V1's process-local health or convergence observations were a multi-Region contract. [charter:specs/2026-08-23-terrabase-v2-goal.md::Multi-region qualification contract]"
+        "scope": "V2 charter addition. No claim that V1's process-local health or convergence observations were a multi-Region contract. [charter:specs/GOAL.md::Multi-region qualification contract]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -8182,7 +8182,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. No claim that V1's cluster member loss was equivalent to Region or failure-domain loss. [charter:specs/2026-08-23-terrabase-v2-goal.md::Multi-region qualification contract]"
+        "scope": "V2 charter addition. No claim that V1's cluster member loss was equivalent to Region or failure-domain loss. [charter:specs/GOAL.md::Multi-region qualification contract]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -8222,7 +8222,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. V1 disconnected-writer conflict tests are process-local evidence and do not define the V2 partition policy. No claim that V1 defines the V2 partition policy. [charter:specs/2026-08-23-terrabase-v2-goal.md::Claim discipline]"
+        "scope": "V2 charter addition. V1 disconnected-writer conflict tests are process-local evidence and do not define the V2 partition policy. No claim that V1 defines the V2 partition policy. [charter:specs/GOAL.md::Claim discipline]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -8261,7 +8261,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. V1 replication retry and reconnect behavior does not prove exactly-once customer or metering effects. No claim that V1 proves exactly-once customer or metering effects. [charter:specs/2026-08-23-terrabase-v2-goal.md::Recovery and durability contract]"
+        "scope": "V2 charter addition. V1 replication retry and reconnect behavior does not prove exactly-once customer or metering effects. No claim that V1 proves exactly-once customer or metering effects. [charter:specs/GOAL.md::Recovery and durability contract]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -8300,7 +8300,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. V1 late-member snapshots, local progress, and restart tests are inputs but not a complete multi-Region rejoin contract. No claim that V1 defines a complete multi-Region rejoin contract. [charter:specs/2026-08-23-terrabase-v2-goal.md::Recovery and durability contract]"
+        "scope": "V2 charter addition. V1 late-member snapshots, local progress, and restart tests are inputs but not a complete multi-Region rejoin contract. No claim that V1 defines a complete multi-Region rejoin contract. [charter:specs/GOAL.md::Recovery and durability contract]"
       },
       "v2": {
         "owner": "engine/replication",
@@ -8340,7 +8340,7 @@
           "E-029"
         ],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. V1 sharding and orchestrator tests do not define a multi-Region placement, failover, or resharding policy. No claim that V1 defines a multi-Region placement, failover, or resharding policy. [charter:specs/2026-08-23-terrabase-v2-goal.md::Multi-region qualification contract]"
+        "scope": "V2 charter addition. V1 sharding and orchestrator tests do not define a multi-Region placement, failover, or resharding policy. No claim that V1 defines a multi-Region placement, failover, or resharding policy. [charter:specs/GOAL.md::Multi-region qualification contract]"
       },
       "v2": {
         "owner": "engine/sharding",

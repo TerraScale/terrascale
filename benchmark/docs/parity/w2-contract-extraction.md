@@ -50,7 +50,7 @@ Citation syntax is:
 ```text
 [v1:src/path/file.cs::Symbol]
 [v1:test/path/file.cs::TestName]
-[charter:specs/2026-08-23-terrabase-v2-goal.md::Section heading]
+[charter:specs/GOAL.md::Section heading]
 ```
 
 The validator checks safe path containment, file existence, declaration shape,
@@ -210,7 +210,7 @@ The following checks and dispatch commands are recorded for this worktree:
   ```sh
   : "${TERRABASE_V1_ROOT:?dispatch must provide the clean pinned V1 root}" &&
   : "${TERRASCALE_WORKSPACE_ROOT:?dispatch must provide the TerraScale workspace root}" &&
-  workspace_charter="${TERRASCALE_WORKSPACE_ROOT}/specs/2026-08-23-terrabase-v2-goal.md" &&
+  workspace_charter="${TERRASCALE_WORKSPACE_ROOT}/specs/GOAL.md" &&
   test -f "$workspace_charter" &&
   v2_root="$(git rev-parse --show-toplevel)" &&
   python3 scripts/validate_v1_citations.py \
@@ -220,7 +220,7 @@ The following checks and dispatch commands are recorded for this worktree:
     --gap-report "$v2_root/parity/v1-test-gaps.json"
   ```
 
-  The charter path is `${TERRASCALE_WORKSPACE_ROOT}/specs/2026-08-23-terrabase-v2-goal.md`;
+  The charter path is `${TERRASCALE_WORKSPACE_ROOT}/specs/GOAL.md`;
   the explicit file check fails closed before validation. With both dispatch
   roots supplied, the contract audit must report 258 rows, 251 V1-backed rows,
   267 source citations, 231 test citations, and 42 unresolved test gaps. The

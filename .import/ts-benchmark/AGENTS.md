@@ -1,7 +1,7 @@
 # TerraBaseV2 agent guide
 
 TerraBaseV2 is the Rust engine repository. The workspace charter at
-`../specs/2026-08-23-terrabase-v2-goal.md` is the source of truth for scope,
+`../specs/GOAL.md` is the source of truth for scope,
 acceptance criteria, evidence, and ownership. Read it before changing a
 public seam. `CONTEXT.md` is the glossary; `docs/adr/` records only accepted
 hard-to-reverse decisions.
