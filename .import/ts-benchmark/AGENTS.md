@@ -11,6 +11,16 @@ hard-to-reverse decisions.
 - Keep the engine, approved typed Platform adapter, and control-plane concerns
   separate. Platform owns provisioning, tenant onboarding, billing, routing,
   and external authentication policy. This repository owns database behavior.
+- Workspace stack policy (root `AGENTS.md`, charter PD-2026-08-26-01/02,
+  ADR 0005): this repository's Rust scope is the engine core (storage, WAL,
+  engine, families, query, index, streaming, replication and sync core,
+  event backbone, interop artifacts). External surfaces are C#/.NET under
+  the `host/` and `cli/` project families, speaking the TerraBase Engine
+  Protocol (TBEP) to the engine process — never an in-process C ABI at the
+  service boundary; the C ABI exists only for SDK-side sync-core embedding.
+  Dashboards are Vinext (`studio/`). NATS may carry member transport lanes
+  under the Orchestrator NATS spec's separation rules. C# code uses the
+  workspace-pinned .NET SDK and `System.Text.Json` only for JSON surfaces.
 - Keep the repository freely usable. Do not add license keys, activation,
   support entitlements, EULA gates, CPU-credit throttling, or commercial limits.
   The package license metadata and release gate must be resolved before any

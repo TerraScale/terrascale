@@ -70,6 +70,47 @@ A set of resources whose correlated loss is treated as one failure in a
 qualification scenario.
 _Avoid_: availability zone, outage bucket
 
+## Sync engine and engine protocol
+
+**Sync Engine**:
+The single state-machine core that drives client sessions, transitions,
+checkpoints, acknowledgements, and delta delivery. One engine serves the
+server delivery side and the embedded SDK cores.
+_Avoid_: replication layer, client cache, poller
+
+**Sync Session**:
+A resumable client conversation with the Sync Engine, identified by a
+Sync Checkpoint and carried over Sync Protocol frames.
+_Avoid_: WebSocket connection, changes subscription
+
+**Sync Protocol**:
+The versioned client-channel wire vocabulary (terrascale.sync.v2) spoken
+between client Sync Sessions and the serving host.
+_Avoid_: sync engine, TBEP, wire format
+
+**Sync Frame**:
+One typed, versioned envelope unit of the Sync Protocol or TBEP, carrying
+correlation and causation identity, an idempotency key where mutation is
+possible, and a content digest.
+_Avoid_: message, packet, event
+
+**Change Event Backbone**:
+The engine's public, journal-backed change-event surface that replays
+ordered change events from any checkpoint to authorized consumers.
+_Avoid_: event bus, notification center, changes API
+
+**Sync Checkpoint**:
+The durable resumption identity of a Sync Session, from which
+unacknowledged delivery resumes after reconnect.
+_Avoid_: cursor, offset (a ReplicationCursor is a member catch-up concept)
+
+**TerraBase Engine Protocol (TBEP)**:
+The custom process-to-process wire protocol between the Rust engine
+process and C# hosts: typed MessagePack frames over Unix-domain sockets
+(same host) or QUIC with mTLS (networked). It is not the client Sync
+Protocol.
+_Avoid_: C ABI boundary, gRPC service, internal API
+
 ## Boundaries and clients
 
 **Platform Adapter**:
