@@ -21,6 +21,14 @@ hard-to-reverse decisions.
   Dashboards are Vinext (`studio/`). NATS may carry member transport lanes
   under the Orchestrator NATS spec's separation rules. C# code uses the
   workspace-pinned .NET SDK and `System.Text.Json` only for JSON surfaces.
+- TQL query language (charter PD-2026-08-26-08): TQL is V2's canonical
+  query language — SQL-familiar, document-native, informed by V1's RQL.
+  It parses to a typed, versioned AST against the query seam; no
+  arbitrary code execution in the language (typed expression projections
+  only, unlike RQL's JavaScript); unparseable or unknown-version queries
+  fail closed. TQL composes with subscriptions for live results and is
+  MCP-exposable as a typed operation. The TQL wave (map under #1) owns
+  the spec, parser, surface integration, and RQL parity mapping.
 - AI-agent-ready and AI-native (charter PD-2026-08-26-07): agents are
   first-class principals alongside human developers. Every typed
   operation this repository adds must be MCP-exposable under the same
