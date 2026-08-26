@@ -14,8 +14,9 @@
 //! or holds a storage lock while building or publishing.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 #[cfg(test)]
@@ -23,9 +24,18 @@ mod tests;
 
 use crate::{
     engine::{CommitPublicationSink, Engine},
-    query::{GenerationView, IndexNamespace, ObservedGeneration},
+    query::{
+        GenerationView, IndexNamespace, ObservedGeneration,
+        optimizer::{
+            IndexDefinition, IndexKind, IndexSelectionRecord, MAX_CACHED_SELECTIONS,
+            MAX_SELECTION_RECORDS, auto_index_name,
+        },
+    },
     storage::CommitPublicationEvent,
-    types::{Document, DocumentId, IndexGenerationSet, ReadSnapshot, StorageSequence, TenantScope},
+    types::{
+        Document, DocumentId, DocumentValue, IndexGenerationSet, ReadSnapshot, StorageSequence,
+        TenantId, TenantScope,
+    },
 };
 
 /// Index publication failures. Crate-private by design.
@@ -41,6 +51,13 @@ pub(crate) enum IndexError {
     GenerationExhausted,
     /// The Engine's snapshot view returned a typed failure.
     StorageFailure,
+    /// An explicit registration named the reserved `Auto/` namespace.
+    AutoNamespaceReserved,
+    /// A registration carried the wrong index kind for its entry point.
+    KindMismatch,
+    /// The deterministic auto name is already occupied by different content,
+    /// so creation fails closed instead of reusing or overwriting it.
+    AutoIdentityMismatch,
 }
 
 /// The immutable delta derived from one commit publication event.
@@ -75,16 +92,19 @@ impl IndexDelta {
 
 /// One published in-memory index segment.
 ///
-/// A segment maps the canonical key of one indexed field value to the
+/// A segment maps the canonical key of one indexed field tuple to the
 /// documents of one tenant that carry it, as observed at the covered storage
-/// sequence of the publication that produced the segment.
+/// sequence of the publication that produced the segment. A multi-field
+/// definition composes its key from the per-field canonical keys joined with
+/// the unit separator; a document that misses any indexed field, or carries
+/// a value the subset does not index, has no entry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IndexSegment {
     namespace_key: String,
     epoch: u64,
     generation: u64,
     covered_sequence: u64,
-    field: String,
+    fields: Vec<String>,
     entries: BTreeMap<String, Vec<DocumentId>>,
 }
 
@@ -110,10 +130,10 @@ impl IndexSegment {
         self.covered_sequence
     }
 
-    /// Returns the indexed field of the segment.
+    /// Returns the indexed fields of the segment, in definition order.
     #[allow(dead_code, reason = "observed by the index tests")]
-    pub(crate) fn field(&self) -> &str {
-        &self.field
+    pub(crate) fn fields(&self) -> &[String] {
+        &self.fields
     }
 
     /// Returns the segment entries in canonical key order.
@@ -135,7 +155,9 @@ struct EpochState {
 /// The state of one namespace across its epochs.
 #[derive(Debug, Default)]
 struct NamespaceState {
-    field: String,
+    fields: Vec<String>,
+    definition: Option<IndexDefinition>,
+    last_queried: Option<Instant>,
     epochs: BTreeMap<u64, EpochState>,
 }
 
@@ -149,6 +171,36 @@ impl NamespaceState {
     fn published_epoch(&self) -> Option<u64> {
         self.epochs.iter().rev().find_map(|(epoch, state)| state.published.as_ref().map(|_| *epoch))
     }
+
+    /// Returns the covered storage sequence of the newest published segment.
+    fn covered_sequence(&self) -> Option<u64> {
+        let epoch = self.published_epoch()?;
+        self.epochs
+            .get(&epoch)
+            .and_then(|state| state.published.as_ref().map(IndexSegment::covered_sequence))
+    }
+}
+
+/// One cached selection of the bounded optimizer plan cache (AX-2, adapted).
+#[derive(Debug)]
+struct CachedSelection {
+    shape: String,
+    namespace: String,
+    revision: u64,
+}
+
+/// The optimizer-integration state of the catalog: the kill switch, the
+/// bounded selection-record store, the bounded plan cache, and the catalog
+/// revision that invalidates cached selections when catalog truth changes.
+///
+/// The derived default is the engine default: automatic creation enabled,
+/// empty stores, revision zero.
+#[derive(Debug, Default)]
+struct OptimizerState {
+    auto_creation_disabled: bool,
+    records: VecDeque<IndexSelectionRecord>,
+    cache: VecDeque<CachedSelection>,
+    revision: u64,
 }
 
 /// The catalog state guarded by the index lock.
@@ -156,6 +208,7 @@ impl NamespaceState {
 struct CatalogState {
     namespaces: BTreeMap<String, NamespaceState>,
     delta: Option<IndexDelta>,
+    optimizer: OptimizerState,
 }
 
 /// The private index catalog and its index lock.
@@ -216,13 +269,16 @@ impl IndexCatalog {
 
     /// Registers a namespace with its indexed field, creating epoch one when
     /// the namespace is new, and returns the current epoch.
+    ///
+    /// This is the raw single-field registration path: the namespace carries
+    /// no index definition, so the optimizer never considers it a candidate.
     #[allow(dead_code, reason = "driven by the index tests and the later wiring")]
     pub(crate) fn ensure_namespace(&self, namespace: &IndexNamespace, field: &str) -> u64 {
         let mut state = self.state.lock().expect("index lock");
         let entry = state.namespaces.entry(namespace.catalog_key()).or_default();
         if entry.epochs.is_empty() {
             entry.epochs.insert(1, EpochState { next_generation: 1, ..EpochState::default() });
-            field.clone_into(&mut entry.field);
+            entry.fields = vec![field.to_owned()];
         }
         entry.current_epoch()
     }
@@ -233,7 +289,9 @@ impl IndexCatalog {
     /// recorded epoch of the namespace, mirroring the rule that a namespace
     /// is recreated only explicitly under its migration contract. The
     /// generation sequence restarts at one inside the new epoch and is never
-    /// compared with the previous epoch's generations.
+    /// compared with the previous epoch's generations. Recreation returns
+    /// the namespace to raw form: its single field is replaced and any
+    /// registered definition is dropped.
     #[allow(dead_code, reason = "driven by the index tests and the later wiring")]
     pub(crate) fn recreate_namespace(
         &self,
@@ -250,8 +308,192 @@ impl IndexCatalog {
             return Err(IndexError::EpochNotNewer);
         }
         entry.epochs.insert(new_epoch, EpochState { next_generation: 1, ..EpochState::default() });
-        field.clone_into(&mut entry.field);
+        entry.fields = vec![field.to_owned()];
+        entry.definition = None;
+        state.optimizer.revision += 1;
         Ok(())
+    }
+
+    /// Registers one explicit index definition under a caller-chosen name.
+    ///
+    /// The reserved `Auto/` namespace refuses explicit registration (AX-10),
+    /// and the definition must be explicit. A re-registration of the same
+    /// namespace updates the definition in place — the caller-chosen name is
+    /// the identity — and returns the current epoch.
+    #[allow(
+        dead_code,
+        reason = "driven by the optimizer tests; the typed explicit-index operation is a recorded follow-up"
+    )]
+    pub(crate) fn register_explicit(
+        &self,
+        namespace: &IndexNamespace,
+        definition: &IndexDefinition,
+    ) -> Result<u64, IndexError> {
+        if namespace.name().starts_with(crate::query::optimizer::AUTO_NAMESPACE_PREFIX) {
+            return Err(IndexError::AutoNamespaceReserved);
+        }
+        if definition.kind() != IndexKind::Explicit {
+            return Err(IndexError::KindMismatch);
+        }
+        let mut state = self.state.lock().expect("index lock");
+        let epoch = {
+            let entry = state.namespaces.entry(namespace.catalog_key()).or_default();
+            if entry.epochs.is_empty() {
+                entry.epochs.insert(1, EpochState { next_generation: 1, ..EpochState::default() });
+            }
+            entry.fields =
+                definition.fields().iter().map(|field| field.name().to_owned()).collect();
+            entry.definition = Some(definition.clone());
+            entry.current_epoch()
+        };
+        state.optimizer.revision += 1;
+        Ok(epoch)
+    }
+
+    /// Registers one auto-index definition under its deterministic name.
+    ///
+    /// The name is derived from the definition, so an existing namespace
+    /// under that name is acceptable only when its stored definition is the
+    /// same; anything else fails closed as an identity conflict rather than
+    /// reusing or overwriting the namespace.
+    pub(crate) fn register_auto(
+        &self,
+        tenant: &TenantId,
+        definition: &IndexDefinition,
+    ) -> Result<AutoRegistration, IndexError> {
+        if definition.kind() != IndexKind::Auto {
+            return Err(IndexError::KindMismatch);
+        }
+        let name = auto_index_name(definition);
+        let namespace = IndexNamespace::try_new(tenant.clone(), &name)
+            .map_err(|_| IndexError::AutoIdentityMismatch)?;
+        let mut state = self.state.lock().expect("index lock");
+        {
+            let entry = state.namespaces.entry(namespace.catalog_key()).or_default();
+            if entry.epochs.is_empty() {
+                entry.epochs.insert(1, EpochState { next_generation: 1, ..EpochState::default() });
+                entry.fields =
+                    definition.fields().iter().map(|field| field.name().to_owned()).collect();
+                entry.definition = Some(definition.clone());
+                state.optimizer.revision += 1;
+                return Ok(AutoRegistration { namespace, created: true, epoch: 1 });
+            }
+            if entry.definition.as_ref() == Some(definition) {
+                let epoch = entry.current_epoch();
+                return Ok(AutoRegistration { namespace, created: false, epoch });
+            }
+        }
+        Err(IndexError::AutoIdentityMismatch)
+    }
+
+    /// Returns every definition-carrying namespace of one tenant, in catalog
+    /// order, with its published state and recency for ranking.
+    pub(crate) fn definitions(&self, tenant: &TenantId) -> Vec<DefinitionEntry> {
+        let state = self.state.lock().expect("index lock");
+        state
+            .namespaces
+            .iter()
+            .filter_map(|(key, entry)| {
+                let definition = entry.definition.as_ref()?;
+                let (tenant_key, name) = key.split_once('\u{1f}')?;
+                if tenant_key != tenant.as_str() {
+                    return None;
+                }
+                let namespace = IndexNamespace::try_new(tenant.clone(), name).ok()?;
+                let published = entry
+                    .published_epoch()
+                    .and_then(|epoch| entry.epochs.get(&epoch))
+                    .and_then(|epoch_state| epoch_state.published.as_ref())
+                    .map(|published| {
+                        ObservedGeneration::new(published.epoch(), published.generation())
+                    });
+                Some(DefinitionEntry {
+                    namespace,
+                    definition: definition.clone(),
+                    published,
+                    covered: entry.covered_sequence(),
+                    queried: entry.last_queried.is_some(),
+                })
+            })
+            .collect()
+    }
+
+    /// Marks one namespace queried by a served query (AX-20).
+    pub(crate) fn mark_queried(&self, namespace: &IndexNamespace) {
+        if let Some(entry) =
+            self.state.lock().expect("index lock").namespaces.get_mut(&namespace.catalog_key())
+        {
+            entry.last_queried = Some(Instant::now());
+        }
+    }
+
+    /// Sets the optimizer's automatic-creation kill switch. Failing closed
+    /// (creation disabled) is the switch's active state; the engine default
+    /// is enabled (charter PD-2026-08-26-09 D1).
+    ///
+    /// Test-driven at this seam: the production wiring from engine
+    /// configuration is a recorded collision action (the engine module is not
+    /// this packet's write scope).
+    #[allow(
+        dead_code,
+        reason = "driven by the optimizer tests; the EngineConfig wiring is a recorded collision action"
+    )]
+    pub(crate) fn set_auto_index_creation(&self, enabled: bool) {
+        self.state.lock().expect("index lock").optimizer.auto_creation_disabled = !enabled;
+    }
+
+    /// Reports whether automatic auto-index creation is enabled.
+    pub(crate) fn auto_index_creation_enabled(&self) -> bool {
+        !self.state.lock().expect("index lock").optimizer.auto_creation_disabled
+    }
+
+    /// Records one selection into the bounded record store.
+    pub(crate) fn record_selection(&self, record: IndexSelectionRecord) {
+        let mut state = self.state.lock().expect("index lock");
+        state.optimizer.records.push_back(record);
+        while state.optimizer.records.len() > MAX_SELECTION_RECORDS {
+            state.optimizer.records.pop_front();
+        }
+    }
+
+    /// Returns one tenant's selection records, oldest first.
+    pub(crate) fn selection_records(&self, tenant: &TenantId) -> Vec<IndexSelectionRecord> {
+        let state = self.state.lock().expect("index lock");
+        state.optimizer.records.iter().filter(|record| record.tenant() == tenant).cloned().collect()
+    }
+
+    /// Returns the cached selection of one query shape when the entry is
+    /// still valid for the current catalog revision.
+    pub(crate) fn cached_selection(&self, shape: &str) -> Option<String> {
+        let mut state = self.state.lock().expect("index lock");
+        let revision = state.optimizer.revision;
+        if let Some(position) = state
+            .optimizer
+            .cache
+            .iter()
+            .position(|entry| entry.shape == shape && entry.revision == revision)
+        {
+            return Some(state.optimizer.cache[position].namespace.clone());
+        }
+        // A stale entry never serves again: catalog truth moved.
+        state.optimizer.cache.retain(|entry| entry.shape != shape);
+        None
+    }
+
+    /// Remembers one selection for a query shape at the current catalog
+    /// revision, keeping the cache bounded.
+    pub(crate) fn remember_selection(&self, shape: &str, namespace: &str) {
+        let mut state = self.state.lock().expect("index lock");
+        let revision = state.optimizer.revision;
+        state.optimizer.cache.retain(|entry| entry.shape != shape);
+        state.optimizer.cache.push_back(CachedSelection {
+            shape: shape.to_owned(),
+            namespace: namespace.to_owned(),
+            revision,
+        });
+        while state.optimizer.cache.len() > MAX_CACHED_SELECTIONS {
+            state.optimizer.cache.pop_front();
+        }
     }
 
     /// Returns the published segment of a namespace's newest published epoch.
@@ -307,7 +549,74 @@ impl IndexCatalog {
         segment.generation = generation;
         epoch_state.history.push((generation, covered_sequence));
         epoch_state.published = Some(segment);
+        // A publication changes catalog truth, so cached selections of every
+        // shape invalidate with this revision.
+        state.optimizer.revision += 1;
         Ok(RebuildOutcome::Published { epoch, generation, covered_sequence })
+    }
+}
+
+/// The outcome of one auto-index registration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AutoRegistration {
+    namespace: IndexNamespace,
+    created: bool,
+    epoch: u64,
+}
+
+impl AutoRegistration {
+    /// Returns the namespace the deterministic name maps to.
+    pub(crate) fn namespace(&self) -> &IndexNamespace {
+        &self.namespace
+    }
+
+    /// Reports whether this registration created the namespace.
+    pub(crate) const fn created(&self) -> bool {
+        self.created
+    }
+
+    /// Returns the namespace's current epoch.
+    #[allow(dead_code, reason = "observed by the optimizer tests and the later wiring")]
+    pub(crate) const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+}
+
+/// One definition-carrying namespace as the optimizer sees it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DefinitionEntry {
+    namespace: IndexNamespace,
+    definition: IndexDefinition,
+    published: Option<ObservedGeneration>,
+    covered: Option<u64>,
+    queried: bool,
+}
+
+impl DefinitionEntry {
+    /// Returns the entry's namespace.
+    pub(crate) fn namespace(&self) -> &IndexNamespace {
+        &self.namespace
+    }
+
+    /// Returns the entry's definition.
+    pub(crate) fn definition(&self) -> &IndexDefinition {
+        &self.definition
+    }
+
+    /// Returns the newest published generation, when one exists.
+    pub(crate) const fn published(&self) -> Option<ObservedGeneration> {
+        self.published
+    }
+
+    /// Returns the covered storage sequence of the newest published
+    /// segment — the recency input of ranking — when one exists.
+    pub(crate) const fn covered_sequence(&self) -> Option<u64> {
+        self.covered
+    }
+
+    /// Reports whether any query marked the index queried.
+    pub(crate) const fn queried(&self) -> bool {
+        self.queried
     }
 }
 
@@ -428,15 +737,15 @@ impl<'catalog, 'engine> IndexBuilder<'catalog, 'engine> {
             .snapshot_documents(&scope, &snapshot)
             .map_err(|_| IndexError::StorageFailure)?;
         // Build the segment privately, with no lock held.
-        let field = {
+        let fields = {
             let state = self.catalog.state.lock().expect("index lock");
             state
                 .namespaces
                 .get(&namespace.catalog_key())
-                .map(|entry| entry.field.clone())
+                .map(|entry| entry.fields.clone())
                 .ok_or(IndexError::NamespaceUnknown)?
         };
-        let segment = build_segment(namespace, &field, delta.covered_sequence(), &documents);
+        let segment = build_segment(namespace, &fields, delta.covered_sequence(), &documents);
         // Publish under the index lock only.
         self.catalog.publish(namespace, segment)
     }
@@ -445,18 +754,27 @@ impl<'catalog, 'engine> IndexBuilder<'catalog, 'engine> {
 /// Builds one segment from the documents a publication covers.
 fn build_segment(
     namespace: &IndexNamespace,
-    field: &str,
+    fields: &[String],
     covered_sequence: u64,
     documents: &[Document],
 ) -> IndexSegment {
     let mut entries: BTreeMap<String, Vec<DocumentId>> = BTreeMap::new();
     for document in documents {
-        if let Some(value) = match document.value() {
-            crate::types::DocumentValue::Object(fields) => fields.get(field),
-            _ => None,
-        } && let Some(key) = value_key(value)
-        {
-            entries.entry(key).or_default().push(document.id().clone());
+        let DocumentValue::Object(document_fields) = document.value() else {
+            continue;
+        };
+        let mut keys: Vec<String> = Vec::with_capacity(fields.len());
+        for field in fields {
+            let Some(value) = document_fields.get(field) else {
+                break;
+            };
+            let Some(key) = value_key(value) else {
+                break;
+            };
+            keys.push(key);
+        }
+        if keys.len() == fields.len() {
+            entries.entry(keys.join("\u{1f}")).or_default().push(document.id().clone());
         }
     }
     IndexSegment {
@@ -464,7 +782,7 @@ fn build_segment(
         epoch: 0,
         generation: 0,
         covered_sequence,
-        field: field.to_owned(),
+        fields: fields.to_vec(),
         entries,
     }
 }

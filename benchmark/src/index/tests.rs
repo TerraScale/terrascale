@@ -388,12 +388,99 @@ fn segments_index_the_registered_field_of_their_own_tenant() {
     // tenant's key cannot alias this namespace's entry.
     assert_eq!(segment.namespace_key(), index_namespace.catalog_key());
     assert_ne!(segment.namespace_key(), "tenant-a/by-age");
-    assert_eq!(segment.field(), "age");
+    assert_eq!(segment.fields(), ["age".to_owned()]);
     let entry = segment.entries().get("integer:1").expect("indexed values");
     assert_eq!(entry.len(), 2);
     assert!(entry.contains(&DocumentId::try_new("doc-a1").expect("valid identifier")));
     assert!(!segment.entries().values().flatten().any(|id| id.as_str().starts_with("doc-b")));
     assert!(!segment.entries().contains_key("string:x"), "only the registered field is indexed");
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn definition_namespaces_build_composite_segment_keys() {
+    // A definition-carrying namespace indexes every definition field: the
+    // segment key composes the per-field canonical keys with the unit
+    // separator, and a document missing any indexed field has no entry.
+    let (dir, engine) = open_engine("composite-segments");
+    let catalog = engine.index_catalog();
+    commit_one(&engine, "tenant-a", "op-1", "doc-1", 1);
+
+    let definition = crate::query::optimizer::IndexDefinition::try_new(
+        CollectionName::try_new("users").expect("valid identifier"),
+        vec![
+            crate::query::optimizer::IndexField::try_new(
+                "age",
+                crate::query::optimizer::IndexCapabilities::FULL,
+            )
+            .expect("valid field"),
+            crate::query::optimizer::IndexField::try_new(
+                "name",
+                crate::query::optimizer::IndexCapabilities::FULL,
+            )
+            .expect("valid field"),
+        ],
+        crate::query::optimizer::IndexKind::Auto,
+    )
+    .expect("valid definition");
+    let registration = catalog
+        .register_auto(&tenant("tenant-a"), &definition)
+        .expect("registers under the deterministic name");
+    assert!(registration.created());
+    assert_eq!(registration.namespace().name(), "Auto/users/ByAgeAndName");
+
+    // A document with both fields, one with only age, and one with neither:
+    // only the complete tuple is indexed.
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let operation = OperationId::try_new("op-2").expect("valid identifier");
+    let mut transaction = engine.begin(&tenant_scope, snapshot, operation).expect("begins");
+    transaction
+        .put(
+            object_document(
+                "doc-2",
+                "users",
+                &[("age", DocumentValue::Integer(2)), ("name", DocumentValue::String("k".into()))],
+            ),
+            ExpectedVersion::Any,
+        )
+        .expect("stages");
+    transaction
+        .put(
+            object_document("doc-3", "users", &[("rank", DocumentValue::Integer(9))]),
+            ExpectedVersion::Any,
+        )
+        .expect("stages");
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(_) => {}
+        other => panic!("commit did not succeed: {other:?}"),
+    }
+
+    let builder = IndexBuilder::new(&catalog, &engine);
+    let delta = catalog.delta().expect("event");
+    assert!(matches!(
+        builder.rebuild_from(registration.namespace(), &delta, engine.identity()),
+        Ok(RebuildOutcome::Published { .. })
+    ));
+    let segment = catalog.segment(registration.namespace()).expect("published");
+    assert_eq!(
+        segment.fields(),
+        ["age".to_owned(), "name".to_owned()],
+        "the segment carries the definition's field order"
+    );
+    // doc-1 and doc-2 carry age but only doc-2 carries name; doc-3 carries
+    // neither; only the complete tuple forms an entry.
+    let composite =
+        segment.entries().keys().map(std::string::ToString::to_string).collect::<Vec<_>>();
+    assert_eq!(
+        composite,
+        [format!("integer:2\u{1f}{}", "string:k")],
+        "only complete tuples are indexed; missing fields form no entry"
+    );
+    let indexed = &segment.entries()[&format!("integer:2\u{1f}{}", "string:k")];
+    assert_eq!(indexed.len(), 1);
+    assert_eq!(indexed[0].as_str(), "doc-2");
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -466,8 +553,9 @@ fn strict_spec(claim: &str, required: IndexNamespace) -> QuerySpec {
 #[test]
 fn tenant_and_name_separator_cannot_alias_a_namespace() {
     let (dir, engine) = open_engine("namespace-aliasing");
-    let catalog = Arc::new(IndexCatalog::new());
-    let _sink_guard = engine.subscribe_publications(catalog.sink());
+    // The Engine-owned catalog (W4-CA-3) is fed by its own registered sink,
+    // so the in-crate tests drive it directly instead of installing one.
+    let catalog = engine.index_catalog();
     // Both tenants commit, so both namespaces can build from real events.
     commit_one(&engine, "a", "op-1", "doc-a1", 1);
     commit_one(&engine, "a/b", "op-2", "doc-b1", 1);
@@ -500,7 +588,7 @@ fn tenant_and_name_separator_cannot_alias_a_namespace() {
     // tenant "a" requiring ("a", "b/c") must fail with IndexNotReady even
     // though ("a/b", "c") has a fresh published generation: under a '/'
     // join, that alias would have opened this gate.
-    let store = engine.queries().with_index_catalog(Arc::clone(&catalog));
+    let store = engine.queries();
     let scope_left = TenantScope::from_parts(tenant("a"), engine.identity());
     let snapshot = engine.read_snapshot(&scope_left).expect("snapshot");
     let plan =

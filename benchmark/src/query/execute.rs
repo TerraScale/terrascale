@@ -98,13 +98,32 @@ pub(crate) fn select_indexes(
 }
 
 /// Executes one compiled plan against one immutable snapshot.
+///
+/// A dynamic plan — one whose staleness policy names no index — also runs
+/// one optimizer pass against the engine-owned catalog on its valid, served
+/// execution: the pass selects or creates the serving index, records the
+/// selection, and fails closed on its guards, in which case the scanned
+/// answer is discarded and the query refuses rather than silently scanning
+/// without its index. The pass never changes the plan's rows, ordering, or
+/// paging, which the bounded snapshot scan below produces either way. A plan
+/// that names an index bypasses the optimizer entirely (AX-26).
 pub(crate) fn execute(
     engine: &Engine,
     indexes: &Arc<IndexCatalog>,
     plan: &super::QueryPlan,
     snapshot: &ReadSnapshot,
 ) -> Result<QueryResult, QueryError> {
-    execute_with_view(engine, indexes.as_ref(), plan, snapshot)
+    if plan.model().staleness().indexes().is_empty() {
+        // Execution validates the plan's bindings — tenant claim, namespace
+        // tenants, the snapshot's Engine identity inside the snapshot view —
+        // and the bounded scan only completes for a valid, served query, so
+        // the optimizer pass below never sees an unvalidated snapshot.
+        let result = execute_with_view(engine, indexes.as_ref(), plan, snapshot)?;
+        super::optimizer::run(engine, indexes.as_ref(), plan, snapshot)?;
+        Ok(result)
+    } else {
+        execute_with_view(engine, indexes.as_ref(), plan, snapshot)
+    }
 }
 
 /// Executes one plan against one supplied index-generation view.

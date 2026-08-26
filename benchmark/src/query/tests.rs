@@ -11,10 +11,7 @@
 use std::{
     collections::BTreeMap,
     path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
@@ -376,10 +373,9 @@ fn strict_generation_rejects_an_index_that_is_too_old() {
 fn allowed_stale_query_reports_the_generation_it_used() {
     let (dir, engine) = open_engine("allow-stale");
     let tenant_scope = scope(&engine, "tenant-a");
-    // The catalog sink is installed before the first commit so the catalog
-    // observes the whole publication history.
-    let catalog = Arc::new(crate::index::IndexCatalog::new());
-    let _sink_guard = engine.subscribe_publications(catalog.sink());
+    // The Engine-owned catalog (W4-CA-3) observes the whole publication
+    // history through its registered sink.
+    let catalog = engine.index_catalog();
     commit_documents(
         &engine,
         &tenant_scope,
@@ -447,7 +443,7 @@ fn allowed_stale_query_reports_the_generation_it_used() {
         })
     ));
     let observed_second_epoch = forged_snapshot(&engine, "tenant-a", 1);
-    let store = engine.queries().with_index_catalog(Arc::clone(&catalog));
+    let store = engine.queries();
     let result = store.execute(&plan, &observed_second_epoch).expect("executes");
     let observation = result.staleness().observation_for(&required).expect("reported");
     assert_eq!(

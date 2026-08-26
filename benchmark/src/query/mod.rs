@@ -16,6 +16,7 @@
 
 mod execute;
 mod model;
+pub mod optimizer;
 mod result;
 mod spec;
 mod v1;
@@ -67,7 +68,10 @@ pub enum QueryError {
     /// The typed query specification is invalid.
     InvalidSpec,
     /// A required index generation is missing, too old, or from a different
-    /// epoch, and the policy is strict.
+    /// epoch, and the policy is strict. The optimizer's fail-closed refusals
+    /// surface here too: an unmatched dynamic query when automatic creation
+    /// is disabled, or a creation refused by the identity guard — the query
+    /// fails rather than silently scanning without its index.
     IndexNotReady,
     /// The request deadline expired.
     Deadline,
@@ -169,22 +173,35 @@ pub struct QueryStore<'engine> {
 }
 
 impl<'engine> QueryStore<'engine> {
-    /// Binds one store to one Engine. Crate-only: the durable Engine is the
+    /// Binds one store to one Engine and its engine-owned index catalog
+    /// (integrator action W4-CA-3). Crate-only: the durable Engine is the
     /// only production acquisition path.
     pub(crate) fn from_engine(engine: &'engine Engine) -> Self {
-        Self { engine, indexes: Arc::new(IndexCatalog::new()) }
+        Self { engine, indexes: engine.index_catalog() }
     }
 
-    /// Binds one index catalog to this store.
+    /// Returns one tenant's recent index selection records, oldest first.
     ///
-    /// Test-only. The Engine does not own an index catalog yet, so this seam
-    /// lets the in-crate tests observe a live catalog through the public
-    /// execute path until the integrator action installs the catalog's
-    /// publication-event sink on the Engine; that action removes this seam.
-    #[cfg(test)]
-    pub(crate) fn with_index_catalog(mut self, indexes: Arc<IndexCatalog>) -> Self {
-        self.indexes = indexes;
-        self
+    /// The record store is bounded engine state: the newest
+    /// [`MAX_SELECTION_RECORDS`](optimizer::MAX_SELECTION_RECORDS)
+    /// selections of the engine are retained, and only this tenant's records
+    /// are ever returned.
+    #[must_use]
+    pub fn recent_index_selections(
+        &self,
+        tenant: &crate::types::TenantId,
+    ) -> Vec<optimizer::IndexSelectionRecord> {
+        self.indexes.selection_records(tenant)
+    }
+
+    /// Returns one tenant's registered indexes, explicit and automatic, in
+    /// catalog order.
+    #[must_use]
+    pub fn registered_indexes(
+        &self,
+        tenant: &crate::types::TenantId,
+    ) -> Vec<optimizer::RegisteredIndex> {
+        optimizer::registered_indexes_of(&self.indexes, tenant)
     }
 
     /// Compiles typed or V1-compatible input into an immutable plan.
