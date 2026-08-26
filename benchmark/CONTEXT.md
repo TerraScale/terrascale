@@ -234,6 +234,36 @@ grammar changes bump the minor and breaking changes bump the major.
 _Avoid_: language version, dialect tag, schema version (a Document
 Schema concept)
 
+## Indexing and query planning
+
+**Auto-Index**:
+An index the Query Optimizer creates, widens, supersedes, or retires
+automatically to serve dynamic queries, named deterministically from the
+query shape under the reserved `Auto/` namespace and owned by the
+engine, never by a user operation. Explicit indexes take precedence
+where equivalent; Auto-Index lifecycle changes never weaken durability
+or correctness.
+_Avoid_: dynamic index (a query is dynamic; an index is auto),
+automatic index, ad-hoc index, managed index
+
+**Query Optimizer**:
+The engine component that selects the serving index for every dynamic
+query — choosing an explicit index when one equivalently serves,
+otherwise selecting or creating an Auto-Index — and records its
+reasoning in an Index Selection Record. It does not name the
+storage-level match planning inside one index evaluation.
+_Avoid_: query planner (reserved for the AST-to-plan stage),
+query engine, index chooser, Corax optimizer (a V1 storage-level term)
+
+**Index Selection Record**:
+The bounded, recorded outcome of one selection: the candidates
+considered, each candidate's verdict, the tie-break rules applied, the
+chosen index or creation event, and the staleness basis of the answer.
+A query served by a worse-than-available index must carry its reason
+here. It is engine state queryable through a typed operation, not a log
+line and not a debug flag.
+_Avoid_: explain plan, query plan, debug explain, selection log
+
 ## Data and migration
 
 **Logical Migration**:
