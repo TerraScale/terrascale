@@ -252,6 +252,13 @@ pub(crate) fn validate_schema(schema: &SchemaDefinition) -> Result<(), super::Fa
 /// record is looked up under the transaction's own tenant: another tenant's
 /// schema for the same collection name is invisible and never applied.
 ///
+/// While a Schema Migration drive is in progress on the collection, the
+/// migration's target schema retargets enforcement instead of the recorded
+/// one (the SM-03 evolution hook): puts conform to where the collection is
+/// going, and a rollback drive falls back to the still-recorded from-version
+/// schema. An unreadable migration record fails closed exactly like an
+/// unreadable validation record.
+///
 /// The reserved family collection is exempt: family records are engine
 /// state, not user documents, and a schema cannot be declared on it. A user
 /// document that occupies the reserved validation-record address makes the
@@ -268,6 +275,15 @@ pub(crate) fn enforce_put(
     let collection = document.collection().as_str();
     if collection == RESERVED_COLLECTION {
         return Ok(());
+    }
+    if let Some(target) =
+        super::migrations::record::in_progress_target(transaction, document.collection())?
+    {
+        return if violations(&target, document.value()).is_empty() {
+            Ok(())
+        } else {
+            Err(EngineError::InvalidDocument)
+        };
     }
     let id = record_id("validation", &[collection]).map_err(|_| EngineError::StorageFailure)?;
     let Some(record) = transaction.read(&id)? else {

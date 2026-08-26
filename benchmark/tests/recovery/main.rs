@@ -5,5 +5,5 @@
 //! focused files in this directory are declared as modules here.
 
 mod backup_public_construction;
-mod restore_public;
 mod migration_public_contract;
+mod restore_public;
