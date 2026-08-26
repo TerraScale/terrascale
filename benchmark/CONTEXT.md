@@ -111,6 +111,17 @@ process and C# hosts: typed MessagePack frames over Unix-domain sockets
 Protocol.
 _Avoid_: C ABI boundary, gRPC service, internal API
 
+**Operations Studio**:
+The database's own Vinext operations UI for documents, queries, indexes,
+families, topology, and live views — the V2 successor to V1 Studio as
+the parity-reference consumer.
+_Avoid_: dashboard, admin panel, Studio SPA
+
+**Live View**:
+A studio page region updated by change-event-backbone delivery through
+the API host's subscription endpoints rather than polling.
+_Avoid_: Sync Session (a client-channel concept), live query, stream
+
 ## Boundaries and clients
 
 **Platform Adapter**:
