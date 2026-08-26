@@ -1,0 +1,31 @@
+# `terrabase-sync-core` — the SE-02 seam crate wrapping the adopted sync
+# base engine (Loro, per the SE-02 GO decision record) behind the typed
+# frame/checkpoint contract that TBEP's sync-delivery frames consume.
+#
+# Standalone workspace root on purpose: the engine workspace at the
+# repository root stays zero-dependency and untouched; the integrator adds
+# this crate to the root `members` list when the engine wires it in (the
+# SE-02 decision record names that as the required integrator action).
+
+[package]
+name = "terrabase-sync-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "LicenseRef-TerraScale-Pending"
+description = "TerraBaseV2 sync-core seam: server-authoritative journal materialization, checkpoints, budgeted deltas, frames"
+publish = false
+
+# Own workspace root: stays out of the engine workspace without any
+# root-Cargo.toml edit until the integrator wires it in.
+[workspace]
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+pedantic = "warn"
+
+[dependencies]
+loro = "1.13.9"
