@@ -116,11 +116,36 @@ pub(crate) struct CheckpointInner {
 impl CheckpointInner {
     /// Reports whether one write position is at or below this checkpoint.
     fn covers(&self, sequence: StorageSequence, write_index: u32) -> bool {
-        if sequence.get() < self.sequence.get() {
-            return true;
-        }
-        sequence.get() == self.sequence.get() && write_index <= self.write_index
+        position_covered(self.sequence.get(), self.write_index, sequence, write_index)
     }
+
+    /// Returns the journal cursor this checkpoint records: the sequence
+    /// and consumed write count a public
+    /// [`ChangeCheckpoint`](super::ChangeCheckpoint) names for replay
+    /// (SE-03).
+    pub(crate) fn journal_cursor(&self) -> (u64, u32) {
+        (self.sequence.get(), self.write_index)
+    }
+}
+
+/// Reports whether the write at `sequence`/`write_index` is consumed by the
+/// journal cursor `(cursor_sequence, cursor_write_index)`.
+///
+/// A cursor consuming `cursor_write_index` writes of its commit covers
+/// exactly the write indices strictly below it — never the next
+/// unexamined write, so a batch boundary that splits one commit resumes
+/// without skipping or double-serving a write. Shared by the live
+/// subscription scan and the SE-03 journal replay.
+pub(crate) fn position_covered(
+    cursor_sequence: u64,
+    cursor_write_index: u32,
+    sequence: StorageSequence,
+    write_index: u32,
+) -> bool {
+    if sequence.get() < cursor_sequence {
+        return true;
+    }
+    sequence.get() == cursor_sequence && write_index < cursor_write_index
 }
 
 /// One compact publication notification.
@@ -139,7 +164,6 @@ struct SubscriptionCore {
     #[cfg(test)]
     name: String,
     tenant: TenantId,
-    engine_identity: u128,
     filter: ChangeFilter,
     max_events: u32,
     state: SubscriptionState,
@@ -147,6 +171,11 @@ struct SubscriptionCore {
     pending: Option<SubscriptionBatch>,
     notifications: VecDeque<Notification>,
     queue_full_drops: u64,
+    /// Bounded conflict-observation queue (SE-03): advisory live events,
+    /// drained into batches at build time.
+    conflicts: VecDeque<ChangeEvent>,
+    /// Conflict notifications dropped because the conflict queue was full.
+    conflict_drops: u64,
 }
 
 /// The private negotiation states; `Closed` is terminal and removes the
@@ -187,7 +216,7 @@ impl SubscriptionState {
 /// An engine-level count is attributed to every subscription of that
 /// engine, which is exactly what a dropped ingress means: no subscription
 /// received the notification.
-struct EngineSubscriptions {
+pub(crate) struct EngineSubscriptions {
     inner: Mutex<EngineSubscriptionsInner>,
     /// Notifications dropped because `inner` was busy at emit time.
     contention_drops: AtomicU64,
@@ -240,16 +269,32 @@ static WEDGE_REQUESTED: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 static WEDGE_ENTERED: AtomicBool = AtomicBool::new(false);
 
-/// The name of the subscription whose polls wedge. Test-only.
+/// The name of the subscription whose polls wedge. Test-only. Unlike the
+/// process-wide counters, the name is replaceable so consecutive wedge
+/// sessions may address different subscriptions.
 #[cfg(test)]
-static WEDGE_NAME: OnceLock<String> = OnceLock::new();
+static WEDGE_NAME: Mutex<Option<String>> = Mutex::new(None);
+
+/// Serializes wedge sessions. Tests run in parallel and the wedge is
+/// process-global, so two wedge tests must not hold wedged polls at the
+/// same time; each takes this session lock for its whole arm-to-join
+/// procedure. Test-only.
+#[cfg(test)]
+static WEDGE_SESSION: Mutex<()> = Mutex::new(());
+
+/// Begins one exclusive wedge session. The returned guard serializes the
+/// session's arm, wedge, and join; dropping it ends the session. Test-only.
+#[cfg(test)]
+pub(crate) fn begin_wedge_session() -> MutexGuard<'static, ()> {
+    WEDGE_SESSION.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Arms the poll wedge for the named subscription and clears the entered
 /// flag. Test-only.
 #[cfg(test)]
 pub(crate) fn arm_poll_wedge(name: &str) {
     WEDGE_ENTERED.store(false, AtomicOrdering::Release);
-    let _ = WEDGE_NAME.set(name.to_owned());
+    *lock_recovered(&WEDGE_NAME) = Some(name.to_owned());
     WEDGE_REQUESTED.store(true, AtomicOrdering::Release);
 }
 
@@ -273,9 +318,12 @@ pub(crate) fn release_poll_wedge() {
 /// waiting.
 #[cfg(test)]
 fn wedge_point(core: &SubscriptionCore) {
-    if WEDGE_REQUESTED.load(AtomicOrdering::Acquire)
-        && core.name == *WEDGE_NAME.get_or_init(String::new)
-    {
+    let wedged = {
+        let name = lock_recovered(&WEDGE_NAME);
+        WEDGE_REQUESTED.load(AtomicOrdering::Acquire)
+            && name.as_deref().is_some_and(|name| core.name == name)
+    };
+    if wedged {
         WEDGE_ENTERED.store(true, AtomicOrdering::Release);
         let deadline = Instant::now() + Duration::from_secs(5);
         while WEDGE_REQUESTED.load(AtomicOrdering::Acquire) && Instant::now() < deadline {
@@ -394,8 +442,63 @@ fn deliver_notification(set: &Arc<EngineSubscriptions>, event: &CommitPublicatio
     }
 }
 
+/// Returns one engine's live subscription set for the conflict ingress,
+/// or `None` when no subscriptions are live under that engine (SE-03).
+#[allow(dead_code, reason = "observed by the SE-03 conflict ingress; exercised in tests")]
+pub(crate) fn conflict_set(identity: u128) -> Option<Arc<EngineSubscriptions>> {
+    let registry = ENGINE_SUBSCRIPTIONS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let engines = lock_recovered(registry);
+    engines.get(&identity).map(Arc::clone)
+}
+
+/// Fans one conflict observation into the bounded conflict queue of every
+/// live subscription of the named tenant under one engine's set (SE-03).
+///
+/// The ingress discipline is the commit-notification discipline: every
+/// lock is taken with `try_lock`, a busy lock drops the notification for
+/// that subscription and counts the drop, and the queue is bounded with
+/// drop-oldest counted drops. The tenant check is the isolation guard: a
+/// conflict observed under one tenant's scope never enters another
+/// tenant's subscription, even on the same engine.
+#[allow(dead_code, reason = "observed by the SE-03 conflict ingress; exercised in tests")]
+pub(crate) fn fan_out_conflict(
+    set: &Arc<EngineSubscriptions>,
+    tenant: &TenantId,
+    event: &ChangeEvent,
+) {
+    let handles: Vec<Arc<SubscriptionHandle>> = {
+        let Ok(inner) = set.inner.try_lock() else {
+            set.contention_drops.fetch_add(1, AtomicOrdering::Relaxed);
+            return;
+        };
+        inner.cores.values().map(Arc::clone).collect()
+    };
+    for handle in handles {
+        let Ok(mut state) = handle.state.try_lock() else {
+            handle.contention_drops.fetch_add(1, AtomicOrdering::Relaxed);
+            continue;
+        };
+        if state.tenant != *tenant {
+            // Tenant isolation: the observation never crosses the scope.
+            continue;
+        }
+        if state.conflicts.len() >= super::backbone::MAX_CONFLICT_NOTIFICATIONS {
+            state.conflicts.pop_front();
+            state.conflict_drops = state.conflict_drops.saturating_add(1);
+        }
+        state.conflicts.push_back(event.clone());
+    }
+}
+
 /// Validates the scope against the Engine and returns its identity.
-fn validated_identity(engine: &Engine, scope: &TenantScope) -> Result<u128, StreamError> {
+///
+/// Shared by the subscription path and the SE-03 journal replay: both
+/// entry points bind every read to the scope's validated tenant before
+/// the journal is paged.
+pub(crate) fn validated_identity(
+    engine: &Engine,
+    scope: &TenantScope,
+) -> Result<u128, StreamError> {
     engine.read_snapshot(scope).map_err(|error| sources::map_engine_error(&error))?;
     Ok(scope.engine_identity())
 }
@@ -461,7 +564,6 @@ pub(crate) fn subscribe(
             #[cfg(test)]
             name: spec.name().to_owned(),
             tenant: scope.tenant().clone(),
-            engine_identity: identity,
             filter: spec.filter().clone(),
             max_events: spec.max_events(),
             state: SubscriptionState::Active,
@@ -469,6 +571,8 @@ pub(crate) fn subscribe(
             pending: None,
             notifications: VecDeque::new(),
             queue_full_drops: 0,
+            conflicts: VecDeque::new(),
+            conflict_drops: 0,
         }),
         contention_drops: AtomicU64::new(0),
     });
@@ -534,7 +638,7 @@ pub(crate) fn next_batch(
     // the engine because no subscription received the notification.
     let ingress_drops = handle.contention_drops.load(AtomicOrdering::Relaxed)
         + set.contention_drops.load(AtomicOrdering::Relaxed);
-    let batch = build_batch(engine, &state, ingress_drops)?;
+    let batch = build_batch(engine, scope, &mut state, ingress_drops)?;
     state.pending = Some(batch.clone());
     state.state = SubscriptionState::AwaitingAcknowledgement;
     Ok(batch)
@@ -552,24 +656,49 @@ pub(crate) fn next_batch(
 /// caller acknowledges the boundary. An accepted event that would exceed
 /// the spec's bound stops the scan without moving the boundary past
 /// itself, so it is delivered by the next batch.
+///
+/// Pending conflict observations are drained into the same bounded batch
+/// (SE-03): delivered when the filter accepts them, counted as a reported
+/// drop otherwise. They are consumed at build time and redelivered
+/// verbatim with an unacknowledged batch.
 fn build_batch(
     engine: &Engine,
-    core: &SubscriptionCore,
+    scope: &TenantScope,
+    core: &mut SubscriptionCore,
     ingress_drops: u64,
 ) -> Result<SubscriptionBatch, StreamError> {
     let checkpoint = core.checkpoint.clone();
     let mut after = if checkpoint.write_index > 0 {
         // Re-read the commit the checkpoint splits so its tail is served.
-        StorageSequence::new(checkpoint.sequence.get() - 1)
+        StorageSequence::new(checkpoint.sequence.get().saturating_sub(1))
     } else {
         checkpoint.sequence
     };
     let page_limit = core.max_events.saturating_add(1);
     let max_events = usize::try_from(core.max_events).unwrap_or(usize::MAX);
     let mut events: Vec<ChangeEvent> = Vec::new();
+    let mut conflicts: Vec<ChangeEvent> = Vec::new();
     let mut boundary = checkpoint.clone();
     let mut filtered_dropped = 0_u64;
     let mut examined = 0_usize;
+
+    // Drain the bounded conflict queue first: advisory events, not
+    // journal-ordered, so they never interleave with the sequence-ordered
+    // journal events.
+    while conflicts.len() < max_events {
+        let Some(front) = core.conflicts.front() else {
+            break;
+        };
+        if core.filter.accepts_event(front) {
+            conflicts.push(front.clone());
+        } else {
+            // The filtered conflict is a reported progress fact, consumed
+            // with the boundary this batch records.
+            filtered_dropped += 1;
+        }
+        core.conflicts.pop_front();
+    }
+
     'pages: while examined < MAX_SUBSCRIPTION_SCAN_EVENTS {
         let page = engine
             .tenant_commits(&core.tenant, after, page_limit)
@@ -579,9 +708,7 @@ fn build_batch(
             break;
         };
         for commit in &page {
-            for (write_index, (kind, collection, event)) in
-                expand_commit(core, commit).into_iter().enumerate()
-            {
+            for (write_index, event) in expand_commit_for(scope, commit).into_iter().enumerate() {
                 let index = u32::try_from(write_index).unwrap_or(u32::MAX);
                 if checkpoint.covers(commit.sequence(), index) {
                     continue;
@@ -592,7 +719,7 @@ fn build_batch(
                     write_index: index.saturating_add(1),
                     epoch: checkpoint.epoch,
                 };
-                if core.filter.accepts(kind, &collection) {
+                if core.filter.accepts_event(&event) {
                     if events.len() >= max_events {
                         // The batch is full at an accepted event: leave it
                         // for the next batch, with the boundary exactly at
@@ -620,21 +747,20 @@ fn build_batch(
     }
     Ok(SubscriptionBatch::new(
         events,
+        conflicts,
         SubscriptionCheckpoint { inner: boundary },
         filtered_dropped,
-        core.queue_full_drops.saturating_add(ingress_drops),
+        core.queue_full_drops.saturating_add(core.conflict_drops).saturating_add(ingress_drops),
     ))
 }
 
-/// Expands one published commit into candidate change events.
+/// Expands one published commit into candidate change events (SE-03
+/// generalization: the scope supplies the tenant and engine identity, so
+/// the live subscription scan and journal replay share one expansion).
 ///
-/// Each candidate is the event's kind, its collection, and the event
-/// itself. A no-op delete — an identifier that existed nowhere — produces
-/// no event: nothing changed.
-fn expand_commit(
-    core: &SubscriptionCore,
-    commit: &PublishedCommit,
-) -> Vec<(ChangeKind, CollectionName, ChangeEvent)> {
+/// A no-op delete — an identifier that existed nowhere — produces no
+/// event: nothing changed.
+pub(crate) fn expand_commit_for(scope: &TenantScope, commit: &PublishedCommit) -> Vec<ChangeEvent> {
     let mut candidates = Vec::new();
     for write in commit.writes() {
         let (collection, document) = match write {
@@ -647,15 +773,14 @@ fn expand_commit(
             PublishedWrite::Delete { collection: None, .. } => continue,
         };
         let kind = change_kind_of(&collection, &document);
-        let event = ChangeEvent::new(
+        candidates.push(ChangeEvent::new(
             kind,
-            TenantScope::from_parts(core.tenant.clone(), core.engine_identity),
-            collection.clone(),
+            scope.clone(),
+            collection,
             document,
             commit.operation_id().clone(),
             commit.sequence(),
-        );
-        candidates.push((kind, collection, event));
+        ));
     }
     candidates
 }

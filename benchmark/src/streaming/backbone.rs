@@ -1,0 +1,537 @@
+//! The public change-event backbone (SE-03): journal-backed replay from an
+//! arbitrary checkpoint and the bounded conflict-observation ingress.
+//!
+//! The backbone extends the W4-STREAM subscription seam to the V1 Changes
+//! API surface without changing its delivery discipline:
+//!
+//! - **Replay is journal-driven and stateless.**
+//!   [`StreamStore::replay_changes`](super::StreamStore::replay_changes)
+//!   resolves every batch from the durable publication-history journal
+//!   ([`Engine::tenant_commits`](crate::engine::Engine::tenant_commits)) —
+//!   the same source of truth the live subscriptions deliver from — so any
+//!   consumer, attached or not, reproduces the exact live event sequence
+//!   from an arbitrary [`ChangeCheckpoint`]. A live subscription's
+//!   acknowledged boundary is itself a replayable checkpoint through
+//!   [`SubscriptionCheckpoint::journal_position`]
+//!   (`super::SubscriptionCheckpoint::journal_position`).
+//! - **Conflict observations are live notifications, never journal
+//!   events.** A conflict is not a commit: the journal has no conflict
+//!   record, so conflict events enter through the crate-internal
+//!   [`notify_conflict`] ingress — bounded queues, `try_lock` only,
+//!   counted drops, never a wait — and ride subscription batches as
+//!   advisory [`SubscriptionBatch::conflicts`](super::SubscriptionBatch::conflicts)
+//!   entries. They are not checkpointed and not replayable; that limit is
+//!   the backbone's recorded accepted-difference from replaying them.
+//! - **Tenant isolation is structural.** Replay pages the journal under
+//!   the scope's validated tenant, and the conflict ingress fans out only
+//!   to subscriptions of the same tenant. No event crosses a tenant scope.
+//!
+//! V1 parity selector mappings and their recorded limits live on
+//! [`ChangeFilter`](super::ChangeFilter).
+//!
+//! - **Trigger notifications are public.**
+//!   [`StreamStore::change_notifications`](super::StreamStore::change_notifications)
+//!   generalizes the in-process notification hints into the public engine
+//!   seam (PD-2026-08-26-13 D3): a
+//!   [`ChangeNotification`] is a content-free two-identifier hint — the
+//!   storage sequence and the operation identity of one published commit —
+//!   that wakes a consumer to pull deltas from its checkpoint. The tap's
+//!   queue is bounded with drop-oldest, every drop is counted and reported,
+//!   and the ingress runs on the committing thread under `try_lock` only,
+//!   so it never blocks a commit. Hints are engine-scoped and carry no
+//!   tenant dimension; the tenant-facing fan-out lives behind the adapter
+//!   seams (SE-08/SE-14 with the W5 authorization rules).
+
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicU64, Ordering as AtomicOrdering},
+    },
+};
+
+use crate::{
+    engine::{CommitPublicationSink, Engine, SubscriptionGuard},
+    replication::ConflictRecord,
+    storage::CommitPublicationEvent,
+    types::{Cancellation, OperationId, StorageSequence, TenantScope},
+};
+
+use super::{
+    ChangeEvent, ChangeFilter, StreamError, sources,
+    subscription::{self, MAX_SUBSCRIPTION_SCAN_EVENTS},
+};
+
+/// The bound of one subscription's conflict-notification queue (SE-03).
+///
+/// Conflict observations ride the same bounded-queue discipline as commit
+/// notifications: a consumer that has not drained this many conflict
+/// events has the oldest dropped and counted, and the drop is reported
+/// through [`SubscriptionBatch::dropped_notifications`](super::SubscriptionBatch::dropped_notifications).
+/// A dropped conflict notification is lost as a notification — conflicts
+/// are not journaled — so the count is a delivery fact, not only a latency
+/// one. The value matches the commit-notification bound; making it
+/// per-deployment configuration is a later disposition.
+#[allow(dead_code, reason = "observed by the SE-03 conflict ingress; exercised in tests")]
+pub const MAX_CONFLICT_NOTIFICATIONS: usize = 64;
+
+/// A public position in the durable publication-history journal (SE-03).
+///
+/// The checkpoint names an exclusive journal cursor: everything at or
+/// before `(sequence, write_index)` — the `write_index` writes of the
+/// commit at `sequence`, and every earlier commit — counts as consumed.
+/// [`ChangeReplayRequest::after`](ChangeReplayRequest::after) resumes
+/// exactly after it. A checkpoint carries no engine binding: it is the
+/// caller's position, and replay validates it against the scope it is
+/// replayed under.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChangeCheckpoint {
+    sequence: u64,
+    write_index: u32,
+}
+
+impl ChangeCheckpoint {
+    /// Names the journal position after `write_index` writes of the commit
+    /// at `sequence`.
+    #[must_use]
+    pub const fn after(sequence: u64, write_index: u32) -> Self {
+        Self { sequence, write_index }
+    }
+
+    /// Returns the storage sequence of the checkpoint's commit.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Returns the write count within that commit the checkpoint has
+    /// consumed.
+    #[must_use]
+    pub const fn write_index(&self) -> u32 {
+        self.write_index
+    }
+}
+
+/// One journal-replay request (SE-03).
+///
+/// The request carries the V1-parity selector, the checkpoint to resume
+/// after (`None` names the servable beginning — the oldest publication
+/// history the journal can still serve), and the batch bound.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChangeReplayRequest {
+    filter: ChangeFilter,
+    after: Option<ChangeCheckpoint>,
+    limit: u32,
+}
+
+impl ChangeReplayRequest {
+    /// Creates a validated replay request.
+    ///
+    /// # Errors
+    ///
+    /// Returns
+    /// [`RequestValidationError::InvalidRange`](crate::operations::RequestValidationError::InvalidRange)
+    /// for a zero or over-limit batch bound.
+    pub fn try_new(
+        filter: ChangeFilter,
+        after: Option<ChangeCheckpoint>,
+        limit: u32,
+    ) -> Result<Self, crate::operations::RequestValidationError> {
+        if limit == 0 || limit > super::MAX_STREAM_BATCH_ITEMS {
+            return Err(crate::operations::RequestValidationError::InvalidRange);
+        }
+        Ok(Self { filter, after, limit })
+    }
+
+    /// Returns the V1-parity selector.
+    #[must_use]
+    pub const fn filter(&self) -> &ChangeFilter {
+        &self.filter
+    }
+
+    /// Returns the checkpoint this request resumes after, or `None` for the
+    /// servable beginning.
+    #[must_use]
+    pub const fn after(&self) -> Option<ChangeCheckpoint> {
+        self.after
+    }
+
+    /// Returns the replay batch bound.
+    #[must_use]
+    pub const fn limit(&self) -> u32 {
+        self.limit
+    }
+}
+
+/// One bounded journal-replay batch (SE-03).
+///
+/// The batch carries at most the request's limit in delivered events, the
+/// checkpoint that resumes exactly after everything it examined —
+/// delivered events and reported drops alike — the count of events the
+/// selector dropped at or below that boundary, and whether the scan
+/// reached the journal's end.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChangeReplayBatch {
+    events: Vec<ChangeEvent>,
+    next: Option<ChangeCheckpoint>,
+    filtered_dropped: u64,
+    drained: bool,
+}
+
+impl ChangeReplayBatch {
+    /// Assembles one batch from its typed parts. Crate-only.
+    pub(crate) fn new(
+        events: Vec<ChangeEvent>,
+        next: Option<ChangeCheckpoint>,
+        filtered_dropped: u64,
+        drained: bool,
+    ) -> Self {
+        Self { events, next, filtered_dropped, drained }
+    }
+
+    /// Returns the delivered events, at most the request's bound, strictly
+    /// ordered by [`StorageSequence`](crate::types::StorageSequence).
+    #[must_use]
+    pub fn events(&self) -> &[ChangeEvent] {
+        &self.events
+    }
+
+    /// Returns the checkpoint that resumes exactly after the last event
+    /// this batch delivered or reported as a filtered drop, or `None` when
+    /// the journal held nothing past the request's position.
+    #[must_use]
+    pub const fn next_checkpoint(&self) -> Option<ChangeCheckpoint> {
+        self.next
+    }
+
+    /// Returns the number of events the selector dropped at or below this
+    /// batch's boundary.
+    #[must_use]
+    pub const fn filtered_dropped(&self) -> u64 {
+        self.filtered_dropped
+    }
+
+    /// Reports whether the scan reached the journal's end: every servable
+    /// publication after the request's position was examined.
+    #[must_use]
+    pub const fn drained(&self) -> bool {
+        self.drained
+    }
+}
+
+/// Replays one bounded batch of the change-event sequence from the
+/// journal (SE-03).
+///
+/// The scan pages [`Engine::tenant_commits`] under the scope's validated
+/// tenant in storage-sequence order, expands every reconstructable write
+/// into one change event, and stops at the request's bound, the scan
+/// budget, or the journal's end — mirroring the live subscription's
+/// `build_batch` so both paths observe an identical sequence.
+pub(crate) fn replay(
+    engine: &Engine,
+    scope: &TenantScope,
+    request: &ChangeReplayRequest,
+    cancellation: &Cancellation,
+) -> Result<ChangeReplayBatch, StreamError> {
+    // The caller's live signal is checked before any work: a cancelled
+    // replay closes promptly without touching the journal.
+    if cancellation.is_cancelled() {
+        return Err(StreamError::Cancelled);
+    }
+    subscription::validated_identity(engine, scope)?;
+
+    let (cursor_sequence, cursor_write_index) = match request.after {
+        Some(checkpoint) => (checkpoint.sequence(), checkpoint.write_index()),
+        None => {
+            // The servable beginning: the same resume rule the live
+            // subscription path applies, so both entry points serve the
+            // identical first event.
+            match engine.servable_history_start() {
+                Ok(Some(start)) => (start.get().saturating_sub(1), 0),
+                _ => (0, 0),
+            }
+        }
+    };
+
+    let limit_index = usize::try_from(request.limit).unwrap_or(usize::MAX);
+    let page_limit = request.limit.saturating_add(1);
+    let mut events: Vec<ChangeEvent> = Vec::new();
+    let mut filtered_dropped = 0_u64;
+    let mut examined = 0_usize;
+    let mut boundary: Option<ChangeCheckpoint> = None;
+    let mut drained = false;
+    // Resume mid-commit by re-reading the split commit; the cursor's write
+    // count skips exactly its already-consumed prefix.
+    let mut after = if cursor_write_index > 0 {
+        StorageSequence::new(cursor_sequence.saturating_sub(1))
+    } else {
+        StorageSequence::new(cursor_sequence)
+    };
+
+    'pages: while examined < MAX_SUBSCRIPTION_SCAN_EVENTS {
+        let page = engine
+            .tenant_commits(scope.tenant(), after, page_limit)
+            .map_err(|error| sources::map_engine_error(&error))?;
+        let Some(last) = page.last() else {
+            // The journal is drained past the cursor.
+            drained = true;
+            break;
+        };
+        for commit in &page {
+            for (write_index, event) in
+                subscription::expand_commit_for(scope, commit).into_iter().enumerate()
+            {
+                let index = u32::try_from(write_index).unwrap_or(u32::MAX);
+                if subscription::position_covered(
+                    cursor_sequence,
+                    cursor_write_index,
+                    commit.sequence(),
+                    index,
+                ) {
+                    continue;
+                }
+                examined += 1;
+                let position =
+                    ChangeCheckpoint::after(commit.sequence().get(), index.saturating_add(1));
+                if request.filter.accepts_event(&event) {
+                    if events.len() >= limit_index {
+                        // The batch is full at an accepted event: leave it
+                        // for the next batch, with the boundary exactly at
+                        // the last accounted event.
+                        break 'pages;
+                    }
+                    events.push(event);
+                    boundary = Some(position);
+                } else {
+                    // The drop is a reported progress fact, so the
+                    // boundary may cover it.
+                    filtered_dropped += 1;
+                    boundary = Some(position);
+                }
+                if examined >= MAX_SUBSCRIPTION_SCAN_EVENTS {
+                    break 'pages;
+                }
+            }
+        }
+        // The page was exhausted without filling the batch: page the
+        // journal forward and keep scanning within the budget.
+        after = last.sequence();
+    }
+    Ok(ChangeReplayBatch::new(events, boundary, filtered_dropped, drained))
+}
+
+/// Offers one conflict observation to the change-event backbone (SE-03).
+///
+/// The observation becomes a [`ChangeKind::Conflict`] event — carrying
+/// only the record's content-free metadata — and enters the bounded
+/// conflict-notification queue of every live subscription of this tenant
+/// under the scope's engine. The ingress never waits: a busy queue bound
+/// or a contended lock drops the notification and counts the drop. A
+/// record without operation identities carries no stable identity and
+/// produces no event.
+///
+/// Crate-only: conflict observations originate from the replication
+/// seam's conflict recording; this function is the typed ingress that
+/// ticket wires in.
+#[allow(
+    dead_code,
+    reason = "the replication seam wires this ingress in its ticket; exercised in tests"
+)]
+pub(crate) fn notify_conflict(
+    scope: &TenantScope,
+    sequence: StorageSequence,
+    record: ConflictRecord,
+) {
+    let Some(operation) = record.operations().first().cloned() else {
+        // No conflicting operation identity: nothing stable identifies the
+        // observation, so no event is minted. The replication seam records
+        // the conflicting operations in every conflict it reports.
+        return;
+    };
+    let Some(set) = subscription::conflict_set(scope.engine_identity()) else {
+        // No live subscriptions under this engine: nothing to notify.
+        return;
+    };
+    let event = ChangeEvent::conflict(scope.clone(), operation, sequence, record);
+    subscription::fan_out_conflict(&set, scope.tenant(), &event);
+}
+
+// ---------------------------------------------------------------------------
+// SE-03: public trigger notifications (PD-2026-08-26-13 D3)
+// ---------------------------------------------------------------------------
+
+/// The largest queue bound one [`ChangeNotificationTap`] may request.
+///
+/// This is the tap's memory bound: a tap never holds more than this many
+/// two-identifier hints, and a publication beyond it drops the oldest hint
+/// and counts the drop. Any positive bound keeps the contract's guarantees
+/// — a dropped hint costs one wake-up, never correctness, because the
+/// journal serves the data — so the value is a configured tracer-scale
+/// limit like the subscription bounds, not a correctness constant.
+pub const MAX_CHANGE_NOTIFICATION_CAPACITY: u32 = 1024;
+
+/// The public Change Notification (PD-2026-08-26-13 D3): the small, typed,
+/// content-free trigger event the engine emits on commit publication.
+///
+/// The hint carries exactly two identifiers — the storage sequence and the
+/// stable operation identity of one published commit — and nothing else:
+/// there is no field through which document data could cross. A consumer
+/// that receives one responds by pulling delta batches from its checkpoint
+/// (the journal replay or its subscription), never by reading the hint as
+/// data.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChangeNotification {
+    sequence: StorageSequence,
+    operation: OperationId,
+}
+
+impl ChangeNotification {
+    /// Assembles one hint from a publication's facts. Crate-only: hints
+    /// originate from commit publication alone.
+    pub(crate) fn new(sequence: StorageSequence, operation: OperationId) -> Self {
+        Self { sequence, operation }
+    }
+
+    /// Returns the storage sequence of the publication the hint names.
+    #[must_use]
+    pub const fn sequence(&self) -> StorageSequence {
+        self.sequence
+    }
+
+    /// Returns the stable operation identity of the publication the hint
+    /// names.
+    #[must_use]
+    pub const fn operation_id(&self) -> &OperationId {
+        &self.operation
+    }
+}
+
+/// The bounded hint queue one tap's sink and consumer share.
+///
+/// `dropped` lives outside the mutex so the committing thread can count a
+/// lock-contention drop without taking any lock.
+struct NotificationQueue {
+    inner: Mutex<VecDeque<ChangeNotification>>,
+    capacity: usize,
+    dropped: AtomicU64,
+}
+
+/// One consumer's bounded handle on the engine's Change Notifications
+/// (PD-2026-08-26-13 D3).
+///
+/// The tap is engine-scoped: it is acquired through one
+/// [`Engine`](crate::engine::Engine)'s
+/// [`StreamStore`](super::StreamStore), receives that engine's
+/// publications as content-free hints, and detaches its sink when dropped.
+/// Hints carry no tenant dimension, so a tap is a trusted in-engine
+/// consumer surface — the TBEP subscription layer and the live-view host
+/// fan out per tenant behind their own authorization rules; a tap itself
+/// is not a tenant-facing authorization boundary.
+pub struct ChangeNotificationTap {
+    queue: Arc<NotificationQueue>,
+    /// Drop-only: detaches this tap's sink from the engine's publication
+    /// registry. The leading underscore marks a guard whose `Drop` is its
+    /// only effect.
+    _guard: SubscriptionGuard,
+}
+
+/// Debug names the tap's delivery-health fact alone: the guard and queue
+/// are machinery, and a tap's observable state is its drop count.
+impl std::fmt::Debug for ChangeNotificationTap {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ChangeNotificationTap")
+            .field("dropped", &self.dropped())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ChangeNotificationTap {
+    /// Pops the oldest undelivered hint, or `None` when the queue is
+    /// empty.
+    ///
+    /// Draining never blocks the engine: the sink takes this queue's lock
+    /// with `try_lock` only, so a hint arriving mid-drain is dropped and
+    /// counted rather than waited on.
+    #[must_use]
+    pub fn try_pop(&self) -> Option<ChangeNotification> {
+        self.queue.inner.lock().unwrap_or_else(PoisonError::into_inner).pop_front()
+    }
+
+    /// Returns the cumulative number of hints this tap dropped: queue-full
+    /// drops of the oldest hint beyond the bound and lock-contention drops
+    /// at ingress alike.
+    ///
+    /// A dropped hint costs one wake-up, never correctness: the journal —
+    /// not the hint — is the source of truth, so the count is a
+    /// delivery-health statistic for the consumer's pull cadence.
+    #[must_use]
+    pub fn dropped(&self) -> u64 {
+        self.queue.dropped.load(AtomicOrdering::Relaxed)
+    }
+
+    /// Takes the tap's queue lock and holds it until dropped. Test-only:
+    /// the non-blocking probe needs one consumer holding the lock across a
+    /// commit, which the public drain API cannot express.
+    #[cfg(test)]
+    pub(crate) fn hold_queue_for_test(
+        &self,
+    ) -> std::sync::MutexGuard<'_, VecDeque<ChangeNotification>> {
+        self.queue.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Acquires one bounded Change Notification tap for one engine (SE-03).
+///
+/// The sink registered here runs synchronously on the committing thread,
+/// so it is strictly non-blocking: the queue lock is taken with `try_lock`
+/// only, a busy lock drops the hint and counts the drop without waiting,
+/// and a full queue drops the oldest hint and counts that drop too. The
+/// tap detaches its sink when dropped.
+///
+/// # Errors
+///
+/// Returns [`StreamError::InvalidSource`] for a zero or over-limit
+/// capacity and when the engine's publication registry already holds its
+/// subscriber bound.
+pub(crate) fn open_tap(
+    engine: &Engine,
+    capacity: u32,
+) -> Result<ChangeNotificationTap, StreamError> {
+    if capacity == 0 || capacity > MAX_CHANGE_NOTIFICATION_CAPACITY {
+        return Err(StreamError::InvalidSource);
+    }
+    let queue = Arc::new(NotificationQueue {
+        inner: Mutex::new(VecDeque::new()),
+        capacity: usize::try_from(capacity).unwrap_or(usize::MAX),
+        dropped: AtomicU64::new(0),
+    });
+    let sink_queue = Arc::clone(&queue);
+    let sink: CommitPublicationSink =
+        Arc::new(move |event: &CommitPublicationEvent| deliver_hint(&sink_queue, event));
+    let guard = engine.subscribe_publications(sink);
+    if !guard.is_attached() {
+        // The registry is at its subscriber bound; no hint can reach this
+        // tap, so it is refused rather than silently deaf.
+        return Err(StreamError::InvalidSource);
+    }
+    Ok(ChangeNotificationTap { queue, _guard: guard })
+}
+
+/// Offers one publication hint to one tap's bounded queue.
+///
+/// The committing thread runs this closure: `try_lock` only, counted drops
+/// on a busy lock or a full queue, never a wait, never a storage lock.
+fn deliver_hint(queue: &Arc<NotificationQueue>, event: &CommitPublicationEvent) {
+    let Ok(mut hints) = queue.inner.try_lock() else {
+        // A consumer is mid-drain and holds the queue lock: drop the hint
+        // and count the drop without waiting.
+        queue.dropped.fetch_add(1, AtomicOrdering::Relaxed);
+        return;
+    };
+    if hints.len() >= queue.capacity {
+        hints.pop_front();
+        queue.dropped.fetch_add(1, AtomicOrdering::Relaxed);
+    }
+    hints.push_back(ChangeNotification::new(event.sequence(), event.operation_id().clone()));
+}
