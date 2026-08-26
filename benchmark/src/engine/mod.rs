@@ -29,8 +29,8 @@ use crate::{
     },
     streaming::StreamStore,
     types::{
-        Document, DocumentId, ExpectedVersion, IndexGenerationSet, LocalDurability, OperationId,
-        ReadSnapshot, RetryDisposition, StorageSequence, TenantId, TenantScope,
+        CollectionName, Document, DocumentId, ExpectedVersion, IndexGenerationSet, LocalDurability,
+        OperationId, ReadSnapshot, RetryDisposition, StorageSequence, TenantId, TenantScope,
     },
 };
 
@@ -914,6 +914,54 @@ impl Transaction<'_> {
         }
         let storage = self.engine.lock_storage()?;
         Ok(storage.port.read_document_at(self.snapshot_sequence, self.scope.tenant(), id))
+    }
+
+    /// Reads one document of one collection as this transaction's snapshot
+    /// observed it.
+    ///
+    /// Storage keys a document by tenant, collection, and identifier, and
+    /// nothing forbids reusing one identifier across a tenant's collections,
+    /// so this read resolves by the exact key: it answers the copy stored in
+    /// the named collection, never whichever copy an identifier-only lookup
+    /// reaches first. A staged write is visible to later reads inside the same
+    /// transaction; the snapshot itself is never mutated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when storage cannot be reached.
+    pub fn read_in_collection(
+        &self,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Result<Option<Document>, EngineError> {
+        for write in self.writes.iter().rev() {
+            if write.document_id() != id {
+                continue;
+            }
+            // A staged write naming another collection touched a different
+            // key, so it cannot answer this read and the scan continues. A
+            // delete that named no collection removed an identifier the
+            // snapshot did not contain anywhere, so it matches every
+            // collection and reads as absent from each of them.
+            let touches_this_collection = match write {
+                StagedWrite::Put { document, .. } => document.collection() == collection,
+                StagedWrite::Delete { collection: None, .. } => true,
+                StagedWrite::Delete { collection: Some(staged), .. } => staged == collection,
+            };
+            if touches_this_collection {
+                return Ok(match write {
+                    StagedWrite::Put { document, .. } => Some(document.clone()),
+                    StagedWrite::Delete { .. } => None,
+                });
+            }
+        }
+        let storage = self.engine.lock_storage()?;
+        Ok(storage.port.read_document_in_collection_at(
+            self.snapshot_sequence,
+            self.scope.tenant(),
+            collection,
+            id,
+        ))
     }
 
     /// Stages one document mutation.

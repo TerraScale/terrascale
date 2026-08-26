@@ -5,8 +5,7 @@
     clippy::elidable_lifetime_names,
     clippy::missing_errors_doc,
     clippy::must_use_candidate,
-    clippy::needless_pass_by_value,
-    clippy::unimplemented
+    clippy::needless_pass_by_value
 )]
 
 use crate::{
@@ -63,6 +62,17 @@ pub struct DocumentReadRequest {
 
 impl DocumentReadRequest {
     /// Creates a request after checking its deadline and cancellation state.
+    ///
+    /// The tenant claim, collection, and document identifier arrive through
+    /// their own validated constructors, so this constructor repeats only the
+    /// bounded liveness checks: an already elapsed deadline or an already
+    /// cancelled signal is refused here and never reaches an adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidDeadline`] for an elapsed
+    /// deadline and [`RequestValidationError::InvalidCancellation`] for an
+    /// already cancelled signal.
     pub fn try_new(
         tenant_claim: TenantId,
         collection: CollectionName,
@@ -70,8 +80,13 @@ impl DocumentReadRequest {
         deadline: Deadline,
         cancellation: Cancellation,
     ) -> Result<Self, RequestValidationError> {
-        let _ = (tenant_claim, collection, document_id, deadline, cancellation);
-        unimplemented!("document request validation belongs to a later behavior packet")
+        if deadline.is_expired() {
+            return Err(RequestValidationError::InvalidDeadline);
+        }
+        if cancellation.is_cancelled() {
+            return Err(RequestValidationError::InvalidCancellation);
+        }
+        Ok(Self { tenant_claim, collection, document_id, deadline, cancellation })
     }
 
     /// Returns the untrusted tenant claim.
@@ -113,6 +128,18 @@ pub struct DocumentWriteRequest {
 
 impl DocumentWriteRequest {
     /// Creates a request after checking its deadline and cancellation state.
+    ///
+    /// The tenant claim, the document, the expected version, and the stable
+    /// operation identity arrive through their own validated constructors, so
+    /// this constructor repeats only the bounded liveness checks: an already
+    /// elapsed deadline or an already cancelled signal is refused here and
+    /// never reaches an adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidDeadline`] for an elapsed
+    /// deadline and [`RequestValidationError::InvalidCancellation`] for an
+    /// already cancelled signal.
     pub fn try_new(
         tenant_claim: TenantId,
         document: Document,
@@ -121,8 +148,13 @@ impl DocumentWriteRequest {
         deadline: Deadline,
         cancellation: Cancellation,
     ) -> Result<Self, RequestValidationError> {
-        let _ = (tenant_claim, document, expected, operation_id, deadline, cancellation);
-        unimplemented!("document request validation belongs to a later behavior packet")
+        if deadline.is_expired() {
+            return Err(RequestValidationError::InvalidDeadline);
+        }
+        if cancellation.is_cancelled() {
+            return Err(RequestValidationError::InvalidCancellation);
+        }
+        Ok(Self { tenant_claim, document, expected, operation_id, deadline, cancellation })
     }
 
     /// Returns the untrusted tenant claim.
@@ -228,14 +260,31 @@ pub struct QueryOperation {
 
 impl QueryOperation {
     /// Creates a query operation after checking its deadline and cancellation.
+    ///
+    /// Both input forms arrive pre-validated — the typed specification
+    /// through [`QuerySpec::try_new`](crate::query::QuerySpec::try_new) and
+    /// the V1-compatible text through [`V1QueryText::try_new`] — so this
+    /// constructor repeats only the bounded liveness checks. The optional
+    /// operation identity is a stable retry identity, not a liveness bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidDeadline`] for an elapsed
+    /// deadline and [`RequestValidationError::InvalidCancellation`] for an
+    /// already cancelled signal.
     pub fn try_new(
         input: QueryInput,
         operation_id: Option<OperationId>,
         deadline: Deadline,
         cancellation: Cancellation,
     ) -> Result<Self, RequestValidationError> {
-        let _ = (input, operation_id, deadline, cancellation);
-        unimplemented!("query operation validation belongs to a later behavior packet")
+        if deadline.is_expired() {
+            return Err(RequestValidationError::InvalidDeadline);
+        }
+        if cancellation.is_cancelled() {
+            return Err(RequestValidationError::InvalidCancellation);
+        }
+        Ok(Self { input, operation_id, deadline, cancellation })
     }
 
     /// Returns the typed query input.

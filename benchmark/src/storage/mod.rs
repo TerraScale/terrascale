@@ -59,6 +59,22 @@ pub(crate) trait StoragePort: Send {
         id: &DocumentId,
     ) -> Option<Document>;
 
+    /// Returns one document as the given read snapshot observed it, resolved
+    /// by the full storage key: tenant, collection, and identifier.
+    ///
+    /// Documents are keyed by all three parts and nothing forbids reusing one
+    /// identifier across a tenant's collections, so a read that names a
+    /// collection must resolve by the exact key. An identifier-only lookup
+    /// answers whichever copy canonical key order happens to put first, which
+    /// is a different document, not an absent one.
+    fn read_document_in_collection_at(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Option<Document>;
+
     /// Returns every document of one tenant as the given read snapshot
     /// observed them, in canonical key order.
     fn documents_at(&self, sequence: StorageSequence, tenant: &TenantId) -> Vec<Document>;
