@@ -200,6 +200,84 @@ fn round_trip_export_import_preserves_families_with_checksums() {
 }
 
 #[test]
+fn import_operation_identities_are_stable_across_selections() {
+    let (_source, engine_a) = open_engine("stable-selection-a");
+    seed_source(&engine_a);
+    let destination = export_destination("stable-selection-dest");
+    let identity = run_smuggler_export(
+        &engine_a,
+        &super::SmugglerExportPlan::for_selection(ExportSelection::all()),
+        &destination,
+    )
+    .expect("exports every family")
+    .identity()
+    .to_owned();
+    let artifact = artifact_of(&destination, &identity);
+
+    let (_target, engine_b) = open_engine("stable-selection-b");
+    // A partial import under selection A (family records only) is
+    // interrupted after its first durable record. The artifact's decode
+    // order is order-1, order-2, the family record, the tombstone, and
+    // beta's invoice — the family record sits at position two.
+    let token = Arc::new(Cancellation::new());
+    let cancel_after_one = {
+        let token = Arc::clone(&token);
+        Arc::new(move |applied: u64| {
+            if applied >= 1 {
+                token.cancel();
+            }
+        })
+    };
+    let interrupted = run_smuggler_import(
+        &engine_b,
+        &scope(&engine_b, "alpha"),
+        &SmugglerImportPlan::importing(ExportSelection::of([ExportFamily::FamilyRecords]))
+            .with_cancellation(Arc::clone(&token))
+            .with_progress_observer(cancel_after_one),
+        &artifact,
+    );
+    assert_eq!(interrupted.err(), Some(SmugglerError::Cancelled));
+
+    // The resumed import selects every family. A record's operation
+    // identity is a property of its decode position in the artifact, never
+    // of the run's selection, so the documents the partial run skipped
+    // must convert — not resolve as duplicates they never applied.
+    let resumed = run_smuggler_import(
+        &engine_b,
+        &scope(&engine_b, "alpha"),
+        &SmugglerImportPlan::importing(ExportSelection::all()),
+        &artifact,
+    )
+    .expect("resumes under a wider selection");
+
+    assert_eq!(resumed.applied(ExportFamily::Documents), 2, "both documents convert");
+    assert_eq!(
+        resumed.duplicates(ExportFamily::Documents),
+        0,
+        "no document may be skipped as a duplicate it never applied"
+    );
+    assert_eq!(
+        resumed.duplicates(ExportFamily::FamilyRecords),
+        1,
+        "exactly the partial run's durable record"
+    );
+    assert_eq!(resumed.applied(ExportFamily::Tombstones), 1);
+
+    let tenant_scope = scope(&engine_b, "alpha");
+    let snapshot = engine_b.read_snapshot(&tenant_scope).expect("snapshot");
+    let documents = engine_b.snapshot_documents(&tenant_scope, &snapshot).expect("documents");
+    assert!(
+        documents.iter().any(|document| document.id().as_str() == "order-1"),
+        "the document the partial run skipped is present in the target"
+    );
+    assert_eq!(
+        documents.len(),
+        3,
+        "order-1, order-2, and the family record; the tombstone stays deleted"
+    );
+}
+
+#[test]
 fn import_applies_collection_rename_transforms() {
     let (_source, engine_a) = open_engine("transform-a");
     seed_source(&engine_a);

@@ -65,7 +65,9 @@
 //! # Restartability and idempotency
 //!
 //! Every record converts under a deterministic operation identity derived
-//! from the representation identity and the record's ordinal, so an
+//! from the representation identity and the record's decode position — its
+//! zero-based ordinal over the concatenated record stream, independent of
+//! any run's kind selection or policies — so an
 //! interrupted run (cancellation is checked per record) resumes exactly
 //! from its last durable record: a resumed run reads the durable
 //! publication history — the same source backup reads — to learn which of
@@ -875,10 +877,13 @@ pub fn run_migration(
     let prefix = operation_prefix(manifest.identity());
     let applied = applied_ordinals(target, scope, &prefix)?;
     let mut run = Run::new(manifest.clone(), scope.clone(), options, applied);
+    // The order contract spans the whole concatenated record stream, so one
+    // order state threads through every segment in manifest order.
+    let mut order = codec::DocumentOrder::new();
     for member in manifest.members() {
         let bytes = std::fs::read(source.join(member.name()))
             .map_err(|_| MigrationError::ManifestInvalid)?;
-        for record in codec::decode_segment(&bytes)? {
+        for record in codec::decode_segment(&bytes, &mut order)? {
             run.record(target, record)?;
         }
     }
@@ -980,15 +985,23 @@ impl Run {
     fn record(&mut self, target: &Engine, record: MigrationRecord) -> Result<(), MigrationError> {
         let kind = record.kind();
         *self.seen.entry(kind).or_default() += 1;
+        // The ordinal advances for every decoded record, in decode order,
+        // before any selection or policy routing: operation identity binds
+        // to (representation identity, record position), so it is a
+        // property of the input, never of this run's options. A partial
+        // run's durable prefix stays valid when a later run widens its
+        // selection or changes its policies.
+        let ordinal = self.ordinal;
+        self.ordinal += 1;
         self.check_cancellation()?;
         if !self.options.selects(kind) {
             self.drop(kind, "unselected by the migration options");
             return Ok(());
         }
         match kind {
-            MigrationKind::Document => self.document(target, record),
+            MigrationKind::Document => self.document(target, ordinal, record),
             MigrationKind::Tombstone => match self.options.tombstone_policy() {
-                MigrationTombstonePolicy::Convert => self.apply(target, &record),
+                MigrationTombstonePolicy::Convert => self.apply(target, ordinal, &record),
                 MigrationTombstonePolicy::DropRecorded => {
                     self.drop(kind, "tombstones dropped by the stated tombstone policy");
                     Ok(())
@@ -1014,12 +1027,17 @@ impl Run {
             | MigrationKind::Counter
             | MigrationKind::TimeSeries
             | MigrationKind::Identity
-            | MigrationKind::CompareExchange => self.apply(target, &record),
+            | MigrationKind::CompareExchange => self.apply(target, ordinal, &record),
         }
     }
 
     /// Applies the `LatestOnly` deferral to document records.
-    fn document(&mut self, target: &Engine, record: MigrationRecord) -> Result<(), MigrationError> {
+    fn document(
+        &mut self,
+        target: &Engine,
+        ordinal: u64,
+        record: MigrationRecord,
+    ) -> Result<(), MigrationError> {
         let MigrationRecord::Document { tenant, collection, id, .. } = &record else {
             unreachable!("document() receives document records only");
         };
@@ -1033,11 +1051,10 @@ impl Run {
                     self.apply_at(target, deferred)?;
                 }
             }
-            self.deferred = Some((key, self.ordinal, record));
-            self.ordinal += 1;
+            self.deferred = Some((key, ordinal, record));
             return Ok(());
         }
-        self.apply(target, &record)
+        self.apply(target, ordinal, &record)
     }
 
     /// Applies one deferred record under its original record ordinal.
@@ -1047,18 +1064,17 @@ impl Run {
         deferred: (DocumentKey, u64, MigrationRecord),
     ) -> Result<(), MigrationError> {
         let (_, ordinal, record) = deferred;
-        let current = self.ordinal;
-        self.ordinal = ordinal;
-        let applied = self.apply(target, &record);
-        self.ordinal = current;
-        applied
+        self.apply(target, ordinal, &record)
     }
 
     /// Applies one record under its deterministic operation identity.
-    fn apply(&mut self, target: &Engine, record: &MigrationRecord) -> Result<(), MigrationError> {
+    fn apply(
+        &mut self,
+        target: &Engine,
+        ordinal: u64,
+        record: &MigrationRecord,
+    ) -> Result<(), MigrationError> {
         let kind = record.kind();
-        let ordinal = self.ordinal;
-        self.ordinal += 1;
         let scope = self.record_scope(record)?;
         let operation = deterministic_operation(self.manifest.identity(), ordinal);
         if self.already_applied.contains(&ordinal) {
@@ -1395,7 +1411,7 @@ fn deterministic_operation(identity: &str, ordinal: u64) -> OperationId {
 
 /// The family-request deadline every conversion uses.
 fn long_deadline() -> Deadline {
-    Deadline::after(std::time::Duration::from_secs(3600)).expect("a positive duration")
+    Deadline::after(std::time::Duration::from_hours(1)).expect("a positive duration")
 }
 
 /// Validates a 64-character lowercase hex identity.

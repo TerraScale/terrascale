@@ -43,10 +43,13 @@
 //!   [`SmugglerError::UnsupportedVersion`] — all before or instead of any
 //!   write, never a skipped item.
 //! - Every record applies under a deterministic operation identity derived
-//!   from the artifact identity and the record's ordinal, so a re-import
-//!   is idempotent: already-applied records are resolved from the durable
-//!   publication history as duplicates, and the engine's operation ledger
-//!   replays an identical write set without a second write.
+//!   from the artifact identity and the record's decode position — its
+//!   zero-based ordinal over the artifact's concatenated record stream,
+//!   independent of the importing run's family selection and transforms —
+//!   so a re-import is idempotent: already-applied records are resolved
+//!   from the durable publication history as duplicates, and the engine's
+//!   operation ledger replays an identical write set without a second
+//!   write.
 //! - Tenant isolation is engine-enforced from the backend-supplied scope:
 //!   one import run serves exactly the scope's tenant. Another tenant's
 //!   records are out of scope — never routed into the authorized tenant's
@@ -752,12 +755,18 @@ impl ImportRun<'_> {
         record: &Record,
     ) -> Result<(), SmugglerError> {
         self.check_cancellation()?;
+        // The ordinal advances for every decoded record, in decode order,
+        // before any selection routing: operation identity binds to
+        // (artifact identity, record position), so it is a property of the
+        // artifact, never of this run's selection or transforms. A partial
+        // run's durable prefix stays valid when a later run widens its
+        // selection.
+        let ordinal = self.ordinal;
+        self.ordinal += 1;
         let family = family_of(record);
         if !self.plan.selection.contains(family) {
             return Ok(());
         }
-        let ordinal = self.ordinal;
-        self.ordinal += 1;
         if tenant_of(record) != scope.tenant() {
             // Another tenant's record is out of this scope, not an error:
             // it is never routed into the authorized tenant's data, and the

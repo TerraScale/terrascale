@@ -177,3 +177,86 @@ claim. GAP-D02's mapping is the other open input.
   facts; V2 assigns its own document versions).
 - The representation format is V2-documented and synthetic; no live V1
   export has been run against it.
+
+## Warden repair loop 1
+
+Three warden findings on packet `aba8ecc`, fixed exactly as scoped; every
+fix carries a red-then-green regression test run against the unfixed tree
+first.
+
+### [MAJOR 1] `clippy::duration_suboptimal_units` under the pinned toolchain
+
+`cargo +1.97.1 clippy --offline --locked --all-targets -- -D warnings`
+failed on two packet sites (`src/migration/mod.rs` `from_secs(3600)`,
+`src/migration/tests.rs` `from_secs(60)`). Fixed to
+`Duration::from_hours(1)` / `Duration::from_mins(1)` per clippy's
+suggestion; the pinned clippy now exits 0 and the full `scripts/check.sh`
+runs through to exit 0 (below).
+
+### [MAJOR 2] operation identities unstable across selections/policies
+
+Both runtimes advanced the record ordinal only after the family-selection
+filter (smuggler `ImportRun::record`) or after selection/policy routing
+(migration `Run::record`/`Run::apply`), so the same record carried
+different ordinals — and different records collided on one ordinal —
+across runs with different selections or policies. An interrupted partial
+import under selection A could leave ordinal N durable, and a resumed
+import under selection B then resolved a *different*, never-applied record
+as that duplicate and silently skipped it while reporting success (both
+per-tenant and per-kind count verifications are satisfied by the
+misattributed duplicate).
+
+Fix: the ordinal advances for every decoded record, in decode order,
+before any selection/policy routing in both runtimes, binding identity to
+(artifact identity, record decode position), option-independent. The
+`LatestOnly` deferral keeps its original ordinal via the `document`/
+`apply_at` parameter instead of ordinal save-and-restore. Regression
+tests, both red before the fix (`migration_operation_identities_are_
+stable_across_selections`, `import_operation_identities_are_stable_across_
+selections`): a partial run under selection A (documents only /
+family records only) is cancelled after one durable record; the resumed
+run under selection B (all kinds / all families) must convert the skipped
+record, resolve exactly the partial run's record as its duplicate, and
+account every decoded record exactly once — without the fix the
+migration test fails at `converted(MigrationKind::Identity) == 0` (the
+identity record counted as a duplicate it never applied) and the smuggler
+test fails at `applied(Documents) == 1` with `duplicates(Documents) == 1`
+(order-1 silently skipped, absent from the target).
+
+### [MAJOR 3] documented document-order contract not enforced while decoding
+
+`src/migration/codec.rs` documents ascending `(tenant, collection, id)`
+with ascending versions of one key adjacent and "enforced while decoding",
+but `decode_segment` carried no ordering state (the check existed only in
+the test fixture producer). A descending-key stream could silently convert
+a non-newest version as a key's latest under `LatestOnly`.
+
+Fix: `DocumentOrder` tracks the previous document key and version;
+`decode_segment` observes it per frame and returns
+`MigrationError::RecordCorrupt` on any key that sorts below its
+predecessor or any non-ascending version of the same key. The order
+contract spans the concatenated record stream, so `run_migration` threads
+one state through every segment in manifest order. Red before the fix:
+`migration_rejects_a_document_order_violation_while_decoding` feeds a
+hand-encoded descending-key segment (and a descending-version variant)
+through the production `run_migration` path with the manifest rebound over
+the bytes — the corrupt-producer shape — and asserts `RecordCorrupt` with
+nothing written; without the fix the run reported success (`err() ==
+None`).
+
+### Commands re-run after the fixes
+
+- `cargo fmt` — applied (minor line wraps in the new tests); the final
+  tree is fmt-clean, which `check.sh`'s `--check` stage re-proves
+- `cargo +1.97.1 clippy --offline --locked --all-targets -- -D warnings`
+  — pass, exit 0 (the two MAJOR 1 sites cleared)
+- `cargo check --offline --locked` — pass, exit 0, no warnings
+- `cargo test --offline --locked` — pass: 365 lib tests (362 before the
+  repair plus the 3 new regression tests) and every integration target,
+  0 failures
+- `bash scripts/check.sh` with
+  `TERRABASE_V1_ROOT=/home/mariogk/Projects/TerraScale/.worktrees/terrabase-v1-fa99b925-readonly`
+  and `TERRASCALE_WORKSPACE_ROOT=/home/mariogk/Projects/TerraScale` —
+  exit 0 (the V1 citation audit now runs against the pristine read-only
+  pinned checkout; the packet-stage environmental failure recorded above
+  did not recur)

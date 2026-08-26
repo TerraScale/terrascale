@@ -68,17 +68,68 @@ struct Frame {
     next: usize,
 }
 
-/// Decodes every record of one segment.
+/// The document-order state of one representation's record stream: the
+/// last document key seen and the version last seen for it.
+///
+/// The order contract spans the representation's whole concatenated record
+/// stream, not one segment, so the caller threads a single instance
+/// through every segment in manifest order.
+#[derive(Default)]
+pub(super) struct DocumentOrder {
+    last: Option<((String, String, String), u64)>,
+}
+
+impl DocumentOrder {
+    /// Returns fresh order state for one representation stream.
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Observes one decoded record, enforcing the order contract.
+    ///
+    /// Non-document records leave the state unchanged: the contract
+    /// constrains the document records' relative order, and the `LatestOnly`
+    /// revision policy's one-record decision depends on a key's revisions
+    /// arriving ascending and adjacent — a descending key or a non-ascending
+    /// version of one key could otherwise silently convert a non-newest
+    /// version as the key's latest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MigrationError::RecordCorrupt`] when a document record's
+    /// key sorts below the previous document key, or when one key repeats
+    /// with a version that does not ascend.
+    pub(super) fn observe(&mut self, record: &MigrationRecord) -> Result<(), MigrationError> {
+        let MigrationRecord::Document { tenant, collection, id, version, .. } = record else {
+            return Ok(());
+        };
+        let key =
+            (tenant.as_str().to_owned(), collection.as_str().to_owned(), id.as_str().to_owned());
+        if let Some((open, open_version)) = &self.last
+            && (*open > key || (*open == key && *version <= *open_version))
+        {
+            return Err(MigrationError::RecordCorrupt);
+        }
+        self.last = Some((key, *version));
+        Ok(())
+    }
+}
+
+/// Decodes every record of one segment, observing `order` as it goes.
 ///
 /// # Errors
 ///
-/// Returns the typed fail-closed cause of the first invalid frame; no
-/// partial decoding result escapes.
-pub(super) fn decode_segment(bytes: &[u8]) -> Result<Vec<MigrationRecord>, MigrationError> {
+/// Returns the typed fail-closed cause of the first invalid frame or order
+/// violation; no partial decoding result escapes.
+pub(super) fn decode_segment(
+    bytes: &[u8],
+    order: &mut DocumentOrder,
+) -> Result<Vec<MigrationRecord>, MigrationError> {
     let mut records = Vec::new();
     let mut offset = 0usize;
     while offset < bytes.len() {
         let frame = decode_frame(bytes, offset)?;
+        order.observe(&frame.record)?;
         records.push(frame.record);
         offset += frame.next;
     }

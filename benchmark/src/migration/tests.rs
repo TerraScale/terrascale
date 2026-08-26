@@ -22,8 +22,8 @@ use crate::families::{
     IdentityRead,
 };
 use crate::migration::{
-    MigrationCategory, MigrationError, MigrationOptions, MigrationRecord, MigrationRevisionPolicy,
-    MigrationTombstonePolicy, fixture, run_migration,
+    MigrationCategory, MigrationError, MigrationKind, MigrationOptions, MigrationRecord,
+    MigrationRevisionPolicy, MigrationTombstonePolicy, fixture, run_migration,
 };
 use crate::types::{CollectionName, DocumentId, DocumentValue, TenantId, TenantScope};
 
@@ -199,7 +199,7 @@ fn migration_writes_only_through_the_engine_transaction_seam() {
     let tenant_scope = scope(&engine, "alpha");
     let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
     let store = engine.families();
-    let deadline = crate::types::Deadline::after(std::time::Duration::from_secs(60))
+    let deadline = crate::types::Deadline::after(std::time::Duration::from_mins(1))
         .expect("a positive deadline");
     let read = store
         .read(
@@ -312,6 +312,103 @@ fn interrupted_migration_resumes_from_its_last_durable_record() {
 }
 
 #[test]
+fn migration_operation_identities_are_stable_across_selections() {
+    // An unselected-first fixture: the identity record sorts before the
+    // documents in decode order, so a documents-only run and an all-kinds
+    // run disagree about which record each ordinal names unless identity
+    // binds to decode position alone.
+    let records = vec![
+        MigrationRecord::Identity {
+            tenant: tenant("alpha"),
+            name: "order-seq".to_owned(),
+            value: 41,
+        },
+        document_record("alpha", "Orders", "order-1", text("v1"), 1),
+        document_record("alpha", "Orders", "order-1", text("v2"), 2),
+    ];
+    let source = write_fixture("stable-selection-src", &records);
+    let (_dir, engine) = open_engine("stable-selection");
+
+    // A partial run under selection A (documents only) is interrupted
+    // after its first durable record.
+    let token = Arc::new(crate::types::Cancellation::new());
+    let cancel_after_one = {
+        let token = Arc::clone(&token);
+        Arc::new(move |applied: u64| {
+            if applied >= 1 {
+                token.cancel();
+            }
+        })
+    };
+    let interrupted = run_migration(
+        &engine,
+        &scope(&engine, "alpha"),
+        &source,
+        &MigrationOptions::default()
+            .only_documents()
+            .with_cancellation(Arc::clone(&token))
+            .with_progress_observer(cancel_after_one),
+    );
+    assert_eq!(interrupted.err(), Some(MigrationError::Cancelled));
+
+    // The resumed run selects every kind. A record's operation identity is
+    // a property of its decode position in the representation, never of
+    // the run's selection, so the record the partial run skipped must
+    // convert — not resolve as a duplicate it never applied.
+    let resumed = run_migration(&engine, &scope(&engine, "alpha"), &source, &default_options())
+        .expect("resumes under a wider selection");
+    assert_eq!(
+        resumed.converted(MigrationKind::Identity),
+        1,
+        "the record unselected by the partial run converts on the wider run"
+    );
+    assert_eq!(resumed.converted_documents(), 1, "the partial run already converted v1");
+    assert_eq!(resumed.duplicates(), 1, "exactly the partial run's durable record");
+    assert_eq!(
+        resumed.converted_documents()
+            + resumed.converted(MigrationKind::Identity)
+            + resumed.duplicates(),
+        3,
+        "every decoded record is accounted exactly once"
+    );
+
+    // The skipped record's data actually arrived through the family seam.
+    let tenant_scope = scope(&engine, "alpha");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let deadline = crate::types::Deadline::after(std::time::Duration::from_mins(1))
+        .expect("a positive deadline");
+    let read = engine
+        .families()
+        .read(
+            FamilyReadContext::new(tenant_scope, snapshot),
+            FamilyReadRequest::identity_range(
+                IdentityRead::try_new(
+                    vec!["order-seq".to_owned()],
+                    deadline,
+                    crate::types::Cancellation::new(),
+                )
+                .expect("valid read"),
+            ),
+        )
+        .expect("identity reads");
+    let FamilyReadResult::IdentityRange(ranges) = read else {
+        panic!("an identity read returns identity ranges");
+    };
+    assert_eq!(
+        ranges.entries().iter().find(|entry| entry.name() == "order-seq").map(IdentityEntry::next),
+        Some(41),
+        "the record the partial run skipped is present, not silently dropped"
+    );
+    let documents = live_documents(&engine, "alpha");
+    let user_documents: Vec<_> = documents
+        .iter()
+        .filter(|document| document.collection().as_str() != "terrabase.families")
+        .collect();
+    assert_eq!(user_documents.len(), 1);
+    assert_eq!(user_documents[0].value(), &text("v2"));
+}
+
+#[test]
 fn migration_reports_an_explicit_loss_matrix_with_reasons_and_counts() {
     let (_dir, engine) = open_engine("loss");
     let source = write_fixture("loss-src", &full_fixture_records());
@@ -413,6 +510,77 @@ fn migration_rejects_a_truncated_or_corrupt_input_record() {
         Some(MigrationError::RecordCorrupt)
     );
     assert!(live_documents(&engine, "alpha").is_empty(), "nothing was written");
+}
+
+#[test]
+fn migration_rejects_a_document_order_violation_while_decoding() {
+    let (_dir, engine) = open_engine("order-contract");
+
+    // Descending key: a revision of order-1 arrives after the record stream
+    // already moved past that key to order-2. Under `LatestOnly` this shape
+    // would silently convert a non-newest version as the key's latest, so
+    // the documented order contract must be enforced by the production
+    // decoder, not only by the fixture producer's gate.
+    let descending_key = write_reordered_export(
+        "order-key-src",
+        &[
+            document_record("alpha", "Orders", "order-1", text("v1"), 1),
+            document_record("alpha", "Orders", "order-1", text("v2"), 2),
+            document_record("alpha", "Orders", "order-2", DocumentValue::Integer(7), 1),
+        ],
+        &[
+            document_record("alpha", "Orders", "order-1", text("v1"), 1),
+            document_record("alpha", "Orders", "order-2", DocumentValue::Integer(7), 1),
+            document_record("alpha", "Orders", "order-1", text("v2"), 2),
+        ],
+    );
+    assert_eq!(
+        run_migration(&engine, &scope(&engine, "alpha"), &descending_key, &default_options()).err(),
+        Some(MigrationError::RecordCorrupt),
+        "a key that sorts below its predecessor is corrupt, never convertible"
+    );
+    assert!(live_documents(&engine, "alpha").is_empty(), "nothing was written");
+
+    // Non-ascending version of one key: v1 arrives after v2 of order-1.
+    let descending_version = write_reordered_export(
+        "order-version-src",
+        &[
+            document_record("alpha", "Orders", "order-1", text("v1"), 1),
+            document_record("alpha", "Orders", "order-1", text("v2"), 2),
+        ],
+        &[
+            document_record("alpha", "Orders", "order-1", text("v2"), 2),
+            document_record("alpha", "Orders", "order-1", text("v1"), 1),
+        ],
+    );
+    assert_eq!(
+        run_migration(&engine, &scope(&engine, "alpha"), &descending_version, &default_options())
+            .err(),
+        Some(MigrationError::RecordCorrupt),
+        "a version that does not ascend within one key is corrupt, never convertible"
+    );
+    assert!(live_documents(&engine, "alpha").is_empty(), "nothing was written");
+}
+
+/// Writes one representation whose manifest was bound for
+/// `manifest_records` but whose segment carries `on_disk`: the fixture
+/// producer gates document order at write time, so the violating bytes are
+/// encoded by hand and the manifest rebound over them (the
+/// corrupt-producer shape — internally consistent, lying about order).
+fn write_reordered_export(
+    tag: &str,
+    manifest_records: &[MigrationRecord],
+    on_disk: &[MigrationRecord],
+) -> PathBuf {
+    let source = write_fixture(tag, manifest_records);
+    let segment = first_segment(&source);
+    let mut buffer = Vec::new();
+    for record in on_disk {
+        super::codec::encode_into(&mut buffer, record);
+    }
+    std::fs::write(&segment, &buffer).expect("rewrites the segment");
+    rebind_manifest(&source);
+    source
 }
 
 /// Rebinds a fixture's manifest over the segment bytes as they are now,
