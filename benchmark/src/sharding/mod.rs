@@ -49,15 +49,23 @@
 //! and is not claimed here. Bucket migration — streaming the bucket's
 //! committed records over the replication plane's catch-up machinery and
 //! transferring the entry with raised epochs — is SH-03's
-//! [`BucketMigration`]. Sharded query fan-out (SH-04) and failover
-//! qualification (SH-05) are not claimed here.
+//! [`BucketMigration`]. Sharded query fan-out and reduction, and sharded
+//! index definition and readers, are SH-04's [`ShardedQueries`] and
+//! [`ShardedIndexDefinition`]: per-shard execution through the existing query
+//! seam over a caller-supplied serving set, with composed staleness that is
+//! never more permissive than the strictest shard's. Failover qualification
+//! and cluster transactions (SH-05) are not claimed here.
 //! No sharded performance claim is made or implied.
 
 mod bucket;
 pub(crate) mod hash;
+mod indexing;
 mod migration;
 #[cfg(test)]
 mod migration_tests;
+mod query;
+#[cfg(test)]
+mod query_tests;
 mod routing;
 mod table;
 #[cfg(test)]
@@ -69,10 +77,19 @@ use crate::types::{CollectionName, TenantId};
 pub use bucket::{
     Bucket, CollectionShardKey, ShardId, ShardKey, ShardKeyField, ShardKeyKind, ShardKeySet,
 };
+pub use indexing::{
+    ShardIndexError, ShardIndexServing, ShardIndexState, ShardPublishedIndex, ShardRegistration,
+    ShardedIndexDefinition, ShardedIndexRefusal, ShardedIndexRegistration, ShardedIndexView,
+};
 pub use migration::{
     BucketMigration, BucketMigrationState, CutOverOutcome, MAX_MIGRATION_STREAM_BATCH,
     MigrationApplyFailure, MigrationError, MigrationProgress, MigrationStreamReport,
     MoveConfirmation, RollBackRecord,
+};
+pub use query::{
+    MemberServing, QueryRouting, RouteReason, ShardQueryOutcome, ShardQueryServing, ShardRoute,
+    ShardServingError, ShardSnapshots, ShardStalenessObservation, ShardedExecutionError,
+    ShardedNamespaceStaleness, ShardedQueries, ShardedQueryResult,
 };
 pub use routing::{RoutePlacement, RoutingRequest, ShardTopology};
 pub use table::{BucketRange, BucketRangeTable};
