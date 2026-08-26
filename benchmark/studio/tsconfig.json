@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["DOM", "DOM.Iterable", "ES2023"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "verbatimModuleSyntax": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "next/*": ["./node_modules/vinext/dist/shims/*.d.ts"]
+    },
+    "types": ["node", "vite/client"]
+  },
+  "include": [
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "e2e/**/*.ts",
+    "types/**/*.d.ts",
+    "next-env.d.ts",
+    "vite.config.ts",
+    "next.config.js",
+    "playwright.config.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

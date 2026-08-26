@@ -1,0 +1,106 @@
+{
+  "suite": "terrabase.api.v2.stub-first",
+  "doc": "Stub-first conformance vectors for the studio contract. The fixture server must pass these before the SE-08 host lands; when SE-08 lands, the same vectors run against the real host (DB-02 acceptance: the fixture passes the same conformance vectors stub-first).",
+  "vectors": [
+    {
+      "id": "status-read-ok",
+      "kind": "operation",
+      "operation": "engine.status",
+      "request": {},
+      "expect": "HTTP 200; response envelope v=2, op echoes 'engine.status', correlationId echoes the request; result has engineId, engineVersion, role in {single,leader,follower}, startedAt ISO-8601, uptimeMs >= 0, storage{collections,documents,walBytes}, counters{reads,writes,queries,familyOperations}"
+    },
+    {
+      "id": "correlation-echo",
+      "kind": "operation",
+      "operation": "document.read",
+      "request": { "collection": "studio-seed", "documentId": "seed-001" },
+      "expect": "HTTP 200; response correlationId equals the request correlationId exactly"
+    },
+    {
+      "id": "unknown-operation-rejected",
+      "kind": "operation",
+      "operation": "not.an.operation",
+      "request": {},
+      "expect": "HTTP 404; typed error envelope v=2 with error.code 'operation.unknown' and retryable false"
+    },
+    {
+      "id": "malformed-envelope-rejected",
+      "kind": "raw",
+      "target": "/api/v2/operations/engine.status",
+      "request": { "v": 1, "op": "engine.status", "correlationId": "vec-0004", "request": {} },
+      "expect": "HTTP 400; typed error envelope with error.code 'protocol.version-unsupported' — fail closed on unknown envelope version"
+    },
+    {
+      "id": "correlation-mismatch-rejected",
+      "kind": "raw",
+      "target": "/api/v2/operations/engine.status",
+      "request": { "v": 2, "op": "query.execute", "correlationId": "vec-0005", "request": {} },
+      "expect": "HTTP 400; typed error envelope with error.code 'protocol.envelope-invalid' — op must match the route segment"
+    },
+    {
+      "id": "query-v1-ok",
+      "kind": "operation",
+      "operation": "query.execute",
+      "request": { "input": { "kind": "v1", "text": "FROM collections" } },
+      "expect": "HTTP 200; QueryResult with matched > 0, rows[].document typed DocumentRecord, staleness array present"
+    },
+    {
+      "id": "tick-session-open",
+      "kind": "subscription",
+      "subscription": "ticks",
+      "expect": "first frames are session.opened then subscription.established; both carry v=2, a valid sha256 digest over their payload, and monotonic seq; subscription.established payload carries a checkpoint"
+    },
+    {
+      "id": "tick-delta-digest-and-seq",
+      "kind": "subscription",
+      "subscription": "ticks",
+      "expect": "delta frames carry strictly increasing seq, seq matches payload.seq, digest recomputes over the payload, and no frame carries credentials or cross-tenant data"
+    },
+    {
+      "id": "tick-heartbeat-present",
+      "kind": "subscription",
+      "subscription": "ticks",
+      "expect": "within the observation window at least one heartbeat frame with a valid digest is delivered"
+    },
+    {
+      "id": "tick-reconnect-resume",
+      "kind": "subscription-resume",
+      "subscription": "ticks",
+      "expect": "after the fixture drops the connection, a reconnect presenting Last-Event-ID '<sessionId>:<seq>' replays exactly the missed deltas with their original seq identities (no gaps, no duplicates beyond at-least-once identities)"
+    },
+    {
+      "id": "tick-resync-on-evicted-checkpoint",
+      "kind": "subscription-resume",
+      "subscription": "ticks",
+      "expect": "a reconnect presenting an unknown or evicted checkpoint receives a resync.required frame with reason and lastSeq — never a silent partial replay"
+    },
+    {
+      "id": "tick-poison-frame-emitted",
+      "kind": "subscription",
+      "subscription": "ticks",
+      "control": "framePoison",
+      "expect": "the fixture can emit one frame with an unknown type ('bogus.frame') under fixture control so clients prove fail-closed rejection (counted, surfaced, connection retained or re-established)"
+    },
+    {
+      "id": "family-kind-unknown-rejected",
+      "kind": "operation",
+      "operation": "family.read",
+      "request": { "kind": "not-a-family", "scope": "studio" },
+      "expect": "HTTP 400; typed error envelope with error.code 'family.kind-unknown' — the closed FamilyKind set fails closed"
+    },
+    {
+      "id": "family-read-ok",
+      "kind": "operation",
+      "operation": "family.read",
+      "request": { "kind": "counters", "scope": "studio" },
+      "expect": "HTTP 200; FamilyReadResult echoes kind 'counters' and scope 'studio' with a typed state object"
+    },
+    {
+      "id": "session-unauthenticated-redirect-simulated",
+      "kind": "operation",
+      "operation": "engine.status",
+      "control": "sessionGate",
+      "expect": "under fixture control 'session-gate': HTTP 401; typed error envelope with error.code 'session.unauthenticated', retryable false, and error.loginUrl pointing at the host's (simulated) login flow, which answers 200 — the studio's session bootstrap redirects there; when the control resets to the default ungated behavior, engine.status answers 200 again"
+    }
+  ]
+}
