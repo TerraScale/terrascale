@@ -25,6 +25,7 @@ pub mod migration;
 pub mod operations;
 pub mod query;
 pub mod replication;
+pub mod sharding;
 pub mod storage;
 pub mod streaming;
 pub mod types;
