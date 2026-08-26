@@ -39,7 +39,7 @@
 //! namespace that squats a deterministic auto name fails closed instead of
 //! being reused or overwritten, and the engine kill switch (creation
 //! disabled) makes an unmatched dynamic query fail with a typed
-//! [`QueryError::IndexNotReady`](super::QueryError::IndexNotReady) — never a
+//! [`QueryError::IndexNotReady`] — never a
 //! silent scan — while a query an existing index serves is unaffected.
 //!
 //! # Bounded first-query behavior
@@ -59,20 +59,43 @@
 //!
 //! Among complete candidates: an equivalent explicit index takes precedence
 //! over an auto index (D-3), then the most up-to-date candidate (highest
-//! covered storage sequence of its newest published segment), then the widest
-//! (most fields). V1's non-idle rule keeps its slot for the idle state and
-//! lands with the lifecycle packet (IX-03); every applied rule is recorded.
-//! The bounded selection cache (AX-2, adapted) remembers the chosen index
-//! per query shape and is invalidated whenever catalog truth changes, and a
-//! cache hit still counts as a selection with its origin recorded.
+//! covered storage sequence of its newest published segment), then the
+//! non-idle one at equal recency, then the widest (most fields); every
+//! applied rule is recorded. An idle candidate stays selectable with a
+//! complete-but-idle verdict, demoted only at equal recency, and choosing
+//! one wakes it synchronously (AX-22). The bounded selection cache (AX-2,
+//! adapted) remembers the chosen index per query shape and is invalidated
+//! whenever catalog truth changes, and a cache hit still counts as a
+//! selection with its origin recorded.
+//!
+//! # The automatic lifecycle (IX-03, ADR 0010 D-4)
+//!
+//! One maintenance pass (`lifecycle::maintain`, the crate-private entry in
+//! this module's `lifecycle` submodule) runs at the head of every
+//! dynamic query's optimizer pass, so selection decides against
+//! post-maintenance truth and one public-seam query drives the whole state
+//! machine: a partial auto match widens the mapping into the covering union
+//! identity and supersedes the covered partials (AX-16); a background
+//! surpass pass retires auto indexes another auto index of the same
+//! collection completely serves and extends partially served ones into the
+//! union, one extension per pass (AX-18); an auto index unqueried past the
+//! idle threshold is demoted but stays selectable, and one still unqueried
+//! past the deletion threshold is deleted (AX-21). Every deletion is
+//! drain-waited behind replacement coverage parity (AX-17), no transition
+//! issues while the usage report is missing, every transition records its
+//! measured value and threshold, explicit indexes are never touched, and the
+//! typed index view reports states, transitions, and a bounded window of
+//! retirements. The per-tenant auto registry is bounded
+//! ([`MAX_AUTO_INDEXES_PER_TENANT`]) and creation past the bound fails
+//! closed with a recorded reason. Selection itself is bounded-retried: an
+//! index replaced underneath the pass re-matches once instead of
+//! interrupting the query (AX-9).
 //!
 //! # Not claimed
 //!
 //! Execution remains the W3-2 bounded snapshot scan: no query is narrowed or
 //! ordered by index data, so this packet makes no performance claim of any
-//! kind (D-6; receipts belong to IX-04). Auto-index lifecycle — merge,
-//! supersede, idle, retirement — belongs to IX-03; this packet only marks a
-//! serving index queried (AX-20) so that lifecycle has its input.
+//! kind (D-6; receipts belong to IX-04).
 
 use std::sync::Arc;
 
@@ -83,14 +106,36 @@ use crate::{
     types::{ReadSnapshot, TenantId},
 };
 
+pub(crate) mod lifecycle;
+
+#[cfg(test)]
+mod lifecycle_tests;
+
 #[cfg(test)]
 mod tests;
+
+pub use lifecycle::{IndexLifecycleState, IndexTransition, LifecycleThresholds};
 
 /// The reserved namespace prefix of engine-owned auto indexes (AX-10).
 pub const AUTO_NAMESPACE_PREFIX: &str = "Auto/";
 
-/// The maximum number of index selection records retained as engine state.
+/// The maximum number of index selection records retained as engine state
+/// per tenant: each tenant's selections are that tenant's alone to observe,
+/// so each tenant owns a separately bounded store.
 pub const MAX_SELECTION_RECORDS: usize = 128;
+
+/// The maximum number of live auto indexes one tenant's registry retains.
+///
+/// The registry is bounded engine state: past the bound, a new auto identity
+/// is refused fail-closed with a recorded reason until the retirement sweep
+/// of the same optimizer pass frees a slot. An initial value, tunable and
+/// subject to measurement (IX-04 owns the receipts).
+pub const MAX_AUTO_INDEXES_PER_TENANT: usize = 64;
+
+/// The maximum number of selection attempts one pass runs when its subject
+/// is replaced underneath it: the bounded plan retry (AX-9) — a vanished
+/// index re-matches once instead of interrupting the query.
+const MAX_SELECTION_ATTEMPTS: usize = 2;
 
 /// The maximum number of cached query-shape selections.
 pub const MAX_CACHED_SELECTIONS: usize = 64;
@@ -354,6 +399,10 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 pub enum CandidateVerdict {
     /// Every demanded field is covered with sufficient capabilities.
     Complete,
+    /// Every demanded field is covered with sufficient capabilities, but the
+    /// index is idle: demoted in preference (AX-13 rule 3), still
+    /// selectable, and woken synchronously when chosen (AX-22).
+    CompleteButIdle,
     /// The candidate covers the collection but cannot serve the whole demand.
     Partial(PartialReason),
     /// The candidate cannot serve this query at all.
@@ -393,6 +442,9 @@ pub enum CandidateNote {
     ExplicitPreferredOverAuto,
     /// The chosen candidate was more up to date.
     NotMostUpToDate,
+    /// The candidate was idle while the chosen candidate was not, at equal
+    /// recency (AX-13 rule 3).
+    IdleDemoted,
     /// The chosen candidate was wider at equal recency.
     NotWidest,
 }
@@ -404,6 +456,8 @@ pub enum TieBreak {
     ExplicitPreferred,
     /// The more up-to-date candidate won.
     MostUpToDate,
+    /// The non-idle candidate won at equal recency (AX-13 rule 3).
+    NonIdlePreferred,
     /// The wider candidate won at equal recency.
     Widest,
 }
@@ -436,6 +490,11 @@ pub enum CreationRefusal {
     /// A namespace already squats the deterministic auto name with different
     /// content; creation fails closed instead of reusing it.
     IdentityConflict,
+    /// The tenant's auto-index registry is at
+    /// [`MAX_AUTO_INDEXES_PER_TENANT`] and no slot was freed by the
+    /// retirement sweep of this pass; creation fails closed with the bound
+    /// as its recorded reason.
+    RegistryFull,
 }
 
 /// The outcome of one selection.
@@ -640,6 +699,11 @@ impl IndexSelectionRecord {
 }
 
 /// One registered index as the typed reads report it.
+///
+/// A view carries the index's lifecycle state and its bounded transition
+/// history, and a bounded window of retired indexes stays listed with the
+/// [`IndexLifecycleState::Retired`] state so lifecycle transitions —
+/// including retirements — stay observable through this one typed read.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegisteredIndex {
     tenant: TenantId,
@@ -649,11 +713,14 @@ pub struct RegisteredIndex {
     fields: Vec<IndexField>,
     published: Option<super::ObservedGeneration>,
     queried: bool,
+    state: IndexLifecycleState,
+    transitions: Vec<IndexTransition>,
 }
 
 impl RegisteredIndex {
     /// Creates one view. Crate-only: the catalog produces these.
-    pub(crate) const fn new(
+    #[allow(clippy::too_many_arguments)] // one frozen view shape
+    pub(crate) fn new(
         tenant: TenantId,
         name: String,
         kind: IndexKind,
@@ -661,8 +728,10 @@ impl RegisteredIndex {
         fields: Vec<IndexField>,
         published: Option<super::ObservedGeneration>,
         queried: bool,
+        state: IndexLifecycleState,
+        transitions: Vec<IndexTransition>,
     ) -> Self {
-        Self { tenant, name, kind, collection, fields, published, queried }
+        Self { tenant, name, kind, collection, fields, published, queried, state, transitions }
     }
 
     /// Returns the owning tenant.
@@ -701,10 +770,28 @@ impl RegisteredIndex {
         self.published
     }
 
-    /// Reports whether any query has marked this index queried (AX-20).
+    /// Reports whether any query has marked this index queried (AX-20) —
+    /// for an auto index, whether its usage report has arrived at all: the
+    /// fail-closed reporting rule of the lifecycle (AX-21) reads exactly
+    /// this fact.
     #[must_use]
     pub const fn queried(&self) -> bool {
         self.queried
+    }
+
+    /// Returns the lifecycle state. Explicit indexes are always active and
+    /// never transition; retired entries are bounded tombstones of deleted
+    /// auto indexes.
+    #[must_use]
+    pub const fn state(&self) -> IndexLifecycleState {
+        self.state
+    }
+
+    /// Returns the bounded lifecycle transition history, oldest first, with
+    /// each transition's measured value and threshold.
+    #[must_use]
+    pub fn transitions(&self) -> &[IndexTransition] {
+        &self.transitions
     }
 }
 
@@ -720,6 +807,13 @@ pub(crate) struct QueryDemand {
 }
 
 impl QueryDemand {
+    /// Creates one demand from its parts. Crate-only: the demand of a query
+    /// derives through [`demand_of`], and the lifecycle's index-vs-index
+    /// comparison derives one from an existing definition.
+    pub(crate) fn new(collection: String, fields: Vec<IndexField>) -> Self {
+        Self { collection, fields }
+    }
+
     /// Returns the demanded collection.
     pub(crate) fn collection(&self) -> &str {
         &self.collection
@@ -796,6 +890,12 @@ fn demand_field(fields: &mut Vec<IndexField>, name: &str, capability: IndexCapab
 /// checkpoint before it creates anything. A fail-closed refusal discards the
 /// served answer upstream: the query errors rather than silently scanning
 /// without its index. The pass never changes the query's result.
+///
+/// One lifecycle maintenance pass runs at the head (IX-03): selection
+/// decides against post-maintenance truth, and one public-seam query drives
+/// the whole state machine. The selection itself is bounded-retried: when
+/// the index it chose or created is replaced underneath it, the pass
+/// re-matches once instead of interrupting the query (AX-9).
 pub(crate) fn run(
     engine: &Engine,
     catalog: &IndexCatalog,
@@ -803,6 +903,8 @@ pub(crate) fn run(
     snapshot: &ReadSnapshot,
 ) -> Result<(), QueryError> {
     let query = plan.model();
+    super::execute::check_bounds(query.deadline(), query.cancellation_signal())?;
+    lifecycle::maintain(engine, catalog, snapshot.engine_identity());
     super::execute::check_bounds(query.deadline(), query.cancellation_signal())?;
     let tenant = snapshot.tenant().clone();
     let demand = demand_of(query);
@@ -822,22 +924,47 @@ pub(crate) fn run(
         return Ok(());
     }
 
+    let shape = demand.shape_key(&tenant);
+    for attempt in 0..MAX_SELECTION_ATTEMPTS {
+        let final_attempt = attempt + 1 == MAX_SELECTION_ATTEMPTS;
+        if let Some(record) =
+            select_once(engine, catalog, &tenant, &demand, &shape, snapshot, final_attempt)?
+        {
+            catalog.record_selection(record);
+            return Ok(());
+        }
+    }
+    Ok(()) // unreachable in practice: the final attempt always records
+}
+
+/// Runs one selection attempt and returns its record, or `None` when the
+/// attempt's subject was replaced underneath it and the bounded retry
+/// should re-match. The final attempt records its outcome regardless — every
+/// dynamic query produces exactly one selection record.
+#[allow(clippy::too_many_arguments)] // one pass context frozen by the seam's shape
+fn select_once(
+    engine: &Engine,
+    catalog: &IndexCatalog,
+    tenant: &TenantId,
+    demand: &QueryDemand,
+    shape: &str,
+    snapshot: &ReadSnapshot,
+    final_attempt: bool,
+) -> Result<Option<IndexSelectionRecord>, QueryError> {
     // The bounded selection cache (AX-2, adapted): a hit still counts as a
     // selection, and a vanished index falls back to the full match.
-    let shape = demand.shape_key(&tenant);
-    if let Some(record) = select_from_cache(catalog, &tenant, &demand, &shape, snapshot) {
-        catalog.record_selection(record);
-        return Ok(());
+    if let Some(record) = select_from_cache(catalog, tenant, demand, shape, snapshot) {
+        return Ok(Some(record));
     }
 
     // Full match: every definition of this tenant is a candidate with a
     // verdict, whatever collection it indexes.
-    let entries = catalog.definitions(&tenant);
+    let entries = catalog.definitions(tenant);
     let mut candidates: Vec<IndexCandidate> = Vec::new();
     let mut complete: Vec<(usize, u64)> = Vec::new(); // (index, covered)
     for (index, entry) in entries.iter().enumerate() {
-        let verdict = verdict_of(entry, &demand);
-        if verdict == CandidateVerdict::Complete {
+        let verdict = verdict_of(entry, demand);
+        if matches!(verdict, CandidateVerdict::Complete | CandidateVerdict::CompleteButIdle) {
             complete.push((index, entry.covered_sequence().unwrap_or(0)));
         }
         candidates.push(IndexCandidate::new(
@@ -850,11 +977,35 @@ pub(crate) fn run(
 
     if !complete.is_empty() {
         let record =
-            select_by_ranking(catalog, &entries, &demand, &shape, candidates, &complete, snapshot);
-        catalog.record_selection(record);
-        return Ok(());
+            select_by_ranking(catalog, &entries, demand, shape, candidates, &complete, snapshot);
+        return Ok(subject_or_retry(catalog, record, final_attempt));
     }
-    create_or_refuse(engine, catalog, tenant, &demand, &shape, candidates, snapshot)
+    create_or_refuse(engine, catalog, tenant, demand, shape, &entries, candidates, snapshot)
+        .map(|record| subject_or_retry(catalog, record, final_attempt))
+}
+
+/// Returns the record when its serving index still exists, `None` when it
+/// was replaced underneath the attempt and the bounded retry should
+/// re-match — and the record unchanged on the final attempt, which always
+/// records.
+fn subject_or_retry(
+    catalog: &IndexCatalog,
+    record: IndexSelectionRecord,
+    final_attempt: bool,
+) -> Option<IndexSelectionRecord> {
+    if final_attempt {
+        return Some(record);
+    }
+    let serving = match record.outcome() {
+        SelectionOutcome::ChosenIndex { name, .. }
+        | SelectionOutcome::CreatedAutoIndex { name, .. } => Some(name.clone()),
+        SelectionOutcome::CollectionScan | SelectionOutcome::CreationRefused { .. } => None,
+    };
+    let live = serving.is_none_or(|name| {
+        IndexNamespace::try_new(record.tenant().clone(), &name)
+            .is_ok_and(|namespace| catalog.definition_exists(&namespace))
+    });
+    live.then_some(record)
 }
 
 /// Serves one demand from the bounded selection cache when the cached choice
@@ -892,8 +1043,11 @@ fn select_from_cache(
 /// the winning record.
 ///
 /// Ranking: an equivalent explicit index takes precedence over an auto index
-/// (D-3), then the most up-to-date candidate, then the widest; catalog order
-/// breaks full ties deterministically.
+/// (D-3), then the most up-to-date candidate, then the non-idle one at equal
+/// recency (AX-13 rule 3), then the widest; catalog order breaks full ties
+/// deterministically. Choosing an idle winner wakes it (AX-22), which
+/// [`IndexCatalog::mark_queried`](crate::index::IndexCatalog) performs and
+/// records.
 fn select_by_ranking(
     catalog: &IndexCatalog,
     entries: &[crate::index::DefinitionEntry],
@@ -911,7 +1065,8 @@ fn select_by_ranking(
         })
         .expect("a complete candidate exists whenever the vector is non-empty");
     let winner_entry = &entries[winner_index];
-    let mut applied = [false; 3];
+    let winner_idle = winner_entry.state() == IndexLifecycleState::Idle;
+    let mut applied = [false; 4];
     for (index, covered) in complete {
         if *index == winner_index {
             continue;
@@ -924,11 +1079,16 @@ fn select_by_ranking(
         } else if covered < &winner_covered {
             (CandidateNote::NotMostUpToDate, 1)
         } else if covered == &winner_covered
+            && entry.state() == IndexLifecycleState::Idle
+            && !winner_idle
+        {
+            (CandidateNote::IdleDemoted, 2)
+        } else if covered == &winner_covered
             && entry.definition().fields().len() < winner_entry.definition().fields().len()
         {
-            (CandidateNote::NotWidest, 2)
+            (CandidateNote::NotWidest, 3)
         } else {
-            (CandidateNote::BetterMatchAvailable, 3)
+            (CandidateNote::BetterMatchAvailable, 4)
         };
         if rule < applied.len() {
             applied[rule] = true;
@@ -943,6 +1103,9 @@ fn select_by_ranking(
         tie_breaks.push(TieBreak::MostUpToDate);
     }
     if applied[2] {
+        tie_breaks.push(TieBreak::NonIdlePreferred);
+    }
+    if applied[3] {
         tie_breaks.push(TieBreak::Widest);
     }
     catalog.mark_queried(winner_entry.namespace());
@@ -963,51 +1126,61 @@ fn select_by_ranking(
     )
 }
 
-/// Creates the demanded auto index — refusing fail-closed when a guard
-/// fires — and returns the recorded outcome of the triggering query.
+/// Creates the auto index the demand demands — widening the mapping from
+/// the partially matching auto indexes first (AX-16) and refusing
+/// fail-closed when a guard fires — and returns the recorded outcome of the
+/// triggering query.
+#[allow(clippy::too_many_arguments)] // one creation context frozen by the seam's shape
 fn create_or_refuse(
     engine: &Engine,
     catalog: &IndexCatalog,
-    tenant: TenantId,
+    tenant: &TenantId,
     demand: &QueryDemand,
     shape: &str,
+    entries: &[crate::index::DefinitionEntry],
     candidates: Vec<IndexCandidate>,
     snapshot: &ReadSnapshot,
-) -> Result<(), QueryError> {
+) -> Result<IndexSelectionRecord, QueryError> {
     // The kill switch: an unmatched dynamic query fails closed, never a
     // silent scan.
     if !catalog.auto_index_creation_enabled() {
-        catalog.record_selection(IndexSelectionRecord::new(
-            tenant,
-            demand.collection.clone(),
-            demand.fields.clone(),
-            candidates,
-            Vec::new(),
-            SelectionOutcome::CreationRefused { reason: CreationRefusal::Disabled },
-            false,
-            None,
-        ));
-        return Err(QueryError::IndexNotReady);
+        return Err(refused(catalog, tenant, demand, candidates, CreationRefusal::Disabled));
     }
-    let definition = auto_definition_of(demand);
-    // The fail-closed identity guard: a namespace that squats the
-    // deterministic name with different content refuses creation rather than
-    // being reused or overwritten.
-    let Ok(registration) = catalog.register_auto(&tenant, &definition) else {
-        catalog.record_selection(IndexSelectionRecord::new(
-            tenant,
-            demand.collection.clone(),
-            demand.fields.clone(),
-            candidates,
-            Vec::new(),
-            SelectionOutcome::CreationRefused { reason: CreationRefusal::IdentityConflict },
-            false,
-            None,
-        ));
-        return Err(QueryError::IndexNotReady);
+    // The partial-match widening (AX-16): the union of the demand and every
+    // partially matching auto index becomes the covering identity, and the
+    // covered partials are scheduled for supersede. Explicit partials never
+    // contribute — a dynamic query never disturbs an explicit index.
+    let (widened, superseded) = lifecycle::widen_from_partials(demand, entries);
+    let definition = auto_definition_of(&widened);
+    // The fail-closed guards: a namespace that squats the deterministic name
+    // with different content, or a registry at its bound, refuse creation
+    // rather than reusing, overwriting, or growing unbounded.
+    let registration = match catalog.register_auto(tenant, &definition) {
+        Ok(registration) => registration,
+        Err(crate::index::IndexError::AutoRegistryFull) => {
+            return Err(refused(
+                catalog,
+                tenant,
+                demand,
+                candidates,
+                CreationRefusal::RegistryFull,
+            ));
+        }
+        Err(_) => {
+            return Err(refused(
+                catalog,
+                tenant,
+                demand,
+                candidates,
+                CreationRefusal::IdentityConflict,
+            ));
+        }
     };
     let namespace = registration.namespace().clone();
     let build = initial_build(engine, catalog, &namespace, snapshot);
+    for target in &superseded {
+        catalog.schedule_supersede(&namespace, target.namespace());
+    }
     catalog.mark_queried(&namespace);
     catalog.remember_selection(shape, namespace.name());
     let basis = basis_of(catalog, &namespace, snapshot);
@@ -1018,8 +1191,8 @@ fn create_or_refuse(
         // have been a complete candidate — but stays honest if that changes.
         SelectionOutcome::ChosenIndex { name: namespace.name().to_owned(), kind: IndexKind::Auto }
     };
-    catalog.record_selection(IndexSelectionRecord::new(
-        tenant,
+    Ok(IndexSelectionRecord::new(
+        tenant.clone(),
         demand.collection.clone(),
         demand.fields.clone(),
         candidates,
@@ -1027,19 +1200,48 @@ fn create_or_refuse(
         outcome,
         false,
         Some(basis),
+    ))
+}
+
+/// Records one fail-closed creation refusal and returns the typed query
+/// error that discards the served answer.
+fn refused(
+    catalog: &IndexCatalog,
+    tenant: &TenantId,
+    demand: &QueryDemand,
+    candidates: Vec<IndexCandidate>,
+    reason: CreationRefusal,
+) -> QueryError {
+    catalog.record_selection(IndexSelectionRecord::new(
+        tenant.clone(),
+        demand.collection.clone(),
+        demand.fields.clone(),
+        candidates,
+        Vec::new(),
+        SelectionOutcome::CreationRefused { reason },
+        false,
+        None,
     ));
-    Ok(())
+    QueryError::IndexNotReady
 }
 
 /// The ranking key of one complete candidate: explicit first, then recency,
-/// then width. Catalog order breaks full ties upstream.
-fn rank_key(entry: &crate::index::DefinitionEntry, covered: u64) -> (bool, u64, usize) {
-    (entry.definition().kind() == IndexKind::Explicit, covered, entry.definition().fields().len())
+/// then non-idle, then width. Catalog order breaks full ties upstream.
+fn rank_key(entry: &crate::index::DefinitionEntry, covered: u64) -> (bool, u64, bool, usize) {
+    (
+        entry.definition().kind() == IndexKind::Explicit,
+        covered,
+        entry.state() != IndexLifecycleState::Idle,
+        entry.definition().fields().len(),
+    )
 }
 
 /// Reports whether one catalog entry completely serves the demand.
 fn serves(entry: &crate::index::DefinitionEntry, demand: &QueryDemand) -> bool {
-    verdict_of(entry, demand) == CandidateVerdict::Complete
+    matches!(
+        verdict_of(entry, demand),
+        CandidateVerdict::Complete | CandidateVerdict::CompleteButIdle
+    )
 }
 
 /// Returns the verdict of one candidate against the demand (AX-12).
@@ -1065,6 +1267,9 @@ fn verdict_of(entry: &crate::index::DefinitionEntry, demand: &QueryDemand) -> Ca
                 });
             }
         }
+    }
+    if entry.state() == IndexLifecycleState::Idle {
+        return CandidateVerdict::CompleteButIdle;
     }
     CandidateVerdict::Complete
 }
@@ -1123,12 +1328,15 @@ fn basis_of(
     )
 }
 
-/// Reads the registered indexes of one tenant as the typed view.
+/// Reads the registered indexes of one tenant as the typed view: every live
+/// definition with its lifecycle state and transition history, then the
+/// bounded window of retired auto indexes so retirements stay observable
+/// after the namespace is gone.
 pub(crate) fn registered_indexes_of(
     catalog: &Arc<IndexCatalog>,
     tenant: &TenantId,
 ) -> Vec<RegisteredIndex> {
-    catalog
+    let mut views: Vec<RegisteredIndex> = catalog
         .definitions(tenant)
         .into_iter()
         .map(|entry| {
@@ -1140,7 +1348,23 @@ pub(crate) fn registered_indexes_of(
                 entry.definition().fields().to_vec(),
                 entry.published(),
                 entry.queried(),
+                entry.state(),
+                entry.transitions().to_vec(),
             )
         })
-        .collect()
+        .collect();
+    for retired in catalog.retired_records(tenant) {
+        views.push(RegisteredIndex::new(
+            retired.tenant().clone(),
+            retired.name().to_owned(),
+            retired.kind(),
+            retired.collection().to_owned(),
+            retired.fields().to_vec(),
+            None,
+            false,
+            IndexLifecycleState::Retired,
+            retired.transitions().to_vec(),
+        ));
+    }
+    views
 }
