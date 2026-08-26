@@ -32,6 +32,7 @@
 //! here. Schema-free collections keep their exact prior behavior; the schema
 //! decision record is `docs/families/schemas.md`.
 
+pub mod migrations;
 mod payloads;
 pub(crate) mod schemas;
 mod state;
