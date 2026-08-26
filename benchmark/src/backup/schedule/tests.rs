@@ -103,6 +103,11 @@ fn point_manifest_path(destination: &Path, identity: &str) -> PathBuf {
     destination.join(format!("rp-{identity}")).join("manifest.tbv2m")
 }
 
+/// The sealed bundle artifact a schedule leaves beside one recovery point.
+fn bundle_path(destination: &Path, identity: &str) -> PathBuf {
+    destination.join(format!("bundle-{identity}.tbv2b"))
+}
+
 /// Pins the sealed-at fact of one recovery point: the mtime of its manifest
 /// file, the last byte written before publication.
 fn pin_point_age(destination: &Path, identity: &str, age: Duration) {
@@ -505,6 +510,111 @@ fn retention_prunes_whole_expired_chains_and_keeps_young_ones() {
 }
 
 #[test]
+fn retention_prunes_sealed_bundles_with_their_points() {
+    let (_dir, engine) = open_engine("retention-bundle");
+    let destination = location("retention-bundle-dest");
+    let seal_key = key();
+    // Chain one: a full plus one incremental, sealed long ago, each point
+    // carrying the encrypted, compressed bundle a scheduled run seals.
+    let old_chain = seed_chain(&engine, &destination, 1);
+    // Chain two: the rotating chain, sealed now.
+    put(&engine, "alpha", "rotate", "doc-r", "value");
+    let new_chain = seed_chain(&engine, &destination, 1);
+    for identity in old_chain.iter().chain(new_chain.iter()) {
+        seal_artifact_bundle(&destination, identity, BundleOptions::compressed(), Some(&seal_key))
+            .expect("the scheduled shape seals one bundle per point");
+    }
+    for identity in &old_chain {
+        pin_point_age(&destination, identity, Duration::from_secs(86_400 * 40));
+    }
+    for identity in &new_chain {
+        pin_point_age(&destination, identity, Duration::from_secs(60));
+    }
+
+    let receipt = enforce_retention(
+        &destination,
+        &RetentionPolicy::min_age(Duration::from_secs(86_400 * 30)),
+        SystemTime::now(),
+    )
+    .expect("retention runs");
+
+    let pruned: Vec<&str> = receipt.pruned().iter().map(PrunedPoint::identity).collect();
+    assert_eq!(pruned.len(), old_chain.len(), "the whole expired chain goes");
+    for identity in &old_chain {
+        assert!(pruned.contains(&identity.as_str()), "the expired member {identity} is receipted");
+        assert!(
+            !point_manifest_path(&destination, identity).exists(),
+            "the expired point directory is gone"
+        );
+        assert!(
+            !bundle_path(&destination, identity).exists(),
+            "the expired point's sealed bundle is reclaimed with it"
+        );
+        assert_eq!(
+            open_artifact_bundle(&destination, identity, Some(&seal_key)).err(),
+            Some(EncryptionError::DestinationUnavailable),
+            "the pruned point is unrecoverable from its bundle"
+        );
+        assert!(
+            load_recovery_point(&destination, identity).is_err(),
+            "the pruned point no longer reloads"
+        );
+    }
+    for identity in &new_chain {
+        assert!(
+            bundle_path(&destination, identity).is_file(),
+            "the kept chain's bundles survive the sweep"
+        );
+        assert!(
+            open_artifact_bundle(&destination, identity, Some(&seal_key)).is_ok(),
+            "the kept chain's bundles still open with the right key"
+        );
+    }
+
+    // The same sweep again prunes nothing: bundle reclamation is idempotent.
+    let again = enforce_retention(
+        &destination,
+        &RetentionPolicy::min_age(Duration::from_secs(86_400 * 30)),
+        SystemTime::now(),
+    )
+    .expect("retention reruns");
+    assert!(again.pruned().is_empty());
+}
+
+#[test]
+fn retention_keeps_the_newest_chain_s_bundles_whatever_their_age() {
+    let (_dir, engine) = open_engine("retention-bundle-keep");
+    let destination = location("retention-bundle-keep-dest");
+    let identities = seed_chain(&engine, &destination, 2);
+    let seal_key = key();
+    for identity in &identities {
+        seal_artifact_bundle(&destination, identity, BundleOptions::compressed(), Some(&seal_key))
+            .expect("seals");
+        pin_point_age(&destination, identity, Duration::from_secs(86_400 * 90));
+    }
+
+    let receipt = enforce_retention(
+        &destination,
+        &RetentionPolicy::min_age(Duration::from_secs(86_400 * 30)),
+        SystemTime::now(),
+    )
+    .expect("retention runs");
+    assert!(receipt.pruned().is_empty(), "the newest chain is never pruned");
+    assert_eq!(receipt.protected_roots().len(), 1);
+    for identity in &identities {
+        assert!(point_manifest_path(&destination, identity).exists());
+        assert!(
+            bundle_path(&destination, identity).is_file(),
+            "the protected chain keeps its bundle artifacts"
+        );
+    }
+    assert!(
+        open_artifact_bundle(&destination, &identities[0], Some(&seal_key)).is_ok(),
+        "the protected chain's root bundle still opens"
+    );
+}
+
+#[test]
 fn retention_keeps_an_expired_shape_below_the_minimum_age() {
     let (_dir, engine) = open_engine("retention-young");
     let destination = location("retention-young-dest");
@@ -886,6 +996,60 @@ fn encrypted_schedules_seal_a_bundle_per_run_and_report_no_secrets() {
     let destination_text = destination.to_string_lossy();
     assert!(!text.contains(destination_text.as_ref()), "status carries no destination path");
     assert_windows_absent(text.as_bytes(), &material, "the status readout");
+}
+
+#[test]
+fn scheduled_retention_reclaims_the_rotated_out_chain_s_bundles() {
+    let (_dir, engine) = open_engine("sched-bundle-reclaim");
+    let destination = location("sched-bundle-reclaim-dest");
+    let schedule = BackupSchedule::full_every(1_000)
+        .with_missed_run_policy(MissedRunPolicy::RunOneNow)
+        .with_compression(true)
+        .with_encryption(true)
+        .with_retention(RetentionPolicy::min_age(Duration::from_secs(3_600)));
+    let driver = driver(&destination, schedule);
+    let mut state = ScheduleState::new(0);
+    let seal_key = key();
+    put(&engine, "alpha", "op-1", "doc-1", "value-one");
+
+    let first = driver
+        .run_due(&engine, &mut state, 0, Some(&seal_key))
+        .expect("the first full runs and bundles")
+        .expect("due");
+    let first_identity = first.run().identity().to_owned();
+    assert!(bundle_path(&destination, &first_identity).is_file(), "the first run sealed a bundle");
+    pin_point_age(&destination, &first_identity, Duration::from_secs(7_200));
+
+    put(&engine, "alpha", "rotate", "doc-r", "value");
+    let rotated = driver
+        .run_due(&engine, &mut state, 1_000, Some(&seal_key))
+        .expect("the rotating full runs and bundles")
+        .expect("due");
+    let rotated_identity = rotated.run().identity().to_owned();
+
+    let retention = rotated.retention().expect("the run enforced retention");
+    assert_eq!(retention.pruned().len(), 1, "the expired first full was pruned");
+    assert!(
+        !point_manifest_path(&destination, &first_identity).exists(),
+        "the expired point is gone"
+    );
+    assert!(
+        !bundle_path(&destination, &first_identity).exists(),
+        "its sealed bundle is reclaimed with it"
+    );
+    assert_eq!(
+        open_artifact_bundle(&destination, &first_identity, Some(&seal_key)).err(),
+        Some(EncryptionError::DestinationUnavailable),
+        "the pruned point is unrecoverable from its bundle"
+    );
+    assert!(
+        bundle_path(&destination, &rotated_identity).is_file(),
+        "the surviving chain keeps its bundle"
+    );
+    assert!(
+        open_artifact_bundle(&destination, &rotated_identity, Some(&seal_key)).is_ok(),
+        "the surviving bundle opens with the right key"
+    );
 }
 
 #[test]

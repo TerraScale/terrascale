@@ -19,15 +19,20 @@
 //!
 //! Deletion is idempotent: a point directory that is already gone counts
 //! as pruned, so a retried sweep after a partial failure completes the
-//! same plan. A failure mid-sweep returns the typed cause together with
-//! the receipt of everything already pruned (PB-6014's partial-deletion
-//! reporting), and nothing is deleted when discovery itself fails — an
-//! invalid sealed manifest fails the whole sweep closed.
+//! same plan. Pruning a point reclaims every artifact of it, so the
+//! sweep deletes the point directory **and** the sealed bundle artifact a
+//! scheduled run leaves beside it in the destination root — a bundle that
+//! outlived its point would keep the pruned data fully recoverable and
+//! grow without bound. A failure mid-sweep returns the typed cause
+//! together with the receipt of everything already pruned (PB-6014's
+//! partial-deletion reporting), and nothing is deleted when discovery
+//! itself fails — an invalid sealed manifest fails the whole sweep closed.
 
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use crate::backup::manifest::{MANIFEST_FILE, point_directory};
+use crate::backup::schedule::codec::bundle_file_name;
 use crate::backup::{BackupKind, BackupManifest, discover_points};
 use crate::types::StorageSequence;
 
@@ -133,7 +138,8 @@ pub enum RetentionFailure {
     /// A sealed-at time cannot be read or compared against `now`; nothing
     /// is pruned on a clock guess.
     Clock,
-    /// A point directory could not be deleted.
+    /// A point directory or its sealed bundle artifact could not be
+    /// deleted.
     DestinationUnavailable,
 }
 
@@ -164,7 +170,11 @@ impl RetentionError {
 /// The sweep discovers every sealed recovery point, groups them into
 /// chains by base links, keeps the newest chain and every chain younger
 /// than the minimum age, and deletes the oldest prunable chains first,
-/// one whole chain at a time, receipting each pruned point.
+/// one whole chain at a time, receipting each pruned point. Each pruned
+/// point takes both of its artifacts with it: the `rp-<identity>`
+/// directory and the `bundle-<identity>.tbv2b` artifact a scheduled run
+/// seals beside it, so pruned data is unrecoverable rather than merely
+/// hidden behind a surviving bundle.
 ///
 /// # Errors
 ///
@@ -218,20 +228,30 @@ pub fn enforce_retention(
             let point = &points[index];
             let directory = destination.join(point_directory(point.identity()));
             let removed = std::fs::remove_dir_all(&directory);
-            if removed.is_ok() || !directory.exists() {
-                // An already-missing directory counts as pruned: the retry
-                // of a partial sweep is idempotent.
-                pruned.push(PrunedPoint::new(
-                    point.identity().to_owned(),
-                    point.kind(),
-                    point.boundary_sequence(),
-                ));
-            } else {
+            if removed.is_err() && directory.exists() {
                 return Err(RetentionError {
                     cause: RetentionFailure::DestinationUnavailable,
                     pruned_before_failure: pruned,
                 });
             }
+            // A scheduled run also seals a bundle artifact for the point in
+            // the destination root, so pruning the point reclaims that too —
+            // otherwise the pruned data stays fully recoverable and orphaned
+            // bundles grow without bound. An already-missing bundle counts
+            // as pruned, exactly like its point directory.
+            let bundle = destination.join(bundle_file_name(point.identity()));
+            let removed = std::fs::remove_file(&bundle);
+            if removed.is_err() && bundle.exists() {
+                return Err(RetentionError {
+                    cause: RetentionFailure::DestinationUnavailable,
+                    pruned_before_failure: pruned,
+                });
+            }
+            pruned.push(PrunedPoint::new(
+                point.identity().to_owned(),
+                point.kind(),
+                point.boundary_sequence(),
+            ));
         }
     }
 

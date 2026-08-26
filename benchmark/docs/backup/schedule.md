@@ -1,7 +1,9 @@
 # BK-04 scheduling, encryption, compression, retention, and destinations
 
 Status: implemented module record for BK-04
-(`TerraBaseV2#45`), 2026-08-26. Authority: workspace charter
+(`TerraBaseV2#45`), 2026-08-26; revised in repair loop 1
+(2026-08-26) so retention reclaims sealed bundle artifacts. Authority:
+workspace charter
 PD-2026-08-26-11 (D2 agent-drivable typed operations), the W4 transfer
 contract's public-type ownership, and the BK-01 backup core this module
 drives. No parity row is resolved by this record alone: PB-6011..PB-6014
@@ -66,13 +68,18 @@ compile-failing `cargo test --lib` at the seam):
   never stranded without their root. Age is the root full's manifest
   mtime compared against a caller-injected `now`; unreadable or future
   sealed-at times fail the sweep typed rather than prune on a guess.
-  Deletion is idempotent (already-missing directories count as pruned),
-  and a failure mid-sweep returns the typed cause plus the partial
-  receipt.
+  Pruning a point reclaims **every** artifact of it: the `rp-<identity>`
+  directory and the `bundle-<identity>.tbv2b` artifact a scheduled run
+  seals beside it, so pruned data is unrecoverable rather than merely
+  hidden behind a surviving bundle and orphaned bundles cannot grow
+  unbounded. The protected newest chain keeps its bundles like the rest
+  of its artifacts. Deletion is idempotent (an already-missing directory
+  or bundle counts as pruned), and a failure mid-sweep returns the typed
+  cause plus the partial receipt.
 
 ## Focused evidence
 
-In-crate suite `src/backup/schedule/tests.rs` (25 tests, all green under
+In-crate suite `src/backup/schedule/tests.rs` (28 tests, all green under
 the pinned toolchain): destination validation and probe; compression
 round-trip over empty, tiny, repetitive, pseudo-random, and multi-window
 corpora plus malformed-stream rejection; encrypted-bundle open-with-right-
@@ -81,13 +88,17 @@ points with wrong-key denial leaving no partials; keyless compressed
 bundles; per-seal nonce freshness with both seals opening; key-material
 absence from artifacts and Debug output; retention keeping the only chain,
 pruning whole expired chains with receipts while keeping young ones,
-keeping sub-minimum-age chains, failing closed on an invalid manifest, and
-pruning nothing when disabled; the scheduler's first-full requirement,
+pruning the sealed bundle of every pruned point (with the kept chain's
+bundles surviving and idempotent re-sweeps), keeping the newest chain's
+bundles whatever their age, keeping sub-minimum-age chains, failing closed
+on an invalid manifest, and pruning nothing when disabled; the
+scheduler's first-full requirement,
 incremental chaining and rotation, no-op rearm, both missed-run policies
 (with the same state contrasting them), pause/resume, typed construction
 failures, typed run-failure recording after external destination damage,
-encrypted schedules sealing per-run bundles without secrets in status, and
-post-run retention enforcement.
+encrypted schedules sealing per-run bundles without secrets in status,
+post-run retention enforcement, and a rotating full whose sweep reclaims
+the rotated-out chain's directory and bundle together.
 
 Public-seam integration `tests/recovery/schedule_public_chain.rs`
 (2 tests): a first full anchors the destination, an incremental over the

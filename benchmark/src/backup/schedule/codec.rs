@@ -517,7 +517,7 @@ impl ArtifactBundle {
 }
 
 /// The bundle file name of one identity.
-fn bundle_file_name(identity: &str) -> String {
+pub(super) fn bundle_file_name(identity: &str) -> String {
     format!("bundle-{identity}.tbv2b")
 }
 
