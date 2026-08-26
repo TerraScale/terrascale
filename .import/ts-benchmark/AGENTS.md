@@ -21,6 +21,19 @@ hard-to-reverse decisions.
   Dashboards are Vinext (`studio/`). NATS may carry member transport lanes
   under the Orchestrator NATS spec's separation rules. C# code uses the
   workspace-pinned .NET SDK and `System.Text.Json` only for JSON surfaces.
+- Performance objective and hard-data rule (charter PD-2026-08-26-03):
+  TerraBaseV2 must be as fast as PostgreSQL or faster on comparable
+  workloads. The objective is proven only with data: performance-relevant
+  changes run the TerraBase.Benchmark harness (statistical gates, exact
+  source identity, TerraBase V1 and PostgreSQL reference baselines) in the
+  exclusive benchmark lane before integration and cite their Benchmark
+  Receipt. No latency, throughput, or "faster than" statement — in code,
+  docs, issues, or commits — may rest on intuition, vibes, or local
+  timing; the charter's verdict vocabulary (`v2-faster`, `no-improvement`,
+  `v2-regression`, `inconclusive`) is used exactly, and each run records
+  objective status (PostgreSQL-parity-or-better met / not met /
+  inconclusive). A regression against the objective is recorded and
+  tracked, never hidden or re-benchmarked into agreement.
 - Keep the repository freely usable. Do not add license keys, activation,
   support entitlements, EULA gates, CPU-credit throttling, or commercial limits.
   The package license metadata and release gate must be resolved before any
