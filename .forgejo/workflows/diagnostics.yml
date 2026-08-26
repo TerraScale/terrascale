@@ -4,18 +4,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  probe-public-sdk:
+  probe-dh-node22:
     runs-on: terrascale-builder
     timeout-minutes: 10
     container:
-      image: mcr.microsoft.com/dotnet/sdk@sha256:b8cc28b501af233e51be59583a41bf3ebde7fc8656418a7dd305b90b21a7f3f9
+      image: docker.io/library/node:22
     steps:
-      - run: sleep 5 && echo public-sdk-ok
+      - run: sleep 5 && echo node22-ok
 
-  probe-public-python:
+  probe-dh-buildpack:
     runs-on: terrascale-builder
-    timeout-minutes: 5
+    timeout-minutes: 10
     container:
-      image: docker.io/library/python:3.13-slim
+      image: docker.io/library/buildpack-deps:bookworm
     steps:
-      - run: sleep 5 && echo python-ok
+      - run: sleep 5 && echo buildpack-ok
