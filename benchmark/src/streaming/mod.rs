@@ -28,6 +28,7 @@
 //! coverage notes, non-claims, limits, and proposed collision actions is
 //! `docs/streaming/w4-stream.md`.
 
+mod backbone;
 mod sources;
 mod subscription;
 #[cfg(test)]
@@ -37,12 +38,17 @@ use crate::{
     engine::Engine,
     families::{FamilyReadResult, TimeSeriesEntry, TimeSeriesRange},
     query::{QueryPlan, QueryRow},
+    replication::ConflictRecord,
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, OperationId, ReadSnapshot,
         StorageSequence, TenantScope,
     },
 };
 
+pub use backbone::{
+    ChangeCheckpoint, ChangeNotification, ChangeNotificationTap, ChangeReplayBatch,
+    ChangeReplayRequest, MAX_CHANGE_NOTIFICATION_CAPACITY,
+};
 pub use sources::StreamSourceKind;
 
 /// The largest batch one [`StreamStore::next_batch`] call may serve.
@@ -154,6 +160,63 @@ impl<'engine> StreamStore<'engine> {
     #[allow(clippy::unused_self, reason = "one store-bound observation seam")]
     pub fn position(&self, cursor: &StreamCursor) -> StreamPosition {
         sources::position(cursor)
+    }
+
+    /// Replays the change-event sequence from one journal checkpoint
+    /// (SE-03).
+    ///
+    /// Replay is journal-driven and stateless: the durable
+    /// publication-history journal is the source of truth, so any consumer
+    /// — attached to a live subscription or not — reproduces the exact live
+    /// event sequence from an arbitrary
+    /// [`ChangeCheckpoint`]. `None` names the
+    /// servable beginning: the oldest publication history the journal can
+    /// still serve. The batch is bounded by the request's limit, strictly
+    /// ordered by [`StorageSequence`], at-least-once over repeated calls
+    /// with the same checkpoint, and reports selector-filtered events as
+    /// counted drops. Conflict observations are live notifications and are
+    /// never replayed from the journal — a recorded limit of the backbone.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StreamError::Cancelled`] for a cancelled signal,
+    /// [`StreamError::SnapshotEngineMismatch`] for a scope naming another
+    /// `Engine`, and the typed journal-read error otherwise.
+    pub fn replay_changes(
+        &self,
+        scope: &TenantScope,
+        request: &ChangeReplayRequest,
+        cancellation: &Cancellation,
+    ) -> Result<ChangeReplayBatch, StreamError> {
+        backbone::replay(self.engine, scope, request, cancellation)
+    }
+
+    /// Acquires one bounded change-notification tap for this `Engine`
+    /// (SE-03, PD-2026-08-26-13 D3).
+    ///
+    /// The tap is the public Change Notification surface: every published
+    /// commit of this `Engine` offers one content-free two-identifier hint
+    /// — the storage sequence and the operation identity — to the tap's
+    /// bounded queue, waking the consumer to pull deltas from its
+    /// checkpoint. The queue is bounded with drop-oldest, every drop is
+    /// counted through [`ChangeNotificationTap::dropped`], and the ingress
+    /// never blocks a commit: a full or contended queue drops the hint and
+    /// counts it. Hints are engine-scoped and carry no tenant dimension —
+    /// the tenant-facing fan-out belongs to the adapter seams — and no
+    /// document data ever rides one. Dropping the tap detaches its sink.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StreamError::InvalidSource`] for a zero or over-limit
+    /// capacity (over
+    /// [`MAX_CHANGE_NOTIFICATION_CAPACITY`])
+    /// and when this `Engine`'s publication registry already holds its
+    /// subscriber bound.
+    pub fn change_notifications(
+        &self,
+        capacity: u32,
+    ) -> Result<ChangeNotificationTap, StreamError> {
+        backbone::open_tap(self.engine, capacity)
     }
 
     /// Opens one named subscription under this scope and returns its
@@ -739,20 +802,36 @@ impl StreamPosition {
 }
 
 /// One committed change observed by a change or subscription stream
-/// (PB-6002).
+/// (PB-6002, SE-03).
 ///
-/// The event carries the change kind, tenant scope, collection and document
-/// identity, the stable `OperationId`, and the `StorageSequence`. It stays
-/// small: content-bearing payloads are fetched separately, and the event is
-/// observable only after its commit is published.
+/// The event carries the change kind, tenant scope, the stable
+/// `OperationId`, and the `StorageSequence`, plus exactly one typed
+/// subject: the changed key (collection and document identity) for
+/// journal-derived events, or the content-free
+/// [`ConflictRecord`] for conflict
+/// events. It stays small: content-bearing payloads are fetched separately,
+/// and the event is observable only after its commit is published — or, for
+/// a conflict, after the observing seam records it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChangeEvent {
     kind: ChangeKind,
     scope: TenantScope,
-    collection: CollectionName,
-    document: DocumentId,
     operation_id: OperationId,
     sequence: StorageSequence,
+    subject: ChangeSubject,
+}
+
+/// The typed subject one event carries. Crate-only: the closed subject set
+/// is what makes the conflict content restriction structural — a conflict
+/// event can carry a `ConflictRecord` and nothing else, and a journal event
+/// can carry a key and nothing else.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ChangeSubject {
+    /// The changed key: collection and document identity.
+    Key { collection: CollectionName, document: DocumentId },
+    /// The conflict observation: identities, members, clocks, and the
+    /// recorded outcome — never a document body.
+    Conflict(ConflictRecord),
 }
 
 impl ChangeEvent {
@@ -766,7 +845,33 @@ impl ChangeEvent {
         operation_id: OperationId,
         sequence: StorageSequence,
     ) -> Self {
-        Self { kind, scope, collection, document, operation_id, sequence }
+        Self {
+            kind,
+            scope,
+            operation_id,
+            sequence,
+            subject: ChangeSubject::Key { collection, document },
+        }
+    }
+
+    /// Creates one conflict event from a recorded conflict. Crate-only:
+    /// conflict events originate from the conflict-observation seam alone
+    /// and carry only the `ConflictRecord`'s content-free metadata — there
+    /// is no parameter through which a document body could cross.
+    #[allow(dead_code, reason = "observed by the SE-03 conflict ingress; exercised in tests")]
+    pub(crate) fn conflict(
+        scope: TenantScope,
+        operation_id: OperationId,
+        sequence: StorageSequence,
+        record: ConflictRecord,
+    ) -> Self {
+        Self {
+            kind: ChangeKind::Conflict,
+            scope,
+            operation_id,
+            sequence,
+            subject: ChangeSubject::Conflict(record),
+        }
     }
 
     /// Returns the closed change kind.
@@ -781,32 +886,59 @@ impl ChangeEvent {
         &self.scope
     }
 
-    /// Returns the collection of the changed key.
+    /// Returns the collection of the changed key, or `None` for a conflict
+    /// event: a conflict observation carries no collection identity.
     #[must_use]
-    pub const fn collection(&self) -> &CollectionName {
-        &self.collection
+    pub fn collection(&self) -> Option<&CollectionName> {
+        match &self.subject {
+            ChangeSubject::Key { collection, .. } => Some(collection),
+            ChangeSubject::Conflict(_) => None,
+        }
     }
 
-    /// Returns the changed document identity.
+    /// Returns the changed document identity, or `None` for a conflict
+    /// event: a conflict observation carries no document identity.
     #[must_use]
-    pub const fn document(&self) -> &DocumentId {
-        &self.document
+    pub fn document(&self) -> Option<&DocumentId> {
+        match &self.subject {
+            ChangeSubject::Key { document, .. } => Some(document),
+            ChangeSubject::Conflict(_) => None,
+        }
+    }
+
+    /// Returns the conflict record a conflict event carries, or `None` for
+    /// every journal-derived event.
+    ///
+    /// The record is the event's entire conflict payload: identities,
+    /// members, clocks, and the recorded outcome. No document body ever
+    /// travels with a conflict event.
+    #[must_use]
+    pub fn conflict_record(&self) -> Option<&ConflictRecord> {
+        match &self.subject {
+            ChangeSubject::Key { .. } => None,
+            ChangeSubject::Conflict(record) => Some(record),
+        }
     }
 
     /// Returns the stable operation identity of the commit.
+    ///
+    /// For a conflict event this is the canonical first conflicting
+    /// operation identity of the record.
     #[must_use]
     pub const fn operation_id(&self) -> &OperationId {
         &self.operation_id
     }
 
-    /// Returns the storage sequence of the publication.
+    /// Returns the storage sequence of the publication — for a conflict
+    /// event, the sequence of the publication the conflict was observed
+    /// against.
     #[must_use]
     pub const fn sequence(&self) -> StorageSequence {
         self.sequence
     }
 }
 
-/// The closed V1 event-shape set for change streams (PB-6002).
+/// The closed V1 event-shape set for change streams (PB-6002, SE-03).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChangeKind {
     /// A document change.
@@ -821,17 +953,47 @@ pub enum ChangeKind {
     Operation,
     /// A database-level change.
     Database,
+    /// A replication conflict observation (V1 `DocumentChangeTypes`
+    /// .Conflict). Conflict events carry only
+    /// [`ConflictRecord`]-shaped
+    /// metadata, never document bodies.
+    Conflict,
 }
 
-/// Typed document, index, and family filters for change streams (PB-6006).
+/// Typed document, index, and family filters for change streams (PB-6006),
+/// extended to the V1 Changes API selector surface (SE-03).
 ///
 /// W4 implements typed filters only; no untrusted script executes in this
 /// seam (decision D-5). A filter drop is reported in the batch's progress
 /// facts and never silently advances a checkpoint.
+///
+/// # V1 Changes API parity mapping
+///
+/// | V1 selector | V2 form |
+/// | --- | --- |
+/// | `forDocument(id)` | [`ChangeFilter::with_document`] |
+/// | `forDocumentsStartingWith(prefix)` | [`ChangeFilter::with_prefix`] |
+/// | `forAllDocuments` | kinds `Some([Document])`, no refinement |
+/// | collection-scoped document watch | the `collections` include list |
+/// | `forIndex` / `forAllIndexes` | kinds `Some([Index])` |
+/// | counter watch | kinds `Some([Counter])` |
+/// | time-series watch | kinds `Some([TimeSeries])` |
+/// | `forOperationId(id)` | [`ChangeFilter::for_operations`] |
+/// | conflict watch (V1 `Conflict`) | kinds `Some([Conflict])` |
+///
+/// Recorded limits of this mapping: an index *name* refinement lands with
+/// the index-change producer (no journal path reports [`ChangeKind::Index`]
+/// yet); conflict events carry no collection or document identity, so a
+/// collection- or document-refined filter does not observe them, and the
+/// operation dimension matches any conflicting operation identity of a
+/// record.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChangeFilter {
     kinds: Option<Vec<ChangeKind>>,
     collections: Option<Vec<CollectionName>>,
+    document: Option<DocumentId>,
+    prefix: Option<String>,
+    operations: Option<Vec<OperationId>>,
 }
 
 impl ChangeFilter {
@@ -857,7 +1019,53 @@ impl ChangeFilter {
         if collections.as_ref().is_some_and(Vec::is_empty) {
             return Err(crate::operations::RequestValidationError::EmptyField);
         }
-        Ok(Self { kinds, collections })
+        Ok(Self { kinds, collections, document: None, prefix: None, operations: None })
+    }
+
+    /// Restricts the filter to one exact document identity (V1
+    /// `forDocument`).
+    #[must_use]
+    pub fn with_document(mut self, id: DocumentId) -> Self {
+        self.document = Some(id);
+        self
+    }
+
+    /// Restricts the filter to identifiers starting with one prefix (V1
+    /// `forDocumentsStartingWith`).
+    ///
+    /// # Errors
+    ///
+    /// Returns
+    /// [`RequestValidationError::InvalidIdentifier`](crate::operations::RequestValidationError::InvalidIdentifier)
+    /// for an empty prefix, a prefix over 255 bytes, or one containing
+    /// control characters.
+    pub fn with_prefix(
+        mut self,
+        prefix: &str,
+    ) -> Result<Self, crate::operations::RequestValidationError> {
+        sources::validate_selector_text(prefix)?;
+        self.prefix = Some(prefix.to_owned());
+        Ok(self)
+    }
+
+    /// Restricts the filter to events of the named operation identities
+    /// (V1 `forOperationId`). The identity matches any conflicting
+    /// operation of a conflict record.
+    ///
+    /// # Errors
+    ///
+    /// Returns
+    /// [`RequestValidationError::EmptyField`](crate::operations::RequestValidationError::EmptyField)
+    /// for an empty list.
+    pub fn for_operations(
+        mut self,
+        operations: Vec<OperationId>,
+    ) -> Result<Self, crate::operations::RequestValidationError> {
+        if operations.is_empty() {
+            return Err(crate::operations::RequestValidationError::EmptyField);
+        }
+        self.operations = Some(operations);
+        Ok(self)
     }
 
     /// Returns the included kinds, or `None` for every kind.
@@ -872,11 +1080,82 @@ impl ChangeFilter {
         self.collections.as_deref()
     }
 
-    /// Reports whether one event passes this filter.
+    /// Returns the exact document identity refinement, when one is set.
     #[must_use]
-    pub fn accepts(&self, kind: ChangeKind, collection: &CollectionName) -> bool {
+    pub fn document(&self) -> Option<&DocumentId> {
+        self.document.as_ref()
+    }
+
+    /// Returns the identifier prefix refinement, when one is set.
+    #[must_use]
+    pub fn prefix(&self) -> Option<&str> {
+        self.prefix.as_deref()
+    }
+
+    /// Returns the included operation identities, or `None` for every
+    /// operation.
+    #[must_use]
+    pub fn operations(&self) -> Option<&[OperationId]> {
+        self.operations.as_deref()
+    }
+
+    /// Reports whether one event passes the kind and collection dimensions
+    /// of this filter.
+    ///
+    /// This is the two-dimension projection of
+    /// [`ChangeFilter::accepts_event`]: delivery code and selectors use the
+    /// full event check; this method remains for the kind/collection
+    /// question alone. A conflict event carries no collection identity, so
+    /// it passes the collection dimension exactly when no collection is
+    /// named.
+    #[must_use]
+    pub fn accepts(&self, kind: ChangeKind, collection: Option<&CollectionName>) -> bool {
         self.kinds.as_ref().is_none_or(|kinds| kinds.contains(&kind))
-            && self.collections.as_ref().is_none_or(|collections| collections.contains(collection))
+            && match collection {
+                Some(collection) => self
+                    .collections
+                    .as_ref()
+                    .is_none_or(|collections| collections.contains(collection)),
+                // A subjectless event (a conflict) carries no collection
+                // identity, so it matches exactly when the dimension is
+                // unrestricted.
+                None => self.collections.is_none(),
+            }
+    }
+
+    /// Reports whether one event passes every dimension of this filter —
+    /// the full V1-parity selector check (SE-03).
+    ///
+    /// The kind and collection dimensions accept or reject by include list;
+    /// a conflict event, which carries no collection or document identity,
+    /// passes the collection, document, and prefix dimensions exactly when
+    /// those refinements are absent. The operation dimension matches the
+    /// event's operation identity — for a conflict event, any conflicting
+    /// operation identity of its record.
+    #[must_use]
+    pub fn accepts_event(&self, event: &ChangeEvent) -> bool {
+        if !self.accepts(event.kind(), event.collection()) {
+            return false;
+        }
+        if let Some(operations) = &self.operations {
+            let matches = if event.kind() == ChangeKind::Conflict {
+                event.conflict_record().is_some_and(|record| {
+                    record.operations().iter().any(|operation| operations.contains(operation))
+                })
+            } else {
+                operations.contains(event.operation_id())
+            };
+            if !matches {
+                return false;
+            }
+        }
+        match (self.document.as_ref(), self.prefix.as_ref()) {
+            (None, None) => true,
+            (document, prefix) => event.document().is_some_and(|id| {
+                document.is_none_or(|wanted| wanted == id)
+                    && prefix.is_none_or(|prefix| id.as_str().starts_with(prefix))
+            }),
+        }
     }
 }
 
@@ -952,16 +1231,19 @@ impl SubscriptionSpec {
 }
 
 /// One bounded subscription batch with its `SubscriptionCheckpoint`
-/// (PB-6003, PB-6004).
+/// (PB-6003, PB-6004, SE-03).
 ///
 /// The durable subscription checkpoint advances only when the caller
 /// acknowledges the batch; unacknowledged items enter resend state and a
 /// reconnect neither skips them nor advances the checkpoint without the
 /// acknowledgement. Filtered drops and dropped notifications are progress
-/// facts, not deliveries.
+/// facts, not deliveries. Conflict observations ride the batch as advisory
+/// [`SubscriptionBatch::conflicts`] events: they are not journal-derived,
+/// not checkpointed, and bounded separately from the journal events.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SubscriptionBatch {
     events: Vec<ChangeEvent>,
+    conflicts: Vec<ChangeEvent>,
     checkpoint: SubscriptionCheckpoint,
     filtered_dropped: u64,
     dropped_notifications: u64,
@@ -971,17 +1253,31 @@ impl SubscriptionBatch {
     /// Assembles one batch from its typed parts. Crate-only.
     pub(crate) fn new(
         events: Vec<ChangeEvent>,
+        conflicts: Vec<ChangeEvent>,
         checkpoint: SubscriptionCheckpoint,
         filtered_dropped: u64,
         dropped_notifications: u64,
     ) -> Self {
-        Self { events, checkpoint, filtered_dropped, dropped_notifications }
+        Self { events, conflicts, checkpoint, filtered_dropped, dropped_notifications }
     }
 
     /// Returns the delivered events, at most the spec's batch bound.
     #[must_use]
     pub fn events(&self) -> &[ChangeEvent] {
         &self.events
+    }
+
+    /// Returns the delivered conflict observations, at most the spec's
+    /// batch bound (SE-03).
+    ///
+    /// Conflict events are advisory live notifications, not journal
+    /// deliveries: they are not covered by the checkpoint and are redelivered
+    /// verbatim with an unacknowledged batch. A subscription closed with an
+    /// unacknowledged batch does not resend them — conflicts are not
+    /// journaled, so there is nothing durable to resend from.
+    #[must_use]
+    pub fn conflicts(&self) -> &[ChangeEvent] {
+        &self.conflicts
     }
 
     /// Returns the recorded boundary this batch asks the caller to
@@ -992,7 +1288,8 @@ impl SubscriptionBatch {
     }
 
     /// Returns the number of events the filter dropped while forming this
-    /// batch at or below its recorded boundary.
+    /// batch at or below its recorded boundary — journal events and drained
+    /// conflict observations alike.
     #[must_use]
     pub const fn filtered_dropped(&self) -> u64 {
         self.filtered_dropped
@@ -1001,13 +1298,14 @@ impl SubscriptionBatch {
     /// Returns the cumulative number of publication notifications the
     /// bounded notification ingress dropped for this subscription.
     ///
-    /// The count includes both queue-full drops and lock-contention drops
-    /// (the sink never blocks a commit, so a contended notification is
-    /// dropped and counted). Engine-level contention drops are attributed
-    /// to every subscription of that engine, including any that predate
-    /// this subscription, so the value is an advisory delivery-health
-    /// statistic, never a delivery-loss count: delivery is journal-driven
-    /// and at-least-once.
+    /// The count includes queue-full drops and lock-contention drops of both
+    /// ingress lanes — commit notifications and conflict notifications (the
+    /// sinks never block a commit, so a contended notification is dropped
+    /// and counted). Engine-level contention drops are attributed to every
+    /// subscription of that engine, including any that predate this
+    /// subscription, so the value is an advisory delivery-health statistic,
+    /// never a journal delivery-loss count: journal delivery is journal-
+    /// driven and at-least-once.
     #[must_use]
     pub const fn dropped_notifications(&self) -> u64 {
         self.dropped_notifications
@@ -1018,10 +1316,24 @@ impl SubscriptionBatch {
 ///
 /// The checkpoint advances only at the acknowledgement seam; it survives
 /// reconnect, and exactly one active consumer owns a subscription at a time.
-/// It stays opaque: equality is its only public operation.
+/// It stays opaque: equality is its only public operation, and
+/// [`SubscriptionCheckpoint::journal_position`] names its journal cursor for
+/// replay.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SubscriptionCheckpoint {
     pub(crate) inner: subscription::CheckpointInner,
+}
+
+impl SubscriptionCheckpoint {
+    /// Returns the journal position this checkpoint records: the exact
+    /// cursor a [`ChangeReplayRequest`] resumes
+    /// after, so a consumer may replay from any acknowledged subscription
+    /// boundary (SE-03).
+    #[must_use]
+    pub fn journal_position(&self) -> ChangeCheckpoint {
+        let (sequence, write_index) = self.inner.journal_cursor();
+        ChangeCheckpoint::after(sequence, write_index)
+    }
 }
 
 /// The caller's acknowledgement of one subscription batch.

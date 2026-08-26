@@ -1004,8 +1004,8 @@ fn changes_subscription_observes_only_committed_publication_events() {
     assert_eq!(event.operation_id().as_str(), "op-published");
     assert_eq!(event.sequence(), sequence);
     assert_eq!(event.kind(), ChangeKind::Document);
-    assert_eq!(event.collection().as_str(), "users");
-    assert_eq!(event.document().as_str(), "doc-1");
+    assert_eq!(event.collection().expect("key event collection").as_str(), "users");
+    assert_eq!(event.document().expect("key event document").as_str(), "doc-1");
     assert_eq!(event.scope().tenant().as_str(), "t1");
 
     // Another tenant's commits stay invisible to this subscription.
@@ -1474,7 +1474,9 @@ fn stream_filters_report_drops_without_advancing_the_checkpoint() {
         .next_subscription_batch(&tenant_scope, "filtered", &Cancellation::new())
         .expect("batch");
     assert!(
-        first.events().iter().all(|event| event.collection().as_str() == "users"),
+        first.events().iter().all(|event| {
+            event.collection().is_some_and(|collection| collection.as_str() == "users")
+        }),
         "only accepted collections are delivered"
     );
     assert_eq!(first.events().len(), 3);
@@ -1548,7 +1550,10 @@ fn publication_sink_never_blocks_a_commit_behind_a_wedged_poll() {
 
     // Wedge one consumer poll while it holds the subscription lock - the
     // exact contention the committing thread's sink must survive without
-    // waiting - and commit from another thread while it is held.
+    // waiting - and commit from another thread while it is held. The wedge
+    // session serializes this test against any other wedge test, because
+    // the wedge is process-global and tests run in parallel.
+    let _wedge_session = streaming::subscription::begin_wedge_session();
     streaming::subscription::arm_poll_wedge("wedged-poll");
     let (committed, commit_elapsed, wedged_batch) = std::thread::scope(|scope_thread| {
         let consumer = scope_thread.spawn(|| {
@@ -1631,7 +1636,7 @@ fn subscription_reaches_events_beyond_a_long_filtered_run() {
         1,
         "the accepted event beyond the filtered run is delivered in one poll"
     );
-    assert_eq!(batch.events()[0].collection().as_str(), "users");
+    assert_eq!(batch.events()[0].collection().expect("key event").as_str(), "users");
     assert_eq!(batch.events()[0].operation_id().as_str(), "op-users");
     assert_eq!(batch.filtered_dropped(), 5, "the filtered run is reported as drops");
     store
@@ -1680,6 +1685,870 @@ fn engine_bound_subscriptions_are_bounded_and_refused() {
         store.subscribe(&tenant_scope, &refill).expect("resubscribes into the freed slot"),
         SubscriptionStatus::Active
     );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// SE-03: the public change-event backbone (selectors, replay, conflicts)
+// ---------------------------------------------------------------------------
+
+/// Builds one synthetic conflict record: two conflicting operations, two
+/// members, two clock stamps, and a recorded winner.
+fn conflict_record(tag: &str) -> crate::replication::ConflictRecord {
+    crate::replication::ConflictRecord::new(
+        vec![operation(&format!("op-local-{tag}")), operation(&format!("op-remote-{tag}"))],
+        vec![
+            crate::replication::MemberId::try_new("member-a").expect("valid member"),
+            crate::replication::MemberId::try_new("member-b").expect("valid member"),
+        ],
+        vec![
+            crate::replication::ReplicationClockStamp::new(10, 1),
+            crate::replication::ReplicationClockStamp::new(10, 2),
+        ],
+        crate::replication::ConflictOutcome::Winner(
+            crate::replication::MemberId::try_new("member-a").expect("valid member"),
+        ),
+    )
+}
+
+/// Replays every journal event a selector accepts from one checkpoint,
+/// paging at `limit`, and returns the delivered events in sequence order.
+fn replay_all(
+    engine: &Engine,
+    tenant_scope: &TenantScope,
+    filter: &ChangeFilter,
+    after: Option<streaming::ChangeCheckpoint>,
+    limit: u32,
+) -> Vec<ChangeEvent> {
+    let store = engine.streams();
+    let mut events = Vec::new();
+    let mut after = after;
+    loop {
+        let request = streaming::ChangeReplayRequest::try_new(filter.clone(), after, limit)
+            .expect("valid replay request");
+        let batch =
+            store.replay_changes(tenant_scope, &request, &Cancellation::new()).expect("replay");
+        assert!(batch.events().len() <= limit as usize, "replay batches stay bounded");
+        events.extend(batch.events().iter().cloned());
+        let drained = batch.drained();
+        after = batch.next_checkpoint();
+        if drained {
+            assert!(after.is_some() || events.is_empty(), "a drained batch names its boundary");
+            break;
+        }
+    }
+    events
+}
+
+/// Drains one live subscription from its opening to the journal's end,
+/// acknowledging each batch, and returns every delivered event.
+fn drain_live(store: &StreamStore<'_>, tenant_scope: &TenantScope, name: &str) -> Vec<ChangeEvent> {
+    let mut events = Vec::new();
+    loop {
+        let batch =
+            store.next_subscription_batch(tenant_scope, name, &Cancellation::new()).expect("batch");
+        events.extend(batch.events().iter().cloned());
+        store
+            .acknowledge(tenant_scope, SubscriptionAcknowledgement::confirming(batch.checkpoint()))
+            .expect("acknowledges");
+        if batch.events().is_empty() {
+            break;
+        }
+    }
+    events
+}
+
+#[test]
+fn change_selector_extends_the_filter_to_the_v1_parity_surface() {
+    let every = ChangeFilter::try_new(None, None).expect("filter");
+    let document = text_document("users", "user-1", "v");
+    let document_event = ChangeEvent::new(
+        ChangeKind::Document,
+        TenantScope::from_parts(tenant("t1"), 7),
+        collection("users"),
+        document_id("user-1"),
+        operation("op-1"),
+        StorageSequence::new(11),
+    );
+    let conflict_event = ChangeEvent::conflict(
+        TenantScope::from_parts(tenant("t1"), 7),
+        operation("op-local-x"),
+        StorageSequence::new(12),
+        conflict_record("x"),
+    );
+
+    // All-documents: every document kind, no refinement.
+    let all_documents =
+        ChangeFilter::try_new(Some(vec![ChangeKind::Document]), None).expect("filter");
+    assert!(all_documents.accepts_event(&document_event));
+    assert!(!all_documents.accepts_event(&conflict_event));
+
+    // Per-document id.
+    let per_document = every.clone().with_document(document_id("user-1"));
+    assert!(per_document.accepts_event(&document_event));
+    assert!(
+        !per_document.clone().with_document(document_id("user-2")).accepts_event(&document_event),
+        "another document identity is not selected"
+    );
+
+    // Identifier prefix, validated like every selector text.
+    let prefix = every.clone().with_prefix("user-").expect("prefix");
+    assert!(prefix.accepts_event(&document_event));
+    assert!(!prefix.accepts_event(&ChangeEvent::new(
+        ChangeKind::Document,
+        TenantScope::from_parts(tenant("t1"), 7),
+        collection("users"),
+        document_id("order-1"),
+        operation("op-2"),
+        StorageSequence::new(11),
+    )));
+    assert_eq!(
+        every.clone().with_prefix("").unwrap_err(),
+        crate::operations::RequestValidationError::InvalidIdentifier
+    );
+
+    // Collection selection keeps its existing dimension.
+    let by_collection =
+        ChangeFilter::try_new(None, Some(vec![collection("users")])).expect("filter");
+    assert!(by_collection.accepts_event(&document_event));
+    assert!(!by_collection.accepts_event(&ChangeEvent::new(
+        ChangeKind::Document,
+        TenantScope::from_parts(tenant("t1"), 7),
+        collection("orders"),
+        document_id("order-1"),
+        operation("op-3"),
+        StorageSequence::new(11),
+    )));
+
+    // Index, counter, and time-series kinds are selectable dimensions.
+    for kind in [ChangeKind::Index, ChangeKind::Counter, ChangeKind::TimeSeries] {
+        let selector = ChangeFilter::try_new(Some(vec![kind]), None).expect("filter");
+        let event = ChangeEvent::new(
+            kind,
+            TenantScope::from_parts(tenant("t1"), 7),
+            collection("users"),
+            document_id("user-1"),
+            operation("op-4"),
+            StorageSequence::new(11),
+        );
+        assert!(selector.accepts_event(&event), "{kind:?} is selectable");
+        assert!(!all_documents.accepts_event(&event));
+    }
+
+    // Operation selection: V1's per-operation observable.
+    let by_operation = every
+        .clone()
+        .for_operations(vec![operation("op-1"), operation("op-other")])
+        .expect("operations");
+    assert!(by_operation.accepts_event(&document_event));
+    assert!(
+        !ChangeFilter::try_new(None, None)
+            .expect("filter")
+            .for_operations(vec![operation("op-other")])
+            .expect("operations")
+            .accepts_event(&document_event)
+    );
+    assert_eq!(
+        every.clone().for_operations(Vec::new()).unwrap_err(),
+        crate::operations::RequestValidationError::EmptyField
+    );
+
+    // Conflict is a first-class kind: a conflict selector accepts conflict
+    // events and rejects document events, and vice versa.
+    let conflicts_only =
+        ChangeFilter::try_new(Some(vec![ChangeKind::Conflict]), None).expect("filter");
+    assert!(conflicts_only.accepts_event(&conflict_event));
+    assert!(!conflicts_only.accepts_event(&document_event));
+    assert!(
+        !all_documents.accepts_event(&conflict_event),
+        "a document selector does not observe conflicts"
+    );
+    // A collection-scoped filter does not observe conflicts: they carry no
+    // collection identity to match.
+    assert!(!by_collection.accepts_event(&conflict_event));
+    // An unrefined every-kind filter does observe them.
+    assert!(every.accepts_event(&conflict_event));
+    // A per-document or prefix-refined filter does not: a conflict carries
+    // no document identity.
+    assert!(!per_document.accepts_event(&conflict_event));
+    assert!(!prefix.accepts_event(&conflict_event));
+    // The operation dimension matches any conflicting operation identity.
+    assert!(
+        every
+            .clone()
+            .for_operations(vec![operation("op-remote-x")])
+            .expect("operations")
+            .accepts_event(&conflict_event)
+    );
+    let _ = document;
+}
+
+#[test]
+fn conflict_events_carry_only_conflict_record_metadata() {
+    let record = conflict_record("only");
+    let scope = TenantScope::from_parts(tenant("t1"), 7);
+    let event = ChangeEvent::conflict(
+        scope.clone(),
+        operation("op-local-only"),
+        StorageSequence::new(30),
+        record.clone(),
+    );
+
+    // The conflict payload is exactly the ConflictRecord: identities,
+    // members, clocks, and the recorded outcome.
+    assert_eq!(event.kind(), ChangeKind::Conflict);
+    let carried = event.conflict_record().expect("the conflict payload");
+    assert_eq!(carried.operations(), record.operations());
+    assert_eq!(carried.members(), record.members());
+    assert_eq!(carried.clocks(), record.clocks());
+    assert_eq!(carried.outcome(), record.outcome());
+    assert_eq!(event.conflict_record(), Some(&record));
+
+    // No key dimensions exist on a conflict event: there is no collection,
+    // no document identity, and structurally no document body — the
+    // constructor accepts no `Document` at all.
+    assert_eq!(event.collection(), None);
+    assert_eq!(event.document(), None);
+
+    // Journal-derived events never carry a conflict payload.
+    let journal_event = ChangeEvent::new(
+        ChangeKind::Document,
+        scope.clone(),
+        collection("users"),
+        document_id("user-1"),
+        operation("op-journal"),
+        StorageSequence::new(31),
+    );
+    assert_eq!(journal_event.conflict_record(), None);
+    assert!(journal_event.collection().is_some());
+    assert!(journal_event.document().is_some());
+}
+
+#[test]
+fn replay_from_beginning_reproduces_the_live_subscription_sequence_exactly() {
+    let (dir, engine) = open_engine("replay-live-parity");
+    let tenant_scope = scope(&engine, "t1");
+    // Interleave single-write and multi-write publications so the expansion
+    // and batch-boundary splitting are exercised on both paths.
+    let mut expected_identities = Vec::new();
+    for index in 0..5 {
+        let sequence = commit_documents(
+            &engine,
+            "t1",
+            &format!("op-{index}"),
+            &[("users", &format!("user-{index}"), "u"), ("orders", &format!("order-{index}"), "o")],
+        );
+        expected_identities.push((format!("op-{index}"), sequence.get(), 2));
+    }
+
+    let store = engine.streams();
+    let spec = subscription("live-parity", 3).from_beginning();
+    store.subscribe(&tenant_scope, &spec).expect("subscribes");
+    let live = drain_live(&store, &tenant_scope, "live-parity");
+
+    let replay = replay_all(
+        &engine,
+        &tenant_scope,
+        &ChangeFilter::try_new(None, None).expect("filter"),
+        None,
+        2,
+    );
+    assert_eq!(live, replay, "journal replay reproduces the live event sequence exactly");
+    assert_eq!(live.len(), 10);
+    // Each publication expands to two ordered writes, so both sequences
+    // carry each commit's operation identity and sequence twice.
+    for ((operation_name, sequence, writes), group) in
+        expected_identities.iter().zip(live.chunks(2))
+    {
+        assert_eq!(*writes, 2);
+        assert_eq!(group.len(), 2);
+        for event in group {
+            assert_eq!(event.operation_id().as_str(), *operation_name);
+            assert_eq!(event.sequence().get(), *sequence);
+        }
+    }
+
+    // Replay continues from its own boundary exactly like a live
+    // subscription: a later publication is the next replayed event.
+    let tail = commit_document(&engine, "t1", "op-tail", "users", "user-tail", "u");
+    let resumed = replay_all(
+        &engine,
+        &tenant_scope,
+        &ChangeFilter::try_new(None, None).expect("filter"),
+        replay
+            .last()
+            .map(|event| streaming::ChangeCheckpoint::after(event.sequence().get(), u32::MAX)),
+        4,
+    );
+    assert_eq!(resumed.len(), 1);
+    assert_eq!(resumed[0].operation_id().as_str(), "op-tail");
+    assert_eq!(resumed[0].sequence(), tail);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn replay_from_an_arbitrary_checkpoint_reproduces_the_exact_suffix() {
+    let (dir, engine) = open_engine("replay-arbitrary");
+    let tenant_scope = scope(&engine, "t1");
+    let batched = commit_documents(
+        &engine,
+        "t1",
+        "op-batched",
+        &[("users", "user-a", "v"), ("users", "user-b", "v"), ("users", "user-c", "v")],
+    );
+    let later = commit_document(&engine, "t1", "op-later", "users", "user-d", "v");
+    let _ = (batched, later);
+
+    let full = replay_all(
+        &engine,
+        &tenant_scope,
+        &ChangeFilter::try_new(None, None).expect("filter"),
+        None,
+        8,
+    );
+    assert_eq!(full.len(), 4);
+
+    // A live subscription's acknowledged boundary is a replayable
+    // checkpoint: replay from it yields exactly the suffix.
+    let store = engine.streams();
+    let spec = subscription("boundary", 2).from_beginning();
+    store.subscribe(&tenant_scope, &spec).expect("subscribes");
+    let first = store
+        .next_subscription_batch(&tenant_scope, "boundary", &Cancellation::new())
+        .expect("batch");
+    assert_eq!(first.events().len(), 2);
+    store
+        .acknowledge(&tenant_scope, SubscriptionAcknowledgement::confirming(first.checkpoint()))
+        .expect("acknowledges");
+    let suffix = replay_all(
+        &engine,
+        &tenant_scope,
+        &ChangeFilter::try_new(None, None).expect("filter"),
+        Some(first.checkpoint().journal_position()),
+        8,
+    );
+    assert_eq!(suffix, full[2..], "replay from a live boundary is the exact suffix");
+
+    // A hand-forged checkpoint may split one multi-write commit: resuming
+    // after the second write of `op-batched` serves only its tail.
+    let split = streaming::ChangeCheckpoint::after(batched.get(), 2);
+    let tail = replay_all(
+        &engine,
+        &tenant_scope,
+        &ChangeFilter::try_new(None, None).expect("filter"),
+        Some(split),
+        8,
+    );
+    assert_eq!(tail.len(), 2);
+    assert_eq!(tail[0].document().expect("key event").as_str(), "user-c");
+    assert_eq!(tail[1].operation_id().as_str(), "op-later");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn replay_is_bounded_and_reports_filtered_drops() {
+    let (dir, engine) = open_engine("replay-bounded");
+    let tenant_scope = scope(&engine, "t1");
+    for index in 0..6 {
+        commit_document(
+            &engine,
+            "t1",
+            &format!("u-{index}"),
+            "users",
+            &format!("user-{index}"),
+            "v",
+        );
+        commit_document(
+            &engine,
+            "t1",
+            &format!("o-{index}"),
+            "orders",
+            &format!("order-{index}"),
+            "v",
+        );
+    }
+    let store = engine.streams();
+
+    let mut delivered = 0_usize;
+    let mut dropped = 0_u64;
+    let mut batches = 0_usize;
+    let mut after = None;
+    loop {
+        let request = streaming::ChangeReplayRequest::try_new(
+            ChangeFilter::try_new(None, Some(vec![collection("users")])).expect("filter"),
+            after,
+            2,
+        )
+        .expect("request");
+        let batch =
+            store.replay_changes(&tenant_scope, &request, &Cancellation::new()).expect("replay");
+        assert!(batch.events().len() <= 2, "the replay bound holds");
+        assert!(
+            batch.events().iter().all(|event| {
+                event.collection().is_some_and(|collection| collection.as_str() == "users")
+            }),
+            "only selected collections are delivered"
+        );
+        delivered += batch.events().len();
+        dropped += batch.filtered_dropped();
+        batches += 1;
+        let drained = batch.drained();
+        after = batch.next_checkpoint();
+        if drained {
+            break;
+        }
+    }
+    assert_eq!(delivered, 6, "every selected event is delivered");
+    assert_eq!(dropped, 6, "every filtered event is reported as a drop");
+    // Reported drops advance the boundary, so the run completes in two
+    // full batches and one final batch that reaches the journal's end.
+    assert_eq!(batches, 3, "two full batches and one final draining batch");
+
+    // A replay request validates its bound like every batch contract.
+    assert_eq!(
+        streaming::ChangeReplayRequest::try_new(
+            ChangeFilter::try_new(None, None).expect("filter"),
+            None,
+            0
+        )
+        .unwrap_err(),
+        crate::operations::RequestValidationError::InvalidRange
+    );
+    assert_eq!(
+        streaming::ChangeReplayRequest::try_new(
+            ChangeFilter::try_new(None, None).expect("filter"),
+            None,
+            streaming::MAX_STREAM_BATCH_ITEMS + 1
+        )
+        .unwrap_err(),
+        crate::operations::RequestValidationError::InvalidRange
+    );
+
+    // A cancelled replay closes promptly before any work.
+    let cancelled = Cancellation::new();
+    cancelled.cancel();
+    let request = streaming::ChangeReplayRequest::try_new(
+        ChangeFilter::try_new(None, None).expect("filter"),
+        None,
+        2,
+    )
+    .expect("request");
+    assert_eq!(
+        store.replay_changes(&tenant_scope, &request, &cancelled).unwrap_err(),
+        StreamError::Cancelled
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn replay_never_crosses_a_tenant_scope() {
+    let (dir, engine) = open_engine("replay-tenant-isolation");
+    let scope_t1 = scope(&engine, "t1");
+    let scope_t2 = scope(&engine, "t2");
+    // Interleave both tenants' publications on one engine.
+    for index in 0..4 {
+        commit_document(
+            &engine,
+            "t1",
+            &format!("t1-{index}"),
+            "users",
+            &format!("one-{index}"),
+            "v",
+        );
+        commit_document(
+            &engine,
+            "t2",
+            &format!("t2-{index}"),
+            "users",
+            &format!("two-{index}"),
+            "v",
+        );
+    }
+
+    let t1_events = replay_all(
+        &engine,
+        &scope_t1,
+        &ChangeFilter::try_new(None, None).expect("filter"),
+        None,
+        3,
+    );
+    assert_eq!(t1_events.len(), 4, "only tenant t1's journal is read");
+    assert!(t1_events.iter().all(|event| event.operation_id().as_str().starts_with("t1-")));
+    assert!(t1_events.iter().all(|event| event.scope().tenant().as_str() == "t1"));
+
+    let t2_events = replay_all(
+        &engine,
+        &scope_t2,
+        &ChangeFilter::try_new(None, None).expect("filter"),
+        None,
+        3,
+    );
+    assert_eq!(t2_events.len(), 4, "only tenant t2's journal is read");
+    assert!(t2_events.iter().all(|event| event.operation_id().as_str().starts_with("t2-")));
+
+    // The isolation probe: a checkpoint forged from tenant t2's journal
+    // position, replayed under tenant t1's scope, still serves only t1's
+    // events after that position — the journal read is keyed by the scope's
+    // validated tenant, never by the checkpoint's origin.
+    let t2_last = t2_events.last().expect("t2 events").sequence();
+    let probed = replay_all(
+        &engine,
+        &scope_t1,
+        &ChangeFilter::try_new(None, None).expect("filter"),
+        Some(streaming::ChangeCheckpoint::after(t2_last.get(), 0)),
+        3,
+    );
+    assert!(
+        probed.iter().all(|event| event.operation_id().as_str().starts_with("t1-")),
+        "no cross-tenant event is served under a forged cross-tenant checkpoint"
+    );
+
+    // A scope from another engine is refused before any journal read.
+    let (dir_b, engine_b) = open_engine("replay-tenant-isolation-b");
+    let scope_b = scope(&engine_b, "t1");
+    let request = streaming::ChangeReplayRequest::try_new(
+        ChangeFilter::try_new(None, None).expect("filter"),
+        None,
+        2,
+    )
+    .expect("request");
+    assert_eq!(
+        engine.streams().replay_changes(&scope_b, &request, &Cancellation::new()).unwrap_err(),
+        StreamError::SnapshotEngineMismatch
+    );
+
+    engine_b.shutdown().expect("shuts down");
+    std::fs::remove_dir_all(&dir_b).ok();
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn conflict_notifications_reach_only_the_owning_tenant() {
+    let (dir, engine) = open_engine("conflict-tenant-isolation");
+    let scope_t1 = scope(&engine, "t1");
+    let scope_t2 = scope(&engine, "t2");
+    let store = engine.streams();
+    // Both tenants hold an unrefined subscription: the only guard between a
+    // conflict notification and either consumer is the tenant check in the
+    // ingress.
+    store.subscribe(&scope_t1, &subscription("t1-conflicts", 8)).expect("subscribes t1");
+    store.subscribe(&scope_t2, &subscription("t2-conflicts", 8)).expect("subscribes t2");
+
+    let record = conflict_record("isolated");
+    streaming::backbone::notify_conflict(&scope_t1, StorageSequence::new(9), record.clone());
+
+    let t1_batch = store
+        .next_subscription_batch(&scope_t1, "t1-conflicts", &Cancellation::new())
+        .expect("t1 batch");
+    assert_eq!(t1_batch.conflicts().len(), 1, "the owning tenant observes the conflict");
+    let event = &t1_batch.conflicts()[0];
+    assert_eq!(event.kind(), ChangeKind::Conflict);
+    assert_eq!(event.conflict_record(), Some(&record));
+    assert_eq!(event.scope().tenant().as_str(), "t1");
+    assert_eq!(event.operation_id().as_str(), "op-local-isolated");
+
+    // The probe: tenant t2's consumer, subscribed with the same
+    // every-kind filter on the same engine, must not observe tenant t1's
+    // conflict.
+    let t2_batch = store
+        .next_subscription_batch(&scope_t2, "t2-conflicts", &Cancellation::new())
+        .expect("t2 batch");
+    assert!(t2_batch.conflicts().is_empty(), "no cross-tenant conflict event");
+    assert!(t2_batch.events().is_empty(), "no cross-tenant journal event");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn conflict_notification_burst_is_bounded_with_counted_drops() {
+    let (dir, engine) = open_engine("conflict-burst");
+    let tenant_scope = scope(&engine, "t1");
+    let store = engine.streams();
+    store.subscribe(&tenant_scope, &subscription("burst", 4)).expect("subscribes");
+
+    // The consumer never drains while the burst runs past the conflict
+    // queue's bound. Every notification must still be accepted: the ingress
+    // is bounded and non-blocking, dropping the oldest and counting the
+    // drop.
+    let over = streaming::backbone::MAX_CONFLICT_NOTIFICATIONS + 20;
+    for index in 0..over {
+        streaming::backbone::notify_conflict(
+            &tenant_scope,
+            StorageSequence::new(u64::try_from(index).unwrap_or(0)),
+            conflict_record(&format!("burst-{index}")),
+        );
+    }
+
+    let batch = store
+        .next_subscription_batch(&tenant_scope, "burst", &Cancellation::new())
+        .expect("batch serves");
+    assert!(
+        batch.conflicts().len() <= 4,
+        "delivered conflicts honor the spec bound, got {}",
+        batch.conflicts().len()
+    );
+    assert!(
+        batch.dropped_notifications() >= 20,
+        "the overflow beyond the queue bound is counted and reported, got {}",
+        batch.dropped_notifications()
+    );
+    // The newest notifications survived the drop-oldest policy.
+    assert_eq!(batch.conflicts().len(), 4);
+    assert_eq!(
+        batch.conflicts()[0].conflict_record().expect("record").operations()[0].as_str(),
+        format!("op-local-burst-{}", over - streaming::backbone::MAX_CONFLICT_NOTIFICATIONS)
+    );
+
+    // Acknowledgement consumes the delivered conflicts; the next batch
+    // drains the remainder of the bounded queue.
+    store
+        .acknowledge(&tenant_scope, SubscriptionAcknowledgement::confirming(batch.checkpoint()))
+        .expect("acknowledges");
+    let rest = store
+        .next_subscription_batch(&tenant_scope, "burst", &Cancellation::new())
+        .expect("batch serves");
+    assert_eq!(rest.conflicts().len(), 4);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn conflict_ingress_never_blocks_behind_a_wedged_poll() {
+    let (dir, engine) = open_engine("conflict-nonblocking");
+    let tenant_scope = scope(&engine, "t1");
+    commit_document(&engine, "t1", "op-seed", "users", "doc-seed", "v");
+    let store = engine.streams();
+    let spec = subscription("wedged-conflict", 8).from_beginning();
+    store.subscribe(&tenant_scope, &spec).expect("subscribes");
+
+    // Wedge one consumer poll while it holds the subscription lock, then
+    // run the conflict ingress from another thread while it is held: the
+    // ingress must not wait on the subscriber's lock. The wedge session
+    // serializes this test against any other wedge test, because the wedge
+    // is process-global and tests run in parallel.
+    let _wedge_session = streaming::subscription::begin_wedge_session();
+    streaming::subscription::arm_poll_wedge("wedged-conflict");
+    let (notify_elapsed, entered) = std::thread::scope(|scope_thread| {
+        let consumer = scope_thread.spawn(|| {
+            store
+                .next_subscription_batch(&tenant_scope, "wedged-conflict", &Cancellation::new())
+                .expect("the wedged poll completes after release")
+        });
+        let entered_by = Instant::now() + Duration::from_secs(5);
+        while !streaming::subscription::wedge_entered() {
+            assert!(Instant::now() < entered_by, "the consumer poll never wedged");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let started = Instant::now();
+        streaming::backbone::notify_conflict(
+            &tenant_scope,
+            StorageSequence::new(1),
+            conflict_record("wedge"),
+        );
+        let notify_elapsed = started.elapsed();
+        streaming::subscription::release_poll_wedge();
+        let batch = consumer.join().expect("the consumer thread does not panic");
+        (notify_elapsed, batch)
+    });
+
+    // The ingress returned while the poll was still wedged: it never
+    // waited on the subscriber's lock. The bound is generous — a blocking
+    // ingress would wait out the wedge's own five-second deadline.
+    assert!(
+        notify_elapsed < Duration::from_secs(1),
+        "the conflict ingress blocked {notify_elapsed:?} behind a wedged subscriber poll"
+    );
+    let _ = entered;
+
+    // The notification the ingress dropped on contention is counted, and
+    // the delivery is observable as a counted drop in the next batch.
+    let batch = store
+        .next_subscription_batch(&tenant_scope, "wedged-conflict", &Cancellation::new())
+        .expect("batch serves");
+    assert!(batch.dropped_notifications() > 0, "the contention drop is counted and observable");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn conflict_events_honor_the_subscription_filter() {
+    let (dir, engine) = open_engine("conflict-filter");
+    let tenant_scope = scope(&engine, "t1");
+    let store = engine.streams();
+    let conflicts_only = SubscriptionSpec::try_new(
+        "conflicts-only",
+        ChangeFilter::try_new(Some(vec![ChangeKind::Conflict]), None).expect("filter"),
+        8,
+    )
+    .expect("spec")
+    .from_beginning();
+    let documents_only = SubscriptionSpec::try_new(
+        "documents-only",
+        ChangeFilter::try_new(Some(vec![ChangeKind::Document]), None).expect("filter"),
+        8,
+    )
+    .expect("spec")
+    .from_beginning();
+    store.subscribe(&tenant_scope, &conflicts_only).expect("subscribes");
+    store.subscribe(&tenant_scope, &documents_only).expect("subscribes");
+
+    commit_document(&engine, "t1", "op-journal", "users", "doc-1", "v");
+    streaming::backbone::notify_conflict(
+        &tenant_scope,
+        StorageSequence::new(1),
+        conflict_record("filtered"),
+    );
+
+    let conflict_batch = store
+        .next_subscription_batch(&tenant_scope, "conflicts-only", &Cancellation::new())
+        .expect("batch");
+    assert!(conflict_batch.events().is_empty(), "the journal event is not delivered");
+    assert_eq!(conflict_batch.filtered_dropped(), 1, "the filtered journal event is reported");
+    assert_eq!(conflict_batch.conflicts().len(), 1, "the conflict is delivered");
+
+    let document_batch = store
+        .next_subscription_batch(&tenant_scope, "documents-only", &Cancellation::new())
+        .expect("batch");
+    assert_eq!(document_batch.events().len(), 1, "the journal event is delivered");
+    assert!(
+        document_batch.conflicts().is_empty(),
+        "the conflict kind is filtered from a document subscription"
+    );
+    assert!(document_batch.filtered_dropped() >= 1, "the filtered conflict is reported");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// SE-03: public trigger notifications (PD-2026-08-26-13 D3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn trigger_notifications_are_content_free_two_identifier_hints() {
+    let (dir, engine) = open_engine("trigger-content-free");
+    let tenant_scope = scope(&engine, "t1");
+    let store = engine.streams();
+    // The tap exists before the publication: a hint is emitted at commit
+    // publication time and is never reconstructed after the fact.
+    let tap = store.change_notifications(8).expect("tap opens");
+    let sequence =
+        commit_document(&engine, "t1", "op-trigger", "users", "secret-doc-id", "secret-body");
+
+    let notification = tap.try_pop().expect("one publication, one hint");
+    assert_eq!(notification.sequence(), sequence);
+    assert_eq!(notification.operation_id().as_str(), "op-trigger");
+    assert_eq!(
+        notification,
+        streaming::backbone::ChangeNotification::new(sequence, operation("op-trigger"))
+    );
+    // The hint is content-free: the two identifiers are its entire payload,
+    // and no document identity or body ever rides it.
+    let observed = std::format!("{notification:?}");
+    assert!(!observed.contains("secret-doc-id"), "no document identity rides the hint: {observed}");
+    assert!(!observed.contains("secret-body"), "no document body rides the hint: {observed}");
+    assert!(tap.try_pop().is_none(), "one hint per publication");
+    let _ = tenant_scope;
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn trigger_notification_queue_is_bounded_with_counted_drops() {
+    let (dir, engine) = open_engine("trigger-bounded");
+    let store = engine.streams();
+    let tap = store.change_notifications(4).expect("tap opens");
+
+    // A burst of publications with no consumer: the oldest hints are
+    // dropped past the bound, the drops counted, the newest kept.
+    for index in 0..10 {
+        commit_document(
+            &engine,
+            "t1",
+            &format!("op-{index}"),
+            "users",
+            &format!("doc-{index}"),
+            "v",
+        );
+    }
+    assert_eq!(tap.dropped(), 6, "the overflow beyond the bound is counted and reported");
+    let mut seen = Vec::new();
+    while let Some(notification) = tap.try_pop() {
+        seen.push(notification.operation_id().as_str().to_owned());
+    }
+    assert_eq!(seen.len(), 4, "the queue holds exactly its bound");
+    assert_eq!(seen[0], "op-6", "drop-oldest keeps the newest hints");
+    assert_eq!(seen[3], "op-9");
+    assert_eq!(tap.dropped(), 6, "draining does not reset the cumulative count");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn trigger_notification_ingress_never_blocks_a_commit() {
+    let (dir, engine) = open_engine("trigger-nonblocking");
+    let store = engine.streams();
+    let tap = store.change_notifications(8).expect("tap opens");
+
+    // Hold the tap's queue lock - the exact contention the committing
+    // thread's sink must survive without waiting - and commit from another
+    // thread while it is held.
+    let queue_lock = tap.hold_queue_for_test();
+    let (sequence, commit_elapsed) = std::thread::scope(|scope_thread| {
+        let committer = scope_thread.spawn(|| {
+            let started = Instant::now();
+            let sequence = commit_document(&engine, "t1", "op-wedge", "users", "doc-wedge", "v");
+            (sequence, started.elapsed())
+        });
+        committer.join().expect("the committing thread does not panic")
+    });
+    drop(queue_lock);
+
+    // The commit returned while the consumer still held the queue lock:
+    // the sink never waited on it.
+    assert!(
+        commit_elapsed < Duration::from_secs(5),
+        "the commit blocked {commit_elapsed:?} behind a locked notification queue"
+    );
+    assert!(tap.dropped() > 0, "the contention drop is counted and observable");
+    // The contended hint was dropped, not delivered: a hint is a wake-up,
+    // never data, so its loss costs one pull trigger - the commit itself
+    // returned promptly and the journal holds the fact.
+    assert!(tap.try_pop().is_none(), "a contended hint is dropped, not queued");
+    let _ = sequence;
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn trigger_notifications_validate_capacity_and_sink_bounds() {
+    let (dir, engine) = open_engine("trigger-bounds");
+    let store = engine.streams();
+    // The capacity bound is part of the request: zero and over-limit are
+    // typed refusals, never silent truncation.
+    assert_eq!(store.change_notifications(0).unwrap_err(), StreamError::InvalidSource);
+    assert_eq!(
+        store.change_notifications(streaming::MAX_CHANGE_NOTIFICATION_CAPACITY + 1).unwrap_err(),
+        StreamError::InvalidSource
+    );
+
+    // The engine's publication registry bounds its sinks (the engine's own
+    // index catalog holds one), so taps attach until that bound and the
+    // next tap is refused - while every attached tap keeps serving.
+    let mut taps = Vec::new();
+    while let Ok(tap) = store.change_notifications(1) {
+        taps.push(tap);
+    }
+    assert_eq!(
+        taps.len(),
+        crate::engine::MAX_PUBLICATION_SINKS - 1,
+        "the registry bound minus the engine's own index sink"
+    );
+    commit_document(&engine, "t1", "op-bound", "users", "doc-bound", "v");
+    assert!(taps[0].try_pop().is_some(), "an attached tap below the bound keeps serving");
 
     std::fs::remove_dir_all(&dir).ok();
 }

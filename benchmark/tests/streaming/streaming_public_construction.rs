@@ -188,9 +188,12 @@ fn public_construction_validates_typed_stream_requests() {
         Some(vec![collection("users")]),
     )
     .expect("valid filter");
-    assert!(filter.accepts(ChangeKind::Counter, &collection("users")));
-    assert!(!filter.accepts(ChangeKind::TimeSeries, &collection("users")));
-    assert!(!filter.accepts(ChangeKind::Document, &collection("orders")));
+    assert!(filter.accepts(ChangeKind::Counter, Some(&collection("users"))));
+    assert!(!filter.accepts(ChangeKind::TimeSeries, Some(&collection("users"))));
+    assert!(!filter.accepts(ChangeKind::Document, Some(&collection("orders"))));
+    // A subjectless event (a conflict) passes the collection dimension
+    // exactly when no collection is named.
+    assert!(!filter.accepts(ChangeKind::Conflict, None));
 
     // Subscription specs validate their name and batch bound.
     assert_eq!(
