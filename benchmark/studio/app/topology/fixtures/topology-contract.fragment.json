@@ -1,0 +1,175 @@
+{
+  "fragment": "terrabase.api.v2.topology.db07",
+  "ticket": "TerraScale/TerraBaseV2#19 (DB-07)",
+  "purpose": "Merge-ready contract fragment for the topology reads. DB-07 served these from the studio fixture's topology route namespace (app/topology/fixtures/topology-demo.mjs) because the contract and its generated typed client are shared files this parallel ticket does not edit. Integrator merge: append the operations and types below to contract/terrabase-api.contract.json (and update tests/contract.test.mjs's pinned operation vocabulary), run `vp run generate:client`, then replace app/topology/lib/topology-client.ts reads with the generated client methods. The fixture payloads and the validators in app/topology/lib/topology-client.ts already match these shapes exactly.",
+  "operations": [
+    {
+      "name": "topology.read",
+      "path": "/api/v2/operations/topology.read",
+      "doc": "Topology snapshot: Regions, Members with Failure Domains and member health, and Bucket Range ownership with ownership epochs (engine TopologyView projected for display).",
+      "request": { "type": "none" },
+      "response": { "type": "TopologySnapshot" }
+    },
+    {
+      "name": "topology.recent-writes",
+      "path": "/api/v2/operations/topology.recent-writes",
+      "doc": "Recent replicated writes, newest first, bounded, each carrying its AcknowledgementReport facts verbatim (requested, observed, contributed Regions and Members, observation lane tick, degenerate normalization).",
+      "request": { "type": "none" },
+      "response": { "type": "RecentWritesReport" }
+    },
+    {
+      "name": "topology.convergence",
+      "path": "/api/v2/operations/topology.convergence",
+      "doc": "The latest Convergence observation with its condition, the per-Member replication lag as a storage-sequence distance, and the engine measurement definitions.",
+      "request": { "type": "none" },
+      "response": { "type": "ConvergenceReport" }
+    }
+  ],
+  "types": {
+    "AcknowledgementLevel": {
+      "kind": "enum",
+      "values": ["local", "region-quorum", "majority-regions", "all-regions"],
+      "doc": "The strongest state a Region or Member has confirmed for a replicated record (engine AcknowledgementLevel; ADR-0004 D-2). Part of the public contract and distinct from local receipt."
+    },
+    "MemberStatus": {
+      "kind": "enum",
+      "values": ["assigned", "active", "responsive", "stale", "unavailable", "degraded", "unknown"],
+      "doc": "Member health observation (engine ReplicationStatus). Health only: never carries or implies a Convergence fact."
+    },
+    "TopologyMemberSeat": {
+      "kind": "object",
+      "fields": [
+        { "name": "member", "type": "string" },
+        { "name": "region", "type": "string" },
+        { "name": "failureDomain", "type": "string" },
+        { "name": "status", "type": "MemberStatus" }
+      ]
+    },
+    "RangeOwnership": {
+      "kind": "object",
+      "fields": [
+        { "name": "start", "type": "integer" },
+        { "name": "end", "type": "integer" },
+        { "name": "shard", "type": "string", "doc": "Canonical shard identity shard/<number>." },
+        { "name": "owner", "type": "string" },
+        {
+          "name": "epoch",
+          "type": "integer",
+          "doc": "The ownership epoch; raised by every ownership transition of the range."
+        }
+      ]
+    },
+    "TopologySnapshot": {
+      "kind": "object",
+      "fields": [
+        {
+          "name": "lane",
+          "type": "string",
+          "doc": "The lane the report comes from (synthetic until the replication data plane lands)."
+        },
+        { "name": "laneTick", "type": "integer", "doc": "Lane clock tick of the snapshot." },
+        { "name": "regions", "type": "array", "items": "string" },
+        { "name": "members", "type": "array", "items": "TopologyMemberSeat" },
+        { "name": "ranges", "type": "array", "items": "RangeOwnership" },
+        {
+          "name": "limits",
+          "type": "array",
+          "items": "string",
+          "doc": "Lane and qualification limits rendered with the panel."
+        }
+      ]
+    },
+    "RegionContribution": {
+      "kind": "object",
+      "fields": [
+        { "name": "region", "type": "string" },
+        { "name": "members", "type": "array", "items": "string" }
+      ]
+    },
+    "AcknowledgementReport": {
+      "kind": "object",
+      "doc": "The observed acknowledgement for one replicated operation, engine fields verbatim.",
+      "fields": [
+        { "name": "operation", "type": "string" },
+        { "name": "requested", "type": "AcknowledgementLevel" },
+        { "name": "observed", "type": "AcknowledgementLevel" },
+        { "name": "contributed", "type": "array", "items": "RegionContribution" },
+        { "name": "observedAt", "type": "integer", "doc": "Lane clock tick of the observation." },
+        {
+          "name": "normalization",
+          "type": "array",
+          "items": "AcknowledgementLevel",
+          "optional": true,
+          "doc": "The degenerate normalization (requested, canonical) when the topology does not distinguish the levels; null otherwise."
+        }
+      ]
+    },
+    "RecentWritesReport": {
+      "kind": "object",
+      "fields": [
+        { "name": "lane", "type": "string" },
+        { "name": "laneTick", "type": "integer" },
+        { "name": "writes", "type": "array", "items": "AcknowledgementReport" },
+        { "name": "limits", "type": "array", "items": "string" }
+      ]
+    },
+    "ConvergenceHolding": {
+      "kind": "object",
+      "fields": [
+        { "name": "member", "type": "string" },
+        {
+          "name": "level",
+          "type": "AcknowledgementLevel",
+          "doc": "Each holding is the Member's own local publication fact (Local)."
+        }
+      ]
+    },
+    "Convergence": {
+      "kind": "object",
+      "doc": "The contract-defined converged-state observation for one operation identity, engine fields verbatim.",
+      "fields": [
+        { "name": "operation", "type": "string" },
+        { "name": "holdings", "type": "array", "items": "ConvergenceHolding" },
+        { "name": "observedAt", "type": "integer", "doc": "Lane clock tick of the observation." }
+      ]
+    },
+    "MemberLag": {
+      "kind": "object",
+      "fields": [
+        { "name": "member", "type": "string" },
+        { "name": "sourceHighWater", "type": "integer" },
+        {
+          "name": "memberHighWater",
+          "type": "integer",
+          "doc": "The Member's durable replication cursor."
+        },
+        {
+          "name": "distance",
+          "type": "integer",
+          "doc": "The storage-sequence distance; never a latency claim."
+        }
+      ]
+    },
+    "ConvergenceReport": {
+      "kind": "object",
+      "fields": [
+        { "name": "lane", "type": "string" },
+        { "name": "laneTick", "type": "integer" },
+        {
+          "name": "convergence",
+          "type": "Convergence",
+          "optional": true,
+          "doc": "Absent (null) when no Convergence observation exists yet."
+        },
+        { "name": "condition", "type": "string" },
+        { "name": "lag", "type": "array", "items": "MemberLag" },
+        {
+          "name": "definitions",
+          "type": "json",
+          "doc": "{ convergence, lag }: the engine measurement definitions, verbatim."
+        },
+        { "name": "limits", "type": "array", "items": "string" }
+      ]
+    }
+  }
+}

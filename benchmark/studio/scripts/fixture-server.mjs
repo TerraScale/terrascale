@@ -22,6 +22,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 
+// DB-07 (TerraBase/TerraBaseV2#19): the topology ticket's synthetic-lane demo
+// owns the `topology.*` route namespace served below.
+import { handleTopologyOperation } from "../app/topology/fixtures/topology-demo.mjs";
+
 const CONTRACT_VERSION = 2;
 const CONTRACT_NAME = "terrabase.api.v2";
 
@@ -567,6 +571,25 @@ export function createFixtureServer(options = {}) {
 
       if (req.method === "GET" && path === "/api/v2/subscriptions/ticks") {
         handleTicksSubscription(req, res, url, state, resolved);
+        return;
+      }
+
+      // Topology reads (DB-07, TerraBase/TerraBaseV2#19): the `topology.*`
+      // route namespace is owned by the topology ticket and delegated to its
+      // synthetic-lane demo module; every other route below is unchanged.
+      if (
+        await handleTopologyOperation(
+          { method: req.method, pathname: path },
+          {
+            req,
+            res,
+            url,
+            state,
+            options: resolved,
+            helpers: { sendJson, errorEnvelope, readBody },
+          },
+        )
+      ) {
         return;
       }
 
