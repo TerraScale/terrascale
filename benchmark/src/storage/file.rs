@@ -9,7 +9,8 @@ use std::{
 };
 
 use crate::types::{
-    Document, DocumentId, ExpectedVersion, LocalDurability, OperationId, StorageSequence, TenantId,
+    CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
+    StorageSequence, TenantId,
 };
 
 use super::{PublishedCommit, PublishedWrite};
@@ -719,6 +720,16 @@ impl super::StoragePort for FileStorage {
     ) -> Option<Document> {
         let table = self.table_at(sequence);
         table.find_by_document_id(tenant, id).map(|(_, document)| document)
+    }
+
+    fn read_document_in_collection_at(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Option<Document> {
+        self.table_at(sequence).document(&StorageKey::new(tenant, collection, id))
     }
 
     fn documents_at(&self, sequence: StorageSequence, tenant: &TenantId) -> Vec<Document> {

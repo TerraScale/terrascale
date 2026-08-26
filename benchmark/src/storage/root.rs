@@ -158,8 +158,9 @@ impl RootTable {
     /// Returns the document stored at one exact canonical key, if present.
     ///
     /// The publication-history derivation uses this to serve the published
-    /// form of a write without re-deriving its version assignment.
-    #[allow(dead_code, reason = "consumed by the W4-CA-4 publication-history derivation")]
+    /// form of a write without re-deriving its version assignment, and the
+    /// collection-aware snapshot read uses it to resolve one point read by
+    /// its full key rather than by identifier alone.
     pub(crate) fn document(&self, key: &StorageKey) -> Option<Document> {
         self.documents.get(key).cloned()
     }
