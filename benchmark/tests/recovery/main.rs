@@ -5,3 +5,4 @@
 //! focused files in this directory are declared as modules here.
 
 mod backup_public_construction;
+mod schedule_public_chain;
