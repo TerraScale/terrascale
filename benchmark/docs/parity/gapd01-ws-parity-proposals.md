@@ -60,7 +60,8 @@ packet's write scope)
    The session surface works around it by construction (its tests page on
    users-only tenants or limits covering the page). Owner: the streaming
    seam (W4-STREAM) — recommend a repair ticket with the failing shape as
-   its red test.
+   its red test. [Fixed by #87 (fleet/w4s-2), merged 2026-08-27; the
+   matrix and caveat removals live with that packet. — integrator]
 2. **Concurrent-session identity allocation window** (recorded in
    `docs/sessions/gapd01-ownership-decision.md`, class 12): two sessions
    whose snapshots predate each other's commits can hand out overlapping

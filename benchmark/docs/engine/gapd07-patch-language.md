@@ -19,7 +19,8 @@ reference below is inside that pinned tree.
 Test evidence: `src/engine/patch_tests.rs` (the in-crate contract tests:
 construction refusals, application semantics, typed refusals, no-partial-write
 proof, determinism) and `tests/engine/document_patch_contract.rs` (public
-construction and the end-to-end patch-then-read chain). `TenantScope` has no
+construction and vocabulary; the end-to-end patch-then-read chains live in
+`src/engine/patch_tests.rs`). `TenantScope` has no
 public constructor by design, so the seam-level proofs run in-crate, following
 the convention the engine, query, and session seams already record.
 
@@ -84,7 +85,7 @@ Observable contract parts:
 (`src/TerraBase.Client/Documents/Operations/JsonPatchOperation.cs:86-120`)
 posts a list of RFC 6902 operations — `op`/`path`/`from`/`value`, the set
 `add`/`remove`/`replace`/`move`/`copy`/`test`
-(`JsonPatchOperation.cs:220-245`) — to `/databases/*/json-patch`, which the
+(the command set at `JsonPatchCommand.cs:396-403`, client op-name checks at `JsonPatchOperation.cs:175-177`) — to `/databases/*/json-patch`, which the
 server parses (`JsonPatchCommand.Parse`,
 `src/TerraBase.Server/Documents/TransactionMerger/Commands/JsonPatchCommand.cs:406-458`)
 and applies inside the transaction merger
@@ -94,7 +95,7 @@ Observable contract parts:
 
 | V1 behavior | Cite | V2 disposition |
 | --- | --- | --- |
-| Operations execute sequentially, in list order, later ops seeing earlier effects | `JsonPatchOperation.cs:100-102` (client remark), `JsonPatchCommand.cs:44-85` (server loop, re-read after every op) | **pinned-compatible** — deterministic vector-order application is D2 |
+| Operations execute sequentially, in list order, later ops seeing earlier effects | `JsonPatchOperation.cs:35`/`:48` (client remark), `JsonPatchCommand.cs:44-85` (server loop, re-read after every op) | **pinned-compatible** — deterministic vector-order application is D2 |
 | Missing document fails closed | `JsonPatchCommand.cs:37-40` | **pinned-compatible** — `PatchError::MissingTarget` (D5) |
 | Path is an escaped string: split on `/`, `~0`→`~`, `~1`→`/` | `JsonPatchCommand.cs:432-458` | **rejected** — string-pointer addressing is precisely what the typed seam refuses (D3, alternative A) |
 | Array addressing: integer index, `-` appends, index must be in bounds | `JsonPatchCommand.cs:179-183`, `:345-355` | **closed-here** as typed segments: `Index(u32)` and one `Append` segment (D3); in-bounds rules kept |
@@ -104,7 +105,7 @@ Observable contract parts:
 | `test` asserts deep value equality inside the write | `JsonPatchCommand.cs:67-69`, `:198-224` | **rejected** — see D3 alternative A: it duplicates the version guard with a weaker, coercion-prone one |
 | One document `Put` after the loop, only when modified | `JsonPatchCommand.cs:87-93` | **pinned-compatible** — the V2 application stages exactly one `Transaction::put` and none when the value is unchanged (D5) |
 | No change-vector guard on this surface at all | `JsonPatchCommand.cs:25-31` (constructor takes no change vector, contrast `PatchOperation.cs:64`) | **accepted-difference** — every V2 write carries `ExpectedVersion`; the unguarded shape is not offered |
-| Numeric equality across nine CLR numeric shapes under `test` | `JsonPatchCommand.cs:262-303` | moot with `test` rejected; recorded as evidence of the coercion the typed seam avoids |
+| Numeric equality across ten CLR numeric shapes under `test` | `JsonPatchCommand.cs:262-303` | moot with `test` rejected; recorded as evidence of the coercion the typed seam avoids |
 
 ### V1 surface 3 — patch-by-query
 
@@ -273,7 +274,8 @@ Rejected on four precise clashes with the typed seam, not on familiarity:
 1. **Unbounded path shapes.** A JSON Pointer is an arbitrary-length
    `/`-split string whose `~0`/`~1` escaping lets any segment encode any
    text — including `/` and `~` — and whose empty segments are legal
-   (`/a//b` parses; V1 splits then unescapes each segment,
+   under the RFC (V1 splits then unescapes each segment, and its parser
+   additionally refuses empty segments of its own accord,
    `JsonPatchCommand.cs:432-458`). The path space is therefore not finitely
    classifiable: every bound this seam requires (`MAX_PATCH_PATH_SEGMENTS`,
    byte bounds, control-character refusal) would have to be re-imposed on an
@@ -283,7 +285,7 @@ Rejected on four precise clashes with the typed seam, not on familiarity:
    addressing power with a finite alphabet.
 2. **`test`-op semantics.** RFC 6902's `test` embeds a read-assertion
    language inside a write: a deep value-equality engine with numeric
-   coercion (V1's `JsonValuesEqual` coerces across nine CLR numeric shapes
+   coercion (V1's `JsonValuesEqual` coerces across ten CLR numeric shapes
    to compare `1`, `1.0`, and `1m` equal, `JsonPatchCommand.cs:198-303`).
    The typed seam already has the disciplined form of conditional writing —
    `ExpectedVersion` guards on the *version*, is checked at construction of
