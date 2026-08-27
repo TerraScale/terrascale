@@ -239,10 +239,13 @@ fn every_registry_kind_overhead_stays_within_the_fixed_bound() {
 /// that can land inside this test's measured window and invert the count
 /// (observed as "11 vs 9" under a loaded workspace run). Inside one test
 /// there is no sibling completion to print, so the measured windows are
-/// quiet by construction; the SERIAL lock stays for any future measuring
-/// test.
+/// quiet by construction.
+///
+/// The caller holds `SERIAL` for the whole E-13 test scope — including
+/// this case — so the case must NOT re-take it: `std::sync::Mutex` is not
+/// reentrant, and a second `measure_exclusively()` here deadlocks the
+/// binary (observed as a permanent futex wait under the workspace run).
 fn stream_write_uses_one_buffer_and_one_write_case() {
-    let _measure = measure_exclusively();
     let frame = TbepFrame::seal(
         SyncDeltaPullResponse {
             session_id: 1,
