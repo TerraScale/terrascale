@@ -41,6 +41,7 @@
 //! `docs/families/attachment-content-plane.md`.
 
 pub mod attachments;
+pub mod hilo;
 pub mod migrations;
 mod payloads;
 pub(crate) mod schemas;

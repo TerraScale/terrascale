@@ -36,6 +36,8 @@ mod identifier;
 mod lane;
 #[cfg(test)]
 mod lane_tests;
+#[cfg(test)]
+mod hilo_tests;
 mod member;
 #[cfg(test)]
 mod repair_tests;
