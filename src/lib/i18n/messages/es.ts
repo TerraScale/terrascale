@@ -1,9 +1,5 @@
 import type { Messages } from './en'
 
-// Español. Anotado contra `Messages` para que el compilador exija paridad con
-// el diccionario inglés: una clave o entrada de matriz que falte aquí es un
-// error en tiempo de compilación, no un refallback silencioso al inglés.
-
 export const es: Messages = {
   meta: {
     title: 'TerraScale Public Alpha | Base de Documentos Regional',

@@ -10,8 +10,6 @@
   import { launchPhase, registrationUrl } from '@/lib/site'
   import { dict } from '@/lib/i18n'
 
-  // Capability badges shown under the CTAs. Labels come from the active
-  // dictionary so the badges localize.
   const highlightIcons = ['globe', 'activity', 'clock'] as const
   $: highlights = $dict.hero.highlights.map((label, i) => ({
     icon: highlightIcons[i] ?? 'globe',
@@ -21,7 +19,6 @@
   const vbW = WORLD_MAP_VIEWBOX.width
   const vbH = WORLD_MAP_VIEWBOX.height
 
-  // Ring: each hub connects to the next; the last closes back to the first.
   const ringPairs: Array<[Region, Region]> = REGIONS.map((r, i) => [
     r,
     REGIONS[(i + 1) % REGIONS.length],
@@ -102,14 +99,13 @@
     </p>
 
     <div class="hero__ctas">
-      <RouteLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine">
+      <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine">
         {launchPhase === 'public-alpha' ? $dict.hero.ctaPrimary : $dict.hero.ctaPrelaunch}
         <Icon name="arrowRight" className="hero__cta-icon" />
-      </RouteLink>
+      </ExternalLink>
       <ExternalLink
         href="https://docs.terrascale.tech"
         target="_blank"
-        rel="noopener noreferrer"
         class="ts-btn ts-btn-glass"
       >
         {$dict.hero.ctaSecondary}
@@ -157,9 +153,6 @@
     );
   }
 
-  /* Single coordinate frame shared by the map, the lines SVG, and the pins.
-     Everything inside uses viewBox-% placement, so dots, lines, and
-     continents stay pixel-aligned at every size. */
   .hero__globe-frame {
     position: absolute;
     top: 50%;
@@ -311,9 +304,6 @@
     flex-wrap: wrap;
   }
 
-  /* Make the "View Docs" CTA opaque so it reads as a solid control against
-     the dramatic hero (TER-22). Scoped here (not on the shared .ts-btn-glass
-     token) so Pricing/404/CTA surfaces keep their calibrated transparency. */
   .hero :global(.ts-btn-glass) {
     background: var(--ts-bg-card);
     border-color: rgba(148, 163, 184, 0.34);

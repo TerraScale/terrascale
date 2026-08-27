@@ -1,13 +1,10 @@
-// ts-sections-1.jsx — Icons, Header, Hero, Stats
 
 const { useState, useEffect } = React;
 
-// ── TerraScale Logo (theme-aware — icon uses primary, wordmark uses text) ────
 function TerraScaleLogo({ height = 40, showWordmark = true }) {
   return (
     <svg viewBox={showWordmark ? "0 0 1429.43 345.24" : "0 0 306 346"}
       style={{ height, width: 'auto', display: 'block' }}>
-      {/* Geometric 3-face icon — uses theme primary */}
       <g fill="var(--ts-primary)">
         <polygon points="55.27 116.13 157.01 59.02 106.14 28.79 157.01 0 305.76 87.34 257.3 116.13 205.95 88.78 106.62 147.32 55.27 116.13" />
         <polygon points="257.25 115.54 253.98 232.16 306.05 204.05 305.62 262.48 153.27 345.24 153.47 288.87 203.31 258.87 204.11 143.57 257.25 115.54" />
@@ -31,7 +28,6 @@ function TerraScaleLogo({ height = 40, showWordmark = true }) {
   );
 }
 
-// ── Inline SVG Icons ──────────────────────────────────────────────────────────
 function Icon({ name, size = 16, color = 'currentColor', style: sty = {} }) {
   const paths = {
     arrowRight: 'M5 12h14M12 5l7 7-7 7',
@@ -69,7 +65,6 @@ function Icon({ name, size = 16, color = 'currentColor', style: sty = {} }) {
   );
 }
 
-// ── Header (with working navigation) ─────────────────────────────────────────
 function Header({ currentPage, setPage }) {
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
@@ -143,11 +138,9 @@ function Header({ currentPage, setPage }) {
   );
 }
 
-// ── Hero (simplified: less text, better badge position) ─────────────────────
 function HeroSection() {
   return (
     <section style={{ position: 'relative', overflow: 'hidden', minHeight: 'calc(100vh - 72px)', display: 'flex', alignItems: 'center' }}>
-      {/* Atmosphere — driven by body[data-atmosphere] */}
       <div className="hero-atmo-overlay" style={{
         background: `
           radial-gradient(ellipse 80% 60% at 50% 0%, var(--ts-hero-glow-top) 0%, transparent 65%),
@@ -159,10 +152,8 @@ function HeroSection() {
       <div className="hero-grid-overlay" />
       <div className="hero-scan-overlay" />
 
-      {/* Content */}
       <div style={{ position: 'relative', zIndex: 1, width: '100%', maxWidth: 1240, margin: '0 auto', padding: '60px 40px', textAlign: 'center' }}>
 
-        {/* Badge — floats above, tight spacing */}
         <div style={{
           display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 32,
           padding: '6px 14px', borderRadius: 100,
@@ -178,7 +169,6 @@ function HeroSection() {
           Database as a Service
         </div>
 
-        {/* Headline — shorter, punchier */}
         <h1 style={{
           fontSize: 'clamp(2.8rem, 5vw + 1rem, 6rem)',
           fontWeight: 700, lineHeight: 1.02, margin: '0 0 24px',
@@ -191,7 +181,6 @@ function HeroSection() {
           }}>effortlessly.</span>
         </h1>
 
-        {/* One-line subtitle */}
         <p style={{
           fontFamily: 'var(--ts-font-accent)',
           fontSize: 'clamp(1rem, 0.8vw + 0.75rem, 1.2rem)',
@@ -201,7 +190,6 @@ function HeroSection() {
           Production-grade database infrastructure with sub-20ms latency.
         </p>
 
-        {/* CTAs */}
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <a href="#" className="cta-shine" style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
@@ -223,7 +211,6 @@ function HeroSection() {
           </a>
         </div>
 
-        {/* Minimal stats strip below fold */}
         <div style={{
           marginTop: 96,
           display: 'flex', justifyContent: 'center', gap: 56, flexWrap: 'wrap',
@@ -254,7 +241,6 @@ function HeroSection() {
   );
 }
 
-// ── Stat Card (improved: left accent, no top-border gimmick) ──────────────────
 function StatCard({ value, label }) {
   const [hov, setHov] = useState(false);
   return (

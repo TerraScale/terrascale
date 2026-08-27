@@ -57,7 +57,6 @@
       <ExternalLink
         href={docsLink.href}
         target="_blank"
-        rel="noopener noreferrer"
         class="ts-header__docs"
       >
         <Icon name={docsLink.icon} className="ts-nav__icon" />
@@ -67,7 +66,6 @@
       <ExternalLink
         href="https://status.terrascale.tech"
         target="_blank"
-        rel="noopener noreferrer"
         class="ts-status-link"
       >
         <span class="pulse-dot ts-status-link__dot"></span>
@@ -121,7 +119,6 @@
         <ExternalLink
           href={docsLink.href}
           target="_blank"
-          rel="noopener noreferrer"
           class="ts-nav__link ts-nav__link--mobile"
         >
           <Icon name={docsLink.icon} className="ts-nav__icon" />
@@ -130,7 +127,6 @@
         <ExternalLink
           href="https://status.terrascale.tech"
           target="_blank"
-          rel="noopener noreferrer"
           class="ts-status-link ts-status-link--mobile"
         >
           <span class="pulse-dot ts-status-link__dot"></span>

@@ -5,12 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>TerraScale — Redesign Exploration</title>
 
-<!-- ─── Roboto (accent face for labels/chips) ─────────────────────────── -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 
-<!-- ─── Self-hosted fonts ──────────────────────────────────────────────── -->
 <style>
   @font-face {
     font-family: 'Quantico';
@@ -34,13 +32,7 @@
   }
 </style>
 
-<!-- ─── Theme system ──────────────────────────────────────────────────── -->
 <style>
-  /* ===== THEME A: FOCUSED BLUE (refined current) =====
-     • Tightens palette: blue leads, green is success-only
-     • Richer atmosphere: 22% blue radial vs current 18%
-     • Visible glass: blue-tinted surfaces instead of pure white 6%
-     • Stats: left-border accent, no top-border gimmick */
   [data-theme="focused"] {
     --ts-bg-base: #050508;
     --ts-bg-base-raw: 5, 5, 8;
@@ -58,7 +50,7 @@
     --ts-tertiary-rgb: 139, 92, 246;
 
     --ts-text: #F1F5F9;
-    --ts-text-muted: #9BACCB;   /* bumped from #94A3B8 for readability */
+    --ts-text-muted: #9BACCB;
 
     --ts-glass-bg: rgba(37, 99, 235, 0.04);
     --ts-glass-border: rgba(148, 163, 184, 0.16);
@@ -71,11 +63,6 @@
     --ts-gradient-primary: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
   }
 
-  /* ===== THEME B: INDIGO NIGHT (premium shift) =====
-     • Primary → electric indigo (more vibrant, premium feel)
-     • Warm deep-purple black instead of cold near-black
-     • Amber as premium accent for CTAs / Enterprise
-     • Stronger hero atmosphere with indigo+violet mesh */
   [data-theme="indigo"] {
     --ts-bg-base: #07060F;
     --ts-bg-base-raw: 7, 6, 15;
@@ -87,7 +74,7 @@
     --ts-primary: #6366F1;
     --ts-primary-light: #A5B4FC;
     --ts-primary-rgb: 99, 102, 241;
-    --ts-secondary: #F59E0B;   /* amber replaces green for premium feel */
+    --ts-secondary: #F59E0B;
     --ts-secondary-rgb: 245, 158, 11;
     --ts-tertiary: #A78BFA;
     --ts-tertiary-rgb: 167, 139, 250;
@@ -106,11 +93,6 @@
     --ts-gradient-primary: linear-gradient(135deg, #818CF8 0%, #6366F1 50%, #A78BFA 100%);
   }
 
-  /* ===== THEME C: ARCTIC (high contrast, vibrant) =====
-     • Sky-blue primary — higher luminance on dark
-     • Stronger glass (10% white) for crisper cards
-     • Emerald secondary, dramatic cyan hero
-     • Best pick if accessibility is the priority */
   [data-theme="arctic"] {
     --ts-bg-base: #030309;
     --ts-bg-base-raw: 3, 3, 9;
@@ -141,7 +123,6 @@
     --ts-gradient-primary: linear-gradient(135deg, #38BDF8 0%, #0EA5E9 50%, #06B6D4 100%);
   }
 
-  /* ===== Glass strength modifier ===== */
   [data-glass="strong"] {
     --ts-glass-bg: rgba(var(--ts-primary-rgb), 0.1);
   }
@@ -149,15 +130,12 @@
     --ts-glass-bg: rgba(var(--ts-primary-rgb), 0.025);
   }
 
-  /* ===== Typography system =====
-     Primary: Quantico (everywhere) · Accent: Roboto (labels, chips, meta) · Mono: Roboto Mono (code) */
   :root {
     --ts-font-body: 'Quantico', system-ui, -apple-system, sans-serif;
     --ts-font-accent: 'Roboto', system-ui, sans-serif;
     --ts-font-mono: 'Roboto Mono', 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
   }
 
-  /* ===== Base reset ===== */
   *, *::before, *::after { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
@@ -170,7 +148,6 @@
   }
   #app { min-height: 100vh; }
 
-  /* ===== Animations ===== */
   @keyframes pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
   @keyframes float-up {
     0%, 100% { transform: translateY(0) rotate(0deg); }
@@ -184,8 +161,6 @@
   .float-up   { animation: float-up   14s ease-in-out infinite; }
   .float-down { animation: float-down 16s ease-in-out infinite; }
 
-  /* ===== SCROLL REVEAL (tasteful page-wide) =====
-     Fade + lift + very soft blur resolve — feels editorial, not gimmicky. */
   .reveal {
     opacity: 0;
     transform: translateY(22px);
@@ -201,7 +176,6 @@
     transform: none;
     filter: none;
   }
-  /* Cascade: direct children of .reveal-stagger wait their turn */
   .reveal-stagger > .reveal { transition-delay: 0ms; }
   .reveal-stagger.is-in > .reveal:nth-child(1) { transition-delay: 0ms; }
   .reveal-stagger.is-in > .reveal:nth-child(2) { transition-delay: 80ms; }
@@ -210,11 +184,9 @@
   .reveal-stagger.is-in > .reveal:nth-child(5) { transition-delay: 320ms; }
   .reveal-stagger.is-in > .reveal:nth-child(6) { transition-delay: 400ms; }
 
-  /* ===== GENTLE HOVER LIFT (tasteful baseline for interactive tiles) ===== */
   .ts-tile-hover { transition: transform 260ms cubic-bezier(.2,.8,.2,1), box-shadow 260ms ease, border-color 260ms ease; }
   .ts-tile-hover:hover { transform: translateY(-3px); }
 
-  /* ===== UNDERLINE WIPE (nav + footer links) ===== */
   .link-wipe { position: relative; }
   .link-wipe::after {
     content: '';
@@ -224,7 +196,6 @@
   }
   .link-wipe:hover::after { transform: scaleX(1); }
 
-  /* ===== CTA SHINE SWEEP (gradient buttons) ===== */
   @keyframes shine-sweep {
     0%   { transform: translateX(-120%) skewX(-18deg); }
     100% { transform: translateX(260%)  skewX(-18deg); }
@@ -245,24 +216,18 @@
     animation: shine-sweep 900ms cubic-bezier(.4,0,.2,1);
   }
 
-  /* ===== SOFT BREATHING (ambient orbs, pulse dots already covered) ===== */
   @keyframes breathe {
     0%, 100% { transform: scale(1);   opacity: 0.82; }
     50%      { transform: scale(1.04); opacity: 1; }
   }
   .breathe { animation: breathe 5.5s ease-in-out infinite; }
 
-  /* Respect reduced motion */
   @media (prefers-reduced-motion: reduce) {
     .reveal, .reveal.is-in { opacity: 1; transform: none; filter: none; transition: none; }
     .pulse-dot, .float-up, .float-down, .breathe { animation: none; }
     .cta-shine::before { display: none; }
   }
 
-  /* ===== HERO ATMOSPHERE TWEAK =====
-     These override the theme's glow tokens so the hero feels
-     flat / standard / cinematic. All sections reading from
-     --ts-hero-glow-* will respond. */
   body[data-atmosphere="minimal"] {
     --ts-atmo-mult: 0.35;
     --ts-atmo-grid-opacity: 0.35;
@@ -279,11 +244,8 @@
     --ts-atmo-float-opacity: 1.25;
   }
 
-  /* Floating geometric decorations responsive to atmosphere */
   .float-up, .float-down { opacity: var(--ts-atmo-float-opacity, 1); transition: opacity 300ms; }
 
-  /* Hero gradient layers driven by atmo multiplier.
-     We add a full-bleed overlay that brightens with atmosphere. */
   .hero-atmo-overlay {
     position: absolute; inset: 0; pointer-events: none;
     opacity: var(--ts-atmo-mult, 1);
@@ -305,7 +267,6 @@
     background-size: 100% 4px;
   }
 
-  /* Custom scrollbar */
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: var(--ts-bg-base); }
   ::-webkit-scrollbar-thumb {
@@ -314,16 +275,12 @@
   }
   ::-webkit-scrollbar-thumb:hover { background: rgba(var(--ts-primary-rgb), 0.4); }
 
-/* Tweaks panel removed — settings locked in */
 </style>
 </head>
 <body data-theme="focused" data-glass="subtle" data-atmosphere="dramatic">
 
 <div id="app"></div>
 
-<!-- Tweaks panel removed — Focused theme + Dramatic atmosphere locked in -->
-
-<!-- ─── React + Babel ────────────────────────────────────────────────── -->
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
@@ -335,23 +292,15 @@
 <script type="text/babel" src="ts-pricing-page.jsx"></script>
 
 <script type="text/babel">
-  // ─── App root with simple router ──────────────────────────────────
-
-  // ─── Global Scroll Reveal ─────────────────────────────────────────
-  // Auto-tag sections + grid children with .reveal classes on each
-  // page transition, then observe with IntersectionObserver.
   function useScrollReveal(deps) {
     useEffect(() => {
-      // Auto-tag: every top-level <section> becomes a reveal target
       requestAnimationFrame(() => {
         const root = document.getElementById('app');
         if (!root) return;
         const sections = root.querySelectorAll('section');
         sections.forEach(s => {
           s.classList.add('reveal');
-          // Stagger grids: grid with 3+ children becomes a stagger group
           s.querySelectorAll(':scope > div, :scope > *').forEach(el => {
-            // Heuristic — tag grid-like containers
             const cs = getComputedStyle(el);
             if (cs.display.includes('grid') && el.children.length >= 2 && el.children.length <= 6) {
               el.classList.add('reveal-stagger');
@@ -360,7 +309,6 @@
           });
         });
 
-        // Observe
         const io = new IntersectionObserver((entries) => {
           entries.forEach(e => {
             if (e.isIntersecting) {
@@ -372,7 +320,6 @@
 
         root.querySelectorAll('.reveal').forEach(el => io.observe(el));
 
-        // Return teardown
         window.__ts_reveal_io = io;
       });
 
@@ -381,7 +328,6 @@
           window.__ts_reveal_io.disconnect();
           window.__ts_reveal_io = null;
         }
-        // Clear tags so next page starts fresh
         document.querySelectorAll('.reveal, .reveal-stagger').forEach(el => {
           el.classList.remove('reveal', 'reveal-stagger', 'is-in');
         });
@@ -396,11 +342,9 @@
     const setPageAndSave = (p) => {
       setPage(p);
       try { localStorage.setItem('ts-page', p); } catch {}
-      // Reset scroll so reveals fire as user scrolls the new page
       requestAnimationFrame(() => window.scrollTo({ top: 0 }));
     };
 
-    // Re-run reveal wiring whenever page changes
     useScrollReveal([page]);
     return (
       <React.Fragment>

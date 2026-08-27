@@ -1,18 +1,9 @@
-// Locale catalogue. Codes mirror the documentation site's hreflang set
-// (https://docs.terrascale.tech/{en,es,pt-br}/) so the two sites agree on how
-// a language is identified. Each entry is shown in its own endonym in the
-// selector — the convention used on the docs site.
-
 export type LocaleCode = 'en' | 'es' | 'pt-br'
 
 export type LocaleMeta = {
-  /** Stable identifier persisted in localStorage and used as the store value. */
   code: LocaleCode
-  /** Endonym shown in the selector (e.g. "Español", not "Spanish"). */
   label: string
-  /** Compact code shown on the selector trigger. */
   short: string
-  /** BCP-47 tag applied to <html lang>. */
   bcp47: string
 }
 

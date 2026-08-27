@@ -13,8 +13,6 @@
     kind: ChannelHrefKind
   }
 
-  // Channel labels are short brand words (Email / Discord / GitHub); the
-  // descriptive `value` under each is localised and pulled from the dictionary.
   const channelMeta: Array<{ icon: AppIconName; label: string; href: string; kind: ChannelHrefKind }> = [
     { icon: 'mail', label: 'Email', href: 'mailto:support@terrascale.tech', kind: 'mailto' },
     { icon: 'brandDiscord', label: 'Discord', href: 'https://discord.gg/8Zr2Nw9g', kind: 'external' },
@@ -198,9 +196,6 @@
         </div>
 
         {#if submitState === 'success'}
-          <!-- TER-81: confirmation badge pinned to the bottom-right corner of the
-               contact box. Visual-only confirmation; the status message above is the
-               authoritative live region for assistive tech, so this stays aria-hidden. -->
           <div class="contact-form__badge" aria-hidden="true">
             <span class="contact-form__badge-icon">
               <Icon name="check" className="contact-form__badge-check" />
@@ -218,7 +213,6 @@
               <ExternalLink
                 href={c.href}
                 target="_blank"
-                rel="noopener noreferrer"
                 class="contact-channel ts-glass"
               >
                 <div class="contact-channel__icon">
@@ -426,9 +420,6 @@
     color: #fca5a5;
   }
 
-  /* TER-81: success confirmation badge pinned to the bottom-right corner of the
-     contact box. Mirrors the submit button's success treatment (solid secondary
-     green, white glyph) so it reads as one design system. */
   .contact-form__badge {
     position: absolute;
     right: 20px;

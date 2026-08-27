@@ -38,8 +38,6 @@
   $: canonicalUrl = `${publicOrigin}${canonicalPath}`
   $: metadata = metadataByPath[canonicalPath] ?? metadataByPath['/404']
 
-  // Resolve the saved/browser locale after hydration (deferred so prerendered
-  // English HTML matches the first client render — no hydration mismatch).
   onMount(() => {
     initLocale()
   })

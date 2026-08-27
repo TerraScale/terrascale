@@ -1,19 +1,3 @@
-// Canonical English message dictionary.
-//
-// This file is the source of truth for the i18n message SHAPE — the exported
-// `Messages` type is what `pt-br.ts` and `es.ts` are checked against, so a
-// missing or malformed key in another locale is a compile error (surfaced by
-// `npm run check`). Keep the structure flat and grouping-by-section so it is
-// easy to mirror across locales.
-//
-// Deliberately NOT translated:
-//   - brand/product names (TerraScale, TerraBase),
-//   - plan names (Developer / Starter / Pro / Enterprise),
-//   - code samples in src/lib/highlight.ts (real source code),
-//   - city / region proper nouns (São Paulo, San Francisco, Falkenstein),
-//   - currency amounts and API field identifiers.
-// Those stay identical across locales; only natural-language copy moves here.
-
 export const en = {
   meta: {
     title: 'TerraScale Public Alpha | Regional Document Database',
@@ -37,8 +21,6 @@ export const en = {
     prelaunch: 'Public Alpha Sep 7',
     toggleNav: 'Toggle navigation menu',
     language: {
-      // `current` is the screen-reader label for the selector trigger,
-      // e.g. "Language: English". `menu` labels the popup listbox.
       trigger: 'Language',
       currentSuffix: 'Language: {label}',
       menu: 'Select a language',
@@ -90,7 +72,6 @@ export const en = {
         },
       },
     },
-    // Social aria-labels are brand names; identical across locales.
     social: {
       github: 'GitHub',
       discord: 'Discord',

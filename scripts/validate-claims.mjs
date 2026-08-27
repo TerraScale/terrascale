@@ -41,9 +41,6 @@ export const claimInventory = [
   },
 ]
 
-// These rules apply to rendered HTML as well as source dictionaries. Keep the
-// inventory here so a new locale, metadata field, or JSON-LD block cannot
-// bypass the launch-phase claim review.
 export const prohibitedClaims = [
   { id: 'non-canonical-domain', pattern: /terrascale\.(?:com|io)\b/i, reason: 'Use the canonical terrascale.tech domain.' },
   { id: 'placeholder-community-link', pattern: /discord\.gg\/(?:terrascale|your-|placeholder|invite-link)/i, reason: 'Use the configured Discord invite.' },

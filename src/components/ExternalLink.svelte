@@ -5,9 +5,8 @@
 
   export let href = ''
   export let target: '_blank' | '_self' | '_parent' | '_top' | null | undefined = undefined
-  export let rel: string | null | undefined = undefined
 </script>
 
-<a href={href} target={target} rel={rel} class={className} {...$$restProps}>
+<a href={href} target={target} rel="external noopener noreferrer" class={className} {...$$restProps}>
   <slot />
 </a>

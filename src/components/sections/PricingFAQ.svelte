@@ -59,7 +59,6 @@
         <ExternalLink
           href="https://docs.terrascale.tech"
           target="_blank"
-          rel="noopener noreferrer"
           class="ts-btn ts-btn-glass ts-btn-compact"
         >
           <Icon name="bookOpen" className="faq__footer-icon" />

@@ -22,6 +22,42 @@ export const requiredLinks = [
 
 export const approvedExternalHosts = new Set(requiredLinks.map((href) => new URL(href).hostname))
 
+const normalizeHostname = (hostname) => String(hostname).replace(/\.+$/, '').toLowerCase()
+
+const isPrivateIpv4 = (hostname) => {
+  if (net.isIP(hostname) !== 4) return false
+  const octets = hostname.split('.').map(Number)
+  const [first, second] = octets
+  return first === 0 || first === 10 || first === 127 || (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168) || (first === 100 && second >= 64 && second <= 127)
+}
+
+const isPrivateHostname = (hostname) => {
+  const normalized = normalizeHostname(hostname).replace(/^\[|\]$/g, '')
+  if (
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized.endsWith('.local') ||
+    normalized.endsWith('.internal') ||
+    normalized.endsWith('.invalid') ||
+    normalized.endsWith('.test')
+  ) return true
+
+  const mappedDotted = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i)
+  if (mappedDotted && isPrivateIpv4(mappedDotted[1])) return true
+  const mappedHex = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i)
+  if (mappedHex) {
+    const high = Number.parseInt(mappedHex[1], 16)
+    const low = Number.parseInt(mappedHex[2], 16)
+    if (isPrivateIpv4(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`)) return true
+  }
+
+  if (net.isIP(normalized) === 6) {
+    const zeroAddress = normalized.split(':').every((part) => part === '' || /^0+$/.test(part))
+    return zeroAddress || normalized === '::1' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')
+  }
+  return isPrivateIpv4(normalized)
+}
+
 export function walk(directory) {
   const files = []
   if (!fs.existsSync(directory)) return files
@@ -67,7 +103,7 @@ export function extractAttributes(html) {
 
 const collectJsonUrls = (value, urls) => {
   const normalized = typeof value === 'string' ? value.trim() : value
-  if (typeof normalized === 'string' && /^https?:\/\//i.test(normalized)) urls.add(normalized)
+  if (typeof normalized === 'string' && /^(?:https?:\/\/|\/\/)/i.test(normalized)) urls.add(normalized)
   else if (Array.isArray(value)) value.forEach((item) => collectJsonUrls(item, urls))
   else if (value && typeof value === 'object') Object.values(value).forEach((item) => collectJsonUrls(item, urls))
 }
@@ -117,6 +153,7 @@ const checkFragment = (target, fragment, source, failures) => {
 }
 
 const isExternalHttpUrl = (value) => /^https?:\/\//i.test(String(value).trim())
+const isProtocolRelativeUrl = (value) => /^\/\//.test(String(value).trim())
 
 const validateExternalUrl = (value, source, failures) => {
   const normalized = String(value).trim()
@@ -129,7 +166,7 @@ const validateExternalUrl = (value, source, failures) => {
   }
   if (parsed.protocol !== 'https:') failures.push(`${source}: external URLs must use HTTPS: ${normalized}`)
   if (parsed.username || parsed.password) failures.push(`${source}: external URLs must not contain credentials: ${normalized}`)
-  if (/localhost|127\.0\.0\.1|preview|\.test$|terrascale\.(?:com|io)$/i.test(parsed.hostname)) {
+  if (isPrivateHostname(parsed.hostname) || /preview|terrascale\.(?:com|io)$/i.test(parsed.hostname)) {
     failures.push(`${source}: preview or non-canonical external host: ${normalized}`)
   }
 }
@@ -210,7 +247,19 @@ export function validateRenderedLinks({ buildRoot, files = walk(buildRoot) } = {
       failures.push(`${file}: invalid application/ld+json structured data`)
       continue
     }
-    if (isExternalHttpUrl(value)) validateExternalUrl(value, `${file} metadata or structured data`, failures)
+    if (isProtocolRelativeUrl(value)) {
+      failures.push(`${file}: protocol-relative links are not allowed: ${value}`)
+      continue
+    }
+    if (isExternalHttpUrl(value)) {
+      validateExternalUrl(value, `${file} metadata or structured data`, failures)
+      try {
+        const parsed = new URL(value)
+        externalLinks.add(parsed.href.replace(/\/$/, ''))
+      } catch {
+        // The validator failure above is the user-facing diagnostic.
+      }
+    }
   }
 
   const linkCorpus = requiredCorpus.join('\n')
@@ -221,38 +270,21 @@ export function validateRenderedLinks({ buildRoot, files = walk(buildRoot) } = {
   return { failures, linkCount: links.length, externalLinks }
 }
 
-const isPrivateHostname = (hostname) => {
-  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase()
-  if (
-    normalized === 'localhost' ||
-    normalized.endsWith('.localhost') ||
-    normalized.endsWith('.local') ||
-    normalized.endsWith('.internal') ||
-    normalized.endsWith('.invalid') ||
-    normalized.endsWith('.test')
-  ) return true
-
-  if (net.isIP(normalized) === 6) {
-    return normalized === '::1' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')
-  }
-  if (net.isIP(normalized) !== 4) return false
-  const octets = normalized.split('.').map(Number)
-  const [first, second] = octets
-  return first === 0 || first === 10 || first === 127 || (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168) || (first === 100 && second >= 64 && second <= 127)
-}
-
 const normalizeProbeUrl = (value) => {
   const url = new URL(value)
   if (url.pathname === '/' && !url.search && !url.hash) url.pathname = ''
   return url.href
 }
 
-const validateProbeTarget = (target, expectedHost) => {
+const validateProbeTarget = (target, expectedHost, allowedHosts = approvedExternalHosts) => {
   const failures = []
+  const normalizedTargetHost = normalizeHostname(target.hostname)
+  const normalizedExpectedHost = normalizeHostname(expectedHost)
+  const normalizedAllowedHosts = new Set([...allowedHosts].map(normalizeHostname))
   if (target.protocol !== 'https:') failures.push(`external link redirect must use HTTPS: ${target.href}`)
   if (target.username || target.password) failures.push(`external link redirect must not contain credentials: ${target.href}`)
   if (target.port) failures.push(`external link redirect must not contain a non-default port: ${target.href}`)
-  if (target.hostname !== expectedHost || !approvedExternalHosts.has(target.hostname)) {
+  if (normalizedTargetHost !== normalizedExpectedHost || !normalizedAllowedHosts.has(normalizedTargetHost)) {
     failures.push(`external link redirect must stay on an approved host: ${target.href}`)
   }
   if (isPrivateHostname(target.hostname)) failures.push(`external link redirect must not target a private or loopback host: ${target.href}`)
@@ -263,11 +295,15 @@ export async function probeExternalLinks(urls = requiredLinks, {
   fetchImpl = globalThis.fetch,
   timeoutMs = Number(process.env.TERRASCALE_VALIDATOR_TIMEOUT_MS ?? 10_000),
   maxHops = 5,
+  maxUrls = 100,
+  allowedHosts = approvedExternalHosts,
 } = {}) {
   const failures = []
   if (typeof fetchImpl !== 'function') return ['release link check requires a fetch implementation']
 
-  for (const href of urls) {
+  const uniqueUrls = [...new Set(urls)]
+  if (uniqueUrls.length > maxUrls) failures.push(`external link probe input exceeded the maximum of ${maxUrls} URLs`)
+  for (const href of uniqueUrls.slice(0, maxUrls)) {
     let initial
     try {
       initial = new URL(href)
@@ -275,7 +311,7 @@ export async function probeExternalLinks(urls = requiredLinks, {
       failures.push(`external link probe received an invalid URL: ${href}`)
       continue
     }
-    const initialFailures = validateProbeTarget(initial, initial.hostname)
+    const initialFailures = validateProbeTarget(initial, initial.hostname, allowedHosts)
     if (initialFailures.length) {
       failures.push(...initialFailures)
       continue
@@ -340,7 +376,7 @@ export async function probeExternalLinks(urls = requiredLinks, {
         completed = true
         break
       }
-      const targetFailures = validateProbeTarget(next, expectedHost)
+      const targetFailures = validateProbeTarget(next, expectedHost, allowedHosts)
       if (targetFailures.length) {
         failures.push(...targetFailures)
         completed = true
@@ -369,7 +405,18 @@ async function main() {
   const buildRoot = path.join(root, 'build')
   const result = validateRenderedLinks({ buildRoot })
   const failures = [...result.failures]
-  if (release) failures.push(...(await probeExternalLinks()))
+  if (release && failures.length === 0) {
+    const renderedUrls = [...result.externalLinks]
+    const renderedHosts = new Set()
+    for (const href of renderedUrls) {
+      try {
+        renderedHosts.add(new URL(href).hostname)
+      } catch {
+        // Rendered-link validation already reports malformed URLs.
+      }
+    }
+    failures.push(...(await probeExternalLinks(renderedUrls, { allowedHosts: renderedHosts })))
+  }
 
   if (failures.length) {
     console.error(`Landing link validation failed${release ? ' (release mode, including external probes)' : ''}:`)

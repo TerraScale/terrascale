@@ -1,11 +1,7 @@
 import { defineConfig, devices } from 'playwright/test'
 
-// End-to-end coverage for the static prerendered site. The webServer builds the
-// real production output and serves it through `vite preview`, so the tests run
-// against the exact artifacts that ship to Cloudflare Pages.
-//
-// One-time setup before the first run (browsers are not vendored):
-//   npx playwright install chromium
+delete process.env.NO_COLOR
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,

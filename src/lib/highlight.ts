@@ -1,6 +1,3 @@
-// Minimal syntax highlighter — token regex per language.
-// Returns an array of spans { text, className? } to be rendered safely.
-
 export type Lang = 'typescript' | 'csharp'
 
 export type Token = { text: string; className?: string }
