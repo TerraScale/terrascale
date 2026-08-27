@@ -67,3 +67,14 @@ part that carries verdicts.
   green run; the failed assertion run is retained here as the reason.
 - The E-15 timing run is retained although it cannot support a verdict
   (reasons above).
+
+## Objective status (canonical line, added by SE-15)
+
+PostgreSQL-parity-or-better: inconclusive
+
+Added by the SE-15 standing objective-status discipline
+(PD-2026-08-26-03 D3, TerraScale/TerraBaseV2#23) so this receipt carries
+the machine-checkable status line `scripts/check_benchmark_receipts.py`
+fails closed on. No measured value, verdict, or note above is altered: the
+SE-07 runs measured deterministic counters only, so the objective question
+is unanswerable from them until the reference baselines exist and run.

@@ -31,6 +31,9 @@ pub mod storage;
 pub mod streaming;
 pub mod types;
 
+#[cfg(test)]
+mod benchmarks;
+
 pub use adapters::platform::{PlatformAdapter, PlatformError};
 pub use adapters::protocol::{
     CallerContext, CallerContextError, CallerEvidence, CredentialInput, CredentialKind, PrincipalId,
