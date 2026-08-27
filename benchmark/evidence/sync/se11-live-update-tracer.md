@@ -104,10 +104,12 @@ tables; the summary:
    SDK writers), and both cores' observed transition sequences — kind,
    storage sequence, version-vector ends, payload digest — are
    asserted **identical** across 25 transitions. The repeated-change
-   budget row is re-derived from observation (1 124 delta bytes for
-   the 8 repeated changes vs 2 772 snapshot bytes of the established
-   state), every batch fits the 8 192-byte delivery budget, and the
-   trigger notification is asserted content-free on the wire.
+   budget row is asserted twice: directly from the vector's recorded row
+   (`delta_bytes 497 < snapshot_bytes 2788`) and re-derived from
+   observation (1 124 delta bytes for the 8 repeated changes vs 2 772
+   snapshot bytes of the established state), every batch fits the
+   8 192-byte delivery budget, and the trigger notification is asserted
+   content-free on the wire.
 2. **s2-drop-resume** — the SDKs' connection endpoint (the host
    process) is killed mid-stream; the engine process and its journal
    survive. The TS session climbs its documented reconnect ladder to
