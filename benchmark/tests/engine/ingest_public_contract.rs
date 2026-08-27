@@ -15,14 +15,13 @@ use terrabase_v2::engine::{
     MAX_INGEST_BATCH_DOCUMENTS, MAX_INGEST_REFUSAL_DETAILS,
 };
 use terrabase_v2::operations::RequestValidationError;
-use terrabase_v2::types::{Cancellation, CollectionName, Deadline, DocumentId, LocalDurability};
+use terrabase_v2::types::{CollectionName, Deadline, DocumentId, LocalDurability};
 
 fn base_request() -> BulkIngestRequest {
     BulkIngestRequest::try_new(
         IngestConflictMode::Overwrite,
         LocalDurability::Written,
         Deadline::after(Duration::from_secs(30)).expect("valid deadline"),
-        Cancellation::new(),
     )
     .expect("valid request")
 }
@@ -34,7 +33,6 @@ fn bulk_ingest_requests_default_to_the_engine_batch_maximum() {
     assert_eq!(request.conflict_mode(), IngestConflictMode::Overwrite);
     assert_eq!(request.durability(), LocalDurability::Written);
     assert!(!request.deadline().is_expired());
-    assert!(!request.cancellation().is_cancelled());
 }
 
 #[test]
@@ -56,29 +54,11 @@ fn bulk_ingest_requests_reject_out_of_range_batch_bounds() {
 }
 
 #[test]
-fn bulk_ingest_requests_reject_cancelled_signals() {
-    let cancelled = Cancellation::new();
-    cancelled.cancel();
-    assert_eq!(
-        BulkIngestRequest::try_new(
-            IngestConflictMode::CreateOnly,
-            LocalDurability::Synced,
-            Deadline::after(Duration::from_secs(30)).expect("valid deadline"),
-            cancelled,
-        )
-        .err(),
-        Some(RequestValidationError::InvalidCancellation),
-        "a pre-cancelled signal would make the stream a no-op with no accounting"
-    );
-}
-
-#[test]
 fn bulk_ingest_create_only_is_a_distinct_typed_selection() {
     let request = BulkIngestRequest::try_new(
         IngestConflictMode::CreateOnly,
         LocalDurability::Buffered,
         Deadline::after(Duration::from_secs(30)).expect("valid deadline"),
-        Cancellation::new(),
     )
     .expect("valid request");
     assert_eq!(request.conflict_mode(), IngestConflictMode::CreateOnly);

@@ -145,14 +145,20 @@ Decisions:
   outcome on the engine's atomicity contract. Both pulls count as committed
   when their batch commits; the reconciling identity is the pull count.
 - **D2.5 Abort and cancellation (closed-here).** The caller's
-  `Cancellation` is checked before every pull and before every batch commit:
-  observed, the stream stops, the forming batch's documents are accounted
-  aborted, and committed-so-far stays honestly counted — an abort never
-  reports a document it did not commit. `IngestStream::abort` is V1's
-  nothing-was-done `AbortAsync` (`BulkInsertOperation.cs:600-604`): a
-  receipt with zero counts and no claim. There is deliberately no
-  post-abort store to refuse: `run`/`abort` consume the stream, so use after
-  abort is a compile error, not a runtime refusal.
+  `Cancellation` gates between pulls and before the final partial batch
+  publishes — the position of V1's per-store token check — observed, the
+  stream stops, the forming batch's documents are accounted aborted, and
+  committed-so-far stays honestly counted: an abort never reports a
+  document it did not commit. The signal is passed **by reference to
+  `run`**, mirroring `StreamStore::next_batch`'s cancellation parameter,
+  because a cloned `Cancellation` is an independent snapshot
+  (`src/types.rs:229-238`) — a by-value signal on the request could never be
+  cancelled mid-run, which the scaffold's RED run demonstrated concretely.
+  `IngestStream::abort` is V1's nothing-was-done `AbortAsync`
+  (`BulkInsertOperation.cs:600-604`): a receipt with zero counts and no
+  claim. There is deliberately no post-abort store to refuse: `run`/`abort`
+  consume the stream, so use after abort is a compile error, not a runtime
+  refusal.
 - **D2.6 The receipt reconciles (closed-here).**
   `attempted == committed + refused + aborted` holds on every path; every
   pulled document lands in exactly one bucket. `is_complete()` is true only

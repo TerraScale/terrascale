@@ -72,11 +72,15 @@ fn request(batch: usize) -> BulkIngestRequest {
         IngestConflictMode::Overwrite,
         LocalDurability::Written,
         Deadline::after(Duration::from_secs(30)).expect("valid deadline"),
-        Cancellation::new(),
     )
     .expect("valid request")
     .try_with_batch_documents(batch)
     .expect("valid batch bound")
+}
+
+/// The fresh, uncancelled signal every run call carries.
+fn signal() -> Cancellation {
+    Cancellation::new()
 }
 
 fn read_value(engine: &Engine, scope: &TenantScope, id: &str) -> Option<String> {
@@ -100,7 +104,7 @@ fn bulk_ingest_commits_across_multiple_batches_and_reconciles() {
     let documents: Vec<Document> =
         (0..20).map(|index| document(&format!("users/{index}"), "users", "v")).collect();
 
-    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents);
+    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents, &signal());
 
     assert_eq!(receipt.attempted(), 20);
     assert_eq!(receipt.committed(), 20);
@@ -155,7 +159,7 @@ fn bulk_ingest_never_materializes_the_whole_batch() {
         document
     });
 
-    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(source);
+    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(source, &signal());
 
     let violations = violations.lock().expect("violation log");
     assert!(
@@ -179,7 +183,7 @@ fn bulk_ingest_refuses_invalid_documents_without_aborting() {
         documents.push(document(&format!("users/{index}"), "users", "after"));
     }
 
-    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents);
+    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents, &signal());
 
     assert_eq!(receipt.attempted(), 9);
     assert_eq!(receipt.committed(), 8, "the valid documents on both sides of the refusal commit");
@@ -211,7 +215,7 @@ fn bulk_ingest_duplicate_keys_last_write_wins_within_a_batch() {
         document("users/1", "users", "second"),
     ];
 
-    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents);
+    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents, &signal());
 
     assert_eq!(receipt.attempted(), 3);
     assert_eq!(receipt.committed(), 3, "both pulls of the duplicate key are accounted committed");
@@ -250,13 +254,12 @@ fn bulk_ingest_create_only_rejects_on_existing_document_without_false_success() 
         IngestConflictMode::CreateOnly,
         LocalDurability::Written,
         Deadline::after(Duration::from_secs(30)).expect("valid deadline"),
-        Cancellation::new(),
     )
     .expect("valid request")
     .try_with_batch_documents(8)
     .expect("valid batch bound");
 
-    let receipt = engine.ingest_stream(&scope, create_only).expect("stream opens").run(documents);
+    let receipt = engine.ingest_stream(&scope, create_only).expect("stream opens").run(documents, &signal());
 
     assert_eq!(receipt.attempted(), 12);
     assert_eq!(receipt.committed(), 8, "only the first batch committed");
@@ -304,8 +307,19 @@ fn bulk_ingest_unknown_commit_aborts_without_claiming_success() {
     engine.arm_storage_fault(FaultPoint::PointerSync);
     let documents: Vec<Document> =
         (0..3).map(|index| document(&format!("users/{index}"), "users", "v")).collect();
+    // The pointer-sync fault fires on the post-publication sync step, which
+    // only the `Synced` durability point runs — the same position the
+    // engine's own fault tests arm it at.
+    let synced = BulkIngestRequest::try_new(
+        IngestConflictMode::Overwrite,
+        LocalDurability::Synced,
+        Deadline::after(Duration::from_secs(30)).expect("valid deadline"),
+    )
+    .expect("valid request")
+    .try_with_batch_documents(8)
+    .expect("valid batch bound");
 
-    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents);
+    let receipt = engine.ingest_stream(&scope, synced).expect("stream opens").run(documents, &signal());
 
     assert_eq!(receipt.attempted(), 3);
     assert_eq!(receipt.committed(), 0, "an unknown outcome is never counted committed");
@@ -334,18 +348,12 @@ fn bulk_ingest_cancellation_accounts_exactly() {
     let engine = open_engine("cancel");
     let scope = scope(&engine);
     let cancellation = Cancellation::new();
-    let stream_request = BulkIngestRequest::try_new(
-        IngestConflictMode::Overwrite,
-        LocalDurability::Written,
-        Deadline::after(Duration::from_secs(30)).expect("valid deadline"),
-        cancellation.clone(),
-    )
-    .expect("valid request")
-    .try_with_batch_documents(4)
-    .expect("valid batch bound");
+    let stream_request = request(4);
     // Cancel once ten documents have been pulled: batches of four mean two
-    // committed batches (8 documents) and a forming batch of two.
-    let signal = cancellation.clone();
+    // committed batches (8 documents) and a forming batch of two. The signal
+    // is shared by reference — a cloned `Cancellation` is an independent
+    // snapshot, which is exactly why `run` takes the signal by reference.
+    let signal = &cancellation;
     let pulled = AtomicU64::new(0);
     let source = (0..20).map(move |index| {
         let document = document(&format!("users/{index}"), "users", "v");
@@ -355,7 +363,8 @@ fn bulk_ingest_cancellation_accounts_exactly() {
         document
     });
 
-    let receipt = engine.ingest_stream(&scope, stream_request).expect("stream opens").run(source);
+    let receipt =
+        engine.ingest_stream(&scope, stream_request).expect("stream opens").run(source, signal);
 
     assert_eq!(receipt.attempted(), 10);
     assert_eq!(receipt.committed(), 8, "exactly the two closed batches are claimed");
@@ -380,24 +389,24 @@ fn bulk_ingest_cancellation_accounts_exactly() {
 fn bulk_ingest_expired_deadline_stops_the_stream_typed() {
     let engine = open_engine("deadline");
     let scope = scope(&engine);
-    let deadline = Deadline::after(Duration::from_nanos(1)).expect("valid deadline");
-    std::thread::sleep(Duration::from_millis(2));
-
-    let receipt = engine
+    // The request is built while the deadline is still live, then the
+    // deadline elapses before the run: the first gate stops the stream.
+    let stream = engine
         .ingest_stream(
             &scope,
             BulkIngestRequest::try_new(
                 IngestConflictMode::Overwrite,
                 LocalDurability::Written,
-                deadline,
-                Cancellation::new(),
+                Deadline::after(Duration::from_millis(50)).expect("valid deadline"),
             )
             .expect("valid request")
             .try_with_batch_documents(4)
             .expect("valid batch bound"),
         )
-        .expect("stream opens")
-        .run((0..6).map(|index| document(&format!("users/{index}"), "users", "v")));
+        .expect("stream opens");
+    std::thread::sleep(Duration::from_millis(100));
+    let receipt =
+        stream.run((0..6).map(|index| document(&format!("users/{index}"), "users", "v")), &signal());
 
     assert_eq!(receipt.attempted(), 0);
     assert_eq!(receipt.committed(), 0);
@@ -410,7 +419,7 @@ fn bulk_ingest_empty_source_completes_with_zero_counts() {
     let engine = open_engine("empty");
     let scope = scope(&engine);
     let receipt =
-        engine.ingest_stream(&scope, request(8)).expect("stream opens").run(std::iter::empty());
+        engine.ingest_stream(&scope, request(8)).expect("stream opens").run(std::iter::empty(), &signal());
 
     assert_eq!(receipt.attempted(), 0);
     assert_eq!(receipt.committed(), 0);
@@ -444,7 +453,7 @@ fn bulk_ingest_refusal_detail_window_is_bounded_and_drops_are_counted() {
     let receipt = engine
         .ingest_stream(&scope, request(MAX_INGEST_BATCH_DOCUMENTS))
         .expect("stream opens")
-        .run(documents);
+        .run(documents, &signal());
 
     assert_eq!(receipt.refused(), invalid as u64, "every refusal is counted");
     assert_eq!(
@@ -481,7 +490,6 @@ fn bulk_ingest_requests_reject_invalid_shapes() {
             IngestConflictMode::Overwrite,
             LocalDurability::Written,
             Deadline::after(Duration::from_secs(30)).expect("valid deadline"),
-            Cancellation::new(),
         )
         .expect("valid request")
     };
@@ -497,16 +505,30 @@ fn bulk_ingest_requests_reject_invalid_shapes() {
     );
     assert!(base().try_with_batch_documents(MAX_INGEST_BATCH_DOCUMENTS).is_ok());
 
+    let deadline = Deadline::after(Duration::from_nanos(1)).expect("valid at construction");
+    std::thread::sleep(Duration::from_millis(2));
+    assert_eq!(
+        BulkIngestRequest::try_new(IngestConflictMode::Overwrite, LocalDurability::Written, deadline)
+            .err(),
+        Some(RequestValidationError::InvalidDeadline),
+        "an elapsed deadline is refused at construction"
+    );
+}
+
+#[test]
+fn bulk_ingest_precancelled_signal_reports_no_claim() {
+    let engine = open_engine("precancelled");
+    let scope = scope(&engine);
     let cancelled = Cancellation::new();
     cancelled.cancel();
-    assert_eq!(
-        BulkIngestRequest::try_new(
-            IngestConflictMode::Overwrite,
-            LocalDurability::Written,
-            Deadline::after(Duration::from_secs(30)).expect("valid deadline"),
-            cancelled,
-        )
-        .err(),
-        Some(RequestValidationError::InvalidCancellation)
-    );
+    let receipt = engine
+        .ingest_stream(&scope, request(4))
+        .expect("stream opens")
+        .run((0..6).map(|index| document(&format!("users/{index}"), "users", "v")), &cancelled);
+
+    assert_eq!(receipt.attempted(), 0);
+    assert_eq!(receipt.committed(), 0);
+    assert!(receipt.reconciles());
+    assert!(!receipt.is_complete(), "a cancelled run makes no success claim");
+    assert!(matches!(receipt.termination(), IngestTermination::Cancelled));
 }
