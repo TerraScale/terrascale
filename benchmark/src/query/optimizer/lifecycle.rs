@@ -20,10 +20,12 @@
 //! dynamic query's optimizer pass, so selection decides against
 //! post-maintenance truth and one public-seam query is enough to drive the
 //! whole state machine. V1 runs the surpass pass on database idle
-//! operations; a dedicated engine-owned maintenance timer is a recorded
-//! collision action for the engine module's owner (this packet's write scope
-//! is the optimizer and index module families), with the query path as the
-//! live driver and this function as the timer's direct body.
+//! operations; V2 maps that to [`Engine::maintain_indexes`], the engine-owned
+//! tick a host schedules on its own timer (PD-2026-08-26-01 D1: cadence is
+//! host-side, the pass is engine-side), with the thresholds configured
+//! through [`EngineConfig`](crate::engine::EngineConfig) at open. The query
+//! path stays the live driver, so a host without a timer loses no
+//! correctness — only idle-time retirement latency.
 //!
 //! # Deletion is always drain-waited
 //!

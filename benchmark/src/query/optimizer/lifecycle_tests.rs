@@ -951,3 +951,51 @@ fn lifecycle_truth_is_observable_through_the_typed_index_view() {
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn engine_config_thresholds_and_the_engine_owned_tick_drive_maintenance() {
+    // IX-03 rider, landed by the engine seam's owner: the thresholds come
+    // from EngineConfig (honored at open, not a post-open test-only setter)
+    // and the Engine exposes the maintenance tick as the timer body a host
+    // schedules (PD-2026-08-26-01 D1: the host owns cadence, the Engine owns
+    // the pass). The query path stays the live driver; this test proves the
+    // tick alone advances the same state machine with no query in sight.
+    let dir = location("engine-tick");
+    std::fs::remove_dir_all(&dir).ok();
+    let zero = LifecycleThresholds::new(Duration::ZERO, Duration::ZERO, Duration::ZERO);
+    let engine = Engine::open(
+        EngineConfig::durable(&dir).expect("durable location").with_lifecycle_thresholds(zero),
+    )
+    .expect("engine opens");
+    assert_eq!(
+        engine.index_catalog().lifecycle_thresholds(),
+        zero,
+        "the Engine honors the configured thresholds at open, not the default"
+    );
+
+    commit_users(&engine, "tenant-a", "op-1", &[5, 3]);
+    execute_dynamic(&engine, users_spec("tenant-a", predicate(vec![equals("age", 5)])), "tenant-a")
+        .expect("executes");
+    assert_eq!(
+        find_index(&engine, "tenant-a", "Auto/users/ByAge").state(),
+        IndexLifecycleState::Active
+    );
+
+    // Two ticks, no queries: the first demotes past the zero idle gate, the
+    // second retires past the zero deletion gate — the full machine through
+    // the Engine-owned body alone.
+    engine.maintain_indexes();
+    assert_eq!(
+        find_index(&engine, "tenant-a", "Auto/users/ByAge").state(),
+        IndexLifecycleState::Idle,
+        "the first tick demotes the unqueried index"
+    );
+    engine.maintain_indexes();
+    let retired = find_index(&engine, "tenant-a", "Auto/users/ByAge");
+    assert_eq!(retired.state(), IndexLifecycleState::Retired);
+    assert_eq!(retired.transitions().len(), 2, "both transitions recorded by the tick alone");
+    assert_eq!(retired.transitions()[0].to(), IndexLifecycleState::Idle);
+    assert_eq!(retired.transitions()[1].to(), IndexLifecycleState::Retired);
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -172,6 +172,7 @@ impl Drop for SubscriptionGuard {
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
     location: PathBuf,
+    lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds,
 }
 
 impl EngineConfig {
@@ -196,13 +197,37 @@ impl EngineConfig {
         if !location.is_dir() {
             return Err(EngineConfigError::NonDurableLocation);
         }
-        Ok(Self { location })
+        Ok(Self {
+            location,
+            lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds::DEFAULT,
+        })
+    }
+
+    /// Selects the auto-index lifecycle thresholds the Engine's index catalog
+    /// measures against (IX-03 rider). The defaults carry V1's values; a
+    /// caller scheduling [`Engine::maintain_indexes`] on its own timer
+    /// configures the gates here, not through any post-open path.
+    #[must_use]
+    pub const fn with_lifecycle_thresholds(
+        mut self,
+        thresholds: crate::query::optimizer::LifecycleThresholds,
+    ) -> Self {
+        self.lifecycle_thresholds = thresholds;
+        self
     }
 
     /// Returns the configured durable location. Crate-only by design: the
     /// physical path never crosses the public seam.
     pub(crate) fn location(&self) -> &PathBuf {
         &self.location
+    }
+
+    /// Returns the configured lifecycle thresholds. Crate-only: production
+    /// callers configure them through [`EngineConfig::durable`] plus
+    /// [`EngineConfig::with_lifecycle_thresholds`], and the Engine applies
+    /// them at open.
+    pub(crate) fn lifecycle_thresholds(&self) -> crate::query::optimizer::LifecycleThresholds {
+        self.lifecycle_thresholds
     }
 }
 
@@ -494,6 +519,9 @@ impl Engine {
         // W4-CA-3: register the Engine-owned index catalog's sink through the
         // production registry so index maintenance observes every publication.
         let indexes = Arc::new(crate::index::IndexCatalog::new());
+        // IX-03 rider: the catalog measures against the configured lifecycle
+        // thresholds from open, never a post-open default.
+        indexes.set_lifecycle_thresholds(config.lifecycle_thresholds());
         let index_subscription = subscriptions.subscribe(indexes.sink());
         Ok(Self {
             identity: EngineIdentity::next().0,
@@ -870,6 +898,19 @@ impl Engine {
     #[allow(dead_code, reason = "consumed by the query-side catalog binding and the index tests")]
     pub(crate) fn index_catalog(&self) -> Arc<crate::index::IndexCatalog> {
         Arc::clone(&self.indexes)
+    }
+
+    /// Runs one auto-index lifecycle maintenance pass (IX-03 rider).
+    ///
+    /// This is the engine-owned body a host schedules on its own timer
+    /// (PD-2026-08-26-01 D1: cadence belongs to the host side, the pass to
+    /// the Engine). The dynamic query path stays the live driver — every
+    /// dynamic query's optimizer pass runs the same maintenance at its head —
+    /// so a host without a timer loses no correctness, only idle-time
+    /// retirement latency. The pass is bounded, holds no lock across an
+    /// Engine call, and never touches an explicit index.
+    pub fn maintain_indexes(&self) {
+        crate::query::optimizer::lifecycle::maintain(self, &self.indexes, self.identity);
     }
 
     /// Arms one storage fault inside the publication order. Test-only.

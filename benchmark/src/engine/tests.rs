@@ -122,7 +122,8 @@ fn engine_opens_only_configured_durable_storage() {
     );
     std::fs::remove_file(&file_path).ok();
 
-    let forged = EngineConfig { location: PathBuf::new() };
+    let base = EngineConfig::durable(location("engine-opens-forged")).expect("durable");
+    let forged = EngineConfig { location: PathBuf::new(), ..base };
     assert_eq!(Engine::open(forged).err(), Some(EngineOpenError::InvalidConfig));
 
     let foreign = location("engine-opens-foreign");

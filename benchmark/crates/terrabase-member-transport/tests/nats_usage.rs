@@ -74,10 +74,7 @@ fn ownership_transitions_use_compare_and_swap_and_fence_stale_epochs() {
 fn the_config_role_shares_versioned_configuration_monotonically() {
     let fixture = database_fixture();
     let client = fixture.database_client().expect("the database account authenticates");
-    let settings = terrabase_member_transport::nats_usage::LaneSettings {
-        catch_up_batch: 32,
-        pump_window_ms: 300,
-    };
+    let settings = terrabase_member_transport::nats_usage::LaneSettings { catch_up_batch: 32 };
     client
         .publish_config(
             ConfigRecord::new(ConfigName::LaneSettings, 1, settings).expect("valid config"),
@@ -304,10 +301,7 @@ fn no_database_data_rides_nats_and_the_audit_proves_it() {
             ConfigRecord::new(
                 ConfigName::LaneSettings,
                 1,
-                terrabase_member_transport::nats_usage::LaneSettings {
-                    catch_up_batch: 32,
-                    pump_window_ms: 300,
-                },
+                terrabase_member_transport::nats_usage::LaneSettings { catch_up_batch: 32 },
             )
             .expect("valid config"),
         )

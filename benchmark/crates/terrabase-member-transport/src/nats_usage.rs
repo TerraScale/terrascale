@@ -250,12 +250,14 @@ impl ConfigName {
 
 /// The member-lane settings: the typed configuration payload of the
 /// [`ConfigName::LaneSettings`] document. Numbers only.
+///
+/// The socket lane once carried a pump drain window here; the lane's drain
+/// is delivery-causal since the SE-06 repair, so the window knob is gone
+/// rather than advertised as a setting that does nothing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LaneSettings {
     /// The bounded number of commits one catch-up round requests.
     pub catch_up_batch: u32,
-    /// The socket lane's pump drain window, in milliseconds.
-    pub pump_window_ms: u32,
 }
 
 /// One versioned configuration record.
@@ -274,12 +276,7 @@ impl ConfigRecord {
     /// Returns [`UsageError::InvalidRecord`] for a zero version or a
     /// non-positive setting.
     pub fn new(name: ConfigName, version: u64, settings: LaneSettings) -> Result<Self, UsageError> {
-        if version == 0
-            || settings.catch_up_batch == 0
-            || settings.catch_up_batch > 4096
-            || settings.pump_window_ms == 0
-            || settings.pump_window_ms > 60_000
-        {
+        if version == 0 || settings.catch_up_batch == 0 || settings.catch_up_batch > 4096 {
             return Err(UsageError::InvalidRecord);
         }
         Ok(Self { name, version, settings })
@@ -945,11 +942,10 @@ fn render_record(record: &RecordValue) -> String {
             record.epoch()
         ),
         RecordValue::Config(record) => format!(
-            "config: name={} version={} catch-up-batch={} pump-window-ms={}",
+            "config: name={} version={} catch-up-batch={}",
             record.name().name(),
             record.version(),
             record.settings().catch_up_batch,
-            record.settings().pump_window_ms,
         ),
         RecordValue::Discovery(record) => format!(
             "discovery: member={} region={} failure-domain={} address={} generation={}",
