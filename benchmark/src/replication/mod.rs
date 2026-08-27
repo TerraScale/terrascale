@@ -62,9 +62,10 @@ pub use retention::{
 };
 
 // The journal-extraction pair a history-bound declaration hands the
-// watermark (GAP-R02): crate-visible under test so the backup suite builds
-// the same window the member extracts from its own journal.
-#[cfg(test)]
+// watermark (GAP-R02): crate-visible so the backup suite builds the same
+// window the member extracts from its own journal, and so the GAP-S1
+// compaction driver (`Engine::compact_with_retention`) pairs the window it
+// extracted with the origin clock stamp durable evidence carries.
 pub(crate) use transport::StampedCommit;
 
 /// A deterministic instant of the replication lane's clock.

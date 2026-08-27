@@ -16,6 +16,9 @@ use crate::types::{
 use super::{PublishedCommit, PublishedWrite};
 use super::{
     codec::{self, LocalDurabilityCode, StorageKey},
+    compaction::{
+        CompactionDriverFacts, CompactionError, CompactionReceipt, RetainedState, StorageCompaction,
+    },
     faults::{FaultPlan, FaultPoint},
     intent::{
         CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite,
@@ -25,6 +28,7 @@ use super::{
         HistoryIndex, HistoryWriter, LedgerIndex, LedgerRecord, LedgerState, LedgerWriter,
         OperationEntry, Published, ReadyToPublish, RejectedRecord,
     },
+    retained::{RetainedIndex, RetainedWriter},
     root::{self, RootTable, StorageRoot, StorageRootId},
     wal::{self, WalCommit, WalWriter},
 };
@@ -45,23 +49,33 @@ pub(crate) enum StorageOpenError {
 }
 
 /// The private file adapter implementing [`super::StoragePort`].
+///
+/// The fields are `pub(super)`-visible so the compaction pass
+/// (`super::compaction`, GAP-S1) drives the same writers and indexes the
+/// publication order uses — one implementation of the format, no duplicate
+/// handles.
 pub(crate) struct FileStorage {
-    dir: PathBuf,
-    wal: WalWriter,
-    ledger: LedgerWriter,
-    ledger_index: LedgerIndex,
+    pub(super) dir: PathBuf,
+    pub(super) wal: WalWriter,
+    pub(super) ledger: LedgerWriter,
+    pub(super) ledger_index: LedgerIndex,
     /// The durable publication-history journal and its sequence-ordered
     /// index (W4-CA-4), with the durable high-water mark (repair F2).
-    journal: HistoryWriter,
-    journal_index: HistoryIndex,
-    journal_high_water: Option<u64>,
-    published: StorageRoot,
-    history: BTreeMap<u64, Arc<RootTable>>,
+    pub(super) journal: HistoryWriter,
+    pub(super) journal_index: HistoryIndex,
+    pub(super) journal_high_water: Option<u64>,
+    /// The durable retained-evidence store and its index (GAP-S1 D3): the
+    /// deletion facts and bound declarations that keep the tombstone
+    /// retention watermark honest after history is given up.
+    pub(super) retained: RetainedWriter,
+    pub(super) retained_index: RetainedIndex,
+    pub(super) published: StorageRoot,
+    pub(super) history: BTreeMap<u64, Arc<RootTable>>,
     /// The highest storage sequence ever named in this location, whether or
     /// not its commit published. New commits allocate past it, so a sequence
     /// is never reused after a mid-publication failure.
-    sequence_watermark: u64,
-    faults: FaultPlan,
+    pub(super) sequence_watermark: u64,
+    pub(super) faults: FaultPlan,
 }
 
 impl FileStorage {
@@ -75,16 +89,32 @@ impl FileStorage {
         let wal_path = dir.join("wal");
         let ledger_path = dir.join("ledger");
         let journal_path = dir.join("history");
+        let retained_path = dir.join("retained");
         let wal_writer = WalWriter::open(&wal_path).map_err(|_| StorageOpenError::Unavailable)?;
         let ledger_writer =
             LedgerWriter::open(&ledger_path).map_err(|_| StorageOpenError::Unavailable)?;
         let journal_writer =
             HistoryWriter::open(&journal_path).map_err(|_| StorageOpenError::Unavailable)?;
-        if wal_writer.is_fresh() || ledger_writer.is_fresh() || journal_writer.is_fresh() {
+        let retained_writer =
+            RetainedWriter::open(&retained_path).map_err(|_| StorageOpenError::Unavailable)?;
+        if wal_writer.is_fresh()
+            || ledger_writer.is_fresh()
+            || journal_writer.is_fresh()
+            || retained_writer.is_fresh()
+        {
             root::sync_dir(dir).map_err(|_| StorageOpenError::Unavailable)?;
         }
         let ledger_index = LedgerIndex::scan(&ledger_path);
         let journal_scan = HistoryIndex::scan(&journal_path);
+        let retained_scan = RetainedIndex::scan(&retained_path);
+        if retained_scan.mid_file_damage {
+            // GAP-S1 D3: the retained-evidence store backs every declared
+            // below-bound history bound. Mid-file damage makes that
+            // evidence unreadable, so the open fails closed rather than
+            // silently serving a prefix — the same discipline the WAL
+            // applies to damage with bytes behind it.
+            return Err(StorageOpenError::FormatMismatch);
+        }
         let report = wal::scan(&wal_path).map_err(|_| StorageOpenError::FormatMismatch)?;
         let mut storage = Self {
             dir: dir.to_path_buf(),
@@ -94,11 +124,22 @@ impl FileStorage {
             journal: journal_writer,
             journal_index: journal_scan.index,
             journal_high_water: journal_scan.high_water,
+            retained: retained_writer,
+            retained_index: retained_scan.index,
             published: StorageRoot::empty(),
             history: BTreeMap::new(),
             sequence_watermark: 0,
             faults: FaultPlan::empty(),
         };
+        if retained_scan.total_bytes > retained_scan.good_bytes {
+            // The trailing record is torn or does not verify: an
+            // interrupted append. Truncate to the verified prefix exactly
+            // as the journal is truncated, so later appends stay scannable.
+            storage
+                .retained
+                .truncate(retained_scan.good_bytes)
+                .map_err(|_| StorageOpenError::Unavailable)?;
+        }
         if report.torn_tail {
             // The trailing frame was an interrupted append: drop it so the
             // store opens on its verified prefix. A truncation that cannot
@@ -132,6 +173,7 @@ impl FileStorage {
         let mut table = RootTable::empty();
         let mut sequence = 0_u64;
         let mut id = StorageRoot::empty().id;
+        let mut manifest_verified = false;
         if let Some((manifest_sequence, manifest_id)) = root::read_manifest(&self.dir) {
             let path = root::root_file_path(&self.dir, &manifest_id);
             if let Ok(Some((root_sequence, root_table, confirmed_id))) = root::load_root_file(&path)
@@ -141,6 +183,25 @@ impl FileStorage {
                 table = root_table;
                 sequence = manifest_sequence;
                 id = manifest_id;
+                manifest_verified = true;
+            }
+        }
+        if !manifest_verified {
+            // GAP-S1 D7: the manifest is absent or does not verify and the
+            // write-ahead log may no longer carry the frames to rebuild
+            // from (a compacted location truncates them at its checkpoint).
+            // Base the rebuild on the highest-sequence root file that
+            // verifies instead. Compaction never deletes the manifest's own
+            // root, so at least one verifying candidate exists whenever
+            // anything was ever published.
+            match root::scan_newest_verifying_root(&self.dir) {
+                Ok(Some((root_sequence, root_table, confirmed_id))) => {
+                    table = root_table;
+                    sequence = root_sequence;
+                    id = confirmed_id;
+                }
+                Ok(None) => {}
+                Err(()) => return Err(StorageOpenError::Unavailable),
             }
         }
         // The watermark starts past every sequence any durable record names,
@@ -155,6 +216,29 @@ impl FileStorage {
         }
         for commit in commits {
             if commit.sequence <= sequence {
+                // With a verified manifest this commit's publication
+                // completed long ago and the guard inside
+                // `record_publication` no-ops. With the D7 fallback base
+                // the loaded table already reflects the commit's writes,
+                // but the kill that damaged the manifest may have preceded
+                // its `Published` ledger record, so the bookkeeping still
+                // runs: it is what makes the commit resolve `Committed`
+                // (and a same-identity retry replay) after recovery. The
+                // journal record is deliberately NOT reconstructed here —
+                // a correct write set cannot be derived without the
+                // pre-commit table, and a fabricated one would poison
+                // retained-evidence extraction — so the commit stays
+                // journal-unservable and the compaction divergence gate
+                // (GAP-S1 D5) refuses history reclaim below it, fail
+                // closed.
+                self.record_publication(
+                    &commit.tenant,
+                    &commit.operation,
+                    commit.digest,
+                    &id,
+                    commit.sequence,
+                    false,
+                );
                 continue;
             }
             let tenant =
@@ -535,7 +619,7 @@ impl FileStorage {
     }
 
     /// Computes the durable resolution of one operation identity.
-    fn resolution_for(&self, entry: &OperationEntry) -> OperationResolution {
+    pub(super) fn resolution_for(&self, entry: &OperationEntry) -> OperationResolution {
         let requested = entry.requested.to_level();
         match entry.state {
             LedgerState::Published { post_publish_synced } => {
@@ -794,6 +878,21 @@ impl super::StoragePort for FileStorage {
 
     fn published_state(&self) -> (StorageSequence, StorageRootId) {
         (StorageSequence::new(self.published.sequence), self.published.id.clone())
+    }
+
+    fn compact(
+        &mut self,
+        request: StorageCompaction,
+    ) -> Result<(CompactionReceipt, CompactionDriverFacts), CompactionError> {
+        self.run_compaction(request)
+    }
+
+    fn retained_state(&self) -> RetainedState {
+        RetainedState {
+            bound: self.retained_index.declared_bound().map(StorageSequence::new),
+            facts: self.retained_index.facts().to_vec(),
+            non_deletion: self.retained_index.non_deletion(),
+        }
     }
 
     fn flush(&mut self) -> Result<(), ()> {

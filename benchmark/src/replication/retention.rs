@@ -648,6 +648,73 @@ impl TombstoneRetention {
     }
 
     /// Declares that publication history below `bound` has been given up,
+    /// restoring a bound the durable retained-evidence store backs (GAP-S1
+    /// D5).
+    ///
+    /// This is the store-backed form the storage compaction seam
+    /// (GAP-S1) drives when it re-derives a watermark after a restart: the
+    /// window's facts were extracted and made durable before the journal
+    /// records were dropped, so there is no journal window to hand over —
+    /// the facts arrive through [`TombstoneRetention::hold`] and the
+    /// non-deletion facts arrive from the store's bound record, because
+    /// after compaction the journal can no longer recompute them. The
+    /// gates are exactly the windowed form's: the bound may not exceed the
+    /// journal's durable head (D2.4), may not regress, and the caller must
+    /// assert durability (D2.3).
+    ///
+    /// # Errors
+    ///
+    /// Fails closed exactly as the windowed form does, with
+    /// [`RetentionRefusal::BoundBeyondWindow`],
+    /// [`RetentionRefusal::BoundRegression`], and
+    /// [`RetentionRefusal::EvidenceNotDurable`]. A refused declaration does
+    /// not move the bound.
+    pub fn declare_history_bound_retained(
+        &mut self,
+        bound: StorageSequence,
+        journal_head: StorageSequence,
+        non_deletion: &[(TenantId, Option<StorageSequence>)],
+        durably_held: bool,
+    ) -> Result<RetentionCompaction, RetentionRefusal> {
+        if bound.get() > journal_head.get() {
+            let refusal =
+                RetentionRefusal::BoundBeyondWindow { head: journal_head, candidate: bound };
+            self.record_refusal(refusal.clone());
+            return Err(refusal);
+        }
+        if let Some(current) = self.bound
+            && bound.get() < current.get()
+        {
+            let refusal = RetentionRefusal::BoundRegression { current, candidate: bound };
+            self.record_refusal(refusal.clone());
+            return Err(refusal);
+        }
+        if !durably_held {
+            let refusal = RetentionRefusal::EvidenceNotDurable { bound };
+            self.record_refusal(refusal.clone());
+            return Err(refusal);
+        }
+        let mut restored = self.non_deletion_through.clone();
+        for (tenant, through) in non_deletion {
+            let entry = restored.entry(tenant.clone()).or_default();
+            *entry = match (*entry, *through) {
+                (Some(known), Some(seen)) => Some(known.max(seen)),
+                (Some(known), None) => Some(known),
+                (None, seen) => seen,
+            };
+        }
+        self.non_deletion_through = restored;
+        self.bound = Some(bound);
+        let consumers_below_bound = self
+            .consumers
+            .iter()
+            .filter(|(_, floor)| floor.is_none_or(|value| value.get() < bound.get()))
+            .map(|(consumer, _)| consumer.clone())
+            .collect::<Vec<_>>();
+        Ok(RetentionCompaction { bound, held: 0, below_floor_discarded: 0, consumers_below_bound })
+    }
+
+    /// Declares that publication history below `bound` has been given up,
     /// with no window to extract from.
     ///
     /// This form asserts the discarded window contributes no deletion

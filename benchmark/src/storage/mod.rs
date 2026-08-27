@@ -19,8 +19,14 @@ mod faults;
 mod file;
 mod intent;
 mod ledger;
+mod retained;
 mod root;
 mod wal;
+
+mod compaction;
+
+#[cfg(test)]
+mod compaction_tests;
 
 #[cfg(test)]
 mod tests;
@@ -30,6 +36,11 @@ pub(crate) use faults::FaultPoint;
 pub(crate) use file::{FileStorage, StorageOpenError};
 pub(crate) use intent::{CommitIntent, CommitResult, OperationResolution, StagedWrite};
 pub(crate) use root::StorageRootId;
+
+pub use compaction::{
+    CompactionError, CompactionPhase, CompactionPolicy, CompactionProgress, CompactionProgressSink,
+    CompactionReceipt, CompactionRequest, HistoryReclaimOutcome,
+};
 
 use crate::types::{
     CollectionName, Document, DocumentId, LocalDurability, OperationId, StorageSequence, TenantId,
@@ -145,6 +156,25 @@ pub(crate) trait StoragePort: Send {
 
     /// Returns the currently published sequence and root identity.
     fn published_state(&self) -> (StorageSequence, StorageRootId);
+
+    /// Runs one compaction pass (GAP-S1): checkpoint, write-ahead log
+    /// reclaim, gated history reclaim with durable retained evidence, and
+    /// superseded-root reclamation.
+    fn compact(
+        &mut self,
+        request: crate::storage::compaction::StorageCompaction,
+    ) -> Result<
+        (
+            crate::storage::compaction::CompactionReceipt,
+            crate::storage::compaction::CompactionDriverFacts,
+        ),
+        crate::storage::compaction::CompactionError,
+    >;
+
+    /// Returns the durable retained-evidence state (GAP-S1 D3): the
+    /// declared bound, the retained deletion facts, and the per-tenant
+    /// non-deletion facts, as the store holds them.
+    fn retained_state(&self) -> crate::storage::compaction::RetainedState;
 
     /// Flushes appended durable bytes on shutdown.
     fn flush(&mut self) -> Result<(), ()>;

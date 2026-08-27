@@ -114,7 +114,12 @@ declaration the storage seam makes to the watermark
    closed (`EvidenceNotDurable`) until GAP-S1 provides one. This is the
    recovery interaction: a crash between "history discarded" and
    "evidence durable" would be silent delayed data loss, so the ordering
-   is enforced as a refusal, not a convention.
+   is enforced as a refusal, not a convention. *GAP-S1 (#81) has since
+   provided the store* — the location's `retained` record stream
+   (`docs/storage/gaps1-storage-compaction.md` D3) — and
+   `Engine::compact_with_retention` declares bounds with
+   `durably_held = true` backed by it, after appending and syncing the
+   window's evidence before the journal rewrite.
 4. **The window must fully exist (D2.4).** A declared bound may not exceed
    the journal's durable head — the window must fully exist. The
    declaration carries the journal's durable head as a caller-handed fact
@@ -215,7 +220,11 @@ and (per tenant) non_deletion_through <= c       (no put was missed)
   The durable facts it is derived from are durable: consumer floors come
   from journal-derived member cursors and sealed backup manifests, and
   the retained evidence is the journal's while the journal covers it. A
-  cold restart re-derives both.
+  cold restart re-derives both. Since GAP-S1, the durable
+  retained-evidence store holds the facts and bound declarations after
+  the journal stops covering the window, and the compaction driver's
+  prologue (`Engine::compact_with_retention`) re-seeds a restarted
+  watermark from it.
 - **The unsafe window.** Between "history given up" and "evidence
   durably held" there is no safe state, which is why D2.3 refuses the
   transition instead of warning about it.
@@ -234,10 +243,10 @@ and (per tenant) non_deletion_through <= c       (no put was missed)
   retention floor and the history bound; the floor cap bounds it from the
   operator's side. No count bound is imposed: dropping a needed tombstone
   to fit a count would be the exact defect this record exists to prevent.
-- The declared history bound is driven by tests and by GAP-S1's future
-  compaction path. No engine component gives up journal history today, so
-  in production the declared bound stays `None` and every behavior in
-  this packet is byte-identical to the pre-packet tree.
+- The declared history bound was driven by tests only at packet time;
+  since GAP-S1 (#81) the production driver is
+  `Engine::compact_with_retention`, which reclaims history under this
+  record's D2 gates and declares the bound with durably held evidence.
 - Topology seeding (D3) has no production caller. It is an explicit,
   tested operation the declaring/calling seam must drive; until the
   member-lifecycle owner (GAP-S1's compaction driver or the member

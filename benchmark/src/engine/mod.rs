@@ -34,9 +34,12 @@ use crate::{
     families::FamilyStore,
     operations::{EngineRequest, EngineResponse},
     query::QueryStore,
+    replication::{
+        DeletionEvidence, ReplicationClockStamp, SharedTombstoneRetention, StampedCommit,
+    },
     storage::{
-        self, CommitIntent, CommitPublicationEvent, CommitResult, PublishedCommit, StagedWrite,
-        StoragePort,
+        self, CommitIntent, CommitPublicationEvent, CommitResult, CompactionError,
+        CompactionReceipt, CompactionRequest, PublishedCommit, StagedWrite, StoragePort,
     },
     streaming::StreamStore,
     types::{
@@ -59,6 +62,14 @@ pub(crate) type CommitPublicationSink = Arc<dyn Fn(&CommitPublicationEvent) + Se
 /// bound is not registered, and the returned guard's
 /// [`SubscriptionGuard::is_attached`] reports `false`.
 pub(crate) const MAX_PUBLICATION_SINKS: usize = 64;
+
+/// The clock stamp durable retained evidence carries (GAP-S1 D3).
+///
+/// D-3 stamps are process-local lane state; the retained-evidence store
+/// does not persist them, so evidence re-derived from the store carries the
+/// origin stamp — the same disclosed degradation post-restart history
+/// serving already documents on `StampedCommit`.
+const ORIGIN_STAMP: ReplicationClockStamp = ReplicationClockStamp::new(0, 0);
 
 /// The production-visible, multi-subscriber registry of publication-event
 /// sinks (integrator action W4-CA-3).
@@ -922,6 +933,121 @@ impl Engine {
     /// Engine call, and never touches an explicit index.
     pub fn maintain_indexes(&self) {
         crate::query::optimizer::lifecycle::maintain(self, &self.indexes, self.identity);
+    }
+
+    /// Runs one storage compaction pass (GAP-S1, decision record
+    /// `docs/storage/gaps1-storage-compaction.md` D1 and D2).
+    ///
+    /// The pass is an in-band, caller-driven maintenance operation on this
+    /// open Engine, exactly like [`Engine::maintain_indexes`]: the host owns
+    /// the cadence, the Engine owns the body. It checkpoints the published
+    /// root, truncates the write-ahead log the checkpoint replaces, and
+    /// reclaims superseded root files; under
+    /// [`CompactionPolicy::ReclaimHistory`](crate::storage::CompactionPolicy::ReclaimHistory)
+    /// it also gives up publication history below the journal's durable
+    /// head after the window's deletion evidence is durably held — or
+    /// refuses and discloses, per the decision record's gates. A failed
+    /// pass leaves the kill-point state the record's D4 table names:
+    /// reopening loses nothing and the pass may be retried.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompactionError::Storage`] when durable storage failed
+    /// inside the pass.
+    pub fn compact(
+        &self,
+        request: CompactionRequest,
+    ) -> Result<CompactionReceipt, CompactionError> {
+        let mut storage = self.lock_storage().map_err(|_| CompactionError::Storage)?;
+        storage.port.compact(request.lower(None)).map(|(receipt, _)| receipt)
+    }
+
+    /// Runs one storage compaction pass driving the tombstone retention
+    /// watermark (GAP-S1 D5 — the production history-bound declaration
+    /// GAP-R02 left un-driven).
+    ///
+    /// The pass first re-derives the handed watermark from the durable
+    /// retained-evidence store — holding every durable deletion fact and
+    /// restoring the declared bound with its per-tenant non-deletion facts —
+    /// so a restarted process resumes from durable state. When it reclaims
+    /// history, it then declares the new bound from the window it just
+    /// extracted, with `durably_held = true` backed by the synced store.
+    /// The watermark's own state is the observation point for the
+    /// declaration (its bound, refusals log, and retained set); the
+    /// retained-evidence facts carry the origin clock stamp, the documented
+    /// degradation of durable evidence (stamps are process-local).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompactionError::Storage`] when durable storage failed
+    /// inside the pass.
+    pub fn compact_with_retention(
+        &self,
+        request: CompactionRequest,
+        retention: &SharedTombstoneRetention,
+    ) -> Result<CompactionReceipt, CompactionError> {
+        let floor = retention.with_lock(|watermark| watermark.retention_floor());
+        let mut storage = self.lock_storage().map_err(|_| CompactionError::Storage)?;
+        // Prologue: re-derive the watermark from the durable store before
+        // the pass touches anything, so the declaration rests on durable
+        // facts even after a restart.
+        let durable = storage.port.retained_state();
+        if !durable.facts.is_empty() || durable.bound.is_some() {
+            let facts: Vec<DeletionEvidence> = durable
+                .facts
+                .iter()
+                .map(|fact| {
+                    DeletionEvidence::new(
+                        fact.tenant.clone(),
+                        fact.collection.clone(),
+                        fact.id.clone(),
+                        fact.version_at_delete,
+                        fact.sequence,
+                        fact.operation.clone(),
+                        ORIGIN_STAMP,
+                        fact.durability,
+                    )
+                })
+                .collect();
+            retention.with_lock(|watermark| watermark.hold(&facts));
+            if let Some(bound) = durable.bound {
+                let head = storage.port.journaled_high_water().unwrap_or_default();
+                // A refused restoration (a bound the damaged journal can no
+                // longer cover) leaves the watermark's bound unmoved and is
+                // recorded in its bounded refusal log — the observation
+                // point for declarations — so the engine does not re-report
+                // it here.
+                let _ = retention.with_lock(|watermark| {
+                    watermark.declare_history_bound_retained(
+                        bound,
+                        head,
+                        &durable.non_deletion,
+                        true,
+                    )
+                });
+            }
+        }
+        let (receipt, driver) = storage.port.compact(request.lower(Some(floor)))?;
+        // Declaration: the evidence is durable now, so the assertion is
+        // honest. A watermark refusal (a regressing bound, a head the
+        // damaged journal can no longer cover) is recorded in the
+        // watermark's bounded refusal log — the observation point above.
+        if let Some(bound) = driver.bound {
+            let head = driver.head.unwrap_or_default();
+            let window: Vec<StampedCommit> = driver
+                .window
+                .iter()
+                .map(|commit| StampedCommit::new(ORIGIN_STAMP, commit.clone()))
+                .collect();
+            // A refused declaration (a regressing bound) leaves the
+            // watermark's bound unmoved and is recorded in its bounded
+            // refusal log — the observation point for declarations — so the
+            // engine does not re-report it here.
+            let _ = retention.with_lock(|watermark| {
+                watermark.declare_history_bound_from_commits(bound, head, &window, true)
+            });
+        }
+        Ok(receipt)
     }
 
     /// Arms one storage fault inside the publication order. Test-only.

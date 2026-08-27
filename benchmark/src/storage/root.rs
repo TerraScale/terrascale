@@ -381,3 +381,52 @@ pub(crate) fn sync_file(path: &Path) -> io::Result<()> {
 pub(crate) fn sync_dir(dir: &Path) -> io::Result<()> {
     fs::File::open(dir)?.sync_data()
 }
+
+/// Scans the `roots` directory for the highest-sequence root file that
+/// verifies (GAP-S1 decision record D7).
+///
+/// This is the recovery fallback when the manifest is absent or does not
+/// verify and the write-ahead log no longer carries the frames to rebuild
+/// from — the state a compacted location is in after manifest damage. Every
+/// candidate must verify as a root file and carry exactly the identity its
+/// file name claims; anything else (a torn write, a misplaced file) is
+/// skipped, never served. Compaction's rule that the manifest's own root is
+/// never deleted guarantees at least one verifying candidate exists.
+pub(crate) fn scan_newest_verifying_root(
+    dir: &Path,
+) -> Result<Option<(u64, RootTable, StorageRootId)>, ()> {
+    let roots_dir = dir.join("roots");
+    let entries = match fs::read_dir(&roots_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(()),
+    };
+    let mut newest: Option<(u64, RootTable, StorageRootId)> = None;
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "root") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let Some(claimed) = StorageRootId::from_encoded(stem) else {
+            continue;
+        };
+        let Ok(Some((sequence, table, confirmed))) = load_root_file(&path) else {
+            // A torn or damaged candidate is skipped: the fallback serves
+            // verified state only, never a partial file.
+            continue;
+        };
+        if confirmed != claimed {
+            continue;
+        }
+        if newest.as_ref().is_none_or(|(known, _, _)| sequence > *known) {
+            newest = Some((sequence, table, confirmed));
+        }
+    }
+    Ok(newest)
+}

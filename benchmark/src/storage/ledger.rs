@@ -445,23 +445,8 @@ impl HistoryWriter {
     }
 
     /// Appends one checksummed publication record.
-    #[allow(clippy::cast_possible_truncation)]
     pub(crate) fn append(&mut self, commit: &PublishedCommit) -> io::Result<()> {
-        let mut payload = Vec::new();
-        codec::push_u8(&mut payload, HISTORY_RECORD_COMMIT);
-        codec::push_str(&mut payload, commit.tenant().as_str());
-        codec::push_str(&mut payload, commit.operation_id().as_str());
-        codec::push_u64(&mut payload, commit.sequence().get());
-        codec::encode_durability(&mut payload, codec::LocalDurabilityCode::of(commit.durability()));
-        codec::push_u32(&mut payload, commit.writes().len() as u32);
-        for write in commit.writes() {
-            codec::encode_published_write(&mut payload, write);
-        }
-        let mut frame = Vec::with_capacity(HEADER_BYTES.saturating_add(payload.len()));
-        codec::push_u32(&mut frame, payload.len() as u32);
-        codec::push_u64(&mut frame, codec::fnv1a(&payload));
-        frame.extend_from_slice(&payload);
-        self.file.write_all(&frame)
+        self.file.write_all(&encode_commit_frame(commit))
     }
 
     /// Appends one checksummed high-water-mark record (repair F2).
@@ -471,16 +456,8 @@ impl HistoryWriter {
     /// A failed mark append leaves the mark conservative — behind a commit
     /// whose own record is durable — which is safe: the signal never
     /// over-reports completeness.
-    #[allow(clippy::cast_possible_truncation)]
     pub(crate) fn append_high_water(&mut self, sequence: u64) -> io::Result<()> {
-        let mut payload = Vec::new();
-        codec::push_u8(&mut payload, HISTORY_RECORD_HIGH_WATER);
-        codec::push_u64(&mut payload, sequence);
-        let mut frame = Vec::with_capacity(HEADER_BYTES.saturating_add(payload.len()));
-        codec::push_u32(&mut frame, payload.len() as u32);
-        codec::push_u64(&mut frame, codec::fnv1a(&payload));
-        frame.extend_from_slice(&payload);
-        self.file.write_all(&frame)
+        self.file.write_all(&encode_high_water_frame(sequence))
     }
 
     /// Truncates the journal to its verified prefix length (repair F1).
@@ -496,6 +473,42 @@ impl HistoryWriter {
     pub(crate) fn sync(&mut self) -> io::Result<()> {
         self.file.sync_data()
     }
+}
+
+/// Encodes one publication record's full checksummed frame.
+///
+/// The compaction pass rewrites the journal through the same spelling the
+/// append path writes, so a rewritten journal scans identically.
+#[allow(clippy::cast_possible_truncation)]
+pub(crate) fn encode_commit_frame(commit: &PublishedCommit) -> Vec<u8> {
+    let mut payload = Vec::new();
+    codec::push_u8(&mut payload, HISTORY_RECORD_COMMIT);
+    codec::push_str(&mut payload, commit.tenant().as_str());
+    codec::push_str(&mut payload, commit.operation_id().as_str());
+    codec::push_u64(&mut payload, commit.sequence().get());
+    codec::encode_durability(&mut payload, codec::LocalDurabilityCode::of(commit.durability()));
+    codec::push_u32(&mut payload, commit.writes().len() as u32);
+    for write in commit.writes() {
+        codec::encode_published_write(&mut payload, write);
+    }
+    let mut frame = Vec::with_capacity(HEADER_BYTES.saturating_add(payload.len()));
+    codec::push_u32(&mut frame, payload.len() as u32);
+    codec::push_u64(&mut frame, codec::fnv1a(&payload));
+    frame.extend_from_slice(&payload);
+    frame
+}
+
+/// Encodes one high-water-mark record's full checksummed frame.
+#[allow(clippy::cast_possible_truncation)]
+pub(crate) fn encode_high_water_frame(sequence: u64) -> Vec<u8> {
+    let mut payload = Vec::new();
+    codec::push_u8(&mut payload, HISTORY_RECORD_HIGH_WATER);
+    codec::push_u64(&mut payload, sequence);
+    let mut frame = Vec::with_capacity(HEADER_BYTES.saturating_add(payload.len()));
+    codec::push_u32(&mut frame, payload.len() as u32);
+    codec::push_u64(&mut frame, codec::fnv1a(&payload));
+    frame.extend_from_slice(&payload);
+    frame
 }
 
 /// One entry of the journal's durable byte stream.
@@ -641,6 +654,44 @@ impl HistoryIndex {
             .filter_map(|entries| entries.keys().next().copied())
             .min()
             .map(StorageSequence::new)
+    }
+
+    /// Returns the number of journal commit records the index holds.
+    pub(crate) fn record_count(&self) -> u64 {
+        self.tenants.values().map(|entries| u64::try_from(entries.len()).unwrap_or(u64::MAX)).sum()
+    }
+
+    /// Returns every recorded commit with a sequence strictly below
+    /// `bound`, in global sequence order — the window a compaction pass
+    /// gives up (GAP-S1 D5).
+    pub(crate) fn commits_below(&self, bound: u64) -> Vec<PublishedCommit> {
+        let mut commits: Vec<PublishedCommit> = self
+            .tenants
+            .values()
+            .flat_map(|entries| entries.range(..bound).map(|(_, commit)| commit.clone()))
+            .collect();
+        commits.sort_by_key(|commit| commit.sequence().get());
+        commits
+    }
+
+    /// Drops every commit record whose sequence is strictly below `bound`,
+    /// leaving the journal's post-compaction in-memory shape.
+    pub(crate) fn retain_from(&mut self, bound: u64) {
+        for entries in self.tenants.values_mut() {
+            let below = entries.range(..bound).map(|(sequence, _)| *sequence).collect::<Vec<_>>();
+            for sequence in below {
+                entries.remove(&sequence);
+            }
+        }
+    }
+
+    /// Returns every recorded commit with a sequence at or above `bound` —
+    /// the records a compaction pass keeps when it rewrites the journal.
+    pub(crate) fn commits_at_or_above(&self, bound: u64) -> Vec<PublishedCommit> {
+        self.tenants
+            .values()
+            .flat_map(|entries| entries.range(bound..).map(|(_, commit)| commit.clone()))
+            .collect()
     }
 }
 

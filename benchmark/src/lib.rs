@@ -66,6 +66,10 @@ pub use replication::{
     ReplicationConfig, ReplicationCursor, ReplicationError, ReplicationOutcome, ReplicationReceipt,
     ReplicationStatus, TopologyView,
 };
+pub use storage::{
+    CompactionError, CompactionPhase, CompactionPolicy, CompactionProgress, CompactionProgressSink,
+    CompactionReceipt, CompactionRequest, HistoryReclaimOutcome,
+};
 pub use streaming::{
     ChangeEvent, ChangeFilter, ChangeKind, DocumentStreamSelector, StreamBatch, StreamCompletion,
     StreamCursor, StreamError, StreamItem, StreamPosition, StreamSource, StreamStore,
