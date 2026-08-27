@@ -123,7 +123,9 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.doesNotMatch(jobDefinition(workflow, "promote"), /^    env:/mu);
   assert.match(jobDefinition(workflow, "promote"), /needs: \[candidate\]/u);
   assert.match(jobDefinition(workflow, "promote"), /candidate-store download/u);
-  assertCredentialStepIsFinal(workflow, "bootstrap", "DEPLOY_CLI_READ_TOKEN");
+  // 0addfcf: the bootstrap env var DEPLOY_CLI_READ_TOKEN is now fed by the
+  // org registry token instead of a dedicated secret.
+  assertCredentialStepIsFinal(workflow, "bootstrap", "REGISTRY_TOKEN");
   assertCredentialStepIsFinal(workflow, "release-e2e", "TERRASCALE_E2E_ACCESS_TOKEN");
   assertCredentialStepIsFinal(workflow, "candidate", "CANDIDATE_STORE_TOKEN");
   assertCredentialStepIsFinal(workflow, "promote", "CANDIDATE_STORE_TOKEN");
@@ -483,19 +485,22 @@ function jobSteps(workflow: string, job: string): string {
 }
 
 function assertCredentialStepIsFinal(workflow: string, job: string, credential: string): void {
-  const definition = jobDefinition(workflow, job);
-  assert.doesNotMatch(definition, /^    env:/mu, `${job} must not set job-level environment variables.`);
+  // Runs over jobSteps: since 0addfcf the container image pull also
+  // references secrets.REGISTRY_USER/REGISTRY_TOKEN ahead of every step,
+  // which is runner infrastructure, not a job credential step.
+  const steps = jobSteps(workflow, job);
+  assert.doesNotMatch(steps, /^    env:/mu, `${job} must not set job-level environment variables.`);
 
-  const credentialIndex = definition.indexOf(`secrets.${credential}`);
+  const credentialIndex = steps.indexOf(`secrets.${credential}`);
   assert.notEqual(credentialIndex, -1, `${job} must use ${credential}.`);
-  const stepStart = definition.lastIndexOf("\n      - ", credentialIndex);
+  const stepStart = steps.lastIndexOf("\n      - ", credentialIndex);
   assert.notEqual(stepStart, -1, `${credential} must be scoped to a shell step.`);
-  const credentialStep = definition.slice(stepStart + 1);
+  const credentialStep = steps.slice(stepStart + 1);
   assert.match(credentialStep, /^      - (?:(?:env:)|[\s\S]*^        env:)[\s\S]*^        run:/mu, `${credential} must be scoped to a run step.`);
   const runIndex = credentialStep.indexOf("\n        run:");
   assert.notEqual(runIndex, -1);
   assert.doesNotMatch(credentialStep.slice(runIndex + 1), /^      - run:/mu, `${credential} must be on the final shell step.`);
-  assert.doesNotMatch(definition.slice(0, stepStart), /secrets\./u, `${credential} must not be present before its scoped step.`);
+  assert.doesNotMatch(steps.slice(0, stepStart), /secrets\./u, `${credential} must not be present before its scoped step.`);
 }
 
 async function sha256(filePath: string): Promise<string> {
