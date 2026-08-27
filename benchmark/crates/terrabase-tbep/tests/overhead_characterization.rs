@@ -82,10 +82,13 @@ impl std::io::Write for CountingWriter {
     }
 }
 
-/// E-13: the registry is code-swept closed, and a representative
-/// maximal-identity frame of every written budget class keeps its measured
-/// per-frame overhead within the generated fixed envelope bound (plus the
-/// stream prefix on the wire).
+/// E-13 and E-14 together (one test so the allocation-counting windows
+/// stay quiet — see the E-14 case below): the registry is code-swept
+/// closed, a representative maximal-identity frame of every written
+/// budget class keeps its measured per-frame overhead within the
+/// generated fixed envelope bound (plus the stream prefix on the wire),
+/// and the stream write itself rides one pre-sized buffer and one write
+/// call.
 #[test]
 #[allow(clippy::too_many_lines, reason = "one representative frame per written budget class")]
 fn every_registry_kind_overhead_stays_within_the_fixed_bound() {
@@ -221,14 +224,24 @@ fn every_registry_kind_overhead_stays_within_the_fixed_bound() {
     )
     .expect("seals");
     assert!(envelope_overhead(&mutation) <= FIXED_ENVELOPE_BYTES + STREAM_PREFIX_BYTES);
+
+    stream_write_uses_one_buffer_and_one_write_case();
 }
 
 /// E-14: writing one frame to a stream performs exactly one write call —
 /// the length prefix and the envelope ride one pre-sized buffer — and
 /// strictly fewer allocations than the two-write path it replaces, on the
 /// same frame.
-#[test]
-fn stream_write_uses_one_buffer_and_one_write_call() {
+///
+/// This runs as a plain case INSIDE the E-13 test rather than as its own
+/// `#[test]`: the counting allocator is process-global, and the harness's
+/// main thread allocates to print a sibling test's completion — a print
+/// that can land inside this test's measured window and invert the count
+/// (observed as "11 vs 9" under a loaded workspace run). Inside one test
+/// there is no sibling completion to print, so the measured windows are
+/// quiet by construction; the SERIAL lock stays for any future measuring
+/// test.
+fn stream_write_uses_one_buffer_and_one_write_case() {
     let _measure = measure_exclusively();
     let frame = TbepFrame::seal(
         SyncDeltaPullResponse {
