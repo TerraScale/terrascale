@@ -38,6 +38,8 @@ mod lane;
 mod lane_tests;
 mod member;
 #[cfg(test)]
+mod observation_tests;
+#[cfg(test)]
 mod repair_tests;
 mod retention;
 #[cfg(test)]
