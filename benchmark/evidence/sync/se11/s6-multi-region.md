@@ -16,6 +16,9 @@ under the run's temp directory.
 
 Outcome: **PASS** (6/6 checks).
 
+Stand-in, recorded honestly: the cross-region link is the tracer's scripted re-submission of the same operation identities (same idempotency keys) through the other region's real write path — the member transport between serving engines is a named integrator action and is not wired today. The visibility, convergence, and lag assertions are real observations at each region's serving surface; the transport between them is not the engine's replication seam.
+
+
 | Check | Outcome | Detail |
 | --- | --- | --- |
 | `the write made through region a is visible through region b's delivery path (the reader's nearest region)` | pass | reader checkpoint on region b: {'storageSequence': 1, 'ends': [[1, 2]]} |

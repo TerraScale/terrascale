@@ -459,9 +459,10 @@ def normalized_deliveries(tracer: Tracer) -> list[tuple]:
 class Facts:
     """Collected per-scenario facts for the receipt writer."""
 
-    def __init__(self, name: str, title: str):
+    def __init__(self, name: str, title: str, note: str | None = None):
         self.name = name
         self.title = title
+        self.note = note
         self.checks: list[tuple[str, bool, str]] = []
 
     def check(self, name: str, passed: bool, detail: str) -> bool:
@@ -1244,7 +1245,19 @@ def scenario_tbep_link_loss(home: pathlib.Path, run_root: pathlib.Path) -> Facts
 
 
 def scenario_region_route_change(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
-    facts = Facts("s5-region-route-change", SCENARIO_TITLES["s5-region-route-change"])
+    facts = Facts(
+        "s5-region-route-change",
+        SCENARIO_TITLES["s5-region-route-change"],
+        note=(
+            "Stand-in, recorded honestly: the `region_route_change` advisory control frame has no "
+            "emission point on the host's HTTP surface today, so the tracer drives the vector's client "
+            "half exactly — the durable checkpoint carried to the new region, acknowledged there, nothing "
+            "re-delivered behind it. The two regions are two real engine + host pairs on distinct loopback "
+            "ports (serving instances 1 and 2); region b's journal is seeded by the tracer's re-submission "
+            "of the same operation identities through region b's real write path (the member transport "
+            "between serving engines is a named integrator action, not wired today)."
+        ),
+    )
     run_dir = run_root / "s5"
     gates = run_dir / "gates"
     gates.mkdir(parents=True, exist_ok=True)
@@ -1338,7 +1351,17 @@ def scenario_region_route_change(home: pathlib.Path, run_root: pathlib.Path) -> 
 
 
 def scenario_multi_region(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
-    facts = Facts("s6-multi-region", SCENARIO_TITLES["s6-multi-region"])
+    facts = Facts(
+        "s6-multi-region",
+        SCENARIO_TITLES["s6-multi-region"],
+        note=(
+            "Stand-in, recorded honestly: the cross-region link is the tracer's scripted re-submission of "
+            "the same operation identities (same idempotency keys) through the other region's real write "
+            "path — the member transport between serving engines is a named integrator action and is not "
+            "wired today. The visibility, convergence, and lag assertions are real observations at each "
+            "region's serving surface; the transport between them is not the engine's replication seam."
+        ),
+    )
     run_dir = run_root / "s6"
     gates = run_dir / "gates"
     gates.mkdir(parents=True, exist_ok=True)
@@ -1507,6 +1530,8 @@ def write_receipt(facts: Facts) -> None:
             dotnet=git_head(DOTNET_REPO),
         ),
         f"Outcome: **{'PASS' if facts.passed else 'FAIL'}** ({facts.summary()}).",
+        "",
+        *(f"{line}\n" for line in [facts.note] if facts.note),
         "",
         "| Check | Outcome | Detail |",
         "| --- | --- | --- |",
