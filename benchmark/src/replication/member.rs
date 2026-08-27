@@ -38,6 +38,10 @@ use crate::engine::{
     CommitError, CommitOutcome, DurableResolution, Engine, EngineConfig, EngineError,
     EngineOpenError,
 };
+use crate::families::{
+    FamilyError, FamilyMergeError, FamilyWriteRequest, RESERVED_COLLECTION, is_counter_record,
+    merge_counter_values,
+};
 use crate::storage::{PublishedCommit, PublishedWrite};
 use crate::types::{
     Document, DocumentId, ExpectedVersion, LocalDurability, OperationId, StorageSequence, TenantId,
@@ -257,6 +261,52 @@ impl ReplicationMember {
             self.key_states.insert(
                 key,
                 KeyState { stamp, writer: self.id.clone(), operation: write.operation.clone() },
+            );
+        }
+        self.activated = true;
+        Ok(receipt)
+    }
+
+    /// Commits one typed family write request locally (GAP-F07).
+    ///
+    /// The write stages through the member's own Engine family seam — the
+    /// same path a serving host uses — so the record value it publishes is
+    /// the merge encoding of `docs/families/counter-merge-encoding.md` and
+    /// the commit rides the publication journal like any document write.
+    /// Admission fencing applies exactly as for document writes (D-1): the
+    /// member must own the addressed range, the write is stamped with the
+    /// member's bounded hybrid logical clock, and the stamp is recorded for
+    /// the range and every record key the commit touched, so non-merging
+    /// family records (decision D4) compete under D-3 like documents.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::NotOwner`] when this member does not own the
+    /// addressed range, [`MemberError::EngineClosed`] when the engine is
+    /// closed, [`MemberError::ApplyFailed`] with
+    /// [`ApplyFailure::FamilyStage`] when a family rule rejects the write,
+    /// and the engine's typed failures otherwise.
+    pub(crate) fn commit_family_write(
+        &mut self,
+        scope: &TenantScope,
+        range: &str,
+        request: FamilyWriteRequest,
+    ) -> Result<crate::engine::CommitReceipt, MemberError> {
+        if self.config.topology().owner_of(range) != Some(&self.id) {
+            return Err(MemberError::NotOwner { range: range.to_owned() });
+        }
+        let stamp = self.tick_local_clock();
+        let operation = request.operation_id().clone();
+        let engine = self.engine.as_ref().ok_or(MemberError::EngineClosed)?;
+        let receipt = commit_family_locally(engine, scope, request)?;
+        let keys = journaled_keys(engine, scope.tenant(), receipt.sequence())?;
+        self.operation_stamps.insert(operation.clone(), stamp);
+        self.operation_ranges.insert(operation.clone(), range.to_owned());
+        self.record_operation_sequence(&operation, receipt.sequence());
+        for key in keys {
+            self.key_states.insert(
+                key,
+                KeyState { stamp, writer: self.id.clone(), operation: operation.clone() },
             );
         }
         self.activated = true;
@@ -945,9 +995,15 @@ impl ReplicationMember {
         self.hlc = merge_stamp(self.hlc, stamp);
         let keys = written_keys(tenant, &stamped.commit);
         // Every recorded state of the touched keys competes, regardless of
-        // whether this member or a remote peer wrote it.
-        let competing: Vec<(&(TenantId, DocumentId), &KeyState)> =
-            self.key_states.iter().filter(|(key, _)| keys.contains(key)).collect();
+        // whether this member or a remote peer wrote it — except counter
+        // family records, which merge instead of competing (GAP-F07
+        // decision D1): an incoming counter write always applies, so a
+        // concurrent increment is never conflict-skipped.
+        let competing: Vec<(&(TenantId, DocumentId), &KeyState)> = self
+            .key_states
+            .iter()
+            .filter(|(key, _)| keys.contains(key) && !is_counter_record(&key.1))
+            .collect();
         if competing.is_empty() {
             return Incoming::Apply;
         }
@@ -1008,6 +1064,10 @@ impl ReplicationMember {
     /// [`CommitError::OperationIdReuse`] rejection (a different write set
     /// under a live identity). The pre-resolve only classifies the outcome
     /// for the caller's accounting.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one apply pass: identity dedup, counter merge, staging, and commit accounting"
+    )]
     fn apply_one(
         &mut self,
         scope: &TenantScope,
@@ -1022,18 +1082,66 @@ impl ReplicationMember {
                 .map_err(MemberError::from)?,
             DurableResolution::Committed(_)
         );
+        // Identity-scoped delta dedup for merged counter records (GAP-F07
+        // decision D3): the first application of this operation already
+        // merged its effects into the local record, so a redelivery —
+        // duplicate frames, a source's retry, another member's journal —
+        // resolves by identity and stages nothing. Restaging a merged value
+        // under a live identity would trip the operation ledger's
+        // identity->write-set guard once later operations merged on top;
+        // resolving by identity is also the fail-closed answer to a hostile
+        // delivery reusing the identity with different contents: the
+        // durable first binding wins and the hostile value is dropped,
+        // never merged.
+        if already_committed && commit.writes().iter().any(is_mergeable_counter_write) {
+            self.operation_stamps.entry(commit.operation_id().clone()).or_insert(stamped.stamp);
+            self.record_operation_sequence(commit.operation_id(), commit.sequence());
+            for key in written_keys(scope.tenant(), commit) {
+                self.key_states.insert(
+                    key,
+                    KeyState {
+                        stamp: stamped.stamp,
+                        writer: source.clone(),
+                        operation: commit.operation_id().clone(),
+                    },
+                );
+            }
+            return Ok(ApplyStep::Duplicate);
+        }
         let snapshot = engine.read_snapshot(scope).map_err(MemberError::from)?;
         let mut transaction = engine
             .begin(scope, snapshot, commit.operation_id().clone())
             .map_err(MemberError::from)?;
+        let mut staged_anything = false;
         for write in commit.writes() {
             match write {
                 PublishedWrite::Put { document } => {
-                    transaction
-                        .put(document.clone(), ExpectedVersion::Any)
-                        .map_err(MemberError::from)?;
+                    let staged =
+                        mergeable_counter_put(document, &mut transaction).map_err(|reason| {
+                            MemberError::ApplyFailed {
+                                operation: commit.operation_id().clone(),
+                                reason,
+                            }
+                        })?;
+                    let document = match staged {
+                        Some(merged) => merged,
+                        None => document.clone(),
+                    };
+                    transaction.put(document, ExpectedVersion::Any).map_err(MemberError::from)?;
+                    staged_anything = true;
                 }
                 PublishedWrite::Delete { collection, id, version_at_delete } => {
+                    // A counter-record delete is the source's empty record
+                    // state: under merge the union keeps the local record,
+                    // so the delete stages nothing (decision record D1 —
+                    // record clears carry no merge information).
+                    if is_counter_record(id)
+                        && collection
+                            .as_ref()
+                            .is_some_and(|name| name.as_str() == RESERVED_COLLECTION)
+                    {
+                        continue;
+                    }
                     // The recorded key and version bind the replay: an
                     // identifier that currently lives in a different
                     // collection than the source deleted from is a typed
@@ -1054,8 +1162,15 @@ impl ReplicationMember {
                         ExpectedVersion::Exact(*version_at_delete)
                     };
                     transaction.delete(id.clone(), expected).map_err(MemberError::from)?;
+                    staged_anything = true;
                 }
             }
+        }
+        // A delivery whose every write was a counter-record delete staged
+        // nothing: there is no transaction to commit, and the operation's
+        // effects are already the local state.
+        if !staged_anything {
+            return Ok(ApplyStep::Duplicate);
         }
         match transaction.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => {
@@ -1580,6 +1695,121 @@ impl ReplicationCursor {
     }
 }
 
+/// Reports whether one published write is a counter family record put in
+/// the reserved collection (GAP-F07 decision D1): the writes that merge.
+fn is_mergeable_counter_write(write: &PublishedWrite) -> bool {
+    matches!(write, PublishedWrite::Put { document }
+        if document.collection().as_str() == RESERVED_COLLECTION && is_counter_record(document.id()))
+}
+
+/// Merges one incoming counter-record put against the local record the
+/// transaction observes.
+///
+/// Returns the merged document to stage, or `None` when the write is not a
+/// mergeable counter record (the caller stages it unchanged).
+///
+/// # Errors
+///
+/// Returns [`ApplyFailure::FamilyMerge`] when either side fails to decode
+/// as counter state or the merged total leaves the signed 64-bit range
+/// (decision record D1/D3: fail closed, never truncate).
+fn mergeable_counter_put(
+    document: &Document,
+    transaction: &mut crate::engine::Transaction<'_>,
+) -> Result<Option<Document>, ApplyFailure> {
+    if document.collection().as_str() != RESERVED_COLLECTION || !is_counter_record(document.id()) {
+        return Ok(None);
+    }
+    let local = transaction
+        .read(document.id())
+        .map_err(|_| ApplyFailure::Rejected(CommitError::StorageFailure))?;
+    let local_value = local
+        .filter(|existing| existing.collection().as_str() == RESERVED_COLLECTION)
+        .map(|existing| existing.value().clone());
+    let merged = merge_counter_values(local_value.as_ref(), document.value())
+        .map_err(ApplyFailure::FamilyMerge)?;
+    Ok(Some(Document::new(document.id().clone(), document.collection().clone(), merged)))
+}
+
+/// Commits one family write request through the Engine family seam
+/// (GAP-F07): the record value published here is the merge encoding, and
+/// the commit rides the publication journal like any document write.
+///
+/// # Errors
+///
+/// Returns [`MemberError::ApplyFailed`] with [`ApplyFailure::FamilyStage`]
+/// when a family rule rejects the write, and the engine's typed failures
+/// otherwise.
+fn commit_family_locally(
+    engine: &Engine,
+    scope: &TenantScope,
+    request: FamilyWriteRequest,
+) -> Result<crate::engine::CommitReceipt, MemberError> {
+    let operation = request.operation_id().clone();
+    let snapshot = engine.read_snapshot(scope).map_err(MemberError::from)?;
+    let mut transaction =
+        engine.begin(scope, snapshot, operation.clone()).map_err(MemberError::from)?;
+    engine.families().stage(&mut transaction, request).map_err(|error| {
+        MemberError::ApplyFailed {
+            operation: operation.clone(),
+            reason: ApplyFailure::FamilyStage(error),
+        }
+    })?;
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(receipt) => Ok(receipt),
+        CommitOutcome::Rejected(reason) => {
+            Err(MemberError::ApplyFailed { operation, reason: ApplyFailure::Rejected(reason) })
+        }
+        CommitOutcome::Unknown(unknown) => {
+            match engine
+                .resolve_commit(scope, unknown.operation_id().clone())
+                .map_err(MemberError::from)?
+            {
+                DurableResolution::Committed(receipt) => Ok(receipt),
+                DurableResolution::Rejected(reason) => Err(MemberError::ApplyFailed {
+                    operation: unknown.operation_id().clone(),
+                    reason: ApplyFailure::Rejected(reason),
+                }),
+                DurableResolution::Pending => Err(MemberError::ApplyFailed {
+                    operation: unknown.operation_id().clone(),
+                    reason: ApplyFailure::Pending,
+                }),
+            }
+        }
+    }
+}
+
+/// Returns the document keys one committed sequence touched, from the
+/// publication journal — the generic source of what a family write
+/// published, with no family layout knowledge in this module.
+///
+/// # Errors
+///
+/// Returns the engine's typed failures.
+fn journaled_keys(
+    engine: &Engine,
+    tenant: &TenantId,
+    sequence: StorageSequence,
+) -> Result<Vec<(TenantId, DocumentId)>, MemberError> {
+    let after = StorageSequence::new(sequence.get().saturating_sub(1));
+    let commits = engine.tenant_commits(tenant, after, 1).map_err(MemberError::from)?;
+    // The journal is advisory here; a journaled-record miss (the recorded
+    // repair-F2 divergence window) reports no keys rather than attributing
+    // a neighbor's write set to this commit.
+    let Some(commit) = commits.first().filter(|commit| commit.sequence() == sequence) else {
+        return Ok(Vec::new());
+    };
+    Ok(commit
+        .writes()
+        .iter()
+        .map(|write| match write {
+            PublishedWrite::Put { document } => document.id().clone(),
+            PublishedWrite::Delete { id, .. } => id.clone(),
+        })
+        .map(|id| (tenant.clone(), id))
+        .collect())
+}
+
 /// Commits one write request through the Engine transaction seam.
 #[allow(
     dead_code,
@@ -2023,6 +2253,13 @@ pub(crate) enum ApplyFailure {
     /// The replayed delete targeted a key whose collection differs from the
     /// one the source recorded.
     KeyMismatch,
+    /// A family write staged through the member's Engine was rejected by a
+    /// family rule (GAP-F07).
+    FamilyStage(FamilyError),
+    /// Two counter records could not merge: a malformed record, or a
+    /// merged total outside the signed 64-bit range (GAP-F07 decision
+    /// record D1/D3). The delivery is never partially applied.
+    FamilyMerge(FamilyMergeError),
     /// The outcome stayed undecided after durable resolution.
     Pending,
 }

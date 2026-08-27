@@ -326,42 +326,402 @@ impl AttachmentRecord {
 // Counter records
 // ---------------------------------------------------------------------------
 
+/// The writer tag of the pre-merge W3-F whole-value record form.
+///
+/// A legacy record decodes as one bucket under this reserved tag, so a
+/// pre-change record still reads and still merges. Two different legacy
+/// values cannot be distinguished (one tag), which is why the decision
+/// record calls legacy records single-writer by construction.
+const LEGACY_WRITER: &str = "legacy-v1";
+
+/// The largest bucket magnitude: bucket contributions stay inside the
+/// signed 64-bit range so the interchange encoding is exact and the live
+/// total is the only overflow point (decision record D1).
+const MAX_BUCKET_MAGNITUDE: u64 = 9_223_372_036_854_775_807;
+
+/// One writer's contribution to one counter (decision record D1,
+/// `docs/families/counter-merge-encoding.md`).
+///
+/// `p` accumulates positive deltas and `n` the magnitudes of negative
+/// deltas; the writer's contribution is `p - n`. `seq` is that writer's
+/// per-record monotone sequence and orders only the writer's own entries,
+/// so replaying a writer's delivery contributes nothing new.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CounterBucket {
+    pub(crate) p: u64,
+    pub(crate) n: u64,
+    pub(crate) seq: u64,
+}
+
+/// The per-counter delete tombstone: delete wins over concurrent
+/// increments, and the tombstone persists to fence stale writers (D2).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CounterTombstone {
+    pub(crate) writer: String,
+    pub(crate) seq: u64,
+}
+
+/// The stored state of one counter name.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CounterState {
+    pub(crate) buckets: BTreeMap<String, CounterBucket>,
+    pub(crate) tombstone: Option<CounterTombstone>,
+}
+
 /// The stored counters of one document.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct CounterRecord {
-    pub(crate) counters: BTreeMap<String, i64>,
+    pub(crate) counters: BTreeMap<String, CounterState>,
+}
+
+/// Why two counter records could not merge (decision record D1/D3).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FamilyMergeError {
+    /// A record value does not decode as counter state, or carries an
+    /// entry one engine could not have minted.
+    RecordInvalid,
+    /// The merged total of one counter does not fit the signed 64-bit
+    /// range, so the merge fails closed instead of truncating.
+    TotalOverflow,
 }
 
 impl CounterRecord {
     /// Decodes one record value.
+    ///
+    /// Decodes the per-writer merge form and, for durability of records
+    /// written before the merge encoding, the legacy whole-value form as a
+    /// single reserved-writer bucket. A value that mixes the two forms, or
+    /// carries any malformed entry, fails closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FamilyError::ReservedStateInvalid`] for any malformed
+    /// entry.
     pub(crate) fn decode(value: &DocumentValue) -> Result<Self, FamilyError> {
         let Some(fields) = map(value, "counters") else {
             return Err(FamilyError::ReservedStateInvalid);
         };
         let mut counters = BTreeMap::new();
         for (name, encoded) in fields {
-            let DocumentValue::Integer(number) = encoded else {
-                return Err(FamilyError::ReservedStateInvalid);
+            let state = match encoded {
+                // The legacy W3-F whole-value form.
+                DocumentValue::Integer(number) => {
+                    let mut buckets = BTreeMap::new();
+                    buckets.insert(
+                        LEGACY_WRITER.to_owned(),
+                        CounterBucket {
+                            p: u64::try_from((*number).max(0)).unwrap_or(0),
+                            n: (*number).min(0).unsigned_abs(),
+                            seq: 0,
+                        },
+                    );
+                    CounterState { buckets, tombstone: None }
+                }
+                DocumentValue::Object(entry) => decode_counter_state(entry)?,
+                _ => return Err(FamilyError::ReservedStateInvalid),
             };
-            counters.insert(name.clone(), *number);
+            counters.insert(name.clone(), state);
         }
         Ok(Self { counters })
     }
 
-    /// Encodes one record value.
+    /// Encodes one record value in the per-writer merge form.
     pub(crate) fn encode(&self) -> DocumentValue {
         object(vec![(
             "counters",
             DocumentValue::Object(
                 self.counters
                     .iter()
-                    .map(|(name, value)| (name.clone(), DocumentValue::Integer(*value)))
+                    .map(|(name, state)| {
+                        let mut fields = vec![(
+                            "buckets",
+                            DocumentValue::Object(
+                                state
+                                    .buckets
+                                    .iter()
+                                    .map(|(writer, bucket)| (writer.clone(), encode_bucket(bucket)))
+                                    .collect(),
+                            ),
+                        )];
+                        if let Some(tombstone) = &state.tombstone {
+                            fields.push(("tombstone", encode_tombstone(tombstone)));
+                        }
+                        (name.clone(), object(fields))
+                    })
                     .collect(),
             ),
         )])
     }
+
+    /// Returns the counter's live value, or `None` when the name is absent
+    /// or tombstoned (decision record D2).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FamilyMergeError::TotalOverflow`] when the live total
+    /// leaves the signed 64-bit range.
+    pub(crate) fn total(&self, name: &str) -> Result<Option<i64>, FamilyMergeError> {
+        let Some(state) = self.counters.get(name) else { return Ok(None) };
+        if state.tombstone.is_some() {
+            return Ok(None);
+        }
+        total_of(state).map(Some)
+    }
+
+    /// Returns every live counter name in canonical order.
+    pub(crate) fn live_names(&self) -> Vec<String> {
+        self.counters
+            .iter()
+            .filter(|(_, state)| state.tombstone.is_none() && !state.buckets.is_empty())
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
+    /// Reports whether the record holds no state at all: no live counters
+    /// and no tombstones. A tombstone keeps the record alive so a remote
+    /// stale increment has a record to merge into and be dominated by
+    /// (decision record D2).
+    pub(crate) fn is_empty(&self) -> bool {
+        self.counters.values().all(|state| state.tombstone.is_none() && state.buckets.is_empty())
+    }
+
+    /// Returns this writer's next per-record sequence.
+    ///
+    /// The sequence is one per batch: every entry a single staged batch
+    /// writes for this writer carries the same sequence, which keeps a
+    /// batch's entries comparable under merge.
+    pub(crate) fn next_seq(&self, writer: &str) -> u64 {
+        let mut highest = 0;
+        for state in self.counters.values() {
+            if let Some(bucket) = state.buckets.get(writer) {
+                highest = highest.max(bucket.seq);
+            }
+            if let Some(tombstone) = &state.tombstone
+                && tombstone.writer == writer
+            {
+                highest = highest.max(tombstone.seq);
+            }
+        }
+        highest + 1
+    }
+
+    /// Applies one increment for a writer at its batch sequence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FamilyError::TombstoneConflict`] when the name carries a
+    /// tombstone (re-creation fails closed, D2) and
+    /// [`FamilyError::CounterOverflow`] when a bucket magnitude or the
+    /// projected live total leaves the representable range.
+    pub(crate) fn increment(
+        &mut self,
+        writer: &str,
+        seq: u64,
+        name: &str,
+        delta: i64,
+    ) -> Result<(), FamilyError> {
+        let state = self.counters.entry(name.to_owned()).or_default();
+        if state.tombstone.is_some() {
+            return Err(FamilyError::TombstoneConflict);
+        }
+        let bucket =
+            state.buckets.entry(writer.to_owned()).or_insert(CounterBucket { p: 0, n: 0, seq });
+        bucket.seq = bucket.seq.max(seq);
+        let magnitude = delta.unsigned_abs();
+        if magnitude > MAX_BUCKET_MAGNITUDE {
+            return Err(FamilyError::CounterOverflow);
+        }
+        let (add_p, add_n) = if delta.is_positive() { (magnitude, 0) } else { (0, magnitude) };
+        let candidate_p = bucket.p.saturating_add(add_p);
+        let candidate_n = bucket.n.saturating_add(add_n);
+        if candidate_p > MAX_BUCKET_MAGNITUDE || candidate_n > MAX_BUCKET_MAGNITUDE {
+            return Err(FamilyError::CounterOverflow);
+        }
+        bucket.p = candidate_p;
+        bucket.n = candidate_n;
+        total_of(state).map_err(|_| FamilyError::CounterOverflow)?;
+        Ok(())
+    }
+
+    /// Applies one delete for a writer at its batch sequence.
+    ///
+    /// A delete of an absent name is a no-op; a delete of a live name
+    /// tombstones it and drops the local buckets (delete wins, D2).
+    pub(crate) fn delete(&mut self, writer: &str, seq: u64, name: &str) {
+        let Some(state) = self.counters.get_mut(name) else { return };
+        if state.buckets.is_empty() && state.tombstone.is_none() {
+            self.counters.remove(name);
+            return;
+        }
+        state.buckets.clear();
+        state.tombstone = Some(CounterTombstone { writer: writer.to_owned(), seq });
+    }
+
+    /// Merges another record into this one (decision record D1/D2).
+    ///
+    /// Per counter name: per writer, the entry with the greater sequence
+    /// wins — two entries with one writer and sequence but different
+    /// contributions cannot be minted by one engine and fail closed — and
+    /// any tombstone dominates every bucket for the name. The merge is
+    /// commutative, associative, and idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FamilyMergeError::RecordInvalid`] for an entry one engine
+    /// could not have minted and [`FamilyMergeError::TotalOverflow`] when a
+    /// merged total leaves the signed 64-bit range.
+    pub(crate) fn merge(&self, other: &CounterRecord) -> Result<CounterRecord, FamilyMergeError> {
+        let mut merged = self.clone();
+        for (name, other_state) in &other.counters {
+            let state = merged.counters.entry(name.clone()).or_default();
+            for (writer, other_bucket) in &other_state.buckets {
+                match state.buckets.get(writer) {
+                    Some(local) if local.seq == other_bucket.seq => {
+                        if local != other_bucket {
+                            return Err(FamilyMergeError::RecordInvalid);
+                        }
+                    }
+                    Some(local) if local.seq > other_bucket.seq => {}
+                    _ => {
+                        state.buckets.insert(writer.clone(), *other_bucket);
+                    }
+                }
+            }
+            if let Some(other_tombstone) = &other_state.tombstone {
+                let stronger = match &state.tombstone {
+                    None => Some(other_tombstone.clone()),
+                    Some(local) => {
+                        if (other_tombstone.seq, &other_tombstone.writer)
+                            > (local.seq, &local.writer)
+                        {
+                            Some(other_tombstone.clone())
+                        } else {
+                            Some(local.clone())
+                        }
+                    }
+                };
+                state.tombstone = stronger;
+            }
+        }
+        // Delete wins over concurrent increments: a tombstoned name drops
+        // every bucket (D2), and every live total must still fit.
+        for state in merged.counters.values_mut() {
+            if state.tombstone.is_some() {
+                state.buckets.clear();
+            } else if !state.buckets.is_empty() {
+                total_of(state)?;
+            }
+        }
+        Ok(merged)
+    }
 }
 
+/// Encodes one bucket entry.
+fn encode_bucket(bucket: &CounterBucket) -> DocumentValue {
+    object(vec![
+        ("p", DocumentValue::Integer(i64::try_from(bucket.p).unwrap_or(i64::MAX))),
+        ("n", DocumentValue::Integer(i64::try_from(bucket.n).unwrap_or(i64::MAX))),
+        ("seq", DocumentValue::Integer(i64::try_from(bucket.seq).unwrap_or(0))),
+    ])
+}
+
+/// Encodes one tombstone entry.
+fn encode_tombstone(tombstone: &CounterTombstone) -> DocumentValue {
+    object(vec![
+        ("writer", DocumentValue::String(tombstone.writer.clone())),
+        ("seq", DocumentValue::Integer(i64::try_from(tombstone.seq).unwrap_or(0))),
+    ])
+}
+
+/// Returns the live total of one counter state, checked into `i64`.
+fn total_of(state: &CounterState) -> Result<i64, FamilyMergeError> {
+    let mut total: i128 = 0;
+    for bucket in state.buckets.values() {
+        total += i128::from(bucket.p);
+        total -= i128::from(bucket.n);
+    }
+    i64::try_from(total).map_err(|_| FamilyMergeError::TotalOverflow)
+}
+
+/// Reads one non-negative bounded magnitude field.
+fn magnitude(entry: &BTreeMap<String, DocumentValue>, key: &str) -> Option<u64> {
+    match entry.get(key) {
+        Some(DocumentValue::Integer(value)) if *value >= 0 => u64::try_from(*value).ok(),
+        _ => None,
+    }
+}
+
+/// Decodes one counter-name state from its object form.
+fn decode_counter_state(
+    entry: &BTreeMap<String, DocumentValue>,
+) -> Result<CounterState, FamilyError> {
+    let mut buckets = BTreeMap::new();
+    if let Some(encoded) = entry.get("buckets") {
+        let DocumentValue::Object(fields) = encoded else {
+            return Err(FamilyError::ReservedStateInvalid);
+        };
+        for (writer, bucket) in fields {
+            let DocumentValue::Object(bucket_fields) = bucket else {
+                return Err(FamilyError::ReservedStateInvalid);
+            };
+            let (Some(p), Some(n), Some(seq)) = (
+                magnitude(bucket_fields, "p"),
+                magnitude(bucket_fields, "n"),
+                magnitude(bucket_fields, "seq"),
+            ) else {
+                return Err(FamilyError::ReservedStateInvalid);
+            };
+            buckets.insert(writer.clone(), CounterBucket { p, n, seq });
+        }
+    }
+    let tombstone = match entry.get("tombstone") {
+        None | Some(DocumentValue::Null) => None,
+        Some(DocumentValue::Object(tombstone_fields)) => {
+            let Some(DocumentValue::String(writer)) = tombstone_fields.get("writer") else {
+                return Err(FamilyError::ReservedStateInvalid);
+            };
+            let Some(seq) = magnitude(tombstone_fields, "seq") else {
+                return Err(FamilyError::ReservedStateInvalid);
+            };
+            Some(CounterTombstone { writer: writer.clone(), seq })
+        }
+        _ => return Err(FamilyError::ReservedStateInvalid),
+    };
+    Ok(CounterState { buckets, tombstone })
+}
+
+/// Reports whether one document identifier is a counter family record.
+///
+/// The namespace check is the reserved record prefix; a non-reserved
+/// document occupying the same identifier is the recorded namespace
+/// collision, never a mergeable record.
+pub(crate) fn is_counter_record(id: &DocumentId) -> bool {
+    id.as_str().starts_with("family:counters/")
+}
+
+/// Merges one incoming counter-record value into a local value (decision
+/// record D1/D3): the replication apply path stages the merged value, and
+/// a missing local record merges as the incoming state alone.
+///
+/// # Errors
+///
+/// Returns the typed merge failure of [`CounterRecord::merge`].
+pub(crate) fn merge_counter_values(
+    local: Option<&DocumentValue>,
+    incoming: &DocumentValue,
+) -> Result<DocumentValue, FamilyMergeError> {
+    let incoming_record =
+        CounterRecord::decode(incoming).map_err(|_| FamilyMergeError::RecordInvalid)?;
+    let merged = match local {
+        None => incoming_record,
+        Some(value) => {
+            let local_record =
+                CounterRecord::decode(value).map_err(|_| FamilyMergeError::RecordInvalid)?;
+            local_record.merge(&incoming_record)?
+        }
+    };
+    Ok(merged.encode())
+}
 // ---------------------------------------------------------------------------
 // Time-series records
 // ---------------------------------------------------------------------------
