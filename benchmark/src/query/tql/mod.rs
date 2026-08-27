@@ -21,12 +21,14 @@
 //! existing W3-2 typed compile seam (`QueryStore::compile` through
 //! `QueryInput::typed`). Lowering is total over the grammar but exact: a
 //! construct the current seam cannot express without changing results —
-//! `or`, nested paths, `between`, `in`, `group by`, `load`, `include`,
-//! `distinct`, aliases that rename output keys, object constructors, and the
-//! gated predicate functions — fails closed with
+//! `or`, `not`, nested paths, `group by`, `include`, `distinct`, aliases
+//! that rename output keys, object constructors, where clauses over a
+//! loaded alias, and the gated predicate functions — fails closed with
 //! [`TqlErrorClass::UnsupportedForPlanning`] naming the construct, never a
-//! degraded plan. Extending the seam for those constructs is recorded work
-//! for the seam owner; this packet does not edit it.
+//! degraded plan. The GAP-EVAL packet extended the seam with `between`,
+//! `in`/`all in`, the string pattern functions, explicit nulls placement,
+//! and `load` bindings with alias-qualified projections; extending the seam
+//! for the remaining constructs is recorded work for the seam owner.
 //!
 //! The search, vector, and spatial predicates are in the grammar now and
 //! gated on [`TqlCapabilities`]: against an engine that does not report the

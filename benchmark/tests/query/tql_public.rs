@@ -578,17 +578,13 @@ fn lowering_fails_closed_for_constructs_the_seam_cannot_express() {
     for text in [
         "from orders where a = 1 or b = 2",
         "from orders where address.city = 'Oslo'",
-        "from orders where total between 1 and 2",
-        "from orders where id in ('a', 'b')",
         "select distinct name from orders",
         "select { id: id() } from orders",
         "select name as n from orders",
-        "from orders as o load o.customerId as c",
+        "from orders as o load o.customerId as c where c.region = 'EMEA'",
         "from orders include customerId",
         "select region, count() from orders group by region",
         "from @all_docs",
-        "from orders order by age asc nulls last",
-        "from orders order by age desc nulls first",
         "from orders where len(name) > 3",
     ] {
         let query = tql::parse(GrammarVersion::CURRENT, text, &parameters)

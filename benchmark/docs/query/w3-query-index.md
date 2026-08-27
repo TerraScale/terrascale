@@ -395,15 +395,13 @@ seam.
 - Fields are top-level only; there are no nested paths, aliases, parameters,
   aggregations, grouping, distinct, includes, suggestions, spatial, vector, or
   streaming forms, and no query explanation, timing, or statistics output.
-- The a3 exact comparison covers the `order by` comparator only. Range
-  predicate evaluation (`>`, `>=`, `<`, `<=`) still widens an `Integer`
-  operand into `f64` when the other operand is a `Number`, so a predicate can
-  answer from the rounded value above 2^53 — for example
-  `Integer(2^53 + 1) > Number(2^53.0)` evaluates false where the exact order
-  says greater. This affects predicate truth at that boundary, not ordering
-  and not totality (the predicate path returns an optional ordering and never
-  feeds a sort). Reusing the exact helper there changes observable predicate
-  results and is left for a focused follow-up with its own tests.
+- The a3 exact comparison originally covered the `order by` comparator
+  only, and range predicate evaluation (`>`, `>=`, `<`, `<=`) widened an
+  `Integer` operand into `f64` against a `Number`. GAP-EVAL (ticket #62)
+  closed that residual: the predicate path now runs the same exact
+  cross-encoding comparison as the order-by path, pinned by
+  `predicate_comparison_is_exact_across_integer_and_number_domains`
+  (`src/query/tests.rs`); see `docs/query/gap-eval-evaluator-parity.md`.
 - The totality property is exhaustive over its listed value set (the 2^53
   neighborhood, the `i64` and finite-`f64` extremes, the smallest magnitudes,
   the two zeroes, and nested containers), not over every representable float

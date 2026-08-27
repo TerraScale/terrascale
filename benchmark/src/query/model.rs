@@ -9,8 +9,8 @@
 use std::cmp::Ordering;
 
 use super::spec::{
-    OrderDirection, QueryCondition, QueryOrdering, QueryPaging, QueryPredicate, QueryProjection,
-    QuerySource, StalenessPolicy,
+    NullsPlacement, OrderDirection, QueryCondition, QueryLoad, QueryOrdering, QueryPaging,
+    QueryPredicate, QueryProjection, QuerySource, StalenessPolicy,
 };
 use crate::types::{Cancellation, Deadline, Document, DocumentValue, TenantId};
 
@@ -23,6 +23,7 @@ pub(crate) struct NormalizedQuery {
     projection: QueryProjection,
     paging: QueryPaging,
     staleness: StalenessPolicy,
+    loads: Vec<QueryLoad>,
     tenant_claim: Option<TenantId>,
     deadline: Option<Deadline>,
     cancellation: Option<Cancellation>,
@@ -38,6 +39,7 @@ impl NormalizedQuery {
         projection: QueryProjection,
         paging: QueryPaging,
         staleness: StalenessPolicy,
+        loads: Vec<QueryLoad>,
         tenant_claim: TenantId,
         deadline: Deadline,
         cancellation: Cancellation,
@@ -49,6 +51,7 @@ impl NormalizedQuery {
             projection,
             paging,
             staleness,
+            loads,
             tenant_claim: Some(tenant_claim),
             deadline: Some(deadline),
             cancellation: Some(cancellation),
@@ -73,6 +76,7 @@ impl NormalizedQuery {
             projection,
             paging,
             staleness,
+            loads: Vec::new(),
             tenant_claim: None,
             deadline: None,
             cancellation: None,
@@ -107,6 +111,11 @@ impl NormalizedQuery {
     /// Returns the typed staleness policy.
     pub(crate) const fn staleness(&self) -> &StalenessPolicy {
         &self.staleness
+    }
+
+    /// Returns the reference-resolution loads in declaration order.
+    pub(crate) fn loads(&self) -> &[QueryLoad] {
+        &self.loads
     }
 
     /// Returns the tenant claim, or `None` for the unbound V1 form.
@@ -178,6 +187,88 @@ fn matches_condition(condition: &QueryCondition, present: Option<&DocumentValue>
         QueryCondition::LessOrEqual { value, .. } => {
             matches!(compare(present, value), Some(Ordering::Less | Ordering::Equal))
         }
+        QueryCondition::Between { low, high, .. } => matches_between(present, low, high),
+        QueryCondition::In { values, .. } => match present {
+            // Any-of-nothing matches nothing, absence included.
+            _ if values.is_empty() => false,
+            Some(value) => values.iter().any(|candidate| carries(value, candidate)),
+            None => false,
+        },
+        QueryCondition::AllIn { values, .. } => match present {
+            // All-of-nothing is vacuously true for every document, absence
+            // included: V1 lowers an empty ContainsAll to TrueToken.
+            _ if values.is_empty() => true,
+            Some(value) => values.iter().all(|candidate| carries(value, candidate)),
+            None => false,
+        },
+        QueryCondition::StartsWith { value, .. } => {
+            matches_pattern(present, |text| text.starts_with(value.as_str()))
+        }
+        QueryCondition::EndsWith { value, .. } => {
+            matches_pattern(present, |text| text.ends_with(value.as_str()))
+        }
+        QueryCondition::Contains { value, .. } => {
+            matches_pattern(present, |text| text.contains(value.as_str()))
+        }
+    }
+}
+
+/// Reports whether one field value carries one candidate value: a scalar
+/// carries it by equality, an array when one element equals it. V1's index
+/// flattens array values into terms, so this one relation serves scalar `in`
+/// and array contains-any alike.
+fn carries(value: &DocumentValue, candidate: &DocumentValue) -> bool {
+    match value {
+        DocumentValue::Array(elements) => elements.contains(candidate),
+        _ => value == candidate,
+    }
+}
+
+/// Applies one string predicate to the string domain of a field: directly to
+/// a string value, or to any string element of an array value. No other
+/// value has string shape, so nothing else matches.
+fn matches_pattern(present: Option<&DocumentValue>, predicate: impl Fn(&str) -> bool) -> bool {
+    match present {
+        Some(DocumentValue::String(text)) => predicate(text),
+        Some(DocumentValue::Array(elements)) => elements
+            .iter()
+            .any(|element| matches!(element, DocumentValue::String(text) if predicate(text))),
+        _ => false,
+    }
+}
+
+/// Evaluates one inclusive range with V1's null-bound rule
+/// (`CoraxBooleanItem.BuildBetween`): a null bound is unbounded on its side,
+/// both-unbounded matches every present field value including explicit null,
+/// an unbounded upper side additionally admits explicit null, and two bounds
+/// order only orderable values.
+fn matches_between(
+    present: Option<&DocumentValue>,
+    low: &DocumentValue,
+    high: &DocumentValue,
+) -> bool {
+    let Some(value) = present else {
+        // Absence never carries the field, not even in the both-unbounded
+        // exists-or-null form.
+        return false;
+    };
+    let low_unbounded = matches!(low, DocumentValue::Null);
+    let high_unbounded = matches!(high, DocumentValue::Null);
+    match (low_unbounded, high_unbounded) {
+        (true, true) => true,
+        (true, false) => {
+            compare(Some(value), high).is_some_and(|ordering| ordering != Ordering::Greater)
+        }
+        (false, true) => {
+            matches!(value, DocumentValue::Null)
+                || compare(Some(value), low).is_some_and(|ordering| ordering != Ordering::Less)
+        }
+        (false, false) => {
+            let ordering = compare(Some(value), low);
+            let upper = compare(Some(value), high);
+            ordering.is_some_and(|ordering| ordering != Ordering::Less)
+                && upper.is_some_and(|upper| upper != Ordering::Greater)
+        }
     }
 }
 
@@ -187,20 +278,19 @@ fn matches_condition(condition: &QueryCondition, present: Option<&DocumentValue>
 /// `Number` compare numerically) and inside the text domain. Any other pair,
 /// including cross-type pairs and absent fields, has no ordering and evaluates
 /// to `None`, which makes the comparison conditions false rather than error.
+/// The mixed numeric pairs run the exact cross-encoding comparison
+/// ([`compare_integer_with_number`]): widening an integer into `f64` rounds
+/// above 2^53, where the float spacing exceeds one, and an
+/// inconsistent equivalence class is not a comparison.
 fn compare(present: Option<&DocumentValue>, literal: &DocumentValue) -> Option<Ordering> {
-    /// Widens one integer into the float domain of the unified numeric order.
-    #[allow(clippy::cast_precision_loss)]
-    fn widen(value: i64) -> f64 {
-        value as f64
-    }
     let present = present?;
     match (present, literal) {
         (DocumentValue::Integer(left), DocumentValue::Integer(right)) => Some(left.cmp(right)),
         (DocumentValue::Integer(left), DocumentValue::Number(right)) => {
-            ordered_f64(widen(*left), *right)
+            Some(compare_integer_with_number(*left, *right))
         }
         (DocumentValue::Number(left), DocumentValue::Integer(right)) => {
-            ordered_f64(*left, widen(*right))
+            Some(compare_integer_with_number(*right, *left).reverse())
         }
         (DocumentValue::Number(left), DocumentValue::Number(right)) => ordered_f64(*left, *right),
         (DocumentValue::String(left), DocumentValue::String(right)) => Some(left.cmp(right)),
@@ -376,20 +466,89 @@ fn compare_objects(
 
 /// Compares two documents under one typed ordering. The sort applied on top is
 /// stable, so equal keys keep the deterministic source order.
+///
+/// A seeded random ordering compares the per-document hash of the seed and
+/// the document identity, which is one fixed permutation per seed. A field
+/// key with an explicit nulls placement moves the missing-and-null group as
+/// one block to the block's side in either direction — V1's
+/// direction-independent `nulls first`/`nulls last` (the Corax mapping in
+/// `CoraxQueryBuilder.cs`: First is `NullsSmallest` ascending and
+/// `NullsLargest` descending, Last the mirror) — while the implicit
+/// placement keeps the seam's total document order unchanged.
 pub(crate) fn compare_documents(
     ordering: &QueryOrdering,
     left: &Document,
     right: &Document,
 ) -> Ordering {
+    if let Some(seed) = ordering.random_seed() {
+        return random_order_key(seed, left.id().as_str())
+            .cmp(&random_order_key(seed, right.id().as_str()));
+    }
     for key in ordering.keys() {
-        let ordering = compare_values(field_of(left, key.field()), field_of(right, key.field()));
-        let ordering = match key.direction() {
-            OrderDirection::Ascending => ordering,
-            OrderDirection::Descending => ordering.reverse(),
-        };
+        let ordering = compare_key(key, field_of(left, key.field()), field_of(right, key.field()));
         if ordering != Ordering::Equal {
             return ordering;
         }
     }
     Ordering::Equal
+}
+
+/// Compares one ordering key's field values under the key's direction and
+/// nulls placement.
+fn compare_key(
+    key: &super::spec::OrderingKey,
+    left: Option<&DocumentValue>,
+    right: Option<&DocumentValue>,
+) -> Ordering {
+    if key.nulls_placement() == NullsPlacement::Implicit {
+        return apply_direction(key.direction(), compare_values(left, right));
+    }
+    // The placed group is missing and null together: an index sort cannot
+    // separate an absent field from an explicit null, and neither does a
+    // placement.
+    let left_grouped = is_missing_or_null(left);
+    let right_grouped = is_missing_or_null(right);
+    if left_grouped != right_grouped {
+        let group_first = key.nulls_placement() == NullsPlacement::First;
+        let ordering = if left_grouped { Ordering::Less } else { Ordering::Greater };
+        return if group_first { ordering } else { ordering.reverse() };
+    }
+    if left_grouped && right_grouped {
+        // Inside the block the tracer order (missing before null) stays, in
+        // either direction: the placement owns the block's side, not the
+        // block's internal shape.
+        return rank(left).cmp(&rank(right));
+    }
+    apply_direction(key.direction(), compare_values(left, right))
+}
+
+/// Applies one key's direction to a value ordering.
+fn apply_direction(direction: OrderDirection, ordering: Ordering) -> Ordering {
+    match direction {
+        OrderDirection::Ascending => ordering,
+        OrderDirection::Descending => ordering.reverse(),
+    }
+}
+
+/// Reports whether one field value belongs to the missing-and-null group.
+fn is_missing_or_null(value: Option<&DocumentValue>) -> bool {
+    match value {
+        None | Some(DocumentValue::Null) => true,
+        Some(_) => false,
+    }
+}
+
+/// Computes the deterministic order key of one document under one seed.
+///
+/// FNV-1a over the seed and the document identity: a fixed, dependency-free
+/// hash whose only contract is that one seed yields one stable permutation.
+/// V1's two engines already produce different permutations for one seed, so
+/// matching a V1 sequence is not a parity obligation.
+fn random_order_key(seed: u64, id: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ seed;
+    for byte in id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }

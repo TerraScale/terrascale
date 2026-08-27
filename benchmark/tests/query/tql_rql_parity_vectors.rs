@@ -298,28 +298,28 @@ fn vectors() -> Vec<Vector> {
             expected: Expected::Lowers,
         },
         Vector {
-            name: "between-not-planned",
+            name: "between-lowers",
             rows: &["R12"],
             rql: "from orders where Freight between 10 and 20",
             tql: "from orders where freight between 10 and 20",
             parameters: vec![],
-            expected: Expected::NotPlanned("between"),
+            expected: Expected::Lowers,
         },
         Vector {
-            name: "in-membership-not-planned",
+            name: "in-membership-lowers",
             rows: &["R13"],
             rql: "from orders where ShipVia in (1, 2, 3)",
             tql: "from orders where shipVia in (1, 2, 3)",
             parameters: vec![],
-            expected: Expected::NotPlanned("in"),
+            expected: Expected::Lowers,
         },
         Vector {
-            name: "all-in-not-planned",
+            name: "all-in-lowers",
             rows: &["R14"],
             rql: "from orders where Tags all in ('red', 'blue')",
             tql: "from orders where tags all in ('red', 'blue')",
             parameters: vec![],
-            expected: Expected::NotPlanned("in"),
+            expected: Expected::Lowers,
         },
         Vector {
             name: "static-value-literals",
@@ -523,12 +523,14 @@ fn vectors() -> Vec<Vector> {
             expected: Expected::Rejected(TqlErrorClass::ParseError, None),
         },
         Vector {
-            name: "load-alias-projection-not-planned",
+            // The load clause itself lowers now (GAP-EVAL); the computed
+            // object-constructor projection is what still has no plan.
+            name: "load-with-computed-projection-not-planned",
             rows: &["R34"],
             rql: "from Orders as o load o.Customer as c select { buyer: c.Name }",
             tql: "select { buyer: c.name } from orders as o load o.customerId as c",
             parameters: vec![],
-            expected: Expected::NotPlanned("load"),
+            expected: Expected::NotPlanned("object constructor"),
         },
         // -------------------------------------------------------------------
         // Section 6 — function registry
@@ -542,20 +544,20 @@ fn vectors() -> Vec<Vector> {
             expected: Expected::Lowers,
         },
         Vector {
-            name: "starts-with-translated-not-planned",
+            name: "starts-with-translated-lowers",
             rows: &["R37"],
             rql: "from employees where startsWith(Name, 'ad')",
             tql: "from employees where starts_with(name, 'ad')",
             parameters: vec![],
-            expected: Expected::NotPlanned("call"),
+            expected: Expected::Lowers,
         },
         Vector {
-            name: "ends-with-translated-not-planned",
+            name: "ends-with-translated-lowers",
             rows: &["R38"],
             rql: "from employees where endsWith(Name, 'da')",
             tql: "from employees where ends_with(name, 'da')",
             parameters: vec![],
-            expected: Expected::NotPlanned("call"),
+            expected: Expected::Lowers,
         },
         Vector {
             name: "exact-modifier-not-planned",
@@ -899,12 +901,14 @@ fn vectors() -> Vec<Vector> {
         // Section 10 — load and include
         // -------------------------------------------------------------------
         Vector {
-            name: "load-aliases-not-planned",
+            // The load clause lowers (GAP-EVAL); the where on a loaded
+            // alias is the remaining unplanned half.
+            name: "load-alias-where-not-planned",
             rows: &["R80"],
             rql: "from Orders as o load o.Customer as c where c.Region = 'EMEA'",
             tql: "from orders as o load o.customerId as c where c.region = 'EMEA'",
             parameters: vec![],
-            expected: Expected::NotPlanned("load"),
+            expected: Expected::NotPlanned("path"),
         },
         Vector {
             name: "include-paths-not-planned",

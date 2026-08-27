@@ -841,8 +841,11 @@ impl QueryDemand {
 /// Where-clause fields come first in declaration order, then order-by fields
 /// that are not already present — V1's ordinal field order. A condition or
 /// ordering key that maps to no capability would contribute nothing; every
-/// condition of the closed W3-2 set maps to at least one, so a query with
-/// any condition or ordering key always demands its fields.
+/// condition of the closed set maps to at least one, so a query with any
+/// condition or ordering key always demands its fields. The expanded
+/// evaluator conditions classify the way V1 serves them: membership
+/// (`in`, `all in`) and the pattern matches are term-set lookups over the
+/// indexed field, and `between` is a range.
 pub(crate) fn demand_of(query: &NormalizedQuery) -> QueryDemand {
     let mut fields: Vec<IndexField> = Vec::new();
     for condition in query.predicate().conditions() {
@@ -850,11 +853,17 @@ pub(crate) fn demand_of(query: &NormalizedQuery) -> QueryDemand {
             super::QueryCondition::Equals { .. }
             | super::QueryCondition::NotEquals { .. }
             | super::QueryCondition::Exists { .. }
-            | super::QueryCondition::Missing { .. } => IndexCapability::Equality,
+            | super::QueryCondition::Missing { .. }
+            | super::QueryCondition::In { .. }
+            | super::QueryCondition::AllIn { .. }
+            | super::QueryCondition::StartsWith { .. }
+            | super::QueryCondition::EndsWith { .. }
+            | super::QueryCondition::Contains { .. } => IndexCapability::Equality,
             super::QueryCondition::GreaterThan { .. }
             | super::QueryCondition::GreaterOrEqual { .. }
             | super::QueryCondition::LessThan { .. }
-            | super::QueryCondition::LessOrEqual { .. } => IndexCapability::Ordering,
+            | super::QueryCondition::LessOrEqual { .. }
+            | super::QueryCondition::Between { .. } => IndexCapability::Ordering,
         };
         demand_field(&mut fields, condition.field(), capability);
     }
