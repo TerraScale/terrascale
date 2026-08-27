@@ -460,4 +460,87 @@ file static class BackboneStreamReading
             return null;
         }
     }
+
+    /// <summary>
+    /// Folds shed while a drop marker sat queued-but-unread survive the
+    /// marker's delivery: the next region's marker carries a boundary no
+    /// newer than those folds, so a shed region is never left unsurfaced
+    /// in-band (re-gate MINOR at integration, 2026-08-27).
+    /// </summary>
+    [Test]
+    public async Task ASecondRegionsMarkerKeepsFoldsFromWhileTheFirstWaited()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        var stream = await host.Hub.OpenAsync("tenant-a", "backend-operator", null, fromSequence: 1);
+
+        // Region 1: overflow the 64-deep queue with no consumer, then keep
+        // writing while the first marker sits queued (those folds are the
+        // point of the row).
+        ulong lastDelivered = 0;
+        StreamEvent.Dropped? first = null;
+        for (var index = 1; index <= 80; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"a-{index:D3}", $"op-a{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        for (var index = 81; index <= 100; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"a-{index:D3}", $"op-a{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        while (await stream.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
+        {
+            switch (frame)
+            {
+                case StreamEvent.Batch batch:
+                    lastDelivered = batch.Body.Events[^1].Sequence;
+                    break;
+                case StreamEvent.Trigger trigger:
+                    lastDelivered = trigger.Body.Sequence;
+                    break;
+                case StreamEvent.Dropped marker:
+                    first ??= marker;
+                    break;
+            }
+
+            if (first is not null)
+            {
+                break;
+            }
+        }
+
+        await Assert.That(first).IsNotNull();
+        var boundaryAfterFirst = lastDelivered;
+
+        // Region 2: overflow again after the first marker was delivered.
+        for (var index = 101; index <= 140; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"a-{index:D3}", $"op-a{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        StreamEvent.Dropped? second = null;
+        while (await stream.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
+        {
+            if (frame is StreamEvent.Dropped marker && !ReferenceEquals(marker, first))
+            {
+                second = marker;
+                break;
+            }
+        }
+
+        await Assert.That(second).IsNotNull();
+        // The second marker must not point past the folds shed while the
+        // first marker waited: its boundary stays within that span instead
+        // of jumping to region 2's own oldest.
+        await Assert.That(second!.ResumeFrom).IsLessThanOrEqualTo(boundaryAfterFirst + 40);
+        await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
+    }
+
 }
