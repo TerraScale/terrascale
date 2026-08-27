@@ -18,7 +18,9 @@
 //!   carrying each shard's receipt and the recorded limitation. A refused
 //!   shard makes the outcome [`ClusterOutcome::Partial`]: the shards that
 //!   already committed stay committed (there is no cross-shard rollback),
-//!   the refusal names the shard and the reason, and a re-drive replays
+//!   the refusal names the shard and the reason, the shards execution
+//!   never reached are recorded as unattempted (so the outcome partitions
+//!   the routed shards exactly), and a re-drive replays
 //!   committed shards idempotently by operation identity while retrying
 //!   only what refused.
 //!
@@ -53,7 +55,7 @@ pub const ATOMIC_WITHIN_ONE_SHARD: &str =
 pub const CROSS_SHARD_NOT_ATOMIC: &str = "cross-shard cluster operations are not atomic across shards: each shard commits its own shard-local transaction and the outcome records every shard's observable result";
 
 /// The recorded rollback limit of a partially refused cluster transaction.
-pub const NO_CROSS_SHARD_ROLLBACK: &str = "a refused shard does not roll back shards that already committed; the outcome names the committed and refused shards and a re-drive replays committed shards idempotently";
+pub const NO_CROSS_SHARD_ROLLBACK: &str = "a refused shard does not roll back shards that already committed; the outcome names the committed, refused, and unattempted shards and a re-drive replays committed shards idempotently";
 
 /// The recorded acknowledgement scope of any cluster commit.
 pub const SHARD_LOCAL_ACKNOWLEDGEMENT: &str = "a shard's commit receipt is a shard-local durability fact; database-wide acknowledgement is the replication plane's own observation and is never inferred here";
@@ -257,9 +259,13 @@ impl RoutedTransaction {
     /// routed under: a failover between the two refuses the stale shard
     /// with the sharding seam's fencing facts. Shards execute in canonical
     /// order; the first refusal stops the execution with the shards that
-    /// already committed recorded truthfully. A group's owner with no
-    /// seated scope refuses that shard: without backend-supplied tenant
-    /// context the shard cannot execute.
+    /// already committed recorded truthfully and the shards after the
+    /// refusal named as never attempted, so the outcome partitions the
+    /// routed shards exactly. A group's owner with no seated scope refuses
+    /// that shard: without backend-supplied tenant context the shard cannot
+    /// execute. A seated scope of another tenant refuses that shard too:
+    /// execution never writes through a foreign tenant's context, whatever
+    /// the caller seated.
     ///
     /// # Panics
     ///
@@ -275,12 +281,14 @@ impl RoutedTransaction {
         scopes: &[(MemberId, TenantScope)],
     ) -> ClusterOutcome {
         let mut committed: Vec<ShardCommit> = Vec::new();
-        for group in &self.groups {
+        for (index, group) in self.groups.iter().enumerate() {
+            let unattempted = &self.groups[index + 1..];
             for placement in group.placements() {
                 if let Err(error) = topology.authorize_placement(placement, &self.tenant) {
                     return refusal_outcome(
                         committed,
                         ShardRefusal::new(group.shard(), ShardWriteError::PlacementFenced(error)),
+                        unattempted,
                     );
                 }
             }
@@ -291,8 +299,23 @@ impl RoutedTransaction {
                         group.shard(),
                         ShardWriteError::ScopeMissing { owner: group.owner().clone() },
                     ),
+                    unattempted,
                 );
             };
+            if scope.1.tenant() != &self.tenant {
+                return refusal_outcome(
+                    committed,
+                    ShardRefusal::new(
+                        group.shard(),
+                        ShardWriteError::ScopeTenantMismatch {
+                            owner: group.owner().clone(),
+                            routed_for: self.tenant.clone(),
+                            seated: scope.1.tenant().clone(),
+                        },
+                    ),
+                    unattempted,
+                );
+            }
             match serving.resolve(group.owner(), &scope.1, &self.operation) {
                 Ok(Some(receipt)) => {
                     committed.push(ShardCommit { shard: group.shard(), receipt, replayed: true });
@@ -300,7 +323,11 @@ impl RoutedTransaction {
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    return refusal_outcome(committed, ShardRefusal::new(group.shard(), error));
+                    return refusal_outcome(
+                        committed,
+                        ShardRefusal::new(group.shard(), error),
+                        unattempted,
+                    );
                 }
             }
             match serving.commit(group.owner(), &scope.1, &self.operation, group.stages()) {
@@ -308,7 +335,11 @@ impl RoutedTransaction {
                     committed.push(ShardCommit { shard: group.shard(), receipt, replayed: false });
                 }
                 Err(error) => {
-                    return refusal_outcome(committed, ShardRefusal::new(group.shard(), error));
+                    return refusal_outcome(
+                        committed,
+                        ShardRefusal::new(group.shard(), error),
+                        unattempted,
+                    );
                 }
             }
         }
@@ -441,6 +472,17 @@ pub enum ShardWriteError {
         /// The owner with no seated scope.
         owner: MemberId,
     },
+    /// The seated tenant scope belongs to another tenant: execution never
+    /// writes the transaction through a foreign tenant's context, whatever
+    /// the caller seated.
+    ScopeTenantMismatch {
+        /// The owner whose seated scope names another tenant.
+        owner: MemberId,
+        /// The tenant this transaction was routed for.
+        routed_for: TenantId,
+        /// The tenant the seated scope belongs to.
+        seated: TenantId,
+    },
     /// The engine seam refused the shard-local transaction.
     Engine(EngineError),
     /// The shard-local transaction was rejected before publication; the
@@ -469,13 +511,18 @@ pub enum ClusterOutcome {
     },
     /// Some shards committed and one refused: the committed shards stay
     /// committed (no cross-shard rollback), the refusal names the refused
-    /// shard, and a re-drive is idempotent per shard.
+    /// shard, the shards after it are recorded as never attempted, and a
+    /// re-drive is idempotent per shard. Together the three parts partition
+    /// the routed shards exactly.
     Partial {
         /// The shards that committed before the refusal, in canonical
         /// shard order.
         committed: Vec<ShardCommit>,
         /// The first refusal, which stopped the execution.
         refused: ShardRefusal,
+        /// The shards execution never reached, in canonical shard order:
+        /// they executed nothing and hold no fact of this operation.
+        unattempted: Vec<ShardId>,
     },
     /// The first shard refused before anything committed.
     Refused {
@@ -499,12 +546,21 @@ impl ClusterOutcome {
     }
 }
 
-/// Assembles the outcome for a refusal after `committed` shards.
-fn refusal_outcome(committed: Vec<ShardCommit>, refused: ShardRefusal) -> ClusterOutcome {
+/// Assembles the outcome for a refusal after `committed` shards, naming
+/// the `unattempted` groups execution never reached.
+fn refusal_outcome(
+    committed: Vec<ShardCommit>,
+    refused: ShardRefusal,
+    unattempted: &[ShardWriteSet],
+) -> ClusterOutcome {
     if committed.is_empty() {
         ClusterOutcome::Refused { refused }
     } else {
-        ClusterOutcome::Partial { committed, refused }
+        ClusterOutcome::Partial {
+            committed,
+            refused,
+            unattempted: unattempted.iter().map(ShardWriteSet::shard).collect(),
+        }
     }
 }
 

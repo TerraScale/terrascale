@@ -11,7 +11,8 @@ use crate::replication::{MemberId, RegionId, TopologyView};
 use crate::sharding::coordination::{
     ATOMIC_WITHIN_ONE_SHARD, ClusterOutcome, ClusterStage, ClusterTransaction,
     ClusterTransactionError, EngineWriteServing, FailoverDecision, FailoverError, MemberRecovery,
-    RecoveryError, ShardLoss, ShardRecoveryReport, ShardRefusal, ShardWriteError,
+    RecoveryError, ShardCommit, ShardLoss, ShardRecoveryReport, ShardRefusal, ShardWriteError,
+    ShardWriteSet,
 };
 use crate::sharding::{
     BUCKET_SPACE, BucketRange, BucketRangeTable, RoutingRequest, ShardId, ShardTopology,
@@ -372,6 +373,107 @@ fn failover_plan_fences_the_deposed_owners_placements() {
     assert!(matches!(refused, ShardingError::PlacementOwnerSuperseded { .. }));
 }
 
+/// The next-table pair that replaces `shard/1`'s half with `shard/3` — an
+/// identity the seated table does not name — leaving `shard/2` exactly as
+/// seated.
+fn entering_shard_table() -> BucketRangeTable {
+    BucketRangeTable::try_new(&[
+        BucketRange::try_new(0, HALF_SPACE, ShardId::from_number(3)).expect("valid range"),
+        BucketRange::try_new(HALF_SPACE, BUCKET_SPACE, ShardId::from_number(2))
+            .expect("valid range"),
+    ])
+    .expect("valid table")
+}
+
+/// The next-view pair seating `shard/3` under `owner` at `epoch`, with
+/// `shard/2` kept exactly as the seated topology holds it.
+fn entering_shard_view(owner: &str, epoch: u64) -> TopologyView {
+    sharded_view()
+        .with_owner_at_epoch("shard/3", owner, epoch)
+        .expect("valid owner")
+        .with_owner_at_epoch("shard/2", "m-b1", 1)
+        .expect("valid owner")
+}
+
+#[test]
+fn failover_refuses_a_lost_owner_re_seated_through_a_new_shard_identity() {
+    let topology = sharded_topology();
+    let loss = ShardLoss::assess(&topology, &[member("m-a1")]).expect("assessment");
+
+    // shard/3 — an identity the table does not seat — takes shard/1's
+    // buckets under the declared-lost owner at shard/1's original epoch.
+    // The decision must judge every identity the next table seats, not
+    // only the ones the current table already seated.
+    let refused = FailoverDecision::decide(
+        &topology,
+        &loss,
+        entering_shard_table(),
+        entering_shard_view("m-a1", 1),
+    )
+    .expect_err("a new identity never launders a declared-lost owner back in");
+    assert_eq!(
+        refused,
+        FailoverError::EnteringShardLostOwner {
+            shard: ShardId::from_number(3),
+            owner: member("m-a1"),
+        },
+        "the entering shard's owner is checked against the declared loss"
+    );
+}
+
+#[test]
+fn failover_refuses_an_entering_shard_below_the_fencing_epoch() {
+    let topology = sharded_topology();
+    let loss = ShardLoss::assess(&topology, &[member("m-a1")]).expect("assessment");
+
+    // shard/3 enters under a surviving owner but at shard/1's original
+    // epoch: the ownership of those buckets would end where it stood, so
+    // anything fenced below that bar could return with the new identity.
+    let refused = FailoverDecision::decide(
+        &topology,
+        &loss,
+        entering_shard_table(),
+        entering_shard_view("m-a2", 1),
+    )
+    .expect_err("an entering shard must clear the fencing bar of its buckets");
+    assert_eq!(
+        refused,
+        FailoverError::EnteringShardEpochNotRaised {
+            shard: ShardId::from_number(3),
+            expectation: 1,
+            offered: 1,
+        },
+        "the entering identity must exceed the highest epoch the table held at its buckets"
+    );
+}
+
+#[test]
+fn failover_accepts_a_returning_shard_identity_above_the_fencing_epoch() {
+    let topology = sharded_topology();
+    let loss = ShardLoss::assess(&topology, &[member("m-a1")]).expect("assessment");
+
+    // The same seating with the epoch raised above the fencing bar is a
+    // legitimate return: the lost shard dispersed into the entering
+    // identity at an epoch that fences everything before it.
+    let plan = FailoverDecision::decide(
+        &topology,
+        &loss,
+        entering_shard_table(),
+        entering_shard_view("m-a2", 2),
+    )
+    .expect("a returning identity above the fencing bar seats");
+    assert!(plan.transfers().is_empty(), "no seated identity changed hands");
+    assert_eq!(plan.dispersed().len(), 1);
+    assert_eq!(plan.dispersed()[0].shard(), ShardId::from_number(1));
+    assert_eq!(
+        plan.dispersed()[0].allocations(),
+        &[(ShardId::from_number(3), u64::from(HALF_SPACE))],
+        "the dispersed buckets are named at their receiving identity"
+    );
+    assert_eq!(plan.topology().owner_of(ShardId::from_number(3)), Some(member("m-a2")));
+    assert_eq!(plan.topology().epoch_of(ShardId::from_number(3)), Some(2));
+}
+
 // ---------------------------------------------------------------------------
 // Cluster-scoped transactions
 // ---------------------------------------------------------------------------
@@ -509,7 +611,7 @@ fn cross_shard_failure_records_the_partial_commit_without_claiming_success() {
     let scopes = vec![(member("m-a1"), scope_of(&engine_a)), (member("m-b1"), scope_of(&engine_b))];
     let outcome =
         transaction.route(&topology).expect("routes").execute(&topology, &serving, &scopes);
-    let ClusterOutcome::Partial { committed, refused } = &outcome else {
+    let ClusterOutcome::Partial { committed, refused, .. } = &outcome else {
         panic!("a refused shard makes the outcome partial, got {outcome:?}");
     };
     assert_eq!(committed.len(), 1, "the shard that could commit did");
@@ -529,6 +631,139 @@ fn cross_shard_failure_records_the_partial_commit_without_claiming_success() {
     // The committed shard's document is observable; the refused shard's is
     // not, and no database-wide success is claimed.
     assert!(documents_of(&engine_a).contains(in_one.id()));
+}
+
+#[test]
+fn execution_refuses_a_scope_seated_for_another_tenant() {
+    let topology = sharded_topology();
+    let engine_a = open_engine("scope-mismatch", "m-a1");
+    let serving = EngineWriteServing::try_new(vec![(member("m-a1"), &engine_a)]).expect("seats");
+
+    let document = document_for_shard(&topology, ShardId::from_number(1));
+    let transaction = ClusterTransaction::try_new(
+        tenant(),
+        OperationId::try_new("cluster-op-scope-tenant").expect("valid operation"),
+        vec![ClusterStage::Put(document)],
+    )
+    .expect("valid transaction");
+
+    // The caller seats m-a1's scope for a foreign tenant: execution must
+    // refuse rather than write the transaction through another tenant's
+    // context.
+    let foreign = TenantId::try_new("tenant-foreign").expect("valid tenant");
+    let scopes =
+        vec![(member("m-a1"), TenantScope::from_parts(foreign.clone(), engine_a.identity()))];
+    let outcome =
+        transaction.route(&topology).expect("routes").execute(&topology, &serving, &scopes);
+    let ClusterOutcome::Refused { refused } = &outcome else {
+        panic!("a seated scope of another tenant refuses, got {outcome:?}");
+    };
+    assert_eq!(refused.shard(), ShardId::from_number(1));
+    assert_eq!(
+        refused.error(),
+        &ShardWriteError::ScopeTenantMismatch {
+            owner: member("m-a1"),
+            routed_for: tenant(),
+            seated: foreign,
+        },
+        "the refusal names the seated tenant against the routed one"
+    );
+    assert!(documents_of(&engine_a).is_empty(), "the refused write landed under no tenant");
+}
+
+/// A three-shard topology: one third of the bucket space per shard, owned
+/// by one Member per shard at epoch 1.
+fn three_shard_topology() -> ShardTopology {
+    let third = BUCKET_SPACE / 3;
+    let two_thirds = 2 * third;
+    let view = sharded_view()
+        .with_owner("shard/1", "m-a1")
+        .expect("valid owner")
+        .with_owner("shard/2", "m-b1")
+        .expect("valid owner")
+        .with_owner("shard/3", "m-g1")
+        .expect("valid owner");
+    let table = BucketRangeTable::try_new(&[
+        BucketRange::try_new(0, third, ShardId::from_number(1)).expect("valid range"),
+        BucketRange::try_new(third, two_thirds, ShardId::from_number(2)).expect("valid range"),
+        BucketRange::try_new(two_thirds, BUCKET_SPACE, ShardId::from_number(3))
+            .expect("valid range"),
+    ])
+    .expect("valid table");
+    ShardTopology::try_new(table, view).expect("seats")
+}
+
+#[test]
+fn partial_outcomes_name_the_shards_execution_never_reached() {
+    let topology = three_shard_topology();
+    let engine_a = open_engine("partial-three", "m-a1");
+    let engine_b = open_engine("partial-three", "m-b1");
+    let engine_g = open_engine("partial-three", "m-g1");
+    // m-b1's endpoint is absent: shard/2 refuses after shard/1 committed,
+    // and shard/3 is never attempted.
+    let serving =
+        EngineWriteServing::try_new(vec![(member("m-a1"), &engine_a), (member("m-g1"), &engine_g)])
+            .expect("seats");
+
+    let stages = [1, 2, 3]
+        .map(|number| {
+            ClusterStage::Put(document_for_shard(&topology, ShardId::from_number(number)))
+        })
+        .to_vec();
+    let transaction = ClusterTransaction::try_new(
+        tenant(),
+        OperationId::try_new("cluster-op-three").expect("valid operation"),
+        stages,
+    )
+    .expect("valid transaction");
+    let routed = transaction.route(&topology).expect("routes");
+    assert_eq!(routed.shard_count(), 3, "the transaction spans three shards");
+
+    let scopes = vec![
+        (member("m-a1"), scope_of(&engine_a)),
+        (member("m-b1"), scope_of(&engine_b)),
+        (member("m-g1"), scope_of(&engine_g)),
+    ];
+    let outcome = routed.execute(&topology, &serving, &scopes);
+    let ClusterOutcome::Partial { committed, refused, unattempted } = &outcome else {
+        panic!("a refusal after a commit is partial, got {outcome:?}");
+    };
+    assert_eq!(committed.len(), 1, "shard/1 committed before the refusal");
+    assert_eq!(committed[0].shard(), ShardId::from_number(1));
+    assert_eq!(refused.shard(), ShardId::from_number(2));
+    assert_eq!(
+        unattempted,
+        &[ShardId::from_number(3)],
+        "the never-attempted shard is named, not silently dropped"
+    );
+    // The three outcome parts partition the routed shards exactly.
+    let mut partitioned: Vec<ShardId> = committed.iter().map(ShardCommit::shard).collect();
+    partitioned.push(refused.shard());
+    partitioned.extend_from_slice(unattempted);
+    partitioned.sort_unstable();
+    let mut routed_shards: Vec<ShardId> =
+        routed.groups().iter().map(ShardWriteSet::shard).collect();
+    routed_shards.sort_unstable();
+    assert_eq!(partitioned, routed_shards, "every routed shard appears in exactly one part");
+    assert!(documents_of(&engine_g).is_empty(), "the unattempted shard executed nothing");
+
+    // Refused at the very first shard of three: nothing commits, the
+    // outcome is the refusal, and no later shard executed anything.
+    let first_refused_serving =
+        EngineWriteServing::try_new(vec![(member("m-g1"), &engine_g)]).expect("seats");
+    let outcome = transaction.route(&topology).expect("routes").execute(
+        &topology,
+        &first_refused_serving,
+        &scopes,
+    );
+    let ClusterOutcome::Refused { refused } = &outcome else {
+        panic!("a refusal before any commit names only the refusal, got {outcome:?}");
+    };
+    assert_eq!(refused.shard(), ShardId::from_number(1));
+    assert!(
+        documents_of(&engine_b).is_empty() && documents_of(&engine_g).is_empty(),
+        "execution never reached past the first refusal"
+    );
 }
 
 #[test]

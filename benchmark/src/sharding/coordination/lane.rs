@@ -604,7 +604,7 @@ fn lane_cross_shard_transaction_refuses_partially_and_completes_after_failover()
     // the serving set that still has shard/1's owner.
     lane.close("m-b1");
     let partial = lane.write(&topology, operation, vec![in_one.clone(), in_two.clone()], &["m-a1"]);
-    let ClusterOutcome::Partial { committed, refused } = &partial else {
+    let ClusterOutcome::Partial { committed, refused, .. } = &partial else {
         panic!("expected a partial outcome, got {partial:?}");
     };
     assert_eq!(committed.len(), 1, "shard/1 committed before the refusal");

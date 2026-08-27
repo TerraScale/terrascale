@@ -35,8 +35,18 @@ below with its scope).
     (`DispersedShard` with per-receiving-shard bucket counts);
   - the declared-lost owner is never re-seated (`LostOwnerRetained`) and
     a lost successor is refused (`SuccessorLost`);
+  - a shard identity the seated table does not name — a new or returning
+    identity entering the table — is judged as a claim on the buckets it
+    takes, never as a fact of a brand-new identity: its owner must
+    survive the declared loss (`EnteringShardLostOwner`) and its epoch
+    must exceed the fencing bar of those buckets
+    (`EnteringShardEpochNotRaised`), so a deposed owner cannot re-enter
+    through a re-identified shard at the epoch it was deposed from;
   - the sharding seam's own seating and epoch-monotonicity rules
-    (`ShardTopology::transition`) apply unchanged.
+    (`ShardTopology::transition`) apply unchanged, including the seam's
+    entering-identity fencing bar
+    (`ShardingError::EnteringShardEpochNotRaised`), which every
+    transition enforces — not only failover.
 - Deposed-owner fencing is not re-implemented: the plan's seated topology
   refuses the deposed owner's placements through the existing
   `authorize_placement` checks (`PlacementOwnerSuperseded`,
@@ -60,16 +70,20 @@ with an explicitly recorded atomicity boundary:
   (`CROSS_SHARD_NOT_ATOMIC`, `NO_CROSS_SHARD_ROLLBACK`,
   `SHARD_LOCAL_ACKNOWLEDGEMENT`). A refused shard makes the outcome
   `Partial`: committed shards stay committed, the refusal names the shard
-  and reason, and a re-drive replays committed shards idempotently while
-  retrying only what refused.
+  and reason, the shards execution never reached are recorded as
+  unattempted (committed, refused, and unattempted partition the routed
+  shards exactly), and a re-drive replays committed shards idempotently
+  while retrying only what refused.
 - A shard-local receipt is a `LocalDurability::Synced` fact about one
   shard's engine; database-wide acknowledgement is the replication
   plane's own observation and is never inferred here (ADR 0011 D1's
   "shard-local acknowledgement is never database success").
 - Tenant context is backend-supplied (PD-2026-08-26-11): the executor's
   caller seats one Platform-minted `TenantScope` per Member; an owner
-  with no seated scope refuses its shard (`ScopeMissing`), and the
-  engine seam validates every scope.
+  with no seated scope refuses its shard (`ScopeMissing`), a seated scope
+  of another tenant refuses it too (`ScopeTenantMismatch` — execution
+  never writes through a foreign tenant's context, whatever the caller
+  seated), and the engine seam validates every scope.
 
 This is a decision, not a gap in progress: cross-shard atomic commit
 would require a distributed-commit protocol that the accepted model does
@@ -118,7 +132,9 @@ by the SH-05 fault lane. What this lane proves directly:
   transition rules, re-validated under loss).
 - **PB-5019 (membership/topology)** — stale topology fails closed
   (`LostOwnerRetained`, `SuccessorLost`, `PlacementEpochSuperseded`);
-  failover never resurrects a declared-lost owner.
+  failover never resurrects a declared-lost owner, directly or through a
+  re-identified shard entering the table
+  (`EnteringShardLostOwner`, `EnteringShardEpochNotRaised`).
 - **PB-5020 (failover/member loss)** — lost-leader shards stop committing
   (refused writes land nowhere); survivors take over at raised epochs;
   receipts name surviving Members and failure domains.

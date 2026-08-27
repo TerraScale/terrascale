@@ -274,8 +274,12 @@ impl FailoverDecision {
     /// moves on healthy shards are migration decisions, not failover), a
     /// lost shard is either transferred to a surviving successor at a
     /// raised epoch or dispersed into other shards, and the declared-lost
-    /// owner is never re-seated. The seating and epoch rules of the
-    /// sharding seam ([`ShardTopology::transition`]) apply unchanged.
+    /// owner is never re-seated. Shard identities entering the table are
+    /// judged as claims on the buckets they take: their owner must survive
+    /// the declared loss and their epoch must exceed the fencing bar of
+    /// those buckets, so a lost owner cannot re-enter through a
+    /// re-identified shard. The seating and epoch rules of the sharding
+    /// seam ([`ShardTopology::transition`]) apply unchanged.
     ///
     /// # Errors
     ///
@@ -284,8 +288,10 @@ impl FailoverDecision {
     /// as [`FailoverError::Routing`], and the failover-shape refusals
     /// [`FailoverError::HealthyShardOwnerReplaced`],
     /// [`FailoverError::HealthyShardShrunk`],
-    /// [`FailoverError::SuccessorLost`], and
-    /// [`FailoverError::LostOwnerRetained`].
+    /// [`FailoverError::SuccessorLost`],
+    /// [`FailoverError::LostOwnerRetained`],
+    /// [`FailoverError::EnteringShardLostOwner`], and
+    /// [`FailoverError::EnteringShardEpochNotRaised`].
     pub fn decide(
         topology: &ShardTopology,
         loss: &ShardLoss,
@@ -355,6 +361,33 @@ impl FailoverDecision {
                     allocate_range(next.table(), &range, &mut allocations);
                 }
                 dispersed.push(DispersedShard { shard, from: owner.clone(), allocations });
+            }
+        }
+
+        // Identities the seated table does not name enter the topology over
+        // the buckets of lost shards. They are judged as claims on those
+        // buckets, never as facts of a brand-new identity: a declared-lost
+        // owner cannot re-enter through one, and its epoch must fence
+        // everything the buckets held before.
+        let seated_shards = topology.table().shards();
+        for shard in next.table().shards() {
+            if seated_shards.contains(&shard) {
+                continue;
+            }
+            let owner = next
+                .owner_of(shard)
+                .ok_or(FailoverError::Routing(ShardingError::ShardWithoutOwner { shard }))?;
+            if loss.lost_members().contains(&owner) {
+                return Err(FailoverError::EnteringShardLostOwner { shard, owner });
+            }
+            let expectation = topology.fencing_expectation_over(&next.table().ranges_of(shard));
+            let offered = next.epoch_of(shard).unwrap_or(1);
+            if offered <= expectation {
+                return Err(FailoverError::EnteringShardEpochNotRaised {
+                    shard,
+                    expectation,
+                    offered,
+                });
             }
         }
 
@@ -560,6 +593,29 @@ pub enum FailoverError {
         shard: ShardId,
         /// The declared-lost owner the view retained.
         owner: MemberId,
+    },
+    /// A shard identity the seated table does not name entered the table
+    /// under a declared-lost owner: a new identity never launders a lost
+    /// Member back into ownership.
+    EnteringShardLostOwner {
+        /// The entering shard identity.
+        shard: ShardId,
+        /// The declared-lost owner the entering shard seated.
+        owner: MemberId,
+    },
+    /// A shard identity the seated table does not name entered the table at
+    /// an epoch that does not exceed the fencing bar of its buckets: the
+    /// entering identity must fence every ownership its buckets held
+    /// before, so a deposed owner cannot return through it at the epoch it
+    /// was deposed from.
+    EnteringShardEpochNotRaised {
+        /// The entering shard identity.
+        shard: ShardId,
+        /// The fencing bar of the entering shard's buckets: the highest
+        /// epoch the seated topology holds over them.
+        expectation: u64,
+        /// The epoch the entering shard was offered.
+        offered: u64,
     },
     /// The seating or transition refused the offered pair; the sharding
     /// seam's own epoch and validation rules stand unchanged.
