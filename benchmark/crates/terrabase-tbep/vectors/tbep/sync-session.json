@@ -1,0 +1,37 @@
+{
+  "adversarial": [],
+  "category": "sync-session",
+  "description": "The sync-delivery family (PD-2026-08-26-12): session setup and one server-ack mutation whose idempotency key is the at-least-once retry identity; no optimistic patches exist on this channel. The composite-valued mutation is legal on the wire (the value type is recursive) and is rejected by the serving host with the typed invalid_body outcome — the scalar serving domain, never silent coercion.",
+  "frames": [
+    {
+      "body": "92a66f7264657273c40401020304",
+      "causation": 0,
+      "correlation": 6,
+      "idempotency": null,
+      "kind": "SyncSessionSetupRequest",
+      "overhead_bytes": 23,
+      "wire": "9701cd01200600c0cf66785041dcb7a4bcc40e92a66f7264657273c40401020304"
+    },
+    {
+      "body": "9301a4642d303192019192a3717479920203",
+      "causation": 0,
+      "correlation": 5,
+      "idempotency": "op-42",
+      "kind": "SyncMutationSubmitRequest",
+      "overhead_bytes": 28,
+      "wire": "9701cd01240500a56f702d3432cf333a1389bbdc97b3c4129301a4642d303192019192a3717479920203"
+    },
+    {
+      "body": "9301a4642d303292019292a4746167739205919204a17892a66e657374656492069192a161920201",
+      "causation": 0,
+      "correlation": 13,
+      "idempotency": "op-composite",
+      "kind": "SyncMutationSubmitRequest",
+      "overhead_bytes": 35,
+      "wire": "9701cd01240d00ac6f702d636f6d706f73697465cfe3e0ad6bffb09c94c4289301a4642d303292019292a4746167739205919204a17892a66e657374656492069192a161920201"
+    }
+  ],
+  "protocol": "terrabase.engine.protocol",
+  "schema": "terrabase.engine.protocol/vector-corpus@1",
+  "wire_version": 1
+}

@@ -1,0 +1,28 @@
+{
+  "adversarial": [],
+  "category": "channel-bind",
+  "description": "The backend-supplied channel binding gates every tenant-scoped operation (PD-2026-08-26-11 D1): no frame carries a tenant; the bound channel does.",
+  "frames": [
+    {
+      "body": "92a76261636b656e64a874656e616e742d61",
+      "causation": 0,
+      "correlation": 1,
+      "idempotency": null,
+      "kind": "ChannelBindRequest",
+      "overhead_bytes": 23,
+      "wire": "9701cd01400100c0cffebbd5fa1430f580c41292a76261636b656e64a874656e616e742d61"
+    },
+    {
+      "body": "92a76261636b656e64a874656e616e742d62",
+      "causation": 18446744073709551615,
+      "correlation": 18446744073709551615,
+      "idempotency": null,
+      "kind": "ChannelBindRequest",
+      "overhead_bytes": 39,
+      "wire": "9701cd0140cfffffffffffffffffcfffffffffffffffffc0cffebbd8fa1430fa99c41292a76261636b656e64a874656e616e742d62"
+    }
+  ],
+  "protocol": "terrabase.engine.protocol",
+  "schema": "terrabase.engine.protocol/vector-corpus@1",
+  "wire_version": 1
+}
