@@ -259,6 +259,98 @@ fn a_declared_bound_may_not_exceed_the_journals_durable_head() {
     );
 }
 
+/// The store-backed declaration form (GAP-S1 D5) carries the same three
+/// fail-closed gates as the windowed one, and merges the bound record's
+/// non-deletion facts by max — never lowering a recorded fact. These rows
+/// pin the form's own contract; the engine-level path that drives it in
+/// production is covered by the data-bearing engine test in
+/// `src/engine/tests.rs`.
+#[test]
+fn a_retained_declaration_is_gated_and_merges_non_deletion_facts_by_max() {
+    // D2.4: the restored bound may not exceed the journal's durable head.
+    let mut retention = TombstoneRetention::new(None);
+    let refused = retention
+        .declare_history_bound_retained(sequence(5), sequence(4), &[], true)
+        .expect_err("the store-backed bound may not pass the journal's durable head");
+    assert_eq!(
+        refused,
+        RetentionRefusal::BoundBeyondWindow { head: sequence(4), candidate: sequence(5) }
+    );
+    assert_eq!(retention.history_bound(), None, "the bound did not move");
+
+    // D2.3: the restored evidence must be asserted durable.
+    let refused = retention
+        .declare_history_bound_retained(sequence(4), sequence(4), &[(tenant("tenant-a"), Some(sequence(2)))], false)
+        .expect_err("the store-backed declaration must assert durability");
+    assert_eq!(refused, RetentionRefusal::EvidenceNotDurable { bound: sequence(4) });
+    assert_eq!(retention.history_bound(), None, "the bound did not move");
+    assert!(retention.non_deletion_through(&tenant("tenant-a")).is_none(),
+        "a refused declaration records no non-deletion fact");
+    assert_eq!(retention.refusals().len(), 2, "each refusal is observable");
+
+    // The accepted restoration records the bound and the store's facts.
+    retention
+        .declare_history_bound_retained(
+            sequence(4),
+            sequence(6),
+            &[(tenant("tenant-a"), Some(sequence(2)))],
+            true,
+        )
+        .expect("the store-backed declaration is accepted");
+    assert_eq!(retention.history_bound(), Some(sequence(4)));
+    assert_eq!(retention.non_deletion_through(&tenant("tenant-a")), Some(sequence(2)));
+
+    // Monotone: a regressing restoration is refused and the bound stands.
+    let regression = retention
+        .declare_history_bound_retained(sequence(3), sequence(6), &[], true)
+        .expect_err("the restored bound is monotone like the windowed one");
+    assert_eq!(
+        regression,
+        RetentionRefusal::BoundRegression { current: sequence(4), candidate: sequence(3) }
+    );
+    assert_eq!(retention.history_bound(), Some(sequence(4)));
+
+    // The non-deletion max-merge across later declarations: a seen value
+    // never lowers a recorded one, a `None` row records the tenant without
+    // claiming a put for it, and a higher seen value raises the fact.
+    retention
+        .declare_history_bound_retained(
+            sequence(5),
+            sequence(6),
+            &[(tenant("tenant-b"), Some(sequence(3)))],
+            true,
+        )
+        .expect("a rising restoration is accepted");
+    retention
+        .declare_history_bound_retained(
+            sequence(6),
+            sequence(6),
+            &[
+                (tenant("tenant-a"), Some(sequence(1))),
+                (tenant("tenant-b"), None),
+                (tenant("tenant-c"), Some(sequence(9))),
+            ],
+            true,
+        )
+        .expect("the later restoration is accepted");
+    assert_eq!(
+        retention.non_deletion_through(&tenant("tenant-a")),
+        Some(sequence(2)),
+        "a lower seen sequence never lowers the recorded fact"
+    );
+    assert_eq!(
+        retention.non_deletion_through(&tenant("tenant-b")),
+        Some(sequence(3)),
+        "a None row never erases a recorded put"
+    );
+    assert_eq!(
+        retention.non_deletion_through(&tenant("tenant-c")),
+        Some(sequence(9)),
+        "a higher seen sequence raises the recorded fact"
+    );
+    assert_eq!(retention.history_bound(), Some(sequence(6)));
+}
+
 #[test]
 fn holding_discloses_the_facts_dropped_below_the_floor() {
     // The same disclosure discipline as advance_floor and declare: a fact
