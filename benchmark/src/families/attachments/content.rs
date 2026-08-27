@@ -7,6 +7,15 @@
 //! collection as one manifest record plus bounded base64 segment records, so
 //! a reader never holds more than one segment in memory.
 //!
+//! Content records keep a reserved kind key of their own
+//! (`family:attachment-content/...`), disjoint from the metadata owner space
+//! `family:attachments/<document>`, so a content record identifier can never
+//! collide with an attachment-metadata record however a document is named;
+//! and every segment identifier is read before it is written or cleared, so
+//! a record that already holds foreign state fails closed as
+//! [`AttachmentContentError::ReservedStateInvalid`] instead of being
+//! destroyed.
+//!
 //! Every write rides the caller's Engine [`Transaction`] and every read
 //! observes one immutable snapshot through a never-committed transaction,
 //! exactly like the rest of the family seam. The plane is attachment content,
@@ -26,7 +35,7 @@ use crate::{
 
 use super::super::{
     FamilyError, FamilyReadContext, FamilyStore, map_begin_error,
-    state::{Records, record_id},
+    state::{ATTACHMENT_CONTENT_KIND, Records, record_id},
     store,
 };
 use super::codec::{self, ContentManifest};
@@ -47,6 +56,23 @@ pub const MAX_SEGMENT_BYTES: usize = 64 * 1024;
 /// memory. Raising or lifting it is a recorded decision, never a silent one
 /// (see `docs/families/attachment-content-plane.md`).
 pub const MAX_CONTENT_BYTES: u64 = 8 * 1024 * 1024;
+
+/// The largest accepted segment count: `ceil(MAX_CONTENT_BYTES /
+/// MAX_SEGMENT_BYTES)`, the canonical bound the byte ceiling implies at the
+/// segment cap.
+///
+/// A byte-budgeted write can never stage more records than that — 8 MiB of
+/// one-byte segments must not become millions of records and an unbounded
+/// reader index — so a payload with more segments is rejected at
+/// construction with
+/// [`RequestValidationError::InvalidFamilyPayload`]. Callers holding
+/// unsegmented bytes chunk to the segment cap instead of splitting by
+/// record-amplifying unit.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the ceil of the 8 MiB ceiling over the 64 KiB segment cap is 128, far inside every usize range"
+)]
+pub const MAX_SEGMENT_COUNT: usize = MAX_CONTENT_BYTES.div_ceil(MAX_SEGMENT_BYTES as u64) as usize;
 
 /// Validates a content digest: sixty-four lowercase hex characters.
 fn is_digest(value: &str) -> bool {
@@ -135,7 +161,8 @@ impl AttachmentContentWrite {
     /// # Errors
     ///
     /// Returns [`RequestValidationError::InvalidFamilyPayload`] for a
-    /// malformed declared digest,
+    /// malformed declared digest or a segment count above
+    /// [`MAX_SEGMENT_COUNT`],
     /// [`RequestValidationError::InvalidDeadline`] for an elapsed deadline,
     /// and [`RequestValidationError::InvalidCancellation`] for an already
     /// cancelled signal.
@@ -148,6 +175,9 @@ impl AttachmentContentWrite {
         cancellation: Cancellation,
     ) -> Result<Self, RequestValidationError> {
         if expected_digest.as_ref().is_some_and(|digest| !is_digest(digest)) {
+            return Err(RequestValidationError::InvalidFamilyPayload);
+        }
+        if segments.len() > MAX_SEGMENT_COUNT {
             return Err(RequestValidationError::InvalidFamilyPayload);
         }
         validate_deadline(&deadline)?;
@@ -458,15 +488,44 @@ impl From<FamilyError> for AttachmentContentError {
 }
 
 /// Builds the manifest record identifier of one digest.
-fn manifest_id(digest: &str) -> Result<DocumentId, AttachmentContentError> {
-    record_id("attachments/content", &[digest]).map_err(|_| AttachmentContentError::StorageFailure)
+///
+/// Content records live under
+/// [`ATTACHMENT_CONTENT_KIND`](super::super::state::ATTACHMENT_CONTENT_KIND)
+/// — a distinct reserved kind key, never inside the attachments metadata
+/// owner space — so a manifest identifier cannot collide with a metadata
+/// record however a document is named.
+pub(super) fn manifest_id(digest: &str) -> Result<DocumentId, AttachmentContentError> {
+    record_id(ATTACHMENT_CONTENT_KIND, &[digest])
+        .map_err(|_| AttachmentContentError::StorageFailure)
 }
 
 /// Builds the segment record identifier of one digest and index.
-fn segment_id(digest: &str, index: u64) -> Result<DocumentId, AttachmentContentError> {
+///
+/// Segment identifiers share the content plane's distinct kind key, so they
+/// cannot collide with attachment-metadata records either.
+pub(super) fn segment_id(digest: &str, index: u64) -> Result<DocumentId, AttachmentContentError> {
     let index = index.to_string();
-    record_id("attachments/content", &[digest, &index])
+    record_id(ATTACHMENT_CONTENT_KIND, &[digest, &index])
         .map_err(|_| AttachmentContentError::StorageFailure)
+}
+
+/// Guards one segment record identifier before the plane touches it.
+///
+/// An occupied segment id must already hold a decodable segment — the same
+/// fail-closed guard the manifest read applies — so a foreign record
+/// (attachment metadata, a reserved-collection collision) is reported as
+/// typed reserved-state corruption instead of being silently overwritten or
+/// cleared.
+fn require_free_or_segment(
+    records: &mut Records<'_, '_>,
+    id: &DocumentId,
+) -> Result<(), AttachmentContentError> {
+    if let Some(occupied) = records.read(id)?
+        && codec::decode_segment(&occupied).is_err()
+    {
+        return Err(AttachmentContentError::ReservedStateInvalid);
+    }
+    Ok(())
 }
 
 /// Reads and decodes one content manifest through the transaction.
@@ -721,7 +780,9 @@ impl<'engine> FamilyStore<'engine> {
     /// [`MAX_CONTENT_BYTES`],
     /// [`AttachmentContentError::DigestMismatch`] when the declared digest
     /// disagrees with the computed digest, and the storage or reserved-state
-    /// cases for unreadable reserved records.
+    /// cases for unreadable reserved records — including a segment record
+    /// identifier already occupied by a value that is not a decodable
+    /// segment, which is never blindly overwritten.
     #[allow(clippy::needless_pass_by_value)] // the seam contract passes payloads by value
     pub fn stage_attachment_content(
         &self,
@@ -785,7 +846,9 @@ impl<'engine> FamilyStore<'engine> {
         for (index, segment) in present.iter().enumerate() {
             let index =
                 u64::try_from(index).map_err(|_| AttachmentContentError::SizeLimitExceeded)?;
-            records.write(segment_id(&digest, index)?, codec::encode_segment(segment.bytes()))?;
+            let id = segment_id(&digest, index)?;
+            require_free_or_segment(&mut records, &id)?;
+            records.write(id, codec::encode_segment(segment.bytes()))?;
         }
         records.write(
             id,
@@ -814,7 +877,10 @@ impl<'engine> FamilyStore<'engine> {
     ///
     /// Returns [`AttachmentContentError::ContentMissing`] when no content is
     /// staged for the digest in this transaction's view, with the same
-    /// identity, binding, and deadline cases as staging.
+    /// identity, binding, and deadline cases as staging. A segment record
+    /// identifier occupied by a value that is not a decodable segment is
+    /// never blindly cleared: the deletion fails closed as
+    /// [`AttachmentContentError::ReservedStateInvalid`] before touching it.
     #[allow(clippy::needless_pass_by_value)] // the seam contract passes payloads by value
     pub fn stage_attachment_content_delete(
         &self,
@@ -834,7 +900,9 @@ impl<'engine> FamilyStore<'engine> {
         let mut records = Records::new(transaction);
         let manifest = load_manifest(&mut records, delete.digest())?;
         for index in 0..u64::try_from(manifest.lengths.len()).unwrap_or(u64::MAX) {
-            records.clear(&segment_id(delete.digest(), index)?)?;
+            let id = segment_id(delete.digest(), index)?;
+            require_free_or_segment(&mut records, &id)?;
+            records.clear(&id)?;
         }
         records.clear(&manifest_id(delete.digest())?)?;
         Ok(())

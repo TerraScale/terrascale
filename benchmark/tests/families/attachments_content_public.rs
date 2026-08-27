@@ -12,7 +12,7 @@ use terrabase_v2::{
     Cancellation, Deadline, RequestValidationError,
     families::attachments::{
         AttachmentContentRead, AttachmentRange, AttachmentSegment, MAX_CONTENT_BYTES,
-        MAX_SEGMENT_BYTES,
+        MAX_SEGMENT_BYTES, MAX_SEGMENT_COUNT,
     },
 };
 
@@ -79,4 +79,5 @@ fn the_plane_publishes_its_explicit_limits() {
     // reason about over-limit requests before making them.
     assert_eq!(MAX_SEGMENT_BYTES, 64 * 1024);
     assert_eq!(MAX_CONTENT_BYTES, 8 * 1024 * 1024);
+    assert_eq!(MAX_SEGMENT_COUNT, 128, "ceil(MAX_CONTENT_BYTES / MAX_SEGMENT_BYTES)");
 }

@@ -34,5 +34,5 @@ mod tests;
 pub use content::{
     AttachmentContentDelete, AttachmentContentError, AttachmentContentRead,
     AttachmentContentReader, AttachmentContentRecorded, AttachmentContentWrite, AttachmentRange,
-    AttachmentSegment, MAX_CONTENT_BYTES, MAX_SEGMENT_BYTES,
+    AttachmentSegment, MAX_CONTENT_BYTES, MAX_SEGMENT_BYTES, MAX_SEGMENT_COUNT,
 };

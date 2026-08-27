@@ -256,6 +256,32 @@ mod digest_tests {
     }
 
     #[test]
+    fn sha256_pad_crossing_final_remainder_known_answers() {
+        // Lengths whose final remainder is 57..=63 bytes are the one padding
+        // shape the FIPS vectors above never exercise: the 0x80 pad byte and
+        // part of the zero padding spill into one extra block before the
+        // 64-bit length word, and length 64 is the exact-block boundary. The
+        // message of length L is the bytes 0x00..=L-1; every digest below was
+        // derived independently of this implementation (Python 3 hashlib,
+        // OpenSSL SHA-256) so the vectors are known answers, not self-checks.
+        let vectors: [(usize, &str); 8] = [
+            (57, "2fe741af801cc238602ac0ec6a7b0c3a8a87c7fc7d7f02a3fe03d1c12eac4d8f"),
+            (58, "e03b18640c635b338a92b82cce4ff072f9f1aba9ac5261ee1340f592f35c0499"),
+            (59, "bd2de8f5dd15c73f68dfd26a614080c2e323b2b51b1b5ed9d7933e535d223bda"),
+            (60, "0ddde28e40838ef6f9853e887f597d6adb5f40eb35d5763c52e1e64d8ba3bfff"),
+            (61, "4b5c2783c91ceccb7c839213bcbb6a902d7fe8c2ec866877a51f433ea17f3e85"),
+            (62, "c89da82cbcd76ddf220e4e9091019b9866ffda72bee30de1effe6c99701a2221"),
+            (63, "29af2686fd53374a36b0846694cc342177e428d1647515f078784d69cdb9e488"),
+            (64, "fdeab9acf3710362bd2658cdc9a29e8f9c757fcf9811603a8c447cd1d9151108"),
+        ];
+        for (len, expected) in vectors {
+            let message: Vec<u8> =
+                (0..len).map(|byte| u8::try_from(byte).expect("in range")).collect();
+            assert_eq!(digest_of(&message), expected, "message length {len}");
+        }
+    }
+
+    #[test]
     fn sha256_streaming_matches_one_shot_regardless_of_chunking() {
         let message: Vec<u8> =
             (0..1000_usize).map(|index| u8::try_from(index % 256).expect("in range")).collect();

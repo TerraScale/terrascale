@@ -33,7 +33,7 @@
 //! decision record is `docs/families/schemas.md`.
 //!
 //! GAP-F01 adds the attachment content plane under the public
-//! [`attachments`](crate::families::attachments) module: digest-addressed,
+//! [`attachments`] module: digest-addressed,
 //! deduplicated byte storage for attachment content with bounded
 //! segment-by-segment readers, V1-pinned range and disposal semantics, and
 //! explicit size limits. The plane records the engine-side halves of the

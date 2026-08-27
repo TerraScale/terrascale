@@ -12,24 +12,28 @@
 #![allow(clippy::too_many_lines)]
 
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
-use super::super::FamilyReadContext;
+use super::super::{
+    AttachmentMetadataResult, AttachmentMutation, AttachmentRead, AttachmentWrite, FamilyError,
+    FamilyReadContext, FamilyReadRequest, FamilyReadResult, FamilyWriteRequest,
+};
 use super::content::{
     AttachmentContentDelete, AttachmentContentError, AttachmentContentRead,
     AttachmentContentReader, AttachmentContentWrite, AttachmentRange, AttachmentSegment,
-    MAX_CONTENT_BYTES, MAX_SEGMENT_BYTES,
+    MAX_CONTENT_BYTES, MAX_SEGMENT_BYTES, MAX_SEGMENT_COUNT,
 };
 use super::digest::{Sha256, to_hex};
 
 use crate::{
     engine::{Engine, EngineConfig},
     types::{
-        Cancellation, Deadline, DocumentId, ExpectedVersion, LocalDurability, OperationId,
-        TenantId, TenantScope,
+        Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
+        ExpectedVersion, LocalDurability, OperationId, TenantId, TenantScope,
     },
 };
 
@@ -396,12 +400,22 @@ fn segment_cap_is_rejected_at_construction() {
 #[test]
 fn total_size_limit_is_an_explicit_typed_error() {
     let (_dir, engine) = open_engine("size-limit");
-    // One segment over the plane's ceiling, in as few records as possible.
+    // One byte over the plane's ceiling, chunked at the segment cap, is
+    // necessarily one segment over the canonical count bound (128), so the
+    // over-limit request is refused at construction — before any record is
+    // written — by the typed request-validation failure.
     let over = usize::try_from(MAX_CONTENT_BYTES).expect("fits usize") + 1;
-    let bytes = pattern(over);
-    let error = stage_content(&engine, "tenant-a", &bytes, MAX_SEGMENT_BYTES)
-        .expect_err("over-limit content is refused");
-    assert_eq!(error, AttachmentContentError::SizeLimitExceeded);
+    let tenant_scope = scope(&engine, "tenant-a");
+    let error = AttachmentContentWrite::try_new(
+        tenant_scope,
+        None,
+        segments_of(&pattern(over), MAX_SEGMENT_BYTES),
+        unique_operation("over-limit"),
+        deadline(),
+        cancellation(),
+    )
+    .expect_err("over-limit content is refused at construction");
+    assert_eq!(error, crate::operations::RequestValidationError::InvalidFamilyPayload);
 
     let at_limit = pattern(usize::try_from(MAX_CONTENT_BYTES).expect("fits usize"));
     let digest = stage_content(&engine, "tenant-a", &at_limit, MAX_SEGMENT_BYTES)
@@ -650,8 +664,7 @@ fn clear_record(engine: &Engine, tenant_name: &str, id: &DocumentId) {
 }
 
 fn segment_record_id(digest: &str, index: u64) -> DocumentId {
-    super::super::state::record_id("attachments/content", &[digest, &index.to_string()])
-        .expect("valid record id")
+    super::content::segment_id(digest, index).expect("valid record id")
 }
 
 #[test]
@@ -721,6 +734,296 @@ fn delete_of_other_tenants_content_is_missing() {
     assert_eq!(drain(&mut reader, 64), bytes);
     drop(reader);
     engine.shutdown().expect("shuts down");
+}
+
+// ---------------------------------------------------------------------------
+// Namespace separation from attachment metadata (warden repair)
+// ---------------------------------------------------------------------------
+
+/// Puts one user document through the raw document seam.
+fn put_user_document(engine: &Engine, tenant_name: &str, id: &DocumentId) {
+    let tenant_scope = scope(engine, tenant_name);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let identity = unique_operation("user-put");
+    let mut transaction = engine.begin(&tenant_scope, snapshot, identity).expect("begins");
+    let collection = CollectionName::try_new("docs").expect("valid collection");
+    let value = DocumentValue::Object(
+        [("kind".to_owned(), DocumentValue::String("page".to_owned()))].into_iter().collect(),
+    );
+    transaction
+        .put(Document::new(id.clone(), collection, value), ExpectedVersion::New)
+        .expect("puts the user document");
+    assert!(matches!(
+        transaction.commit(LocalDurability::Synced),
+        crate::engine::CommitOutcome::Committed(_)
+    ));
+}
+
+/// Stores attachment metadata on one document through the metadata seam.
+fn store_attachment_metadata(
+    engine: &Engine,
+    tenant_name: &str,
+    document: &DocumentId,
+) -> Result<(), FamilyError> {
+    let tenant_scope = scope(engine, tenant_name);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let identity = unique_operation("metadata-put");
+    let store = engine.families();
+    let mut transaction = engine.begin(&tenant_scope, snapshot, identity.clone()).expect("begins");
+    let write = AttachmentWrite::try_new(
+        tenant_scope,
+        document.clone(),
+        AttachmentMutation::Store {
+            name: "logo".to_owned(),
+            content_type: "image/png".to_owned(),
+            size: 300,
+            hash: "declared".to_owned(),
+            replace: false,
+        },
+        ExpectedVersion::Any,
+        identity,
+        deadline(),
+        cancellation(),
+    )
+    .expect("valid attachment write");
+    store.stage(&mut transaction, FamilyWriteRequest::attachment_mutation(write))?;
+    assert!(matches!(
+        transaction.commit(LocalDurability::Synced),
+        crate::engine::CommitOutcome::Committed(_)
+    ));
+    Ok(())
+}
+
+/// Reads one document's attachment metadata through the metadata seam.
+fn read_attachment_metadata(
+    engine: &Engine,
+    tenant_name: &str,
+    document: &DocumentId,
+) -> Result<AttachmentMetadataResult, FamilyError> {
+    let tenant_scope = scope(engine, tenant_name);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.families();
+    store
+        .read(
+            FamilyReadContext::new(tenant_scope, snapshot),
+            FamilyReadRequest::attachment_metadata(
+                AttachmentRead::try_new(document.clone(), deadline(), cancellation())
+                    .expect("valid attachment read"),
+            ),
+        )
+        .map(|result| match result {
+            FamilyReadResult::AttachmentMetadata(metadata) => metadata,
+            other => panic!("expected attachment metadata, got {other:?}"),
+        })
+}
+
+/// One reserved value that is not content-plane state: shaped like an
+/// attachment-metadata record, not a base64 segment.
+fn foreign_value() -> DocumentValue {
+    DocumentValue::Object(
+        [("attachments".to_owned(), DocumentValue::Object(BTreeMap::new()))].into_iter().collect(),
+    )
+}
+
+/// Writes one value into the reserved collection through the raw seam.
+fn put_reserved_record(engine: &Engine, tenant_name: &str, id: &DocumentId, value: DocumentValue) {
+    let tenant_scope = scope(engine, tenant_name);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let identity = unique_operation("reserved-put");
+    let mut transaction = engine.begin(&tenant_scope, snapshot, identity).expect("begins");
+    let collection =
+        CollectionName::try_new(super::super::state::RESERVED_COLLECTION).expect("collection");
+    transaction
+        .put(Document::new(id.clone(), collection, value), ExpectedVersion::Any)
+        .expect("puts the reserved record");
+    assert!(matches!(
+        transaction.commit(LocalDurability::Synced),
+        crate::engine::CommitOutcome::Committed(_)
+    ));
+}
+
+/// Reads one reserved record's value through the raw seam.
+fn read_reserved_record(
+    engine: &Engine,
+    tenant_name: &str,
+    id: &DocumentId,
+) -> Option<DocumentValue> {
+    let tenant_scope = scope(engine, tenant_name);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let identity = unique_operation("reserved-read");
+    let transaction = engine.begin(&tenant_scope, snapshot, identity).expect("begins");
+    let observed = transaction.read(id).expect("reads the record").map(|d| d.value().clone());
+    drop(transaction);
+    observed
+}
+
+fn manifest_record_id(digest: &str) -> DocumentId {
+    super::content::manifest_id(digest).expect("valid record id")
+}
+
+/// The warden's probe: a user document whose identifier is shaped exactly
+/// like a content-plane segment owner (`content/<digest>/<index>`) is a legal
+/// metadata document, and its metadata must survive every content operation
+/// on the digest it names — staging must not overwrite the record and a
+/// content delete must not clear it.
+#[test]
+fn metadata_on_a_content_shaped_document_survives_content_operations() {
+    let (_dir, engine) = open_engine("probe-collision");
+    let bytes = pattern(300);
+    let digest = digest_of(&bytes);
+    let document = DocumentId::try_new(&format!("content/{digest}/0")).expect("valid document id");
+    put_user_document(&engine, "tenant-a", &document);
+    store_attachment_metadata(&engine, "tenant-a", &document).expect("metadata stores");
+    let metadata =
+        read_attachment_metadata(&engine, "tenant-a", &document).expect("metadata reads back");
+    assert_eq!(metadata.entries().len(), 1);
+    assert_eq!(metadata.entries()[0].name(), "logo");
+
+    // Staging ordinary content whose segment records used to land on this
+    // metadata record must not destroy it.
+    let staged = stage_content(&engine, "tenant-a", &bytes, 128);
+    assert_eq!(staged, Ok(digest.clone()), "ordinary content still stages");
+    let metadata = read_attachment_metadata(&engine, "tenant-a", &document)
+        .expect("metadata survives content staging");
+    assert_eq!(metadata.entries().len(), 1, "the attachment entry survives staging");
+    assert_eq!(metadata.entries()[0].name(), "logo");
+
+    // Deleting that content must not destroy it either.
+    delete_content(&engine, "tenant-a", &digest).expect("content deletes");
+    let metadata = read_attachment_metadata(&engine, "tenant-a", &document)
+        .expect("metadata survives content deletion");
+    assert_eq!(metadata.entries().len(), 1, "the attachment entry survives deletion");
+    assert_eq!(metadata.entries()[0].name(), "logo");
+    engine.shutdown().expect("shuts down");
+}
+
+/// A segment record occupied by a value that is not a decodable segment is
+/// never blindly overwritten by staging and never blindly cleared by a
+/// content delete: both fail closed as reserved-state corruption before
+/// touching the record, mirroring the manifest's decode guard.
+#[test]
+fn foreign_values_on_segment_ids_fail_staging_and_deletion_closed() {
+    let (_dir, engine) = open_engine("segment-guard");
+    let bytes = pattern(300);
+    let digest = digest_of(&bytes);
+
+    // Stage path: the squatter occupies the first segment id.
+    let squatter = segment_record_id(&digest, 0);
+    put_reserved_record(&engine, "tenant-a", &squatter, foreign_value());
+    let error = stage_content(&engine, "tenant-a", &bytes, 128)
+        .expect_err("an occupied segment id never stages blindly");
+    assert_eq!(error, AttachmentContentError::ReservedStateInvalid);
+    assert_eq!(
+        read_reserved_record(&engine, "tenant-a", &squatter),
+        Some(foreign_value()),
+        "the foreign value survives the refused staging"
+    );
+
+    // Delete path: staged content with one segment record replaced by a
+    // foreign value fails closed and clears nothing.
+    let other = pattern(150);
+    let other_digest = stage_content(&engine, "tenant-a", &other, 128).expect("stages");
+    assert_ne!(other_digest, digest);
+    let occupied = segment_record_id(&other_digest, 1);
+    put_reserved_record(&engine, "tenant-a", &occupied, foreign_value());
+    let error = delete_content(&engine, "tenant-a", &other_digest)
+        .expect_err("a foreign value on a segment id never clears");
+    assert_eq!(error, AttachmentContentError::ReservedStateInvalid);
+    assert!(
+        read_reserved_record(&engine, "tenant-a", &segment_record_id(&other_digest, 0)).is_some(),
+        "the intact segment record survives the refused delete"
+    );
+    assert!(
+        read_reserved_record(&engine, "tenant-a", &manifest_record_id(&other_digest)).is_some(),
+        "the manifest survives the refused delete"
+    );
+    assert_eq!(
+        read_reserved_record(&engine, "tenant-a", &occupied),
+        Some(foreign_value()),
+        "the foreign value survives the refused delete"
+    );
+    engine.shutdown().expect("shuts down");
+}
+
+/// Content records live under their own reserved kind key, disjoint from the
+/// attachments metadata owner space, yet reserved-record enumeration (the
+/// backup/migration seam, W4-CA-5) must still classify them as
+/// attachments-family records — the coordination the kind-key move keeps.
+#[test]
+fn content_records_classify_for_snapshot_enumeration() {
+    let (_dir, engine) = open_engine("snapshot-classify");
+    let bytes = pattern(300);
+    let digest = stage_content(&engine, "tenant-a", &bytes, 128).expect("stages");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let records = engine
+        .families()
+        .snapshot_family_records(&tenant_scope, &snapshot)
+        .expect("enumerates the reserved collection");
+    let ids: Vec<&str> = records.iter().map(|record| record.id().as_str()).collect();
+    for expected in [
+        manifest_record_id(&digest).as_str(),
+        segment_record_id(&digest, 0).as_str(),
+        segment_record_id(&digest, 1).as_str(),
+        segment_record_id(&digest, 2).as_str(),
+    ] {
+        assert!(ids.contains(&expected), "the reserved record {expected} enumerates");
+    }
+    for record in &records {
+        assert_eq!(
+            record.kind(),
+            crate::families::FamilyKind::Attachments,
+            "content records stay attachments-family records"
+        );
+    }
+    engine.shutdown().expect("shuts down");
+}
+
+// ---------------------------------------------------------------------------
+// Segment-count bound (warden repair)
+// ---------------------------------------------------------------------------
+
+/// The accepted segment count is capped at the canonical maximum
+/// `ceil(MAX_CONTENT_BYTES / MAX_SEGMENT_BYTES)` = 128, so a byte-budgeted
+/// write can never stage a record per byte.
+#[test]
+fn segment_count_is_capped_at_the_canonical_maximum() {
+    assert_eq!(MAX_SEGMENT_COUNT, 128, "ceil(8 MiB / 64 KiB) is the canonical bound");
+    let tenant_scope =
+        TenantScope::from_parts(TenantId::try_new("segment-cap").expect("valid tenant"), 0);
+    let too_many: Vec<AttachmentSegment> = (0..=MAX_SEGMENT_COUNT)
+        .map(|_| AttachmentSegment::try_new(&[7]).expect("valid one-byte segment"))
+        .collect();
+    assert_eq!(
+        AttachmentContentWrite::try_new(
+            tenant_scope.clone(),
+            None,
+            too_many,
+            unique_operation("too-many"),
+            deadline(),
+            cancellation(),
+        )
+        .map(|_| ()),
+        Err(crate::operations::RequestValidationError::InvalidFamilyPayload),
+        "129 segments exceed the canonical bound of 128"
+    );
+
+    let full = pattern(MAX_SEGMENT_BYTES);
+    let canonical: Vec<AttachmentSegment> = (0..MAX_SEGMENT_COUNT)
+        .map(|_| AttachmentSegment::try_new(&full).expect("valid maximum segment"))
+        .collect();
+    assert!(
+        AttachmentContentWrite::try_new(
+            tenant_scope,
+            None,
+            canonical,
+            unique_operation("canonical"),
+            deadline(),
+            cancellation(),
+        )
+        .is_ok(),
+        "exactly 128 maximum-size segments construct"
+    );
 }
 
 // ---------------------------------------------------------------------------

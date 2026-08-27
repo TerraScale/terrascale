@@ -31,13 +31,28 @@ family seam.
 ## D1 — Encoding: digest-addressed content as reserved records
 
 Content is stored under the reserved family collection exactly like every
-other family value, split into bounded records:
+other family value, split into bounded records under a kind key of their
+own:
 
 ```text
-family:attachments/content/<hex-sha-256>            → manifest record
-family:attachments/content/<hex-sha-256>/<index>    → segment record
+family:attachment-content/<hex-sha-256>            → manifest record
+family:attachment-content/<hex-sha-256>/<index>    → segment record
 ```
 
+- The kind key `attachment-content` is distinct from the attachments
+  metadata owner space (`family:attachments/<document>`), so a content
+  record identifier can never equal a metadata record identifier however a
+  document is named — the keys diverge before any owner text. Reserved
+  record enumeration (`kind_of_record`, W4-CA-5) classifies these records
+  as attachments-family records. The original packet keyed content as
+  `family:attachments/content/...` inside the metadata owner space; the
+  warden verified empirically that a metadata document named
+  `content/<digest>/<index>` then collided with a segment record and was
+  silently destroyed by staging and deletion, which this repair closes.
+- As defense in depth, every segment identifier is read before the plane
+  writes or clears it: a record that exists but does not decode as a
+  segment (`codec::decode_segment`) fails closed as `ReservedStateInvalid`
+  and is never touched, mirroring the manifest's existing decode guard.
 - The manifest is `{digest, size, lengths}`: the whole-content digest, the
   whole-content size, and one byte length per segment, in order. A
   manifest whose lengths do not sum to its size, or whose digest disagrees
@@ -118,6 +133,15 @@ explicit errors and memory remains bounded":
 - `MAX_CONTENT_BYTES = 8 MiB` — the staged-content ceiling; a larger total
   is the typed `AttachmentContentError::SizeLimitExceeded` at staging, so
   over-limit requests fail before any record is written.
+- `MAX_SEGMENT_COUNT = 128 = ceil(MAX_CONTENT_BYTES / MAX_SEGMENT_BYTES)` —
+  the canonical segment-count bound (warden repair). A payload with more
+  segments is rejected at construction (`InvalidFamilyPayload`), so 8 MiB
+  of one-byte segments cannot become millions of records and an unbounded
+  reader index. Because 128 maximal segments are exactly the byte ceiling,
+  every over-limit total is necessarily over the count bound too: the
+  over-limit refusal an external caller observes is the construction-time
+  validation failure, and the staged `SizeLimitExceeded` check remains as
+  defense in depth for state the constructor cannot express.
 
 This is an **accepted V1 difference** until the streaming packet's
 transport work revisits it: raising or lifting the ceiling is a recorded
@@ -190,3 +214,42 @@ and found two defects, both fixed red-then-green:
   manifest, so empty-segment writes stage as the canonical empty content;
   `empty_segments_stage_as_canonical_content` and
   `empty_segments_among_bytes_do_not_change_content` pin it.
+
+## Warden repair (2026-08-27)
+
+The warden loop verified the packet's findings empirically and every
+repair below was made red-then-green:
+
+- **Content/metadata record-id collision (MAJOR).** Content records were
+  keyed `family:attachments/content/<digest>[/<index>]` inside the
+  attachments metadata owner space, so metadata stored on a document named
+  `content/<digest>/<index>` shared a record identifier with a segment:
+  staging blindly overwrote the metadata record (`ExpectedVersion::Any`
+  put) and content deletion blindly cleared it. Repaired twice over —
+  content records moved to the distinct kind key
+  `family:attachment-content/...` (see D1), and every segment identifier
+  is now read and decode-guarded before any write or clear, failing
+  closed as `ReservedStateInvalid` on foreign values.
+  `metadata_on_a_content_shaped_document_survives_content_operations`
+  reproduces the warden's probe and
+  `foreign_values_on_segment_ids_fail_staging_and_deletion_closed` pins
+  the decode guard;
+  `content_records_classify_for_snapshot_enumeration` pins the
+  `kind_of_record`/`snapshot_family_records` coordination the kind-key
+  move requires.
+- **No segment-count bound (MINOR).** 8 MiB of 1-byte segments could
+  stage up to 8,388,608 records with a 64 MiB reader index.
+  `MAX_SEGMENT_COUNT` (D3) caps the accepted count at 128, rejected at
+  payload construction; `segment_count_is_capped_at_the_canonical_maximum`
+  and the public limits test pin it. The over-limit byte test moved to
+  the construction-time refusal the bound makes canonical.
+- **SHA-256 pad-crossing coverage (MINOR).** The known-answer vectors
+  never covered final remainders of 57..=63 bytes, the one padding shape
+  where the pad byte spills into an extra block.
+  `sha256_pad_crossing_final_remainder_known_answers` adds lengths
+  57..=64 with digests derived independently of the implementation
+  (Python 3 hashlib / OpenSSL); the vectors passed on arrival — the
+  implementation was already correct, the defect was the absent vectors.
+- **Redundant rustdoc link (MINOR).** The `[`attachments`]` link in
+  `src/families/mod.rs` carried an explicit intra-doc target rustdoc
+  reports redundant; the explicit target was dropped.
