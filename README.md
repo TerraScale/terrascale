@@ -138,7 +138,9 @@ test suite: the SE-04 corpus and the SE-05 integrity manifest are vendored
 under `test/fixtures/terrascale.sync.v2/` (digest-verified), and
 `runSyncV2Conformance` executes the per-language harness contract against
 the shipped codec, emitting the `terrascale.sync.v2/conformance-report@1`
-report.
+report. The vendored corpus is a deliberate pin of one engine revision —
+see `test/fixtures/terrascale.sync.v2/README.md` for the pinned source,
+its digests, and how to re-vendor.
 
 ## Public API Surface
 
