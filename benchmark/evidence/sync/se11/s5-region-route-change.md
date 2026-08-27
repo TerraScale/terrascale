@@ -16,7 +16,7 @@ under the run's temp directory.
 
 Outcome: **PASS** (5/5 checks).
 
-Stand-in, recorded honestly: the `region_route_change` advisory control frame has no emission point on the host's HTTP surface today, so the tracer drives the vector's client half exactly — the durable checkpoint carried to the new region, acknowledged there, nothing re-delivered behind it. The two regions are two real engine + host pairs on distinct loopback ports (serving instances 1 and 2); region b's journal is seeded by the tracer's re-submission of the same operation identities through region b's real write path (the member transport between serving engines is a named integrator action, not wired today).
+Stand-in, recorded honestly: the `region_route_change` advisory control frame has no emission point on the host's HTTP surface today, so the tracer drives the vector's client half exactly — the durable checkpoint carried to the new region, acknowledged there, nothing re-delivered behind it. The two regions are two real engine + host pairs on distinct loopback ports (serving instances 1 and 2); region b's journal is seeded by the tracer's re-submission of the same operation identities through region b's real write path (the member transport between serving engines is a named integrator action, not wired today). The post-route write is released only after both cores' region-b subscriptions are observed on their own wire (the `waitStream` gate): the .NET live loop has no fallback pull before its first trigger, so a write beating the subscription would be undeliverable — the race behind this receipt's earlier 2-of-4 flake.
 
 
 | Check | Outcome | Detail |

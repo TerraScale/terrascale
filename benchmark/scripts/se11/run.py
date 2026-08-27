@@ -510,6 +510,20 @@ def wait_until(predicate, what: str, timeout: float = 30.0, interval: float = 0.
     raise TimeoutError(f"timed out waiting for {what}")
 
 
+def wait_logged_at(tracer: Tracer, sequence: int, timeout: float = 30.0) -> dict:
+    """Waits for the tracer's OBSERVATION LOG to reach a checkpoint.
+
+    The .NET core's waitCheckpoint gate is satisfied by its session state,
+    which its own observation line can lag by one write; the receipts
+    assert on the log, so the assertions wait for the log.
+    """
+    return wait_until(
+        lambda: ((tracer.checkpoint_now() or {}).get("storageSequence", 0) >= sequence and tracer.checkpoint_now()) or None,
+        f"{tracer.role} observation log to reach storage sequence {sequence}",
+        timeout,
+    )
+
+
 def wait_both_at(tracers: list[Tracer], sequence: int, timeout: float = 30.0) -> None:
     wait_until(
         lambda: all((tracer.checkpoint_now() or {}).get("storageSequence", 0) >= sequence for tracer in tracers),
@@ -1525,7 +1539,11 @@ def scenario_multi_region(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         link = region_b.open_session()
         region_b.mutate(link["sessionId"], "op-w1", "d-shared", put={"f000": "written-through-a"})
         wait_until(lambda: (gates / "reader-saw-w1").exists(), "the reader saw w1 through region b", 30)
-        reader_checkpoint = net.checkpoint_now() or {}
+        # The observation is read from the LOG, and it waits for the log:
+        # the .NET core's waitCheckpoint gate is satisfied by its session
+        # state, which its own observation line can lag by one write, and
+        # the receipt asserts on the log.
+        reader_checkpoint = wait_logged_at(net, 1)
         facts.check(
             "the write made through region a is visible through region b's delivery path (the reader's nearest region)",
             reader_checkpoint.get("storageSequence") == 1,
@@ -1546,7 +1564,7 @@ def scenario_multi_region(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         region_b.mutate(link["sessionId"], "op-w2", "d-shared", put={"f000": "written-through-a-2"})
         net.gate("lag-sampled")
         wait_until(lambda: (gates / "reader-saw-w2").exists(), "the reader saw w2 through region b", 30)
-        reader_checkpoint = net.checkpoint_now() or {}
+        reader_checkpoint = wait_logged_at(net, 2)
         facts.check(
             "convergence observation after the pump names both regions and closes the lag",
             reader_checkpoint.get("storageSequence") == 2,

@@ -1,7 +1,10 @@
 # SE-11 end-to-end client live-update tracer — packet record
 
 Status: implementation record for the SE-11 packet (issue #13),
-2026-08-27. Authority: the SE wave capstone — the client live-update
+2026-08-27, revised the same day by the repair loop after the quality
+warden failed the first packet (the s5 receipt was not independently
+reproducible; see the determinism note below and finding 3). Authority:
+the SE wave capstone — the client live-update
 tracer across the full stack (ticket #13's scope). Worktree
 `terrabasev2-se11`, branch `fleet/se11-2`, based on `develop` @
 `24c593c`. Sibling SDK checkouts consumed read-only (never edited,
@@ -297,21 +300,49 @@ tables; the summary:
   today; s5 drives the vector's client half exactly (checkpoint
   carried to the new region, acknowledged there, nothing re-delivered
   behind it), and the receipt says so.
+- s3's flood is deliberately **not** gated on the fast consumers'
+  subscriptions, unlike every other scenario's measured writes. Gating
+  it was tried during the repair and removed on evidence: with the
+  flood gated, every commit also serves two delta pulls, the flood's
+  pace drops enough that the slow consumer's bounded queue stops
+  shedding (`droppedFrames` stays 0 for the whole run) — and the shed
+  is the observation s3 exists to make. The trade-off is named where
+  the plan is built: the flood's last commit is the only one a
+  consumer's snapshot-to-registration window can lose (every earlier
+  one is recovered by the next commit's trigger), the 400-commit flood
+  makes that the same tail risk the scenario always carried, and the
+  boundary reconnect that recovers it is asserted in the same receipt.
 
 ## Receipts
 
 | Scenario | Receipt | Checks |
 | --- | --- | --- |
-| s1 golden path | `evidence/sync/se11/s1-golden-path.md` | 14/14 |
+| s1 golden path | `evidence/sync/se11/s1-golden-path.md` | 15/15 |
 | s2 drop + resume | `evidence/sync/se11/s2-drop-resume.md` | 6/6 |
 | s3 slow consumer | `evidence/sync/se11/s3-slow-consumer.md` | 9/9 |
 | s4 TBEP link loss | `evidence/sync/se11/s4-tbep-link-loss.md` | 6/6 |
 | s5 region route change | `evidence/sync/se11/s5-region-route-change.md` | 5/5 |
 | s6 multi-region | `evidence/sync/se11/s6-multi-region.md` | 6/6 |
 
+The committed receipts are from the last of three consecutive
+all-green full-suite runs of `python3 scripts/se11/run.py` (exit 0 each
+time) after the s5 determinism repair; the same three runs left zero
+lingering processes behind (`pgrep` for `tbep-engine-harness`,
+`TerraBase.Api`, `TerraScale.Tracer`, `tracer.mjs` all empty once the
+orchestrator exits — the scenarios' teardown now ends the tracers as
+well as the engines and hosts).
+
 Repository checks: this packet changes scripts, the tracer harness,
 and evidence records only — no Rust code, no crate, no host source.
-`scripts/check.sh` stays green (run receipt in the packet commit
-message); the Rust format/clippy/test receipts are unaffected because
-the repository's Rust surface is untouched (the throwaway engine
-harness compiles outside the repository, exactly the SE-08 pattern).
+`scripts/check.sh` was run from this worktree after the repair and
+passed in full (exit 0: fmt, `cargo check --workspace --locked`, the
+dev-profile and release test runs, clippy `-D warnings`, doc build, the
+parity tooling, the secret/license scans, and the strict V1 citation
+audit — `STRICT V1 QUALIFICATION PASSED`, one adjudicated no-V1-test
+gap carried per PD-2026-08-24-02; `cargo-deny` is not installed on this
+host and is recorded by the script itself as unrun). The environment:
+`env -u RUSTUP_TOOLCHAIN TERRABASE_V1_ROOT=… TERRASCALE_WORKSPACE_ROOT=…`.
+The repository's Rust surface is untouched by this packet (the
+throwaway engine harness compiles outside the repository, exactly the
+SE-08 pattern), which is why the gate's Rust receipts are unchanged
+rather than merely re-run.
