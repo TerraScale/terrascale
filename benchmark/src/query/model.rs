@@ -278,7 +278,9 @@ fn matches_between(
 /// `Number` compare numerically) and inside the text domain. Any other pair,
 /// including cross-type pairs and absent fields, has no ordering and evaluates
 /// to `None`, which makes the comparison conditions false rather than error.
-/// The mixed numeric pairs run the exact cross-encoding comparison
+/// A `NaN` operand is unordered in both the same-domain and the mixed
+/// numeric arms, so every comparison condition against `NaN` is false. The
+/// mixed numeric pairs run the exact cross-encoding comparison
 /// ([`compare_integer_with_number`]): widening an integer into `f64` rounds
 /// above 2^53, where the float spacing exceeds one, and an
 /// inconsistent equivalence class is not a comparison.
@@ -287,10 +289,10 @@ fn compare(present: Option<&DocumentValue>, literal: &DocumentValue) -> Option<O
     match (present, literal) {
         (DocumentValue::Integer(left), DocumentValue::Integer(right)) => Some(left.cmp(right)),
         (DocumentValue::Integer(left), DocumentValue::Number(right)) => {
-            Some(compare_integer_with_number(*left, *right))
+            mixed_numeric_ordering(*left, *right)
         }
         (DocumentValue::Number(left), DocumentValue::Integer(right)) => {
-            Some(compare_integer_with_number(*right, *left).reverse())
+            mixed_numeric_ordering(*right, *left).map(Ordering::reverse)
         }
         (DocumentValue::Number(left), DocumentValue::Number(right)) => ordered_f64(*left, *right),
         (DocumentValue::String(left), DocumentValue::String(right)) => Some(left.cmp(right)),
@@ -302,6 +304,19 @@ fn compare(present: Option<&DocumentValue>, literal: &DocumentValue) -> Option<O
 /// Compares two finite floats; NaN compares as unordered (`None`).
 fn ordered_f64(left: f64, right: f64) -> Option<Ordering> {
     left.partial_cmp(&right)
+}
+
+/// Orders one integer against one number for the predicate path: `None` for
+/// `NaN` — an unordered operand makes the comparison condition false, the
+/// same rule the same-domain `Number` arm applies through `partial_cmp` —
+/// and the exact cross-encoding comparison otherwise. The infinities keep
+/// their sign-gate answers (every integer is below `+inf` and above `-inf`),
+/// so only `NaN` is routed around [`compare_integer_with_number`].
+fn mixed_numeric_ordering(integer: i64, number: f64) -> Option<Ordering> {
+    if number.is_nan() {
+        return None;
+    }
+    Some(compare_integer_with_number(integer, number))
 }
 
 /// The type rank of the total document order used by `order by`.
@@ -342,7 +357,10 @@ fn rank(value: Option<&DocumentValue>) -> u8 {
 /// - equal whole parts tie-break on the fractional part, symmetrically for
 ///   negatives because `fract` carries the number's sign.
 fn compare_integer_with_number(integer: i64, number: f64) -> Ordering {
-    // The rank gate sends non-finite numbers elsewhere, so `number` is finite.
+    // Every caller routes NaN elsewhere (the rank gate in `compare_values`,
+    // the NaN gate in `mixed_numeric_ordering`), and the sign gates below
+    // decide any infinity before the truncation, so the `trunc` only ever
+    // runs on a finite `number`.
     const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
     if number >= TWO_POW_63 {
         // Every i64 is at most 2^63 - 1, below any float at or beyond 2^63.

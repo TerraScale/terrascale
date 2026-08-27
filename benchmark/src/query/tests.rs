@@ -2317,6 +2317,273 @@ fn loads_resolve_referenced_source_documents_into_projection() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// GAP-EVAL repair (Q2 rider): NaN is unordered, so every ordering condition
+/// against a NaN literal is false in the mixed Integer/Number arms exactly as
+/// it already is in the same-domain Number arm (`ordered_f64` is
+/// `partial_cmp`, and V1's numeric range terms never match NaN either).
+/// Documents provably carry `Number(NaN)` (the order-by corpus above), and
+/// the Q2 exact-comparison rewrite routed the predicate's mixed arms through
+/// `compare_integer_with_number`, whose finite-only precondition the rank
+/// gate enforces only in the order-by path: with a NaN literal both sign
+/// gates are false and `NaN.trunc() as i128` saturates to 0, so the
+/// predicate decided against a phantom 0 — `Integer(5)` answered
+/// `> Number(NaN)` true, and a `Between` with a NaN bound admitted half the
+/// range (`Integer(-3)` but not `Integer(5)`).
+#[test]
+fn mixed_nan_literals_make_every_ordering_condition_false() {
+    let (dir, engine) = open_engine("gap-eval-q2-nan-literals");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("neg", "users", &[("n", DocumentValue::Integer(-3))]),
+            object_document("zero", "users", &[("n", DocumentValue::Integer(0))]),
+            object_document("five", "users", &[("n", DocumentValue::Integer(5))]),
+            object_document("nan-doc", "users", &[("n", DocumentValue::Number(f64::NAN))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let run = |condition: QueryCondition| -> Vec<String> {
+        let query = spec(
+            "tenant-a",
+            "users",
+            predicate(vec![condition]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        );
+        let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+        let mut ids = row_ids(&store.execute(&plan, &snapshot).expect("executes"));
+        ids.sort();
+        ids
+    };
+    let nan = || DocumentValue::Number(f64::NAN);
+    let field = "n";
+
+    // Integer documents against Number(NaN) literals: no value orders
+    // against NaN, so no inequality holds in either direction and neither
+    // inclusive form falls back to equality.
+    assert_eq!(
+        run(QueryCondition::GreaterThan { field: field.to_owned(), value: nan() }),
+        Vec::<String>::new(),
+        "Integer(5) must not answer > Number(NaN) through a phantom 0"
+    );
+    assert_eq!(
+        run(QueryCondition::LessThan { field: field.to_owned(), value: nan() }),
+        Vec::<String>::new(),
+        "Integer(-3) must not answer < Number(NaN)"
+    );
+    assert_eq!(
+        run(QueryCondition::GreaterOrEqual { field: field.to_owned(), value: nan() }),
+        Vec::<String>::new(),
+        "Integer(0) must not answer >= Number(NaN) as phantom equality"
+    );
+    assert_eq!(
+        run(QueryCondition::LessOrEqual { field: field.to_owned(), value: nan() }),
+        Vec::<String>::new(),
+        "Integer(0) must not answer <= Number(NaN) as phantom equality"
+    );
+
+    // A Between with either NaN bound is unordered on that side, so the
+    // inclusive range matches nothing — not half of it.
+    assert_eq!(
+        run(QueryCondition::Between {
+            field: field.to_owned(),
+            low: DocumentValue::Integer(-10),
+            high: nan(),
+        }),
+        Vec::<String>::new(),
+        "a NaN upper bound must not admit Integer(-3) by comparing against 0"
+    );
+    assert_eq!(
+        run(QueryCondition::Between {
+            field: field.to_owned(),
+            low: nan(),
+            high: DocumentValue::Integer(10),
+        }),
+        Vec::<String>::new(),
+        "a NaN lower bound must not admit Integer(0) and Integer(5)"
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// GAP-EVAL repair (Q2 rider, symmetric half): the phantom-0 defect also
+/// crossed the encodings the other way — a `Number(NaN)` document compared
+/// against an `Integer` literal ran the same helper with the operands
+/// swapped, so the NaN document answered `>=` and `<=` an integer through a
+/// phantom equality. NaN stays unordered on that side too, while the
+/// infinities keep their sign-gate answers (every integer is below `+inf`
+/// and above `-inf`), which pins that the fix routes NaN only.
+#[test]
+fn nan_documents_answer_no_integer_inequality_and_infinities_keep_their_signs() {
+    let (dir, engine) = open_engine("gap-eval-q2-nan-documents");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("neg", "users", &[("n", DocumentValue::Integer(-3))]),
+            object_document("zero", "users", &[("n", DocumentValue::Integer(0))]),
+            object_document("five", "users", &[("n", DocumentValue::Integer(5))]),
+            object_document("nan-doc", "users", &[("n", DocumentValue::Number(f64::NAN))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let run = |condition: QueryCondition| -> Vec<String> {
+        let query = spec(
+            "tenant-a",
+            "users",
+            predicate(vec![condition]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        );
+        let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+        let mut ids = row_ids(&store.execute(&plan, &snapshot).expect("executes"));
+        ids.sort();
+        ids
+    };
+    let field = "n";
+
+    // A Number(NaN) document against Integer literals: the NaN document
+    // answers no integer inequality (phantom equality against 0 used to
+    // satisfy >= and <=).
+    assert_eq!(
+        run(QueryCondition::GreaterOrEqual {
+            field: field.to_owned(),
+            value: DocumentValue::Integer(0)
+        }),
+        ["five", "zero"],
+        "Number(NaN) must not answer >= Integer(0)"
+    );
+    assert_eq!(
+        run(QueryCondition::LessOrEqual {
+            field: field.to_owned(),
+            value: DocumentValue::Integer(0)
+        }),
+        ["neg", "zero"],
+        "Number(NaN) must not answer <= Integer(0)"
+    );
+
+    // The infinities keep their sign-gate answers: every integer is below
+    // +inf and above -inf, and the NaN document still answers nothing.
+    assert_eq!(
+        run(QueryCondition::LessThan {
+            field: field.to_owned(),
+            value: DocumentValue::Number(f64::INFINITY)
+        }),
+        ["five", "neg", "zero"]
+    );
+    assert_eq!(
+        run(QueryCondition::GreaterThan {
+            field: field.to_owned(),
+            value: DocumentValue::Number(f64::NEG_INFINITY)
+        }),
+        ["five", "neg", "zero"]
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// GAP-EVAL repair (Q5 rider): a load resolves a bare id by the engine's own
+/// identifier rule, not by silent last-wins. Storage keys documents by
+/// tenant, collection, and identifier, and nothing forbids reusing one
+/// identifier across a tenant's collections, so one bare id can name two
+/// stored documents; the engine's identifier-only point read
+/// (`Transaction::read` → `read_document_at` → `find_by_document_id`) serves
+/// the first match in canonical key order. The load map was built
+/// last-wins over the same snapshot, so the same id answered two different
+/// ways. The map now keeps the first match in canonical key order: the load
+/// binds exactly the document the point read serves. The decision is
+/// recorded in docs/query/gap-eval-evaluator-parity.md.
+#[test]
+fn loads_resolve_a_reused_id_the_way_the_point_read_does() {
+    use super::QueryLoad;
+    let (dir, engine) = open_engine("gap-eval-q5-reuse");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document(
+                "order-1",
+                "orders",
+                &[
+                    ("total", DocumentValue::Integer(1)),
+                    ("refId", DocumentValue::String("shared-1".to_owned())),
+                ],
+            ),
+            // The same document id committed in two collections of one
+            // tenant: "alpha" sorts before "beta" in canonical key order, so
+            // the point read serves the alpha copy.
+            object_document(
+                "shared-1",
+                "alpha",
+                &[("marker", DocumentValue::String("alpha-copy".to_owned()))],
+            ),
+            object_document(
+                "shared-1",
+                "beta",
+                &[("marker", DocumentValue::String("beta-copy".to_owned()))],
+            ),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+
+    // The engine's identifier-only read, the rule the load must agree with.
+    let operation = OperationId::try_new("op-read").expect("valid identifier");
+    let transaction = engine.begin(&tenant_scope, snapshot.clone(), operation).expect("begins");
+    let point_read = transaction
+        .read(&DocumentId::try_new("shared-1").expect("valid identifier"))
+        .expect("reads");
+    let point_read = point_read.expect("the reused id resolves for the point read");
+    assert_eq!(point_read.collection().as_str(), "alpha");
+    drop(transaction);
+
+    let store = engine.queries();
+    let query = spec(
+        "tenant-a",
+        "orders",
+        predicate(Vec::new()),
+        QueryOrdering::default(),
+        projection_fields(&["total", "r.marker", "r"]),
+        paging(0, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+    )
+    .with_loads(vec![QueryLoad::try_new("refId", "r").expect("valid load")])
+    .expect("loads bind");
+    let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+    let result = store.execute(&plan, &snapshot).expect("executes");
+    assert_eq!(row_ids(&result), ["order-1"]);
+    let projected = result.rows()[0]
+        .projected()
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.clone()))
+        .collect::<Vec<_>>();
+    // The qualified field and the bare alias both read the alpha copy — the
+    // same document the point read served — never the beta copy that
+    // last-wins keyed.
+    assert_eq!(
+        projected,
+        [
+            ("total", DocumentValue::Integer(1)),
+            ("r.marker", DocumentValue::String("alpha-copy".to_owned())),
+            ("r", object(&[("marker", DocumentValue::String("alpha-copy".to_owned()))])),
+        ]
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// GAP-EVAL rider: the optimizer's demand derivation must classify the
 /// expanded conditions — a dynamic query carrying them selects or creates
 /// its index and still answers, rather than failing closed on an

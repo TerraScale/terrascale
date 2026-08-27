@@ -211,6 +211,60 @@ evaluator's closed condition set. V1's array-alias loads (`alias[]`,
 `QueryMetadata.cs:1113-1117`) have no `tql/1.0` spelling and are
 **deferred** with the same surface.
 
+**Closed-here (warden repair, loop 1) — reused ids resolve by the
+engine's first-match rule.** Storage keys documents by tenant,
+collection, and identifier, and nothing forbids reusing one identifier
+across a tenant's collections — the same supported state the streaming
+cursor rule records (`src/storage/root.rs`, `tenant_documents_from`).
+The Q5 load map keyed tenant documents by bare id with silent
+last-wins, so one snapshot answered the same bare id two different
+ways: the load bound the last occurrence in canonical key order while
+the engine's identifier-only point read (`Transaction::read` →
+`read_document_at` → `find_by_document_id`) serves the first. Two fixes
+were possible — first-match-wins, or a typed ambiguity error. The
+repair picks **first-match-wins**: it is the engine's own existing id
+resolution (agreement beats a new error), and it keeps the load a
+lookup, not a policy decision. `by_id` in `src/query/execute.rs` is
+built with `entry(id).or_insert` over the snapshot's canonical key
+order, so a load binds exactly the document the point read serves; a
+caller that needs a specific copy uses the collection-qualified read
+(`read_in_collection`), as with the point-read surface. Red test first:
+`loads_resolve_a_reused_id_the_way_the_point_read_does` committed one
+id in two collections, observed the point read serve the alpha copy
+while the load bound the beta copy, and passes on the agreed
+first-match answer. The typed-ambiguity-error alternative is recorded
+here as rejected: it would make reuse a query-time failure for a state
+the engine already serves deterministically.
+
+**Closed-here (warden repair, loop 1) — NaN is unordered in the mixed
+predicate arms.** The Q2 exact-comparison rewrite routed the predicate's
+mixed Integer/Number arms through `compare_integer_with_number`, whose
+finite-only precondition the rank gate enforces only in the order-by
+path: with a NaN literal both sign gates were false and
+`NaN.trunc() as i128` saturated to 0, so the predicate decided against a
+phantom 0 (`Integer(5)` answered `> Number(NaN)` true; a `Between` with
+a NaN bound admitted half the range). The mixed arms now route NaN
+around the helper (`mixed_numeric_ordering` in `src/query/model.rs`):
+NaN compares unordered — `None` — making every comparison condition
+against it false, the same rule the same-domain `Number` arm already
+applies through `partial_cmp`; the infinities keep their sign-gate
+answers (every integer is below `+inf` and above `-inf`). Red tests
+first: `mixed_nan_literals_make_every_ordering_condition_false` pinned
+all four inequalities against `Number(NaN)` literals and both `Between`
+NaN-bound sides, and
+`nan_documents_answer_no_integer_inequality_and_infinities_keep_their_signs`
+pinned the symmetric `Number(NaN)`-document cases and the infinities'
+unchanged answers.
+
+Rider (same repair): the load-aware projection built its dotted alias
+prefix with `format!` per matched row per projection name; the clause's
+field, alias, and prefix are now precomputed once per query
+(`LoadShape` in `src/query/execute.rs`) and per-row code only reads
+them. Behavior-preserving; no red test exists for an allocation, and
+the bare-alias and qualified-field projection arms are covered by
+`loads_resolve_a_reused_id_the_way_the_point_read_does` and
+`loads_resolve_referenced_source_documents_into_projection`.
+
 ## Shared machinery notes
 
 - The predicate path, the order-by path, and the between evaluation now
