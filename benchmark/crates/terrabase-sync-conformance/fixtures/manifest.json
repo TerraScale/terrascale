@@ -1,0 +1,61 @@
+{
+  "protocol": "terrascale.sync.v2",
+  "protocol_version": 2,
+  "schema": "terrascale.sync.v2/corpus-manifest@1",
+  "vectors": [
+    {
+      "bytes": 4431,
+      "category": "checkpoint-resume",
+      "file": "checkpoint-resume.json",
+      "sha256": "65a50eebc1953a2d8d457b0adbaeb0e4e9e219e24768567955cc754829ee6c16"
+    },
+    {
+      "bytes": 6697,
+      "category": "fresh-session",
+      "file": "fresh-session.json",
+      "sha256": "67273fcf9407ea6169919202c7aafce1cfd7349d4ff57a6a84caf4864c72de05"
+    },
+    {
+      "bytes": 3451,
+      "category": "malformed-frame-rejection",
+      "file": "malformed-frame-rejection.json",
+      "sha256": "0160117eb27457a5ed8a28065fc92de996819065989c1339b25379d713b3d5af"
+    },
+    {
+      "bytes": 5543,
+      "category": "reconnect-replay",
+      "file": "reconnect-replay.json",
+      "sha256": "32c8ec2f61213858411bf2fc3444fe4ffa1dff5c722230f5bc2296f2c8156dc0"
+    },
+    {
+      "bytes": 1731,
+      "category": "region-route-change",
+      "file": "region-route-change.json",
+      "sha256": "fbc4216992cafdcd8e2adcaf0720093e21df2505055a5f8ed59c730a251ce319"
+    },
+    {
+      "bytes": 24800,
+      "category": "repeated-change-delta",
+      "file": "repeated-change-delta.json",
+      "sha256": "a1136f85417d81f86af2fe51afac71d076b7a9dd24b5e3558e3f93d2c786558a"
+    },
+    {
+      "bytes": 11370,
+      "category": "resync-required",
+      "file": "resync-required.json",
+      "sha256": "8d52e95832e151cf7e3889d5cbd459fedf203eff6d687fd57e017c6d869254cc"
+    },
+    {
+      "bytes": 81972,
+      "category": "slow-consumer",
+      "file": "slow-consumer.json",
+      "sha256": "8c492139ddc6a3134a815479b08b0cdb237d3ed942dcf9ea368e29279ba03985"
+    },
+    {
+      "bytes": 4396,
+      "category": "trigger-notification",
+      "file": "trigger-notification.json",
+      "sha256": "396ee707fa1f87ff67316968d888d5793a71a0ee97f298987dc325ac89bbfe18"
+    }
+  ]
+}
