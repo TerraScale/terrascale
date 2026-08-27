@@ -53,7 +53,11 @@ import urllib.request
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKSPACE_ROOT = REPO_ROOT.parents[2]
 TS_REPO = pathlib.Path(os.environ.get("TERRASCALE_TS_SDK", str(WORKSPACE_ROOT / "TerraScale.TypeScript")))
-DOTNET_REPO = pathlib.Path(os.environ.get("TERRASCALE_DOTNET_SDK_REPO", str(WORKSPACE_ROOT / "TerraScale.DotNet")))
+# One name everywhere (run.py, tracer/README, the packet record, the
+# tracer csproj): TERRASCALE_DOTNET_SDK. The tracer's csproj reads the
+# same variable, so an override selects both the tracer's project
+# reference and the HEAD this record names.
+DOTNET_REPO = pathlib.Path(os.environ.get("TERRASCALE_DOTNET_SDK", str(WORKSPACE_ROOT / "TerraScale.DotNet")))
 VECTORS = REPO_ROOT / "crates/terrabase-sync-core/vectors/terrascale.sync.v2"
 EVIDENCE = REPO_ROOT / "evidence/sync/se11"
 TRACER_TS = REPO_ROOT / "tracer/ts/tracer.mjs"
@@ -438,6 +442,23 @@ class Tracer:
             time.sleep(0.1)
         raise TimeoutError(f"{self.role}: no final observation")
 
+    def stop(self) -> None:
+        """Ends the tracer process: an orchestrator-side exception must not
+        leave a tracer lingering on its plan timeouts (mirrors host.stop())."""
+        if self.process is None:
+            return
+        try:
+            if self.process.poll() is None:
+                self.process.terminate()
+                self.process.wait(timeout=10)
+        except Exception:  # noqa: BLE001 - best-effort teardown
+            self.process.kill()
+            try:
+                self.process.wait(timeout=5)
+            except Exception:  # noqa: BLE001 - best-effort teardown
+                pass
+        self.process = None
+
 
 def normalized_deliveries(tracer: Tracer) -> list[tuple]:
     """The comparable transition sequence: (kind, storage sequence, ends,
@@ -618,6 +639,23 @@ SCENARIO_TITLES = {
 }
 
 
+def subscribed() -> dict:
+    """The deterministic subscription gate every measured write waits behind.
+
+    Both SDK cores open their push channel without awaiting it (the .NET
+    live loop subscribes only after setup and its initial pull, and has no
+    fallback pull before its first trigger; the TS connect() fires the
+    stream factory and returns), so a commit landing between the session
+    setup and the subscription is undeliverable — the pull is
+    authoritative but needs a hint. The tracers observe their own
+    /v1/streams subscription (a `stream-opened` observation on their own
+    wire — the host registers the subscriber and the engine's backbone
+    subscription before it writes the stream's first event), and this step
+    completes only on that positive evidence, never on elapsed time.
+    """
+    return {"op": "waitStream", "timeoutMs": 20000}
+
+
 def scenario_golden_path(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
     facts = Facts("s1-golden-path", SCENARIO_TITLES["s1-golden-path"])
     run_dir = run_root / "s1"
@@ -646,6 +684,7 @@ def scenario_golden_path(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         for tracer in (ts, net):
             tracer.plan = [
                 {"op": "connect"},
+                subscribed(),
                 {"op": "waitCheckpoint", "sequence": 3, "timeoutMs": 20000},
                 {"op": "signal", "name": f"{tracer.role}-at-3"},
             ]
@@ -744,9 +783,18 @@ def scenario_golden_path(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
                     "no snapshot adoption observed",
                 )
 
-        # The repeated-change budget row, re-derived from observation: the
-        # delta path for the 8 repeated changes stays below the snapshot
-        # of the established state (the state the vector snapshots).
+        # The vector's recorded budget row, asserted directly from the
+        # corpus (the row the SE-07 budget work reports against)...
+        vector_budget = next(step["budget"] for step in repeated["steps"] if "budget" in step)
+        facts.check(
+            "the vector's recorded budget row: repeated changes ride deltas below the snapshot of the same state",
+            vector_budget["delta_bytes"] < vector_budget["snapshot_bytes"],
+            f"recorded delta_bytes {vector_budget['delta_bytes']} < snapshot_bytes {vector_budget['snapshot_bytes']} "
+            f"(payload_bytes {vector_budget['payload_bytes']}, envelope_overhead_bytes {vector_budget['envelope_overhead_bytes']}, "
+            f"bytes_per_delivered_change {vector_budget['bytes_per_delivered_change']})",
+        )
+        # ...and the same relation re-derived from what the two cores
+        # actually observed on the wire through the full stack.
         established_snapshot = host.request(
             "POST", f"/v1/sync/sessions/{host.open_session()['sessionId']}/snapshot", {}
         )[1]
@@ -756,7 +804,7 @@ def scenario_golden_path(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
             repeated_deltas = [event for event in deltas if event["checkpoint"]["storageSequence"] >= 20]
             delta_total = sum(event["payloadBytes"] for event in repeated_deltas)
             facts.check(
-                f"{tracer.role} repeated-change deltas stay below the snapshot re-send (the vector's budget row)",
+                f"{tracer.role} repeated-change deltas stay below the snapshot re-send (re-derived from observation)",
                 0 < delta_total < established_snapshot_bytes,
                 f"{delta_total} delta bytes for 8 repeated changes vs {established_snapshot_bytes} snapshot bytes of the established state",
             )
@@ -807,6 +855,8 @@ def scenario_golden_path(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
             f"key set {sorted(keys)}; {triggers[0]['bytes']} wire bytes for the SSE event",
         )
     finally:
+        ts.stop()
+        net.stop()
         host.stop()
     return facts
 
@@ -833,6 +883,11 @@ def scenario_drop_resume(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
             {"op": "gate", "name": "host-back"},
             {"op": "dispose"},
             {"op": "connect", "resume": True},
+            subscribed(),
+            # The re-set-up .NET session's subscription gates this write:
+            # both cores are live on their push channels before the commit
+            # lands (its trigger must have a subscriber to ride).
+            {"op": "gate", "name": "net-stream-live"},
             {"op": "mutate", "key": "op-s2-005", "document": "d-05", "put": {"f000": "after-resume-ts"}},
             {"op": "waitCheckpoint", "sequence": 5, "timeoutMs": 30000},
             {"op": "signal", "name": "ts-at-5"},
@@ -857,6 +912,8 @@ def scenario_drop_resume(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
             {"op": "signal", "name": "net-stale-probed"},
             {"op": "dispose"},
             {"op": "connect", "resume": True},
+            subscribed(),
+            {"op": "signal", "name": "net-stream-live"},
             {"op": "waitCheckpoint", "sequence": 5, "timeoutMs": 60000},
             {"op": "signal", "name": "net-at-5"},
             {"op": "final"},
@@ -926,6 +983,8 @@ def scenario_drop_resume(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
             f"{len(duplicates)} duplicate batches",
         )
     finally:
+        ts.stop()
+        net.stop()
         host.stop()
     return facts
 
@@ -944,6 +1003,8 @@ def scenario_slow_consumer(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         for tracer in (ts, net):
             tracer.plan = [
                 {"op": "connect"},
+                subscribed(),
+                {"op": "signal", "name": f"{tracer.role}-subscribed"},
                 {"op": "waitCheckpoint", "sequence": total, "timeoutMs": 60000},
                 {"op": "signal", "name": f"{tracer.role}-at-{total}"},
                 {"op": "gate", "name": "oversize-go"},
@@ -959,6 +1020,15 @@ def scenario_slow_consumer(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         wait_until(lambda: [event for event in probe.pump() if event["event"] == "opened"], "the slow probe stream to open")
         watcher = SlowProbe(host)
         watcher.open()
+
+        # The flood waits for both fast consumers' subscriptions: the very
+        # last commit must not land in the window between a consumer's
+        # snapshot and its stream registration (there is no later commit
+        # whose trigger would recover it).
+        wait_until(
+            lambda: (gates / "ts-subscribed").exists() and (gates / "net-subscribed").exists(),
+            "both fast consumers subscribed before the flood",
+        )
 
         # The consumer stalls: it simply stops reading.
         driver = host.open_session()
@@ -1122,6 +1192,12 @@ def scenario_tbep_link_loss(home: pathlib.Path, run_root: pathlib.Path) -> Facts
             {"op": "gate", "name": "ts-fresh-go"},
             {"op": "dispose"},
             {"op": "connect"},
+            subscribed(),
+            # A symmetric rendezvous: both fresh setups subscribe before
+            # either post-recovery write lands, so the concurrent mutations
+            # cannot beat the other core's subscription.
+            {"op": "signal", "name": "ts-fresh-subscribed"},
+            {"op": "gate", "name": "net-fresh-subscribed"},
             {"op": "mutate", "key": "op-s4-007", "document": "d-07", "put": {"f000": "post-recovery-ts"}},
             {"op": "waitCheckpoint", "sequence": 3, "timeoutMs": 30000},
             {"op": "signal", "name": "ts-recovered"},
@@ -1147,7 +1223,15 @@ def scenario_tbep_link_loss(home: pathlib.Path, run_root: pathlib.Path) -> Facts
             {"op": "gate", "name": "net-fresh-go"},
             {"op": "dispose"},
             {"op": "connect"},
-            {"op": "watch", "ms": 2000},
+            subscribed(),
+            # Positive evidence where this step used to sleep a 2 s settle:
+            # the plan thread's mutations wait until this session's own
+            # delivery stream is subscribed, and the gate it then waits on
+            # releases only after the TS core's fresh setup is subscribed
+            # too (a symmetric rendezvous — both signals precede both
+            # waits).
+            {"op": "signal", "name": "net-fresh-subscribed"},
+            {"op": "gate", "name": "ts-fresh-subscribed"},
             {"op": "mutate", "key": "op-s4-004", "document": "d-04", "put": {"f000": "post-recovery-net"}},
             {"op": "mutate", "key": "op-s4-005", "document": "d-05", "put": {"f000": "post-recovery-net-2"}},
             {"op": "waitCheckpoint", "sequence": 3, "timeoutMs": 30000},
@@ -1241,6 +1325,8 @@ def scenario_tbep_link_loss(home: pathlib.Path, run_root: pathlib.Path) -> Facts
         )
     finally:
         probe.close()
+        ts.stop()
+        net.stop()
         host.stop()
     return facts
 
@@ -1281,6 +1367,15 @@ def scenario_region_route_change(home: pathlib.Path, run_root: pathlib.Path) -> 
                 {"op": "gate", "name": "route-changed"},
                 {"op": "dispose"},
                 {"op": "connect", "resume": True, "host": region_b.url},
+                # The measured post-route write is gated on positive
+                # evidence that this session's delivery stream at the new
+                # region is subscribed: the .NET live loop subscribes only
+                # after the setup and its checkpoint-acked pull, and has no
+                # fallback pull before its first trigger, so a write that
+                # beats the subscription is undeliverable (it was exactly
+                # this race that made the committed 5/5 receipt fail 2/4
+                # under independent execution).
+                subscribed(),
                 {"op": "signal", "name": f"{tracer.role}-on-b"},
                 {"op": "waitCheckpoint", "sequence": 4, "timeoutMs": 30000},
                 {"op": "signal", "name": f"{tracer.role}-at-4-b"},
@@ -1346,6 +1441,8 @@ def scenario_region_route_change(home: pathlib.Path, run_root: pathlib.Path) -> 
                 f"digest {b_deltas['ts'][0]['payloadSha256'][:16]}…",
             )
     finally:
+        ts.stop()
+        net.stop()
         region_a.stop()
         region_b.stop()
     return facts
@@ -1377,6 +1474,7 @@ def scenario_multi_region(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         net = Tracer("net", run_dir, gates, region_b.url)
         ts.plan = [
             {"op": "connect"},
+            subscribed(),
             {"op": "signal", "name": "ts-open"},
             {"op": "gate", "name": "write-w1"},
             {"op": "mutate", "key": "op-w1", "document": "d-shared", "put": {"f000": "written-through-a"}},
@@ -1390,6 +1488,7 @@ def scenario_multi_region(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         ]
         net.plan = [
             {"op": "connect"},
+            subscribed(),
             {"op": "signal", "name": "net-open"},
             {"op": "waitCheckpoint", "sequence": 1, "timeoutMs": 30000},
             {"op": "signal", "name": "reader-saw-w1"},
@@ -1492,6 +1591,8 @@ def scenario_multi_region(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
             f"ends region-a {ts_final['checkpoint']['ends']} == region-b {net_final['checkpoint']['ends']}",
         )
     finally:
+        ts.stop()
+        net.stop()
         region_a.stop()
         region_b.stop()
     return facts
@@ -1564,9 +1665,17 @@ def build_all(run_root: pathlib.Path) -> pathlib.Path:
         raise RuntimeError(f"the C# host failed to build:\n{result.stdout}\n{result.stderr}")
     log("C# host built")
 
-    if not TRACER_DOTNET_DLL.exists():
+    tracer_project = REPO_ROOT / "tracer/dotnet/TerraScale.Tracer"
+    # Rebuild whenever the source is newer than the built tracer: a stale
+    # binary would silently run a plan vocabulary the checked-in tracer no
+    # longer speaks.
+    tracer_sources = [*(tracer_project).glob("*.cs"), *(tracer_project).glob("*.csproj")]
+    stale = not TRACER_DOTNET_DLL.exists() or any(
+        source.stat().st_mtime > TRACER_DOTNET_DLL.stat().st_mtime for source in tracer_sources
+    )
+    if stale:
         result = subprocess.run(
-            [dotnet, "build", str(REPO_ROOT / "tracer/dotnet/TerraScale.Tracer"), "-v", "q"],
+            [dotnet, "build", str(tracer_project), "-v", "q"],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
