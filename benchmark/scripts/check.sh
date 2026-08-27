@@ -4,6 +4,13 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+# The repository pins its toolchain in rust-toolchain.toml. An ambient
+# RUSTUP_TOOLCHAIN (this host's default is "stable") would silently
+# override that pin and gate on the wrong toolchain — surfaced 2026-08-26
+# when the GAP-F07 warden found pinned-only clippy findings the ambient
+# override masked. Unset it so every cargo step below honors the pin.
+unset RUSTUP_TOOLCHAIN
+
 cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo test --workspace --locked --release

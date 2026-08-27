@@ -1,0 +1,19 @@
+{
+  "adversarial": [],
+  "category": "query-cancellation",
+  "description": "The wire-side query cancellation lifecycle handoff (GAP-Q12, PB-4034): one typed live signal frame keyed by the in-flight query identity.",
+  "frames": [
+    {
+      "body": "9107",
+      "causation": 0,
+      "correlation": 4,
+      "idempotency": null,
+      "kind": "QueryCancelRequest",
+      "overhead_bytes": 23,
+      "wire": "9701cd01050400c0cf0a188107b6885221c4029107"
+    }
+  ],
+  "protocol": "terrabase.engine.protocol",
+  "schema": "terrabase.engine.protocol/vector-corpus@1",
+  "wire_version": 1
+}

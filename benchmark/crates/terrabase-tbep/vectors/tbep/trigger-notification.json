@@ -1,0 +1,28 @@
+{
+  "adversarial": [],
+  "category": "trigger-notification",
+  "description": "The content-free trigger notification (PD-2026-08-26-13 D3): unsolicited pushes carry correlation 0, causation naming their subscription, and never document data — the consumer pulls the delta.",
+  "frames": [
+    {
+      "body": "942aa66f726465727309a56f702d3432",
+      "causation": 42,
+      "correlation": 0,
+      "idempotency": null,
+      "kind": "TriggerNotification",
+      "overhead_bytes": 23,
+      "wire": "9701cd0302002ac0cf3ec523af4b2d8dd4c410942aa66f726465727309a56f702d3432"
+    },
+    {
+      "body": "932a91a66f7264657273920209",
+      "causation": 0,
+      "correlation": 7,
+      "idempotency": null,
+      "kind": "BackboneSubscribeRequest",
+      "overhead_bytes": 23,
+      "wire": "9701cd01100700c0cf3824b47eccefe511c40d932a91a66f7264657273920209"
+    }
+  ],
+  "protocol": "terrabase.engine.protocol",
+  "schema": "terrabase.engine.protocol/vector-corpus@1",
+  "wire_version": 1
+}

@@ -535,27 +535,31 @@ fn counter_crud_preserves_signed_values_and_missing_errors() {
         .expect("reads after the delete");
     assert_eq!(counter_value(&group, "hits"), None, "a deleted counter is missing");
 
+    // Decision D2 (docs/families/counter-merge-encoding.md): the delete
+    // tombstones the name and re-creation fails closed, because the closed
+    // registry has no typed create operation and a silent resurrect would
+    // be indistinguishable from a concurrent increment the delete must
+    // dominate.
     commit_transaction(
         &engine,
         "tenant-a",
         "recreate-1",
         |store, transaction, tenant_scope, identity| {
-            store
-                .stage(
-                    transaction,
-                    counter_write(
-                        tenant_scope,
-                        identity.as_str(),
-                        "doc-1",
-                        vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 9 }],
-                    ),
-                )
-                .expect("recreates the counter from zero");
+            let staged = store.stage(
+                transaction,
+                counter_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 9 }],
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::TombstoneConflict));
         },
     );
     let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &["hits"])))
-        .expect("reads the recreated counter");
-    assert_eq!(counter_value(&group, "hits"), Some(9));
+        .expect("reads after the rejected re-creation");
+    assert_eq!(counter_value(&group, "hits"), None, "the tombstone keeps the name deleted");
 
     let missing_document = read_family(&engine, "tenant-a", counter_read("doc-404", &["hits"]));
     assert_eq!(missing_document, Err(FamilyError::DocumentMissing));
@@ -634,7 +638,10 @@ fn counter_batch_is_atomic_across_increment_delete_and_recreate() {
     assert_eq!(counter_value(&group, "reborn"), Some(10));
 
     // A batch that fails partway stages nothing, so committing the same
-    // transaction cannot publish a partial counter group.
+    // transaction cannot publish a partial counter group. The overflow is
+    // exercised on live names; the tombstoned `drop` name is exercised
+    // next (decision D2: an increment on a tombstoned counter fails
+    // closed with the typed tombstone conflict).
     commit_transaction(
         &engine,
         "tenant-a",
@@ -648,16 +655,36 @@ fn counter_batch_is_atomic_across_increment_delete_and_recreate() {
                     "doc-1",
                     vec![
                         CounterOperation::Increment { name: "keep".to_owned(), delta: 100 },
-                        CounterOperation::Increment { name: "drop".to_owned(), delta: i64::MAX },
-                        CounterOperation::Increment { name: "drop".to_owned(), delta: i64::MAX },
+                        CounterOperation::Increment { name: "keep".to_owned(), delta: i64::MAX },
+                        CounterOperation::Increment { name: "keep".to_owned(), delta: i64::MAX },
                     ],
                 ),
             );
             assert_eq!(staged, Err(FamilyError::CounterOverflow));
         },
     );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "batch-3",
+        |store, transaction, tenant_scope, identity| {
+            let staged = store.stage(
+                transaction,
+                counter_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    vec![
+                        CounterOperation::Increment { name: "keep".to_owned(), delta: 1 },
+                        CounterOperation::Increment { name: "drop".to_owned(), delta: 1 },
+                    ],
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::TombstoneConflict));
+        },
+    );
     let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &[])))
-        .expect("reads after the rejected batch");
+        .expect("reads after the rejected batches");
     assert_eq!(counter_value(&group, "keep"), Some(3), "no partial state");
     assert_eq!(counter_value(&group, "drop"), None, "no partial state");
     engine.shutdown().expect("shuts down");
@@ -708,6 +735,250 @@ fn counter_overflow_rejects_without_partial_state() {
     let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &["total"])))
         .expect("reads the unmodified counter");
     assert_eq!(counter_value(&group, "total"), Some(i64::MAX));
+    engine.shutdown().expect("shuts down");
+}
+
+// The state-level companions of the GAP-F07 merge encoding (decision
+// record D1/D2, `docs/families/counter-merge-encoding.md`): the merge
+// algebra and the legacy decode, exercised directly on the record
+// encoding. The end-to-end convergence, dedup, delete-wins, and rejoin
+// proofs run on the replication lane (`src/replication/lane_tests.rs`).
+
+#[test]
+fn counter_merge_is_commutative_associative_and_idempotent() {
+    use super::state::CounterRecord;
+
+    let mut alpha = CounterRecord::default();
+    alpha.increment("writer-a", 1, "views", 5).expect("alpha increments");
+    alpha.increment("writer-a", 2, "clicks", 2).expect("alpha increments");
+
+    let mut gamma = CounterRecord::default();
+    gamma.increment("writer-g", 1, "views", 3).expect("gamma increments");
+    gamma.increment("writer-g", 2, "views", 4).expect("gamma increments");
+
+    let alpha_then_gamma = alpha.merge(&gamma).expect("merges");
+    let gamma_then_alpha = gamma.merge(&alpha).expect("merges");
+    assert_eq!(
+        alpha_then_gamma.encode(),
+        gamma_then_alpha.encode(),
+        "the merge is commutative (same encoded state both directions)"
+    );
+    assert_eq!(alpha_then_gamma.total("views"), Ok(Some(12)));
+    assert_eq!(alpha_then_gamma.total("clicks"), Ok(Some(2)));
+
+    let again = alpha_then_gamma
+        .merge(&gamma)
+        .expect("re-merging the same delivery")
+        .merge(&alpha)
+        .expect("re-merging the other delivery");
+    assert_eq!(
+        again.encode(),
+        alpha_then_gamma.encode(),
+        "the merge is idempotent: redelivery contributes nothing"
+    );
+
+    // A third state merges associatively on top.
+    let mut beta = CounterRecord::default();
+    beta.increment("writer-b", 1, "views", 10).expect("beta increments");
+    let left = alpha_then_gamma.merge(&beta).expect("merges");
+    let right = alpha.merge(&gamma.merge(&beta).expect("merges")).expect("merges");
+    assert_eq!(left.encode(), right.encode(), "the merge is associative");
+    assert_eq!(left.total("views"), Ok(Some(22)));
+}
+
+#[test]
+fn counter_merge_keeps_each_writers_latest_entry_and_fails_closed_on_forged_seq() {
+    use super::state::{CounterBucket, CounterRecord, FamilyMergeError};
+
+    let mut local = CounterRecord::default();
+    local.increment("writer-a", 1, "views", 5).expect("local increments");
+    // The same writer re-delivers a LATER entry of its own: the greater
+    // sequence wins, so a writer's retried batch never double counts.
+    let mut advanced = CounterRecord::default();
+    advanced.increment("writer-a", 2, "views", 7).expect("advanced increments");
+    let merged = local.merge(&advanced).expect("merges");
+    assert_eq!(merged.total("views"), Ok(Some(7)), "the greater sequence wins");
+
+    // Two different contributions under one writer and sequence cannot be
+    // minted by one engine: the merge fails closed.
+    let mut forged = advanced.clone();
+    forged
+        .counters
+        .get_mut("views")
+        .expect("entry")
+        .buckets
+        .insert("writer-a".to_owned(), CounterBucket { p: 9, n: 0, seq: 2 });
+    assert_eq!(
+        advanced.merge(&forged),
+        Err(FamilyMergeError::RecordInvalid),
+        "a forged same-sequence entry fails closed"
+    );
+}
+
+#[test]
+fn counter_merge_delete_wins_and_the_tombstone_survives() {
+    use super::state::CounterRecord;
+
+    let mut deleted = CounterRecord::default();
+    deleted.increment("writer-a", 1, "views", 7).expect("seeds");
+    deleted.delete("writer-a", 2, "views");
+
+    let mut concurrent = CounterRecord::default();
+    concurrent.increment("writer-g", 1, "views", 3).expect("concurrent increment");
+
+    let merged = deleted.merge(&concurrent).expect("merges");
+    assert_eq!(merged.total("views"), Ok(None), "delete wins over the concurrent increment");
+    // The tombstone survives the merge and the record is not empty, so a
+    // later stale delivery still has a record to merge into (D2).
+    assert!(!merged.is_empty(), "the tombstone keeps the record alive");
+    let remerged = merged.merge(&concurrent).expect("re-merges");
+    assert_eq!(remerged.total("views"), Ok(None), "the tombstone still fences");
+}
+
+#[test]
+fn counter_merge_fails_closed_when_the_merged_total_overflows() {
+    use super::state::{CounterRecord, FamilyMergeError};
+
+    let mut alpha = CounterRecord::default();
+    alpha.increment("writer-a", 1, "views", i64::MAX / 2 + 1).expect("alpha increments");
+    let mut gamma = CounterRecord::default();
+    gamma.increment("writer-g", 1, "views", i64::MAX / 2 + 1).expect("gamma increments");
+    assert_eq!(
+        alpha.merge(&gamma),
+        Err(FamilyMergeError::TotalOverflow),
+        "a merged total outside the signed 64-bit range fails closed"
+    );
+}
+
+#[test]
+fn legacy_counter_record_decodes_reads_and_merges() {
+    use super::state::CounterRecord;
+
+    // The pre-merge W3-F whole-value form (decision record D1's legacy
+    // decode): a record written before the merge encoding still reads and
+    // still merges under the reserved legacy writer tag.
+    let legacy = DocumentValue::Object(
+        [(
+            "counters".to_owned(),
+            DocumentValue::Object(
+                [("views".to_owned(), DocumentValue::Integer(6))].into_iter().collect(),
+            ),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let record = CounterRecord::decode(&legacy).expect("the legacy form decodes");
+    assert_eq!(record.total("views"), Ok(Some(6)));
+
+    let mut fresh = CounterRecord::default();
+    fresh.increment("writer-new", 1, "views", 2).expect("increments");
+    let merged = record.merge(&fresh).expect("merges");
+    assert_eq!(
+        merged.total("views"),
+        Ok(Some(8)),
+        "a legacy record merges with fresh writer buckets"
+    );
+
+    // The re-encoded record always uses the merge form.
+    let DocumentValue::Object(fields) = merged.encode() else {
+        panic!("the encoded record is an object");
+    };
+    let DocumentValue::Object(counters) = fields.get("counters").expect("counters") else {
+        panic!("the counters field is an object");
+    };
+    let DocumentValue::Object(entry) = counters.get("views").expect("views") else {
+        panic!("the per-name entry is an object");
+    };
+    assert!(entry.contains_key("buckets"), "the merge form carries buckets");
+}
+
+// Decision record D2 (docs/families/counter-merge-encoding.md): a counter
+// delete records a per-counter tombstone, reads hide the tombstoned name,
+// the tombstone keeps the record alive so a remote stale increment cannot
+// resurrect it unnoticed, and local re-creation fails closed with the
+// typed tombstone conflict. Merge survival of the tombstone is proven at
+// the state level in `counter_merge_is_...` and on the replication lane
+// in `src/replication/lane_tests.rs`.
+#[test]
+fn counter_delete_tombstones_the_name_and_fails_closed_recreation() {
+    let (_dir, engine) = open_engine("counter-tombstone");
+    put_user_document(&engine, "tenant-a", "put-doc", "doc-1", object_user_value(&[("n", "v")]));
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "seed-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![
+                            CounterOperation::Increment { name: "hits".to_owned(), delta: 7 },
+                            CounterOperation::Increment { name: "kept".to_owned(), delta: 2 },
+                        ],
+                    ),
+                )
+                .expect("seeds two counters");
+        },
+    );
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "delete-1",
+        |store, transaction, tenant_scope, identity| {
+            store
+                .stage(
+                    transaction,
+                    counter_write(
+                        tenant_scope,
+                        identity.as_str(),
+                        "doc-1",
+                        vec![CounterOperation::Delete { name: "hits".to_owned() }],
+                    ),
+                )
+                .expect("stages the delete");
+        },
+    );
+
+    // The deleted name is hidden and fenced: reads exclude it and any
+    // later increment fails closed without staging.
+    let group = counter_group(read_family(&engine, "tenant-a", counter_read("doc-1", &[])))
+        .expect("reads the group after the delete");
+    assert_eq!(counter_value(&group, "hits"), None, "the tombstoned name is absent");
+    assert_eq!(counter_value(&group, "kept"), Some(2), "unrelated names survive");
+    commit_transaction(
+        &engine,
+        "tenant-a",
+        "stale-1",
+        |store, transaction, tenant_scope, identity| {
+            let staged = store.stage(
+                transaction,
+                counter_write(
+                    tenant_scope,
+                    identity.as_str(),
+                    "doc-1",
+                    vec![CounterOperation::Increment { name: "hits".to_owned(), delta: 1 }],
+                ),
+            );
+            assert_eq!(staged, Err(FamilyError::TombstoneConflict));
+        },
+    );
+
+    // The tombstone keeps the reserved record alive: a document still
+    // occupies the reserved identifier, so a remote stale increment has a
+    // record to merge into and be dominated by (decision D2).
+    let record = record_id("counters", &["doc-1"]).expect("reserved record identifier");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let present = engine
+        .snapshot_documents(&tenant_scope, &snapshot)
+        .expect("reads the snapshot documents")
+        .iter()
+        .any(|document| document.id() == &record);
+    assert!(present, "the tombstone keeps the counter record alive");
     engine.shutdown().expect("shuts down");
 }
 

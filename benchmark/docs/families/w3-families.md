@@ -1,3 +1,5 @@
+# SUPERSEDED IN PART (counter records): see counter-merge-encoding.md (accepted 2026-08-26) for the counter-record encoding; the statements below stand as W3-F history.
+
 # W3-F families record: typed Data Family seam
 
 Status: implementation record for the W3-F data-family packet, 2026-08-24.

@@ -1,0 +1,55 @@
+{
+  "adversarial": [],
+  "category": "schema-pitfalls",
+  "description": "The cross-language pitfall set (PD-2026-08-26-02 D4): nil rides only in optional slots, objects canonicalize name-sorted at every nesting level, tagged value arrays carry the type distinction the map/array worlds miss, and empty bodies are fixarray(0).",
+  "frames": [
+    {
+      "body": "90",
+      "causation": 0,
+      "correlation": 8,
+      "idempotency": null,
+      "kind": "SupervisionHealthRequest",
+      "overhead_bytes": 23,
+      "wire": "9701cd01410800c0cfaf644d4c8602ac8fc40190"
+    },
+    {
+      "body": "90",
+      "causation": 0,
+      "correlation": 9,
+      "idempotency": null,
+      "kind": "TopologyReadRequest",
+      "overhead_bytes": 23,
+      "wire": "9701cd01300900c0cfaf644d4c8602ac8fc40190"
+    },
+    {
+      "body": "919101",
+      "causation": 0,
+      "correlation": 10,
+      "idempotency": null,
+      "kind": "SupervisionShutdownRequest",
+      "overhead_bytes": 23,
+      "wire": "9701cd01420a00c0cfae12cc1b28098ba2c403919101"
+    },
+    {
+      "body": "90",
+      "causation": 0,
+      "correlation": 11,
+      "idempotency": null,
+      "kind": "AdminStatusRequest",
+      "overhead_bytes": 23,
+      "wire": "9701cd01310b00c0cfaf644d4c8602ac8fc40190"
+    },
+    {
+      "body": "9393a4642d3032a66f726465727392069392a1619203cb3ff800000000000092a16d92069292a5616c7068619202ff92a5696e6e65729204a576616c756592a17a92059291009201c29102a56f702d3033",
+      "causation": 0,
+      "correlation": 12,
+      "idempotency": "retry-03",
+      "kind": "DocumentWriteRequest",
+      "overhead_bytes": 31,
+      "wire": "9701cd01020c00a872657472792d3033cff9e5d9c865dffa13c4519393a4642d3032a66f726465727392069392a1619203cb3ff800000000000092a16d92069292a5616c7068619202ff92a5696e6e65729204a576616c756592a17a92059291009201c29102a56f702d3033"
+    }
+  ],
+  "protocol": "terrabase.engine.protocol",
+  "schema": "terrabase.engine.protocol/vector-corpus@1",
+  "wire_version": 1
+}
