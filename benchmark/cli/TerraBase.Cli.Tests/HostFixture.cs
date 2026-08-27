@@ -43,7 +43,19 @@ public sealed class HostFixture : IAsyncDisposable
             ListenUrl = "http://127.0.0.1:0",
         });
         await bundle.Supervisor.StartAsync().ConfigureAwait(false);
-        await bundle.App.StartAsync().ConfigureAwait(false);
+        try
+        {
+            await bundle.App.StartAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // The supervisor already spawned the engine: an app boot
+            // failure must not leak the supervised process.
+            await bundle.Supervisor.DisposeAsync().ConfigureAwait(false);
+            await bundle.App.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
         return new HostFixture(bundle);
     }
 

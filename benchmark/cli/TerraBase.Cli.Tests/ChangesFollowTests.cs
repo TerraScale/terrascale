@@ -55,7 +55,11 @@ public sealed class ChangesFollowTests
         var (exit, stdout, stderr) = await RunAsync(host, ["--json", "changes", "--from", "1", "--idle", "300"]);
         await Assert.That(exit).IsEqualTo(0);
         await Assert.That(stderr).IsEmpty();
-        var envelopes = Envelopes(stdout);
+        // Every machine line of the tail — the events and the lifecycle
+        // notices — carries the stable header and exactly one payload.
+        var envelopes = await MachineEnvelope.AssertStreamWellFormedAsync(stdout, "changes", "host");
+        await Assert.That(envelopes.Any(e => e.TryGetProperty("event", out _))).IsTrue();
+        await Assert.That(envelopes.Any(e => e.TryGetProperty("notice", out _))).IsTrue();
         var events = envelopes.Where(e => e.TryGetProperty("event", out _)).ToList();
         var operationIds = events
             .Select(e => e.GetProperty("event").TryGetProperty("operationId", out var id) ? id.GetString() : null)

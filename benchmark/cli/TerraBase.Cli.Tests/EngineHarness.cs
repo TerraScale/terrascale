@@ -174,10 +174,20 @@ public static class EngineHarness
 
     /// <summary>Spawns one local engine process bound to a fresh UDS path (the direct-TBEP fixture).</summary>
     /// <returns>The running engine process and its socket path.</returns>
-    public static async Task<(Process Process, string Socket)> SpawnAsync()
+    public static Task<(Process Process, string Socket)> SpawnAsync() => SpawnAsync(null);
+
+    /// <summary>
+    /// Spawns one local engine process, either on a fresh UDS path or on a
+    /// caller-named path — the engine-loss row restarts the engine on the
+    /// same socket a following tail still points at (the server replaces a
+    /// stale socket file on bind), so the tail's reconnection is real.
+    /// </summary>
+    /// <param name="socket">The UDS path to bind, or <c>null</c> for a fresh path.</param>
+    /// <returns>The running engine process and its socket path.</returns>
+    public static async Task<(Process Process, string Socket)> SpawnAsync(string? socket)
     {
         var binary = await BinaryPathAsync().ConfigureAwait(false);
-        var socket = SocketPath();
+        socket ??= SocketPath();
         var info = new ProcessStartInfo
         {
             FileName = binary,

@@ -118,6 +118,110 @@ public sealed class GrammarTests
         await Assert.That(stderr.ToString()).Contains("mode");
     }
 
+    /// <summary>A malformed operand or option value is a bounded usage error, never a crash.</summary>
+    /// <param name="args">The malformed invocation.</param>
+    /// <param name="word">The word the bounded refusal must name.</param>
+    /// <returns>A task that completes when the refusal held.</returns>
+    private static async Task RefusedAsync(string[] args, string word)
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+        var exit = await Cli.RunAsync(args, stdout, stderr, environment: NoEnvironment);
+        await Assert.That(exit).IsEqualTo(1);
+        await Assert.That(stdout.ToString()).IsEmpty();
+        await Assert.That(stderr.ToString()).Contains(word);
+        // The refusal is bounded: one diagnostic line and the grammar
+        // pointer, never a stack trace, never a core dump.
+        var lines = stderr.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        await Assert.That(lines.Length).IsEqualTo(2);
+        await Assert.That(lines[0].StartsWith("terrabase: ", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(stderr.ToString()).DoesNotContain("Exception");
+    }
+
+    /// <summary>A non-JSON <c>document write</c> body is a usage refusal, not a parse crash.</summary>
+    [Test]
+    public async Task AMalformedDocumentBodyIsAUsageError() =>
+        await RefusedAsync(["document", "write", "orders", "d-01", "not-json"], "JSON");
+
+    /// <summary>A non-numeric <c>--max-items</c> is a usage refusal, not a parse crash.</summary>
+    [Test]
+    public async Task AMalformedMaxItemsIsAUsageError() =>
+        await RefusedAsync(["document", "browse", "orders", "--max-items", "many"], "max-items");
+
+    /// <summary>A non-numeric query <c>--max-items</c> is a usage refusal, not a parse crash.</summary>
+    [Test]
+    public async Task AMalformedQueryBoundIsAUsageError() =>
+        await RefusedAsync(["query", "from orders", "--max-items", "x"], "max-items");
+
+    /// <summary>A non-numeric <c>--idle</c> is a usage refusal, not a parse crash.</summary>
+    [Test]
+    public async Task AMalformedIdleIsAUsageError() =>
+        await RefusedAsync(["changes", "--idle", "abc"], "idle");
+
+    /// <summary>A negative <c>--idle</c> is refused before the subscription opens, not after it.</summary>
+    [Test]
+    public async Task ANegativeIdleIsAUsageError() =>
+        await RefusedAsync(["changes", "--idle", "-5"], "idle");
+
+    /// <summary>A non-numeric <c>--max-events</c> is a usage refusal, not a silent unbounded tail.</summary>
+    [Test]
+    public async Task AMalformedMaxEventsIsAUsageError() =>
+        await RefusedAsync(["changes", "--max-events", "soon"], "max-events");
+
+    /// <summary>A non-numeric audit <c>--limit</c> is a usage refusal, not a parse crash.</summary>
+    [Test]
+    public async Task AMalformedAuditLimitIsAUsageError() =>
+        await RefusedAsync(["audit", "--limit", "none"], "limit");
+
+    /// <summary>A malformed <c>--expected</c> is a usage refusal in host mode too, not a typed error later.</summary>
+    [Test]
+    public async Task AMalformedExpectedIsAUsageErrorInHostMode() =>
+        await RefusedAsync(["document", "write", "orders", "d-01", "{}", "--expected", "later"], "expected");
+
+    /// <summary>Every machine envelope carries the stable header and exactly one payload property.</summary>
+    [Test]
+    public async Task MachineEnvelopesCarryTheStableHeaderAndOnePayload()
+    {
+        // A representative result envelope (help answers one machine line).
+        var helpOut = new StringWriter();
+        var helpErr = new StringWriter();
+        var helpExit = await Cli.RunAsync(["--json", "help"], helpOut, helpErr, environment: NoEnvironment);
+        await Assert.That(helpExit).IsEqualTo(0);
+        await Assert.That(helpErr.ToString()).IsEmpty();
+        var result = MachineEnvelope.Parse(helpOut.ToString()).Single();
+        await MachineEnvelope.AssertWellFormedAsync(result, "help", "host");
+        await Assert.That(result.TryGetProperty("result", out _)).IsTrue();
+
+        // A representative error envelope (an endpoint that cannot be
+        // reached answers the unavailable envelope on standard error).
+        var statusOut = new StringWriter();
+        var statusErr = new StringWriter();
+        var statusExit = await Cli.RunAsync(
+            ["--json", "--url", "http://127.0.0.1:9", "status"], statusOut, statusErr, environment: NoEnvironment);
+        await Assert.That(statusExit).IsEqualTo(3);
+        await Assert.That(statusOut.ToString()).IsEmpty();
+        var error = MachineEnvelope.Parse(statusErr.ToString()).Single();
+        await MachineEnvelope.AssertWellFormedAsync(error, "status", "host");
+        await Assert.That(error.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unavailable");
+    }
+
+    /// <summary>A typed error is one bounded human line in human mode, never a raw JSON envelope.</summary>
+    [Test]
+    public async Task TypedErrorsAreBoundedHumanLinesInHumanMode()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+        var exit = await Cli.RunAsync(
+            ["--url", "http://127.0.0.1:9", "status"], stdout, stderr, environment: NoEnvironment);
+        await Assert.That(exit).IsEqualTo(3);
+        await Assert.That(stdout.ToString()).IsEmpty();
+        var text = stderr.ToString();
+        await Assert.That(text).Contains("terrabase:");
+        await Assert.That(text).Contains("status");
+        await Assert.That(text).DoesNotContain("cliVersion");
+        await Assert.That(text).DoesNotContain("{");
+    }
+
     /// <summary><c>help</c> prints the whole grammar and exits zero.</summary>
     [Test]
     public async Task HelpPrintsTheWholeGrammar()

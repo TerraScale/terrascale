@@ -4,6 +4,7 @@
 
 namespace TerraBase.Cli.Tests;
 
+using System.Diagnostics;
 using System.Text.Json;
 using TerraBase.Protocol;
 
@@ -84,9 +85,11 @@ public sealed class DirectTbepTests
     public async Task DirectModeChangesTailTheLocalEngine()
     {
         var (process, socket) = await EngineHarness.SpawnAsync();
-        await using var driver = TbepChannel.Connect(socket);
         try
         {
+            // The engine's kill starts before the driver connects: a
+            // connect or bind failure must not leak the engine process.
+            await using var driver = TbepChannel.Connect(socket);
             await driver.BindChannelAsync("backend-operator", "tenant-a").ConfigureAwait(false);
             var setup = await driver.SyncSessionSetupAsync("orders", null).ConfigureAwait(false);
             foreach (var operation in new[] { "op-01", "op-02" })
@@ -126,14 +129,113 @@ public sealed class DirectTbepTests
         }
     }
 
+    /// <summary>
+    /// The direct mode's follow tail detects an engine loss under the
+    /// tail, notices the reconnect with its checkpoint, and resumes on a
+    /// fresh engine process that takes the same socket — the direct-mode
+    /// counterpart of the host family's dropped-connection row. The
+    /// fixture owns both engine processes, so the kill is deterministic.
+    /// </summary>
+    [Test]
+    public async Task DirectModeFollowResumesAfterTheEngineDies()
+    {
+        var (process, socket) = await EngineHarness.SpawnAsync();
+        Process? replacement = null;
+        try
+        {
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var environment = new Dictionary<string, string?> { ["TERRABASE_TBEP_SOCKET"] = socket };
+            var run = Cli.RunAsync(
+                [
+                    "--mode", "tbep", "--json", "--principal", "backend-operator", "--tenant", "tenant-a",
+                    "changes", "--follow", "--from", "1",
+                ],
+                stdout,
+                stderr,
+                bound.Token,
+                environment);
+
+            var opened = false;
+            for (var attempt = 0; attempt < 400 && !opened; attempt++)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+                opened = stdout.ToString().Contains("\"kind\":\"opened\"", StringComparison.Ordinal);
+            }
+
+            await Assert.That(opened).IsTrue();
+
+            // The engine dies under the following tail.
+            process.Kill(entireProcessTree: true);
+
+            var reconnect = false;
+            for (var attempt = 0; attempt < 400 && !reconnect; attempt++)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+                reconnect = stdout.ToString().Contains("\"kind\":\"reconnect\"", StringComparison.Ordinal);
+            }
+
+            await Assert.That(reconnect).IsTrue();
+
+            // A fresh engine takes the same socket: the tail must
+            // re-subscribe from its checkpoint and deliver the new commit.
+            var (fresh, _) = await EngineHarness.SpawnAsync(socket);
+            replacement = fresh;
+            await using var driver = TbepChannel.Connect(socket);
+            await driver.BindChannelAsync("backend-operator", "tenant-a").ConfigureAwait(false);
+            var setup = await driver.SyncSessionSetupAsync("orders", null).ConfigureAwait(false);
+            var answer = await driver.SyncMutationSubmitAsync(
+                setup.SessionId,
+                "d-01",
+                SyncChange.Put([new SyncField { Name = "note", Value = TbepValue.Of("body-of-op-restart") }]),
+                "op-restart").ConfigureAwait(false);
+            await Assert.That(answer.Outcome.Variant).IsEqualTo("Applied");
+
+            var resumed = false;
+            for (var attempt = 0; attempt < 400 && !resumed; attempt++)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+                resumed = stdout.ToString().Contains("op-restart", StringComparison.Ordinal);
+            }
+
+            await Assert.That(resumed).IsTrue();
+            bound.Cancel();
+            var exit = await run.ConfigureAwait(false);
+            await Assert.That(exit).IsEqualTo(0);
+            await Assert.That(stderr.ToString()).IsEmpty();
+            await MachineEnvelope.AssertStreamWellFormedAsync(stdout.ToString(), "changes", "tbep");
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            process.Dispose();
+            if (replacement is { } engine)
+            {
+                if (!engine.HasExited)
+                {
+                    engine.Kill(entireProcessTree: true);
+                }
+
+                engine.Dispose();
+            }
+        }
+    }
+
     /// <summary>The direct mode answers the session diagnostics honestly: the registry is the host's, the engine counters are real.</summary>
     [Test]
     public async Task DirectModeSessionsReportTheEngineCountersHonestly()
     {
         var (process, socket) = await EngineHarness.SpawnAsync();
-        await using var driver = TbepChannel.Connect(socket);
         try
         {
+            // The engine's kill starts before the driver connects: a
+            // connect or bind failure must not leak the engine process.
+            await using var driver = TbepChannel.Connect(socket);
             await driver.BindChannelAsync("backend-operator", "tenant-a").ConfigureAwait(false);
             var setup = await driver.SyncSessionSetupAsync("orders", null).ConfigureAwait(false);
             await Assert.That(setup.SessionId).IsGreaterThan(0ul);
