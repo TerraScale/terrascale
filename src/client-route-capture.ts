@@ -240,6 +240,8 @@ const captureOperations: readonly CaptureOperation[] = [
       client.onboarding.createPaymentSession({
         successUrl: "https://app.example.test/onboarding?payment=success",
         cancelUrl: "https://app.example.test/onboarding?payment=cancelled",
+        plan: "developer",
+        billingInterval: "monthly",
       }),
   },
   {

@@ -195,7 +195,6 @@ export type RegisterRequest = {
   readonly lastName?: string;
   readonly verifyUrl?: string;
   readonly fullName?: string;
-  readonly username?: string;
   readonly acceptedTerms?: boolean;
   readonly termsVersion?: string;
 };
@@ -523,6 +522,9 @@ export type UpdateOnboardingAccountRequest = {
 export type CreateOnboardingPaymentSessionRequest = {
   readonly successUrl: string;
   readonly cancelUrl: string;
+  readonly plan?: OnboardingPlan;
+  readonly planId?: Ulid;
+  readonly billingInterval?: "monthly";
 };
 
 export type OnboardingPaymentSession = {

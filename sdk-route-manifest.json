@@ -71,7 +71,9 @@
           "kind": "json",
           "shape": {
             "successUrl": "https://app.example.test/onboarding?payment=success",
-            "cancelUrl": "https://app.example.test/onboarding?payment=cancelled"
+            "cancelUrl": "https://app.example.test/onboarding?payment=cancelled",
+            "plan": "developer",
+            "billingInterval": "monthly"
           }
         },
         "headers": [
@@ -326,7 +328,6 @@
             "firstName": "Ada",
             "lastName": "Lovelace",
             "fullName": "",
-            "username": "",
             "acceptedTerms": false,
             "termsVersion": "",
             "verifyUrl": "https://app.example.test/verify"
@@ -363,7 +364,6 @@
             "firstName": "Ada",
             "lastName": "Lovelace",
             "fullName": "",
-            "username": "",
             "acceptedTerms": false,
             "termsVersion": "",
             "verifyUrl": "https://app.example.test/verify"

@@ -193,12 +193,15 @@ describe("TerraScaleClient route contracts", () => {
     assertRequest(requests[0], "GET", "/api/v1/pricing/plans");
   });
 
-  test("sends onboarding checkout return URLs to the public product API", async () => {
+  test("sends the selected onboarding plan to the public product API", async () => {
     const { client, requests } = createCapturingClient({});
 
     await client.onboarding.createPaymentSession({
       successUrl: "https://app.example.test/onboarding?payment=success",
       cancelUrl: "https://app.example.test/onboarding?payment=cancelled",
+      plan: "starter",
+      planId: pricingPlan.planId,
+      billingInterval: "monthly",
     });
 
     assert.equal(requests[0]?.url.origin, "https://api.terrascale.test");
@@ -206,6 +209,9 @@ describe("TerraScaleClient route contracts", () => {
     assert.deepEqual(requests[0]?.body, {
       successUrl: "https://app.example.test/onboarding?payment=success",
       cancelUrl: "https://app.example.test/onboarding?payment=cancelled",
+      plan: "starter",
+      planId: pricingPlan.planId,
+      billingInterval: "monthly",
     });
   });
 
