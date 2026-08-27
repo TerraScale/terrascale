@@ -329,12 +329,7 @@ fn partial_match_widens_the_mapping_and_supersedes_after_the_drain_wait() {
     // The superseded index survives until the replacement covers it and the
     // drain wait has elapsed (AX-17): with a 30-second drain it is still
     // there after the next pass.
-    thresholds(
-        &engine,
-        Duration::from_secs(3600),
-        Duration::from_secs(7200),
-        Duration::from_secs(30),
-    );
+    thresholds(&engine, Duration::from_hours(1), Duration::from_hours(2), Duration::from_secs(30));
     execute_dynamic(&engine, users_spec("tenant-a", predicate(vec![equals("age", 5)])), "tenant-a")
         .expect("executes");
     assert_eq!(
@@ -397,12 +392,7 @@ fn supersede_deletion_waits_for_replacement_coverage_before_the_drain() {
     catalog.mark_queried(&narrow);
     catalog.mark_queried(&wide);
     catalog.schedule_supersede(&wide, &narrow);
-    thresholds(
-        &engine,
-        Duration::from_secs(3600),
-        Duration::from_secs(7200),
-        Duration::from_secs(10),
-    );
+    thresholds(&engine, Duration::from_hours(1), Duration::from_hours(2), Duration::from_secs(10));
 
     // Drain elapsed since the scheduling, but coverage has not reached the
     // target: the deletion must not fire. The pass drives the replacement's
@@ -442,7 +432,7 @@ fn surpass_pass_deletes_an_auto_index_another_completely_serves() {
     build_latest(&engine, &wide);
     engine.index_catalog().mark_queried(&narrow);
     engine.index_catalog().mark_queried(&wide);
-    thresholds(&engine, Duration::from_secs(3600), Duration::from_secs(7200), Duration::ZERO);
+    thresholds(&engine, Duration::from_hours(1), Duration::from_hours(2), Duration::ZERO);
 
     execute_dynamic(&engine, users_spec("tenant-a", predicate(vec![equals("age", 5)])), "tenant-a")
         .expect("executes");
@@ -470,7 +460,7 @@ fn surpass_pass_extends_partially_served_indexes_one_extension_per_pass() {
     build_latest(&engine, &by_name);
     engine.index_catalog().mark_queried(&by_age);
     engine.index_catalog().mark_queried(&by_name);
-    thresholds(&engine, Duration::from_secs(3600), Duration::from_secs(7200), Duration::ZERO);
+    thresholds(&engine, Duration::from_hours(1), Duration::from_hours(2), Duration::ZERO);
 
     // Pass one: the extension creates the union and supersedes its subject.
     execute_dynamic(&engine, users_spec("tenant-a", predicate(vec![equals("age", 5)])), "tenant-a")
@@ -505,7 +495,7 @@ fn idle_demotes_but_stays_selectable_and_a_query_wakes_it() {
     // One serving index, marked queried by the query that created it.
     execute_dynamic(&engine, users_spec("tenant-a", predicate(vec![equals("age", 5)])), "tenant-a")
         .expect("executes");
-    thresholds(&engine, Duration::from_secs(60), Duration::from_secs(3600), Duration::ZERO);
+    thresholds(&engine, Duration::from_mins(1), Duration::from_hours(1), Duration::ZERO);
 
     // Unqueried past the idle threshold: the next maintenance pass demotes
     // it to idle with the measured value and threshold recorded (AX-21). A
@@ -519,7 +509,7 @@ fn idle_demotes_but_stays_selectable_and_a_query_wakes_it() {
     assert_eq!(transition.subject(), "Auto/users/ByAge");
     assert_eq!(transition.from(), IndexLifecycleState::Active);
     assert_eq!(transition.to(), IndexLifecycleState::Idle);
-    assert_eq!(transition.threshold(), Duration::from_secs(60));
+    assert_eq!(transition.threshold(), Duration::from_mins(1));
     assert!(transition.measured() >= transition.threshold());
 
     // An idle index stays selectable: the next query still chooses it —
@@ -555,12 +545,7 @@ fn idle_ranking_demotes_an_idle_candidate_only_at_equal_recency() {
     build_latest(&engine, &wide);
     catalog.mark_queried(&narrow);
     catalog.mark_queried(&wide);
-    thresholds(
-        &engine,
-        Duration::from_secs(60),
-        Duration::from_secs(3600),
-        Duration::from_secs(3600),
-    );
+    thresholds(&engine, Duration::from_mins(1), Duration::from_hours(1), Duration::from_hours(1));
 
     // Age the narrow index past the idle threshold while the wide one stays
     // fresh, then run the pass that demotes it.
@@ -595,7 +580,7 @@ fn idle_past_the_deletion_threshold_retires_with_measured_value_and_threshold() 
 
     execute_dynamic(&engine, users_spec("tenant-a", predicate(vec![equals("age", 5)])), "tenant-a")
         .expect("executes");
-    thresholds(&engine, Duration::from_secs(60), Duration::from_secs(600), Duration::ZERO);
+    thresholds(&engine, Duration::from_mins(1), Duration::from_mins(10), Duration::ZERO);
 
     advance_clock(&engine, Duration::from_secs(61));
     run_maintenance(&engine, "tenant-a");
@@ -612,7 +597,7 @@ fn idle_past_the_deletion_threshold_retires_with_measured_value_and_threshold() 
     let transition = retired.transitions().last().expect("recorded");
     assert_eq!(transition.from(), IndexLifecycleState::Idle);
     assert_eq!(transition.to(), IndexLifecycleState::Retired);
-    assert_eq!(transition.threshold(), Duration::from_secs(600));
+    assert_eq!(transition.threshold(), Duration::from_mins(10));
     assert!(transition.measured() >= transition.threshold());
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
@@ -674,7 +659,7 @@ fn explicit_indexes_are_never_auto_retired_superseded_or_widened_into() {
     build_latest(&engine, &wide);
     catalog.mark_queried(&explicit);
     catalog.mark_queried(&wide);
-    thresholds(&engine, Duration::from_secs(3600), Duration::from_secs(7200), Duration::ZERO);
+    thresholds(&engine, Duration::from_hours(1), Duration::from_hours(2), Duration::ZERO);
 
     run_maintenance(&engine, "tenant-a");
     run_maintenance(&engine, "tenant-a");
@@ -715,12 +700,7 @@ fn the_auto_registry_is_bounded_per_tenant_and_refuses_fail_closed_when_full() {
     commit_users(&engine, "tenant-b", "op-2", &[6]);
     // One collection per shape keeps the surpass pass from merging the
     // fixtures into unions: the bound, not the merge rules, is under test.
-    thresholds(
-        &engine,
-        Duration::from_secs(3600),
-        Duration::from_secs(7200),
-        Duration::from_secs(3600),
-    );
+    thresholds(&engine, Duration::from_hours(1), Duration::from_hours(2), Duration::from_hours(1));
 
     for index in 0..MAX_AUTO_INDEXES_PER_TENANT {
         let collection = format!("c{index}");
@@ -857,12 +837,7 @@ fn replacement_never_interrupts_queries_and_results_stay_identical() {
 
     // During the drain the superseded index still serves, and every query
     // answers identically.
-    thresholds(
-        &engine,
-        Duration::from_secs(3600),
-        Duration::from_secs(7200),
-        Duration::from_secs(30),
-    );
+    thresholds(&engine, Duration::from_hours(1), Duration::from_hours(2), Duration::from_secs(30));
     let during = execute_dynamic(&engine, narrow_query(), "tenant-a").expect("no interruption");
     assert_eq!(ids(&during), expected);
 
@@ -915,7 +890,7 @@ fn a_crash_during_replacement_recovers_to_the_same_correct_state() {
     // re-derives — no half-replaced index ever serves — and the lifecycle
     // converges back to the same covering state with identical answers.
     let engine = reopen_engine(&dir);
-    thresholds(&engine, Duration::from_secs(3600), Duration::from_secs(7200), Duration::ZERO);
+    thresholds(&engine, Duration::from_hours(1), Duration::from_hours(2), Duration::ZERO);
     // The fresh catalog observes no publication until a commit arrives; one
     // non-matching document gives the re-derived builds their input without
     // changing any expected answer.

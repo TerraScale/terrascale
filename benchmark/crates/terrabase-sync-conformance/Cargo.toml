@@ -1,0 +1,46 @@
+# `terrabase-sync-conformance` — the SE-05 protocol conformance kit:
+# the Rust reference harness that executes the committed
+# `terrascale.sync.v2` golden-vector corpus (SE-04) against the engine's
+# delivery core, the machine-readable corpus integrity manifest, and the
+# versioned conformance-report format every SDK's CI can emit
+# (PD-2026-08-26-12 D1/D4: conformance, not compilation, is the
+# compatibility guarantee).
+#
+# Standalone workspace root on purpose — exactly how
+# `crates/terrabase-sync-core` shipped before its integrator wiring: the
+# engine workspace's root `Cargo.toml` stays untouched here. The
+# integrator action that wires this crate in is: remove the `[workspace]`
+# table below and add `crates/terrabase-sync-conformance` to the root
+# `members` list (the SE-05 report records that as a collision action).
+
+
+[package]
+name = "terrabase-sync-conformance"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "LicenseRef-TerraScale-Pending"
+description = "TerraBaseV2 sync.v2 protocol conformance kit: reference harness, corpus manifest, conformance reports"
+publish = false
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+pedantic = "warn"
+
+[dependencies]
+# The engine's delivery core (SE-02 seam + SE-04 protocol): the harness
+# executes the corpus against the real `SyncCore` and codec, never a
+# reimplementation.
+terrabase-sync-core = { path = "../terrabase-sync-core" }
+# The corpus, manifest, and report are JSON so no toolchain assumption
+# crosses languages (PD-2026-08-26-12 D1). Pinned to the exact version
+# the engine workspace locks for `terrabase-sync-core`'s dev-dependency
+# so the integrator wiring moves no lock entries.
+serde_json = "=1.0.150"
+
+[[bin]]
+name = "terrabase-sync-conformance"
+path = "src/main.rs"
