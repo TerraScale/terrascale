@@ -329,6 +329,93 @@ fn document_stream_selectors_support_id_prefix_match_and_exclusion() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Ticket #87's red test, in the shape the GAP-D01 gates recorded: one
+/// cross-collection document rides inside the first lookahead window, the
+/// batch fills on the selected collection's documents alone, and the short
+/// tail window still holds a matching item. That item must be delivered
+/// before the terminal completion, not dropped by it.
+#[test]
+fn document_stream_delivers_the_triggering_item_at_the_exact_fill_boundary() {
+    let (dir, engine) = open_engine("doc-exact-fill");
+    let tenant_scope = scope(&engine, "t1");
+    // Canonical order is orders/040, users/010, users/020, users/030: the
+    // orders document consumes one slot of the first limit+1 window.
+    commit_documents(
+        &engine,
+        "t1",
+        "op-batch",
+        &[
+            ("users", "030", "c"),
+            ("orders", "040", "x"),
+            ("users", "010", "a"),
+            ("users", "020", "b"),
+        ],
+    );
+    let ids = drain_document_ids(&engine, &tenant_scope, selector("users"), 2);
+    assert_eq!(ids, ["010", "020", "030"], "no item is lost at the boundary");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Property-style coverage of the exact-fill boundary (ticket #87): for
+/// every limit 1..=8 and every fixture shape — a mixed orders+users tenant
+/// with a varying number of cross-collection documents ahead of the users
+/// run — each stream delivers exactly the selected set, no more and no
+/// fewer, before its terminal completion.
+#[test]
+fn document_stream_delivers_exact_sets_across_limits_and_window_shapes() {
+    let (dir, engine) = open_engine("doc-exact-matrix");
+    // (tag, orders documents, users documents): each shape places the
+    // users run at a different offset from the window boundary, so for
+    // some limit in 1..=8 the batch fills exactly when the short tail
+    // window arrives.
+    let shapes: &[(&str, usize, usize)] = &[
+        ("g0-n3", 0, 3),
+        ("g1-n3", 1, 3),
+        ("g2-n3", 2, 3),
+        ("g1-n5", 1, 5),
+        ("g3-n5", 3, 5),
+        ("g0-n9", 0, 9),
+        ("g1-n9", 1, 9),
+        ("g2-n9", 2, 9),
+        ("g3-n9", 3, 9),
+    ];
+    for (tag, orders_count, users_count) in shapes {
+        let tenant_name = format!("t-{tag}");
+        let tenant_scope = scope(&engine, &tenant_name);
+        // Identifiers stay tenant-unique across collections: the resume
+        // cursor names a document identifier, and identifier reuse across
+        // collections is the storage port's documented at-least-once
+        // shape, not this exact-delivery contract.
+        let mut fixture: Vec<(String, String, String)> = (0..*orders_count)
+            .map(|index| ("orders".to_owned(), format!("order-{index:03}"), "x".to_owned()))
+            .collect();
+        fixture.extend(numbered_documents("users", *users_count, 3));
+        commit_documents(&engine, &tenant_name, "op-batch", &as_refs(&fixture));
+
+        let expected_orders: Vec<String> =
+            (0..*orders_count).map(|index| format!("order-{index:03}")).collect();
+        let expected_users: Vec<String> =
+            (0..*users_count).map(|index| format!("doc-{index:03}")).collect();
+
+        // Both collections' streams deliver their exact sets.
+        for limit in 1..=8_u32 {
+            assert_eq!(
+                drain_document_ids(&engine, &tenant_scope, selector("orders"), limit),
+                expected_orders,
+                "orders set at shape {tag} limit {limit}"
+            );
+            assert_eq!(
+                drain_document_ids(&engine, &tenant_scope, selector("users"), limit),
+                expected_users,
+                "users set at shape {tag} limit {limit}"
+            );
+        }
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn document_stream_missing_documents_and_invalid_selectors_return_typed_errors() {
     let (dir, engine) = open_engine("doc-errors");

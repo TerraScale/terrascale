@@ -1322,12 +1322,6 @@ impl<'engine> Session<'engine> {
     /// surface of W4-STREAM. Batches serve canonical key order with
     /// exactly-once terminal completion.
     ///
-    /// Known defect (ticket #87, streaming seam): document delivery at the
-    /// exact-fill boundary is incomplete — a reader whose consumption stops
-    /// on a batch that filled exactly to its limit can miss the documents
-    /// after that boundary. The streaming seam owns the fix; this surface
-    /// inherits the defect until #87 lands.
-    ///
     /// # Errors
     ///
     /// Returns the mapped [`SessionError::Stream`] for an invalid source or
@@ -1352,12 +1346,6 @@ impl<'engine> Session<'engine> {
     /// Loads one prefix page in canonical key order — V1
     /// `LoadStartingWith(idPrefix, matches, start, pageSize)`: skip `start`
     /// documents, then take `page_size`.
-    ///
-    /// Known defect (ticket #87, streaming seam): document delivery at the
-    /// exact-fill boundary is incomplete — a page pull whose final batch
-    /// fills exactly to its limit can omit the documents after that
-    /// boundary instead of reaching the terminal completion. The streaming
-    /// seam owns the fix; this surface inherits the defect until #87 lands.
     ///
     /// # Panics
     ///

@@ -236,13 +236,6 @@ increment, however many collection batches it took.
   `DocumentSession.Stream.cs:114`) over the same selector seam: canonical
   order, skip `start`, take `page_size`. The numeric `start` is a skip in
   canonical key order (accepted difference: the seam is cursor-based).
-- Known defect (ticket #87, streaming seam): document delivery at the
-  exact-fill boundary is incomplete — a stream reader or page pull whose
-  final batch fills exactly to its limit can miss the documents after that
-  boundary instead of reaching the terminal completion. The streaming seam
-  owns the fix; both session surfaces inherit the defect until #87 lands
-  (the `stream_documents`/`load_starting_with` rustdoc carries the same
-  caveat).
 
 ### R11 Hooks (PB-2027, GAP-D16)
 
