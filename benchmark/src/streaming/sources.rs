@@ -562,17 +562,22 @@ fn document_batch(
             last_delivered = Some(document.id().clone());
             items.push(StreamItem::Document(document.clone()));
         }
-        if short_window {
-            // The snapshot view is exhausted.
-            complete = true;
-            resume = last_raw.or(resume);
-            break;
-        }
         if batch_full {
             // Resume exactly after the last delivered document so the
             // lookahead document is never skipped. Documents the selector
-            // filtered between matches are re-scanned, never lost.
+            // filtered between matches are re-scanned, never lost. This
+            // takes priority over a short window: a batch that filled
+            // still holding a matching item is not a complete stream —
+            // the window's shortness says the view ends, not that every
+            // match in it was delivered.
             resume = last_delivered.or(resume);
+            break;
+        }
+        if short_window {
+            // The snapshot view is exhausted and no match is pending in
+            // the window: every match has been delivered.
+            complete = true;
+            resume = last_raw.or(resume);
             break;
         }
         resume = last_raw;
