@@ -276,6 +276,26 @@ describe("terrascale.sync.v2 frame envelope", () => {
     assert.equal(protocolErrorCode(longTrigger), "malformed_frame");
   });
 
+  test("invalid utf-8 in a frame string field is a typed malformed_frame rejection", () => {
+    // A region_route_change whose single-byte string field is 0xff: the
+    // length is honest and the frame is structurally sound, but the string
+    // bytes are not utf-8. The idempotency-key path already maps this to
+    // malformed("keys are utf-8"); every string field must agree.
+    const body = [0x0b, 0x00, ...u64Le(1n), 0xff];
+    const wire = new Uint8Array([
+      syncV2ProtocolVersion,
+      0x0b,
+      0x00,
+      ...u64Le(1n),
+      ...u64Le(0n),
+      0,
+      ...u64Le(0n),
+      ...u64Le(BigInt(body.length)),
+      ...body,
+    ]);
+    assert.equal(protocolErrorCode(catchDecode(wire)), "malformed_frame");
+  });
+
   test("the frame round-trips every scalar value tag", () => {
     const frame: SyncV2Frame = sealSyncV2Frame(
       {
@@ -303,4 +323,14 @@ function catchDecode(bytes: Uint8Array): unknown {
   } catch (caught) {
     return caught;
   }
+}
+
+function u64Le(value: bigint): number[] {
+  const bytes: number[] = [];
+  let rest = value;
+  for (let index = 0; index < 8; index++) {
+    bytes.push(Number(rest & 0xffn));
+    rest >>= 8n;
+  }
+  return bytes;
 }

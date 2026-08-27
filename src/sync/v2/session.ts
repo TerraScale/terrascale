@@ -327,7 +327,7 @@ export class TerraScaleSyncV2Session {
       throw new TypeError("Principal and Tenant (backend-supplied context) are required.");
     }
     if (options.ResumeCheckpoint !== undefined && options.ResumeCheckpoint.length > 0) {
-      this.#checkpoint = syncV2CheckpointFromBytes(decodeBase64(options.ResumeCheckpoint));
+      this.#checkpoint = syncV2CheckpointFromBytes(decodeBase64(options.ResumeCheckpoint, "the resume checkpoint"));
     }
     this.#options = options;
     this.#fetch = options.Fetch
@@ -481,7 +481,7 @@ export class TerraScaleSyncV2Session {
     );
     const body = await readJsonObject(response) as { sessionId?: unknown; checkpoint?: unknown; retainedFloor?: unknown };
     this.#sessionId = numberField(body.sessionId);
-    const serverCheckpoint = syncV2CheckpointFromBytes(decodeBase64(stringField(body.checkpoint)));
+    const serverCheckpoint = syncV2CheckpointFromBytes(decodeBase64(stringField(body.checkpoint), "the setup checkpoint"));
     if (resume === undefined && advances(this.#checkpoint, serverCheckpoint)) {
       // A fresh session adopts the full state as one snapshot answer.
       await this.#adoptSnapshot(signal);
@@ -548,9 +548,9 @@ export class TerraScaleSyncV2Session {
       commits?: unknown;
       singleCommitOversize?: unknown;
     };
-    const payload = decodeBase64(stringField(body.payload));
+    const payload = decodeBase64(stringField(body.payload), "the delta payload");
     const codec = stringField(body.payloadCodec) as SyncV2PayloadCodecName;
-    const next = syncV2CheckpointFromBytes(decodeBase64(stringField(body.next)));
+    const next = syncV2CheckpointFromBytes(decodeBase64(stringField(body.next), "the next checkpoint"));
     const commits = numberField(body.commits);
     if (commits === 0 || payload.length === 0) {
       return false;
@@ -574,9 +574,9 @@ export class TerraScaleSyncV2Session {
       signal,
     );
     const body = await readJsonObject(response) as { payloadCodec?: unknown; payload?: unknown; checkpoint?: unknown };
-    const payload = decodeBase64(stringField(body.payload));
+    const payload = decodeBase64(stringField(body.payload), "the snapshot payload");
     const codec = stringField(body.payloadCodec) as SyncV2PayloadCodecName;
-    const checkpoint = syncV2CheckpointFromBytes(decodeBase64(stringField(body.checkpoint)));
+    const checkpoint = syncV2CheckpointFromBytes(decodeBase64(stringField(body.checkpoint), "the snapshot checkpoint"));
     this.#store.adoptSnapshot(payload, codec, checkpoint, this.#options.Materializer);
     this.#checkpoint = checkpoint;
     await this.#acknowledge(signal);
@@ -719,11 +719,18 @@ async function sessionErrorOf(response: Response): Promise<SyncV2SessionError> {
 }
 
 async function readJsonObject(response: Response): Promise<Record<string, unknown>> {
-  const body = await response.json() as unknown;
-  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+  let parsed: unknown;
+  try {
+    parsed = await response.json();
+  } catch {
+    // A body that is not JSON stays inside the typed rejection
+    // vocabulary instead of escaping as a raw SyntaxError.
+    throw new SyncV2SessionError("malformed_frame", "the host answer is not valid JSON");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new SyncV2SessionError("malformed_frame", "the host answer is not a JSON object");
   }
-  return body as Record<string, unknown>;
+  return parsed as Record<string, unknown>;
 }
 
 function stringField(value: unknown): string {
@@ -805,8 +812,15 @@ function encodeBase64(bytes: Uint8Array): string {
   return globalThis.btoa(binary);
 }
 
-function decodeBase64(value: string): Uint8Array {
-  const binary = globalThis.atob(value);
+function decodeBase64(value: string, what: string): Uint8Array {
+  let binary: string;
+  try {
+    binary = globalThis.atob(value);
+  } catch {
+    // Notably the durable ResumeCheckpoint at construction: a bad value is
+    // a typed rejection, not a raw DOMException.
+    throw new SyncV2SessionError("malformed_frame", `${what} is not valid base64`);
+  }
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index++) {
     bytes[index] = binary.charCodeAt(index);

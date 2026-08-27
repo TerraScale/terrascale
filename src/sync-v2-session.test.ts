@@ -545,6 +545,47 @@ describe("TerraScaleSyncV2Session over the API host HTTP/SSE surface", () => {
     await session.disconnect();
   });
 
+  test("a non-JSON host answer is a typed malformed_frame rejection, not a raw SyntaxError", async () => {
+    const refuseJson: SyncV2Fetch = async () =>
+      new Response("gateway noise", { status: 200, headers: { "content-type": "application/json" } });
+    const session = new TerraScaleSyncV2Session({
+      Url: "https://api.terrascale.test",
+      Collection: "orders",
+      Principal: "principal-1",
+      Tenant: "tenant-a",
+      Fetch: refuseJson,
+    });
+    await assert.rejects(
+      session.connect(),
+      (error: unknown) => {
+        assert.ok(error instanceof SyncV2SessionError, "the rejection is typed");
+        assert.equal(error.code, "malformed_frame");
+        return true;
+      },
+    );
+    assert.equal(session.getStatus(), "failed");
+  });
+
+  test("a resume checkpoint that is not valid base64 is a typed rejection at construction", () => {
+    assert.throws(
+      () =>
+        new TerraScaleSyncV2Session({
+          Url: "https://api.terrascale.test",
+          Collection: "orders",
+          Principal: "principal-1",
+          Tenant: "tenant-a",
+          Fetch: async () => Response.json({}),
+          ResumeCheckpoint: "!!!not-base64!!!",
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof SyncV2SessionError, "the rejection is typed, not a raw DOMException");
+        assert.equal(error.code, "malformed_frame");
+        assert.match(error.detail ?? "", /resume checkpoint/u);
+        return true;
+      },
+    );
+  });
+
   test("construction fails closed without the backend-supplied tenant context", () => {
     const host = new FixtureApiHost();
     assert.throws(

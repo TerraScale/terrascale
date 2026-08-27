@@ -449,7 +449,14 @@ class ByteReader {
     if (length > limit || this.remaining < length) {
       throw malformed("string exceeds its frame limit");
     }
-    return textDecoder.decode(this.take(length, reason));
+    try {
+      // The fatal decoder keeps the vocabulary closed: bytes that are not
+      // utf-8 are a typed malformed_frame rejection, exactly like the
+      // idempotency-key path ("keys are utf-8") and the Rust reference.
+      return textDecoder.decode(this.take(length, reason));
+    } catch {
+      throw malformed("string fields are utf-8");
+    }
   }
 
   public strings(reason: string): string[] {
