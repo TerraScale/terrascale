@@ -374,19 +374,17 @@ fn counters_read(
         Some(value) => CounterRecord::decode(&value)?,
         None => CounterRecord::default(),
     };
-    let entries = if request.names().is_empty() {
-        record
-            .counters
-            .iter()
-            .map(|(name, value)| CounterEntry::new(name.clone(), Some(*value)))
-            .collect()
-    } else {
-        request
-            .names()
-            .iter()
-            .map(|name| CounterEntry::new(name.clone(), record.counters.get(name).copied()))
-            .collect()
-    };
+    // The read derives live totals from the per-writer buckets (decision
+    // record D1) and hides tombstoned names (D2). A total outside the
+    // signed 64-bit range cannot be staged by the write path; if a record
+    // still carries one, the read fails closed instead of truncating.
+    let names: Vec<String> =
+        if request.names().is_empty() { record.live_names() } else { request.names().to_vec() };
+    let mut entries = Vec::new();
+    for name in names {
+        let value = record.total(&name).map_err(|_| FamilyError::CounterOverflow)?;
+        entries.push(CounterEntry::new(name, value));
+    }
     Ok(CounterGroupResult::new(entries))
 }
 
@@ -401,21 +399,22 @@ fn counters_stage(
         Some(value) => CounterRecord::decode(&value)?,
         None => CounterRecord::default(),
     };
+    // The writing engine's never-reused identity is the bucket key of its
+    // contributions (decision record D1): every replica's increments
+    // accumulate under its own key and merges compare by per-writer max.
+    let writer = write.tenant_scope().engine_identity().to_string();
+    let seq = record.next_seq(&writer);
     for operation in write.operations() {
         match operation {
             CounterOperation::Increment { name, delta } => {
-                let current = record.counters.get(name).copied().unwrap_or(0);
-                let Some(next) = current.checked_add(*delta) else {
-                    return Err(FamilyError::CounterOverflow);
-                };
-                record.counters.insert(name.clone(), next);
+                record.increment(&writer, seq, name, *delta)?;
             }
             CounterOperation::Delete { name } => {
-                record.counters.remove(name);
+                record.delete(&writer, seq, name);
             }
         }
     }
-    write_or_clear(records, id, record.counters.is_empty(), record.encode())
+    write_or_clear(records, id, record.is_empty(), record.encode())
 }
 
 // ---------------------------------------------------------------------------

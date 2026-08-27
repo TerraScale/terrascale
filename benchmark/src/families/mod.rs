@@ -57,6 +57,14 @@ pub use payloads::{
 };
 pub use schemas::SchemaFormatError;
 
+// The counter merge seam of the GAP-F07 decision record
+// (`docs/families/counter-merge-encoding.md`): counter records replicate as
+// merged state, so the replication apply path consumes the record
+// predicate and the value merge at this crate-private surface instead of
+// re-deriving the reserved layout.
+pub(crate) use state::FamilyMergeError;
+pub(crate) use state::{RESERVED_COLLECTION, is_counter_record, merge_counter_values};
+
 use crate::{
     engine::{Engine, EngineError, Transaction},
     types::{Cancellation, Deadline, ReadSnapshot, TenantScope},
