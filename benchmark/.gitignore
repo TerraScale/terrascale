@@ -18,6 +18,10 @@ __pycache__/
 !/evidence/replication/
 !/evidence/recovery/
 !/evidence/benchmarks/
+# The SE-11 ticket write scope names evidence records under evidence/;
+# the sync tracer receipts under evidence/sync/ are tracked (flagged
+# for parent review, same as the paths above).
+!/evidence/sync/
 /benches/results/
 
 # Fleet builder worktrees (never tracked)
