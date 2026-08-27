@@ -16,8 +16,19 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+mod metadata;
+
+#[cfg(test)]
+mod metadata_tests;
+
 #[cfg(test)]
 mod tests;
+
+pub use metadata::{
+    ConditionalLoadError, DocumentHead, DocumentVersionContract, DocumentVersionContractError,
+    HeadCondition, MAX_V1_CHANGE_VECTOR_BYTES, MAX_V1_CHANGE_VECTOR_ENTRIES, V1ChangeVector,
+    V1ChangeVectorEntry, V1ChangeVectorError, V1ChangeVectorMapping,
+};
 
 use crate::{
     families::FamilyStore,
