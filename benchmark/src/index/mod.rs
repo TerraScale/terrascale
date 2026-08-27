@@ -29,7 +29,12 @@ use std::{
 };
 
 #[cfg(test)]
+mod definitions_tests;
+
+#[cfg(test)]
 mod tests;
+
+pub mod definitions;
 
 use crate::{
     engine::{CommitPublicationSink, Engine},
