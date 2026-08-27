@@ -2,11 +2,13 @@
 //!
 //! A result carries the ordered rows, the number of matched rows before
 //! paging, the ordering actually applied, the per-namespace staleness
-//! observations, and the index generation used. It never carries a storage
-//! detail, lock, or raw byte.
+//! observations, the index generation used, the include materialization,
+//! and the typed result statistics. It never carries a storage detail,
+//! lock, or raw byte.
 
 use super::includes::IncludeSet;
 use super::spec::{IndexNamespace, QueryOrdering};
+use super::statistics::QueryStatistics;
 use crate::types::{Document, DocumentValue};
 
 /// One typed result row: the matched document and its projected fields.
@@ -148,6 +150,18 @@ impl StalenessReport {
     pub fn observation_for(&self, namespace: &IndexNamespace) -> Option<&StaleIndexObservation> {
         self.observations.iter().find(|observation| observation.namespace() == namespace)
     }
+
+    /// Reports whether any required namespace was answered from a stale
+    /// generation.
+    ///
+    /// This is the aggregate form of V1's `IsStale` flag. An index-less
+    /// query — one whose plan required no namespace — has an empty report,
+    /// has nothing to be stale about, and reports `false`, exactly as V1's
+    /// collection queries reading live storage do.
+    #[must_use]
+    pub fn is_stale(&self) -> bool {
+        self.observations.iter().any(|observation| observation.stale())
+    }
 }
 
 /// The namespace/epoch/generation of the index a query used.
@@ -191,6 +205,7 @@ pub struct QueryResult {
     staleness: StalenessReport,
     index_generation: Option<IndexGenerationRef>,
     includes: IncludeSet,
+    statistics: QueryStatistics,
 }
 
 impl QueryResult {
@@ -202,8 +217,9 @@ impl QueryResult {
         staleness: StalenessReport,
         index_generation: Option<IndexGenerationRef>,
         includes: IncludeSet,
+        statistics: QueryStatistics,
     ) -> Self {
-        Self { rows, matched, ordering, staleness, index_generation, includes }
+        Self { rows, matched, ordering, staleness, index_generation, includes, statistics }
     }
 
     /// Returns the result rows in result order.
@@ -248,5 +264,17 @@ impl QueryResult {
     #[must_use]
     pub const fn includes(&self) -> &IncludeSet {
         &self.includes
+    }
+
+    /// Returns the typed result-metadata of this execution: the scan
+    /// accounting, the capped matched count, the state token, and the
+    /// diagnostic duration.
+    ///
+    /// The counts are exact and carry no marker values, and the duration is
+    /// diagnostic-only; see [`QueryStatistics`] for what each field is and
+    /// is not.
+    #[must_use]
+    pub const fn statistics(&self) -> &QueryStatistics {
+        &self.statistics
     }
 }

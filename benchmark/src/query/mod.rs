@@ -20,6 +20,7 @@ mod model;
 pub mod optimizer;
 mod result;
 mod spec;
+mod statistics;
 mod v1;
 
 pub mod tql;
@@ -40,6 +41,7 @@ pub use result::{
     IndexGenerationRef, ObservedGeneration, QueryResult, QueryRow, StaleIndexObservation,
     StalenessReport,
 };
+pub use statistics::{DiagnosticDuration, QueryStatistics, ResultEtag};
 pub use spec::{
     IndexNamespace, MAX_CONDITIONS, MAX_FIELD_BYTES, MAX_IN_VALUES, MAX_LOADS, MAX_ORDERING_KEYS,
     MAX_PAGE_LIMIT, MAX_PROJECTION_FIELDS, MAX_STALENESS_INDEXES, NullsPlacement, OrderDirection,

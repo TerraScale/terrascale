@@ -7,11 +7,13 @@
 //! mutates a document, a snapshot, or an index, and it publishes nothing.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use super::spec::StalenessPolicy;
 use super::{
     GenerationView, NormalizedQuery, QueryError, QueryResult, QueryRow, StalenessMode, model,
     result::{IndexGenerationRef, ObservedGeneration, StaleIndexObservation, StalenessReport},
+    statistics::{DiagnosticDuration, QueryStatistics, ResultEtag},
 };
 use crate::{
     engine::Engine,
@@ -138,6 +140,10 @@ pub(crate) fn execute_with_view(
     plan: &super::QueryPlan,
     snapshot: &ReadSnapshot,
 ) -> Result<QueryResult, QueryError> {
+    // The diagnostic window: entry of the execution path to the construction
+    // of the result. It is an observation of this one call, never a
+    // benchmark or a speed claim (see `DiagnosticDuration`).
+    let started = Instant::now();
     let query: &NormalizedQuery = plan.model();
     // Tenant, snapshot, and namespace validation before any data access.
     if let Some(claim) = query.tenant_claim()
@@ -160,8 +166,12 @@ pub(crate) fn execute_with_view(
 
     // Index-less scan: the W3-2 tracer base path. The document list is
     // materialized, so no Engine or storage lock is held while scanning,
-    // ordering, projecting, or paging.
+    // ordering, projecting, or paging. The scan accounting counts the
+    // candidates of the source collection — the FILTER accounting of V1's
+    // statistics — and saturates, so no count ever wraps.
     let mut matched: Vec<&Document> = Vec::new();
+    let mut scanned: u64 = 0;
+    let mut skipped: u64 = 0;
     for (position, document) in documents.iter().enumerate() {
         if position % CHECKPOINT_INTERVAL == 0 {
             check_bounds(query.deadline(), query.cancellation_signal())?;
@@ -169,8 +179,11 @@ pub(crate) fn execute_with_view(
         if document.collection() != query.source().collection() {
             continue;
         }
+        scanned = scanned.saturating_add(1);
         if model::matches(query.predicate(), document) {
             matched.push(document);
+        } else {
+            skipped = skipped.saturating_add(1);
         }
     }
     // Reference resolution for the loads clause: one bounded id lookup per
@@ -217,6 +230,14 @@ pub(crate) fn execute_with_view(
                 .used()
                 .map(|used| IndexGenerationRef::new(observation.namespace().clone(), used))
         });
+    let statistics = QueryStatistics::new(
+        matched_count,
+        query.paging(),
+        scanned,
+        skipped,
+        ResultEtag::of(snapshot.sequence(), &staleness),
+        DiagnosticDuration::new(started.elapsed()),
+    );
     Ok(QueryResult::new(
         rows,
         matched_count,
@@ -224,6 +245,7 @@ pub(crate) fn execute_with_view(
         staleness,
         index_generation,
         includes,
+        statistics,
     ))
 }
 
