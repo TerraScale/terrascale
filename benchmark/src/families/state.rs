@@ -34,6 +34,15 @@ pub(crate) const RESERVED_COLLECTION: &str = "terrabase.families";
 /// The reserved record-identifier prefix.
 const RECORD_PREFIX: &str = "family:";
 
+/// The reserved kind key of the attachment content plane's records
+/// (`family:attachment-content/...`).
+///
+/// A distinct kind key keeps every content-plane record identifier disjoint
+/// from the attachments metadata owner space (`family:attachments/<document>`
+/// through [`record_id`]) however a document is named, so the two record
+/// populations can never occupy or destroy each other.
+pub(crate) const ATTACHMENT_CONTENT_KIND: &str = "attachment-content";
+
 /// Builds one reserved record identifier.
 pub(crate) fn record_id(kind: &str, parts: &[&str]) -> Result<DocumentId, FamilyError> {
     let mut text = format!("{RECORD_PREFIX}{kind}");
@@ -56,6 +65,13 @@ pub(crate) fn kind_of_record(id: &DocumentId) -> Option<super::FamilyKind> {
     let (kind_key, owner) = text.split_once('/')?;
     if owner.is_empty() {
         return None;
+    }
+    // The attachment content plane holds its records under a distinct kind
+    // key (`family:attachment-content/<digest>[/<index>]`) so they can never
+    // collide with attachment-metadata owners under `family:attachments/`;
+    // for enumeration those records are still attachments-family records.
+    if kind_key == ATTACHMENT_CONTENT_KIND {
+        return Some(super::FamilyKind::Attachments);
     }
     [
         super::FamilyKind::Attachments,
