@@ -1,8 +1,15 @@
 # Family merge encoding decision record (GAP-F07, ticket #76)
 
-Status: **proposed** — awaiting parent ratification. Direction is already
-parent-decided (charter PD-2026-08-26-14 D5: counters REQUIRE merge
-semantics; an LWW-forever outcome is not available to a builder). This
+Status: **accepted** — ratified by the parent at integration, 2026-08-26,
+on review of D1-D4 against charter PD-2026-08-26-14 D5, the rejected
+alternatives' evidence, the lane receipts (convergence, duplicate-once,
+redelivery-by-identity, delete-wins, rejoin totals), and both gate
+verdicts (inspector GO, warden PASS). Direction was parent-decided
+(PD-2026-08-26-14 D5: counters REQUIRE merge semantics; an LWW-forever
+outcome is not available to a builder); the encoding choice, delete
+semantics, and ledger interaction are accepted as recorded here. The
+recorded limits (per-restart writer buckets; tombstone lifecycle with
+the SH wave; typed counter-create as a recorded follow-up) stand. This
 record owns the encoding choice, the create/delete semantics, the
 operation-ledger interaction, and the merged-or-excluded decisions for the
 other family kinds. The implementation in this packet lands behind this
