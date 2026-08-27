@@ -883,7 +883,9 @@ impl<'engine> Session<'engine> {
             || self.pending_puts.contains_key(key)
     }
 
-    /// Reports whether the id was loaded and found absent.
+    /// Reports whether the id is known-missing: loaded and found absent, or
+    /// deleted in this session (V1's `IsDeleted` registration, which `Load`
+    /// consults before the identity map).
     #[must_use]
     pub fn is_known_missing(&self, collection: &CollectionName, id: &DocumentId) -> bool {
         self.known_missing.contains(&(collection.clone(), id.clone()))

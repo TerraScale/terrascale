@@ -80,22 +80,31 @@ version (V1 `Delete(string id, string expectedChangeVector)`,
 `Session/IDocumentSession.cs`). Deleting a tracked document reports
 `DocumentDeleted` in WhatChanged until the save commits.
 
-Store and delete on one key are **last-command-wins**, matching V1's
-observable outcomes:
+Store and delete on one key are **last-command-wins**:
 
 - A delete cancels a pending put for the same key. V1's `Delete` removes
   the id from `DocumentsById` and registers known-missing
   (`InMemoryDocumentSessionOperations.cs:730-763`), so the pending put
   never reaches the batch: the save sends the delete alone, post-save
   `what_changed` reports nothing, and no later save resurrects the
-  document.
-- A store queued after a delete subsumes it: V1's single batch applies a
-  delete+put pair to the stored value (deletes before puts,
-  `Session/Operations/BatchOperation.cs:37-39`), and the engine's
-  one-write-per-target transaction contract means the subsuming put alone
-  produces that committed outcome — the stored value survives, and the
-  store clears the delete's known-missing registration like V1's
-  `StoreInternal` (`InMemoryDocumentSessionOperations.cs:867-868`).
+  document. This direction matches V1 exactly.
+- A store queued after a delete subsumes it. **Accepted difference from
+  V1**: V1 refuses this sequence outright — `Store` throws
+  `InvalidOperationException` when a deferred command is registered for
+  the id (`InMemoryDocumentSessionOperations.cs:847-848`) — while V2
+  commits the subsuming put (the stored value survives, and the store
+  clears the delete's known-missing registration like V1's `StoreInternal`
+  at `:867-868`). The outcome-equivalence rationale: V1's own batch
+  orders deletes before puts (`PrepareForEntitiesDeletion` before
+  `PrepareForEntitiesPuts`, `InMemoryDocumentSessionOperations.cs:985-986`),
+  so a delete+put pair V1 *could* assemble would land on the stored value —
+  but that pair is unreachable in V1, and the divergence is recorded here
+  and in the WS-PARITY proposals (PB-2008/PB-2009) rather than passed off
+  as parity. The engine's one-write-per-target transaction contract
+  (`src/storage/file.rs`) makes the subsuming put the only stageable
+  command; a typed refusal was considered and rejected at the repair
+  re-gate — last-command-wins is deterministic, tested, and creates no
+  resurrection or durability hazard.
 
 ### R4 Load — identity map, batch, known-missing (PB-2005)
 
@@ -170,9 +179,11 @@ observable outcomes:
 4. **Generated ids** allocate from the identity family in this
    transaction (before the puts that carry them).
 5. **One engine transaction** stages writes in V1's batch order —
-   **deletes, then puts, then deferred commands**
-   (`Session/Operations/BatchOperation.cs:37-39`) — and commits once at the
-   configured durability.
+   **deletes, then puts, then deferred commands** (V1's
+   `PrepareForEntitiesDeletion` before `PrepareForEntitiesPuts`,
+   `InMemoryDocumentSessionOperations.cs:985-986`; the session-vs-deferred
+   merge is `Session/Operations/BatchOperation.cs:37-39`) — and commits
+   once at the configured durability.
 6. **On success**: committed state clears — changed documents re-base
    (original := current, the checked expectation consumed — the next save
    is unchecked until a new `store_checked`), deleted documents leave the
