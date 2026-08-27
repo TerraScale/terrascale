@@ -432,3 +432,72 @@ fn a_self_comparison_reads_as_parity() {
     let comparison = throughput(first.samples(), second.samples());
     assert_eq!(comparison.throughput, Trend::Stable);
 }
+
+/// The V2-side counter characterization, run for real and transcribed into
+/// `evidence/benchmarks/se15-v2-lane-commissioning-receipt.md`.
+///
+/// Ignored by default, exactly like the SE-07 UDS characterization: it is a
+/// lane characterization, not a gate, and it writes enough durable data that
+/// it does not belong in every test run. Run it with
+/// `--ignored --nocapture`.
+///
+/// These are counters, not timings: operations, durable bytes appended, and
+/// documents returned are exact facts about the operation stream. The
+/// wall-clock commissioning samples below them are engineering evidence
+/// only and support no verdict.
+#[test]
+#[ignore = "a lane characterization, not a gate; run with --ignored --nocapture"]
+fn v2_lane_counter_characterization() {
+    let seed_documents = 256;
+    let warmup_operations = 128;
+    let samples = 3;
+    let operations_per_sample = 512;
+
+    for workload in
+        [Workload::DocumentRead, Workload::DocumentWrite, Workload::IndexedQuery, Workload::Mixed]
+    {
+        let lane = V2Lane::open(&format!("characterization-{}", workload.as_str()));
+        lane.seed(seed_documents);
+        let seeded_bytes = lane.durable_bytes();
+        let seed_count = f64::from(u32::try_from(seed_documents).unwrap_or(u32::MAX));
+        println!(
+            "{:>6} seed {} documents: {} durable bytes ({:.1} bytes per seeded document)",
+            workload.as_str(),
+            seed_documents,
+            seeded_bytes,
+            f64::from(u32::try_from(seeded_bytes).unwrap_or(u32::MAX)) / seed_count,
+        );
+
+        let warmed = lane.warm_up(workload, warmup_operations);
+        let after_warm_up = lane.durable_bytes();
+        println!(
+            "{:>6} warm-up {} operations: {} operations, {} durable bytes appended, {} documents returned",
+            workload.as_str(),
+            warmup_operations,
+            warmed.operations,
+            after_warm_up - seeded_bytes,
+            warmed.documents_returned,
+        );
+
+        let commissioning = lane.commission(workload, samples, operations_per_sample);
+        let measured = lane.run(workload, operations_per_sample);
+        println!(
+            "{:>6} measured window of {} operations: {} durable bytes appended, {} documents returned",
+            workload.as_str(),
+            operations_per_sample,
+            measured.durable_bytes_written,
+            measured.documents_returned,
+        );
+        println!(
+            "{:>6} commissioning throughput samples (ops/s, engineering evidence only): {}",
+            workload.as_str(),
+            commissioning
+                .samples()
+                .iter()
+                .map(|sample| format!("{sample:.0}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        lane.remove();
+    }
+}
