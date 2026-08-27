@@ -126,6 +126,39 @@ describe("terrascale.sync.v2 conformance (SE-04/SE-05 golden vectors)", () => {
     assert.ok((report.manifest.problems.length ?? 0) > 0);
   });
 
+  test("a malformed vector shape is a recorded failure, never a harness crash", async () => {
+    const base = corpusFrom(fixtureDirectory);
+    const hostile: SyncV2Corpus = {
+      ...base,
+      async read(relativePath) {
+        if (relativePath !== "vectors/trigger-notification.json") {
+          return base.read(relativePath);
+        }
+        const loaded = await base.read(relativePath);
+        const parsed = JSON.parse(loaded.text) as { steps: unknown[] };
+        parsed.steps = [
+          42, // a step that is not an object
+          { client_frame: { frame: { kind: "heartbeat" }, wire: "00" } }, // a codec throw inside a check
+          { serve_trigger: { expect_wire: "abc", expect_frame: {} } }, // odd-length hex, then a non-object frame
+        ];
+        const text = JSON.stringify(parsed);
+        return { bytes: encoder.encode(text), text };
+      },
+    };
+
+    const report = await runSyncV2Conformance({ corpus: hostile });
+
+    assert.equal(report.summary.status, "fail");
+    assert.equal(report.vectors.length, 9, "every vector still executes and reports");
+    const vector = report.vectors.find((entry) => entry.file === "trigger-notification.json");
+    assert.equal(vector?.status, "fail");
+    assert.ok((vector?.failures.length ?? 0) >= 3, `each hostile step is recorded: ${JSON.stringify(vector?.failures)}`);
+    for (const failure of vector?.failures ?? []) {
+      assert.ok(failure.check.length > 0, "each recorded failure names its check");
+      assert.ok(failure.reason.length > 0, "each recorded failure carries a reason");
+    }
+  });
+
   test("a corpus file missing its manifest entry fails the run before vectors execute", async () => {
     const base = corpusFrom(fixtureDirectory);
     const listBase = base.list?.bind(base);

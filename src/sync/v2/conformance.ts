@@ -156,13 +156,35 @@ class VectorRun {
     try {
       execute();
     } catch (error) {
+      // Every throw inside a check is a recorded failure — including a
+      // codec throw (SyncV2ProtocolError and friends) — never a harness
+      // crash. A non-CheckFailure throw also aborts the row: later steps
+      // generally depend on the state this check was building.
+      this.failures.push({
+        step,
+        check,
+        reason: error instanceof Error ? error.message : String(error),
+      });
       if (!(error instanceof CheckFailure)) {
-        throw error;
+        this.aborted = true;
       }
-      this.failures.push({ step, check, reason: error.message });
       return false;
     }
     return true;
+  }
+
+  /**
+   * Records a failure raised outside any check (step/wire shape parsing).
+   * Shape failures do not abort the row: later steps are independent, and
+   * a fuller report beats an early exit.
+   */
+  public recordOutsideCheck(check: string, step: number, error: unknown): void {
+    this.checks.set(check, (this.checks.get(check) ?? 0) + 1);
+    this.failures.push({
+      step,
+      check,
+      reason: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -376,7 +398,16 @@ const executableKeys: readonly string[] = [
 ];
 
 function executeStep(run: VectorRun, index: number, rawStep: unknown): void {
-  const step = objectOf(rawStep, "step");
+  // Shape parsing happens before any check body: a step that is not an
+  // object (or whose executable key is not an object) is a recorded
+  // failure with the row aborted, never a harness crash.
+  let step: Record<string, unknown>;
+  try {
+    step = objectOf(rawStep, "step");
+  } catch (error) {
+    run.recordOutsideCheck("step_kind_known", index, error);
+    return;
+  }
   const present = executableKeys.filter((key) => key in step && step[key] !== undefined);
   if (present.length > 1) {
     run.check("step_kind_known", index, () => {
@@ -393,28 +424,35 @@ function executeStep(run: VectorRun, index: number, rawStep: unknown): void {
     return;
   }
   const key = present[0]!;
+  let entry: Record<string, unknown>;
+  try {
+    entry = objectOf(step[key], key);
+  } catch (error) {
+    run.recordOutsideCheck("step_kind_known", index, error);
+    return;
+  }
   switch (key) {
     case "apply":
       // A server-side journal commit; the client contract has no check.
       return;
     case "client_frame":
     case "server_frame":
-      checkRecordedFrame(run, index, objectOf(step[key], key));
+      checkRecordedFrame(run, index, entry);
       return;
     case "serve_delta":
-      checkServeDelta(run, index, objectOf(step[key], key));
+      checkServeDelta(run, index, entry);
       return;
     case "serve_snapshot":
-      checkServeSnapshot(run, index, objectOf(step[key], key));
+      checkServeSnapshot(run, index, entry);
       return;
     case "serve_trigger":
-      checkServeTrigger(run, index, objectOf(step[key], key));
+      checkServeTrigger(run, index, entry);
       return;
     case "decode_rejects":
-      checkDecodeRejects(run, index, objectOf(step[key], key));
+      checkDecodeRejects(run, index, entry);
       return;
     case "budget":
-      checkBudget(run, index, objectOf(step[key], key));
+      checkBudget(run, index, entry);
       return;
   }
 }
@@ -430,7 +468,13 @@ function checkRecordedFrame(run: VectorRun, step: number, entry: Record<string, 
     run.aborted = true;
     return;
   }
-  const wire = hexToBytes(stringOf(entry.wire, "wire"));
+  let wire: Uint8Array;
+  try {
+    wire = hexToBytes(stringOf(entry.wire, "wire"));
+  } catch (error) {
+    run.recordOutsideCheck("frame_encode_bytes_exact", step, error);
+    return;
+  }
   run.check("frame_encode_bytes_exact", step, () => {
     if (!bytesEqual(encodeSyncV2Frame(sealed.frame!), wire)) {
       throw new CheckFailure("frame_encode_bytes_exact", "the structured frame does not encode to the recorded bytes");
@@ -477,8 +521,20 @@ function checkServeDelta(run: VectorRun, step: number, entry: Record<string, unk
   if (wireHex === null) {
     return;
   }
-  const wire = hexToBytes(wireHex);
-  const described = entry.expect_frame === undefined ? null : objectOf(entry.expect_frame, "expect_frame");
+  let wire: Uint8Array;
+  try {
+    wire = hexToBytes(wireHex);
+  } catch (error) {
+    run.recordOutsideCheck("serve_frame_bytes_exact", step, error);
+    return;
+  }
+  let described: Record<string, unknown> | null;
+  try {
+    described = entry.expect_frame === undefined ? null : objectOf(entry.expect_frame, "expect_frame");
+  } catch (error) {
+    run.recordOutsideCheck("serve_frame_matches_description", step, error);
+    return;
+  }
   run.check("serve_frame_bytes_exact", step, () => {
     const frame = frameFromDescription(described === null ? {} : described);
     if (!bytesEqual(encodeSyncV2Frame(frame), wire)) {
@@ -497,8 +553,15 @@ function checkServeSnapshot(run: VectorRun, step: number, entry: Record<string, 
   run.check("serve_completes", step, () => {
     bigOf(entry.correlation ?? 0);
   });
-  const wire = hexToBytes(stringOf(entry.expect_wire, "expect_wire"));
-  const described = objectOf(entry.expect_frame, "expect_frame");
+  let wire: Uint8Array;
+  let described: Record<string, unknown>;
+  try {
+    wire = hexToBytes(stringOf(entry.expect_wire, "expect_wire"));
+    described = objectOf(entry.expect_frame, "expect_frame");
+  } catch (error) {
+    run.recordOutsideCheck("serve_frame_bytes_exact", step, error);
+    return;
+  }
   run.check("serve_frame_bytes_exact", step, () => {
     const frame = frameFromDescription(described);
     if (!bytesEqual(encodeSyncV2Frame(frame), wire)) {
@@ -524,8 +587,15 @@ function checkServeTrigger(run: VectorRun, step: number, entry: Record<string, u
       operation_id: entry.operation_id,
     });
   });
-  const wire = hexToBytes(stringOf(entry.expect_wire, "expect_wire"));
-  const described = objectOf(entry.expect_frame, "expect_frame");
+  let wire: Uint8Array;
+  let described: Record<string, unknown>;
+  try {
+    wire = hexToBytes(stringOf(entry.expect_wire, "expect_wire"));
+    described = objectOf(entry.expect_frame, "expect_frame");
+  } catch (error) {
+    run.recordOutsideCheck("serve_frame_bytes_exact", step, error);
+    return;
+  }
   run.check("serve_frame_bytes_exact", step, () => {
     const frame = frameFromDescription(described);
     if (!bytesEqual(encodeSyncV2Frame(frame), wire)) {
@@ -570,8 +640,15 @@ function checkDecodeRejects(run: VectorRun, step: number, entry: Record<string, 
 }
 
 function checkBudget(run: VectorRun, step: number, entry: Record<string, unknown>): void {
-  const wire = hexToBytes(stringOf(entry.wire, "wire"));
-  const className = stringOf(entry.class, "class");
+  let wire: Uint8Array;
+  let className: string;
+  try {
+    wire = hexToBytes(stringOf(entry.wire, "wire"));
+    className = stringOf(entry.class, "class");
+  } catch (error) {
+    run.recordOutsideCheck("budget_frame_decodes", step, error);
+    return;
+  }
   const decoded = new (class {
     public frame: SyncV2Frame | undefined;
   })();
@@ -853,6 +930,9 @@ function stringsOf(value: unknown): string[] {
 }
 
 function hexToBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) {
+    throw malformed("the recorded wire hex has an odd length");
+  }
   const bytes = new Uint8Array(hex.length / 2);
   for (let index = 0; index < bytes.length; index++) {
     bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);

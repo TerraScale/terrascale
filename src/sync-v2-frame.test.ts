@@ -11,6 +11,7 @@ import {
   syncV2FixedEnvelopeBytes,
   syncV2InitialCheckpoint,
   syncV2MaxFrameBytes,
+  syncV2MaxPayloadBytes,
   syncV2ProtocolVersion,
   verifySyncV2Frame,
   type SyncV2Frame,
@@ -294,6 +295,118 @@ describe("terrascale.sync.v2 frame envelope", () => {
       ...body,
     ]);
     assert.equal(protocolErrorCode(catchDecode(wire)), "malformed_frame");
+  });
+
+  test("correlation and causation must fit the u64 envelope at seal and encode", () => {
+    const beyondU64 = 18_446_744_073_709_551_616n; // 2^64
+    const sealed = (() => {
+      try {
+        sealSyncV2Frame({ kind: "heartbeat" }, beyondU64, 0n);
+        return undefined;
+      } catch (caught) {
+        return caught;
+      }
+    })();
+    assert.equal(protocolErrorCode(sealed), "malformed_frame");
+
+    const negative = (() => {
+      try {
+        sealSyncV2Frame({ kind: "heartbeat" }, 0n, -1n);
+        return undefined;
+      } catch (caught) {
+        return caught;
+      }
+    })();
+    assert.equal(protocolErrorCode(negative), "malformed_frame");
+
+    // A hand-built frame (seal bypassed) is refused at encode too, instead
+    // of silently wrapping through the u64 mask.
+    const handBuilt = (() => {
+      try {
+        encodeSyncV2Frame({ correlation: beyondU64, causation: 0n, idempotency: undefined, digest: 0n, body: { kind: "heartbeat" } });
+        return undefined;
+      } catch (caught) {
+        return caught;
+      }
+    })();
+    assert.equal(protocolErrorCode(handBuilt), "malformed_frame");
+  });
+
+  test("payload hex is strict per character: partial parses are refused", () => {
+    // parseInt("1z", 16) === 1: a trailing non-hex digit must not be
+    // silently dropped.
+    const lenient = (() => {
+      try {
+        sealSyncV2Frame(
+          {
+            kind: "delta_batch",
+            codec: "loro-delta/1",
+            payload: "1z",
+            next: syncV2InitialCheckpoint(),
+            within_budget: true,
+            single_commit_oversize: false,
+            commits: 1n,
+          },
+          1n,
+          0n,
+        );
+        return undefined;
+      } catch (caught) {
+        return caught;
+      }
+    })();
+    assert.equal(protocolErrorCode(lenient), "malformed_frame");
+
+    const prefixed = (() => {
+      try {
+        sealSyncV2Frame(
+          {
+            kind: "snapshot_answer",
+            codec: "loro-snapshot/1",
+            payload: "0x",
+            checkpoint: syncV2InitialCheckpoint(),
+          },
+          1n,
+          0n,
+        );
+        return undefined;
+      } catch (caught) {
+        return caught;
+      }
+    })();
+    assert.equal(protocolErrorCode(prefixed), "malformed_frame");
+  });
+
+  test("encode refuses a frame whose total size its own decoder would reject", () => {
+    // A delta batch whose payload sits exactly at the payload bound: the
+    // body (payload plus its own framing fields) already carries the frame
+    // past the decode bounds, so the encoder must refuse first instead of
+    // emitting bytes decodeSyncV2Frame rejects. (Hand-built frame: seal's
+    // digest pass over a max-size body is not the unit under test.)
+    const payload = "ab".repeat(syncV2MaxPayloadBytes);
+    const oversize = (() => {
+      try {
+        encodeSyncV2Frame({
+          correlation: 1n,
+          causation: 0n,
+          idempotency: undefined,
+          digest: 0n,
+          body: {
+            kind: "delta_batch",
+            codec: "loro-delta/1",
+            payload,
+            next: syncV2InitialCheckpoint(),
+            within_budget: false,
+            single_commit_oversize: false,
+            commits: 1n,
+          },
+        });
+        return undefined;
+      } catch (caught) {
+        return caught;
+      }
+    })();
+    assert.equal(protocolErrorCode(oversize), "malformed_frame");
   });
 
   test("the frame round-trips every scalar value tag", () => {

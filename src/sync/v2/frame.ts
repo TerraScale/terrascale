@@ -597,17 +597,31 @@ function encodePayloadInto(bytes: number[], payloadHex: string): void {
   }
 }
 
+/** Strict per-character hex values: parseInt's prefix/partial parsing must not leak into the codec. */
+const hexDigitValues: ReadonlyArray<number | undefined> = (() => {
+  const table: Array<number | undefined> = new Array(128).fill(undefined);
+  for (let digit = 0; digit < 10; digit++) {
+    table[48 + digit] = digit;
+  }
+  for (let letter = 0; letter < 6; letter++) {
+    table[97 + letter] = 10 + letter;
+    table[65 + letter] = 10 + letter;
+  }
+  return table;
+})();
+
 function decodeHexBytes(hex: string): Uint8Array {
   if (hex.length % 2 !== 0) {
     throw malformed("payload hex has an odd length");
   }
   const bytes = new Uint8Array(hex.length / 2);
   for (let index = 0; index < bytes.length; index++) {
-    const byte = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
-    if (!Number.isInteger(byte)) {
+    const high = hexDigitValues[hex.charCodeAt(index * 2)] ?? 128;
+    const low = hexDigitValues[hex.charCodeAt(index * 2 + 1)] ?? 128;
+    if (high > 15 || low > 15) {
       throw malformed("payload hex carries a non-hex digit");
     }
-    bytes[index] = byte;
+    bytes[index] = (high << 4) | low;
   }
   return bytes;
 }
@@ -1051,6 +1065,13 @@ function isMutationBody(body: SyncV2FrameBody): boolean {
   return body.kind === "mutation_request" || body.kind === "mutation_ack";
 }
 
+/** Refuses an envelope identity the u64 wire field cannot carry without wrapping. */
+function validateU64Identity(name: string, value: bigint): void {
+  if (value < 0n || value > u64Mask) {
+    throw malformed(`${name} does not fit the u64 envelope field`);
+  }
+}
+
 /**
  * Seals a body into a frame: validates the body, enforces the idempotency
  * pairing (a key exactly on the mutation-family frames), and computes the
@@ -1073,6 +1094,10 @@ export function sealSyncV2Frame(
   if (idempotency !== undefined) {
     validateIdempotencyKey(idempotency);
   }
+  // Refused here rather than masked in pushU64: a correlation or causation
+  // outside u64 would silently wrap onto the wire as different bytes.
+  validateU64Identity("the correlation", correlation);
+  validateU64Identity("the causation", causation);
   const bodyBytes = syncV2BodyToBytes(body);
   return Object.freeze({
     correlation,
@@ -1085,7 +1110,21 @@ export function sealSyncV2Frame(
 
 /** The versioned wire encoding of a sealed frame. */
 export function encodeSyncV2Frame(frame: SyncV2Frame): Uint8Array {
+  validateU64Identity("the correlation", frame.correlation);
+  validateU64Identity("the causation", frame.causation);
+  const keyBytes = frame.idempotency === undefined ? new Uint8Array(0) : textEncoder.encode(frame.idempotency);
   const bodyBytes = syncV2BodyToBytes(frame.body);
+  // Encode-side symmetry with the decoder's bounds: a frame this module
+  // emits must be one this module accepts. version(1) + kind(2) +
+  // correlation(8) + causation(8) + presence(1) + digest(8) + body
+  // length(8) = 36, plus the key length field when a key rides.
+  const envelopeBytes = 36 + (frame.idempotency === undefined ? 0 : 8 + keyBytes.length);
+  if (bodyBytes.length > syncV2MaxPayloadBytes) {
+    throw malformed("body length exceeds the frame bound");
+  }
+  if (envelopeBytes + bodyBytes.length > syncV2MaxFrameBytes) {
+    throw malformed("the frame exceeds the encode bound");
+  }
   const digest = fnv1a64(bodyBytes);
   const bytes: number[] = [];
   bytes.push(syncV2ProtocolVersion);
@@ -1096,7 +1135,6 @@ export function encodeSyncV2Frame(frame: SyncV2Frame): Uint8Array {
     bytes.push(0);
   } else {
     bytes.push(1);
-    const keyBytes = textEncoder.encode(frame.idempotency);
     pushU64(bytes, BigInt(keyBytes.length));
     for (const byte of keyBytes) {
       bytes.push(byte);
