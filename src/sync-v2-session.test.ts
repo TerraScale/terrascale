@@ -703,6 +703,68 @@ describe("TerraScaleSyncV2Session over the API host HTTP/SSE surface", () => {
     await session.disconnect();
   });
 
+  test("a pathological event-stream line aborts the subscription with a typed stream error", async () => {
+    const host = new FixtureApiHost();
+    host.commit("orders");
+    let streamCancels = 0;
+    let streamGets = 0;
+    let abortSignals = 0;
+    const pathologicalStream: SyncV2Fetch = async (input, init) => {
+      const url = new URL(input.toString());
+      if ((init?.method ?? "GET").toUpperCase() === "GET" && url.pathname === "/v1/streams") {
+        streamGets += 1;
+        init?.signal?.addEventListener("abort", () => {
+          abortSignals += 1;
+        });
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("id: 1\nevent: trigger\ndata: "));
+            // A pathological undelimited line: no newline ever arrives.
+            controller.enqueue(new TextEncoder().encode("x".repeat(200_000)));
+          },
+          cancel() {
+            streamCancels += 1;
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return host.fetch(input, init);
+    };
+    const session = new TerraScaleSyncV2Session({
+      Url: "https://api.terrascale.test",
+      Collection: "orders",
+      Principal: "principal-1",
+      Tenant: "tenant-a",
+      Fetch: pathologicalStream,
+      ReconnectDelayMilliseconds: 1,
+      MaxReconnectAttempts: 2,
+    });
+    const observedErrors: string[] = [];
+    session.getStore().subscribe(() => {
+      const lastError = session.getStore().getSnapshot().LastError;
+      if (lastError !== undefined) {
+        observedErrors.push(lastError);
+      }
+    });
+
+    await session.connect();
+    await waitFor(() => session.getStatus() === "failed");
+
+    assert.ok(
+      observedErrors.some((error) => /stream_limit/u.test(error)),
+      `the typed stream-limit error surfaced through the failure surface: ${JSON.stringify(observedErrors)}`,
+    );
+    assert.ok(
+      abortSignals >= 1 || streamCancels >= 1,
+      `the pathological subscription is aborted (fetch aborts: ${abortSignals}, cancels: ${streamCancels})`,
+    );
+    assert.ok(streamGets >= 2, "the torn-down stream was abandoned for the bounded reconnect ladder");
+    await session.dispose();
+  });
+
   test("construction fails closed without the backend-supplied tenant context", () => {
     const host = new FixtureApiHost();
     assert.throws(

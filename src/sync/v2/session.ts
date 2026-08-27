@@ -299,6 +299,13 @@ const maxDrainBatches = 4096;
 const reconnectDelayDefault = 100;
 const maxReconnectAttemptsDefault = 8;
 const reconnectDelayCapMilliseconds = 30_000;
+/**
+ * How long a stream must stay open before the ladder forgets previous
+ * attempts: a stream that keeps dying within the window is one sustained
+ * outage (attempts accumulate); a stream that was stable for a window
+ * starts a fresh ladder on its next failure.
+ */
+const reconnectStabilityMilliseconds = 1_000;
 const maxSafeInteger = 9_007_199_254_740_991n;
 
 /**
@@ -334,9 +341,11 @@ function errorMessageOf(error: unknown): string {
  * stream) route through one typed surface: transient failures record
  * `LastError` on the store and climb a bounded exponential-backoff ladder
  * (`ReconnectDelayMilliseconds` base, jittered, capped at 30 s, at most
- * `MaxReconnectAttempts` attempts; a recovered tick resets the ladder and
- * clears the error). Terminal codes — `session_closed`, `scope_refused`,
- * `http_401`, `http_403` — and ladder exhaustion transition the session to
+ * `MaxReconnectAttempts` attempts; a recovered tick clears the recorded
+ * error, and a stream that stays open for a stability window starts a
+ * fresh ladder on its next failure). Terminal codes — `session_closed`,
+ * `scope_refused`, `http_401`, `http_403` — and ladder exhaustion
+ * transition the session to
  * the terminal `failed` state with `LastError` recorded and the host
  * session identity dropped. The documented re-setup after a terminal
  * failure is a fresh `connect()` (which performs a new host setup resumed
@@ -357,6 +366,7 @@ export class TerraScaleSyncV2Session {
   #status: SyncV2ConnectionStatus = "idle";
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   #reconnectAttempts = 0;
+  #streamOpenedAt = 0;
 
   public constructor(options: TerraScaleSyncV2SessionOptions) {
     if (options.Url.length === 0 || !/^https?:/u.test(options.Url)) {
@@ -675,6 +685,7 @@ export class TerraScaleSyncV2Session {
       },
       (error) => this.#onStreamEnded(error),
     );
+    this.#streamOpenedAt = Date.now();
   }
 
   #onStreamEnded(error: unknown): void {
@@ -732,6 +743,13 @@ export class TerraScaleSyncV2Session {
       // stream end and the drain of the same tick) climb one ladder.
       return;
     }
+    if (Date.now() - this.#streamOpenedAt >= reconnectStabilityMilliseconds) {
+      // The previous stream was stable for a full window, so this failure
+      // is a fresh outage, not a continuation of the last one. (Without
+      // this, a stream that keeps dying while the delta endpoint answers
+      // would reset its own ladder through the tick's drain and loop.)
+      this.#reconnectAttempts = 0;
+    }
     const maxAttempts = this.#options.MaxReconnectAttempts ?? maxReconnectAttemptsDefault;
     if (this.#reconnectAttempts >= maxAttempts) {
       this.#failTerminally(new SyncV2SessionError(
@@ -758,9 +776,10 @@ export class TerraScaleSyncV2Session {
       this.#openStream();
       void this.#drainDeltas().then(() => {
         if (this.#status === "reconnecting") {
-          // A completed reconnect-tick drain is recovery: the ladder
-          // resets and the recorded transient error clears.
-          this.#reconnectAttempts = 0;
+          // A completed reconnect-tick drain clears the recorded transient
+          // error; the ladder itself resets only after a stable stream
+          // window (a dying stream with a healthy delta endpoint must not
+          // reset its own ladder).
           this.#setStatus("live");
         }
       }).catch((error: unknown) => {
@@ -948,6 +967,16 @@ function decodeBase64(value: string, what: string): Uint8Array {
   return bytes;
 }
 
+/**
+ * The SSE line bound of the default stream factory: 16x the trigger frame
+ * budget (256 bytes) — a trigger notification's JSON envelope rides far
+ * below it, and an undelimited line can never grow the buffer unboundedly.
+ */
+const sseMaxLineCodeUnits = 4096;
+
+/** The per-event data bound: the joined data lines, 64x the trigger budget. */
+const sseMaxDataCodeUnits = 16384;
+
 /** The default push channel: SSE parsed over the session's fetch. */
 function sseOverFetch(fetchLike: SyncV2Fetch): SyncV2StreamFactory {
   return (url, headers, onEvent, onEnded) => sseOverFetchWith(fetchLike, url, headers, onEvent, onEnded);
@@ -966,7 +995,19 @@ function sseOverFetchWith(
   let eventName = "message";
   let eventId: string | null = null;
   let dataLines: string[] = [];
+  let dataCodeUnits = 0;
   let closed = false;
+  let ended = false;
+
+  /** Reports exactly one end (typed error through onEnded) and aborts the fetch. */
+  const endWithError = (error: unknown): void => {
+    if (closed || ended) {
+      return;
+    }
+    ended = true;
+    controller.abort();
+    onEnded(error);
+  };
 
   const dispatch = (): void => {
     if (dataLines.length === 0 && eventName === "message") {
@@ -982,6 +1023,7 @@ function sseOverFetchWith(
     onEvent({ event: eventName, id: eventId, data: parsed });
     eventName = "message";
     dataLines = [];
+    dataCodeUnits = 0;
   };
 
   void (async () => {
@@ -1007,6 +1049,15 @@ function sseOverFetchWith(
           break;
         }
         buffer += decoder.decode(value, { stream: true });
+        if (buffer.length > sseMaxLineCodeUnits) {
+          // A pathological host streaming an undelimited line can never
+          // grow the buffer (or the read loop) without bound.
+          endWithError(new SyncV2SessionError(
+            "stream_limit",
+            `an event-stream line exceeds its ${sseMaxLineCodeUnits}-unit bound`,
+          ));
+          return;
+        }
         let newline = buffer.indexOf("\n");
         while (newline !== -1) {
           const line = buffer.slice(0, newline).replace(/\r$/u, "");
@@ -1020,16 +1071,28 @@ function sseOverFetchWith(
           } else if (line.startsWith("id:")) {
             eventId = line.slice(3).trim();
           } else if (line.startsWith("data:")) {
-            dataLines.push(line.slice(5).replace(/^ /u, ""));
+            const data = line.slice(5).replace(/^ /u, "");
+            dataCodeUnits += data.length + 1;
+            if (dataCodeUnits > sseMaxDataCodeUnits) {
+              endWithError(new SyncV2SessionError(
+                "stream_limit",
+                `an event-stream event exceeds its ${sseMaxDataCodeUnits}-unit data bound`,
+              ));
+              return;
+            }
+            dataLines.push(data);
           }
           newline = buffer.indexOf("\n");
         }
       }
-      onEnded(undefined);
-    } catch (error) {
-      if (!closed) {
-        onEnded(error);
+      if (!closed && !ended) {
+        ended = true;
+        onEnded(undefined);
       }
+    } catch (error) {
+      // A mid-stream failure (including the read aborted above) reports at
+      // most one end; aborting the fetch releases the connection.
+      endWithError(error);
     }
   })();
 
