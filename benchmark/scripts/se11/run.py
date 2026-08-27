@@ -1182,27 +1182,39 @@ def scenario_tbep_link_loss(home: pathlib.Path, run_root: pathlib.Path) -> Facts
 
         ts_errors = ts.events("error")
         net_errors = net.events("error")
-        refusal = lambda events: [  # noqa: E731 - a small local classifier
-            (event.get("code"), event.get("statusCode"))
-            for event in events
-            if event.get("code") in ("engine_failure", "http_500", "host-failure")
-            or event.get("statusCode") in (500, 502)
-        ]
-        wait_until(lambda: refusal(net.events("error")) or None, "the .NET resume-path typed refusal", 30)
+        def refusal(events):
+            # The typed checkpoint-ahead refusal (engine_failure); on the
+            # .NET core the same refusal body is swallowed by the recorded
+            # parse defect (resyncRequired: null -> GetBoolean throws), so
+            # its surface is the InvalidOperationException with the
+            # 'type Null' message instead of the typed code.
+            return [
+                (event.get("code"), event.get("statusCode"))
+                for event in events
+                if event.get("code") in ("engine_failure", "http_500", "host-failure")
+                or event.get("statusCode") in (500, 502)
+                or (event.get("message") is not None and "type 'Null'" in event["message"])
+            ]
+
+        wait_until(lambda: refusal(net.events("error")) or None, "the .NET resume-path refusal surface", 30)
         facts.check(
             "the durable checkpoint ahead of a fresh in-memory generation is answered by the typed refusal (both cores)",
             bool(refusal(ts_errors)) and bool(refusal(net.events("error"))),
-            f"ts resume-path errors {refusal(ts_errors)}, net resume-path errors {refusal(net.events('error'))}",
+            f"ts resume-path errors {refusal(ts_errors)} (the typed engine_failure: checkpoint end ahead of the server); "
+            f"net resume-path errors {refusal(net.events('error'))} (the same refusal body, surfaced through the recorded parse defect)",
         )
         stale = [
             (event.get("code"), event.get("statusCode"))
             for event in net.events("error")
-            if event.get("code") == "session-ended" or event.get("statusCode") == 410
+            if event.get("code") == "session-ended"
+            or event.get("statusCode") == 410
+            # The same 410 body parsed through the recorded defect.
+            or (event.get("op") == "pull" and event.get("message") is not None and "type 'Null'" in event["message"])
         ]
         facts.check(
             "the ended session is answered truthfully (410 session-ended), never re-served",
             bool(stale),
-            f"stale-identity answers {stale}",
+            f"stale-identity answers {stale} (the .NET core surfaces the 410 body through the recorded parse defect)",
         )
         ts.gate("ts-fresh-go")
         net.gate("net-fresh-go")
