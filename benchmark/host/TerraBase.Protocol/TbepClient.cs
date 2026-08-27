@@ -13,7 +13,7 @@ using System.Threading;
 /// (the API host SE-08, the CLI SE-13 direct mode) uses to speak the
 /// TerraBase Engine Protocol to the engine process.
 /// </summary>
-public sealed class TbepClient : IAsyncDisposable
+public sealed partial class TbepClient : IAsyncDisposable
 {
     private readonly Socket socket;
     private readonly NetworkStream stream;

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- TerraBase.Api — the C# API host (ticket SE-08, charter            -->
+  <!-- PD-2026-08-26-01/02; ADR 0005): an ASP.NET Core host that is a      -->
+  <!-- TBEP client of the Rust engine process over the required UDS       -->
+  <!-- binding (PD-2026-08-26-11 D1). All engine communication goes       -->
+  <!-- through the SE-14 TerraBase.Protocol client — no C ABI, no raw     -->
+  <!-- sockets, no storage access (probe-tested). JSON surfaces use       -->
+  <!-- System.Text.Json only.                                             -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>preview</LangVersion>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>TerraBase.Api</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TerraBase.Protocol\TerraBase.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The supervision rows of the test family drive real engine-process
+         loss on the supervisor's own managed process handle. -->
+    <InternalsVisibleTo Include="TerraBase.Api.Tests" />
+  </ItemGroup>
+
+</Project>
