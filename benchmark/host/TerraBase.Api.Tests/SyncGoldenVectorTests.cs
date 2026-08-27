@@ -25,17 +25,6 @@ public sealed class SyncGoldenVectorTests
 {
     private static string Corpus => Path.Combine(AppContext.BaseDirectory, "vectors", "terrascale.sync.v2");
 
-    /// <summary>The session-bearing corpus categories this family replays.</summary>
-    private static readonly string[] Replayed =
-    [
-        "fresh-session",
-        "checkpoint-resume",
-        "repeated-change-delta",
-        "reconnect-replay",
-        "resync-required",
-        "malformed-frame-rejection",
-    ];
-
     /// <summary>The corpus is exactly the committed category set: a new vector fails loudly here.</summary>
     [Test]
     public async Task TheCorpusIsExactlyTheCommittedCategorySet()
@@ -267,7 +256,7 @@ public sealed class SyncGoldenVectorTests
         // slow-consumer: the engine-side close-out policy is the SE-14
         // UDS suite's row (tests/server_uds.rs); the host-side bounded
         // queues with counted, surfaced drops are StreamsTests'
-        // AFulLBoundedQueueDropsCountsAndSurfaces.
+        // AFullBoundedQueueDropsCountsAndSurfaces.
         //
         // region-route-change: member-transport routing is SE-06's
         // surface; no host session surface is involved.

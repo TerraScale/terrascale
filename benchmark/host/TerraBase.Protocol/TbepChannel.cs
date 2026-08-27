@@ -419,7 +419,21 @@ public sealed class TbepChannel : IAsyncDisposable
             }
 
             var frame = TbepWire.Seal(TbepRegistry.RequestKindOf(operation), correlation, 0, idempotency, body);
-            await TbepWire.WriteFrame(this.stream, frame).ConfigureAwait(false);
+            try
+            {
+                await TbepWire.WriteFrame(this.stream, frame).ConfigureAwait(false);
+            }
+            catch
+            {
+                // The frame never left: the registration goes with it, so
+                // no later answer can complete an abandoned call.
+                lock (this.gate)
+                {
+                    this.pending.Remove(correlation);
+                }
+
+                throw;
+            }
         }
         finally
         {
