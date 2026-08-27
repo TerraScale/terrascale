@@ -238,12 +238,16 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
             var frame = await this.queue.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
             if (frame is StreamEvent.Dropped)
             {
-                // The marker reached its consumer: the dropped region it
-                // describes is surfaced, and the next region starts fresh.
-                // (The unsynchronized reset is a benign race — the count,
-                // not the marker, is the accounting of record.)
+                // The marker reached its consumer: the region it describes
+                // is surfaced and the next drop may queue a fresh marker.
+                // gapStart is deliberately NOT reset here: frames shed
+                // while this marker sat queued-but-unread folded their
+                // boundaries into it, and wiping them would narrow the
+                // next marker's boundary past sequences never surfaced
+                // in-band. Carrying the older boundary forward is the safe
+                // direction — a consumer rewinds further, never less. (The
+                // count, not the marker, remains the accounting of record.)
                 Volatile.Write(ref this.markerQueued, false);
-                Volatile.Write(ref this.gapStart, 0ul);
             }
 
             return frame;

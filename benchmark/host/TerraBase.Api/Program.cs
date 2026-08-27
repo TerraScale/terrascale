@@ -66,12 +66,14 @@ public static class Program
         }
         finally
         {
-            // A failed startup owns everything it started: the supervisor
-            // kills and disposes the managed engine process it spawned,
-            // and the application is disposed — nothing outlives the exit
-            // code, on success or failure.
-            await bundle.Supervisor.DisposeAsync().ConfigureAwait(false);
+            // A failed startup owns everything it started, torn down in
+            // ownership order: the application stops serving first, then
+            // the supervisor kills and disposes the managed engine process
+            // it spawned — nothing outlives the exit code, on success or
+            // failure, and shutdown never depends on the hub tolerating a
+            // dead engine generation mid-drain.
             await bundle.App.DisposeAsync().ConfigureAwait(false);
+            await bundle.Supervisor.DisposeAsync().ConfigureAwait(false);
         }
     }
 }
