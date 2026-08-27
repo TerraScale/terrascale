@@ -1159,6 +1159,7 @@ impl ReplicationMember {
                     {
                         for stamped in &commits {
                             self.record_conflict(ConflictRecord::new(
+                                tenant.clone(),
                                 vec![stamped.commit.operation_id().clone()],
                                 vec![source.clone()],
                                 vec![stamped.stamp],
@@ -1316,6 +1317,7 @@ impl ReplicationMember {
                 self.id.clone()
             };
             self.record_conflict(ConflictRecord::new(
+                tenant.clone(),
                 vec![stamped.commit.operation_id().clone()],
                 sorted_members(&[source.clone(), self.id.clone()]),
                 vec![stamp, self.hlc],
@@ -1356,6 +1358,7 @@ impl ReplicationMember {
             // The incoming write wins every competing key: it applies, and
             // the losing writes are retained as history.
             self.record_conflict(ConflictRecord::new(
+                tenant.clone(),
                 operations,
                 sorted_members(&[source.clone(), self.id.clone()]),
                 clocks,
@@ -1377,6 +1380,7 @@ impl ReplicationMember {
                 members.push(state.writer.clone());
             }
             self.record_conflict(ConflictRecord::new(
+                tenant.clone(),
                 operations,
                 sorted_members(&members),
                 clocks,
@@ -2436,21 +2440,13 @@ impl ApplyReport {
 
 /// One observable tenant-isolation denial.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
-)]
-pub(crate) struct TenantDenial {
+pub struct TenantDenial {
     seam: DenialSeam,
     scope_tenant: TenantId,
     attempted_tenant: TenantId,
     counterparty: MemberId,
 }
 
-#[allow(
-    dead_code,
-    reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
-)]
 impl TenantDenial {
     /// Records one denial from its facts.
     fn new(
@@ -2463,29 +2459,33 @@ impl TenantDenial {
     }
 
     /// Returns the seam the denial happened at.
-    pub(crate) fn seam(&self) -> DenialSeam {
+    #[must_use]
+    pub fn seam(&self) -> DenialSeam {
         self.seam
     }
 
     /// Returns the tenant the caller's scope named.
-    pub(crate) fn scope_tenant(&self) -> &TenantId {
+    #[must_use]
+    pub fn scope_tenant(&self) -> &TenantId {
         &self.scope_tenant
     }
 
     /// Returns the tenant the denied attempt named.
-    pub(crate) fn attempted_tenant(&self) -> &TenantId {
+    #[must_use]
+    pub fn attempted_tenant(&self) -> &TenantId {
         &self.attempted_tenant
     }
 
     /// Returns the member on the other side of the denied attempt.
-    pub(crate) fn counterparty(&self) -> &MemberId {
+    #[must_use]
+    pub fn counterparty(&self) -> &MemberId {
         &self.counterparty
     }
 }
 
 /// The seam a tenant-isolation denial happened at.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum DenialSeam {
+pub enum DenialSeam {
     /// A catch-up request named a tenant the serving scope does not.
     ServeRequest,
     /// A catch-up delivery named a tenant the applying scope does not.
@@ -2911,17 +2911,13 @@ fn strongest_satisfied_level(
 
 /// One observable below-epoch batch this member fenced.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct FencedBatch {
+pub struct FencedBatch {
     range: String,
     batch_epoch: u64,
     highest_epoch: u64,
     source: MemberId,
 }
 
-#[allow(
-    dead_code,
-    reason = "observed by the W4-REPLICATION R-2 lane tests; the production acquisition seam lands with R-3"
-)]
 impl FencedBatch {
     /// Records one fenced batch from its facts.
     fn new(range: String, batch_epoch: u64, highest_epoch: u64, source: MemberId) -> Self {
@@ -2929,39 +2925,39 @@ impl FencedBatch {
     }
 
     /// Returns the range the fenced batch claimed.
-    pub(crate) fn range(&self) -> &str {
+    #[must_use]
+    pub fn range(&self) -> &str {
         &self.range
     }
 
     /// Returns the epoch the batch carried.
-    pub(crate) fn batch_epoch(&self) -> u64 {
+    #[must_use]
+    pub const fn batch_epoch(&self) -> u64 {
         self.batch_epoch
     }
 
     /// Returns the highest epoch this member had seen for the range.
-    pub(crate) fn highest_epoch(&self) -> u64 {
+    #[must_use]
+    pub const fn highest_epoch(&self) -> u64 {
         self.highest_epoch
     }
 
     /// Returns the member that pushed the fenced batch.
-    pub(crate) fn source(&self) -> &MemberId {
+    #[must_use]
+    pub fn source(&self) -> &MemberId {
         &self.source
     }
 }
 
 /// One observable ownership transition that deposed this member.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Deposition {
+pub struct Deposition {
     range: String,
     from_epoch: u64,
     to_epoch: u64,
     new_owner: MemberId,
 }
 
-#[allow(
-    dead_code,
-    reason = "observed by the W4-REPLICATION R-2 lane tests; the production acquisition seam lands with R-3"
-)]
 impl Deposition {
     /// Records one deposition from its facts.
     fn new(range: String, from_epoch: u64, to_epoch: u64, new_owner: MemberId) -> Self {
@@ -2969,22 +2965,26 @@ impl Deposition {
     }
 
     /// Returns the range this member lost ownership of.
-    pub(crate) fn range(&self) -> &str {
+    #[must_use]
+    pub fn range(&self) -> &str {
         &self.range
     }
 
     /// Returns the epoch the ownership was held at before the transition.
-    pub(crate) fn held_epoch(&self) -> u64 {
+    #[must_use]
+    pub const fn held_epoch(&self) -> u64 {
         self.from_epoch
     }
 
     /// Returns the epoch the new owner holds the range at.
-    pub(crate) fn owner_epoch(&self) -> u64 {
+    #[must_use]
+    pub const fn owner_epoch(&self) -> u64 {
         self.to_epoch
     }
 
     /// Returns the member that owns the range now.
-    pub(crate) fn new_owner(&self) -> &MemberId {
+    #[must_use]
+    pub fn new_owner(&self) -> &MemberId {
         &self.new_owner
     }
 }

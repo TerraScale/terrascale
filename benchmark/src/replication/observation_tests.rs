@@ -15,9 +15,14 @@
 //!   field values, or collection payload text — the tests write canary
 //!   documents and assert the canaries never appear.
 
+#![allow(
+    clippy::similar_names,
+    reason = "fixtures bind per-member values whose canonical names differ by one character (m_a1/m_b1, dir_a1/dir_b1)"
+)]
+
 use crate::replication::observation::{
-    observe_conflicts, observe_cursor, observe_depositions, observe_denials, observe_fenced_history,
-    observe_health, ObservationRefusal,
+    ObservationRefusal, observe_conflicts, observe_cursor, observe_denials, observe_depositions,
+    observe_fenced_history, observe_health,
 };
 use crate::replication::tests::{member_put, open_member};
 use crate::replication::{
@@ -122,34 +127,48 @@ fn cross_tenant_observation_probes_refuse_typed_at_every_operation() {
 
     // Scope tenant-a, asked for tenant-b: every operation refuses typed,
     // before any fact is read, mirroring the data plane's CrossTenant.
-    for refused in [
-        observe_conflicts(&member, &scope_a, &tenant_b),
-        observe_fenced_history(&member, &scope_a, &tenant_b),
-        observe_depositions(&member, &scope_a, &tenant_b),
-        observe_denials(&member, &scope_a, &tenant_b),
-        observe_cursor(&member, &scope_a, &tenant_b),
-        observe_health(&member, &scope_a, &tenant_b),
-    ] {
+    let refusals: Vec<ObservationRefusal> = [
+        observe_conflicts(&member, &scope_a, &tenant_b).err(),
+        observe_fenced_history(&member, &scope_a, &tenant_b).err(),
+        observe_depositions(&member, &scope_a, &tenant_b).err(),
+        observe_denials(&member, &scope_a, &tenant_b).err(),
+        observe_cursor(&member, &scope_a, &tenant_b).err(),
+        observe_health(&member, &scope_a, &tenant_b).err(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    assert_eq!(
+        refusals.len(),
+        6,
+        "every observation operation refuses the cross-tenant probe: {refusals:?}"
+    );
+    for refusal in &refusals {
         assert!(
-            matches!(&refused, Err(ObservationRefusal::CrossTenant { scope, attempted })
+            matches!(refusal, ObservationRefusal::CrossTenant { scope, attempted }
                 if scope.as_str() == "tenant-a" && attempted.as_str() == "tenant-b"),
-            "an observation scoped to tenant-a must refuse tenant-b typed: {refused:?}"
+            "an observation scoped to tenant-a must refuse tenant-b typed: {refusal:?}"
         );
     }
 
     // The mirror: scope tenant-b, asked for tenant-a.
-    for refused in [
-        observe_conflicts(&member, &scope_b, &tenant_a),
-        observe_fenced_history(&member, &scope_b, &tenant_a),
-        observe_depositions(&member, &scope_b, &tenant_a),
-        observe_denials(&member, &scope_b, &tenant_a),
-        observe_cursor(&member, &scope_b, &tenant_a),
-        observe_health(&member, &scope_b, &tenant_a),
-    ] {
+    let mirrored: Vec<ObservationRefusal> = [
+        observe_conflicts(&member, &scope_b, &tenant_a).err(),
+        observe_fenced_history(&member, &scope_b, &tenant_a).err(),
+        observe_depositions(&member, &scope_b, &tenant_a).err(),
+        observe_denials(&member, &scope_b, &tenant_a).err(),
+        observe_cursor(&member, &scope_b, &tenant_a).err(),
+        observe_health(&member, &scope_b, &tenant_a).err(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    assert_eq!(mirrored.len(), 6, "the mirrored probes refuse: {mirrored:?}");
+    for refusal in &mirrored {
         assert!(
-            matches!(&refused, Err(ObservationRefusal::CrossTenant { scope, attempted })
+            matches!(refusal, ObservationRefusal::CrossTenant { scope, attempted }
                 if scope.as_str() == "tenant-b" && attempted.as_str() == "tenant-a"),
-            "an observation scoped to tenant-b must refuse tenant-a typed: {refused:?}"
+            "an observation scoped to tenant-b must refuse tenant-a typed: {refusal:?}"
         );
     }
 
@@ -165,14 +184,12 @@ fn conflicts_observation_is_tenant_scoped_names_the_outcome_and_stays_content_fr
     let mut network = ReplicationNetwork::new();
 
     let scope_a = scope(&m_a1, "tenant-a");
-    m_a1
-        .commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "canary-value-a"))
+    m_a1.commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "canary-value-a"))
         .expect("writer one commits");
     network.pump();
     m_b1.observe_instant(network.now());
     let scope_b = scope(&m_b1, "tenant-a");
-    m_b1
-        .commit_write(&scope_b, put_request("main", "op-b", "doc-shared", "canary-value-b"))
+    m_b1.commit_write(&scope_b, put_request("main", "op-b", "doc-shared", "canary-value-b"))
         .expect("writer two commits");
 
     let healed = healed_view("main");
@@ -194,10 +211,7 @@ fn conflicts_observation_is_tenant_scoped_names_the_outcome_and_stays_content_fr
         observation.records()
     );
     assert!(
-        observation
-            .records()
-            .iter()
-            .all(|record| record.tenant().as_str() == "tenant-a"),
+        observation.records().iter().all(|record| record.tenant().as_str() == "tenant-a"),
         "only the claimed tenant's conflicts are observable"
     );
 
@@ -236,8 +250,7 @@ fn fenced_history_and_depositions_are_observable_as_typed_operations() {
     let mut network = ReplicationNetwork::new();
 
     let scope_a = scope(&m_a1, "tenant-a");
-    m_a1
-        .commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "canary-value-a"))
+    m_a1.commit_write(&scope_a, put_request("main", "op-a", "doc-shared", "canary-value-a"))
         .expect("the old owner commits");
     let transitioned = healed_view("main");
     m_a1.apply_view(transitioned.clone()).expect("the old owner learns of the transition");
@@ -250,7 +263,9 @@ fn fenced_history_and_depositions_are_observable_as_typed_operations() {
         operation("op-a"),
         StorageSequence::new(1),
         LocalDurability::Synced,
-        vec![PublishedWrite::Put { document: text_document("users", "doc-shared", "canary-value-a") }],
+        vec![PublishedWrite::Put {
+            document: text_document("users", "doc-shared", "canary-value-a"),
+        }],
     );
     network
         .send(
@@ -390,13 +405,12 @@ fn health_observation_reports_the_member_status_and_never_a_convergence_fact() {
             if scope.as_str() == "tenant-b" && attempted.as_str() == "tenant-a"),
         "the probe denial is recorded: {denied:?}"
     );
-    let degraded =
-        observe_health(&member, &scope_b, &tenant("tenant-b")).expect("health observes");
+    let degraded = observe_health(&member, &scope_b, &tenant("tenant-b")).expect("health observes");
     assert_eq!(degraded.status(), ReplicationStatus::Degraded, "the denial degrades health");
 
     member.close();
-    let unavailable =
-        observe_health(&member, &scope_b, &tenant("tenant-b")).expect("health never needs the engine");
+    let unavailable = observe_health(&member, &scope_b, &tenant("tenant-b"))
+        .expect("health never needs the engine");
     assert_eq!(unavailable.status(), ReplicationStatus::Unavailable);
 
     std::fs::remove_dir_all(&dir).ok();

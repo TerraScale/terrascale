@@ -1784,6 +1784,7 @@ fn engine_bound_subscriptions_are_bounded_and_refused() {
 /// members, two clock stamps, and a recorded winner.
 fn conflict_record(tag: &str) -> crate::replication::ConflictRecord {
     crate::replication::ConflictRecord::new(
+        tenant("tenant-a"),
         vec![operation(&format!("op-local-{tag}")), operation(&format!("op-remote-{tag}"))],
         vec![
             crate::replication::MemberId::try_new("member-a").expect("valid member"),

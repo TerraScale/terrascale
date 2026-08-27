@@ -37,6 +37,7 @@ mod lane;
 #[cfg(test)]
 mod lane_tests;
 mod member;
+mod observation;
 #[cfg(test)]
 mod observation_tests;
 #[cfg(test)]
@@ -61,6 +62,17 @@ pub use retention::{
     ConsumerObservation, DeletionEvidence, MAX_RETENTION_REFUSALS, RetentionAdvance,
     RetentionCompaction, RetentionConsumer, RetentionHold, RetentionRefusal,
     SharedTombstoneRetention, TombstoneRetention,
+};
+
+// The typed observation operations and the observable record types they
+// return are module-level public (GAP-R03): an engine-side adapter maps
+// them onto the TBEP observation frames, so the observation vocabulary is
+// reachable as `terrabase_v2::replication::*` while the crate root's
+// re-export list, which the integrator owns, stays untouched.
+pub use member::{DenialSeam, Deposition, FencedBatch, TenantDenial};
+pub use observation::{
+    ConflictsObservation, CursorObservation, DenialsObservation, DepositionsObservation,
+    FencedHistoryObservation, HealthObservation, ObservationRefusal,
 };
 
 // The journal-extraction pair a history-bound declaration hands the
@@ -894,9 +906,12 @@ impl FaultClass {
 /// Carries identities, vectors or clocks, and the recorded policy outcome —
 /// under ADR-0004 D-3, deterministic last-writer-wins on a bounded hybrid
 /// logical clock, with losers retained as observable history. No conflicting
-/// document payload crosses this type.
+/// document payload crosses this type. The tenant names the key's owner, so
+/// a tenant-scoped observation acquires only its own conflicts (GAP-R03).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConflictRecord {
+    /// The tenant whose key conflicted.
+    tenant: TenantId,
     /// The conflicting operation identities, in canonical order.
     operations: Vec<OperationId>,
     /// The writer identities of the conflicting operations, in canonical
@@ -912,12 +927,19 @@ pub struct ConflictRecord {
 impl ConflictRecord {
     /// Creates one conflict record from its content-free facts.
     pub(crate) fn new(
+        tenant: TenantId,
         operations: Vec<OperationId>,
         members: Vec<MemberId>,
         clocks: Vec<ReplicationClockStamp>,
         outcome: ConflictOutcome,
     ) -> Self {
-        Self { operations, members, clocks, outcome }
+        Self { tenant, operations, members, clocks, outcome }
+    }
+
+    /// Returns the tenant whose key conflicted.
+    #[must_use]
+    pub fn tenant(&self) -> &TenantId {
+        &self.tenant
     }
 
     /// Returns the conflicting operation identities, in canonical order.
