@@ -13,7 +13,6 @@
 # keeps the dependency closure to the mandated codec pair (rmp-serde).
 # The QUIC binding is deferred per PD-2026-08-26-11 D1.
 
-[workspace]
 
 [package]
 name = "terrabase-tbep"

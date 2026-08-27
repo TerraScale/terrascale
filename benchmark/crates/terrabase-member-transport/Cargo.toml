@@ -18,7 +18,6 @@ publish = false
 
 # Own workspace root: stays out of the engine workspace without any
 # root-Cargo.toml edit until the integrator wires it in.
-[workspace]
 
 [lints.rust]
 unsafe_code = "deny"
