@@ -9,7 +9,7 @@
 //!
 //!
 //! The discipline is the contract
-//! ([`docs/families/hilo-identity-distribution.md`](../../docs/families/hilo-identity-distribution.md)):
+//! (`docs/families/hilo-identity-distribution.md`):
 //!
 //! - D1: blocks are owner-fenced allocations of the identity family — the
 //!   caller commits the planned [`IdentityWrite`] through the owning
