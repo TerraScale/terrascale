@@ -6,3 +6,4 @@
 mod document_metadata_contract;
 mod document_patch_contract;
 mod engine_public_construction;
+mod ingest_public_contract;
