@@ -57,6 +57,13 @@ pub const MAX_MAP_OUTPUT_FIELDS: usize = 32;
 /// The maximum number of grouping keys in one reduce stage.
 pub const MAX_REDUCE_KEYS: usize = 8;
 
+/// The maximum number of aggregate bindings in one reduce stage.
+///
+/// An initial engine bound aligned with the map output field bound:
+/// aggregate outputs are the reduce stage's half of the output width, so
+/// a reduce stage stays bounded engine state exactly as a map stage is.
+pub const MAX_AGGREGATIONS: usize = MAX_MAP_OUTPUT_FIELDS;
+
 /// The maximum number of dynamic-field rules one map stage declares.
 pub const MAX_DYNAMIC_FIELD_RULES: usize = 4;
 
@@ -119,6 +126,8 @@ pub enum IndexDefinitionError {
     NoReduceKeys,
     /// A reduce stage declares more grouping keys than the bound.
     TooManyReduceKeys,
+    /// A reduce stage declares more aggregate bindings than the bound.
+    TooManyAggregations,
     /// A grouping key names a field the map stages do not project.
     ReduceKeyNotProjected,
     /// A reduce stage groups twice by the same field.
@@ -692,9 +701,11 @@ impl ReduceStage {
     ///
     /// Returns [`IndexDefinitionError::NoReduceKeys`] or
     /// [`IndexDefinitionError::TooManyReduceKeys`] for an out-of-bound key
-    /// list, [`IndexDefinitionError::DuplicateReduceKey`] for a repeated
-    /// key, and [`IndexDefinitionError::DuplicateAggregationOutput`] for a
-    /// repeated aggregate output.
+    /// list, [`IndexDefinitionError::TooManyAggregations`] for an
+    /// out-of-bound aggregation list,
+    /// [`IndexDefinitionError::DuplicateReduceKey`] for a repeated key, and
+    /// [`IndexDefinitionError::DuplicateAggregationOutput`] for a repeated
+    /// aggregate output.
     pub fn try_new(
         keys: Vec<ReduceKey>,
         aggregations: Vec<AggregationBinding>,
@@ -704,6 +715,9 @@ impl ReduceStage {
         }
         if keys.len() > MAX_REDUCE_KEYS {
             return Err(IndexDefinitionError::TooManyReduceKeys);
+        }
+        if aggregations.len() > MAX_AGGREGATIONS {
+            return Err(IndexDefinitionError::TooManyAggregations);
         }
         for key in &keys {
             validate_field_name_text(key.field())?;
@@ -1286,10 +1300,11 @@ impl StaticIndexDefinition {
 
     /// Returns the deterministic content identity of this definition.
     ///
-    /// The identity renders the version, name, sources, projections,
-    /// reduce stage, field options, compound hints, and output publication
-    /// in canonical order: two definitions of one name with equal content
-    /// render equal identities regardless of map order.
+    /// The identity renders the version, name, sources, projections
+    /// (including dynamic-field rules with their options), reduce stage,
+    /// field options, compound hints, and output publication in canonical
+    /// order: two definitions of one name with equal content render equal
+    /// identities regardless of map order.
     #[must_use]
     pub fn identity_key(&self) -> String {
         let mut identity =
@@ -1314,6 +1329,7 @@ impl StaticIndexDefinition {
                 identity.push_str(rule.name_path());
                 identity.push('=');
                 identity.push_str(rule.value_path());
+                push_options_identity(&mut identity, rule.options());
             }
         }
         if let Some(reduce) = &self.reduce {
@@ -1344,20 +1360,7 @@ impl StaticIndexDefinition {
             identity.push(IDENTITY_GROUP);
             identity.push_str("options:");
             identity.push_str(field);
-            identity.push_str(match options.indexing() {
-                FieldIndexing::Default => "|default",
-                FieldIndexing::Exact => "|exact",
-                FieldIndexing::No => "|no",
-                FieldIndexing::Search => "|search",
-            });
-            identity.push_str(match options.storage() {
-                FieldStorage::NotStored => "|not-stored",
-                FieldStorage::Stored => "|stored",
-            });
-            if let Some(analyzer) = options.analyzer() {
-                identity.push('|');
-                identity.push_str(analyzer.as_str());
-            }
+            push_options_identity(&mut identity, options);
         }
         for compound in &self.compounds {
             identity.push(IDENTITY_GROUP);
@@ -1393,6 +1396,27 @@ impl StaticIndexDefinition {
         self.name != other.name
             && matches!((&self.output, &other.output), (Some(mine), Some(theirs))
                 if mine.collection() == theirs.collection())
+    }
+}
+
+/// Appends one options value to an identity rendering with the shared
+/// options grammar: indexing mode, storage mode, then the analyzer of an
+/// analyzed field. Static field options and dynamic-field rules render
+/// through this one helper, so the two can never drift apart.
+fn push_options_identity(identity: &mut String, options: &IndexFieldOptions) {
+    identity.push_str(match options.indexing() {
+        FieldIndexing::Default => "|default",
+        FieldIndexing::Exact => "|exact",
+        FieldIndexing::No => "|no",
+        FieldIndexing::Search => "|search",
+    });
+    identity.push_str(match options.storage() {
+        FieldStorage::NotStored => "|not-stored",
+        FieldStorage::Stored => "|stored",
+    });
+    if let Some(analyzer) = options.analyzer() {
+        identity.push('|');
+        identity.push_str(analyzer.as_str());
     }
 }
 

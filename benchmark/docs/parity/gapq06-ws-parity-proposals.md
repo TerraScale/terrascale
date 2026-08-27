@@ -23,7 +23,7 @@ Evidence base:
   `terrabase_v2::index::definitions` (typed, versioned `idx/1.0`,
   fail-closed).
 - **Tests** — `tests/index/static_index_definitions.rs` (14 public-path
-  tests) and `src/index/definitions_tests.rs` (12 in-crate tests,
+  tests) and `src/index/definitions_tests.rs` (9 in-crate tests,
   including the catalog reserved-prefix agreement pin).
 - **Row source** — `parity/contracts/query.json` (63 items,
   PB-4000..PB-4062) at V1 source identity

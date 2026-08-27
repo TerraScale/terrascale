@@ -5,7 +5,7 @@ DISTINCT/static-`GROUP BY` half and GAP-Q16's legacy-JavaScript-index
 disposition per charter PD-2026-08-26-14 D3). Implementation:
 `src/index/definitions.rs` (public seam
 `terrabase_v2::index::definitions`); focused tests: `tests/index/` (public
-path, 14 tests) and `src/index/definitions_tests.rs` (in-crate, 12 tests).
+path, 14 tests) and `src/index/definitions_tests.rs` (in-crate, 9 tests).
 WS-PARITY proposals authored by this ticket:
 `docs/parity/gapq06-ws-parity-proposals.md` — no parity overlay is mutated
 by this document or by the builder.
@@ -214,9 +214,9 @@ deterministically for drift and registration use.
 - No parity overlay is mutated; rows stay `unresolved` until WS-PARITY
   dispositions them from the proposals file.
 - The bounds (`MAX_MAP_STAGES`, `MAX_MAP_OUTPUT_FIELDS`,
-  `MAX_REDUCE_KEYS`, `MAX_DYNAMIC_FIELD_RULES`, `MAX_COMPOUND_FIELDS`,
-  `MAX_COMPOUND_MEMBERS`) are initial engine values, tunable with measured
-  evidence.
+  `MAX_REDUCE_KEYS`, `MAX_AGGREGATIONS`, `MAX_DYNAMIC_FIELD_RULES`,
+  `MAX_COMPOUND_FIELDS`, `MAX_COMPOUND_MEMBERS`) are initial engine
+  values, tunable with measured evidence.
 
 ## Test evidence
 
@@ -229,10 +229,12 @@ deterministically for drift and registration use.
   compound hints incl. hint-only drift; output-collection loop, pattern,
   reference, and cross-index conflict rules; drift comparison and
   reindex scope; deterministic identity keys; canonical option order.
-- In-crate (`src/index/definitions_tests.rs`, 12 tests): the reserved
+- In-crate (`src/index/definitions_tests.rs`, 9 tests): the reserved
   prefix agrees with the catalog rule (`AUTO_NAMESPACE_PREFIX`); every
-  bound fails closed and each bound is reachable; the version constant is
-  wired; the reduce shape coverage rule.
+  bound fails closed and each bound is reachable (including the reduce
+  aggregation bound); the version constant is wired; the reduce shape
+  coverage rule; a dynamic rule's options participate in `identity_key`
+  with the static options grammar.
 - Red-then-green: the public test file was written first and failed
   against the unimplemented tree (`error[E0432]: could not find
   'definitions' in 'index'`) before the module existed.
