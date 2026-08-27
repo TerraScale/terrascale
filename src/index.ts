@@ -7,6 +7,9 @@ export * from "./result.js";
 export * from "./sync/client.js";
 export * from "./sync/protocol.js";
 export * from "./sync/store.js";
+export * from "./sync/v2/conformance.js";
+export * from "./sync/v2/frame.js";
+export * from "./sync/v2/session.js";
 export { sdkRouteManifest } from "./client.js";
 export type {
   AccessClient,

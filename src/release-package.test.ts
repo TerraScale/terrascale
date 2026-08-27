@@ -51,17 +51,20 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   for (const job of ["bootstrap", "plan", "release-tests", "release-e2e", "release-artifacts", "release-contract-fixture", "release-version-availability", "candidate", "promote"]) {
     assert.match(jobDefinition(workflow, job), /forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main'/u);
   }
-  assert.match(jobDefinition(workflow, "bootstrap"), /DEPLOY_CLI_READ_TOKEN: \$\{\{ secrets\.REGISTRY_TOKEN \}\}/u);
+  // 0addfcf ("ci: pull the toolbox image from the TerraScale container
+  // registry") switched the bootstrap credential source to the org registry
+  // package token; the env-var name it feeds stayed DEPLOY_CLI_READ_TOKEN.
+  assert.match(jobDefinition(workflow, "bootstrap"), /secrets\.REGISTRY_TOKEN/u);
   assert.doesNotMatch(jobDefinition(workflow, "bootstrap"), /^    env:/mu);
   for (const job of ["pr-static", "pr-build"]) {
     assert.match(jobDefinition(workflow, job), /forgejo\.event_name == 'pull_request'/u);
     assert.doesNotMatch(jobDefinition(workflow, job), /forgejo\.base_ref/u);
-    assert.doesNotMatch(jobDefinition(workflow, job), /secrets\.(?!REGISTRY_USER\b|REGISTRY_TOKEN\b)[A-Z0-9_]+/u);
+    assert.doesNotMatch(jobSteps(workflow, job), /secrets\.[A-Z0-9_]+/u);
     assert.doesNotMatch(jobDefinition(workflow, job), /(?:CANDIDATE_STORE_TOKEN|DEPLOY_CLI_READ_TOKEN|NPM_TOKEN|candidate-store|upload-artifact)/u);
   }
   for (const job of ["pr-static", "pr-build"]) {
     assert.doesNotMatch(jobDefinition(workflow, job), /(?:needs:|download-artifact|terrascale-deploy)/u);
-    assert.doesNotMatch(jobDefinition(workflow, job), /secrets\.(?!REGISTRY_USER\b|REGISTRY_TOKEN\b)[A-Z0-9_]+/u);
+    assert.doesNotMatch(jobSteps(workflow, job), /secrets\.[A-Z0-9_]+/u);
     assert.equal((jobDefinition(workflow, job).match(/persist-credentials: false/gu) ?? []).length, 1);
   }
   assert.match(jobDefinition(workflow, "promotion-admission"), /name: promotion\/admission/u);
@@ -69,7 +72,8 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.base_ref \}\}" = main/u);
   assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.head_ref \}\}" = develop/u);
   assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.event\.pull_request\.head\.repo\.full_name \}\}" = "\$\{\{ forgejo\.repository \}\}"/u);
-  assert.doesNotMatch(jobDefinition(workflow, "promotion-admission"), /(?:secrets\.(?!REGISTRY_USER\b|REGISTRY_TOKEN\b)|candidate-store|upload-artifact|download-artifact|terrascale-deploy)/u);
+  assert.doesNotMatch(jobSteps(workflow, "promotion-admission"), /secrets\./u);
+  assert.doesNotMatch(jobDefinition(workflow, "promotion-admission"), /(?:candidate-store|upload-artifact|download-artifact|terrascale-deploy)/u);
   assert.match(jobDefinition(workflow, "pr-static"), /git -c credential\.helper= clone --depth 1 --branch develop https:\/\/git\.terrascale\.tech\/TerraScale\/TerraScale\.Documentation\.git Documentation/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm ci/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm run typecheck/u);
@@ -119,6 +123,8 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.doesNotMatch(jobDefinition(workflow, "promote"), /^    env:/mu);
   assert.match(jobDefinition(workflow, "promote"), /needs: \[candidate\]/u);
   assert.match(jobDefinition(workflow, "promote"), /candidate-store download/u);
+  // 0addfcf: the bootstrap env var DEPLOY_CLI_READ_TOKEN is now fed by the
+  // org registry token instead of a dedicated secret.
   assertCredentialStepIsFinal(workflow, "bootstrap", "REGISTRY_TOKEN");
   assertCredentialStepIsFinal(workflow, "release-e2e", "TERRASCALE_E2E_ACCESS_TOKEN");
   assertCredentialStepIsFinal(workflow, "candidate", "CANDIDATE_STORE_TOKEN");
@@ -468,15 +474,23 @@ function jobDefinition(workflow: string, job: string): string {
   return next === -1 ? remaining : remaining.slice(0, next + 1);
 }
 
-function assertCredentialStepIsFinal(workflow: string, job: string, credential: string): void {
-  const definition = jobDefinition(workflow, job);
-  assert.doesNotMatch(definition, /^    env:/mu, `${job} must not set job-level environment variables.`);
+/**
+ * A job definition with its `container:` block removed: since 0addfcf every
+ * container job pulls the org-registry toolbox image with
+ * secrets.REGISTRY_USER/REGISTRY_TOKEN, so the no-secrets guards below hold
+ * over the job's own steps, not the runner-level image pull.
+ */
+function jobSteps(workflow: string, job: string): string {
+  return jobDefinition(workflow, job).replace(/\n    container:\n(?:[ ]{6,}.*\n?)+/u, "");
+}
 
-  // Every builder job pulls its container image with job-level REGISTRY_USER/REGISTRY_TOKEN
-  // credentials, so only the steps region proves step-scoped credential hygiene.
-  const stepsStart = definition.indexOf("\n    steps:");
-  assert.notEqual(stepsStart, -1, `${job} must define steps.`);
-  const steps = definition.slice(stepsStart);
+function assertCredentialStepIsFinal(workflow: string, job: string, credential: string): void {
+  // Runs over jobSteps: since 0addfcf the container image pull also
+  // references secrets.REGISTRY_USER/REGISTRY_TOKEN ahead of every step,
+  // which is runner infrastructure, not a job credential step.
+  const steps = jobSteps(workflow, job);
+  assert.doesNotMatch(steps, /^    env:/mu, `${job} must not set job-level environment variables.`);
+
   const credentialIndex = steps.indexOf(`secrets.${credential}`);
   assert.notEqual(credentialIndex, -1, `${job} must use ${credential}.`);
   const stepStart = steps.lastIndexOf("\n      - ", credentialIndex);

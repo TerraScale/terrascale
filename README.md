@@ -93,6 +93,55 @@ share one wire registration until their last handle is released. Call
 `executeMutation` with a stable idempotency key and optional optimistic patches;
 call `disconnect` or `dispose` with the owning application lifetime.
 
+The v1 WebSocket session above stays available behind its compat flag for the
+deprecation window; it speaks `terrascale.sync.v1` and is the legacy surface.
+
+## Sync v2 (`terrascale.sync.v2`)
+
+`TerraScaleSyncV2Session` is the native TypeScript client for the
+`terrascale.sync.v2` contract (PD-2026-08-26-12: native-language SDK clients,
+no wasm/wasi artifacts). It speaks to the TerraBase API host's HTTP/SSE
+endpoints: session setup with durable checkpoint resume, checkpoint-bounded
+delta pulls, snapshot adoption on resync-required, and the trigger-notification
+channel that drives immediate pulls — push the hint, pull the delta.
+
+```ts
+import { TerraScaleSyncV2Session } from "@terrascale/sdk";
+
+const sync = new TerraScaleSyncV2Session({
+  Url: "https://api.terrascale.test",
+  Collection: "orders",
+  Principal,   // backend-supplied context (X-TB-Principal)
+  Tenant,      // backend-supplied context (X-TB-Tenant)
+  ResumeCheckpoint: persisted, // base64, from getCheckpointBase64()
+  CheckpointStore: { save: persist },
+});
+
+await sync.connect();
+const applied = await sync.executeMutation(
+  { Document: "d-01", Put: { status: "approved" } },
+  "stable-idempotency-key",
+);
+await sync.disconnect();
+```
+
+Mutations are server-ack-only (PD-2026-08-26-12 D2, the recorded v1/v2
+behavioral difference): `executeMutation` returns the durable receipt or the
+typed rejection and there is no optimistic-patch surface — the mutation
+reaches the session's state only through the journal-to-delta path, and a
+retry with the same idempotency key is the same mutation. Stores are
+memory-only this wave; `loro-delta/1`/`loro-snapshot/1` payload bytes stay
+opaque to the protocol and reach documents through an optional materializer.
+
+Conformance to the engine's committed golden vectors runs in this package's
+test suite: the SE-04 corpus and the SE-05 integrity manifest are vendored
+under `test/fixtures/terrascale.sync.v2/` (digest-verified), and
+`runSyncV2Conformance` executes the per-language harness contract against
+the shipped codec, emitting the `terrascale.sync.v2/conformance-report@1`
+report. The vendored corpus is a deliberate pin of one engine revision —
+see `test/fixtures/terrascale.sync.v2/README.md` for the pinned source,
+its digests, and how to re-vendor.
+
 ## Public API Surface
 
 The public client follows the backed `TerraScale.Platform` REST surface:
