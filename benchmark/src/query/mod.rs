@@ -20,6 +20,7 @@ mod model;
 pub mod optimizer;
 mod result;
 mod spec;
+mod statistics;
 mod v1;
 
 pub mod tql;
@@ -46,6 +47,7 @@ pub use spec::{
     OrderingKey, QueryCondition, QueryLoad, QueryOrdering, QueryPaging, QueryPredicate,
     QueryProjection, QuerySource, QuerySpec, StalenessMode, StalenessPolicy,
 };
+pub use statistics::{DiagnosticDuration, QueryStatistics, ResultEtag};
 #[allow(
     unused_imports,
     reason = "the public V1QueryText constructor delegates here once the integrator action lands"

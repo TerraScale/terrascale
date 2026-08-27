@@ -2638,3 +2638,246 @@ fn dynamic_queries_with_expanded_conditions_select_through_the_optimizer() {
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn result_statistics_report_the_scan_accounting() {
+    let (dir, engine) = open_engine("stats-scan");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("match-1", "users", &[("age", DocumentValue::Integer(2))]),
+            object_document("match-2", "users", &[("age", DocumentValue::Integer(3))]),
+            object_document("match-3", "users", &[("age", DocumentValue::Integer(4))]),
+            object_document("reject-1", "users", &[("age", DocumentValue::Integer(1))]),
+            object_document("reject-2", "users", &[("age", DocumentValue::Integer(0))]),
+            object_document("other-1", "cities", &[("age", DocumentValue::Integer(9))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let query = spec(
+        "tenant-a",
+        "users",
+        predicate(vec![QueryCondition::GreaterThan {
+            field: "age".to_owned(),
+            value: DocumentValue::Integer(1),
+        }]),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(0, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+    );
+    let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+
+    let result = store.execute(&plan, &snapshot).expect("executes");
+    // The scan accounting is the FILTER accounting of V1's statistics: the
+    // candidates examined, and the candidates examined but rejected. Only
+    // documents of the source collection are candidates; the `cities`
+    // document is neither scanned nor skipped.
+    assert_eq!(result.matched(), 3);
+    assert_eq!(result.rows().len(), 3);
+    assert_eq!(result.statistics().scanned(), 5);
+    assert_eq!(result.statistics().skipped(), 2);
+    // With no limit requested, the capped count is the matched count.
+    assert_eq!(result.statistics().capped_matched(), 3);
+    // An index-less query has no namespace observation to be stale about.
+    assert!(!result.staleness().is_stale());
+
+    // The etag is a function of the state the query answered from: the same
+    // plan over the same snapshot reports the same etag.
+    let again = store.execute(&plan, &snapshot).expect("executes");
+    assert_eq!(result.statistics().result_etag(), again.statistics().result_etag());
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn statistics_count_caps_are_typed_exact_and_saturating() {
+    let (dir, engine) = open_engine("stats-caps");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("doc-1", "users", &[("age", DocumentValue::Integer(1))]),
+            object_document("doc-2", "users", &[("age", DocumentValue::Integer(2))]),
+            object_document("doc-3", "users", &[("age", DocumentValue::Integer(3))]),
+            object_document("doc-4", "users", &[("age", DocumentValue::Integer(4))]),
+            object_document("doc-5", "users", &[("age", DocumentValue::Integer(5))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+
+    // A paged window: the matched count stays exact, the capped count is the
+    // window's size, and nothing truncates the matched count itself.
+    let query = spec(
+        "tenant-a",
+        "users",
+        predicate(vec![QueryCondition::Exists { field: "age".to_owned() }]),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(1, Some(2)),
+        staleness(StalenessMode::Strict, Vec::new()),
+    );
+    let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+    let result = store.execute(&plan, &snapshot).expect("executes");
+    assert_eq!(result.rows().len(), 2);
+    assert_eq!(result.matched(), 5);
+    assert_eq!(result.statistics().capped_matched(), 2);
+    assert_eq!(result.statistics().skipped(), 0);
+
+    // An offset beyond the matched set saturates the capped count at zero;
+    // V1's collection path can compute a negative cap
+    // (`Math.Min(limit, TotalResults - offset)` unclamped) and V2 never does.
+    let query = spec(
+        "tenant-a",
+        "users",
+        predicate(vec![QueryCondition::Exists { field: "age".to_owned() }]),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(9, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+    );
+    let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+    let result = store.execute(&plan, &snapshot).expect("executes");
+    assert!(result.rows().is_empty());
+    assert_eq!(result.matched(), 5);
+    assert_eq!(result.statistics().capped_matched(), 0);
+
+    // The page-limit cap refuses typed at construction instead of truncating
+    // an answer with an in-band marker: a limit at `MAX_PAGE_LIMIT` is valid
+    // and one above it is refused.
+    assert!(QueryPaging::try_new(0, Some(MAX_PAGE_LIMIT)).is_ok());
+    assert_eq!(
+        QueryPaging::try_new(0, Some(MAX_PAGE_LIMIT + 1)).unwrap_err(),
+        RequestValidationError::InvalidQuery
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn statistics_result_etag_tracks_the_state_the_query_answered_from() {
+    let (dir, engine) = open_engine("stats-etag");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("doc-1", "users", &[("age", DocumentValue::Integer(1))]),
+            object_document("doc-2", "users", &[("age", DocumentValue::Integer(2))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let required = namespace("tenant-a", "by-age");
+    let store = engine.queries();
+    let query = spec(
+        "tenant-a",
+        "users",
+        predicate(Vec::new()),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(0, None),
+        staleness(StalenessMode::AllowStale, vec![required.clone()]),
+    );
+    let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+
+    // One snapshot, two gate states: the etag names the state the answer was
+    // computed from, so a different accepted generation is a different etag.
+    let current = ForgedView::with(&required, Some((1, 2)), Some((1, 2)));
+    let older = ForgedView::with(&required, Some((1, 2)), Some((1, 1)));
+    let current_result = execute_with_view(&engine, &current, &plan, &snapshot).expect("executes");
+    let older_result = execute_with_view(&engine, &older, &plan, &snapshot).expect("executes");
+    assert_ne!(current_result.statistics().result_etag(), older_result.statistics().result_etag());
+
+    // A new committed state is a new etag, through the live catalog path.
+    let first = store.execute(&plan, &snapshot).expect("executes");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-2",
+        vec![object_document("doc-3", "users", &[("age", DocumentValue::Integer(3))])],
+    );
+    let next = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let second = store.execute(&plan, &next).expect("executes");
+    assert_ne!(first.statistics().result_etag(), second.statistics().result_etag());
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn diagnostic_duration_reports_an_execution_observation_only() {
+    let (dir, engine) = open_engine("stats-duration");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![object_document("doc-1", "users", &[("age", DocumentValue::Integer(1))])],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let query = simple_spec("tenant-a", "users");
+    let plan = engine.queries().compile(QueryInput::typed(query)).expect("compiles");
+    let result = engine.queries().execute(&plan, &snapshot).expect("executes");
+    // The duration is a diagnostic observation of this one execution window.
+    // It is recorded for every successful execution, and nothing may be
+    // inferred from its magnitude: it is not a benchmark, not comparable
+    // across engines or builds, and carries no performance claim.
+    assert!(result.statistics().duration().elapsed() >= Duration::ZERO);
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn staleness_report_aggregates_the_is_stale_flag() {
+    let (dir, engine) = open_engine("stats-stale");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![object_document("doc-1", "users", &[("age", DocumentValue::Integer(1))])],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let required = namespace("tenant-a", "by-age");
+    let store = engine.queries();
+
+    // An allow-stale query that accepted an older generation reports stale.
+    let query = spec(
+        "tenant-a",
+        "users",
+        predicate(Vec::new()),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(0, None),
+        staleness(StalenessMode::AllowStale, vec![required.clone()]),
+    );
+    let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+    let view = ForgedView::with(&required, Some((1, 4)), Some((1, 2)));
+    let result = execute_with_view(&engine, &view, &plan, &snapshot).expect("executes");
+    assert!(result.staleness().is_stale());
+
+    // A strict query that passed the gate on an equal, current generation is
+    // not stale.
+    let strict = spec(
+        "tenant-a",
+        "users",
+        predicate(Vec::new()),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(0, None),
+        staleness(StalenessMode::Strict, vec![required.clone()]),
+    );
+    let plan = store.compile(QueryInput::typed(strict)).expect("compiles");
+    let view = ForgedView::with(&required, Some((1, 2)), Some((1, 2)));
+    let result = execute_with_view(&engine, &view, &plan, &snapshot).expect("executes");
+    assert!(!result.staleness().is_stale());
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
