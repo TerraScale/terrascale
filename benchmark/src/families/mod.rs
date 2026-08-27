@@ -409,6 +409,24 @@ impl FamilyWriteRequest {
         }
     }
 
+    /// Replaces the write's operation identity. Crate-internal: the session
+    /// seam (GAP-D01) rebinds deferred commands to the save transaction's
+    /// identity before staging, which the family stage contract requires.
+    pub(crate) fn rebase_operation(&mut self, operation: crate::types::OperationId) {
+        match self {
+            Self::AttachmentMutation(value) => value.rebase_operation(operation),
+            Self::CounterBatch(value) => value.rebase_operation(operation),
+            Self::TimeSeriesBatch(value) => value.rebase_operation(operation),
+            Self::RevisionCommand(value) => value.rebase_operation(operation),
+            Self::CompareExchangeCondition(value) => value.rebase_operation(operation),
+            Self::IdentityAllocation(value) => value.rebase_operation(operation),
+            Self::LifecycleUpdate(value) => value.rebase_operation(operation),
+            Self::ArchivalUpdate(value) => value.rebase_operation(operation),
+            Self::SchemaValidationUpdate(value) => value.rebase_operation(operation),
+            Self::TombstoneOperation(value) => value.rebase_operation(operation),
+        }
+    }
+
     /// Returns the write's deadline.
     #[must_use]
     pub fn deadline(&self) -> Deadline {
