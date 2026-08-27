@@ -21,9 +21,9 @@ Outcome: **PASS** (9/9 checks).
 | `the stalled consumer's bounded queue shed frames (counted, never blocked the engine)` | pass | droppedFrames 1, openStreams 3 |
 | `the stalled consumer's missed range is surfaced in-band or re-delivered from the boundary` | pass | 0 in-band drop markers (resumeFrom 51); the boundary reconnect re-delivered 1 batch events covering the missed range |
 | `ts observed the oversize single commit delivered alone (the .NET core also carries its commits == 1 flag)` | pass | 1 over-budget batches; bytes 20138; commits n/a (ts surface) |
-| `ts every other batch fits the delivery byte budget` | pass | 94 batches checked against the 8192-byte budget |
+| `ts every other batch fits the delivery byte budget` | pass | 93 batches checked against the 8192-byte budget |
 | `net observed the oversize single commit delivered alone (the .NET core also carries its commits == 1 flag)` | pass | 1 over-budget batches; bytes 20138; commits 1 |
-| `net every other batch fits the delivery byte budget` | pass | 135 batches checked against the 8192-byte budget |
+| `net every other batch fits the delivery byte budget` | pass | 138 batches checked against the 8192-byte budget |
 | `the fast consumers lost nothing while the slow consumer shed frames` | pass | ts 401, net 401 (total 401 commits) |
 | `no duplicate application at the fast consumers` | pass | 0 duplicate batches |
-| `the content-free trigger hint channel stayed live (advisory hints; the checkpoint-bounded pull is authoritative)` | pass | 44 triggers observed by the .NET core for 401 commits; a parallel raw consumer recorded {'opened': 1, 'batch': 52, 'trigger': 51} (the pull is authoritative: both fast consumers reached every commit with zero duplicates) |
+| `the content-free trigger hint channel stayed live (advisory hints; the checkpoint-bounded pull is authoritative)` | pass | 38 triggers observed by the .NET core for 401 commits; a parallel raw consumer recorded {'opened': 1, 'batch': 52, 'trigger': 51} (the pull is authoritative: both fast consumers reached every commit with zero duplicates) |
