@@ -163,7 +163,7 @@ public sealed class TerraScaleClientE2ETests
 
     [Test]
     [RequiresTerraScaleBearerToken]
-    public async Task Databases_ListAsync_UsesCallerProvidedBearerTokenProvider()
+    public async Task Notifications_ListAsync_UsesCallerProvidedBearerTokenProvider()
     {
         var providerCalls = 0;
         var client = TerraScaleApiE2E.CreateBearerProviderClient(cancellationToken =>
@@ -173,9 +173,9 @@ public sealed class TerraScaleClientE2ETests
             return ValueTask.FromResult(TerraScaleApiE2E.BearerToken);
         });
 
-        var databases = await client.Databases.ListAsync(take: 10);
+        var notifications = await client.Notifications.ListAsync(take: 10);
 
-        await Assert.That(databases).IsNotNull();
+        await Assert.That(notifications).IsNotNull();
         await Assert.That(providerCalls > 0).IsTrue();
     }
 
