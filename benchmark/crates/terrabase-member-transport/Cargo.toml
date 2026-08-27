@@ -1,0 +1,42 @@
+# `terrabase-member-transport` — the SE-06 engine-owned member transport
+# crate: the first real network incarnation of the W4 replication plane on
+# engine-owned lanes (charter PD-2026-08-26-13 D2, ADR 0012 D-2).
+#
+# Standalone workspace root on purpose: the engine workspace at the
+# repository root stays untouched; the integrator adds this crate to the
+# root `members` list when wiring it in (recorded as the required
+# integrator action in the SE-06 receipt and docs).
+
+[package]
+name = "terrabase-member-transport"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "LicenseRef-TerraScale-Pending"
+description = "TerraBaseV2 member transport: versioned fail-closed member envelopes over in-process lanes and engine QUIC sockets; NATS never carries member frames"
+publish = false
+
+# Own workspace root: stays out of the engine workspace without any
+# root-Cargo.toml edit until the integrator wires it in.
+[workspace]
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+pedantic = "warn"
+
+[dependencies]
+# The engine socket lane (PD-2026-08-26-13 D2: engine sockets for networked
+# member links, no broker between members). quinn is the QUIC implementation;
+# rustls with the `ring` provider keeps the crypto closure on one backend.
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }
+# Content digest of every envelope payload (message-contract discipline).
+# `ring` is already in the QUIC closure; reusing its SHA-256 keeps the crate's
+# dependency tree at exactly the engine-socket set, with no second digest crate
+# (and no second `cpufeatures`) in the eventual unified workspace lock.
+ring = "0.17"
