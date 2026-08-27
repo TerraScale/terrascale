@@ -250,6 +250,12 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "onboarding",
+    operation: "registerOnboardingPaymentMethod",
+    invoke: (client) =>
+      client.onboarding.registerOnboardingPaymentMethod({ sessionId: "cs_test_onboarding" }),
+  },
+  {
+    client: "onboarding",
     operation: "createOrganization",
     invoke: (client) => client.onboarding.createOrganization({
       name: "Analytical Engines",

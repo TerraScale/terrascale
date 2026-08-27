@@ -529,6 +529,10 @@ export type ValidateOnboardingPaymentRequest = {
   readonly sessionId?: string;
 };
 
+export type RegisterOnboardingPaymentMethodRequest = {
+  readonly sessionId: string;
+};
+
 export type CreateOnboardingOrganizationRequest = {
   readonly name: string;
   readonly plan: OnboardingPlan;

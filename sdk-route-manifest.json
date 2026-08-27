@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 159,
+  "routeCount": 160,
   "routes": [
     {
       "base": "api",
@@ -95,6 +95,35 @@
       "method": "POST",
       "pathTemplate": "/api/v1/onboarding/payment-method/validate",
       "requestType": "ValidateOnboardingPaymentRequest",
+      "responseType": "OnboardingState",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "sessionId": "cs_test_onboarding"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "onboarding",
+      "operation": "registerOnboardingPaymentMethod",
+      "routeName": "onboarding.paymentMethod.register",
+      "method": "POST",
+      "pathTemplate": "/api/v1/onboarding/payment-method/register",
+      "requestType": "RegisterOnboardingPaymentMethodRequest",
       "responseType": "OnboardingState",
       "sourceContract": {
         "body": {

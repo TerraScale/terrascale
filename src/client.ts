@@ -13,6 +13,7 @@ export const sdkRouteManifest = {
     accountInformation: `${apiRoot}/onboarding/account-information`,
     paymentSession: `${apiRoot}/onboarding/payment-method/checkout-session`,
     paymentValidation: `${apiRoot}/onboarding/payment-method/validate`,
+    paymentMethodRegistration: `${apiRoot}/onboarding/payment-method/register`,
     organization: `${apiRoot}/onboarding/organization`,
     project: `${apiRoot}/onboarding/project`,
   },
@@ -171,6 +172,17 @@ export class OnboardingClient {
       method: "POST",
       path: sdkRouteManifest.onboarding.paymentValidation,
       routeName: "onboarding.paymentMethod.validate",
+      body: request,
+    });
+  }
+
+  registerOnboardingPaymentMethod(
+    request: Models.RegisterOnboardingPaymentMethodRequest,
+  ): Promise<TerraScaleResult<Models.OnboardingState>> {
+    return this.#http.request({
+      method: "POST",
+      path: sdkRouteManifest.onboarding.paymentMethodRegistration,
+      routeName: "onboarding.paymentMethod.register",
       body: request,
     });
   }

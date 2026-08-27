@@ -98,7 +98,7 @@ describe("TerraScaleClient route contracts", () => {
       manifest.routes.map(routeManifestCore),
       capturedRoutes.map(routeManifestCore),
     );
-    assert.equal(manifest.routeCount, 159);
+    assert.equal(manifest.routeCount, 160);
     assert.equal(manifest.routeCount, capturedRoutes.length);
     assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
     assert.deepEqual(
@@ -207,6 +207,18 @@ describe("TerraScaleClient route contracts", () => {
       successUrl: "https://app.example.test/onboarding?payment=success",
       cancelUrl: "https://app.example.test/onboarding?payment=cancelled",
     });
+  });
+
+  test("registers the onboarding payment method with the checkout session id", async () => {
+    const { client, requests } = createCapturingClient({});
+
+    await client.onboarding.registerOnboardingPaymentMethod({
+      sessionId: "cs_test_onboarding",
+    });
+
+    assert.equal(requests[0]?.url.origin, "https://api.terrascale.test");
+    assertRequest(requests[0], "POST", "/api/v1/onboarding/payment-method/register");
+    assert.deepEqual(requests[0]?.body, { sessionId: "cs_test_onboarding" });
   });
 
   test("uses typed public Auth routes for providers, email, and password changes", async () => {
