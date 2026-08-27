@@ -13,6 +13,12 @@ unset RUSTUP_TOOLCHAIN
 
 cargo fmt --all -- --check
 cargo check --workspace --locked
+# Dev-profile tests come first: `debug_assert!` contracts (frame-length
+# and budget invariants) compile out under --release, so a release-only
+# test run gates nothing about them. Surfaced by the SE-07 warden repair,
+# where an off-by-one frame-header assertion was green in every release
+# gate and deterministically red in dev.
+cargo test --workspace --locked
 cargo test --workspace --locked --release
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo doc --workspace --no-deps --locked

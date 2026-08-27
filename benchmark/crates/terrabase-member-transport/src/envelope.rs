@@ -28,8 +28,10 @@ pub const ENVELOPE_SCHEMA: &str = "terrabase.member.lane";
 pub const ENVELOPE_VERSION_MAJOR: u16 = 1;
 
 /// The supported envelope minor version. Additive changes bump it; a minor
-/// above the supported one fails closed rather than guessing.
-pub const ENVELOPE_VERSION_MINOR: u16 = 0;
+/// above the supported one fails closed rather than guessing. Minor 1
+/// (SE-07) adds the batched acknowledgement report
+/// ([`FrameKind::AckBatch`]); minor-0 frames decode unchanged.
+pub const ENVELOPE_VERSION_MINOR: u16 = 1;
 
 /// The digest length the codec writes and verifies.
 pub const DIGEST_BYTES: usize = 32;
@@ -72,6 +74,11 @@ pub enum FrameKind {
     /// writer cannot read a peer's durable state in-process, so the
     /// observation crosses the wire.
     AckReport,
+    /// One Member reports its durable holding of every operation one pushed
+    /// batch carried, in one frame (SE-07 budgets E-3/E-4: the
+    /// acknowledgement of a K-operation push is one frame per peer, not K).
+    /// Additive in envelope minor version 1.
+    AckBatch,
 }
 
 impl FrameKind {
@@ -83,6 +90,7 @@ impl FrameKind {
             Self::CatchUpBatch => 2,
             Self::Push => 3,
             Self::AckReport => 4,
+            Self::AckBatch => 5,
         }
     }
 
@@ -97,6 +105,7 @@ impl FrameKind {
             2 => Ok(Self::CatchUpBatch),
             3 => Ok(Self::Push),
             4 => Ok(Self::AckReport),
+            5 => Ok(Self::AckBatch),
             _ => Err(EnvelopeError::UnsupportedKind),
         }
     }
@@ -109,6 +118,7 @@ impl FrameKind {
             Self::CatchUpBatch => "catch-up-batch",
             Self::Push => "push",
             Self::AckReport => "ack-report",
+            Self::AckBatch => "ack-batch",
         }
     }
 }
@@ -211,6 +221,16 @@ pub enum Payload {
         /// Whether the Member's own publication of the operation is committed
         /// at the durable level.
         held_synced: bool,
+    },
+    /// Reports one Member's durable holding of every operation one pushed
+    /// batch carried: the batched acknowledgement of a multi-operation push
+    /// (envelope minor 1, SE-07 budgets E-3/E-4).
+    AckBatch {
+        /// The tenant the observations name.
+        tenant: TenantId,
+        /// The observed operations with their durable holding, in the
+        /// pushed batch's order.
+        reports: Vec<(OperationId, bool)>,
     },
 }
 
@@ -535,6 +555,12 @@ impl<'a> Cursor<'a> {
         self.offset >= self.bytes.len()
     }
 
+    /// The bytes the cursor has not consumed yet — the declared payload's
+    /// own bound on how many elements can possibly follow.
+    fn remaining(&self) -> usize {
+        self.bytes.len() - self.offset
+    }
+
     fn take_bytes(&mut self, len: usize) -> Result<&'a [u8], EnvelopeError> {
         if self.bytes.len() - self.offset < len {
             return Err(EnvelopeError::Truncated);
@@ -675,6 +701,14 @@ fn encode_payload(out: &mut Vec<u8>, payload: &Payload) -> Result<(), EnvelopeEr
             put_str(out, operation.as_str())?;
             put_u8(out, u8::from(*held_synced));
         }
+        Payload::AckBatch { tenant, reports } => {
+            put_str(out, tenant.as_str())?;
+            put_u32(out, u32::try_from(reports.len()).map_err(|_| EnvelopeError::Oversized)?);
+            for (operation, held_synced) in reports {
+                put_str(out, operation.as_str())?;
+                put_u8(out, u8::from(*held_synced));
+            }
+        }
     }
     Ok(())
 }
@@ -707,6 +741,24 @@ fn encode_write(out: &mut Vec<u8>, write: &LaneWrite) -> Result<(), EnvelopeErro
         }
     }
     Ok(())
+}
+
+/// The minimum wire bytes one decoded element of each repeated payload
+/// sequence occupies: every counted field at its empty minimum (a `u32`
+/// string length of zero still costs its 4 width bytes). Capacity planning
+/// bounds a declared element count by these lower bounds against the
+/// bytes the declared payload actually holds, so a hostile count inside a
+/// digest-valid frame can never pre-allocate more than
+/// payload-proportional memory (the count alone is not trusted for
+/// capacity; the elements themselves still fail closed on truncation).
+const MIN_ACK_REPORT_WIRE_BYTES: usize = 5;
+const MIN_COMMIT_WIRE_BYTES: usize = 32;
+const MIN_WRITE_WIRE_BYTES: usize = 13;
+
+/// The decode capacity for a declared element count: the count, bounded by
+/// how many elements the cursor's remaining bytes could possibly hold.
+fn bounded_capacity(cursor: &Cursor<'_>, declared: usize, min_wire_bytes: usize) -> usize {
+    declared.min(cursor.remaining() / min_wire_bytes)
 }
 
 fn decode_payload(cursor: &mut Cursor<'_>, kind: FrameKind) -> Result<Payload, EnvelopeError> {
@@ -755,6 +807,27 @@ fn decode_payload(cursor: &mut Cursor<'_>, kind: FrameKind) -> Result<Payload, E
             };
             Ok(Payload::AckReport { tenant, operation, held_synced })
         }
+        FrameKind::AckBatch => {
+            let tenant =
+                TenantId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
+            let count = cursor.take_u32()? as usize;
+            if count > MAX_PAYLOAD_BYTES {
+                return Err(EnvelopeError::MalformedLength);
+            }
+            let mut reports =
+                Vec::with_capacity(bounded_capacity(cursor, count, MIN_ACK_REPORT_WIRE_BYTES));
+            for _ in 0..count {
+                let operation = OperationId::try_new(&take_str(cursor)?)
+                    .map_err(|_| EnvelopeError::FieldTooLarge)?;
+                let held_synced = match cursor.take_u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(EnvelopeError::MalformedLength),
+                };
+                reports.push((operation, held_synced));
+            }
+            Ok(Payload::AckBatch { tenant, reports })
+        }
     }
 }
 
@@ -763,7 +836,7 @@ fn decode_commits(cursor: &mut Cursor<'_>) -> Result<Vec<LaneCommit>, EnvelopeEr
     if count > MAX_PAYLOAD_BYTES {
         return Err(EnvelopeError::MalformedLength);
     }
-    let mut commits = Vec::with_capacity(count);
+    let mut commits = Vec::with_capacity(bounded_capacity(cursor, count, MIN_COMMIT_WIRE_BYTES));
     for _ in 0..count {
         let operation =
             OperationId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
@@ -773,7 +846,8 @@ fn decode_commits(cursor: &mut Cursor<'_>) -> Result<Vec<LaneCommit>, EnvelopeEr
         if writes_count > MAX_PAYLOAD_BYTES {
             return Err(EnvelopeError::MalformedLength);
         }
-        let mut writes = Vec::with_capacity(writes_count);
+        let mut writes =
+            Vec::with_capacity(bounded_capacity(cursor, writes_count, MIN_WRITE_WIRE_BYTES));
         for _ in 0..writes_count {
             writes.push(decode_write(cursor)?);
         }

@@ -354,6 +354,29 @@ impl MemberJournal {
             .collect())
     }
 
+    /// Returns the collection one document key currently lives in, if the
+    /// derived state holds it — the point-lookup form of
+    /// [`MemberJournal::documents_at`] the apply path uses (SE-07 budget
+    /// E-6: applying one delivered commit must not clone the tenant's
+    /// whole derived document state).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JournalError::Closed`] while the journal is closed.
+    pub fn document_collection(
+        &self,
+        tenant: &TenantId,
+        id: &DocumentId,
+    ) -> Result<Option<CollectionName>, JournalError> {
+        if self.file.is_none() {
+            return Err(JournalError::Closed);
+        }
+        Ok(self
+            .documents
+            .get(&(tenant.clone(), id.clone()))
+            .map(|(collection, _, _)| collection.clone()))
+    }
+
     /// Returns every tenant with at least one journaled commit.
     ///
     /// # Errors

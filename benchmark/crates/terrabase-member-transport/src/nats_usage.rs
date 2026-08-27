@@ -57,6 +57,13 @@ pub const CONTROL_PLANE_NAMESPACE: &str = "terrabase.orchestrator";
 /// lease as a fixture fact; a publish is a heartbeat).
 pub const LEASE_TICKS: u64 = 20;
 
+/// The closed range of the shared lane settings' catch-up batch (SE-07
+/// budget E-2): the flow-control knob the config-sharing role distributes
+/// cannot degenerate the lane — a batch below the floor starves catch-up
+/// throughput, a batch above the ceiling breaks the bounded-link contract
+/// (`transport::MAX_LINK_FRAMES` sized frames).
+pub const FLOW_CONTROL_CATCH_UP_BATCH_RANGE: (u32, u32) = (8, 256);
+
 /// One of the three NATS roles `TerraBaseV2` is allowed (PD-2026-08-26-13 D2).
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum NatsRole {
@@ -268,15 +275,24 @@ pub struct ConfigRecord {
     settings: LaneSettings,
 }
 
+/// Reports whether a closed `(low, high)` range contains `value`.
+const fn range_contains(range: (u32, u32), value: u32) -> bool {
+    range.0 <= value && value <= range.1
+}
+
 impl ConfigRecord {
     /// Creates one config record; the version starts at one.
     ///
     /// # Errors
     ///
     /// Returns [`UsageError::InvalidRecord`] for a zero version or a
-    /// non-positive setting.
+    /// flow-control setting outside its closed written range (SE-07
+    /// budget E-2: the shared knob fails closed rather than degenerating
+    /// the lane).
     pub fn new(name: ConfigName, version: u64, settings: LaneSettings) -> Result<Self, UsageError> {
-        if version == 0 || settings.catch_up_batch == 0 || settings.catch_up_batch > 4096 {
+        if version == 0
+            || !range_contains(FLOW_CONTROL_CATCH_UP_BATCH_RANGE, settings.catch_up_batch)
+        {
             return Err(UsageError::InvalidRecord);
         }
         Ok(Self { name, version, settings })

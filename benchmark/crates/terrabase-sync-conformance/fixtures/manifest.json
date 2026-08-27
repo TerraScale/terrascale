@@ -46,10 +46,10 @@
       "sha256": "8d52e95832e151cf7e3889d5cbd459fedf203eff6d687fd57e017c6d869254cc"
     },
     {
-      "bytes": 81972,
+      "bytes": 60254,
       "category": "slow-consumer",
       "file": "slow-consumer.json",
-      "sha256": "8c492139ddc6a3134a815479b08b0cdb237d3ed942dcf9ea368e29279ba03985"
+      "sha256": "bc97fb745f860bfc2defb6e8ce0877f900261f2260f35c9e9fd14e1972641b80"
     },
     {
       "bytes": 4396,

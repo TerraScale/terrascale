@@ -122,7 +122,12 @@ Honest costs of the Loro path, recorded with the GO:
   it, only the tightness of batch packing does).
 - The estimate-based batch acceptance under-fills batches in the burst
   observation (max 24_696 B of a 65_536 B budget); SE-07 can tighten
-  packing with measured re-export feedback.
+  packing with measured re-export feedback. (SE-07 resolution, recorded
+  in `evidence/benchmarks/se07-sync-core-delta-receipt.md`: measured
+  re-export feedback now packs to 0.743 utilization against the written
+  0.70 budget, delivered batches never exceed the budget, and the
+  per-apply measurement export stays the bounded-memory guarantee's
+  cost.)
 - Loro's snapshot of a small document set measured larger than the plain
   bodies (70_532 B vs 35_264 B for 64 small documents): initial sync by
   snapshot carries structure and history overhead. Where initial-sync
