@@ -147,12 +147,10 @@ impl V2Lane {
         }
         let baseline = self.durable_bytes();
         let mut returned = 0_u64;
-        let started = Instant::now();
         for index in 0..operations {
             let selected = workload.select_mixed(index);
             returned += u64::from(self.one_operation(selected, index));
         }
-        let _elapsed = started.elapsed();
         WorkloadCounters {
             operations: operations as u64,
             durable_bytes_written: self.durable_bytes().saturating_sub(baseline),
