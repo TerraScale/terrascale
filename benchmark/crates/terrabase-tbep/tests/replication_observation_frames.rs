@@ -27,9 +27,9 @@ use terrabase_tbep::generated::ConflictRecord;
 use terrabase_tbep::generated::DenialRecord;
 use terrabase_tbep::generated::DenialSeam;
 use terrabase_tbep::generated::DepositionRecord;
+use terrabase_tbep::generated::FRAME_ROWS;
 use terrabase_tbep::generated::FencedRecord;
 use terrabase_tbep::generated::FrameKind;
-use terrabase_tbep::generated::FRAME_ROWS;
 use terrabase_tbep::generated::ReplicationConflictsRequest;
 use terrabase_tbep::generated::ReplicationConflictsResponse;
 use terrabase_tbep::generated::ReplicationCursorRequest;
@@ -49,12 +49,7 @@ use terrabase_tbep::generated::TbepBody;
 const OBSERVATION_CODES: &[(FrameKind, FrameKind, u16, u16)] = &[
     (FrameKind::ReplicationConflictsRequest, FrameKind::ReplicationConflictsResponse, 306, 562),
     (FrameKind::ReplicationFencedRequest, FrameKind::ReplicationFencedResponse, 307, 563),
-    (
-        FrameKind::ReplicationDepositionsRequest,
-        FrameKind::ReplicationDepositionsResponse,
-        308,
-        564,
-    ),
+    (FrameKind::ReplicationDepositionsRequest, FrameKind::ReplicationDepositionsResponse, 308, 564),
     (FrameKind::ReplicationCursorRequest, FrameKind::ReplicationCursorResponse, 309, 565),
     (FrameKind::ReplicationHealthRequest, FrameKind::ReplicationHealthResponse, 310, 566),
     (FrameKind::ReplicationDenialsRequest, FrameKind::ReplicationDenialsResponse, 311, 567),
@@ -114,10 +109,8 @@ fn observation_bodies_round_trip_content_free() {
         clocks: vec![ClockStamp { ticks: 10, counter: 1 }, ClockStamp { ticks: 10, counter: 2 }],
         outcome: ConflictOutcome { kind: ConflictOutcomeKind::Winner, member: "m-b1".into() },
     };
-    let response = ReplicationConflictsResponse {
-        member: "m-b1".into(),
-        records: vec![record; 64],
-    };
+    let response =
+        ReplicationConflictsResponse { member: "m-b1".into(), records: vec![record; 64] };
     let frame = TbepFrame::seal(response, 7, 6, None).expect("the response seals");
     let wire = frame.to_bytes();
     let decoded = TbepFrame::from_bytes(&wire).expect("the response decodes");
@@ -140,8 +133,10 @@ fn observation_bodies_round_trip_content_free() {
         stream_wire_bytes(&decoded) <= budget,
         "a maximal bounded conflicts response fits its written budget"
     );
+}
 
-    // The remaining record shapes round-trip with their typed facts.
+#[test]
+fn the_remaining_observation_bodies_round_trip_their_typed_facts() {
     let fenced = TbepFrame::seal(
         ReplicationFencedResponse {
             member: "m-b1".into(),
@@ -260,7 +255,7 @@ fn observation_requests_are_refused_typed_until_a_host_serves_them() {
     let bound = TbepFrame::read_stream(&mut stream).expect("the bind answers").expect("a frame");
     assert!(matches!(bound.body(), TbepBody::ChannelBindResponse(_)));
 
-    for (request, _, _, _) in OBSERVATION_CODES.iter() {
+    for (request, _, _, _) in OBSERVATION_CODES {
         let body = match request {
             FrameKind::ReplicationConflictsRequest => {
                 TbepBody::from(ReplicationConflictsRequest {})
@@ -276,7 +271,8 @@ fn observation_requests_are_refused_typed_until_a_host_serves_them() {
         };
         let frame = TbepFrame::seal(body, 2, 0, None).expect("the observation request seals");
         frame.write_stream(&mut stream).expect("the request writes");
-        let answer = TbepFrame::read_stream(&mut stream).expect("the server answers").expect("a frame");
+        let answer =
+            TbepFrame::read_stream(&mut stream).expect("the server answers").expect("a frame");
         assert_eq!(answer.causation(), 2, "the answer names its request");
         match answer.body() {
             TbepBody::Error(error) => {

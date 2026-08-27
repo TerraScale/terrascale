@@ -489,6 +489,26 @@ fn dispatch(connection: &mut Connection, frame: &TbepFrame) -> bool {
                 answer(connection, causation, connection.host.topology_read(&tenant));
             }
         }
+        // The GAP-R03 replication observation requests (PB-5035) are
+        // registered reads the shipped hosts do not serve: the wire says
+        // so typed, instead of misreporting a request as a direction
+        // violation. Serving them from a live engine member is the
+        // engine-backed host integrator action the decision record
+        // (`docs/replication/gapr03-replication-observations.md`) names.
+        TbepBody::ReplicationConflictsRequest(_)
+        | TbepBody::ReplicationFencedRequest(_)
+        | TbepBody::ReplicationDepositionsRequest(_)
+        | TbepBody::ReplicationCursorRequest(_)
+        | TbepBody::ReplicationHealthRequest(_)
+        | TbepBody::ReplicationDenialsRequest(_) => {
+            if bound_tenant(connection, causation).is_some() {
+                connection.error_frame(
+                    causation,
+                    ErrorCode::OperationRefused,
+                    "replication observations are not served by this host",
+                );
+            }
+        }
         // Response and notification kinds are engine-to-host frames: a
         // host sending them to the engine is a protocol violation.
         TbepBody::Error(body) => {

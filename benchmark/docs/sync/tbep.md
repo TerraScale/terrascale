@@ -162,7 +162,8 @@ check in `.forgejo`) is an integrator action recorded with this packet.
 
 Frame codes: request frames occupy the family blocks `0x0100`+
 (documents/queries/families), `0x0110`+ (backbone), `0x0120`+ (sync
-delivery), `0x0130`+ (topology/admin), `0x0140`+ (supervision); response
+delivery), `0x0130`+ (topology/admin/replication observation),
+`0x0140`+ (supervision); response
 frames answer at request code + `0x100`; notifications occupy `0x0300`+;
 the channel `error` frame is code `1`.
 
@@ -175,6 +176,7 @@ the channel `error` frame is code `1`.
 | backbone | `backbone.subscribe` 272→528, `backbone.acknowledge` 273→529, `backbone.unsubscribe` 274→530 |
 | sync delivery | `sync.session_setup` 288→544, `sync.delta_pull` 289→545, `sync.snapshot_pull` 290→546, `sync.checkpoint_ack` 291→547, `sync.mutation_submit` 292→548 (mutation), `sync.session_close` 293→549 |
 | topology/admin | `topology.read` 304→560, `admin.status` 305→561 |
+| replication observation | `replication.conflicts` 306→562, `replication.fenced` 307→563, `replication.depositions` 308→564, `replication.cursor` 309→565, `replication.health` 310→566, `replication.denials` 311→567 |
 | notifications | `subscription_batch` 769, `trigger_notification` 770, `subscription_closed` 771 |
 | channel | `error` 1 |
 
@@ -207,6 +209,18 @@ Notable rows:
   retry older than that horizon — behind more than a full retained
   window of mutations — may re-apply. That at-least-once caveat is the
   documented cost of bounded serving memory.
+- **The replication observation family (306..=311)** is the GAP-R03 fold
+  (PB-5035): six content-free reads of a member's bounded observable
+  facts — conflicts, fenced-leader history, depositions, cursor
+  position, health, and the tenant-isolation denial log — over the
+  engine's typed observation operations
+  (`src/replication/observation.rs`, decision record
+  `docs/replication/gapr03-replication-observations.md`). No request
+  carries a tenant (the bound channel's tenant is the scope, per
+  PD-2026-08-26-11 D1), no record type can carry a document body, and
+  the shipped hosts answer an unserved request with the typed
+  `operation_refused` until the engine-backed host integrator action
+  lands.
 
 ## The channel binding and tenant isolation
 
@@ -277,6 +291,7 @@ the generated registries, and the corpus:
 | subscription | 65,536 | subscription_batch |
 | trigger | 256 | trigger_notification |
 | delivery | 65,536 | sync.* |
+| observation | 65,536 | replication.* |
 
 The **fixed envelope cost bound** is 35 bytes over the body (the
 all-maximal-width encodings: array header, u8, u16, two u64 identities,

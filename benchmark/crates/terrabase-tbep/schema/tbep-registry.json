@@ -60,6 +60,11 @@
       "class": "delivery",
       "wire_bytes": 65536,
       "frames": "sync.*"
+    },
+    {
+      "class": "observation",
+      "wire_bytes": 65536,
+      "frames": "replication.*"
     }
   ],
   "errors": [
@@ -412,6 +417,60 @@
           "name": "delete"
         }
       ]
+    },
+    {
+      "name": "conflict_outcome_kind",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "winner"
+        },
+        {
+          "name": "deposed_owner_retained"
+        },
+        {
+          "name": "untrusted_clock"
+        }
+      ]
+    },
+    {
+      "name": "denial_seam",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "serve_request"
+        },
+        {
+          "name": "apply_delivery"
+        }
+      ]
+    },
+    {
+      "name": "replication_status",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "assigned"
+        },
+        {
+          "name": "active"
+        },
+        {
+          "name": "responsive"
+        },
+        {
+          "name": "stale"
+        },
+        {
+          "name": "unavailable"
+        },
+        {
+          "name": "degraded"
+        },
+        {
+          "name": "unknown"
+        }
+      ]
     }
   ],
   "types": [
@@ -514,6 +573,129 @@
         {
           "name": "value",
           "type": "value"
+        }
+      ]
+    },
+    {
+      "name": "clock_stamp",
+      "fields": [
+        {
+          "name": "ticks",
+          "type": "u64"
+        },
+        {
+          "name": "counter",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "conflict_outcome",
+      "fields": [
+        {
+          "name": "kind",
+          "type": "conflict_outcome_kind"
+        },
+        {
+          "name": "member",
+          "type": "str",
+          "bound": 128
+        }
+      ]
+    },
+    {
+      "name": "conflict_record",
+      "fields": [
+        {
+          "name": "tenant",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "operations",
+          "type": "[str]"
+        },
+        {
+          "name": "members",
+          "type": "[str]"
+        },
+        {
+          "name": "clocks",
+          "type": "[clock_stamp]"
+        },
+        {
+          "name": "outcome",
+          "type": "conflict_outcome"
+        }
+      ]
+    },
+    {
+      "name": "fenced_record",
+      "fields": [
+        {
+          "name": "range",
+          "type": "str",
+          "bound": 128
+        },
+        {
+          "name": "batch_epoch",
+          "type": "u64"
+        },
+        {
+          "name": "highest_epoch",
+          "type": "u64"
+        },
+        {
+          "name": "source",
+          "type": "str",
+          "bound": 128
+        }
+      ]
+    },
+    {
+      "name": "deposition_record",
+      "fields": [
+        {
+          "name": "range",
+          "type": "str",
+          "bound": 128
+        },
+        {
+          "name": "held_epoch",
+          "type": "u64"
+        },
+        {
+          "name": "owner_epoch",
+          "type": "u64"
+        },
+        {
+          "name": "new_owner",
+          "type": "str",
+          "bound": 128
+        }
+      ]
+    },
+    {
+      "name": "denial_record",
+      "fields": [
+        {
+          "name": "seam",
+          "type": "denial_seam"
+        },
+        {
+          "name": "scope_tenant",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "attempted_tenant",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "counterparty",
+          "type": "str",
+          "bound": 128
         }
       ]
     }
@@ -1330,6 +1512,188 @@
           {
             "name": "scopes",
             "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "replication.conflicts",
+      "code": 306,
+      "family": "replication",
+      "class": "observation",
+      "mutation": false,
+      "parity": [
+        "PB-5022",
+        "PB-5035"
+      ],
+      "request": {
+        "name": "replication_conflicts_request",
+        "fields": []
+      },
+      "response": {
+        "code": 562,
+        "name": "replication_conflicts_response",
+        "fields": [
+          {
+            "name": "member",
+            "type": "str",
+            "bound": 128
+          },
+          {
+            "name": "records",
+            "type": "[conflict_record]"
+          }
+        ]
+      }
+    },
+    {
+      "name": "replication.fenced",
+      "code": 307,
+      "family": "replication",
+      "class": "observation",
+      "mutation": false,
+      "parity": [
+        "PB-5035",
+        "new-capability: typed fenced-leader history observation (ADR-0004 D-1 fencing evidence)"
+      ],
+      "request": {
+        "name": "replication_fenced_request",
+        "fields": []
+      },
+      "response": {
+        "code": 563,
+        "name": "replication_fenced_response",
+        "fields": [
+          {
+            "name": "member",
+            "type": "str",
+            "bound": 128
+          },
+          {
+            "name": "records",
+            "type": "[fenced_record]"
+          }
+        ]
+      }
+    },
+    {
+      "name": "replication.depositions",
+      "code": 308,
+      "family": "replication",
+      "class": "observation",
+      "mutation": false,
+      "parity": [
+        "PB-5035",
+        "new-capability: typed deposition observation of ownership transitions (ADR-0004 D-1)"
+      ],
+      "request": {
+        "name": "replication_depositions_request",
+        "fields": []
+      },
+      "response": {
+        "code": 564,
+        "name": "replication_depositions_response",
+        "fields": [
+          {
+            "name": "member",
+            "type": "str",
+            "bound": 128
+          },
+          {
+            "name": "records",
+            "type": "[deposition_record]"
+          }
+        ]
+      }
+    },
+    {
+      "name": "replication.cursor",
+      "code": 309,
+      "family": "replication",
+      "class": "observation",
+      "mutation": false,
+      "parity": [
+        "PB-5031",
+        "PB-5033",
+        "PB-5035"
+      ],
+      "request": {
+        "name": "replication_cursor_request",
+        "fields": []
+      },
+      "response": {
+        "code": 565,
+        "name": "replication_cursor_response",
+        "fields": [
+          {
+            "name": "member",
+            "type": "str",
+            "bound": 128
+          },
+          {
+            "name": "position",
+            "type": "u64",
+            "optional": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "replication.health",
+      "code": 310,
+      "family": "replication",
+      "class": "observation",
+      "mutation": false,
+      "parity": [
+        "PB-5032",
+        "PB-5035"
+      ],
+      "request": {
+        "name": "replication_health_request",
+        "fields": []
+      },
+      "response": {
+        "code": 566,
+        "name": "replication_health_response",
+        "fields": [
+          {
+            "name": "member",
+            "type": "str",
+            "bound": 128
+          },
+          {
+            "name": "status",
+            "type": "replication_status"
+          }
+        ]
+      }
+    },
+    {
+      "name": "replication.denials",
+      "code": 311,
+      "family": "replication",
+      "class": "observation",
+      "mutation": false,
+      "parity": [
+        "PB-5035",
+        "new-capability: typed tenant-isolation denial observation (engine-enforced isolation evidence)"
+      ],
+      "request": {
+        "name": "replication_denials_request",
+        "fields": []
+      },
+      "response": {
+        "code": 567,
+        "name": "replication_denials_response",
+        "fields": [
+          {
+            "name": "member",
+            "type": "str",
+            "bound": 128
+          },
+          {
+            "name": "records",
+            "type": "[denial_record]"
           }
         ]
       }
