@@ -41,9 +41,12 @@
 //! `docs/families/attachment-content-plane.md`.
 
 pub mod attachments;
+pub mod compare_exchange;
 pub mod hilo;
+pub mod lifecycle;
 pub mod migrations;
 mod payloads;
+pub mod revisions;
 pub(crate) mod schemas;
 mod state;
 mod store;

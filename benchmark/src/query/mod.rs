@@ -14,11 +14,13 @@
 //! supported grammar, per-row coverage notes, limits, and non-claims is
 //! `docs/query/w3-query-index.md`.
 
+mod analyzer;
 mod execute;
 pub mod includes;
 mod model;
 pub mod optimizer;
 mod result;
+mod spatial;
 mod spec;
 mod statistics;
 mod v1;
