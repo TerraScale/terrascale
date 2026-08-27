@@ -67,6 +67,37 @@ public sealed class ObservationLog : IDisposable
     }
 }
 
+/// <summary>
+/// An observing HTTP handler: records the client-side wire facts (method,
+/// path, status) without touching a byte of any request or response. The
+/// SE-11 plans gate a measured write on the one fact this handler can
+/// prove — that the SDK live loop's push-channel subscription (the
+/// <c>/v1/streams</c> GET) was accepted by the host: the host registers
+/// the subscriber (and the engine's backbone subscription) before it
+/// writes the stream's first event, so the subscription being observable
+/// on the client means every later trigger fans out to it. The .NET live
+/// loop has no fallback pull before its first trigger (finding 3 in the
+/// packet record), so a commit landing between the session setup and that
+/// subscription is otherwise undeliverable.
+/// </summary>
+internal sealed class ObservingHandler : DelegatingHandler
+{
+    private readonly Action<HttpRequestMessage, HttpResponseMessage> observe;
+
+    public ObservingHandler(Action<HttpRequestMessage, HttpResponseMessage> observe)
+        : base(new SocketsHttpHandler())
+    {
+        this.observe = observe;
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        this.observe(request, response);
+        return response;
+    }
+}
+
 /// <summary>One scripted tracer run over the real SDK session.</summary>
 public sealed class SdkTracer
 {
@@ -79,6 +110,7 @@ public sealed class SdkTracer
     private TerraScaleSyncV2Client? client;
     private TerraScaleSyncV2Session? session;
     private Task? liveLoop;
+    private TaskCompletionSource<bool>? streamSubscribed;
 
     public SdkTracer(JsonElement spec, ObservationLog log)
     {
@@ -139,6 +171,9 @@ public sealed class SdkTracer
             case "waitCheckpoint":
                 await this.WaitCheckpointAsync(step.GetProperty("sequence").GetUInt64(), IntOrDefault(step, "timeoutMs", 20_000)).ConfigureAwait(false);
                 break;
+            case "waitStream":
+                await this.WaitStreamAsync(IntOrDefault(step, "timeoutMs", 20_000)).ConfigureAwait(false);
+                break;
             case "gate":
                 await this.WaitGateAsync(step.GetProperty("name").GetString()!, IntOrDefault(step, "timeoutMs", 60_000)).ConfigureAwait(false);
                 break;
@@ -163,12 +198,6 @@ public sealed class SdkTracer
     {
         await this.DisposeSessionAsync().ConfigureAwait(false);
         var url = (step.TryGetProperty("host", out var hostElement) ? hostElement.GetString() : null) ?? this.SpecString("host");
-        this.http = new HttpClient { BaseAddress = new Uri(url) };
-        this.client = new TerraScaleSyncV2Client(this.http, new TerraScaleSyncV2ClientOptions
-        {
-            Principal = this.SpecString("principal"),
-            Tenant = this.SpecString("tenant"),
-        });
 
         TerraScaleSyncV2SessionOptions options = new(this.SpecString("collection"))
         {
@@ -186,6 +215,34 @@ public sealed class SdkTracer
             options = options with { Resume = TerraScaleSyncV2Checkpoint.FromBytes(Convert.FromBase64String(resume)) };
         }
 
+        // The subscription observation of THIS connection: the gate the
+        // plan's waitStream step (and through it the orchestrator's
+        // measured writes) waits on. Per connection, because the plan may
+        // dispose and re-connect (a drop, a route change, a fresh setup).
+        var subscribed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        this.streamSubscribed = subscribed;
+        var streamsPath = options.StreamsPath;
+        this.http = new HttpClient(
+            new ObservingHandler((request, response) =>
+            {
+                if (!response.IsSuccessStatusCode
+                    || request.Method != HttpMethod.Get
+                    || request.RequestUri?.AbsolutePath != streamsPath)
+                {
+                    return;
+                }
+
+                this.Log(new { t = "stream-opened", path = streamsPath, status = (int)response.StatusCode });
+                subscribed.TrySetResult(true);
+            }))
+        {
+            BaseAddress = new Uri(url),
+        };
+        this.client = new TerraScaleSyncV2Client(this.http, new TerraScaleSyncV2ClientOptions
+        {
+            Principal = this.SpecString("principal"),
+            Tenant = this.SpecString("tenant"),
+        });
         this.session = this.client.CreateSession(options);
         var session = this.session;
         // The live loop runs the trigger-driven path: setup (resuming or
@@ -284,6 +341,27 @@ public sealed class SdkTracer
         throw new TimeoutException($"checkpoint timeout waiting for storage sequence {sequence}");
     }
 
+    /// <summary>
+    /// Waits for positive evidence that this session's push channel is
+    /// subscribed: the streams response observed on the client's own wire.
+    /// The deterministic gate a measured write is held behind (the .NET
+    /// live loop has no fallback pull before its first trigger, so a
+    /// commit landing before the subscription is undeliverable — finding 3
+    /// of the packet record).
+    /// </summary>
+    private async Task WaitStreamAsync(int timeoutMs)
+    {
+        var subscribed = this.streamSubscribed ?? throw new InvalidOperationException("the session is not open");
+        try
+        {
+            await subscribed.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            throw new TimeoutException($"the delivery stream was not subscribed within {timeoutMs} ms");
+        }
+    }
+
     private async Task WaitGateAsync(string name, int timeoutMs)
     {
         var path = Path.Combine(this.gates, name);
@@ -326,6 +404,7 @@ public sealed class SdkTracer
 
             this.session = null;
             this.liveLoop = null;
+            this.streamSubscribed = null;
             // A fresh cancellation source per session: a reset of the
             // cancelled one is not guaranteed once callbacks registered,
             // and the next session must not inherit a cancelled token.

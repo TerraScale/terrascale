@@ -53,6 +53,10 @@ const state = {
   pendingPayload: null,
   lastStatus: "idle",
   checkpoint: null,
+  // Resolved when THIS connection's push-channel subscription (the
+  // /v1/streams GET) is observed on the client's own wire — the
+  // deterministic gate a measured write is held behind.
+  streamSubscribed: null,
 };
 
 function recordStatus(status, lastError) {
@@ -60,6 +64,34 @@ function recordStatus(status, lastError) {
     emit({ t: "status", status, lastError: lastError ?? null });
     state.lastStatus = status;
   }
+}
+
+/**
+ * The observing fetch: delegates one-to-one to the global fetch (the SDK's
+ * own default) and records the one wire fact the plan needs as a
+ * deterministic gate — that the session's push-channel subscription (the
+ * streams GET) was accepted by the host. The host registers the subscriber
+ * and the engine's backbone subscription before it writes the stream's
+ * first event, so the subscription being observable on the client means
+ * every later trigger fans out to it. No request or response byte is
+ * touched; the returned promise is the fetch's own.
+ */
+function observingFetch(onStreamSubscribed) {
+  return (url, init) => {
+    const pending = fetch(url, init);
+    const method = String(init?.method ?? "GET").toUpperCase();
+    if (method === "GET" && String(url).includes("/v1/streams")) {
+      pending.then((response) => {
+        if (response.ok) {
+          onStreamSubscribed(String(url));
+        }
+      }).catch(() => {
+        // A refused or dropped open is the SDK's own typed surface; the
+        // gate simply stays unset until a subscription is observed.
+      });
+    }
+    return pending;
+  };
 }
 
 /** Builds one session wired to the observation log. */
@@ -73,6 +105,10 @@ function openSession(url, resumeBase64) {
       writeFileSync(checkpointFile, checkpointBase64, "utf8");
     },
   };
+  let resolveSubscribed;
+  state.streamSubscribed = new Promise((resolve) => {
+    resolveSubscribed = resolve;
+  });
   const options = {
     Url: url,
     Collection: spec.collection,
@@ -80,6 +116,10 @@ function openSession(url, resumeBase64) {
     Tenant: spec.tenant,
     Materializer: materializer,
     CheckpointStore: store,
+    Fetch: observingFetch((streamUrl) => {
+      emit({ t: "stream-opened", host: streamUrl.split("?")[0] });
+      resolveSubscribed();
+    }),
     ReconnectDelayMilliseconds: spec.reconnect?.delayMs ?? 100,
     MaxReconnectAttempts: spec.reconnect?.maxAttempts ?? 3,
   };
@@ -166,6 +206,35 @@ async function waitFailed(timeoutMs) {
   }
 }
 
+/**
+ * Waits for positive evidence that this session's push channel is
+ * subscribed (the streams response observed on the client's own wire):
+ * the deterministic gate a measured write is held behind. The TS core's
+ * connect() opens the stream without awaiting it, so a commit landing
+ * before the subscription is undeliverable — the pull is authoritative
+ * but needs a hint.
+ */
+async function waitStream(timeoutMs) {
+  const subscribed = state.streamSubscribed;
+  if (subscribed === null) {
+    throw new Error("the session is not open");
+  }
+  let timer;
+  try {
+    await Promise.race([
+      subscribed,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`the delivery stream was not subscribed within ${timeoutMs} ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function run() {
   emit({ t: "tracer", role: spec.role, sdk: "TerraScale.TypeScript dist", node: process.version });
 
@@ -232,6 +301,10 @@ async function runStep(step) {
         await waitCheckpoint(step.sequence, step.timeoutMs ?? 20000);
         break;
       }
+      case "waitStream": {
+        await waitStream(step.timeoutMs ?? 20000);
+        break;
+      }
       case "waitFailed": {
         await waitFailed(step.timeoutMs ?? 30000);
         break;
@@ -257,6 +330,7 @@ async function runStep(step) {
           }
           state.session = null;
         }
+        state.streamSubscribed = null;
         break;
       }
       case "final": {
