@@ -160,7 +160,7 @@ impl StalenessReport {
     /// collection queries reading live storage do.
     #[must_use]
     pub fn is_stale(&self) -> bool {
-        self.observations.iter().any(|observation| observation.stale())
+        self.observations.iter().any(StaleIndexObservation::stale)
     }
 }
 

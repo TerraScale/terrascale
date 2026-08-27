@@ -20,7 +20,10 @@ fn deadline() -> Deadline {
 
 #[test]
 fn page_limit_at_the_cap_is_valid_and_above_it_refuses() {
-    assert_eq!(QueryPaging::try_new(0, Some(MAX_PAGE_LIMIT)).unwrap().limit(), Some(MAX_PAGE_LIMIT));
+    assert_eq!(
+        QueryPaging::try_new(0, Some(MAX_PAGE_LIMIT)).unwrap().limit(),
+        Some(MAX_PAGE_LIMIT)
+    );
     assert_eq!(
         QueryPaging::try_new(0, Some(MAX_PAGE_LIMIT + 1)).unwrap_err(),
         RequestValidationError::InvalidQuery,

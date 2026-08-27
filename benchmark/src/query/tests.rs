@@ -2794,10 +2794,7 @@ fn statistics_result_etag_tracks_the_state_the_query_answered_from() {
     let older = ForgedView::with(&required, Some((1, 2)), Some((1, 1)));
     let current_result = execute_with_view(&engine, &current, &plan, &snapshot).expect("executes");
     let older_result = execute_with_view(&engine, &older, &plan, &snapshot).expect("executes");
-    assert_ne!(
-        current_result.statistics().result_etag(),
-        older_result.statistics().result_etag()
-    );
+    assert_ne!(current_result.statistics().result_etag(), older_result.statistics().result_etag());
 
     // A new committed state is a new etag, through the live catalog path.
     let first = store.execute(&plan, &snapshot).expect("executes");

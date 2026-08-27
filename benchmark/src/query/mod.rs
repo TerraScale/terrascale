@@ -41,13 +41,13 @@ pub use result::{
     IndexGenerationRef, ObservedGeneration, QueryResult, QueryRow, StaleIndexObservation,
     StalenessReport,
 };
-pub use statistics::{DiagnosticDuration, QueryStatistics, ResultEtag};
 pub use spec::{
     IndexNamespace, MAX_CONDITIONS, MAX_FIELD_BYTES, MAX_IN_VALUES, MAX_LOADS, MAX_ORDERING_KEYS,
     MAX_PAGE_LIMIT, MAX_PROJECTION_FIELDS, MAX_STALENESS_INDEXES, NullsPlacement, OrderDirection,
     OrderingKey, QueryCondition, QueryLoad, QueryOrdering, QueryPaging, QueryPredicate,
     QueryProjection, QuerySource, QuerySpec, StalenessMode, StalenessPolicy,
 };
+pub use statistics::{DiagnosticDuration, QueryStatistics, ResultEtag};
 #[allow(
     unused_imports,
     reason = "the public V1QueryText constructor delegates here once the integrator action lands"
