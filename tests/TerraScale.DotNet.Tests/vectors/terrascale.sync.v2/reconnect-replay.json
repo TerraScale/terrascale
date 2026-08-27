@@ -1,0 +1,153 @@
+{
+  "category": "reconnect-replay",
+  "description": "At-least-once delivery: after a reconnect from the same unacknowledged checkpoint, the server re-serves the identical delta batch, and re-served batches are idempotent at the consumer.",
+  "protocol": "terrascale.sync.v2",
+  "protocol_version": 2,
+  "schema": "terrascale.sync.v2/vector-corpus@1",
+  "server": {
+    "config": {
+      "batch_byte_budget": 8192,
+      "checkpoint_window": 128
+    },
+    "journal_before": [
+      {
+        "document": "d-01",
+        "operation_id": "op-000001",
+        "put": {
+          "f000": "v0001"
+        },
+        "sequence": 1
+      },
+      {
+        "document": "d-02",
+        "operation_id": "op-000002",
+        "put": {
+          "f000": "v0002"
+        },
+        "sequence": 2
+      },
+      {
+        "document": "d-01",
+        "operation_id": "op-000003",
+        "put": {
+          "f000": "v0001b",
+          "f001": "3"
+        },
+        "sequence": 3
+      }
+    ],
+    "scope": {
+      "collection": "orders",
+      "tenant": "tenant-a"
+    }
+  },
+  "steps": [
+    {
+      "note": "the first delivery is lost with the connection"
+    },
+    {
+      "serve_delta": {
+        "causation": 1,
+        "correlation": 1,
+        "expect_frame": {
+          "causation": 1,
+          "codec": "loro-delta/1",
+          "commits": 3,
+          "correlation": 1,
+          "kind": "delta_batch",
+          "next": {
+            "ends": [
+              [
+                1,
+                6
+              ]
+            ],
+            "storage_sequence": 3
+          },
+          "payload": "6c6f726f000000000000000000000000a26205ab0004b1010006000601100101000000000000000101000000000005010000010010030401000008040100000a040100000c3904642d3031046630303004642d3032046630303104646f63730ff09fa49d3a24646f63733e642d30310ff09fa49d3a24646f63733e642d303200190104070b000201040100080100040205010004020c0b020c01002d0608004c4d010041f1b8050576303030310608004c4d01006ca27b050576303030320506763030303162050133",
+          "single_commit_oversize": false,
+          "within_budget": true
+        },
+        "expect_wire": "02070001000000000000000100000000000000006136703585cafa6eff00000000000000070001c9000000000000006c6f726f000000000000000000000000a26205ab0004b1010006000601100101000000000000000101000000000005010000010010030401000008040100000a040100000c3904642d3031046630303004642d3032046630303104646f63730ff09fa49d3a24646f63733e642d30310ff09fa49d3a24646f63733e642d303200190104070b000201040100080100040205010004020c0b020c01002d0608004c4d010041f1b8050576303030310608004c4d01006ca27b05057630303032050676303030316205013319000000000000000103000000000000000100000001000000000000000600000001000300000000000000",
+        "from": {
+          "ends": [],
+          "storage_sequence": 0
+        }
+      }
+    },
+    {
+      "note": "the session reconnects from the same checkpoint: byte-identical re-delivery (different correlation, same content)"
+    },
+    {
+      "serve_delta": {
+        "causation": 1,
+        "correlation": 2,
+        "expect_frame": {
+          "causation": 1,
+          "codec": "loro-delta/1",
+          "commits": 3,
+          "correlation": 2,
+          "kind": "delta_batch",
+          "next": {
+            "ends": [
+              [
+                1,
+                6
+              ]
+            ],
+            "storage_sequence": 3
+          },
+          "payload": "6c6f726f000000000000000000000000a26205ab0004b1010006000601100101000000000000000101000000000005010000010010030401000008040100000a040100000c3904642d3031046630303004642d3032046630303104646f63730ff09fa49d3a24646f63733e642d30310ff09fa49d3a24646f63733e642d303200190104070b000201040100080100040205010004020c0b020c01002d0608004c4d010041f1b8050576303030310608004c4d01006ca27b050576303030320506763030303162050133",
+          "single_commit_oversize": false,
+          "within_budget": true
+        },
+        "expect_wire": "02070002000000000000000100000000000000006136703585cafa6eff00000000000000070001c9000000000000006c6f726f000000000000000000000000a26205ab0004b1010006000601100101000000000000000101000000000005010000010010030401000008040100000a040100000c3904642d3031046630303004642d3032046630303104646f63730ff09fa49d3a24646f63733e642d30310ff09fa49d3a24646f63733e642d303200190104070b000201040100080100040205010004020c0b020c01002d0608004c4d010041f1b8050576303030310608004c4d01006ca27b05057630303032050676303030316205013319000000000000000103000000000000000100000001000000000000000600000001000300000000000000",
+        "from": {
+          "ends": [],
+          "storage_sequence": 0
+        }
+      }
+    },
+    {
+      "note": "the consumer acknowledges; retransmission is checkpoint-bounded"
+    },
+    {
+      "client_frame": {
+        "frame": {
+          "causation": 2,
+          "checkpoint": {
+            "ends": [
+              [
+                1,
+                6
+              ]
+            ],
+            "storage_sequence": 3
+          },
+          "correlation": 3,
+          "kind": "checkpoint_ack"
+        },
+        "wire": "02050003000000000000000200000000000000003da449e960efc5f223000000000000000500190000000000000001030000000000000001000000010000000000000006000000"
+      }
+    },
+    {
+      "note": "from the acknowledged checkpoint nothing is re-served"
+    },
+    {
+      "serve_delta": {
+        "causation": 1,
+        "correlation": 4,
+        "expect_wire": null,
+        "from": {
+          "ends": [
+            [
+              1,
+              6
+            ]
+          ],
+          "storage_sequence": 3
+        }
+      }
+    }
+  ]
+}

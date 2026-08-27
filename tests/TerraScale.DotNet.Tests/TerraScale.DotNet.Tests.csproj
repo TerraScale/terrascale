@@ -13,4 +13,8 @@
     <ProjectReference Include="..\..\src\TerraScale.DotNet\TerraScale.DotNet.csproj" />
     <ProjectReference Include="..\..\samples\TerraScale.Samples.Quickstart\TerraScale.Samples.Quickstart.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Include="vectors\terrascale.sync.v2\*.json" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
 </Project>
