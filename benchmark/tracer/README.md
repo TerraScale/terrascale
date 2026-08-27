@@ -22,12 +22,27 @@ recorded findings is `evidence/sync/se11-live-update-tracer.md`.
 | `dotnet/TerraScale.Tracer/` | The .NET core: the same plan vocabulary and log contract over the sibling TerraScale.DotNet client (project-referenced read-only; `TERRASCALE_DOTNET_SDK` overrides the default workspace-relative path). |
 
 Both tracers consume the same plan vocabulary (`connect`, `mutate`,
-`pull`, `resync`, `waitCheckpoint`, `gate`, `signal`, `watch`,
-`dispose`, `final`) and emit the same event vocabulary (`opened`,
-`status`, `snapshot-adopted`, `delta-applied`, `duplicate-delta`,
-`mutation`, `error`, `final`), so the orchestrator can diff the two
-cores' transition sequences and assert their identity against the
-SE-04 golden vectors.
+`pull`, `resync`, `waitCheckpoint`, `waitStream`, `gate`, `signal`,
+`watch`, `dispose`, `final`) and emit the same event vocabulary
+(`opened`, `stream-opened`, `status`, `snapshot-adopted`,
+`delta-applied`, `duplicate-delta`, `mutation`, `error`, `final`), so
+the orchestrator can diff the two cores' transition sequences and
+assert their identity against the SE-04 golden vectors.
+
+`waitStream` is the deterministic gate every measured write waits
+behind: both SDK cores open their push channel without awaiting it
+(the .NET live loop subscribes only after setup and its initial pull,
+and has no fallback pull before its first trigger; the TS `connect()`
+fires the stream factory and returns), so a commit landing between the
+session setup and the subscription is undeliverable. Each tracer
+observes its own `/v1/streams` subscription on its own wire — the .NET
+tracer wraps its `HttpClient` in an observing `DelegatingHandler`, the
+TS tracer passes an observing `Fetch` that delegates one-to-one to the
+global fetch; neither touches a byte of any request or response — and
+emits a `stream-opened` observation the step waits on. The host
+registers the subscriber and the engine's backbone subscription before
+it writes the stream's first event, so the observation being visible
+on the client means every later trigger fans out to it.
 
 Everything here is correctness evidence, never a performance claim:
 loopback hosts, temp-dir sockets, backend-context fixtures only

@@ -14,7 +14,7 @@ under the run's temp directory.
   TerraBaseV2 worktree root (the fresh-checkout sequence is in
   `evidence/sync/se11-live-update-tracer.md`).
 
-Outcome: **PASS** (14/14 checks).
+Outcome: **PASS** (15/15 checks).
 
 
 | Check | Outcome | Detail |
@@ -25,9 +25,10 @@ Outcome: **PASS** (14/14 checks).
 | `ts snapshot payload bytes equal the golden vector's (byte-exact Loro delivery)` | pass | 451 bytes (vector 451), digest match True |
 | `net snapshot checkpoint equals the golden vector's` | pass | observed (sequence 3, ends [[1, 6]]) vs vector (3, ((1, 6),)) |
 | `net snapshot payload bytes equal the golden vector's (byte-exact Loro delivery)` | pass | 451 bytes (vector 451), digest match True |
-| `ts repeated-change deltas stay below the snapshot re-send (the vector's budget row)` | pass | 1124 delta bytes for 8 repeated changes vs 2772 snapshot bytes of the established state |
+| `the vector's recorded budget row: repeated changes ride deltas below the snapshot of the same state` | pass | recorded delta_bytes 497 < snapshot_bytes 2788 (payload_bytes 407, envelope_overhead_bytes 90, bytes_per_delivered_change 62) |
+| `ts repeated-change deltas stay below the snapshot re-send (re-derived from observation)` | pass | 1124 delta bytes for 8 repeated changes vs 2772 snapshot bytes of the established state |
 | `ts every delta batch fits the delivery budget` | pass | max batch 320 bytes (budget 8192) |
-| `net repeated-change deltas stay below the snapshot re-send (the vector's budget row)` | pass | 1124 delta bytes for 8 repeated changes vs 2772 snapshot bytes of the established state |
+| `net repeated-change deltas stay below the snapshot re-send (re-derived from observation)` | pass | 1124 delta bytes for 8 repeated changes vs 2772 snapshot bytes of the established state |
 | `net every delta batch fits the delivery budget` | pass | max batch 320 bytes (budget 8192) |
 | `both SDK cores observed identical transition and checkpoint sequences` | pass | 25 ts transitions vs 25 net transitions |
 | `every committed update applied by both cores exactly once (no loss, no duplicate)` | pass | ts applied 24 batches, net applied 24 batches (24 = 16 established + 8 repeated; the seeded 3 arrive inside the snapshot) |

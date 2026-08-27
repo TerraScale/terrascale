@@ -29,6 +29,20 @@ host forwards it over `terrascale.sync.v2`, and both SDK cores apply
 it — no polling anywhere (every delta arrives through the
 trigger-driven or snapshot path).
 
+Determinism discipline (the repair of the warden's s5 finding): every
+write a scenario measures is held behind a `waitStream` gate — positive
+evidence, on the tracer's own wire, that the session's delivery stream
+is subscribed — never behind elapsed time. Both tracers observe their
+own `/v1/streams` subscription (the .NET tracer wraps its `HttpClient`
+in an observing `DelegatingHandler`, the TS tracer passes an observing
+`Fetch` that delegates one-to-one to the global fetch; neither touches
+a byte of any request or response) and emit a `stream-opened`
+observation the plan step waits on. The host registers the subscriber
+and the engine's backbone subscription before it writes the stream's
+first event, so the observation being visible on the client means every
+later trigger fans out to it. See finding 3 for why this gate is needed
+at all.
+
 Correctness evidence only — no performance claim. No numbers below are
 timings; every byte count is a deterministic wire fact.
 
@@ -124,7 +138,9 @@ tables; the summary:
    client half (checkpoint continuity; nothing re-delivered behind the
    acknowledged position). All four committed updates are visible
    through region b, and the post-route write applies byte-identical
-   payloads on both cores.
+   payloads on both cores. The post-route write is released only after
+   both cores' new-region subscriptions are observed (the `waitStream`
+   gate) — the deterministic form of the fix for the warden's finding.
 6. **s6-multi-region** — the writer's nearest region is a (the TS
    core), the reader's nearest region is b (the .NET core). A write
    through region a becomes visible through region b's own delivery
@@ -147,6 +163,41 @@ tables; the summary:
   payload bytes, budget rows, and content-free trigger row are
   asserted from the corpus
   (`crates/terrabase-sync-core/vectors/terrascale.sync.v2/`).
+- **AC-spec-2** (the trigger path end-to-end, PD-2026-08-26-13 D3:
+  commit → engine trigger notification → host forward → client delta
+  pull, with no polling, and records commit-to-fetch latency):
+  **met for the path halves; the latency-recording half is
+  unrun-with-reason.** Met: s1 asserts the trigger notification
+  content-free on the wire at the host's SSE surface (the vector's
+  trigger row), s3 counts the triggers the .NET core observed against
+  its checkpoint-bounded pulls (the hint channel stays live while both
+  fast consumers lose nothing with zero duplicates), and s3/s5 assert
+  the delivery itself is trigger-driven on both cores — no plan step
+  polls, and every delta arrives through the trigger-driven or snapshot
+  path. Unrun-with-reason: a commit-to-fetch **latency** number is a
+  wall-clock performance claim, which this packet does not make (the
+  SE-07 budget's own scope rule: wall-clock statements are out of
+  scope for these lanes and belong to the SE-15 statistical gates). A
+  timing lane needs its own gate and its own receipt; none is claimed
+  here.
+- **AC-spec-3** (records bytes-on-wire per delivered change for the
+  full client path, reported against the SE-07 budgets,
+  PD-2026-08-26-13 D1): **met** — as the budget rows of s1 and s3. s1
+  asserts the repeated-change vector's recorded budget row directly
+  from the corpus (`delta_bytes 497 < snapshot_bytes 2788`,
+  `bytes_per_delivered_change 62`, `envelope_overhead_bytes 90` — the
+  row the SE-07 budget work reports against) **and** re-derives the
+  same relation from what both cores observed through the full stack,
+  plus the per-batch 8 192-byte delivery budget on every delta; s3
+  adds the oversize single-commit row (one commit whose delta alone
+  exceeds the budget is delivered alone, `commits == 1`) and the
+  slow-consumer vector's shed accounting. The SE-07 artifacts these
+  rows report against are `docs/benchmarks/se07-efficiency-budget.md`
+  (the written budget) and
+  `evidence/benchmarks/se07-sync-core-delta-receipt.md` (the
+  deterministic byte counters of the sync-core/client-link lane, budget
+  items E-8..E-12); every number here is a deterministic byte count,
+  never a timing.
 - **AC2** (drop/reconnect/resume, slow-consumer, and TBEP-link-loss
   pass on both hosts with no lost committed update and no duplicate
   application beyond documented at-least-once identities): **met** —
@@ -199,6 +250,31 @@ tables; the summary:
    `checkpoint-ahead-of-server` refusal (surfaced as `engine_failure`
    over the host today). s4 records this exactly; durable storage
    wiring is the engine-backed integrator action.
+3. **The .NET SDK's live loop has a commit-before-subscription liveness
+   gap.** `TerraScaleSyncV2Session.UpdatesAsync`
+   (`TerraScale.DotNet/TerraScaleSyncV2Client.cs`) runs setup (and, on a
+   resuming session, the initial checkpoint-bounded pull), and only then
+   opens the trigger stream — and its first subscription carries no
+   `Last-Event-ID`/`from`, while the loop pulls **only** in response to a
+   trigger. A commit that lands between the setup's pull and the stream
+   subscription therefore fires its content-free trigger at a subscriber
+   list that does not yet include this client, and no later pull ever
+   reaches it: the update is silently undelivered (the pull is
+   authoritative but needs a hint). This is exactly the race that made
+   this packet's first s5 receipt pass on timing and fail 2/4 under
+   independent execution. Owner: the TerraScale.DotNet live loop — a
+   fallback pull after the first stream subscription is established
+   (mirroring what a host-side trigger replay-on-subscribe would
+   guarantee), or a host that replays triggers from the acknowledged
+   checkpoint on subscribe. This packet does not fix it in the SDK (out
+   of its write scope); the harness closes it deterministically instead
+   — both tracers observe their own `/v1/streams` subscription on their
+   own wire (a `stream-opened` observation; the host registers the
+   subscriber and the engine's backbone subscription before it writes
+   the stream's first event), and every plan holds its measured writes
+   behind that `waitStream` gate. The TS core has the same shape
+   (`connect()` fires the stream factory without awaiting it), so both
+   tracers carry the gate.
 
 ## Honest limits, stated
 

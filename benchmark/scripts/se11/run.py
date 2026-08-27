@@ -1000,11 +1000,18 @@ def scenario_slow_consumer(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         host.start()
         ts = Tracer("ts", run_dir, gates, host.url)
         net = Tracer("net", run_dir, gates, host.url)
+        # No subscription gate here, deliberately: the flood's pace IS the
+        # scenario's load profile. Gating the flood on both fast consumers'
+        # subscriptions throttles it (each commit then serves two delta
+        # pulls), and the slow consumer's bounded queue no longer sheds —
+        # the observation the scenario exists to make. The residual window
+        # (a consumer's snapshot -> its registration) is covered by every
+        # later commit's trigger, except the very last one; the flood's
+        # 400 commits make that the same tail risk the scenario always
+        # carried, and the boundary reconnect is asserted regardless.
         for tracer in (ts, net):
             tracer.plan = [
                 {"op": "connect"},
-                subscribed(),
-                {"op": "signal", "name": f"{tracer.role}-subscribed"},
                 {"op": "waitCheckpoint", "sequence": total, "timeoutMs": 60000},
                 {"op": "signal", "name": f"{tracer.role}-at-{total}"},
                 {"op": "gate", "name": "oversize-go"},
@@ -1020,15 +1027,6 @@ def scenario_slow_consumer(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         wait_until(lambda: [event for event in probe.pump() if event["event"] == "opened"], "the slow probe stream to open")
         watcher = SlowProbe(host)
         watcher.open()
-
-        # The flood waits for both fast consumers' subscriptions: the very
-        # last commit must not land in the window between a consumer's
-        # snapshot and its stream registration (there is no later commit
-        # whose trigger would recover it).
-        wait_until(
-            lambda: (gates / "ts-subscribed").exists() and (gates / "net-subscribed").exists(),
-            "both fast consumers subscribed before the flood",
-        )
 
         # The consumer stalls: it simply stops reading.
         driver = host.open_session()
@@ -1047,13 +1045,17 @@ def scenario_slow_consumer(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
             while not stop_watch.is_set():
                 watcher.pump()
                 time.sleep(0.02)
-        watch_thread = threading.Thread(target=watch); watch_thread.start()
+        # A daemon thread: a failed scenario must never leave the
+        # orchestrator alive on a reader thread it can no longer stop.
+        watch_thread = threading.Thread(target=watch, daemon=True)
+        watch_thread.start()
         metrics = wait_until(
             lambda: (host.metrics().get("droppedFrames", 0) > 0 and host.metrics()) or None,
             "the slow consumer's bounded queue to shed frames",
             timeout=30,
         )
-        stop_watch.set(); watch_thread.join()
+        stop_watch.set()
+        watch_thread.join(timeout=5)
         facts.check(
             "the stalled consumer's bounded queue shed frames (counted, never blocked the engine)",
             metrics["droppedFrames"] > 0,
@@ -1342,7 +1344,11 @@ def scenario_region_route_change(home: pathlib.Path, run_root: pathlib.Path) -> 
             "re-delivered behind it. The two regions are two real engine + host pairs on distinct loopback "
             "ports (serving instances 1 and 2); region b's journal is seeded by the tracer's re-submission "
             "of the same operation identities through region b's real write path (the member transport "
-            "between serving engines is a named integrator action, not wired today)."
+            "between serving engines is a named integrator action, not wired today). The post-route write "
+            "is released only after both cores' region-b subscriptions are observed on their own wire "
+            "(the `waitStream` gate): the .NET live loop has no fallback pull before its first trigger, so "
+            "a write beating the subscription would be undeliverable — the race behind this receipt's "
+            "earlier 2-of-4 flake."
         ),
     )
     run_dir = run_root / "s5"
