@@ -22,7 +22,14 @@ use super::{
     MemberId, RPO_DEFINITION, RTO_DEFINITION, ReplicationOutcome, ReplicationReceipt,
 };
 
-use crate::types::{DocumentValue, OperationId, StorageSequence, TenantId};
+use crate::families::{
+    CounterBatchWrite, CounterOperation, CounterRead, FamilyReadContext, FamilyReadRequest,
+    FamilyReadResult, FamilyWriteRequest, TimeSeriesAppend, TimeSeriesBatchWrite,
+};
+use crate::types::{
+    Cancellation, Deadline, DocumentId, DocumentValue, ExpectedVersion, OperationId,
+    StorageSequence, TenantId,
+};
 
 const TENANT: &str = "tenant-lane";
 
@@ -467,4 +474,441 @@ fn lane_region_partition_with_isolated_concurrent_writes_converges() {
     let rendered = format!("{:?}", h.member("m-a1").conflicts());
     assert!(!rendered.contains("alpha-side-value") && !rendered.contains("gamma-side-value"));
     h.clean_up();
+}
+
+// ---------------------------------------------------------------------------
+// GAP-F07 family merge lane (decision record:
+// docs/families/counter-merge-encoding.md). Counter records replicate as
+// merged state, not whole-record LWW; time-series records stay LWW by the
+// explicit exclusion decision D4. Family writes stage through the
+// member's own family-write path, so admission fencing, D-3 stamps, and
+// key states record exactly as for document writes.
+// ---------------------------------------------------------------------------
+
+/// Stages and commits one counter batch through one member's family-write
+/// path.
+fn family_counter_write(
+    h: &mut LaneHarness,
+    name: &str,
+    tenant: &str,
+    operation: &str,
+    document: &str,
+    deltas: &[(&str, i64)],
+) {
+    let scope = h.scope(name, tenant);
+    let operations = deltas
+        .iter()
+        .map(|(counter, delta)| CounterOperation::Increment {
+            name: (*counter).to_owned(),
+            delta: *delta,
+        })
+        .collect();
+    let request = FamilyWriteRequest::counter_batch(
+        CounterBatchWrite::try_new(
+            scope,
+            DocumentId::try_new(document).expect("valid identifier"),
+            operations,
+            ExpectedVersion::Any,
+            OperationId::try_new(operation).expect("valid operation"),
+            Deadline::after(std::time::Duration::from_secs(45)).expect("valid deadline"),
+            Cancellation::new(),
+        )
+        .expect("valid counter batch"),
+    );
+    let range = super::lane::LANE_RANGE.to_owned();
+    let member_scope = h.scope(name, tenant);
+    h.member_mut(name)
+        .commit_family_write(&member_scope, &range, request)
+        .unwrap_or_else(|error| panic!("the family counter batch commits: {error:?}"));
+}
+
+/// Stages and commits one counter delete through one member's
+/// family-write path.
+fn family_counter_delete(
+    h: &mut LaneHarness,
+    name: &str,
+    tenant: &str,
+    operation: &str,
+    document: &str,
+    counter: &str,
+) {
+    let scope = h.scope(name, tenant);
+    let request = FamilyWriteRequest::counter_batch(
+        CounterBatchWrite::try_new(
+            scope,
+            DocumentId::try_new(document).expect("valid identifier"),
+            vec![CounterOperation::Delete { name: counter.to_owned() }],
+            ExpectedVersion::Any,
+            OperationId::try_new(operation).expect("valid operation"),
+            Deadline::after(std::time::Duration::from_secs(45)).expect("valid deadline"),
+            Cancellation::new(),
+        )
+        .expect("valid counter batch"),
+    );
+    let range = super::lane::LANE_RANGE.to_owned();
+    let member_scope = h.scope(name, tenant);
+    h.member_mut(name)
+        .commit_family_write(&member_scope, &range, request)
+        .unwrap_or_else(|error| panic!("the family counter delete commits: {error:?}"));
+}
+
+/// Reads one counter value through one member's Engine family seam.
+fn family_counter_read(
+    h: &LaneHarness,
+    name: &str,
+    tenant: &str,
+    document: &str,
+    counter: &str,
+) -> Option<i64> {
+    let scope = h.scope(name, tenant);
+    let engine = h.member(name).engine().expect("engine open");
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    let request = FamilyReadRequest::counter_group(
+        CounterRead::try_new(
+            DocumentId::try_new(document).expect("valid identifier"),
+            vec![counter.to_owned()],
+            Deadline::after(std::time::Duration::from_secs(45)).expect("valid deadline"),
+            Cancellation::new(),
+        )
+        .expect("valid counter read"),
+    );
+    let result = engine
+        .families()
+        .read(FamilyReadContext::new(scope, snapshot), request)
+        .expect("reads the counter group");
+    let FamilyReadResult::CounterGroup(group) = result else {
+        panic!("expected a counter group, got {result:?}");
+    };
+    group.find(counter).flatten()
+}
+
+/// Counter assertion helper: panics with both sides on mismatch.
+fn assert_family_counter(
+    h: &LaneHarness,
+    name: &str,
+    tenant: &str,
+    document: &str,
+    counter: &str,
+    expected: Option<i64>,
+) {
+    let observed = family_counter_read(h, name, tenant, document, counter);
+    assert_eq!(
+        observed, expected,
+        "{name} observes {counter} as {observed:?}, expected {expected:?}"
+    );
+}
+
+#[test]
+fn lane_family_counter_concurrent_increments_merge_to_the_union_total() {
+    let mut h = LaneHarness::new("family-merge");
+
+    // The owning document exists on both sides before the split.
+    h.write("m-a1", TENANT, "user-op-1", "doc-counters", "base");
+    let seeded = h.replicate("m-a1", "m-g1", TENANT, 4);
+    assert!(seeded.caught_up(), "the document reaches the future second writer");
+
+    // Split: r-gamma is isolated and the control plane promotes m-g1 at a
+    // raised epoch, so both sides admit family writes under their own
+    // views (the deposed m-a1 keeps its local receipt, D-1).
+    h.partition_region("r-gamma");
+    let promoted = lane_topology_with_owner("m-g1", 2);
+    h.apply_view("m-g1", promoted.clone());
+    h.apply_view("m-g2", promoted);
+    family_counter_write(&mut h, "m-a1", TENANT, "fam-op-a", "doc-counters", &[("views", 5)]);
+    family_counter_write(
+        &mut h,
+        "m-g1",
+        TENANT,
+        "fam-op-g",
+        "doc-counters",
+        &[("views", 3), ("clicks", 2)],
+    );
+    h.heal();
+    let deposed_view = lane_topology_with_owner("m-g1", 2);
+    h.apply_view("m-a1", deposed_view);
+
+    // Repair in both directions: the counter record must MERGE (decision
+    // D1), not converge by whole-record last-writer-wins.
+    let into_alpha = h.replicate("m-g1", "m-a1", TENANT, 4);
+    assert!(into_alpha.caught_up());
+    let into_gamma = h.replicate("m-a1", "m-g1", TENANT, 4);
+    assert!(into_gamma.caught_up());
+
+    assert_family_counter(&h, "m-a1", TENANT, "doc-counters", "views", Some(8));
+    assert_family_counter(&h, "m-g1", TENANT, "doc-counters", "views", Some(8));
+    assert_family_counter(&h, "m-a1", TENANT, "doc-counters", "clicks", Some(2));
+    assert_family_counter(&h, "m-g1", TENANT, "doc-counters", "clicks", Some(2));
+
+    // A third member that receives both journals converges to the same
+    // merged totals without having written anything itself.
+    let from_alpha = h.replicate("m-a1", "m-b1", TENANT, 4);
+    assert!(from_alpha.caught_up());
+    let from_gamma = h.replicate("m-g1", "m-b1", TENANT, 4);
+    assert!(from_gamma.caught_up());
+    assert_family_counter(&h, "m-b1", TENANT, "doc-counters", "views", Some(8));
+    assert_family_counter(&h, "m-b1", TENANT, "doc-counters", "clicks", Some(2));
+    h.clean_up();
+}
+
+/// Decision D2 on the lane: a delete tombstones the counter, the
+/// tombstone replicates, and a concurrent increment from the other side is
+/// dominated (delete wins) instead of resurrecting the name.
+#[test]
+fn lane_family_counter_delete_wins_over_the_concurrent_increment() {
+    let mut h = LaneHarness::new("family-delete");
+
+    h.write("m-a1", TENANT, "user-op-1", "doc-counters", "base");
+    family_counter_write(&mut h, "m-a1", TENANT, "fam-seed", "doc-counters", &[("views", 7)]);
+    let seeded = h.replicate("m-a1", "m-g1", TENANT, 4);
+    assert!(seeded.caught_up(), "the seed reaches the future second writer");
+
+    h.partition_region("r-gamma");
+    let promoted = lane_topology_with_owner("m-g1", 2);
+    h.apply_view("m-g1", promoted.clone());
+    h.apply_view("m-g2", promoted);
+    // Both sides hold views=7; the split writes race: m-a1 deletes,
+    // m-g1 increments concurrently.
+    family_counter_delete(&mut h, "m-a1", TENANT, "fam-del-a", "doc-counters", "views");
+    family_counter_write(&mut h, "m-g1", TENANT, "fam-inc-g", "doc-counters", &[("views", 3)]);
+    h.heal();
+    let deposed_view = lane_topology_with_owner("m-g1", 2);
+    h.apply_view("m-a1", deposed_view);
+
+    let into_alpha = h.replicate("m-g1", "m-a1", TENANT, 4);
+    assert!(into_alpha.caught_up());
+    let into_gamma = h.replicate("m-a1", "m-g1", TENANT, 4);
+    assert!(into_gamma.caught_up());
+
+    assert_family_counter(&h, "m-a1", TENANT, "doc-counters", "views", None);
+    assert_family_counter(&h, "m-g1", TENANT, "doc-counters", "views", None);
+    h.clean_up();
+}
+
+#[test]
+fn lane_family_counter_duplicate_delivery_merges_each_operation_once() {
+    let mut h = LaneHarness::new("family-dedup");
+
+    h.write("m-a1", TENANT, "user-op-1", "doc-counters", "base");
+    let seeded = h.replicate("m-a1", "m-b1", TENANT, 4);
+    assert!(seeded.caught_up());
+    family_counter_write(&mut h, "m-a1", TENANT, "fam-op-1", "doc-counters", &[("views", 5)]);
+    family_counter_write(&mut h, "m-a1", TENANT, "fam-op-2", "doc-counters", &[("views", 3)]);
+
+    // Every frame on the delivery direction is duplicated: the at-least-once
+    // lane must resolve each operation by identity and merge each delta
+    // exactly once (decision D3).
+    h.duplicate("m-a1", "m-b1");
+    let report = h.replicate("m-a1", "m-b1", TENANT, 6);
+    assert!(report.caught_up());
+    assert!(report.duplicates_resolved() >= 2, "the duplicated frames replay idempotently");
+    assert_family_counter(&h, "m-b1", TENANT, "doc-counters", "views", Some(8));
+
+    // Another member's journal carries the same operation identities with
+    // its own staged record values. Delivering it back to the origin
+    // resolves by identity: never re-merged, never a ledger rejection.
+    let round_trip = h.replicate("m-b1", "m-a1", TENANT, 4);
+    assert!(round_trip.caught_up());
+    assert_family_counter(&h, "m-a1", TENANT, "doc-counters", "views", Some(8));
+
+    // A later operation by a promoted owner still merges on top.
+    let promoted = lane_topology_with_owner("m-b1", 2);
+    h.apply_view("m-b1", promoted);
+    family_counter_write(&mut h, "m-b1", TENANT, "fam-op-b", "doc-counters", &[("views", 4)]);
+    let back = h.replicate("m-b1", "m-a1", TENANT, 4);
+    assert!(back.caught_up());
+    assert_family_counter(&h, "m-a1", TENANT, "doc-counters", "views", Some(12));
+    assert_family_counter(&h, "m-b1", TENANT, "doc-counters", "views", Some(12));
+    h.clean_up();
+}
+
+/// The decisive operation-ledger interaction (decision D3): a member that
+/// merged ANOTHER operation into the same counter record has a different
+/// write set bound to an incoming operation's identity than a member that
+/// applied it onto an empty record. Redelivering the operation from the
+/// second member's journal must resolve by identity — staging the
+/// redelivered value would trip the ledger's typed
+/// identity->write-set guard and fail the apply.
+#[test]
+fn lane_family_counter_redelivery_after_merge_resolves_by_identity() {
+    let mut h = LaneHarness::new("family-rebind");
+
+    h.write("m-a1", TENANT, "user-op-1", "doc-counters", "base");
+    for target in ["m-b1", "m-g1", "m-g2"] {
+        let seeded = h.replicate("m-a1", target, TENANT, 4);
+        assert!(seeded.caught_up());
+    }
+
+    // Promote m-g1 without telling the deposed m-a1: both sides admit
+    // family writes under their own views.
+    let promoted = lane_topology_with_owner("m-g1", 2);
+    h.apply_view("m-g1", promoted.clone());
+    h.apply_view("m-g2", promoted);
+    family_counter_write(&mut h, "m-g1", TENANT, "fam-op-g", "doc-counters", &[("views", 3)]);
+    let gamma_reached = h.replicate("m-g1", "m-b1", TENANT, 4);
+    assert!(gamma_reached.caught_up());
+
+    // m-a1's increments reach two receivers with different local states:
+    // m-b1 already holds m-g1's bucket, m-g2 holds nothing.
+    family_counter_write(&mut h, "m-a1", TENANT, "fam-op-a", "doc-counters", &[("views", 5)]);
+    let to_beta = h.replicate("m-a1", "m-b1", TENANT, 4);
+    assert!(to_beta.caught_up());
+    let to_gamma_two = h.replicate("m-a1", "m-g2", TENANT, 4);
+    assert!(to_gamma_two.caught_up());
+    assert_family_counter(&h, "m-b1", TENANT, "doc-counters", "views", Some(8));
+    // m-g2 saw only m-a1's increments at this point: its ledger binds
+    // fam-op-a to the record staged onto an EMPTY local state.
+    assert_family_counter(&h, "m-g2", TENANT, "doc-counters", "views", Some(5));
+
+    // m-g2's journal carries fam-op-a staged onto an EMPTY record, while
+    // m-b1's ledger bound fam-op-a to the record merged with m-g1's
+    // bucket. The redelivery resolves by identity, keeps the merged
+    // total, and never reports the typed identity-reuse rejection.
+    let redelivered = h.replicate("m-g2", "m-b1", TENANT, 4);
+    assert!(redelivered.caught_up(), "the redelivery resolves by identity");
+    assert_family_counter(&h, "m-b1", TENANT, "doc-counters", "views", Some(8));
+    h.clean_up();
+}
+
+#[test]
+fn lane_family_counter_rejoin_preserves_family_totals() {
+    let mut h = LaneHarness::new("family-rejoin");
+
+    h.write("m-a1", TENANT, "user-op-1", "doc-counters", "base");
+    family_counter_write(&mut h, "m-a1", TENANT, "fam-op-1", "doc-counters", &[("views", 6)]);
+    let report = h.replicate("m-a1", "m-b1", TENANT, 4);
+    assert!(report.caught_up());
+    assert_family_counter(&h, "m-b1", TENANT, "doc-counters", "views", Some(6));
+
+    // The follower restarts from its own journal and rejoins with its
+    // cursor: the merged family totals survive the restart (the R1
+    // receipt fact: rejoin with family totals proven).
+    let cursor = super::ReplicationCursor::from_journal(
+        &h.member_id("m-b1"),
+        h.member("m-b1").engine().expect("engine open"),
+    )
+    .expect("derives the cursor");
+    h.restart("m-b1");
+    h.rejoin_with("m-b1", &cursor);
+    assert_family_counter(&h, "m-b1", TENANT, "doc-counters", "views", Some(6));
+
+    // Post-rejoin replication keeps merging on top of the preserved state.
+    family_counter_write(&mut h, "m-a1", TENANT, "fam-op-2", "doc-counters", &[("views", 5)]);
+    let caught = h.replicate("m-a1", "m-b1", TENANT, 4);
+    assert!(caught.caught_up());
+    assert_family_counter(&h, "m-b1", TENANT, "doc-counters", "views", Some(11));
+    assert_family_counter(&h, "m-a1", TENANT, "doc-counters", "views", Some(11));
+    h.clean_up();
+}
+
+/// Decision D4 (docs/families/counter-merge-encoding.md): time-series
+/// records are EXCLUDED from family merge in this packet; their records
+/// converge by whole-record D-3 last-writer-wins. This test pins that
+/// decided behavior so the exclusion is observable, never silent.
+#[test]
+fn lane_family_time_series_records_keep_whole_record_lww_by_decision() {
+    let mut h = LaneHarness::new("family-timeseries-lww");
+
+    h.write("m-a1", TENANT, "user-op-1", "doc-series", "base");
+    let seeded = h.replicate("m-a1", "m-g1", TENANT, 4);
+    assert!(seeded.caught_up());
+
+    // Two isolated concurrent appends to the same series.
+    h.partition_region("r-gamma");
+    let promoted = lane_topology_with_owner("m-g1", 2);
+    h.apply_view("m-g1", promoted.clone());
+    h.apply_view("m-g2", promoted);
+    family_time_series_append(&mut h, "m-a1", TENANT, "fam-ts-a", "doc-series", "load", (1, 10.0));
+    family_time_series_append(&mut h, "m-g1", TENANT, "fam-ts-g", "doc-series", "load", (2, 20.0));
+    h.heal();
+    let deposed_view = lane_topology_with_owner("m-g1", 2);
+    h.apply_view("m-a1", deposed_view);
+
+    let into_alpha = h.replicate("m-g1", "m-a1", TENANT, 4);
+    assert!(into_alpha.caught_up());
+    let into_gamma = h.replicate("m-a1", "m-g1", TENANT, 4);
+    assert!(into_gamma.caught_up());
+
+    // Whole-record LWW: both members hold the same single winning entry
+    // set (the record converges), and the loser's append is observable as
+    // conflict history — the decided D4 behavior for this family.
+    let (at_alpha, at_gamma) = (
+        family_time_series_read(&h, "m-a1", TENANT, "doc-series", "load"),
+        family_time_series_read(&h, "m-g1", TENANT, "doc-series", "load"),
+    );
+    assert_eq!(at_alpha, at_gamma, "the series record converges by D-3 LWW");
+    assert!(at_alpha.len() == 1, "the whole record is replaced, not merged: {at_alpha:?}");
+    assert!(
+        h.member("m-a1")
+            .conflicts()
+            .iter()
+            .chain(h.member("m-g1").conflicts().iter())
+            .any(|record| matches!(record.outcome(), ConflictOutcome::Winner(_))),
+        "the losing series write is retained as conflict history"
+    );
+    h.clean_up();
+}
+
+/// Stages and commits one time-series append through one member's
+/// family-write path.
+fn family_time_series_append(
+    h: &mut LaneHarness,
+    name: &str,
+    tenant: &str,
+    operation: &str,
+    document: &str,
+    series: &str,
+    point: (i64, f64),
+) {
+    let (timestamp, value) = point;
+    let scope = h.scope(name, tenant);
+    let request = FamilyWriteRequest::time_series_batch(
+        TimeSeriesBatchWrite::try_new(
+            scope,
+            DocumentId::try_new(document).expect("valid identifier"),
+            series.to_owned(),
+            vec![TimeSeriesAppend::new(timestamp, vec![value], None)],
+            Vec::new(),
+            None,
+            ExpectedVersion::Any,
+            OperationId::try_new(operation).expect("valid operation"),
+            Deadline::after(std::time::Duration::from_secs(45)).expect("valid deadline"),
+            Cancellation::new(),
+        )
+        .expect("valid time-series batch"),
+    );
+    let range = super::lane::LANE_RANGE.to_owned();
+    let member_scope = h.scope(name, tenant);
+    h.member_mut(name)
+        .commit_family_write(&member_scope, &range, request)
+        .unwrap_or_else(|error| panic!("the family time-series batch commits: {error:?}"));
+}
+
+/// Reads one series' timestamps through one member's Engine family seam.
+fn family_time_series_read(
+    h: &LaneHarness,
+    name: &str,
+    tenant: &str,
+    document: &str,
+    series: &str,
+) -> Vec<i64> {
+    let scope = h.scope(name, tenant);
+    let engine = h.member(name).engine().expect("engine open");
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    let read = crate::families::TimeSeriesRead::try_new(
+        DocumentId::try_new(document).expect("valid identifier"),
+        series.to_owned(),
+        None,
+        Deadline::after(std::time::Duration::from_secs(45)).expect("valid deadline"),
+        Cancellation::new(),
+    )
+    .expect("valid series read");
+    let request = FamilyReadRequest::time_series_range(read);
+    let result = engine
+        .families()
+        .read(FamilyReadContext::new(scope, snapshot), request)
+        .expect("reads the series");
+    let FamilyReadResult::TimeSeriesPage(page) = result else {
+        panic!("expected a time-series page, got {result:?}");
+    };
+    page.entries().iter().map(crate::families::TimeSeriesEntry::timestamp).collect()
 }
