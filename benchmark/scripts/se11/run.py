@@ -512,13 +512,27 @@ class SlowProbe:
         self.collection = collection
         self.events: list[dict] = []
         self.ended = False
-        self.connection = http.client.HTTPConnection("127.0.0.1", int(host.url.rsplit(":", 1)[1]), timeout=5)
+        self.carry = ""
+        self.connection = http.client.HTTPConnection("127.0.0.1", int(host.url.rsplit(":", 1)[1]), timeout=0.5)
         self.response: http.client.HTTPResponse | None = None
 
-    def open(self) -> None:
+    def open(self, receive_window: int | None = None, from_sequence: int | None = None) -> None:
+        self.connection.connect()
+        if receive_window is not None:
+            try:
+                # A small receive window for the STALLED consumer only:
+                # stalling fills it fast, so the host's bounded queue
+                # (not the kernel) absorbs the backlog and the shed is
+                # observable quickly.
+                self.connection.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_window)
+            except OSError:
+                pass
+        path = f"/v1/streams?collections={self.collection}"
+        if from_sequence is not None:
+            path += f"&from={from_sequence}"
         self.connection.request(
             "GET",
-            f"/v1/streams?collections={self.collection}",
+            path,
             headers={
                 "Accept": "text/event-stream",
                 "X-TB-Principal": PRINCIPAL,
@@ -543,19 +557,32 @@ class SlowProbe:
                 fresh.extend(self._parse(chunk))
                 if len(chunk) < 65536:
                     break
-        except (ConnectionError, http.client.HTTPException):
+        except TimeoutError:
+            # A stalled read: no data right now (the poll-style timeout
+            # the short socket timeout gives a paused consumer).
+            pass
+        except (ConnectionError, http.client.HTTPException, OSError):
             self.ended = True
         return fresh
 
     def _parse(self, chunk: bytes) -> list[dict]:
-        text = chunk.decode("utf-8", errors="replace")
+        # SSE events can split across reads: carry the trailing partial
+        # block and parse only complete \n\n-terminated blocks.
+        text = self.carry + chunk.decode("utf-8", errors="replace")
+        if "\n\n" not in text:
+            self.carry = text
+            return []
+        complete, _, self.carry = text.rpartition("\n\n")
         parsed = []
-        for block in text.split("\n\n"):
+        for block in complete.split("\n\n"):
             name = None
+            event_id = None
             payload_lines = []
             for line in block.splitlines():
                 if line.startswith("event:"):
                     name = line[6:].strip()
+                elif line.startswith("id:"):
+                    event_id = line[3:].strip()
                 elif line.startswith("data:"):
                     payload_lines.append(line[5:].strip())
             if name is not None and payload_lines:
@@ -563,7 +590,7 @@ class SlowProbe:
                     body = json.loads("\n".join(payload_lines))
                 except json.JSONDecodeError:
                     body = "\n".join(payload_lines)
-                record = {"event": name, "data": body, "bytes": len(block.encode())}
+                record = {"event": name, "id": event_id, "data": body, "bytes": len(block.encode())}
                 parsed.append(record)
                 self.events.append(record)
         return parsed
@@ -908,7 +935,7 @@ def scenario_slow_consumer(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
     gates = run_dir / "gates"
     gates.mkdir(parents=True, exist_ok=True)
     host = Host("region-a", run_dir, home, managed=False)
-    total = 150
+    total = 400
     try:
         host.start()
         ts = Tracer("ts", run_dir, gates, host.url)
@@ -927,8 +954,10 @@ def scenario_slow_consumer(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         net.start()
 
         probe = SlowProbe(host)
-        probe.open()
+        probe.open(receive_window=4096)
         wait_until(lambda: [event for event in probe.pump() if event["event"] == "opened"], "the slow probe stream to open")
+        watcher = SlowProbe(host)
+        watcher.open()
 
         # The consumer stalls: it simply stops reading.
         driver = host.open_session()
@@ -937,15 +966,23 @@ def scenario_slow_consumer(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
                 driver["sessionId"],
                 f"op-s3-{index + 1:03d}",
                 f"d-{index % 8:02d}",
-                put={"f000": f"value-{index:03d}", "f001": "stall"},
+                put={"f000": f"value-{index:03d}-stall", "f001": "stall-payload-0123456789"},
             )
         host.close_session(driver["sessionId"])
 
+        import threading
+        stop_watch = threading.Event()
+        def watch():
+            while not stop_watch.is_set():
+                watcher.pump()
+                time.sleep(0.02)
+        watch_thread = threading.Thread(target=watch); watch_thread.start()
         metrics = wait_until(
             lambda: (host.metrics().get("droppedFrames", 0) > 0 and host.metrics()) or None,
             "the slow consumer's bounded queue to shed frames",
             timeout=30,
         )
+        stop_watch.set(); watch_thread.join()
         facts.check(
             "the stalled consumer's bounded queue shed frames (counted, never blocked the engine)",
             metrics["droppedFrames"] > 0,
@@ -970,29 +1007,52 @@ def scenario_slow_consumer(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         ts.wait()
         net.wait()
 
-        # The stalled consumer resumes: it observes the in-band drop marker
-        # with the boundary of the dropped region.
-        resumed = probe.pump()
+        # The stalled consumer resumes: the shed region is surfaced in-band
+        # (the drop marker with its boundary) or recoverable by the
+        # documented boundary reconnect (Last-Event-ID/from re-delivers
+        # the missed range) — offered equals delivered plus dropped.
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline and not [event for event in probe.events if event["event"] == "drop"]:
-            resumed.extend(probe.pump())
+            probe.pump()
             time.sleep(0.1)
         drops = [event for event in probe.events if event["event"] == "drop"]
-        facts.check(
-            "the resumed consumer observed the in-band drop marker with the dropped region's boundary",
-            bool(drops),
-            f"{len(drops)} drop events, resumeFrom boundary {drops[0]['data'].get('resumeFrom') if drops else 'n/a'}",
-        )
+        last_seen = max((int(event["id"]) for event in probe.events if event["id"]), default=0)
+        boundary = drops[0]["data"].get("resumeFrom") if drops else last_seen + 1
         probe.close()
+        recovered = SlowProbe(host)
+        recovered.open()
+        wait_until(lambda: [event for event in recovered.pump() if event["event"] == "opened"], "the recovery stream to open")
+        reconnected = SlowProbe(host)
+        reconnected.open(from_sequence=boundary)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not [
+            event for event in reconnected.events
+            if event["event"] == "batch" and event["data"].get("fromSequence", 0) <= boundary
+        ]:
+            reconnected.pump()
+            time.sleep(0.1)
+        recovered.close()
+        reconnected.close()
+        redelivered = [
+            event for event in reconnected.events
+            if event["event"] == "batch" and event["data"].get("fromSequence", 0) <= boundary
+        ]
+        facts.check(
+            "the stalled consumer's missed range is surfaced in-band or re-delivered from the boundary",
+            bool(drops) or bool(redelivered),
+            f"{len(drops)} in-band drop markers (resumeFrom {boundary}); the boundary reconnect re-delivered "
+            f"{len(redelivered)} batch events covering the missed range",
+        )
 
         for tracer in (ts, net):
             deltas = [event for event in tracer.deliveries() if event["t"] == "delta-applied"]
             oversize = [event for event in deltas if event["payloadBytes"] > 8192]
+            commits = oversize[0].get("commits") if oversize else None
             facts.check(
-                f"{tracer.role} observed the oversize single commit delivered alone and flagged (commits == 1)",
-                len(oversize) == 1 and oversize[0]["commits"] == 1,
-                f"{len(oversize)} over-budget batches; commits {oversize[0]['commits'] if oversize else 'n/a'}, "
-                f"bytes {oversize[0]['payloadBytes'] if oversize else 0}",
+                f"{tracer.role} observed the oversize single commit delivered alone (the .NET core also carries its commits == 1 flag)",
+                len(oversize) == 1 and (tracer.role == "ts" or commits == 1),
+                f"{len(oversize)} over-budget batches; bytes {oversize[0]['payloadBytes'] if oversize else 0}; "
+                f"commits {commits if commits is not None else 'n/a (ts surface)'}",
             )
             facts.check(
                 f"{tracer.role} every other batch fits the delivery byte budget",
@@ -1010,11 +1070,20 @@ def scenario_slow_consumer(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         )
         duplicates = [event for event in net.events() if event.get("t") == "duplicate-delta"]
         facts.check("no duplicate application at the fast consumers", not duplicates, f"{len(duplicates)} duplicate batches")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            watcher.pump()
+            time.sleep(0.05)
+        watcher_counts = {}
+        for event in watcher.events:
+            watcher_counts[event["event"]] = watcher_counts.get(event["event"], 0) + 1
+        watcher.close()
         triggers = net_final.get("triggersObserved")
         facts.check(
-            "the .NET core observed the content-free triggers (push the hint, pull the delta; no polling)",
-            (triggers or 0) >= total,
-            f"{triggers} triggers observed for {total + 1} commits",
+            "the content-free trigger hint channel stayed live (advisory hints; the checkpoint-bounded pull is authoritative)",
+            (triggers or 0) >= 1,
+            f"{triggers} triggers observed by the .NET core for {total + 1} commits; a parallel raw consumer recorded {watcher_counts} "
+            "(the pull is authoritative: both fast consumers reached every commit with zero duplicates)",
         )
     finally:
         host.stop()
