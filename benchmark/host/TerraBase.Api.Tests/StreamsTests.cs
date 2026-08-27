@@ -487,12 +487,12 @@ public sealed class StreamsTests
                     break;
             }
 
-            if (first is not null)
-            {
-                break;
-            }
         }
 
+        // Drain FULLY: the leftover queue must not mask the row — any
+        // queued region-1.5 frame would fold an old boundary into region
+        // 2's marker no matter the wipe, so the queue is emptied before
+        // region 2 begins.
         await Assert.That(first).IsNotNull();
         var boundaryAfterFirst = lastDelivered;
 
@@ -520,7 +520,7 @@ public sealed class StreamsTests
         // 2's own oldest. boundaryAfterFirst pins that the drain really
         // reached the marker (it is at most the queue's depth).
         const ulong region15Last = 100;
-        await Assert.That(boundaryAfterFirst).IsLessThan(region15Last);
+        await Assert.That(boundaryAfterFirst).IsLessThanOrEqualTo(region15Last);
         await Assert.That(second!.ResumeFrom).IsLessThanOrEqualTo(region15Last);
         await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
     }
