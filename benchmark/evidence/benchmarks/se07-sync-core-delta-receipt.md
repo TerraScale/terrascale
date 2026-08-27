@@ -144,3 +144,14 @@ the release run). Green at the repaired source:
   value of 1 stands for both (the dev-profile adapter prints the same
   `E-10: seal+encode allocations: 1 (samples [1, 1, 1, 1, 1]), 587 wire
   bytes`).
+
+## Objective status (canonical line, added by SE-15)
+
+PostgreSQL-parity-or-better: inconclusive
+
+Added by the SE-15 standing objective-status discipline
+(PD-2026-08-26-03 D3, TerraScale/TerraBaseV2#23) so this receipt carries
+the machine-checkable status line `scripts/check_benchmark_receipts.py`
+fails closed on. No measured value, verdict, or note above is altered: the
+SE-07 runs measured deterministic counters only, so the objective question
+is unanswerable from them until the reference baselines exist and run.
