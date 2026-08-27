@@ -67,13 +67,15 @@ public sealed class HostHarness : IAsyncDisposable
     /// <param name="body">The request body, or <c>null</c> for none.</param>
     /// <param name="idempotencyKey">The idempotency key, when the operation is a mutation.</param>
     /// <param name="method">The method; the default is GET without a body and POST with one.</param>
+    /// <param name="expected">The expected-version conditional header, when the row maps one.</param>
     /// <returns>The status and the parsed JSON document.</returns>
     public static async Task<(int Status, JsonDocument Body)> SendAsync(
         HttpClient client,
         string path,
         object? body = null,
         string? idempotencyKey = null,
-        string? method = null)
+        string? method = null,
+        string? expected = null)
     {
         using var request = new HttpRequestMessage(
             method is null ? (body is null ? HttpMethod.Get : HttpMethod.Post) : new HttpMethod(method),
@@ -86,6 +88,11 @@ public sealed class HostHarness : IAsyncDisposable
         if (idempotencyKey is not null)
         {
             request.Headers.Add("Idempotency-Key", idempotencyKey);
+        }
+
+        if (expected is not null)
+        {
+            request.Headers.Add("X-TB-Expected", expected);
         }
 
         using var answer = await client.SendAsync(request).ConfigureAwait(false);

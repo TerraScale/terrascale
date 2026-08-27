@@ -224,6 +224,159 @@ public sealed class StreamsTests
         await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// A full bounded queue sheds the OLDEST queued frame, never the
+    /// incoming one: the frame that triggered the shed lands in the freed
+    /// slot and is delivered — a bounded queue may shed load, never lose
+    /// the frame it just accepted uncounted.
+    /// </summary>
+    [Test]
+    public async Task TheIncomingFrameSurvivesAFullQueue()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        // Nothing consumes the stream while the journal runs ahead: the
+        // queue (depth 64) fills and sheds.
+        var stream = await host.Hub.OpenAsync("tenant-a", "backend-operator", null, fromSequence: 1);
+        const int writes = 40;
+        for (var index = 1; index <= writes; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"d-{index:D3}", $"op-{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        await Assert.That(stream.Dropped).IsGreaterThan(0);
+        var delivered = new List<StreamEvent>();
+        while (await stream.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
+        {
+            delivered.Add(frame);
+        }
+
+        // The frames offered last — into a full queue — survive: the
+        // newest committed batch and its trigger reach the consumer.
+        var batches = delivered.OfType<StreamEvent.Batch>().SelectMany(batch => batch.Body.Events.Select(@event => @event.Sequence));
+        await Assert.That(batches).Contains((ulong)writes);
+        var triggers = delivered.OfType<StreamEvent.Trigger>().Select(trigger => trigger.Body.Sequence);
+        await Assert.That(triggers).Contains((ulong)writes);
+        await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The drop accounting is exact: every offered frame is either
+    /// delivered to the consumer or counted as dropped — offered equals
+    /// delivered plus dropped, never less (an uncounted loss).
+    /// </summary>
+    [Test]
+    public async Task EveryOfferedFrameIsDeliveredOrCountedExactly()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        // The journal is empty at subscribe (no replay batch): every
+        // write offers exactly one batch and one trigger, and nothing
+        // else is ever offered on this stream.
+        var stream = await host.Hub.OpenAsync("tenant-a", "backend-operator", null, fromSequence: 1);
+        const int writes = 80;
+        for (var index = 1; index <= writes; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"d-{index:D3}", $"op-{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        long deliveredFrames = 0;
+        while (await stream.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
+        {
+            // Markers are surfaced bookkeeping, not offered frames.
+            if (frame is not StreamEvent.Dropped)
+            {
+                deliveredFrames++;
+            }
+        }
+
+        const ulong offered = 2 * (ulong)writes;
+        await Assert.That(stream.Dropped).IsGreaterThan(0);
+        await Assert.That((ulong)deliveredFrames + (ulong)stream.Dropped).IsEqualTo(offered);
+        await Assert.That(host.Hub.DroppedTotal).IsEqualTo(stream.Dropped);
+        await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The in-band drop marker carries the boundary of the dropped
+    /// region — the oldest sequence actually dropped (the gap start) —
+    /// and a reconnect from that boundary re-delivers the missed range:
+    /// the surfaced resume point never erases the gap.
+    /// </summary>
+    [Test]
+    public async Task APostDropReconnectRedeliversTheMissedRange()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        var stream = await host.Hub.OpenAsync("tenant-a", "backend-operator", null, fromSequence: 1);
+        const int writes = 80;
+        for (var index = 1; index <= writes; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"d-{index:D3}", $"op-{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        var deliveredSequences = new HashSet<ulong>();
+        StreamEvent.Dropped? drop = null;
+        while (await stream.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
+        {
+            switch (frame)
+            {
+                case StreamEvent.Batch batch:
+                    foreach (var @event in batch.Body.Events)
+                    {
+                        deliveredSequences.Add(@event.Sequence);
+                    }
+
+                    break;
+                case StreamEvent.Trigger trigger:
+                    deliveredSequences.Add(trigger.Body.Sequence);
+                    break;
+                case StreamEvent.Dropped marker:
+                    drop ??= marker;
+                    break;
+            }
+        }
+
+        var offered = Enumerable.Range(1, writes).Select(sequence => (ulong)sequence).ToHashSet();
+        var missing = offered.Except(deliveredSequences).ToArray();
+        await Assert.That(missing).IsNotEmpty();
+        await Assert.That(drop).IsNotNull();
+
+        // The marker's boundary is the oldest sequence actually dropped.
+        await Assert.That(drop!.ResumeFrom).IsEqualTo(missing.Min());
+
+        // The reconnect from the surfaced boundary re-delivers the missed
+        // range (at-least-once): nothing the consumer missed is skipped.
+        var reconnect = await host.Hub.OpenAsync("tenant-a", "backend-operator", null, fromSequence: drop.ResumeFrom);
+        var replayed = new HashSet<ulong>();
+        while (await reconnect.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
+        {
+            if (frame is StreamEvent.Batch batch)
+            {
+                foreach (var @event in batch.Body.Events)
+                {
+                    replayed.Add(@event.Sequence);
+                }
+            }
+        }
+
+        await Assert.That(replayed.IsSupersetOf(missing)).IsTrue();
+        await host.Hub.CloseAsync(reconnect, reason: "test-complete").ConfigureAwait(false);
+        await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
+    }
+
     /// <summary>Acknowledging a stream records the consumer's checkpoint with the engine.</summary>
     [Test]
     public async Task AcknowledgingAStreamRecordsTheCheckpoint()

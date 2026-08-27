@@ -50,11 +50,25 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
     /// <summary>Every request kind the engine received, with its bound tenant (the gate proof: refused callers never appear).</summary>
     public ConcurrentQueue<string> Received { get; } = [];
 
+    /// <summary>
+    /// The expected-version conditional of every write and delete the
+    /// engine received, rendered with its bound tenant (the conditional
+    /// mapping rider's proof surface).
+    /// </summary>
+    public ConcurrentQueue<string> WriteConditionals { get; } = [];
+
     /// <summary>The scripted document read answers, keyed by collection/document.</summary>
     public ConcurrentDictionary<string, DocumentBody> Documents { get; } = new();
 
     /// <summary>When set, the engine refuses every new binding (a draining engine).</summary>
     public bool Draining { get; set; }
+
+    /// <summary>
+    /// The delay before the engine answers a channel binding: a window
+    /// wide enough for two host callers to race the same first bind
+    /// deterministically (default: none).
+    /// </summary>
+    public TimeSpan BindDelay { get; set; }
 
     private async Task AcceptAsync(CancellationToken cancellationToken)
     {
@@ -132,6 +146,14 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                         continue;
                     }
 
+                    if (this.BindDelay > TimeSpan.Zero)
+                    {
+                        // The deterministic first-bind race window: the
+                        // answer stays outstanding long enough for a
+                        // second caller to reach the same channel.
+                        await Task.Delay(this.BindDelay).ConfigureAwait(false);
+                    }
+
                     tenant = body.Tenant;
                     await this.AnswerAsync(
                         stream,
@@ -170,6 +192,7 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                 case "DocumentWriteRequest":
                 {
                     var body = MessagePackSerializer.Deserialize<DocumentWriteRequest>(request.Body, TbepOptions.Strict);
+                    this.WriteConditionals.Enqueue($"{tenant}:write:{Render(body.Expected)}");
                     var sequence = this.Commit(tenant!, body.Document.Collection, body.OperationId, body.Document.Id);
                     this.Documents[$"{tenant}/{body.Document.Collection}/{body.Document.Id}"] = new DocumentBody
                     {
@@ -192,6 +215,7 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                 case "DocumentDeleteRequest":
                 {
                     var body = MessagePackSerializer.Deserialize<DocumentDeleteRequest>(request.Body, TbepOptions.Strict);
+                    this.WriteConditionals.Enqueue($"{tenant}:delete:{Render(body.Expected)}");
                     var sequence = this.Commit(tenant!, body.Collection, body.OperationId, body.Document);
                     this.Documents.TryRemove($"{tenant}/{body.Collection}/{body.Document}", out _);
                     await this.BroadcastAsync(tenant!, body.Collection, subscriptions, stream, writeGate).ConfigureAwait(false);
@@ -572,6 +596,23 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
             }
         }
     }
+
+    /// <summary>
+    /// Ends a session on the engine's own initiative (an idle expiry,
+    /// say) — the host hears nothing: no refusal, no generation loss.
+    /// </summary>
+    /// <param name="sessionId">The session the engine ends.</param>
+    public void ForgetSession(ulong sessionId) => this.sessionTenants.TryRemove(sessionId, out _);
+
+    /// <summary>Renders the expected-version conditional the engine received.</summary>
+    /// <param name="expected">The conditional of the write or delete.</param>
+    /// <returns>The rendered conditional.</returns>
+    private static string Render(ExpectedVersion expected) => expected.Variant switch
+    {
+        "Any" => "any",
+        "Exact" => $"exact:{(ulong)expected.Payload!}",
+        _ => "absent",
+    };
 
     private ulong Commit(string tenant, string collection, string operationId, string document)
     {

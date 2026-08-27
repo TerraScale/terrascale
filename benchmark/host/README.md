@@ -98,7 +98,7 @@ TERRABASE_HOST_URL=http://127.0.0.1:8420       # the loopback listener
 ```
 cd host
 dotnet run --project TerraBase.Api              # the host
-dotnet run --project TerraBase.Api.Tests        # the SE-08 family (73 rows)
+dotnet run --project TerraBase.Api.Tests        # the SE-08 family (80 rows)
 dotnet run --project TerraBase.Protocol.Tests   # the SE-14 conformance suite
 ```
 
@@ -121,10 +121,24 @@ first run compiles it once per worktree (`~1 minute` cold); set
   credentials).
 - `StreamsTests` — SSE/WebSocket parity, checkpoint replay and
   `Last-Event-ID` resume, collection filters, the bounded queue with
-  counted surfaced drops, the stream lifecycle.
+  counted surfaced drops (the incoming frame survives a shed; offered
+  equals delivered plus dropped, exactly; the drop marker carries the
+  dropped region's boundary and a reconnect from it re-delivers the
+  missed range), the stream lifecycle.
+- `ChannelBindingTests` — the first-bind discipline: concurrent first
+  callers of one tenant share one live channel (the late arrival adopts
+  the first bind's outcome; one bind, nothing disposed).
+- `EntryPointTests` — a failed startup owns everything it started: the
+  spawned managed engine process is killed and disposed.
 - `SyncSessionTests` — the session lifecycle end to end, retry
   receipts, typed composite rejections, checkpoint refusals with the
-  resync marker, fail-closed malformed resumes, ended-session answers.
+  resync marker, fail-closed malformed resumes, ended-session answers
+  (including the engine ending a session without a generation loss:
+  the host stops tracking it).
+- `TerraBase.Protocol.Tests` (the SE-14 suite) — the golden-vector
+  conformance rows plus the serving channel's error-routing contract:
+  an error for an abandoned call completes nothing; a causation-less
+  decode refusal fails the oldest pending call.
 - `RealEngineTests` — the real engine over UDS: binding and isolation,
   the typed operation refusals, real Loro delivery, retained-floor
   resync, real backbone streams with content-free triggers, graceful

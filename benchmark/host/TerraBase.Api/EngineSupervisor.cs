@@ -30,6 +30,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
     private readonly AuditLog audit;
     private readonly object gate = new();
     private readonly Dictionary<string, TbepChannel> tenantChannels = [];
+    private readonly SemaphoreSlim bindGate = new(1, 1);
     private readonly SemaphoreSlim recovery = new(1, 1);
     private readonly CancellationTokenSource stopped = new();
     private TbepChannel? adminChannel;
@@ -259,6 +260,11 @@ public sealed class EngineSupervisor : IAsyncDisposable
     /// <summary>
     /// Borrows the caller's tenant channel directly — for the
     /// subscription endpoints, whose sinks outlive the initiating call.
+    /// The first use of a channel binds it under the bind gate:
+    /// concurrent first callers queue there, and a late arrival adopts
+    /// the first bind's outcome — it never races a second bind onto the
+    /// same channel (the engine answers <c>AlreadyBound</c>) and never
+    /// disposes the live binding another caller is already serving on.
     /// </summary>
     /// <param name="tenant">The backend-supplied tenant.</param>
     /// <param name="principal">The backend-supplied principal.</param>
@@ -275,22 +281,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
 
         while (true)
         {
-            TbepChannel channel;
-            lock (this.gate)
-            {
-                if (this.disposed)
-                {
-                    throw new ObjectDisposedException(nameof(EngineSupervisor));
-                }
-
-                if (!this.tenantChannels.TryGetValue(tenant, out channel!) || channel.IsClosed)
-                {
-                    this.tenantChannels.Remove(tenant);
-                    channel = TbepChannel.Connect(this.Options.SocketPath);
-                    this.tenantChannels[tenant] = channel;
-                }
-            }
-
+            var channel = this.EnsureChannel(tenant);
             if (channel.Tenant == tenant)
             {
                 return channel;
@@ -304,33 +295,80 @@ public sealed class EngineSupervisor : IAsyncDisposable
                 continue;
             }
 
+            await this.bindGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                await channel.BindChannelAsync(principal, tenant, cancellationToken).ConfigureAwait(false);
+                var current = this.EnsureChannel(tenant);
+                if (!ReferenceEquals(current, channel))
+                {
+                    // The channel this caller saw left the map while it
+                    // waited (a failed bind discards it): whoever removed
+                    // it owns its disposal — continue on the current one.
+                    channel = current;
+                }
+
+                if (channel.Tenant == tenant)
+                {
+                    // The first bind completed while this caller waited:
+                    // adopt its outcome.
+                    return channel;
+                }
+
+                try
+                {
+                    await channel.BindChannelAsync(principal, tenant, cancellationToken).ConfigureAwait(false);
+                }
+                catch (TbepException failure) when (failure.Code is not null)
+                {
+                    // The engine refused the binding itself (a draining
+                    // engine refuses every new binding): the typed refusal
+                    // propagates and the unbound channel is discarded — the
+                    // fail-closed binding rule of PD-2026-08-26-11 D1.
+                    await this.RemoveChannelAsync(tenant, channel).ConfigureAwait(false);
+                    throw;
+                }
+                catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException)
+                {
+                    await this.RemoveChannelAsync(tenant, channel).ConfigureAwait(false);
+                    await this.LoseEngineAsync(failure.Message).ConfigureAwait(false);
+                    continue;
+                }
+
+                this.audit.Record(
+                    AuditKind.ChannelBound,
+                    tenant,
+                    principal,
+                    operation: "channel.bind",
+                    outcome: AuditOutcome.Accepted,
+                    detail: $"generation {this.Generation}");
+                return channel;
             }
-            catch (TbepException failure) when (failure.Code is not null)
+            finally
             {
-                // The engine refused the binding itself (a draining
-                // engine refuses every new binding): the typed refusal
-                // propagates and the unbound channel is discarded — the
-                // fail-closed binding rule of PD-2026-08-26-11 D1.
-                await this.RemoveChannelAsync(tenant, channel).ConfigureAwait(false);
-                throw;
+                this.bindGate.Release();
             }
-            catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException)
+        }
+    }
+
+    /// <summary>Returns the tenant's tracked live channel, connecting a fresh one when there is none.</summary>
+    /// <param name="tenant">The backend-supplied tenant.</param>
+    /// <returns>The channel to bind or serve on.</returns>
+    private TbepChannel EnsureChannel(string tenant)
+    {
+        lock (this.gate)
+        {
+            if (this.disposed)
             {
-                await this.RemoveChannelAsync(tenant, channel).ConfigureAwait(false);
-                await this.LoseEngineAsync(failure.Message).ConfigureAwait(false);
-                continue;
+                throw new ObjectDisposedException(nameof(EngineSupervisor));
             }
 
-            this.audit.Record(
-                AuditKind.ChannelBound,
-                tenant,
-                principal,
-                operation: "channel.bind",
-                outcome: AuditOutcome.Accepted,
-                detail: $"generation {this.Generation}");
+            if (!this.tenantChannels.TryGetValue(tenant, out var channel) || channel.IsClosed)
+            {
+                this.tenantChannels.Remove(tenant);
+                channel = TbepChannel.Connect(this.Options.SocketPath);
+                this.tenantChannels[tenant] = channel;
+            }
+
             return channel;
         }
     }
@@ -461,6 +499,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
 
         await this.CloseChannelsAsync().ConfigureAwait(false);
         this.Sessions.Clear();
+        this.bindGate.Dispose();
         this.recovery.Dispose();
         this.stopped.Dispose();
     }

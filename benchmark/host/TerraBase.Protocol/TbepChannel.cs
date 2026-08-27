@@ -540,7 +540,11 @@ public sealed class TbepChannel : IAsyncDisposable
         // order, so the oldest still-pending call is the refused one —
         // the refusal surfaces to that caller as its typed error, never
         // as a hang; the connection stays usable for the next frame.
-        if (frame.Kind == TbepRegistry.KindCode("Error"))
+        // An error frame with a NON-zero causation the host does not
+        // track answers a call the caller already abandoned (canceled):
+        // it completes nothing — a live call must never receive another
+        // call's error.
+        if (frame.Kind == TbepRegistry.KindCode("Error") && frame.Causation == 0)
         {
             TaskCompletionSource<TbepWire.Frame>? refused = null;
             lock (this.gate)

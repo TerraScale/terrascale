@@ -121,6 +121,46 @@ public sealed class GateTests
         await Assert.That(host.Audit.Recent(16).Count(record => record.Kind == AuditKind.ScopeRefused)).IsEqualTo(6);
     }
 
+    /// <summary>
+    /// The expected-version conditional rider (PD-2026-08-26-14 D1): the
+    /// <c>X-TB-Expected</c> header maps onto every wire conditional —
+    /// <c>any</c>, an exact version, and (absent or not a conditional)
+    /// absent — on both the write and the delete path.
+    /// </summary>
+    [Test]
+    public async Task TheExpectedVersionConditionalMapsEveryHeaderCase()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+        var body = new { @string = "body" };
+
+        // Every conditional case of the mapping, on the write path.
+        var (any, _) = await HostHarness.SendAsync(caller, "/v1/documents/orders/e-any", body, idempotencyKey: "op-e-any", method: "PUT", expected: "any");
+        await Assert.That(any).IsEqualTo(200);
+        var (exact, _) = await HostHarness.SendAsync(caller, "/v1/documents/orders/e-exact", body, idempotencyKey: "op-e-exact", method: "PUT", expected: "7");
+        await Assert.That(exact).IsEqualTo(200);
+        var (absent, _) = await HostHarness.SendAsync(caller, "/v1/documents/orders/e-absent", body, idempotencyKey: "op-e-absent", method: "PUT");
+        await Assert.That(absent).IsEqualTo(200);
+        var (notAConditional, _) = await HostHarness.SendAsync(caller, "/v1/documents/orders/e-garbage", body, idempotencyKey: "op-e-garbage", method: "PUT", expected: "latest");
+        await Assert.That(notAConditional).IsEqualTo(200);
+
+        // And on the delete path: the exact conditional maps there too.
+        var (delete, _) = await HostHarness.SendAsync(caller, "/v1/documents/orders/e-any", idempotencyKey: "op-e-delete", method: "DELETE", expected: "3");
+        await Assert.That(delete).IsEqualTo(200);
+
+        // The engine received exactly the mapped conditionals, in order.
+        await Assert.That(engine.WriteConditionals.ToArray()).IsEquivalentTo(
+        [
+            "tenant-a:write:any",
+            "tenant-a:write:exact:7",
+            "tenant-a:write:absent",
+            "tenant-a:write:absent",
+            "tenant-a:delete:exact:3",
+        ]);
+    }
+
     /// <summary>Mutations without a valid idempotency key are refused at the host (the wire would refuse them too).</summary>
     [Test]
     public async Task MutationsRequireAValidIdempotencyKey()

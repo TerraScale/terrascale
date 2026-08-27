@@ -91,8 +91,12 @@ public sealed class SupervisionTests
             "the engine loss to be audited");
 
         // Within the bounded policy the host recovers: a fresh engine
-        // generation serves again.
-        await WaitUntilAsync(async () => (await HealthOf(host)).Status == 200, "the engine generation to recover");
+        // generation serves again. (The wait is on the restart itself,
+        // not just health: a probe that lands before the loss surfaces
+        // answers 200 of the dying generation.)
+        await WaitUntilAsync(
+            async () => host.Supervisor.Restarts == 1 && (await HealthOf(host)).Status == 200,
+            "the engine generation to recover");
         await Assert.That(host.Supervisor.Generation).IsEqualTo(generation + 1);
         await Assert.That(host.Supervisor.Restarts).IsEqualTo(1);
 
@@ -195,9 +199,13 @@ public sealed class SupervisionTests
         var host = await HostHarness.StartAsync(await OptionsAsync(maxRestarts: 1));
         await using var _ = host;
 
-        // First loss: one restart within the policy.
+        // First loss: one restart within the policy. (The wait is on the
+        // restart itself, not just health: a probe that lands before the
+        // loss surfaces answers 200 of the dying generation.)
         host.Supervisor.EngineProcess!.Kill(entireProcessTree: true);
-        await WaitUntilAsync(async () => (await HealthOf(host)).Status == 200, "the first restart");
+        await WaitUntilAsync(
+            async () => host.Supervisor.Restarts == 1 && (await HealthOf(host)).Status == 200,
+            "the first restart");
         await Assert.That(host.Supervisor.Restarts).IsEqualTo(1);
 
         // Second loss: the budget is spent; no further restart.

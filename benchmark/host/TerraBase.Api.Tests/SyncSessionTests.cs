@@ -202,6 +202,44 @@ public sealed class SyncSessionTests
         await Assert.That(body.RootElement.GetProperty("code").GetString()).IsEqualTo("checkpoint-refused");
     }
 
+    /// <summary>
+    /// The engine ending a session on its own (no generation loss the
+    /// host would hear) stops the host's tracking: the refusal that
+    /// proves it is not live removes it — nothing lingers as a session
+    /// the host no longer owns.
+    /// </summary>
+    [Test]
+    public async Task AnEngineEndedSessionStopsBeingTracked()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+        var (sessionId, checkpoint) = await OpenSessionAsync(caller);
+        await Assert.That(host.Supervisor.Sessions.ContainsKey(sessionId)).IsTrue();
+
+        // The engine ends the session itself (an idle expiry, say): no
+        // refusal, no engine-generation loss — the host hears nothing.
+        engine.ForgetSession(sessionId);
+
+        // The next lifecycle frame is the engine's typed refusal —
+        // unknown, not cross-tenant — and the host stops tracking the
+        // session it now knows is not live on the engine.
+        var (ended, endedBody) = await HostHarness.SendAsync(
+            caller,
+            $"/v1/sync/sessions/{sessionId}/delta",
+            new { from = Convert.ToBase64String(checkpoint) });
+        await Assert.That(ended).IsEqualTo(410);
+        await Assert.That(endedBody.RootElement.GetProperty("code").GetString()).IsEqualTo("session-ended");
+        await Assert.That(host.Supervisor.Sessions.ContainsKey(sessionId)).IsFalse();
+
+        // The registry answers truthfully too: the session is gone, not
+        // lingering as live state the engine already ended.
+        var (listing, listingBody) = await HostHarness.SendAsync(caller, "/v1/sync/sessions");
+        await Assert.That(listing).IsEqualTo(200);
+        await Assert.That(listingBody.RootElement.EnumerateArray().Count()).IsEqualTo(0);
+    }
+
     /// <summary>A session id this host does not track is answered as ended, without touching the engine.</summary>
     [Test]
     public async Task AnUntrackedSessionIsAnsweredAsEndedWithoutTouchingTheEngine()

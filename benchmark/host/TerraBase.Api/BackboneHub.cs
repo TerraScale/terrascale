@@ -14,9 +14,12 @@ using TerraBase.Protocol;
 /// every notification the engine streams — ordered batches, the
 /// content-free triggers of PD-2026-08-26-13 D3, and the close frame —
 /// lands in one bounded queue. A consumer that falls a full depth
-/// behind drops the oldest queued frame; the drop is counted and
-/// surfaced in the stream itself and in the host metrics, with the
-/// sequence the consumer must resume from.
+/// behind sheds the OLDEST queued frames: the incoming frame always
+/// lands in the freed slot, and every frame actually lost is counted
+/// and surfaced in the stream itself and in the host metrics. The
+/// in-band drop marker carries the boundary of the dropped region —
+/// the oldest sequence actually dropped, the gap start — never the
+/// newest, so the surfaced resume point cannot erase the gap.
 /// </summary>
 public sealed class BackboneHub
 {
@@ -174,15 +177,16 @@ public sealed class BackboneHub
             stream.Principal,
             operation: "stream.queue",
             outcome: AuditOutcome.Noted,
-            detail: $"subscription {stream.SubscriptionId} dropped a frame at depth {QueueDepth}");
+            detail: $"subscription {stream.SubscriptionId} dropped a frame at the queue bound {QueueDepth}");
     }
 }
 
 /// <summary>
 /// One open backbone stream of the hub: the registered TBEP sink and
-/// the bounded queue the SSE/WebSocket endpoint drains. Frames are
-/// dropped (oldest first, counted, surfaced) only when the consumer
-/// falls a full depth behind.
+/// the bounded queue the SSE/WebSocket endpoint drains. Only a consumer
+/// that falls a full depth behind sheds frames — oldest first, every
+/// shed frame counted, the drop surfaced in-band and in the metrics —
+/// and the frame that triggered the shed always lands.
 /// </summary>
 public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
 {
@@ -191,6 +195,9 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
         new BoundedChannelOptions(BackboneHub.QueueDepth) { SingleReader = true, SingleWriter = false });
     private long dropped;
     private ulong lastSequence;
+    private ulong gapStart;
+    private bool markerQueued;
+    private bool completing;
 
     internal BackboneStream(BackboneHub hub, ulong subscriptionId, string tenant, string[]? collections)
     {
@@ -228,7 +235,18 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
     {
         if (await this.queue.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            return await this.queue.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+            var frame = await this.queue.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+            if (frame is StreamEvent.Dropped)
+            {
+                // The marker reached its consumer: the dropped region it
+                // describes is surfaced, and the next region starts fresh.
+                // (The unsynchronized reset is a benign race — the count,
+                // not the marker, is the accounting of record.)
+                Volatile.Write(ref this.markerQueued, false);
+                Volatile.Write(ref this.gapStart, 0ul);
+            }
+
+            return frame;
         }
 
         return null;
@@ -259,6 +277,7 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
             this.Offer(new StreamEvent.GenerationLost());
         }
 
+        Volatile.Write(ref this.completing, true);
         this.queue.Writer.TryComplete();
     }
 
@@ -269,19 +288,114 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
             return;
         }
 
-        // A full bounded queue drops the oldest queued frame to take this
-        // one; the drop is counted, surfaced in-band (the resume point it
-        // implies), audited, and summed into the host metrics — never
-        // hidden, never unbounded.
-        Interlocked.Increment(ref this.dropped);
-        this.hub.OnDrop(this);
-        if (this.queue.Reader.TryRead(out _))
+        if (Volatile.Read(ref this.completing))
         {
-            this.queue.Writer.TryWrite(new StreamEvent.Dropped(this.LastSequence));
+            // The stream ended under this offer: the frame cannot be
+            // delivered — it is counted, never lost silently.
+            this.ShedFrame();
+            return;
         }
 
-        this.queue.Writer.TryWrite(frame);
+        // A full bounded queue sheds the OLDEST queued frames to take
+        // this one — the incoming frame always lands in the freed slot,
+        // never the frame the queue just accepted responsibility for.
+        // Every shed frame is counted, audited, and summed into the
+        // host metrics: offered equals delivered plus dropped, exactly.
+        while (!this.queue.Writer.TryWrite(frame))
+        {
+            if (!this.queue.Reader.TryRead(out var oldest))
+            {
+                // The queue completed under this offer: the frame cannot
+                // be delivered — count it.
+                this.ShedFrame();
+                return;
+            }
+
+            this.Shed(oldest);
+        }
+
+        if (Volatile.Read(ref this.markerQueued))
+        {
+            // An unsurfaced marker is already queued and carries the
+            // oldest not-yet-surfaced boundary: one marker per dropped
+            // region, coalesced.
+            return;
+        }
+
+        // The drop is surfaced in-band: the marker carries the boundary
+        // of the dropped region. Its slot is shed the same way — the
+        // marker never evicts a frame uncounted.
+        while (!this.queue.Writer.TryWrite(new StreamEvent.Dropped(Volatile.Read(ref this.gapStart))))
+        {
+            if (!this.queue.Reader.TryRead(out var oldest))
+            {
+                return;
+            }
+
+            this.Shed(oldest);
+        }
+
+        Volatile.Write(ref this.gapStart, 0ul);
+        Volatile.Write(ref this.markerQueued, true);
     }
+
+    /// <summary>Sheds one queued item: a frame is counted and folds its gap boundary; a marker only folds.</summary>
+    /// <param name="item">The shed queue item.</param>
+    private void Shed(StreamEvent item)
+    {
+        if (item is StreamEvent.Dropped dropped)
+        {
+            // A shed marker is not engine data and never counts as a
+            // dropped frame; its unsurfaced gap boundary folds forward
+            // into the next marker.
+            this.FoldGap(dropped.ResumeFrom);
+            Volatile.Write(ref this.markerQueued, false);
+            return;
+        }
+
+        this.ShedFrame();
+        this.FoldGap(FirstSequenceOf(item));
+    }
+
+    private void ShedFrame()
+    {
+        Interlocked.Increment(ref this.dropped);
+        this.hub.OnDrop(this);
+    }
+
+    /// <summary>Folds a boundary into the tracked gap, keeping the oldest (the start of the dropped region).</summary>
+    /// <param name="sequence">The boundary to fold.</param>
+    private void FoldGap(ulong sequence)
+    {
+        if (sequence == 0)
+        {
+            return;
+        }
+
+        while (true)
+        {
+            var current = Volatile.Read(ref this.gapStart);
+            if (current != 0 && current <= sequence)
+            {
+                return;
+            }
+
+            if (Interlocked.CompareExchange(ref this.gapStart, sequence, current) == current)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>The first sequence of a frame: the boundary a shed of it opens (0 when the frame carries none).</summary>
+    /// <param name="frame">The frame.</param>
+    /// <returns>The frame's oldest sequence, or 0.</returns>
+    private static ulong FirstSequenceOf(StreamEvent frame) => frame switch
+    {
+        StreamEvent.Batch batch => batch.Body.Events is { Length: > 0 } events ? events[0].Sequence : batch.Body.FromSequence,
+        StreamEvent.Trigger trigger => trigger.Body.Sequence,
+        _ => 0,
+    };
 }
 
 /// <summary>One frame of a backbone stream, in arrival order.</summary>
@@ -304,7 +418,17 @@ public abstract record StreamEvent
     public sealed record Closed(SubscriptionClosed Body) : StreamEvent;
 
     /// <summary>The bounded queue dropped a frame; the consumer resumes from the carried sequence.</summary>
-    /// <param name="ResumeFrom">The last sequence still served before the drop.</param>
+    /// <param name="ResumeFrom">
+    /// The boundary of the dropped region: the oldest sequence actually
+    /// dropped — the gap start, never the newest sequence (which would
+    /// erase the gap). The consumer replays from its own checkpoint when
+    /// that checkpoint is older than this boundary; a checkpoint at or
+    /// past it cannot be trusted for the gap, so the consumer rewinds:
+    /// on reconnect it asks the engine for the inclusive replay start
+    /// <c>from</c> = <paramref name="ResumeFrom"/> (or sends
+    /// <c>Last-Event-ID</c> = <paramref name="ResumeFrom"/> - 1), and
+    /// the missed range is re-delivered, at-least-once.
+    /// </param>
     public sealed record Dropped(ulong ResumeFrom) : StreamEvent;
 
     /// <summary>The engine generation was lost; the consumer reconnects and resumes from its last sequence.</summary>

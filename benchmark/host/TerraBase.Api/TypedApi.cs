@@ -612,9 +612,14 @@ public sealed class TypedApi
                             }).ConfigureAwait(false);
                         break;
                     case StreamEvent.Dropped drop:
+                        // The event id is the consumer's safe checkpoint:
+                        // the last sequence still serveable without a
+                        // hole (one before the dropped region's boundary,
+                        // which the payload carries) — a reconnect with
+                        // that id re-delivers the missed range.
                         await writer(
                             "drop",
-                            drop.ResumeFrom,
+                            drop.ResumeFrom > 0 ? drop.ResumeFrom - 1 : 0,
                             new Dictionary<string, object?>
                             {
                                 ["subscriptionId"] = stream.SubscriptionId,
@@ -1123,6 +1128,22 @@ public sealed class TypedApi
             return Results.Json(
                 new ErrorDto("tenant-refused", $"the {kind} belongs to another tenant's channel"),
                 statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        if (kind == "session" && this.supervisor.Sessions.TryRemove(id, out var ended))
+        {
+            // The engine refused a lifecycle frame naming this session
+            // without the cross-tenant detail: the session is provably
+            // not live on the engine (ended there, without a generation
+            // loss the host would hear) — the host stops tracking it, so
+            // the registry never lingers state the engine already ended.
+            this.audit.Record(
+                AuditKind.SessionEndedByRestart,
+                caller.Tenant,
+                caller.Principal,
+                operation: "sync.session",
+                outcome: AuditOutcome.Noted,
+                detail: $"session {ended.SessionId} is not live on the engine");
         }
 
         return Results.Json(
