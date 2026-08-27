@@ -129,6 +129,13 @@ rather than a measurement of the engine.
 - The `session` workload's adapter slot: the TBEP UDS host session needs the
   C# host process beside the engine; the slot is declared in
   `Workload::driver_status` and names its owner.
+- The sync-path workload class's four adapter slots
+  (`sync-commit-to-delivery-latency`, `sync-delivery-throughput`,
+  `sync-bytes-on-wire`, `sync-trigger-notification-size` —
+  PD-2026-08-26-05 D4, PD-2026-08-26-13 D1): each is declared in
+  `Workload::driver_status` with its owner, mapped in the workload-mapping
+  document's sync-path class section, and recorded unrun-with-reason in
+  `se15-sync-path-workload-slots-receipt.md`.
 - A recorded run (not a commissioning trial) once the references exist,
   at V1's minimums: 1,000 seed documents, 10,000 operations per sample,
   5 samples.

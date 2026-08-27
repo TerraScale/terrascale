@@ -76,10 +76,16 @@ output at a lane run.
 - The run slot is a named deliverable with a named owner, recorded in the
   pin document and in the adapter's `REFERENCE_OWNER` constant.
 - The workload mapping, the fairness assumptions, the statistical gate, the
-  warm-up discipline, the recorded-run minimums, and the TerraBaseV2 side
-  of the lane are all implemented, tested, and run for real
-  (`se15-v2-lane-commissioning-receipt.md`). What is missing is exactly the
-  one thing this host cannot supply: a PostgreSQL server.
+  warm-up discipline, and the recorded-run minimums are implemented and
+  tested. Of the TerraBaseV2 side of the lane, the four CRUD-class
+  workloads (`read`, `write`, `query`, `mixed`) are implemented, tested,
+  and run for real (`se15-v2-lane-commissioning-receipt.md`); the `session`
+  workload is mapped with a declared open adapter slot; and the four
+  sync-path workloads (PD-2026-08-26-05 D4, PD-2026-08-26-13 D1) are
+  declared open slots recorded in
+  `se15-sync-path-workload-slots-receipt.md`. What is missing is exactly
+  the one thing this host cannot supply: a PostgreSQL server — plus, for
+  the open slots, their served-lane and comparison runs beside it.
 
 ## Validity notes
 
