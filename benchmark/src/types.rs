@@ -185,6 +185,13 @@ impl Document {
     pub(crate) fn set_version(&mut self, version: u64) {
         self.metadata = DocumentMetadata::with_version(version);
     }
+
+    /// Replaces the structured value in place, keeping identity, collection,
+    /// and metadata. Crate-only: the patch seam (GAP-D07) rewrites a read
+    /// document's value; every other write path constructs a new document.
+    pub(crate) fn set_value(&mut self, value: DocumentValue) {
+        self.value = value;
+    }
 }
 
 /// A requested upper bound for a typed operation.

@@ -4,4 +4,5 @@
 //! focused files in this directory are declared as modules here.
 
 mod document_metadata_contract;
+mod document_patch_contract;
 mod engine_public_construction;
