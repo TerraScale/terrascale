@@ -165,6 +165,24 @@ class BenchmarkReceiptDisciplineTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("no canonical objective-status line", result.stderr)
 
+    def test_a_receipt_that_is_not_utf8_fails_closed_with_a_named_problem(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self.receipt(temporary)
+            # A binary blob (here: UTF-16LE text with a byte-order mark,
+            # the shape a Windows editor leaves behind) is not a readable
+            # receipt. The checker must report it as a problem line in its
+            # own format — not crash with a decode traceback — while still
+            # failing closed. (Without the BOM the UTF-16 bytes would
+            # decode as NUL-interleaved UTF-8, which is a different,
+            # already-handled failure shape.)
+            path.write_bytes(
+                b"\xff\xfe" + "PostgreSQL-parity-or-better: met\n".encode("utf-16-le")
+            )
+            result = self.run_cli(path.parent)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("receipt is not valid UTF-8", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_a_receipt_root_with_no_receipts_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             empty = Path(temporary) / "benchmarks"

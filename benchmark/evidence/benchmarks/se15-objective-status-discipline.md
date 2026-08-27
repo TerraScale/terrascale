@@ -66,6 +66,8 @@ that is not auditable:
 - a status outside `met` / `not met` / `inconclusive` → fail;
 - a `verdict:` line outside the charter vocabulary → fail;
 - `not met` without a `regression follow-up owner:` line → fail;
+- a receipt that is not valid UTF-8 → fail, as a problem line in the
+  checker's own format rather than a decoder traceback;
 - a receipts directory with no receipts at all → fail, because that is the
   easiest way to make the discipline vacuously true.
 

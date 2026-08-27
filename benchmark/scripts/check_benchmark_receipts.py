@@ -21,7 +21,8 @@ Rules, one shape each:
 * a line beginning ``verdict:`` carries one of ``v2-faster``,
   ``no-improvement``, ``v2-regression``, ``inconclusive``;
 * a receipt whose status is ``not met`` also names a regression follow-up
-  owner on a line beginning ``regression follow-up owner:``.
+  owner on a line beginning ``regression follow-up owner:``;
+* a receipt that is not valid UTF-8 is a problem line, not a traceback.
 """
 
 from __future__ import annotations
@@ -70,7 +71,14 @@ def strip_fenced_blocks(text: str) -> tuple[str, str]:
 
 def check_receipt(path: Path, relative: str) -> list[str]:
     """Returns the problems with one receipt, empty when it is compliant."""
-    text = path.read_text(encoding="utf-8")
+    # Read bytes and decode defensively: a receipt some editor wrote in a
+    # non-UTF-8 encoding is an auditability problem like any other, and it
+    # must surface as this checker's problem-line output rather than as a
+    # UnicodeDecodeError traceback with the wrong diagnostic shape.
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        return [f"{relative}: receipt is not valid UTF-8"]
     scannable, _fenced = strip_fenced_blocks(text)
     problems: list[str] = []
 
