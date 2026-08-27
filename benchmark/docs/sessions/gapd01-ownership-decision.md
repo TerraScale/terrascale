@@ -129,12 +129,15 @@ New files only, plus one pre-existing-file edit:
   its write payloads (a field set, no contract change): the family stage
   seam requires a staged write's operation identity to equal the save
   transaction's, and the session owns that identity, so deferred commands
-  adopt it at save time. These are the only pre-existing files this ticket
-  touches. GAP-D02's in-flight files (`src/engine/mod.rs`,
-  `src/engine/metadata*.rs`, `tests/engine/*`, migration mapping) are
-  untouched; the session composes the existing public engine seams
-  (`Engine::read_snapshot`, `begin`, `Transaction`, `Engine::families`,
-  `Engine::streams`) and needs no engine edit.
+  adopt it at save time. *Amendment, recorded when implementation revealed
+  the family-stage operation-identity requirement — this bullet was added
+  after the families code, not written before it; everything above it is
+  the original before-code proposal.* These are the only pre-existing
+  files this ticket touches. GAP-D02's in-flight files
+  (`src/engine/mod.rs`, `src/engine/metadata*.rs`, `tests/engine/*`,
+  migration mapping) are untouched; the session composes the existing
+  public engine seams (`Engine::read_snapshot`, `begin`, `Transaction`,
+  `Engine::families`, `Engine::streams`) and needs no engine edit.
 
 Deferred by this record (recorded, not silently dropped): session exposure
 over TBEP frames and the C# host session API (SE-08 owns the host facade;

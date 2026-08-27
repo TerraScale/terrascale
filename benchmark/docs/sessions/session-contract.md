@@ -57,6 +57,14 @@ effects only exist through tracking.
   with the same id it will be overwritten" (`Session/IDocumentSession.cs`).
 - `store_new(collection, id, value)` stages a create (`ExpectedVersion::New`)
   — V1's forced-concurrency store for ids it could not extract.
+- `store_checked(collection, id, value, expected)` stages the put with an
+  explicit expected version — V1 `Store(entity, changeVector, id)` sets the
+  change vector and forces the concurrency check
+  (`InMemoryDocumentSessionOperations.cs:818-829`). The staged expectation is
+  **last-write-wins session state**: a later `store`/`store_checked` on the
+  same key replaces it (tracked or pending-put path alike), and a successful
+  save consumes it — the re-based document saves unchecked again until a new
+  checked store records one.
 - Storing into a tracked document updates `current`; nothing is sent until
   save. V1 `Store` on a tracked entity only refreshes concurrency metadata
   (`InMemoryDocumentSessionOperations.cs:818-829`).
@@ -72,12 +80,32 @@ version (V1 `Delete(string id, string expectedChangeVector)`,
 `Session/IDocumentSession.cs`). Deleting a tracked document reports
 `DocumentDeleted` in WhatChanged until the save commits.
 
+Store and delete on one key are **last-command-wins**, matching V1's
+observable outcomes:
+
+- A delete cancels a pending put for the same key. V1's `Delete` removes
+  the id from `DocumentsById` and registers known-missing
+  (`InMemoryDocumentSessionOperations.cs:730-763`), so the pending put
+  never reaches the batch: the save sends the delete alone, post-save
+  `what_changed` reports nothing, and no later save resurrects the
+  document.
+- A store queued after a delete subsumes it: V1's single batch applies a
+  delete+put pair to the stored value (deletes before puts,
+  `Session/Operations/BatchOperation.cs:37-39`), and the engine's
+  one-write-per-target transaction contract means the subsuming put alone
+  produces that committed outcome — the stored value survives, and the
+  store clears the delete's known-missing registration like V1's
+  `StoreInternal` (`InMemoryDocumentSessionOperations.cs:867-868`).
+
 ### R4 Load — identity map, batch, known-missing (PB-2005)
 
 - `load(collection, id)` resolves in order: pending puts (read-your-writes),
-  the identity map, then one engine snapshot read. The first loaded value is
-  pinned: later external commits are invisible to `load` until `refresh`,
-  `evict`, or a save — V1's one-instance-per-document guarantee.
+  pending deletes (absent — the delete registered known-missing, and V1's
+  `Load` answers null for a session-deleted id before consulting the
+  identity map, `LoadOperation.cs:236,255`), the identity map, then one
+  engine snapshot read. The first loaded value is pinned: later external
+  commits are invisible to `load` until `refresh`, `evict`, or a save —
+  V1's one-instance-per-document guarantee.
 - `load_many` resolves a batch of ids in one snapshot pass.
 - An absent document registers **known-missing**: `is_loaded` reports `true`
   (V1 `IsLoaded`/`IsLoadedOrDeleted`, `InMemoryDocumentSessionOperations.cs:457-469`)
@@ -146,10 +174,11 @@ version (V1 `Delete(string id, string expectedChangeVector)`,
    (`Session/Operations/BatchOperation.cs:37-39`) — and commits once at the
    configured durability.
 6. **On success**: committed state clears — changed documents re-base
-   (original := current), deleted documents leave the identity map and
-   known-missing set, deferred commands, pending puts, and generated-id
-   reservations report once through the save result then clear. V1
-   `ClearSessionStateAfterSuccessfulSaveChanges`
+   (original := current, the checked expectation consumed — the next save
+   is unchecked until a new `store_checked`), deleted documents leave the
+   identity map and known-missing set, deferred commands, pending puts,
+   and generated-id reservations report once through the save result then
+   clear. V1 `ClearSessionStateAfterSuccessfulSaveChanges`
    (`InMemoryDocumentSessionOperations.cs:2605-2630`).
 7. **On rejection or unknown outcome**: session state is kept for retry;
    the engine's `CommitOutcome` (with the operation identity for
@@ -178,7 +207,10 @@ the **whole pending set as one batched load** (one batch per execution,
 observable through `lazy_batches_executed()`), tracking each result — V1
 evaluates any lazy value by executing all pending lazy operations
 (`Session/DocumentSession.Lazy.cs:128-141`). Evict and clear remove pending
-entries.
+entries. The engine's batch read is per-collection, so a pending set
+spanning several collections resolves as one batched load per collection
+inside the single execution — one execution, one `lazy_batches_executed`
+increment, however many collection batches it took.
 
 ### R10 Streaming (PB-2023, GAP-D15)
 
@@ -193,6 +225,13 @@ entries.
   `DocumentSession.Stream.cs:114`) over the same selector seam: canonical
   order, skip `start`, take `page_size`. The numeric `start` is a skip in
   canonical key order (accepted difference: the seam is cursor-based).
+- Known defect (ticket #87, streaming seam): document delivery at the
+  exact-fill boundary is incomplete — a stream reader or page pull whose
+  final batch fills exactly to its limit can miss the documents after that
+  boundary instead of reaching the terminal completion. The streaming seam
+  owns the fix; both session surfaces inherit the defect until #87 lands
+  (the `stream_documents`/`load_starting_with` rustdoc carries the same
+  caveat).
 
 ### R11 Hooks (PB-2027, GAP-D16)
 

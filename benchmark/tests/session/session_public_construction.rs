@@ -42,7 +42,8 @@ fn options_build_fluently_and_report_their_selection() {
 fn change_kind_carries_the_v1_change_type_vocabulary() {
     // V1 DocumentsChanges.ChangeType is an eight-value closed set
     // (Session/DocumentsChanges.cs, pinned sweep fa99b925): the V2 enum
-    // names exactly those cases.
+    // names exactly those cases. Pinning the rendered names fails when a
+    // variant is renamed, dropped, or added to the public set.
     let vocabulary = [
         FieldChangeKind::DocumentDeleted,
         FieldChangeKind::DocumentAdded,
@@ -53,9 +54,13 @@ fn change_kind_carries_the_v1_change_type_vocabulary() {
         FieldChangeKind::ArrayValueAdded,
         FieldChangeKind::ArrayValueRemoved,
     ];
-    for (left, right) in vocabulary.iter().zip(vocabulary.iter().skip(1)) {
-        assert_ne!(left, right, "every change type is a distinct value");
-    }
+    let names: Vec<String> = vocabulary.iter().map(|kind| format!("{kind:?}")).collect();
+    assert_eq!(
+        names.join(","),
+        "DocumentDeleted,DocumentAdded,FieldChanged,NewField,RemovedField,ArrayValueChanged,\
+         ArrayValueAdded,ArrayValueRemoved",
+        "the closed change-type vocabulary matches V1's ChangeType set"
+    );
 }
 
 #[test]

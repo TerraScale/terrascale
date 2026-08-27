@@ -366,8 +366,6 @@ fn what_changed_reports_field_level_old_new_and_change_types() {
     );
 
     let u1 = &report[0];
-    let u1_full_names: Vec<String> =
-        u1.changes().iter().map(FieldChange::field_full_name).collect();
     let u1_changes: Vec<(String, &str, FieldChangeKind)> = u1
         .changes()
         .iter()
@@ -384,7 +382,6 @@ fn what_changed_reports_field_level_old_new_and_change_types() {
         ],
         "V1's change-type vocabulary with old/new values and dotted paths"
     );
-    drop(u1_full_names);
     let name_change = &u1.changes()[1];
     assert_eq!(name_change.old_value(), Some(&text("ada")));
     assert_eq!(name_change.new_value(), Some(&text("grace")));
@@ -411,6 +408,44 @@ fn what_changed_reports_field_level_old_new_and_change_types() {
         "a successful save clears the committed session state"
     );
     assert!(!session.has_changes());
+    drop(dir);
+}
+
+#[test]
+fn nested_type_change_reports_the_parent_path_and_leaf_name() {
+    // A nested field whose value changed kind (object to scalar) diffed
+    // below the root reports the containing path and the leaf name, like
+    // every other field change — never the full dotted name in `name`.
+    let mut changes = Vec::new();
+    super::diff_values(
+        "profile.address",
+        &object(&[("city", text("london"))]),
+        &text("plain"),
+        &mut changes,
+    );
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].field_path(), "profile");
+    assert_eq!(changes[0].field_name(), "address");
+    assert_eq!(changes[0].field_full_name(), "profile.address");
+    assert_eq!(changes[0].old_value(), Some(&object(&[("city", text("london"))])));
+    assert_eq!(changes[0].new_value(), Some(&text("plain")));
+    assert_eq!(changes[0].change(), FieldChangeKind::FieldChanged);
+}
+
+#[test]
+fn root_type_change_reports_the_root_value_name() {
+    let (dir, engine) = open_engine("root-type-change");
+    commit_document(&engine, "tenant-a", "users", "u1", text("scalar"));
+    let mut session = open_session(&engine, "tenant-a");
+    session.load(&collection("users"), &doc_id("u1")).expect("loads");
+    session.store(collection("users"), doc_id("u1"), object(&[("a", text("b"))])).expect("stages");
+    let report = session.what_changed();
+    assert_eq!(report.len(), 1);
+    let change = &report[0].changes()[0];
+    assert_eq!(change.field_path(), "");
+    assert_eq!(change.field_name(), "value");
+    assert_eq!(change.field_full_name(), "value");
+    assert_eq!(change.change(), FieldChangeKind::FieldChanged);
     drop(dir);
 }
 
@@ -588,6 +623,88 @@ fn read_your_writes_and_pending_puts_report_document_added() {
     drop(dir);
 }
 
+// ---------------------------------------------------------------------------
+// R2/R3 interaction — a delete and a pending put for the same key.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn store_then_delete_in_one_session_does_not_resurrect_on_a_later_save() {
+    let (dir, engine) = open_engine("store-delete-resurrect");
+    let mut session = open_session(&engine, "tenant-a");
+    session.store(collection("users"), doc_id("x"), text("v1")).expect("stages");
+    session.delete(collection("users"), doc_id("x")).expect("stages delete");
+    committed(session.save_changes().expect("save"));
+    assert!(
+        read_engine_document(&engine, "tenant-a", "users", "x").is_none(),
+        "the engine document is absent after the save"
+    );
+
+    // V1's Delete replaces an earlier Store: the pending put never reaches
+    // the batch, so nothing survives the save to report or resend.
+    assert!(
+        session.what_changed().is_empty(),
+        "no post-save report: the delete cancelled the pending put"
+    );
+    assert!(!session.has_changes(), "a second save has nothing queued");
+    assert!(
+        session.save_changes().expect("second save").is_none(),
+        "the no-op save sends nothing, so the document stays deleted"
+    );
+    assert!(
+        read_engine_document(&engine, "tenant-a", "users", "x").is_none(),
+        "still absent after the second save"
+    );
+    drop(dir);
+}
+
+#[test]
+fn delete_then_store_commits_the_put_like_v1s_delete_plus_put_batch() {
+    let (dir, engine) = open_engine("delete-store-batch");
+    commit_document(&engine, "tenant-a", "users", "u1", text("v1"));
+    let mut session = open_session(&engine, "tenant-a");
+    session.delete(collection("users"), doc_id("u1")).expect("stages delete");
+    session.store(collection("users"), doc_id("u1"), text("v2")).expect("stages put");
+    committed(session.save_changes().expect("save"));
+    assert_eq!(
+        read_engine_document(&engine, "tenant-a", "users", "u1").map(|d| d.value().clone()),
+        Some(text("v2")),
+        "V1's delete+put batch leaves the stored value in place; the engine's \
+         one-write-per-target transaction receives the subsuming put, whose \
+         committed outcome is the same"
+    );
+    assert!(!session.has_changes(), "the save cleared both staged commands");
+    assert_eq!(
+        session
+            .load(&collection("users"), &doc_id("u1"))
+            .expect("loads")
+            .map(|d| d.value().clone()),
+        Some(text("v2")),
+        "the re-based tracked instance answers the surviving value"
+    );
+    drop(dir);
+}
+
+#[test]
+fn load_after_a_pending_delete_answers_absent() {
+    let (dir, engine) = open_engine("load-after-delete");
+    commit_document(&engine, "tenant-a", "users", "u1", text("v1"));
+    let mut session = open_session(&engine, "tenant-a");
+    assert!(
+        session.load(&collection("users"), &doc_id("u1")).expect("loads").is_some(),
+        "the document exists before the delete"
+    );
+    session.delete(collection("users"), doc_id("u1")).expect("stages delete");
+    assert!(
+        session.load(&collection("users"), &doc_id("u1")).expect("loads").is_none(),
+        "V1's Delete registers known-missing, so Load answers null for a session-deleted id"
+    );
+    assert!(
+        session.is_loaded(&collection("users"), &doc_id("u1")),
+        "the deleted id stays loaded like V1's IsLoadedOrDeleted"
+    );
+    drop(dir);
+}
+
 #[test]
 fn store_new_refuses_an_existing_document_at_commit_and_keeps_session_state() {
     let (dir, engine) = open_engine("store-new");
@@ -632,6 +749,65 @@ fn checked_store_sends_the_expected_version() {
         second.save_changes().expect("save"),
         Some(CommitOutcome::Rejected(CommitError::Conflict))
     ));
+    drop(dir);
+}
+
+#[test]
+fn checked_store_on_a_tracked_document_carries_its_expected_version() {
+    let (dir, engine) = open_engine("checked-tracked");
+    commit_document(&engine, "tenant-a", "users", "u1", text("v1"));
+    let mut session = open_session(&engine, "tenant-a");
+    session.load(&collection("users"), &doc_id("u1")).expect("loads");
+    session
+        .store_checked(collection("users"), doc_id("u1"), text("v2"), ExpectedVersion::Exact(9999))
+        .expect("stages");
+    let outcome = session.save_changes().expect("save surfaces the engine outcome");
+    assert!(
+        matches!(outcome, Some(CommitOutcome::Rejected(CommitError::Conflict))),
+        "the explicitly requested check must reach the commit, got {outcome:?}"
+    );
+    assert_eq!(
+        read_engine_document(&engine, "tenant-a", "users", "u1").map(|d| d.value().clone()),
+        Some(text("v1")),
+        "the engine document is untouched by the rejection"
+    );
+    assert!(session.has_changes(), "a rejected save keeps the session state for retry");
+    drop(dir);
+}
+
+#[test]
+fn a_later_store_adopts_the_last_expectation() {
+    let (dir, engine) = open_engine("checked-lww");
+    let mut session = open_session(&engine, "tenant-a");
+    session
+        .store_checked(collection("users"), doc_id("u2"), text("v1"), ExpectedVersion::Exact(9999))
+        .expect("stages");
+    session.store(collection("users"), doc_id("u2"), text("v2")).expect("stages");
+    committed(session.save_changes().expect("save"));
+    assert_eq!(
+        read_engine_document(&engine, "tenant-a", "users", "u2").map(|d| d.value().clone()),
+        Some(text("v2")),
+        "the staged expectation is last-write-wins: the later store replaced the check"
+    );
+    drop(dir);
+}
+
+#[test]
+fn a_successful_save_consumes_the_checked_expectation() {
+    let (dir, engine) = open_engine("checked-consumed");
+    commit_document(&engine, "tenant-a", "users", "u1", text("v1"));
+    let mut session = open_session(&engine, "tenant-a");
+    session
+        .store_checked(collection("users"), doc_id("u1"), text("v2"), ExpectedVersion::Exact(1))
+        .expect("stages");
+    committed(session.save_changes().expect("save"));
+    session.store(collection("users"), doc_id("u1"), text("v3")).expect("stages");
+    committed(session.save_changes().expect("save"));
+    assert_eq!(
+        read_engine_document(&engine, "tenant-a", "users", "u1").map(|d| d.value().clone()),
+        Some(text("v3")),
+        "the re-based document saves unchecked again until a new checked store"
+    );
     drop(dir);
 }
 

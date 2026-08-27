@@ -1,7 +1,7 @@
 //! The engine-side session and unit-of-work contract (GAP-D01).
 //!
 //! One [`Session`] is one unit of work bound to one [`Engine`], one
-//! Platform-minted [`TenantScope`](crate::types::TenantScope), and one
+//! Platform-minted [`TenantScope`], and one
 //! [`SessionOptions`] set. Stores and deletes stay deferred until
 //! [`Session::save_changes`], loaded documents are pinned by an identity
 //! map, [`Session::what_changed`] reports field-level old/new values
@@ -445,12 +445,14 @@ struct SessionHooks {
     after_save: Vec<AfterSaveHook>,
 }
 
-/// One tracked document: the pinned value it was loaded with and the value
-/// staged now.
+/// One tracked document: the pinned value it was loaded with, the value
+/// staged now, and the expected version the next save stages it under (the
+/// last-write-wins override a `store_checked` records).
 struct TrackedDocument {
     original: Document,
     current: Document,
     ignored: bool,
+    expected: ExpectedVersion,
 }
 
 /// One deferred put awaiting the next save.
@@ -596,7 +598,12 @@ impl<'engine> Session<'engine> {
     }
 
     /// Stages one put with an explicit expected version — V1
-    /// `Store(entity, changeVector, id)`.
+    /// `Store(entity, changeVector, id)`, which sets the change vector and
+    /// forces the concurrency check (`InMemoryDocumentSessionOperations.cs:
+    /// 818-829`). The staged expectation is last-write-wins session state:
+    /// a later `store` or `store_checked` on the same key replaces it, and
+    /// a successful save consumes it (the re-based document saves unchecked
+    /// again until a new checked store).
     ///
     /// # Errors
     ///
@@ -639,10 +646,20 @@ impl<'engine> Session<'engine> {
         let key = (collection, id);
         if let Some(pending) = self.pending_puts.get_mut(&key) {
             pending.value = value;
+            pending.expected = expected;
             return Ok(());
         }
+        // A store subsumes a queued delete for the same key. V1's single
+        // batch applies a delete+put pair to the stored value, and the
+        // engine's one-write-per-target transaction contract means one
+        // staged put produces exactly that committed outcome — so the put
+        // replaces the delete instead of staging beside it. Store also
+        // clears known-missing, like V1's `StoreInternal`.
+        self.pending_deletes.remove(&key);
+        self.known_missing.remove(&key);
         if let Some(tracked) = self.tracked.get_mut(&key) {
             tracked.current = Document::new(key.1.clone(), key.0.clone(), value);
+            tracked.expected = expected;
             return Ok(());
         }
         self.pending_puts.insert(key, PendingPut { value, expected });
@@ -652,7 +669,10 @@ impl<'engine> Session<'engine> {
     // -- R3: deferred deletes -----------------------------------------------
 
     /// Stages one delete (`ExpectedVersion::Any`), deferred until the next
-    /// save — V1 `Delete(string id)`.
+    /// save — V1 `Delete(string id)`. The delete cancels a pending put for
+    /// the same key (V1's Delete replaces an earlier Store) and registers
+    /// known-missing, so loads answer absent until the save commits or a
+    /// later store subsumes the delete.
     ///
     /// # Errors
     ///
@@ -687,15 +707,24 @@ impl<'engine> Session<'engine> {
         expected: ExpectedVersion,
     ) -> Result<(), SessionError> {
         self.require_tracking()?;
-        self.pending_deletes.insert((collection, id), expected);
+        let key = (collection, id);
+        // V1's Delete replaces an earlier Store: the id leaves the identity
+        // map and registers known-missing, so a pending put never reaches
+        // the batch and cannot resurrect on a later save
+        // (`InMemoryDocumentSessionOperations.cs:730-763`).
+        self.pending_puts.remove(&key);
+        self.known_missing.insert(key.clone());
+        self.pending_deletes.insert(key, expected);
         Ok(())
     }
 
     // -- R4: loads and the identity map --------------------------------------
 
     /// Loads one document: pending puts answer first (read-your-writes),
-    /// then the pinned identity-map instance, then one engine read. An
-    /// absent document registers known-missing.
+    /// then a pending delete answers absent (the delete registered
+    /// known-missing, like V1's `Load` on a session-deleted id), then the
+    /// pinned identity-map instance, then one engine read. An absent
+    /// document registers known-missing.
     ///
     /// # Errors
     ///
@@ -727,6 +756,11 @@ impl<'engine> Session<'engine> {
             if let Some(pending) = self.pending_puts.get(&key) {
                 answers[index] =
                     Some(Document::new(id.clone(), collection.clone(), pending.value.clone()));
+            } else if self.pending_deletes.contains_key(&key) {
+                // A pending delete answers absent without a read: the delete
+                // registered known-missing, and V1's `Load` checks the
+                // deleted set before the identity map, so a session-deleted
+                // id answers null even while a tracked instance remains.
             } else if let Some(tracked) = self.tracked.get(&key) {
                 answers[index] = Some(tracked.current.clone());
             } else if !self.known_missing.contains(&key) {
@@ -756,6 +790,7 @@ impl<'engine> Session<'engine> {
                                 original: document.clone(),
                                 current: document,
                                 ignored: false,
+                                expected: ExpectedVersion::Any,
                             },
                         );
                     }
@@ -797,7 +832,12 @@ impl<'engine> Session<'engine> {
         {
             self.tracked.insert(
                 key.clone(),
-                TrackedDocument { original: document.clone(), current: document, ignored: false },
+                TrackedDocument {
+                    original: document.clone(),
+                    current: document,
+                    ignored: false,
+                    expected: ExpectedVersion::Any,
+                },
             );
             self.known_missing.remove(&key);
         } else {
@@ -966,7 +1006,9 @@ impl<'engine> Session<'engine> {
     /// Executes the whole pending lazy set as one batched load — V1
     /// `ExecuteAllPendingLazyOperations`. Each execution increments
     /// [`Session::lazy_batches_executed`] once, however many reads it
-    /// resolved.
+    /// resolved. The engine's batch read is per-collection, so a pending
+    /// set spanning several collections resolves as one batched load per
+    /// collection within the single execution.
     ///
     /// # Errors
     ///
@@ -1071,10 +1113,13 @@ impl<'engine> Session<'engine> {
 
         let deletes: Vec<(DocKey, ExpectedVersion)> =
             self.pending_deletes.iter().map(|(key, expected)| (key.clone(), *expected)).collect();
+        // A key never holds both a pending put and a pending delete: each
+        // command cancels the other when it is queued last, which is how
+        // the one-write-per-target engine transaction receives the pair
+        // (V1's delete+put batch leaves the stored value in place).
         let mut puts: BTreeMap<DocKey, (DocumentValue, ExpectedVersion)> = self
             .pending_puts
             .iter()
-            .filter(|(key, _)| !self.pending_deletes.contains_key(*key))
             .map(|(key, pending)| (key.clone(), (pending.value.clone(), pending.expected)))
             .collect();
         for (key, tracked) in &self.tracked {
@@ -1084,7 +1129,7 @@ impl<'engine> Session<'engine> {
             {
                 continue;
             }
-            puts.insert(key.clone(), (tracked.current.value().clone(), ExpectedVersion::Any));
+            puts.insert(key.clone(), (tracked.current.value().clone(), tracked.expected));
         }
         // The reservations are read, not taken: a refused or rejected save
         // keeps them queued, like every other piece of session state.
@@ -1224,7 +1269,8 @@ impl<'engine> Session<'engine> {
         if let CommitOutcome::Committed(receipt) = &outcome {
             // Committed state clears (V1
             // ClearSessionStateAfterSuccessfulSaveChanges): stored
-            // documents re-base, deleted documents leave the map.
+            // documents re-base (the checked expectation is consumed),
+            // deleted documents leave the map.
             for (key, (value, _)) in &puts {
                 let document = Document::new(key.1.clone(), key.0.clone(), value.clone());
                 self.pending_puts.remove(key);
@@ -1235,12 +1281,16 @@ impl<'engine> Session<'engine> {
                         original: document.clone(),
                         current: document,
                         ignored: false,
+                        expected: ExpectedVersion::Any,
                     },
                 );
             }
             for (key, _) in &deletes {
                 self.tracked.remove(key);
                 self.known_missing.remove(key);
+                // Defensive: no delete-masked pending put survives its own
+                // save to resurrect on the next one.
+                self.pending_puts.remove(key);
             }
             self.pending_deletes.clear();
             self.deferred.clear();
@@ -1270,6 +1320,12 @@ impl<'engine> Session<'engine> {
     /// surface of W4-STREAM. Batches serve canonical key order with
     /// exactly-once terminal completion.
     ///
+    /// Known defect (ticket #87, streaming seam): document delivery at the
+    /// exact-fill boundary is incomplete — a reader whose consumption stops
+    /// on a batch that filled exactly to its limit can miss the documents
+    /// after that boundary. The streaming seam owns the fix; this surface
+    /// inherits the defect until #87 lands.
+    ///
     /// # Errors
     ///
     /// Returns the mapped [`SessionError::Stream`] for an invalid source or
@@ -1294,6 +1350,12 @@ impl<'engine> Session<'engine> {
     /// Loads one prefix page in canonical key order — V1
     /// `LoadStartingWith(idPrefix, matches, start, pageSize)`: skip `start`
     /// documents, then take `page_size`.
+    ///
+    /// Known defect (ticket #87, streaming seam): document delivery at the
+    /// exact-fill boundary is incomplete — a page pull whose final batch
+    /// fills exactly to its limit can omit the documents after that
+    /// boundary instead of reaching the terminal completion. The streaming
+    /// seam owns the fix; this surface inherits the defect until #87 lands.
     ///
     /// # Panics
     ///
@@ -1493,14 +1555,33 @@ fn diff_values(path: &str, old: &DocumentValue, new: &DocumentValue, out: &mut V
         }
         _ => {
             if old != new {
-                let name = if path.is_empty() { "value".to_owned() } else { path.to_owned() };
+                // A kind change reached without a field name of its own (the
+                // root value, or a nested path handed down by a caller):
+                // report the containing path and the leaf name, never the
+                // full dotted name in `name`.
+                let (containing, name) = split_leaf(path);
                 out.push(FieldChange::new(
-                    String::new(),
+                    containing,
                     name,
                     Some(old.clone()),
                     Some(new.clone()),
                     FieldChangeKind::FieldChanged,
                 ));
+            }
+        }
+    }
+}
+
+/// Splits one dotted diff path into its containing path and leaf name. The
+/// root names its value `value`; a single segment is a root field.
+fn split_leaf(path: &str) -> (String, String) {
+    match path.rsplit_once('.') {
+        Some((containing, name)) => (containing.to_owned(), name.to_owned()),
+        None => {
+            if path.is_empty() {
+                (String::new(), "value".to_owned())
+            } else {
+                (String::new(), path.to_owned())
             }
         }
     }
