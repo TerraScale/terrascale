@@ -16,8 +16,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+mod ingest;
 mod metadata;
 mod patch;
+
+#[cfg(test)]
+mod ingest_tests;
 
 #[cfg(test)]
 mod metadata_tests;
@@ -28,6 +32,11 @@ mod patch_tests;
 #[cfg(test)]
 mod tests;
 
+pub use ingest::{
+    BulkIngestRequest, IngestBatchReceipt, IngestConflictMode, IngestReceipt, IngestRefusal,
+    IngestRefusalReason, IngestStream, IngestTermination, MAX_INGEST_BATCH_DOCUMENTS,
+    MAX_INGEST_REFUSAL_DETAILS,
+};
 pub use metadata::{
     ConditionalLoadError, DocumentHead, DocumentVersionContract, DocumentVersionContractError,
     HeadCondition, MAX_V1_CHANGE_VECTOR_BYTES, MAX_V1_CHANGE_VECTOR_ENTRIES, V1ChangeVector,
@@ -664,6 +673,31 @@ impl Engine {
     /// mirroring [`Engine::queries`] and [`Engine::families`].
     pub fn streams(&self) -> StreamStore<'_> {
         StreamStore::from_engine(self)
+    }
+
+    /// Opens one bulk-insert ingestion stream bound to this Engine and
+    /// scope (GAP-D10).
+    ///
+    /// The scope is validated before the stream exists, exactly like
+    /// [`Engine::begin`]. The stream consumes any document source one
+    /// document at a time, publishes each bounded batch as one atomic
+    /// transaction, refuses per-document validation failures without
+    /// aborting, and returns a receipt whose counts reconcile exactly — a
+    /// mid-stream stop never claims a document it did not commit. The
+    /// decision record is `docs/engine/gapd10-bulk-ingest.md`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::ScopeMismatch`] when the scope names another
+    /// Engine and [`EngineError::StorageFailure`] when storage cannot be
+    /// reached to validate the scope.
+    pub fn ingest_stream(
+        &self,
+        scope: &TenantScope,
+        request: crate::engine::ingest::BulkIngestRequest,
+    ) -> Result<crate::engine::ingest::IngestStream<'_>, EngineError> {
+        self.read_snapshot(scope)?;
+        Ok(crate::engine::ingest::IngestStream::new(self, scope.clone(), request))
     }
 
     /// Resolves an uncertain operation using its durable identity.
