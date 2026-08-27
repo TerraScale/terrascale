@@ -21,8 +21,8 @@ use std::{
 };
 
 use crate::engine::{DurableResolution, EngineConfig};
-use crate::families::hilo::{BlockDurability, HiLoDistributor};
 use crate::families::FamilyWriteRequest;
+use crate::families::hilo::{BlockDurability, HiLoDistributor};
 use crate::replication::{
     MemberId, ReplicationConfig, TopologyView,
     member::{MemberError, ReplicationMember, synchronize},
@@ -113,15 +113,16 @@ fn allocate(
 /// Returns the distributor's most recently allocated block, whether it is
 /// still pending or already acknowledged.
 fn current_block(distributor: &HiLoDistributor) -> crate::families::hilo::HiLoBlock {
-    distributor
-        .pending_block()
-        .or(distributor.live_block())
-        .expect("a block was just allocated")
+    distributor.pending_block().or(distributor.live_block()).expect("a block was just allocated")
 }
 
 /// Reports whether one member durably holds one operation — the fact the
 /// acknowledgement mapping is derived from, never assumed.
-fn holds_durably(member: &ReplicationMember, member_scope: &TenantScope, operation_name: &str) -> bool {
+fn holds_durably(
+    member: &ReplicationMember,
+    member_scope: &TenantScope,
+    operation_name: &str,
+) -> bool {
     member.engine().is_some_and(|engine| {
         matches!(
             engine.resolve_commit(member_scope, operation(operation_name)),
@@ -139,8 +140,8 @@ fn catch_up(
     follower: &mut ReplicationMember,
     follower_scope: &TenantScope,
 ) {
-    let report =
-        synchronize(network, source, source_scope, follower, follower_scope, 4).expect("catch-up runs");
+    let report = synchronize(network, source, source_scope, follower, follower_scope, 4)
+        .expect("catch-up runs");
     assert!(report.caught_up(), "the follower catches up from the source");
 }
 
@@ -174,14 +175,19 @@ fn hilo_member_loss_never_rehands_the_dead_owners_allocated_blocks() {
     owner
         .acknowledged(BlockDurability::SurvivesOwnerLoss)
         .expect("the loss-surviving fact releases the block");
-    let handed_by_owner: Vec<u64> = (0..5)
-        .map(|_| owner.next_id().expect("the live block mints").expect("ids remain"))
-        .collect();
-    assert_eq!(handed_by_owner, vec![32, 33, 34, 35, 36], "five ids were handed out");
+    // The owner hands out its whole block: under D2 the next allocation
+    // exists only in the exhausted-to-refetch window, which is exactly
+    // where the loss below strikes.
+    let mut handed_by_owner = Vec::new();
+    while let Some(id) = owner.next_id().expect("the live block mints") {
+        handed_by_owner.push(id);
+    }
+    assert_eq!(handed_by_owner, (32..64).collect::<Vec<_>>(), "the whole block was handed out");
 
     // The owner allocates its NEXT block and dies before it reaches any
     // other member: the in-flight allocation nobody else received.
-    allocate(&mut m_a1, &scope_a1, &mut owner, "hilo-block-a2").expect("the in-flight block commits");
+    allocate(&mut m_a1, &scope_a1, &mut owner, "hilo-block-a2")
+        .expect("the in-flight block commits");
     let in_flight = current_block(&owner);
     assert_eq!(in_flight.low(), 64, "the in-flight block starts past the acknowledged one");
     m_a1.close();
@@ -265,6 +271,15 @@ fn hilo_deposed_owner_cannot_allocate_after_the_replacement_appears() {
     allocate(&mut m_a1, &scope_a1, &mut owner, "hilo-burn-a1").expect("the burn commits");
     allocate(&mut m_a1, &scope_a1, &mut owner, "hilo-block-a1").expect("the block commits");
     let deposed_block = current_block(&owner);
+    catch_up(&mut network, &mut m_a1, &scope_a1, &mut m_g1, &scope_g1);
+    assert!(
+        holds_durably(&m_g1, &scope_g1, "hilo-block-a1"),
+        "the future replacement durably holds the acknowledged allocation"
+    );
+    owner
+        .acknowledged(BlockDurability::SurvivesOwnerLoss)
+        .expect("the loss-surviving fact releases the block");
+    while owner.next_id().expect("the live block mints").is_some() {}
 
     // The replacement appears at a raised epoch; the deposed owner adopts
     // the view and its next allocation is refused by admission fencing.
@@ -298,7 +313,7 @@ fn hilo_deposed_owner_cannot_allocate_after_the_replacement_appears() {
     let block = current_block(&replacement);
     assert_eq!(
         block.low(),
-        deposed_block.high(),
-        "the replacement hands out past the deposed owner's last allocated block"
+        deposed_block.high() + 32,
+        "the replacement's hand-outs start one burned block past the deposed owner's last allocation"
     );
 }

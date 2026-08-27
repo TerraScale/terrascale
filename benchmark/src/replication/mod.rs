@@ -31,13 +31,13 @@
 //! let _ = status.convergence();
 //! ```
 
+#[cfg(test)]
+mod hilo_tests;
 mod identifier;
 #[cfg(test)]
 mod lane;
 #[cfg(test)]
 mod lane_tests;
-#[cfg(test)]
-mod hilo_tests;
 mod member;
 #[cfg(test)]
 mod repair_tests;

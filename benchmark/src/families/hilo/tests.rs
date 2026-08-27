@@ -12,7 +12,11 @@
 //! that need the replication doubles live on the replication lane
 //! (`src/replication/hilo_tests.rs`), the same split GAP-F07 used.
 
-use std::{path::PathBuf, sync::atomic::{AtomicU64, Ordering}, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use super::{BlockDurability, HiLoDistributor, HiLoError, MAX_BLOCK_SIZE, MIN_BLOCK_SIZE};
 use crate::engine::{CommitOutcome, Engine, EngineConfig};
@@ -74,14 +78,15 @@ fn identity_next(engine: &Engine, scope: &TenantScope, name: &str) -> u64 {
 
 /// Commits one identity write through the engine family seam, the same path
 /// an owning member's family-write commit takes.
-fn commit_identity(engine: &Engine, scope: &TenantScope, write: IdentityWrite) -> Result<(), FamilyError> {
+fn commit_identity(
+    engine: &Engine,
+    scope: &TenantScope,
+    write: IdentityWrite,
+) -> Result<(), FamilyError> {
     let operation = write.operation_id().clone();
     let snapshot = engine.read_snapshot(scope).expect("snapshot");
-    let mut transaction =
-        engine.begin(scope, snapshot, operation).expect("transaction begins");
-    engine
-        .families()
-        .stage(&mut transaction, FamilyWriteRequest::identity_allocation(write))?;
+    let mut transaction = engine.begin(scope, snapshot, operation).expect("transaction begins");
+    engine.families().stage(&mut transaction, FamilyWriteRequest::identity_allocation(write))?;
     match transaction.commit(LocalDurability::Synced) {
         CommitOutcome::Committed(_) => Ok(()),
         CommitOutcome::Rejected(reason) => panic!("the identity write commits: {reason:?}"),
@@ -159,10 +164,7 @@ fn first_allocation_of_a_fresh_distributor_is_a_transition_burn() {
     // discarded, and never handed out (decision D4).
     allocate(&engine, &scope, &mut distributor, "hilo-burn-1");
     assert_eq!(distributor.burned(), 32, "one full block is burned");
-    assert!(
-        distributor.live_block().is_none(),
-        "a burn hands nothing out"
-    );
+    assert!(distributor.live_block().is_none(), "a burn hands nothing out");
     assert_eq!(
         identity_next(&engine, &scope, "orders"),
         32,
@@ -215,7 +217,12 @@ fn blocks_mint_only_after_loss_surviving_acknowledgement() {
     );
     assert!(
         matches!(
-            distributor.plan_allocation(&engine, &scope, operation("hilo-block-2"), valid_deadline()),
+            distributor.plan_allocation(
+                &engine,
+                &scope,
+                operation("hilo-block-2"),
+                valid_deadline()
+            ),
             Err(HiLoError::AllocationOutstanding)
         ),
         "a second allocation cannot start while one is outstanding (D2)"
@@ -224,24 +231,37 @@ fn blocks_mint_only_after_loss_surviving_acknowledgement() {
     distributor
         .acknowledged(BlockDurability::SurvivesOwnerLoss)
         .expect("a loss-surviving acknowledgement releases the block");
-    let mut minted = Vec::new();
+    assert!(distributor.pending_block().is_none(), "the acknowledged block is no longer pending");
+
+    // A live block must be exhausted before the next allocation: V1 mints
+    // from the local range before fetching the next one.
+    assert_eq!(
+        distributor.next_id().expect("the live block mints"),
+        Some(32),
+        "the block mints in order"
+    );
+    assert!(
+        matches!(
+            distributor.plan_allocation(
+                &engine,
+                &scope,
+                operation("hilo-block-2"),
+                valid_deadline()
+            ),
+            Err(HiLoError::BlockNotExhausted)
+        ),
+        "planning past an unexhausted live block is refused"
+    );
+    let mut minted = vec![32];
     while let Some(id) = distributor.next_id().expect("the live block mints") {
         minted.push(id);
     }
     assert_eq!(minted, (32..64).collect::<Vec<_>>(), "the block mints its whole range in order");
     assert!(
-        distributor.pending_block().is_none(),
-        "the acknowledged block is no longer pending"
-    );
-
-    // A live block must be exhausted before the next allocation: V1 mints
-    // from the local range before fetching the next one.
-    assert!(
-        matches!(
-            distributor.plan_allocation(&engine, &scope, operation("hilo-block-2"), valid_deadline()),
-            Err(HiLoError::BlockNotExhausted)
-        ),
-        "planning past an unexhausted live block is refused"
+        distributor
+            .plan_allocation(&engine, &scope, operation("hilo-block-2"), valid_deadline())
+            .is_ok(),
+        "an exhausted live block plans its successor"
     );
 }
 
@@ -267,11 +287,7 @@ fn planned_allocation_abandoned_clears_the_outstanding_step() {
         .plan_allocation(&engine, &scope, operation("hilo-block-refused"), valid_deadline())
         .expect("plans the block");
     distributor.allocation_abandoned();
-    assert_eq!(
-        identity_next(&engine, &scope, "orders"),
-        32,
-        "an abandoned plan allocates nothing"
-    );
+    assert_eq!(identity_next(&engine, &scope, "orders"), 32, "an abandoned plan allocates nothing");
     allocate(&engine, &scope, &mut distributor, "hilo-block-1");
     let block = distributor.pending_block().expect("the block is pending");
     assert_eq!(block.low(), 32, "the real block starts where the record stands");
@@ -286,11 +302,20 @@ fn allocation_past_the_identity_ceiling_is_refused_not_wrapped() {
 
     // Ten ids of headroom: no burn of 32 fits, so planning is refused with
     // the typed exhaustion error — never a wrapped or clamped block.
-    commit_identity(&engine, &scope, seed_write(&scope, "orders", super::IDENTITY_CEILING - 10, "hilo-seed-near-ceiling"))
-        .expect("seeds near the ceiling");
+    commit_identity(
+        &engine,
+        &scope,
+        seed_write(&scope, "orders", super::IDENTITY_CEILING - 10, "hilo-seed-near-ceiling"),
+    )
+    .expect("seeds near the ceiling");
     assert!(
         matches!(
-            distributor.plan_allocation(&engine, &scope, operation("hilo-burn-1"), valid_deadline()),
+            distributor.plan_allocation(
+                &engine,
+                &scope,
+                operation("hilo-burn-1"),
+                valid_deadline()
+            ),
             Err(HiLoError::Exhausted)
         ),
         "a burn past the ceiling is refused at planning time"
@@ -358,7 +383,12 @@ fn the_last_fitting_block_ends_at_the_ceiling_and_the_next_is_refused() {
     .expect("seeds past the boundary");
     assert!(
         matches!(
-            distributor.plan_allocation(&engine, &scope, operation("hilo-block-2"), valid_deadline()),
+            distributor.plan_allocation(
+                &engine,
+                &scope,
+                operation("hilo-block-2"),
+                valid_deadline()
+            ),
             Err(HiLoError::Exhausted)
         ),
         "a block that would cross the ceiling is refused"
@@ -373,13 +403,10 @@ fn unused_tails_of_abandoned_blocks_are_burned_not_rehanded() {
     // One distributor hands out five ids of its block and is dropped: the
     // unused tail [37, 64) is abandoned with it (decision D5 — there is no
     // return path).
-    let mut first =
-        HiLoDistributor::try_new("orders".to_owned(), 32).expect("valid distributor");
+    let mut first = HiLoDistributor::try_new("orders".to_owned(), 32).expect("valid distributor");
     allocate(&engine, &scope, &mut first, "hilo-burn-1");
     allocate(&engine, &scope, &mut first, "hilo-block-1");
-    first
-        .acknowledged(BlockDurability::SurvivesOwnerLoss)
-        .expect("the block is acknowledged");
+    first.acknowledged(BlockDurability::SurvivesOwnerLoss).expect("the block is acknowledged");
     let handed: Vec<u64> =
         (0..5).map(|_| first.next_id().expect("the block mints").expect("ids remain")).collect();
     assert_eq!(handed, vec![32, 33, 34, 35, 36], "five ids were handed out");
@@ -388,8 +415,7 @@ fn unused_tails_of_abandoned_blocks_are_burned_not_rehanded() {
     // The successor distributor burns its own transition block and hands
     // out strictly past everything the first one ever allocated — the
     // unused tail included.
-    let mut second =
-        HiLoDistributor::try_new("orders".to_owned(), 32).expect("valid distributor");
+    let mut second = HiLoDistributor::try_new("orders".to_owned(), 32).expect("valid distributor");
     allocate(&engine, &scope, &mut second, "hilo-burn-2");
     assert_eq!(second.burned(), 32, "the successor burned one block");
     allocate(&engine, &scope, &mut second, "hilo-block-2");

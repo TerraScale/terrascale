@@ -122,13 +122,13 @@ next` and V1's post-allocation `Max` onto V2's `next - 1`.
 
 **D2 — One distributor, one live block, one outstanding allocation.**
 A `HiLoDistributor` mints locally from its live block and reaches for the
-engine only when the block is exhausted — V1's generator shape. It refuses
-to plan a new allocation while one is outstanding (planned or committed
-but unacknowledged), which is V1's single in-flight `_nextRangeTask`
-discipline (`AsyncHiLoIdGenerator.cs:65`, `:96-129`). One distributor per
-(member, tenant, identity name) is the host's discipline, exactly as one
-generator per tag per store was V1's
-(`AsyncMultiTypeHiLoIdGenerator.cs:17`).
+engine only when the block is exhausted — V1's generator shape. A
+successor block is plannable only in that exhausted-to-refetch window, and
+never while another allocation is outstanding (planned or committed but
+unacknowledged) — V1's single in-flight `_nextRangeTask` discipline
+(`AsyncHiLoIdGenerator.cs:65`, `:96-129`). One distributor per (member,
+tenant, identity name) is the host's discipline, exactly as one generator
+per tag per store was V1's (`AsyncMultiTypeHiLoIdGenerator.cs:17`).
 
 **D3 — Hand-out is acknowledgement-gated.** A committed block is
 *pending* until its allocation is durably recorded on members that
