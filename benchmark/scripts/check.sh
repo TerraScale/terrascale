@@ -27,6 +27,18 @@ python3 scripts/test_parity_tooling.py
 python3 scripts/test_v1_citations.py
 python3 scripts/test_secret_scan.py
 python3 scripts/check_license.py
+# SE-15's standing benchmark-receipt discipline: every receipt under
+# evidence/benchmarks/ carries the canonical objective-status line, and a
+# `not met` status names its regression owner. Wired by the integrator
+# (the SE-15 packet's write scope stopped at the checker itself); the
+# guard only bridges the window before SE-15's scripts land on develop —
+# once they exist here the check is mandatory and the miss fails loudly.
+if [[ -f scripts/check_benchmark_receipts.py ]]; then
+  python3 scripts/check_benchmark_receipts.py
+  python3 scripts/test_benchmark_receipt_discipline.py
+else
+  echo "benchmark-receipt discipline UNRUN: SE-15 checkers not yet on this branch"
+fi
 ./scripts/check_secrets.sh
 
 v1_root="${TERRABASE_V1_ROOT:-}"
