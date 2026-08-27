@@ -444,9 +444,11 @@ export type CreateProjectRequest = {
 };
 
 export type OnboardingStep =
-  | "user"
+  | "account-information"
+  | "mfa"
   | "organization"
-  | "billing"
+  | "payment-method"
+  | "payment-validation"
   | "project"
   | "invitation"
   | "complete";
@@ -454,6 +456,8 @@ export type OnboardingStep =
 export type OnboardingJourneyType = "developer" | "paid" | "invitation";
 
 export type OnboardingPlan = "developer" | "starter" | "pro";
+
+export type OnboardingMfaDecision = "pending" | "configured" | "later";
 
 export type OnboardingRetryState = "none" | "pending" | "retryable" | "unavailable" | "expired";
 
@@ -492,6 +496,7 @@ export type OnboardingState = {
   readonly invitationAccepted: boolean;
   readonly retryState: OnboardingRetryState;
   readonly accountInformationCompleted: boolean;
+  readonly mfaDecision: OnboardingMfaDecision;
   readonly paymentMethodRegistered: boolean;
   readonly paymentMethodValidated: boolean;
   readonly paymentValidationStatus: OnboardingPaymentValidationStatus;
@@ -527,15 +532,20 @@ export type OnboardingPaymentSession = {
 
 export type ValidateOnboardingPaymentRequest = {
   readonly sessionId?: string;
+  readonly developmentBypass?: boolean;
 };
 
 export type RegisterOnboardingPaymentMethodRequest = {
   readonly sessionId: string;
 };
 
+export type UpdateOnboardingMfaRequest = {
+  readonly configureLater: boolean;
+};
+
 export type CreateOnboardingOrganizationRequest = {
   readonly name: string;
-  readonly plan: OnboardingPlan;
+  readonly plan?: OnboardingPlan;
 };
 
 export type CreateOnboardingProjectRequest = {
