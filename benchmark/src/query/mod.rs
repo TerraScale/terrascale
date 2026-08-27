@@ -15,6 +15,7 @@
 //! `docs/query/w3-query-index.md`.
 
 mod execute;
+pub mod includes;
 mod model;
 pub mod optimizer;
 mod result;
@@ -24,10 +25,17 @@ mod v1;
 pub mod tql;
 
 #[cfg(test)]
+mod includes_tests;
+#[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
 
+pub use includes::{
+    CounterInclude, DocumentInclude, INCLUDE_READ_WINDOW, IncludeClause, IncludePath, IncludeSet,
+    IncludedCounters, IncludedTimeSeries, MAX_INCLUDE_COUNTER_NAMES, MAX_INCLUDE_DEPTH,
+    MAX_INCLUDE_DOCUMENTS, MAX_INCLUDE_PATH_SEGMENTS, MAX_INCLUDES, TimeSeriesInclude,
+};
 pub use result::{
     IndexGenerationRef, ObservedGeneration, QueryResult, QueryRow, StaleIndexObservation,
     StalenessReport,
@@ -95,6 +103,16 @@ pub enum QueryError {
     Deadline,
     /// The request was cancelled.
     Cancelled,
+    /// A chained document include re-entered a document the execution had
+    /// already gathered from. The include graph carries a reference cycle
+    /// reachable within the declared depth, and the query refuses instead
+    /// of following it.
+    IncludeCycle,
+    /// The include set would materialize more than
+    /// [`MAX_INCLUDE_DOCUMENTS`](includes::MAX_INCLUDE_DOCUMENTS) distinct
+    /// documents. Depth bounds the levels, not the width, so this is the
+    /// bound that keeps one array field from materializing without limit.
+    IncludeBoundExceeded,
     /// The Engine's snapshot view returned a typed failure.
     StorageFailure,
 }
@@ -139,6 +157,17 @@ impl QueryPlan {
     #[must_use]
     pub fn ordering(&self) -> &QueryOrdering {
         self.query.ordering()
+    }
+
+    /// Returns the include clauses the plan will materialize, in
+    /// declaration order.
+    ///
+    /// An empty list materializes nothing: the includes contract is
+    /// additive, exactly like the loads clause, and a query without
+    /// includes pays nothing for it.
+    #[must_use]
+    pub fn includes(&self) -> &[IncludeClause] {
+        self.query.includes()
     }
 }
 
@@ -249,6 +278,7 @@ impl<'engine> QueryStore<'engine> {
                 spec.tenant_claim().clone(),
                 spec.deadline(),
                 spec.cancellation(),
+                spec.includes().to_vec(),
             )),
             QueryInput::V1Compatible(text) => {
                 let (source, predicate, ordering, paging, projection) =

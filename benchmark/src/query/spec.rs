@@ -7,6 +7,7 @@
 //! [`V1QueryText`](crate::operations::V1QueryText), which normalizes through
 //! the same compile seam as these typed values.
 
+use super::includes::IncludeClause;
 use crate::operations::RequestValidationError;
 use crate::types::{Cancellation, CollectionName, Deadline, DocumentValue, TenantId};
 
@@ -641,6 +642,18 @@ impl StalenessPolicy {
     }
 }
 
+/// The load and include clause lists of one specification.
+///
+/// Both are shared and almost always empty, and both ride one allocation
+/// behind one thin pointer: the spec is carried by value inside
+/// `QueryInput`, and inline vectors — or two fat slice pointers — cross
+/// that enum's large-variant boundary.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct QueryClauses {
+    loads: Box<[QueryLoad]>,
+    includes: Box<[IncludeClause]>,
+}
+
 /// A validated typed query specification.
 ///
 /// This is the typed input form of the one compile seam; the V1-compatible
@@ -654,10 +667,8 @@ pub struct QuerySpec {
     projection: QueryProjection,
     paging: QueryPaging,
     staleness: StalenessPolicy,
-    // Shared and almost always empty: the spec is carried by value inside
-    // `QueryInput`, and an inline vector here crosses the enum's
-    // large-variant boundary.
-    loads: std::sync::Arc<[QueryLoad]>,
+    // Shared and almost always empty, per `QueryClauses` above.
+    clauses: std::sync::Arc<QueryClauses>,
     deadline: Deadline,
     cancellation: Cancellation,
 }
@@ -697,7 +708,7 @@ impl QuerySpec {
             projection,
             paging,
             staleness,
-            loads: std::sync::Arc::from(Vec::new().into_boxed_slice()),
+            clauses: std::sync::Arc::new(QueryClauses::default()),
             deadline,
             cancellation,
         })
@@ -723,14 +734,43 @@ impl QuerySpec {
         if aliases.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err(RequestValidationError::InvalidQuery);
         }
-        self.loads = std::sync::Arc::from(loads.into_boxed_slice());
+        std::sync::Arc::make_mut(&mut self.clauses).loads = loads.into_boxed_slice();
         Ok(self)
     }
 
     /// Returns the reference-resolution loads in declaration order.
     #[must_use]
     pub fn loads(&self) -> &[QueryLoad] {
-        &self.loads
+        &self.clauses.loads
+    }
+
+    /// Binds same-request secondary materialization onto the
+    /// specification.
+    ///
+    /// The includes clause is additive, exactly like the loads clause: the
+    /// frozen constructor stays untouched and a query without includes
+    /// materializes nothing. The materialization is carried on the result
+    /// beside the rows, never merged into them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidQuery`] when the clause list
+    /// is longer than
+    /// [`MAX_INCLUDES`](includes::MAX_INCLUDES). Each clause is validated by
+    /// its own constructor.
+    pub fn with_includes(
+        mut self,
+        includes: Vec<IncludeClause>,
+    ) -> Result<Self, RequestValidationError> {
+        IncludeClause::validate_list(&includes)?;
+        std::sync::Arc::make_mut(&mut self.clauses).includes = includes.into_boxed_slice();
+        Ok(self)
+    }
+
+    /// Returns the include clauses in declaration order.
+    #[must_use]
+    pub fn includes(&self) -> &[IncludeClause] {
+        &self.clauses.includes
     }
 
     /// Returns the untrusted tenant claim.

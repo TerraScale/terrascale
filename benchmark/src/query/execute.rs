@@ -195,6 +195,18 @@ pub(crate) fn execute_with_view(
     ordered.sort_by(|left, right| model::compare_documents(query.ordering(), left, right));
     let matched_count = u64::try_from(ordered.len()).unwrap_or(u64::MAX);
     let rows = materialize(query, &ordered, &by_id)?;
+    // The include set is materialized from exactly the rows the page
+    // carries, after ordering and paging, so a paged include-bearing query
+    // materializes the includes of its own page and nothing else.
+    let includes = super::includes::materialize(
+        engine,
+        snapshot,
+        &documents,
+        &rows,
+        query.includes(),
+        query.deadline(),
+        query.cancellation_signal(),
+    )?;
 
     let index_generation = staleness
         .observations()
@@ -205,7 +217,14 @@ pub(crate) fn execute_with_view(
                 .used()
                 .map(|used| IndexGenerationRef::new(observation.namespace().clone(), used))
         });
-    Ok(QueryResult::new(rows, matched_count, query.ordering().clone(), staleness, index_generation))
+    Ok(QueryResult::new(
+        rows,
+        matched_count,
+        query.ordering().clone(),
+        staleness,
+        index_generation,
+        includes,
+    ))
 }
 
 /// Sorts nothing and reads no data: this is the bounded materialization step

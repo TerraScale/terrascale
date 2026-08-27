@@ -672,13 +672,15 @@ pub struct StreamCursor {
 /// and — exactly once at the end of the stream — the terminal
 /// [`StreamCompletion`]. The batch limit is part of the request, not the
 /// batch. Query streams additionally report the index generation their
-/// execution used, faithfully `None` for an index-less execution.
+/// execution used, faithfully `None` for an index-less execution, and carry
+/// the include materialization of their own items.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StreamBatch {
     items: Vec<StreamItem>,
     next_cursor: StreamCursor,
     completion: Option<StreamCompletion>,
     index_generation: Option<crate::query::IndexGenerationRef>,
+    includes: crate::query::IncludeSet,
 }
 
 impl StreamBatch {
@@ -710,6 +712,18 @@ impl StreamBatch {
     #[must_use]
     pub fn index_generation(&self) -> Option<&crate::query::IndexGenerationRef> {
         self.index_generation.as_ref()
+    }
+
+    /// Returns the include materialization of this batch's own items.
+    ///
+    /// The set is materialized from exactly the query rows sliced into
+    /// this batch, so the union of every batch's include set equals the
+    /// include set of one paged execution over the same plan and window.
+    /// A plan without include clauses, and every non-query source, carries
+    /// an empty set.
+    #[must_use]
+    pub const fn includes(&self) -> &crate::query::IncludeSet {
+        &self.includes
     }
 }
 

@@ -5,6 +5,7 @@
 //! observations, and the index generation used. It never carries a storage
 //! detail, lock, or raw byte.
 
+use super::includes::IncludeSet;
 use super::spec::{IndexNamespace, QueryOrdering};
 use crate::types::{Document, DocumentValue};
 
@@ -189,6 +190,7 @@ pub struct QueryResult {
     ordering: QueryOrdering,
     staleness: StalenessReport,
     index_generation: Option<IndexGenerationRef>,
+    includes: IncludeSet,
 }
 
 impl QueryResult {
@@ -199,8 +201,9 @@ impl QueryResult {
         ordering: QueryOrdering,
         staleness: StalenessReport,
         index_generation: Option<IndexGenerationRef>,
+        includes: IncludeSet,
     ) -> Self {
-        Self { rows, matched, ordering, staleness, index_generation }
+        Self { rows, matched, ordering, staleness, index_generation, includes }
     }
 
     /// Returns the result rows in result order.
@@ -233,5 +236,17 @@ impl QueryResult {
     #[must_use]
     pub const fn index_generation(&self) -> Option<&IndexGenerationRef> {
         self.index_generation.as_ref()
+    }
+
+    /// Returns the include materialization of this result.
+    ///
+    /// The set is materialized from exactly the rows this result carries,
+    /// so paging an include-bearing query pages its includes: the second
+    /// page materializes the includes of the second page's rows, not of the
+    /// whole matched set. A query without include clauses carries an empty
+    /// set.
+    #[must_use]
+    pub const fn includes(&self) -> &IncludeSet {
+        &self.includes
     }
 }
