@@ -14,10 +14,15 @@
 //! checksum-failing **trailing** record is an interrupted append, truncated
 //! at open; the same damage **mid-file** is integrity loss for evidence a
 //! declared bound rests on, so the open fails closed instead of silently
-//! serving a prefix. Records never carry document content — a tombstone
-//! that kept the body would keep deleted data alive. D-3 clock stamps are
-//! process-local lane state and are not durable; evidence re-derived from
-//! this store carries the origin stamp.
+//! serving a prefix. The torn-tail reading is bounded by
+//! [`MAX_RETAINED_RECORD_BYTES`]: an interrupted append can only ever be a
+//! prefix of a record this store writes, so a length header declaring more
+//! than any legal record could carry is damage to the length field itself —
+//! integrity damage wherever it sits, never a silent truncation. Records
+//! never carry document content — a tombstone that kept the body would keep
+//! deleted data alive. D-3 clock stamps are process-local lane state and
+//! are not durable; evidence re-derived from this store carries the origin
+//! stamp.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -40,6 +45,21 @@ const RETAINED_RECORD_BOUND: u8 = 2;
 
 /// Record header size: four length bytes and eight checksum bytes.
 const HEADER_BYTES: usize = 12;
+
+/// The maximum payload size one legal retained record may declare.
+///
+/// This bounds the torn-tail reading of a damaged store. A fact record
+/// holds four validated identifiers — each at most 255 bytes plus its
+/// length prefix — and fixed fields, so it stays just over one KiB. A
+/// bound record holds one row per tenant that committed in the given-up
+/// window, 268 bytes a row; the ceiling leaves room for every tenant a
+/// window could plausibly hold while staying far below any damaged length
+/// field. A declared length beyond it cannot be an interrupted append of
+/// any record this store writes — interrupted appends only ever produce
+/// prefixes of legal frames — so it is integrity damage, and the open
+/// fails closed wherever it sits instead of silently truncating every
+/// record behind it.
+const MAX_RETAINED_RECORD_BYTES: usize = 1 << 20;
 
 /// One content-free retained deletion fact, as the store holds it.
 ///
@@ -198,13 +218,18 @@ impl RetainedIndex {
     /// Scans the durable store and builds the index over its verified
     /// prefix, the prefix length, and the damage classification.
     ///
-    /// The classification follows the write-ahead log's position rule: a
-    /// frame that is cut off by end of file — its declared payload, or the
-    /// header itself, runs past the end — is an interrupted append, so the
-    /// verified prefix ends there and the caller truncates the tail; a
-    /// structurally complete frame that fails its checksum or parse is
-    /// integrity damage, and with bytes behind it the open fails closed
-    /// (only the trailing position keeps the gentler torn-tail reading).
+    /// The classification follows the write-ahead log's position rule,
+    /// bounded by the maximum legal record size: a frame that is cut off
+    /// by end of file — its declared payload, or the header itself, runs
+    /// past the end — is an interrupted append, so the verified prefix ends
+    /// there and the caller truncates the tail; a structurally complete
+    /// frame that fails its checksum or parse is integrity damage, and with
+    /// bytes behind it the open fails closed (only the trailing position
+    /// keeps the gentler torn-tail reading). A declared length beyond
+    /// [`MAX_RETAINED_RECORD_BYTES`] is never an interrupted append — no
+    /// legal record carries it — so it is integrity damage wherever it
+    /// sits, and the open fails closed instead of silently truncating
+    /// every record behind a corrupted length field.
     pub(crate) fn scan(path: &Path) -> RetainedScan {
         let empty = RetainedScan {
             index: Self::default(),
@@ -233,9 +258,15 @@ impl RetainedIndex {
                 // exactly decides torn tail versus mid-file damage.
                 let consumed = before.saturating_sub(reader.remaining());
                 let stopped = frame_start + consumed;
-                let declared_end = declared_frame_end(&bytes, frame_start);
-                let mid_file =
-                    declared_end.is_some_and(|end| end <= total && (end < total || stopped < end));
+                let mid_file = match declared_frame(&bytes, frame_start) {
+                    // The header itself is cut off by the end of the file:
+                    // the only explanation is an interrupted append.
+                    None => false,
+                    // A length no legal record could carry is a damaged
+                    // length field, not a torn tail.
+                    Some((length, _)) if length > MAX_RETAINED_RECORD_BYTES => true,
+                    Some((_, end)) => end <= total && (end < total || stopped < end),
+                };
                 return RetainedScan { index, good_bytes, total_bytes, mid_file_damage: mid_file };
             };
             let consumed = before.saturating_sub(reader.remaining());
@@ -292,16 +323,17 @@ impl RetainedIndex {
     }
 }
 
-/// Returns where the frame starting at `frame_start` declares it ends, when
-/// its length header is present and readable.
-fn declared_frame_end(bytes: &[u8], frame_start: usize) -> Option<usize> {
+/// Returns the payload length the frame starting at `frame_start` declares
+/// and where that frame declares it ends, when the length header is present
+/// and readable.
+fn declared_frame(bytes: &[u8], frame_start: usize) -> Option<(usize, usize)> {
     let total = bytes.len();
     if frame_start + 4 > total {
         return None;
     }
     let length = u32::from_le_bytes(bytes[frame_start..frame_start + 4].try_into().expect("length"))
         as usize;
-    Some(frame_start + HEADER_BYTES + length)
+    Some((length, frame_start + HEADER_BYTES + length))
 }
 
 /// One decoded record of the store.

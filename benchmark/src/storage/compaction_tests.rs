@@ -470,6 +470,52 @@ fn a_torn_retained_store_tail_is_truncated_and_midfile_damage_fails_closed() {
 }
 
 #[test]
+fn an_impossible_declared_length_fails_the_open_and_a_legal_torn_tail_still_truncates() {
+    let (dir, mut storage) = open_storage("store-length-overrun");
+    seed(&mut storage);
+    assert!(storage.compact(compact_request(CompactionPolicy::ReclaimHistory)).is_ok());
+    drop(storage);
+
+    let retained = dir.join("retained");
+    let good = std::fs::read(&retained).expect("store reads");
+    // The compacted store holds at least two records — the fact and the
+    // bound — so damaging the first record's length field is the mid-file
+    // shape: everything after it (the bound the location's history bound
+    // rests on) must not be silently truncated away.
+    let mut damaged = good.clone();
+    damaged[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
+    std::fs::write(&retained, &damaged).expect("store rewrites");
+    assert_eq!(
+        FileStorage::open(&dir).err(),
+        Some(super::StorageOpenError::FormatMismatch),
+        "a declared length no legal record could carry is integrity damage, not an interrupted append"
+    );
+
+    // The genuine torn tail keeps the gentler reading: a frame whose header
+    // declares a legal length but whose payload is cut off by the end of
+    // the file is an interrupted append, truncated to the verified prefix
+    // exactly like the journal's.
+    let mut torn = good.clone();
+    torn.extend_from_slice(&24_u32.to_le_bytes());
+    torn.extend_from_slice(&[0_u8; 8]);
+    torn.extend_from_slice(&[0xa5, 0xa5]);
+    std::fs::write(&retained, &torn).expect("store rewrites");
+    let reopened = FileStorage::open(&dir).expect("a legal-length torn tail opens on its prefix");
+    assert_eq!(
+        reopened.retained_state().bound,
+        Some(StorageSequence::new(4)),
+        "the verified prefix still names the bound"
+    );
+    drop(reopened);
+    assert_eq!(
+        std::fs::metadata(&retained).expect("store exists").len(),
+        good.len() as u64,
+        "the torn tail was truncated so later appends stay scannable"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn a_truncated_wal_with_a_corrupt_manifest_recovers_from_the_newest_root() {
     let (dir, mut storage) = open_storage("root-fallback");
     seed(&mut storage);
