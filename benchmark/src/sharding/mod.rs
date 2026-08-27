@@ -58,6 +58,9 @@
 //! No sharded performance claim is made or implied.
 
 mod bucket;
+pub mod coordination;
+#[cfg(test)]
+mod coordination_tests;
 pub(crate) mod hash;
 mod indexing;
 mod migration;
@@ -294,6 +297,21 @@ pub enum ShardingError {
         /// The epoch the topology holds.
         held: u64,
         /// The epoch the transition offered.
+        offered: u64,
+    },
+    /// A shard identity entering the table seated at an epoch that does not
+    /// exceed the fencing bar of its buckets (the highest epoch the seated
+    /// topology holds over them). A new or returning identity never resets
+    /// the fencing facts of the buckets it takes: it must fence every
+    /// ownership seated before it, so a deposed owner cannot return through
+    /// a re-identified shard at the epoch it was deposed from.
+    EnteringShardEpochNotRaised {
+        /// The entering shard identity.
+        shard: ShardId,
+        /// The fencing bar of the entering shard's buckets: the highest
+        /// epoch the topology holds over them.
+        expectation: u64,
+        /// The epoch the transition offered the entering identity.
         offered: u64,
     },
 }

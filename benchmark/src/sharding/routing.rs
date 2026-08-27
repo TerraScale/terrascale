@@ -12,7 +12,7 @@
 use crate::replication::{MemberId, TopologyView};
 use crate::types::{CollectionName, Document, DocumentId, DocumentValue, TenantId};
 
-use super::{Bucket, BucketRangeTable, ShardId, ShardKeySet, ShardingError};
+use super::{Bucket, BucketRange, BucketRangeTable, ShardId, ShardKeySet, ShardingError};
 
 /// A validated bucket-range table seated against a `TopologyView`: one
 /// `RangeOwnership` per shard, ready to route.
@@ -207,16 +207,21 @@ impl ShardTopology {
     /// the fencing facts: a shard identity's epoch never decreases, and a
     /// shard whose buckets or owner changed must raise its epoch — the
     /// ownership transfer that ends a bucket move (ADR 0011 D3). Shards that
-    /// leave the table (drained) and shards that enter it are transitions of
-    /// the shards that gave or took their buckets, which the same rule
-    /// covers.
+    /// leave the table (drained) are transitions of the shards that took
+    /// their buckets. A shard identity the seated table does not name — a
+    /// new or returning identity entering the table — must seat above the
+    /// fencing bar of the buckets it takes (the highest epoch this topology
+    /// holds over them): re-identifying a shard never resets the fencing
+    /// facts of its buckets.
     ///
     /// # Errors
     ///
     /// Returns the seating failures of [`ShardTopology::try_new`],
     /// [`ShardingError::EpochRegression`] when a shard's offered epoch is
-    /// below the held one, and [`ShardingError::EpochNotRaised`] when a
-    /// shard's buckets or owner changed without a raised epoch.
+    /// below the held one, [`ShardingError::EpochNotRaised`] when a
+    /// shard's buckets or owner changed without a raised epoch, and
+    /// [`ShardingError::EnteringShardEpochNotRaised`] when an entering
+    /// shard identity seats at or below the fencing bar of its buckets.
     pub fn transition(
         &self,
         table: BucketRangeTable,
@@ -237,7 +242,48 @@ impl ShardTopology {
                 }
             }
         }
+        let seated_shards = self.table.shards();
+        for shard in next.table().shards() {
+            if seated_shards.contains(&shard) {
+                continue;
+            }
+            let offered = next.epoch_of(shard).unwrap_or(1);
+            let expectation = self.fencing_expectation_over(&next.table().ranges_of(shard));
+            if offered <= expectation {
+                return Err(ShardingError::EnteringShardEpochNotRaised {
+                    shard,
+                    expectation,
+                    offered,
+                });
+            }
+        }
         Ok(next)
+    }
+
+    /// Returns the fencing bar of one set of bucket ranges: the highest
+    /// ownership epoch this topology holds over them.
+    ///
+    /// A shard identity entering the table over these buckets must seat at
+    /// an epoch above this bar — the entering identity fences every
+    /// ownership the buckets held under the identities before it, so a
+    /// re-identified shard cannot re-seat stale ownership at the epoch it
+    /// was deposed from.
+    pub(crate) fn fencing_expectation_over(&self, ranges: &[BucketRange]) -> u64 {
+        let mut expectation = 0;
+        for held_shard in self.table.shards() {
+            let Some(epoch) = self.epoch_of(held_shard) else {
+                continue;
+            };
+            let overlaps = self.table.ranges_of(held_shard).iter().any(|held| {
+                ranges.iter().any(|offered| {
+                    offered.start().max(held.start()) < offered.end().min(held.end())
+                })
+            });
+            if overlaps {
+                expectation = expectation.max(epoch);
+            }
+        }
+        expectation
     }
 }
 

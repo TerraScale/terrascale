@@ -691,6 +691,57 @@ fn view_transitions_refuse_epoch_regressions() {
 }
 
 #[test]
+fn shards_entering_a_transition_must_clear_the_fencing_epoch() {
+    let topology = two_shard_topology();
+    // shard/2 — an identity the table does not seat — takes shard/0's half
+    // under m-beta, deposing m-alpha, at the epoch the table already held
+    // there. Re-identifying the shard must not reset the fencing bar of
+    // the buckets it takes.
+    let half = BUCKET_SPACE / 2;
+    let entering_table =
+        BucketRangeTable::try_new(&[range(0, half, 2), range(half, BUCKET_SPACE, 1)])
+            .expect("valid table");
+    let entering_view = |epoch: u64| {
+        TopologyView::new()
+            .with_region("r-alpha")
+            .expect("valid region")
+            .with_region("r-beta")
+            .expect("valid region")
+            .with_member("m-alpha", "r-alpha", "r-alpha")
+            .expect("valid member")
+            .with_member("m-beta", "r-beta", "r-beta")
+            .expect("valid member")
+            .with_owner_at_epoch(&shard(2).as_range(), "m-beta", epoch)
+            .expect("valid owner")
+            .with_owner_at_epoch(&shard(1).as_range(), "m-beta", 1)
+            .expect("valid owner")
+            .validated()
+            .expect("servable view")
+    };
+
+    assert_eq!(
+        topology.transition(entering_table.clone(), entering_view(1)),
+        Err(ShardingError::EnteringShardEpochNotRaised {
+            shard: shard(2),
+            expectation: 1,
+            offered: 1,
+        }),
+        "an entering identity seats only above the epochs its buckets held"
+    );
+
+    // Above the fencing bar the entering identity seats, and the drained
+    // identity is gone from the table.
+    let seated = topology
+        .transition(entering_table, entering_view(2))
+        .expect("an entering identity above the fencing bar seats");
+    let mut seated_shards = seated.table().shards();
+    seated_shards.sort_unstable();
+    assert_eq!(seated_shards, vec![shard(1), shard(2)]);
+    assert_eq!(seated.owner_of(shard(2)), Some(MemberId::try_new("m-beta").expect("valid member")));
+    assert_eq!(seated.epoch_of(shard(2)), Some(2));
+}
+
+#[test]
 fn bucket_ownership_transfers_require_raised_epochs() {
     let topology = two_shard_topology();
     let fixture = Fixture::new("tenant-a", "orders/1001");
