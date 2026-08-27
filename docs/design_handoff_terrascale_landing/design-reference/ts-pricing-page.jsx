@@ -1,4 +1,3 @@
-// ts-pricing-page.jsx — Full Pricing page matching terrascale.tech/pricing
 
 const { useState: usePS } = React;
 
@@ -14,7 +13,6 @@ function PricingPage() {
   );
 }
 
-// 3-up feature row (Security / Fast / Auto-scaling)
 function PricingFeatureTriad() {
   const items = [
     { icon: 'shieldCheck', title: 'Enterprise Security', text: 'Access-controlled with end-to-end encryption' },
@@ -52,7 +50,6 @@ function PricingFeatureTriad() {
   );
 }
 
-// Detailed Pricing — usage-based table
 function DetailedPricingTable() {
   const rows = [
     { item: 'Enterprise Level Support', price: '$499', unit: '/month',
@@ -144,7 +141,6 @@ function DetailedPricingTable() {
   );
 }
 
-// FAQ with collapsible items
 const FAQS = [
   { q: 'What is a Database Operation?',
     a: 'A Database Operation is any single read, write, update, or delete action against your database. Each query you execute — whether fetching a row, inserting a record, running an aggregate, or replicating to another region — counts as one or more operations depending on complexity.' },
@@ -250,7 +246,6 @@ function PricingFAQ() {
   );
 }
 
-// Bottom "Ready to get started?" CTA
 function PricingCTA() {
   return (
     <section style={{ position: 'relative', padding: '80px 0 100px', overflow: 'hidden' }}>

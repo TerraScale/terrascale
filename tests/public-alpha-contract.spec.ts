@@ -1,13 +1,155 @@
-import { expect, test } from 'playwright/test'
+import { readdirSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { expect, test, type Page } from 'playwright/test'
 
 const registrationUrl = 'https://dash.terrascale.tech/register'
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const publishedRoutes = [
   { path: '/', canonical: 'https://terrascale.tech/' },
   { path: '/about', canonical: 'https://terrascale.tech/about' },
   { path: '/contact', canonical: 'https://terrascale.tech/contact' },
   { path: '/pricing', canonical: 'https://terrascale.tech/pricing' },
-]
+] as const
+
+type PublicRoute = (typeof publishedRoutes)[number]['path']
+type RenderedRoute = PublicRoute | '/404'
+
+const renderedRoutes = [...publishedRoutes, { path: '/404', canonical: 'https://terrascale.tech/404' }] as const
+
+const expectedRenderedCtaHrefs = {
+  '/': [registrationUrl, registrationUrl, 'https://docs.terrascale.tech', registrationUrl, './contact'],
+  '/about': [registrationUrl, './pricing', './contact'],
+  '/contact': [registrationUrl],
+  '/pricing': [
+    registrationUrl,
+    `${registrationUrl}?plan=developer`,
+    `${registrationUrl}?plan=starter`,
+    `${registrationUrl}?plan=pro`,
+    './contact',
+    './contact',
+    'https://docs.terrascale.tech',
+    registrationUrl,
+  ],
+  '/404': [registrationUrl, './', './contact'],
+} as const satisfies Record<RenderedRoute, readonly string[]>
+
+const expectedRenderedRegistrationHrefs = {
+  '/': [registrationUrl, registrationUrl, registrationUrl],
+  '/about': [registrationUrl],
+  '/contact': [registrationUrl],
+  '/pricing': [
+    registrationUrl,
+    `${registrationUrl}?plan=developer`,
+    `${registrationUrl}?plan=starter`,
+    `${registrationUrl}?plan=pro`,
+    registrationUrl,
+  ],
+  '/404': [registrationUrl],
+} as const satisfies Record<RenderedRoute, readonly string[]>
+
+const expectedStaticHtml = ['404.html', 'about.html', 'contact.html', 'index.html', 'pricing.html']
+
+function listStaticHtml(directory: string): string[] {
+  const files: string[] = []
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const fullPath = path.join(directory, entry.name)
+    if (entry.isDirectory()) files.push(...listStaticHtml(fullPath))
+    else if (entry.isFile() && entry.name.endsWith('.html')) files.push(path.relative(repositoryRoot, fullPath))
+  }
+  return files.sort()
+}
+
+const normalizeExpectedHref = (href: string) => {
+  const url = new URL(href, 'http://localhost:4173')
+  return url.origin === 'http://localhost:4173' ? `${url.pathname}${url.search}${url.hash}` : url.href
+}
+
+async function assertRegistrationCtas(page: Page, path: RenderedRoute, mobile: boolean) {
+  await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 })
+  await page.goto(path)
+
+  const headerLogin = mobile
+    ? page.locator('#mobile-navigation a[href="https://dash.terrascale.tech/login"]')
+    : page.locator('header .ts-header__actions > a[href="https://dash.terrascale.tech/login"]')
+
+  if (mobile) {
+    const toggle = page.getByRole('button', { name: /toggle navigation/i })
+    await expect(toggle).toBeVisible()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.locator('#mobile-navigation')).toBeVisible()
+  }
+  await expect(headerLogin, `${mobile ? 'mobile' : 'desktop'} login link`).toHaveCount(1)
+  await expect(headerLogin).toBeVisible()
+  await expect(headerLogin).not.toHaveAttribute('href', registrationUrl)
+
+  const semanticCtas = await page.locator('a').evaluateAll((anchors) =>
+    anchors
+      .map((anchor) => {
+        const href = anchor.getAttribute('href') ?? ''
+        const className = anchor.getAttribute('class') ?? ''
+        const text = (anchor.textContent ?? '').replace(/\s+/g, ' ').trim()
+        let decodedPath: string
+        try {
+          let candidate = new URL(href, document.baseURI).pathname
+          for (let i = 0; i < 3; i += 1) {
+            const next = decodeURIComponent(candidate)
+            if (next === candidate) break
+            candidate = next
+          }
+          decodedPath = candidate
+        } catch {
+          decodedPath = href
+        }
+        const registrationLike =
+          /(?:^|\/)(?:register|signup)(?:\/|$)/i.test(decodedPath) ||
+          /(?:register|signup|get started|sign up|start public alpha)/i.test(text) ||
+          /\b(?:ts-cta|cta__primary)\b/.test(className)
+        const publicCta = registrationLike || /\b(?:ts-btn|pricing-card__cta)\b/.test(className)
+        const cardPlan = anchor.closest('[data-plan]')?.getAttribute('data-plan') ?? null
+        let normalizedHref = `invalid:${href}`
+        try {
+          const resolved = new URL(href, document.baseURI)
+          normalizedHref = resolved.origin === window.location.origin
+            ? `${resolved.pathname}${resolved.search}${resolved.hash}`
+            : resolved.href
+        } catch {
+          // Keep malformed CTA targets visible to the comparison below.
+        }
+        return {
+          href,
+          normalizedHref,
+          registrationLike,
+          publicCta,
+          cardPlan,
+          visible: getComputedStyle(anchor).display !== 'none' && getComputedStyle(anchor).visibility !== 'hidden',
+        }
+      })
+      .filter(({ publicCta, registrationLike }) => publicCta || registrationLike),
+  )
+
+  const expectedCtaHrefs = [...expectedRenderedCtaHrefs[path], ...(mobile ? [registrationUrl] : [])].map(normalizeExpectedHref).sort()
+  expect(semanticCtas.map(({ normalizedHref }) => normalizedHref).sort()).toEqual(expectedCtaHrefs)
+
+  const expectedRegistrationHrefs = [...expectedRenderedRegistrationHrefs[path], ...(mobile ? [registrationUrl] : [])]
+    .map(normalizeExpectedHref)
+    .sort()
+  expect(semanticCtas.filter(({ registrationLike }) => registrationLike).map(({ normalizedHref }) => normalizedHref).sort()).toEqual(expectedRegistrationHrefs)
+
+  const enterpriseCtas = semanticCtas.filter(({ cardPlan }) => cardPlan === 'enterprise')
+  if (path === '/pricing') expect(enterpriseCtas.map(({ normalizedHref }) => normalizedHref)).toEqual(['/contact'])
+}
+
+test('static output contains exactly the approved prerendered route set', () => {
+  const actualStaticHtml = listStaticHtml(path.join(repositoryRoot, 'build'))
+  expect(actualStaticHtml).toEqual(expectedStaticHtml.map((file) => path.join('build', file)).sort())
+  for (const forbiddenRoute of ['security.html', 'terms.html', 'signup.html', 'login.html', 'usage.html']) {
+    expect(actualStaticHtml).not.toContain(path.join('build', forbiddenRoute))
+  }
+})
 
 test('published routes expose canonical metadata and basic accessible structure', async ({ page }) => {
   for (const route of publishedRoutes) {
@@ -59,6 +201,13 @@ test('published routes keep registration, login, status, and policy links canoni
     }
     await expect(page.locator(`a[href^="${registrationUrl}"]`).first()).toBeAttached()
     await expect(page.locator('a[href*="dash.terrascale.tech/signup"]')).toHaveCount(0)
+  }
+})
+
+test('every public registration CTA keeps its exact destination on desktop and mobile', async ({ page }) => {
+  for (const { path } of renderedRoutes) {
+    await assertRegistrationCtas(page, path, false)
+    await assertRegistrationCtas(page, path, true)
   }
 })
 

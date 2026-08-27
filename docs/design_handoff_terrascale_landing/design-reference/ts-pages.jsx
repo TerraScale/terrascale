@@ -1,6 +1,3 @@
-// ts-pages.jsx — About, Pricing, Contact page content
-
-// ── About Page ───────────────────────────────────────────────────────────────
 function AboutPage() {
   const values = [
     { icon: 'target', title: 'Transparency', text: 'Open communication and honest relationships with every user.' },
@@ -11,7 +8,6 @@ function AboutPage() {
 
   return (
     <React.Fragment>
-      {/* Hero */}
       <section style={{ position: 'relative', padding: '120px 0 80px', overflow: 'hidden' }}>
         <div style={{
           position: 'absolute', inset: 0, pointerEvents: 'none',
@@ -52,7 +48,6 @@ function AboutPage() {
         </div>
       </section>
 
-      {/* Mission */}
       <section style={{ padding: '80px 0', background: 'var(--ts-bg-surface)' }}>
         <div style={{ maxWidth: 1240, margin: '0 auto', padding: '0 40px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 64, alignItems: 'center' }}>
@@ -120,7 +115,6 @@ function AboutPage() {
         </div>
       </section>
 
-      {/* Values */}
       <section style={{ padding: '100px 0' }}>
         <div style={{ maxWidth: 1240, margin: '0 auto', padding: '0 40px' }}>
           <SectionHeader eyebrow="Values" title="What we stand for" subtitle="The principles that guide every decision we make." />
@@ -148,7 +142,6 @@ function AboutPage() {
         </div>
       </section>
 
-      {/* Team */}
       <section style={{ padding: '80px 0', background: 'var(--ts-bg-surface)' }}>
         <div style={{ maxWidth: 720, margin: '0 auto', padding: '0 40px', textAlign: 'center' }}>
           <h2 style={{ fontSize: 36, fontWeight: 700, color: 'var(--ts-text)', letterSpacing: '-0.02em', marginBottom: 16 }}>
@@ -191,7 +184,6 @@ function AboutPage() {
   );
 }
 
-// ── Contact Page ─────────────────────────────────────────────────────────────
 function ContactPage() {
   const [formState, setFormState] = useState({ name: '', email: '', company: '', message: '' });
   const [submitted, setSubmitted] = useState(false);
@@ -211,7 +203,6 @@ function ContactPage() {
 
   return (
     <React.Fragment>
-      {/* Hero */}
       <section style={{ position: 'relative', padding: '120px 0 60px', overflow: 'hidden' }}>
         <div style={{
           position: 'absolute', inset: 0, pointerEvents: 'none',
@@ -251,12 +242,10 @@ function ContactPage() {
         </div>
       </section>
 
-      {/* Form + Channels */}
       <section style={{ padding: '40px 0 100px' }}>
         <div style={{ maxWidth: 1120, margin: '0 auto', padding: '0 40px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 40 }}>
 
-            {/* Form */}
             <form onSubmit={handleSubmit} style={{
               padding: 36, borderRadius: 12,
               background: 'var(--ts-glass-bg)', backdropFilter: 'blur(14px)',
@@ -319,7 +308,6 @@ function ContactPage() {
               </div>
             </form>
 
-            {/* Channels */}
             <div>
               <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--ts-text)', marginBottom: 20 }}>
                 Other ways to reach us

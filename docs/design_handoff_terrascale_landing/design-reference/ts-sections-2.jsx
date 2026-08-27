@@ -1,6 +1,3 @@
-// ts-sections-2.jsx — Features, Code Panel, Pricing, CTA, Footer
-
-// ── Features ──────────────────────────────────────────────────────────────────
 function FeaturesSection() {
   const features = [
     {
@@ -90,7 +87,6 @@ function FeatureCard({ feature, index }) {
           ? '0 14px 40px rgba(var(--ts-primary-rgb), 0.2), inset 0 1px 0 rgba(255,255,255,0.06)'
           : '0 1px 0 rgba(255,255,255,0.04) inset',
       }}>
-      {/* Corner glow */}
       <div style={{
         position: 'absolute', top: -60, right: -60, width: 180, height: 180,
         background: hov
@@ -142,7 +138,6 @@ function FeatureCard({ feature, index }) {
   );
 }
 
-// ── Code Panel ────────────────────────────────────────────────────────────────
 const CODE_SAMPLES = {
   typescript: `import { TerraScale } from '@terrascale/sdk';
 
@@ -151,7 +146,6 @@ const db = new TerraScale({
   region: 'us-east-1',
 });
 
-// Create and query a table in one flow
 const users = db.table<User>('users');
 
 const active = await users
@@ -275,7 +269,6 @@ function CodePanelSection() {
       <div style={{ maxWidth: 1240, margin: '0 auto', padding: '0 40px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 72, alignItems: 'center' }}>
 
-          {/* Left: copy */}
           <div>
             <div style={{
               display: 'inline-flex', alignItems: 'center', gap: 8,
@@ -324,7 +317,6 @@ function CodePanelSection() {
             </div>
           </div>
 
-          {/* Right: terminal */}
           <div style={{
             position: 'relative',
             background: 'var(--ts-code-bg)',
@@ -332,7 +324,6 @@ function CodePanelSection() {
             borderRadius: 10, overflow: 'hidden',
             boxShadow: '0 20px 60px rgba(0,0,0,0.5), 0 0 80px rgba(var(--ts-primary-rgb), 0.08)',
           }}>
-            {/* Terminal chrome */}
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '12px 16px', background: 'rgba(0,0,0,0.3)',
@@ -365,7 +356,6 @@ function CodePanelSection() {
               </button>
             </div>
 
-            {/* Language tabs */}
             <div style={{
               display: 'flex', gap: 2, padding: '10px 12px 0',
               background: 'rgba(0,0,0,0.15)', borderBottom: '1px solid var(--ts-glass-border)',
@@ -389,7 +379,6 @@ function CodePanelSection() {
               ))}
             </div>
 
-            {/* Code body */}
             <pre style={{
               margin: 0, padding: 24,
               fontFamily: 'var(--ts-font-mono)', fontSize: 13.5, lineHeight: 1.75,
@@ -405,7 +394,6 @@ function CodePanelSection() {
   );
 }
 
-// Minimal syntax highlighter — token regex per language
 function HighlightedCode({ code, lang }) {
   const keywords = {
     typescript: /\b(import|from|const|let|var|async|await|function|return|if|else|new|class|extends|export|default|interface|type|as|in|of)\b/g,
@@ -419,7 +407,6 @@ function HighlightedCode({ code, lang }) {
   const numbers = /\b(\d+(?:\.\d+)?)\b/g;
   const fns = /\b([a-zA-Z_][\w]*)(?=\()/g;
 
-  // naive but readable tokenizer: mark segments
   const tokens = [];
   const claimed = new Array(code.length).fill(false);
 

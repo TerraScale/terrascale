@@ -1,6 +1,3 @@
-// ts-sections-3.jsx — Pricing, CTA, Footer
-
-// ── Pricing ───────────────────────────────────────────────────────────────────
 function PricingSection() {
   const [billing, setBilling] = useState('monthly');
 
@@ -55,7 +52,6 @@ function PricingSection() {
           subtitle="Start free, scale on demand. No hidden fees, no surprises."
         />
 
-        {/* Billing toggle */}
         <div style={{ display: 'flex', justifyContent: 'center', margin: '40px 0 64px' }}>
           <div style={{
             display: 'inline-flex', position: 'relative',
@@ -85,7 +81,6 @@ function PricingSection() {
                 {b === 'annual' ? 'Annual' : 'Monthly'}
               </button>
             ))}
-            {/* Floating green savings chip — top right */}
             <div style={{
               position: 'absolute',
               top: -11, right: -14,
@@ -160,7 +155,6 @@ function PricingCard({ plan, billing }) {
         </div>
       )}
 
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
         <div style={{
           width: 40, height: 40, borderRadius: 6,
@@ -176,7 +170,6 @@ function PricingCard({ plan, billing }) {
         {plan.description}
       </p>
 
-      {/* Price */}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
         <div style={{
           fontSize: 44, fontWeight: 700, lineHeight: 1,
@@ -202,7 +195,6 @@ function PricingCard({ plan, billing }) {
         background: 'linear-gradient(90deg, transparent, var(--ts-glass-border), transparent)',
       }} />
 
-      {/* Features */}
       <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 28px', flex: 1 }}>
         {plan.features.map(f => (
           <li key={f} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
@@ -218,7 +210,6 @@ function PricingCard({ plan, billing }) {
         ))}
       </ul>
 
-      {/* CTA */}
       <button style={{
         width: '100%', padding: '14px 20px',
         background: plan.popular ? plan.accent : 'rgba(255,255,255,0.04)',
@@ -236,11 +227,9 @@ function PricingCard({ plan, billing }) {
   );
 }
 
-// ── CTA Section ───────────────────────────────────────────────────────────────
 function CtaSection() {
   return (
     <section style={{ position: 'relative', padding: '120px 0', overflow: 'hidden' }}>
-      {/* Big atmospheric glow */}
       <div style={{
         position: 'absolute', inset: 0,
         background: `
@@ -310,7 +299,6 @@ function CtaSection() {
   );
 }
 
-// ── Footer ────────────────────────────────────────────────────────────────────
 function Footer({ setPage }) {
   const columns = [
     { title: 'Product', links: ['Features', 'Pricing', 'Changelog', 'Roadmap', 'Documentation'] },

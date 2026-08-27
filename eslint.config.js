@@ -12,11 +12,6 @@ export default tseslint.config(
       'dist',
       '.wrangler',
       'tmp',
-      'src/**/*.tsx',
-      'src/**/*.jsx',
-      'src/components/motion/**/*',
-      'src/components/ui/**/*',
-      'src/lib/utils.ts',
     ],
   },
   js.configs.recommended,
@@ -25,6 +20,12 @@ export default tseslint.config(
   {
     languageOptions: {
       globals: globals.browser,
+    },
+  },
+  {
+    files: ['*.js', '*.ts', 'scripts/**/*.{js,mjs,cjs,ts}', 'tests/**/*.{js,mjs,cjs,ts}'],
+    languageOptions: {
+      globals: globals.node,
     },
   },
   {
@@ -40,20 +41,7 @@ export default tseslint.config(
   },
   {
     rules: {
-      'no-undef': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
-    },
-  },
-  {
-    files: ['src/components/ExternalLink.svelte', 'src/components/RouteLink.svelte'],
-    rules: {
-      'svelte/no-navigation-without-resolve': 'off',
-    },
-  },
-  {
-    files: ['src/pages/Home.svelte'],
-    rules: {
-      'svelte/no-at-html-tags': 'off',
     },
   },
 )

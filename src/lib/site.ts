@@ -2,11 +2,6 @@ import type { AppIconName } from '@/lib/icons'
 
 export type RoutePath = '/' | '/about' | '/contact' | '/pricing'
 
-// Display labels are intentionally NOT stored here — they live in the i18n
-// dictionaries (src/lib/i18n/messages/*.ts) and are resolved by key. This file
-// remains the single source of truth for the locale-independent parts that are
-// easy to get wrong: route hrefs, icon names, link ordering, and external URLs.
-
 export type NavKey = 'home' | 'about' | 'pricing' | 'contact'
 
 export type NavEntry = {
@@ -92,8 +87,6 @@ export const publicAlphaCatalog = [
 
 export type PublicAlphaPlanSlug = (typeof publicAlphaCatalog)[number]['slug']
 
-// The Dashboard owns acceptance and version recording. The landing page owns
-// the public policy links shown before payment-method verification.
 export const registrationPolicyLinks = [
   { key: 'terms', href: 'https://docs.terrascale.tech/en/legal/terms/' },
   { key: 'privacy', href: 'https://docs.terrascale.tech/en/legal/privacy/' },

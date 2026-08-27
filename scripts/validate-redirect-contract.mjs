@@ -7,6 +7,8 @@ const scriptPath = fileURLToPath(import.meta.url)
 const defaultRoot = path.resolve(path.dirname(scriptPath), '..')
 const root = path.resolve(process.env.TERRASCALE_VALIDATOR_ROOT ?? defaultRoot)
 
+const normalizeHostname = (hostname) => String(hostname).replace(/\.+$/, '').toLowerCase()
+
 export const requiredRedirectRules = [
   '/signup https://dash.terrascale.tech/register 308',
   'https://dashboard.terrascale.tech/* https://dash.terrascale.tech/:splat 308',
@@ -44,10 +46,62 @@ export const parseRedirectRules = (text) =>
       }
     })
 
+const decodePathname = (pathname) => {
+  let decoded = pathname
+  try {
+    for (let i = 0; i < 3; i += 1) {
+      const next = decodeURIComponent(decoded)
+      if (next === decoded) return decoded
+      decoded = next
+    }
+    return decoded
+  } catch {
+    return null
+  }
+}
+
+const rawDestinationPath = (destination) => String(destination).match(/^https?:\/\/[^/?#]+([^?#]*)/i)?.[1] ?? '/'
+
+const rawLocationPath = (location) => {
+  const value = String(location).trim()
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(value) || value.startsWith('//')) {
+    return value.match(/^[a-z][a-z\d+.-]*:\/\/[^/?#]+([^?#]*)/i)?.[1]
+      ?? value.match(/^\/\/[^/?#]+([^?#]*)/)?.[1]
+      ?? '/'
+  }
+  return value.split(/[?#]/, 1)[0] || '/'
+}
+
+const hasUnsafeDestinationPath = (destination) => {
+  const rawPath = rawDestinationPath(destination)
+  const decodedPath = decodePathname(rawPath)
+  if (decodedPath === null) return true
+  return /%[0-9a-f]{2}/i.test(rawPath) || /(?:^|\/)\.\.?(?:\/|$)/.test(decodedPath)
+}
+
+const hasRetiredDashboardPath = (destination) => {
+  try {
+    const url = new URL(destination)
+    if (normalizeHostname(url.hostname) !== 'dash.terrascale.tech') return false
+    const decodedPath = decodePathname(url.pathname)
+    return decodedPath !== null && /(?:^|\/)\b(?:signup|usage)\b(?:\/|$)/i.test(decodedPath)
+  } catch {
+    return false
+  }
+}
+
+const validateRawLocation = (location, prefix) => {
+  const decodedPath = decodePathname(rawLocationPath(location))
+  if (decodedPath === null) return [`${prefix}: redirect Location has malformed encoding`]
+  if (/(?:^|\/)\.\.?(?:\/|$)/.test(decodedPath)) return [`${prefix}: redirect Location contains dot-segment path traversal`]
+  if (/(?:^|\/)\b(?:signup|usage)\b(?:\/|$)/i.test(decodedPath)) return [`${prefix}: redirect Location uses a retired dashboard path`]
+  return []
+}
+
 const isCanonicalDestination = (destination) => {
   try {
     const url = new URL(destination)
-    return url.protocol === 'https:' && url.hostname === 'dash.terrascale.tech' && !url.port && !url.username && !url.password
+    return url.protocol === 'https:' && normalizeHostname(url.hostname) === 'dash.terrascale.tech' && !url.port && !url.username && !url.password && !hasUnsafeDestinationPath(destination)
   } catch {
     return false
   }
@@ -80,7 +134,7 @@ export function validateRedirectRules(text) {
     if (rule.status !== '308') failures.push(`redirect migration rules must remain permanent (308): ${rule.line}`)
   }
 
-  if (/dash\.terrascale\.tech\/(?:signup|usage)\b/i.test(text)) {
+  if (/dash\.terrascale\.tech\/(?:signup|usage)\b/i.test(text) || rules.some(({ destination }) => hasRetiredDashboardPath(destination))) {
     failures.push('redirects must not use retired dashboard paths')
   }
 
@@ -97,7 +151,13 @@ export function validateRedirectRules(text) {
 }
 
 export function applyContractRedirect(input) {
-  const url = new URL(input)
+  if (typeof input !== 'string') return null
+  let url
+  try {
+    url = new URL(input)
+  } catch {
+    return null
+  }
   if (url.origin === 'https://dashboard.terrascale.tech') {
     return `https://dash.terrascale.tech${url.pathname}${url.search}`
   }
@@ -111,12 +171,20 @@ export function validateRedirectVectors() {
   const failures = []
   for (const { input, expected } of redirectVectors) {
     const actual = applyContractRedirect(input)
+    if (typeof actual !== 'string') {
+      failures.push(`redirect vector is malformed: ${input}`)
+      continue
+    }
     if (actual !== expected) failures.push(`redirect must preserve the safe path and query: ${input} -> ${actual}`)
     if (!/^https:\/\//.test(actual)) failures.push(`redirect destination must use HTTPS: ${actual}`)
     if (applyContractRedirect(actual) !== actual) failures.push(`redirect destination must be loop-free: ${input}`)
-    const destination = new URL(actual)
-    if (destination.hostname !== 'dash.terrascale.tech') {
-      failures.push(`redirect destination must use the canonical dashboard host: ${actual}`)
+    try {
+      const destination = new URL(actual)
+      if (destination.hostname !== 'dash.terrascale.tech') {
+        failures.push(`redirect destination must use the canonical dashboard host: ${actual}`)
+      }
+    } catch {
+      failures.push(`redirect vector produced a malformed destination: ${actual}`)
     }
   }
 
@@ -169,12 +237,29 @@ export async function checkDeployedRedirects({
     const expectedInitialStatus = vector.initialStatus ?? 308
     const expected = vector.destination ?? vector.input
 
-    const expectedUrl = new URL(expected)
+    const expectedRawFailures = validateRawLocation(expected, `${vector.label}: expected destination`)
+    if (expectedRawFailures.length) {
+      failures.push(...expectedRawFailures)
+      continue
+    }
+
+    let expectedUrl
+    try {
+      expectedUrl = new URL(expected)
+    } catch {
+      failures.push(`${vector.label}: deployed vector has a malformed expected URL`)
+      continue
+    }
     const validateFinalState = (candidate, prefix) => {
-      const candidateUrl = new URL(candidate)
+      let candidateUrl
+      try {
+        candidateUrl = new URL(candidate)
+      } catch {
+        return [`${prefix}: deployed URL is malformed: ${candidate}`]
+      }
       const stateFailures = []
       if (candidateUrl.protocol !== 'https:') stateFailures.push(`${prefix}: deployed URL must use HTTPS: ${candidate}`)
-      if (candidateUrl.hostname !== 'dash.terrascale.tech' || candidateUrl.port) {
+      if (normalizeHostname(candidateUrl.hostname) !== 'dash.terrascale.tech' || candidateUrl.port) {
         stateFailures.push(`${prefix}: deployed URL must use the canonical dashboard host: ${candidate}`)
       }
       if (candidateUrl.username || candidateUrl.password) stateFailures.push(`${prefix}: deployed URL must not contain credentials`)
@@ -185,13 +270,25 @@ export async function checkDeployedRedirects({
       return stateFailures
     }
 
-    const inputUrl = new URL(vector.input)
+    const expectedPolicyFailures = validateFinalState(expectedUrl.href, `${vector.label}: expected destination`)
+    if (expectedPolicyFailures.length) {
+      failures.push(...expectedPolicyFailures)
+      continue
+    }
+
+    let inputUrl
+    try {
+      inputUrl = new URL(vector.input)
+    } catch {
+      failures.push(`${vector.label}: deployed probe input is malformed`)
+      continue
+    }
     if (
       inputUrl.protocol !== 'https:' ||
       inputUrl.port ||
       inputUrl.username ||
       inputUrl.password ||
-      !['terrascale.tech', 'dashboard.terrascale.tech', 'dash.terrascale.tech'].includes(inputUrl.hostname)
+      !['terrascale.tech', 'dashboard.terrascale.tech', 'dash.terrascale.tech'].includes(normalizeHostname(inputUrl.hostname))
     ) {
       failures.push(`${vector.label}: deployed probe input must use an approved credential-free HTTPS host`)
       continue
@@ -244,6 +341,12 @@ export async function checkDeployedRedirects({
         }
         if (!location) {
           failures.push(`${vector.label}: deployed ${status} response has no Location header`)
+          completed = true
+          break
+        }
+        const rawLocationFailures = validateRawLocation(location, `${vector.label}: deployed Location`)
+        if (rawLocationFailures.length) {
+          failures.push(...rawLocationFailures)
           completed = true
           break
         }

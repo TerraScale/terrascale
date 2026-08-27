@@ -3,9 +3,6 @@
   import Icon from '@/components/Icon.svelte'
   import { locale, dict, setLocale, LOCALES, type LocaleCode } from '@/lib/i18n'
 
-  // `dropdown` (default) renders the popover used in the desktop header.
-  // `inline` renders a flat button row for the mobile nav and the footer,
-  // where an absolutely-positioned popover would clip against the edge.
   export let variant: 'dropdown' | 'inline' = 'dropdown'
 
   let open = false
@@ -234,7 +231,6 @@
     color: var(--ts-primary-light);
   }
 
-  /* Inline variant — flat button row for the mobile nav and footer. */
   .lang--inline {
     display: flex;
     flex-wrap: wrap;

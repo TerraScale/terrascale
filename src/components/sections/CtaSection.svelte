@@ -32,7 +32,7 @@
       <nav class="cta__policies" aria-label="Registration policies">
         <span>{$dict.cta.policyLead}</span>
         {#each registrationPolicyLinks as policy (policy.key)}
-          <ExternalLink href={policy.href} target="_blank" rel="noopener noreferrer" class="link-wipe">
+          <ExternalLink href={policy.href} target="_blank" class="link-wipe">
             {($dict.footer.columns.legal.links as Record<string, string>)[policy.key]}
           </ExternalLink>
         {/each}

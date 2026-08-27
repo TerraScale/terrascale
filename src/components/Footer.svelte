@@ -10,9 +10,6 @@
 
   const isExternal = (href: string) => href.startsWith('http') || href.startsWith('mailto:')
 
-  // Resolve display labels from the active dictionary. Reactive ($:) so the
-  // whole footer re-labels when the locale changes. The cast is safe because
-  // site.ts link keys are kept in lockstep with the dictionary keys.
   $: columns = footerColumns.map((column) => ({
     column,
     title: $dict.footer.columns[column.key].title,
@@ -49,7 +46,6 @@
             <ExternalLink
               href={social.href}
               target="_blank"
-              rel="noopener noreferrer"
               aria-label={name}
               class="ts-footer__social"
               style={`color: ${social.color}; background: ${social.bg}; border-color: ${social.border};`}
@@ -70,7 +66,6 @@
                   <ExternalLink
                     href={link.href}
                     target={link.href.startsWith('mailto:') ? undefined : '_blank'}
-                    rel={link.href.startsWith('mailto:') ? undefined : 'noopener noreferrer'}
                     class="ts-footer__link"
                   >
                     <Icon name="chevronRight" className="ts-footer__chevron" />

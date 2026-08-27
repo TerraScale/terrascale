@@ -27,11 +27,6 @@
       data-website-id="f76c453a-382e-48ac-a3e4-c53a8d8a553a"
     ></script>
     <script>
-      // Resolve the visitor's locale before first paint so <html lang> matches
-      // and the i18n store hydrates straight into the right language (minimises
-      // the English flash for returning non-English visitors). Mirrors the
-      // resolution order in src/lib/i18n/index.ts: stored choice, then browser
-      // language, then English. Runs synchronously in <head>, before the body.
       (function () {
         try {
           var stored = localStorage.getItem('ts-locale');
@@ -49,8 +44,9 @@
           var bcp47 = { en: 'en', es: 'es', 'pt-br': 'pt-BR' }[lang] || 'en';
           document.documentElement.lang = bcp47;
           window.__TS_LOCALE__ = lang;
-        } catch (e) {
-          /* blocked storage / no navigator — English prerender stands */
+        } catch {
+          document.documentElement.lang = 'en';
+          window.__TS_LOCALE__ = 'en';
         }
       })();
     </script>

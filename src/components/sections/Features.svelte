@@ -4,7 +4,6 @@
   import type { AppIconName } from '@/lib/icons'
   import { dict } from '@/lib/i18n'
 
-  // Icons are fixed per card; copy comes from the active dictionary.
   const featureIcons: AppIconName[] = ['zap', 'shield', 'globe', 'trendingUp']
   $: features = $dict.features.items.map((item, i) => ({
     icon: featureIcons[i] ?? 'zap',

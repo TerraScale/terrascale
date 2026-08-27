@@ -21,7 +21,7 @@
         copied = false
       }, 1600)
     } catch {
-      /* noop */
+      copied = false
     }
   }
 </script>
@@ -146,12 +146,6 @@
     margin: 0 0 20px;
   }
 
-  /* Lock the headline to exactly two lines on desktop — "Query your data"
-     then "in the language you love". The <br /> in the markup handles the
-     break; nowrap stops the gradient phrase from wrapping once the font
-     reaches its clamp cap (where it is wider than the copy column). On
-     mobile the column is narrow, so we keep natural wrapping there to
-     avoid horizontal overflow on small phones. */
   @media (min-width: 961px) {
     .code__headline {
       white-space: nowrap;

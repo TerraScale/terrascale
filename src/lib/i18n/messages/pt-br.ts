@@ -1,9 +1,5 @@
 import type { Messages } from './en'
 
-// Português (Brasil). Annotated against `Messages` so the compiler enforces
-// parity with the English dictionary — a missing key or array entry here is a
-// build-time error, not a silent English fallback at runtime.
-
 export const ptBr: Messages = {
   meta: {
     title: 'TerraScale Public Alpha | Banco de Documentos Regional',

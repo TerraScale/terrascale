@@ -43,7 +43,6 @@
       <ExternalLink
         href="https://docs.terrascale.tech/en/reference/pricing/"
         target="_blank"
-        rel="noopener noreferrer"
         class="detailed__docs"
       >
         <Icon name="bookOpen" className="detailed__docs-icon" />

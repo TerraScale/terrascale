@@ -1,13 +1,5 @@
 @import "tailwindcss";
 
-/* ===================================================================
-   TerraScale Design System
-   Source of truth: docs/design_handoff_terrascale_landing/README.md
-   Locked configuration:
-     data-theme="focused" · data-glass="subtle" · data-atmosphere="dramatic"
-   =================================================================== */
-
-/* ───────── Self-hosted fonts ───────── */
 @font-face {
   font-family: 'Quantico';
   src: url('/fonts/quantico.woff2') format('woff2');
@@ -40,17 +32,14 @@
   font-display: swap;
 }
 
-/* ───────── Tailwind font tokens ───────── */
 @theme {
   --font-quantico: "Quantico", system-ui, -apple-system, sans-serif;
   --font-roboto: "Roboto", system-ui, sans-serif;
   --font-roboto-mono: "Roboto Mono", "JetBrains Mono", ui-monospace, monospace;
 }
 
-/* ───────── Focused theme (locked default) ───────── */
 :root,
 [data-theme="focused"] {
-  /* Backgrounds */
   --ts-bg-base: #050508;
   --ts-bg-base-raw: 5, 5, 8;
   --ts-bg-surface: #09090F;
@@ -58,7 +47,6 @@
   --ts-code-bg: #07070D;
   --ts-divider: #15151F;
 
-  /* Brand / semantic */
   --ts-primary: #2563EB;
   --ts-primary-light: #60A5FA;
   --ts-primary-rgb: 37, 99, 235;
@@ -67,34 +55,27 @@
   --ts-tertiary: #8B5CF6;
   --ts-tertiary-rgb: 139, 92, 246;
 
-  /* Text */
   --ts-text: #F1F5F9;
   --ts-text-muted: #9BACCB;
 
-  /* Glass (subtle modifier) */
   --ts-glass-bg: rgba(37, 99, 235, 0.025);
   --ts-glass-border: rgba(148, 163, 184, 0.16);
   --ts-grid-color: rgba(37, 99, 235, 0.055);
 
-  /* Hero glow tokens */
   --ts-hero-glow-top: rgba(37, 99, 235, 0.22);
   --ts-hero-glow-mid: rgba(37, 99, 235, 0.10);
   --ts-hero-glow-accent: rgba(16, 185, 129, 0.05);
 
-  /* Gradients */
   --ts-gradient-primary: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
 
-  /* Atmosphere — locked to "dramatic" */
   --ts-atmo-mult: 1.9;
   --ts-atmo-grid-opacity: 1;
   --ts-atmo-float-opacity: 1.25;
 
-  /* Fonts */
   --ts-font-body: 'Quantico', system-ui, -apple-system, sans-serif;
   --ts-font-accent: 'Roboto', system-ui, sans-serif;
   --ts-font-mono: 'Roboto Mono', 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
 
-  /* Spacing (8-pt grid) */
   --ts-space-1: 0.25rem;
   --ts-space-2: 0.5rem;
   --ts-space-3: 0.75rem;
@@ -108,19 +89,16 @@
   --ts-space-20: 5rem;
   --ts-space-24: 6rem;
 
-  /* Radius */
   --ts-radius-sm: 6px;
   --ts-radius-md: 10px;
   --ts-radius-lg: 16px;
   --ts-radius-xl: 18px;
   --ts-radius-pill: 9999px;
 
-  /* Shadows (handoff spec) */
   --ts-shadow-card-hover: 0 12px 40px -12px rgba(37, 99, 235, 0.35);
   --ts-shadow-floating-cta: 0 20px 60px -20px rgba(37, 99, 235, 0.5);
   --ts-shadow-popular: 0 0 0 1px var(--ts-primary), 0 24px 60px -24px rgba(37, 99, 235, 0.45);
 
-  /* Transitions */
   --ts-transition-fast: 120ms ease-out;
   --ts-transition-normal: 180ms ease-out;
   --ts-transition-slow: 260ms cubic-bezier(.2,.8,.2,1);
@@ -131,7 +109,6 @@
   color: var(--ts-text);
 }
 
-/* ───────── Base reset ───────── */
 *,
 *::before,
 *::after {
@@ -192,14 +169,12 @@ svg {
   max-width: 100%;
 }
 
-/* ───────── Focus ───────── */
 :focus-visible {
   outline: 2px solid var(--ts-primary);
   outline-offset: 2px;
   border-radius: 4px;
 }
 
-/* ───────── Atmosphere overlays (hero) ───────── */
 .hero-atmo-overlay {
   position: absolute;
   inset: 0;
@@ -236,7 +211,6 @@ svg {
   background-size: 28px 28px;
 }
 
-/* ───────── Tile / card hover lift ───────── */
 .ts-tile-hover {
   transition:
     transform 260ms cubic-bezier(.2, .8, .2, 1),
@@ -248,7 +222,6 @@ svg {
   transform: translateY(-3px);
 }
 
-/* ───────── Link underline wipe ───────── */
 .link-wipe {
   position: relative;
   transition: color 180ms ease;
@@ -272,7 +245,6 @@ svg {
   transform: scaleX(1);
 }
 
-/* ───────── CTA sheen sweep ───────── */
 @keyframes ts-shine-sweep {
   0%   { transform: translateX(-120%) skewX(-18deg); }
   100% { transform: translateX(260%)  skewX(-18deg); }
@@ -305,7 +277,6 @@ svg {
   animation: ts-shine-sweep 900ms cubic-bezier(.4, 0, .2, 1);
 }
 
-/* ───────── Ambient motion ───────── */
 @keyframes ts-breathe {
   0%, 100% { transform: scale(1);    opacity: 0.82; }
   50%      { transform: scale(1.04); opacity: 1; }
@@ -348,7 +319,6 @@ svg {
   transition: opacity 300ms;
 }
 
-/* ───────── Scroll reveal (existing action hook) ───────── */
 .ts-reveal {
   opacity: 0;
   transition:
@@ -372,7 +342,6 @@ svg {
   filter: none;
 }
 
-/* ───────── Gradient text ───────── */
 .ts-text-gradient {
   background: var(--ts-gradient-primary);
   -webkit-background-clip: text;
@@ -380,7 +349,6 @@ svg {
   background-clip: text;
 }
 
-/* ───────── Eyebrow / kicker ───────── */
 .ts-eyebrow {
   display: inline-flex;
   align-items: center;
@@ -411,7 +379,6 @@ svg {
   display: none;
 }
 
-/* ───────── Buttons ───────── */
 .ts-btn {
   display: inline-flex;
   align-items: center;
@@ -467,7 +434,6 @@ svg {
   font-size: 12px;
 }
 
-/* ───────── Inputs ───────── */
 .ts-input {
   width: 100%;
   padding: 11px 14px;
@@ -511,7 +477,6 @@ svg {
   margin-bottom: 6px;
 }
 
-/* ───────── Glass surfaces ───────── */
 .ts-glass {
   background: var(--ts-glass-bg);
   backdrop-filter: blur(14px);
@@ -519,7 +484,6 @@ svg {
   border: 1px solid var(--ts-glass-border);
 }
 
-/* ───────── Syntax-highlight tokens (used by HighlightedCode) ───────── */
 .tok-keyword { color: var(--ts-primary-light); }
 .tok-string  { color: #86EFAC; }
 .tok-comment { color: #64748B; font-style: italic; }
@@ -527,7 +491,6 @@ svg {
 .tok-num     { color: #F0ABFC; }
 .tok-op      { color: #CBD5E1; }
 
-/* ───────── Scrollbar ───────── */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -547,7 +510,6 @@ svg {
   background: rgba(var(--ts-primary-rgb), 0.4);
 }
 
-/* ───────── Reduced motion ───────── */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

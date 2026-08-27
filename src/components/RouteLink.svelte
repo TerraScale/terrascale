@@ -1,6 +1,7 @@
 <script lang="ts">
   import { resolve } from '$app/paths'
   import { page } from '$app/stores'
+  import type { ResolvedPathname } from '$app/types'
 
   let className = ''
 
@@ -12,29 +13,26 @@
   export let match: 'exact' | 'prefix' = 'exact'
   export let afterClick: (() => void) | undefined = undefined
 
-  const isInternalHref = (value: string) => value.startsWith('/') || value.startsWith('#')
-  const toResolvedHref = (value: string) => {
+  const toResolvedHref = (value: string): ResolvedPathname => {
     if (value.startsWith('#')) {
-      return value
+      return value as ResolvedPathname
     }
 
     const [pathname, hash = ''] = value.split('#')
     const resolvedPath = resolve((pathname || '/') as Parameters<typeof resolve>[0])
-    return hash ? `${resolvedPath}#${hash}` : resolvedPath
+    return (hash ? `${resolvedPath}#${hash}` : resolvedPath) as ResolvedPathname
   }
 
-  $: internal = isInternalHref(href)
-  $: resolvedHref = internal ? toResolvedHref(href) : href
+  $: resolvedHref = toResolvedHref(href)
   $: targetPath = href.startsWith('#') ? $page.url.pathname : href.split('#')[0] || '/'
   $: normalizedTargetPath =
     targetPath.length > 1 && targetPath.endsWith('/') ? targetPath.slice(0, -1) : targetPath
   $: isActive =
-    internal &&
-    (match === 'prefix'
+    match === 'prefix'
       ? normalizedTargetPath === '/'
         ? $page.url.pathname === '/'
         : $page.url.pathname.startsWith(normalizedTargetPath)
-      : $page.url.pathname === normalizedTargetPath)
+      : $page.url.pathname === normalizedTargetPath
 
   function handleClick() {
     afterClick?.()

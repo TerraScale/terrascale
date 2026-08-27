@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { tmpdir } from 'node:os'
 import test from 'node:test'
 
 import {
@@ -77,6 +78,31 @@ test('redirect rules reject non-default canonical destination ports', () => {
   assert.match(failures.join('\n'), /HTTPS and the canonical dashboard host/i)
 })
 
+test('redirect rules reject stale signup destinations and wrong hosts', () => {
+  const failures = validateRedirectRules(`
+    /signup https://dash.terrascale.tech/signup 308
+    https://dashboard.terrascale.tech/* https://evil.example/:splat 308
+  `)
+
+  assert.match(failures.join('\n'), /retired dashboard paths/i)
+  assert.match(failures.join('\n'), /canonical dashboard host/i)
+})
+
+test('redirect rules reject encoded and dot-segment stale destinations', () => {
+  for (const destination of [
+    'https://dash.terrascale.tech/%73ignup',
+    'https://dash.terrascale.tech/foo/%2e%2e/signup',
+    'https://dash.terrascale.tech/foo/../signup',
+  ]) {
+    const failures = validateRedirectRules(`
+      /signup ${destination} 308
+      https://dashboard.terrascale.tech/* https://dash.terrascale.tech/:splat 308
+    `)
+
+    assert.match(failures.join('\n'), /retired dashboard paths|canonical registration path|encoded|dot-segment/i, destination)
+  }
+})
+
 test('deployed redirect checks verify the complete safe chain', async () => {
   const requests = []
   const responses = new Map([
@@ -146,6 +172,151 @@ test('deployed checks reject malformed statuses before following a chain', async
 
   assert.equal(requests.length, 1)
   assert.match(failures.join('\n'), /status|numeric|malformed/i)
+})
+
+test('deployed checks reject wrong redirect statuses before following a chain', async () => {
+  const input = 'https://terrascale.tech/signup?plan=pro&return=%2Fpricing'
+  const requests = []
+  const failures = await checkDeployedRedirects({
+    vectors: [{ label: '/signup', input, destination: 'https://dash.terrascale.tech/register?plan=pro&return=%2Fpricing', initialStatus: 308 }],
+    fetchImpl: async (url) => {
+      requests.push(url)
+      return new Response(null, {
+        status: 302,
+        headers: { location: 'https://dash.terrascale.tech/register?plan=pro&return=%2Fpricing' },
+      })
+    },
+  })
+
+  assert.deepEqual(requests, [input])
+  assert.match(failures.join('\n'), /must return 308/i)
+})
+
+test('deployed checks fail closed on malformed vector URLs', async () => {
+  const requests = []
+  const failures = await checkDeployedRedirects({
+    vectors: [
+      { label: 'malformed input', input: 'not a URL', destination: 'https://dash.terrascale.tech/register', initialStatus: 200 },
+      { label: 'malformed expected', input: 'https://terrascale.tech/signup', destination: 'not a URL', initialStatus: 308 },
+    ],
+    fetchImpl: async (url) => {
+      requests.push(url)
+      return new Response('unexpected fetch', { status: 200 })
+    },
+  })
+
+  assert.deepEqual(requests, [])
+  assert.match(failures.join('\n'), /malformed/i)
+})
+
+test('deployed checks always request manual redirect handling', async () => {
+  const fetchOptions = []
+  const failures = await checkDeployedRedirects({
+    vectors: [{ label: 'registration CTA', input: 'https://dash.terrascale.tech/register?plan=pro', destination: null, initialStatus: 200 }],
+    fetchImpl: async (_url, options) => {
+      fetchOptions.push(options)
+      return new Response('ok', { status: 200 })
+    },
+  })
+
+  assert.deepEqual(failures, [])
+  assert.equal(fetchOptions.length, 1)
+  assert.equal(fetchOptions[0].redirect, 'manual')
+})
+
+test('deployed checks reject a wrong status on a later redirect hop', async () => {
+  const input = 'https://terrascale.tech/signup?plan=pro&return=%2Fpricing'
+  const destination = 'https://dash.terrascale.tech/register?plan=pro&return=%2Fpricing'
+  const requests = []
+  const failures = await checkDeployedRedirects({
+    vectors: [{ label: '/signup', input, destination, initialStatus: 308 }],
+    fetchImpl: async (url) => {
+      requests.push(url)
+      if (url === input) return new Response(null, { status: 308, headers: { location: destination } })
+      return new Response(null, { status: 302, headers: { location: 'https://dash.terrascale.tech/login' } })
+    },
+  })
+
+  assert.deepEqual(requests, [input, destination])
+  assert.match(failures.join('\n'), /redirect hops must return 308/i)
+})
+
+test('deployed checks reject unsafe credentialed, preview, local, and wrong-host inputs before fetching', async () => {
+  for (const input of [
+    'http://terrascale.tech/signup',
+    'https://user:pass@dash.terrascale.tech/register',
+    'https://preview.example.invalid/register',
+    'https://127.0.0.1/register',
+    'https://dash.terrascale.tech:8443/register',
+    'https://evil.example/register',
+  ]) {
+    const requests = []
+    const failures = await checkDeployedRedirects({
+      vectors: [{ label: 'unsafe input', input, destination: 'https://dash.terrascale.tech/register', initialStatus: 200 }],
+      fetchImpl: async (url) => {
+        requests.push(url)
+        return new Response('unexpected fetch', { status: 200 })
+      },
+    })
+
+    assert.deepEqual(requests, [], input)
+    assert.match(failures.join('\n'), /approved credential-free HTTPS host/i, input)
+  }
+})
+
+test('deployed checks normalize canonical trailing-dot hosts and reject noncanonical trailing-dot hosts', async () => {
+  const input = 'https://terrascale.tech./signup?plan=pro'
+  const destination = 'https://dash.terrascale.tech./register?plan=pro'
+  const requests = []
+  const failures = await checkDeployedRedirects({
+    vectors: [{ label: 'trailing-dot canonical', input, destination, initialStatus: 308 }],
+    fetchImpl: async (url) => {
+      requests.push(url)
+      if (url === input) return new Response(null, { status: 308, headers: { location: destination } })
+      return new Response('ok', { status: 200 })
+    },
+  })
+
+  assert.deepEqual(failures, [])
+  assert.deepEqual(requests, [input, destination])
+
+  const rejectedRequests = []
+  const rejected = await checkDeployedRedirects({
+    vectors: [{ label: 'trailing-dot noncanonical', input: 'https://evil.example./register', destination: 'https://dash.terrascale.tech/register', initialStatus: 200 }],
+    fetchImpl: async (url) => {
+      rejectedRequests.push(url)
+      return new Response('unexpected fetch', { status: 200 })
+    },
+  })
+  assert.deepEqual(rejectedRequests, [])
+  assert.match(rejected.join('\n'), /approved credential-free HTTPS host/i)
+})
+
+test('deployed checks validate expected and observed destination policy', async () => {
+  const expectedCredentialFailures = await checkDeployedRedirects({
+    vectors: [{ label: 'credentialed expected', input: 'https://dash.terrascale.tech/register', destination: 'https://user:pass@dash.terrascale.tech/register', initialStatus: 200 }],
+    fetchImpl: async () => new Response('unexpected fetch', { status: 200 }),
+  })
+  assert.match(expectedCredentialFailures.join('\n'), /credentials/i)
+
+  const input = 'https://terrascale.tech/signup?plan=pro'
+  const destination = 'https://dash.terrascale.tech/register?plan=pro'
+  for (const location of [
+    'https://user:pass@dash.terrascale.tech/register?plan=pro',
+    'https://dash.terrascale.tech/foo/../register?plan=pro',
+    'https://dash.terrascale.tech/%73ignup?plan=pro',
+  ]) {
+    const requests = []
+    const failures = await checkDeployedRedirects({
+      vectors: [{ label: 'unsafe observed destination', input, destination, initialStatus: 308 }],
+      fetchImpl: async (url) => {
+        requests.push(url)
+        return new Response(null, { status: 308, headers: { location } })
+      },
+    })
+    assert.deepEqual(requests, [input])
+    assert.match(failures.join('\n'), /credentials|dot-segment|retired dashboard path/i, location)
+  }
 })
 
 test('deployed checks reject path/query tampering and loops without continuing', async () => {
@@ -446,6 +617,27 @@ test('release link probes fail closed on an unavailable required endpoint', asyn
   assert.match(failures.join('\n'), /returned 503/)
 })
 
+test('release link probes reject unsafe initial credential, preview, and local targets before fetching', async () => {
+  for (const href of [
+    'http://status.terrascale.tech',
+    'https://user:pass@status.terrascale.tech',
+    'https://preview.example.invalid',
+    'https://localhost:4173',
+    'https://127.0.0.1:4173',
+  ]) {
+    const requests = []
+    const failures = await probeExternalLinks([href], {
+      fetchImpl: async (url) => {
+        requests.push(url)
+        return new Response('unexpected fetch', { status: 200 })
+      },
+    })
+
+    assert.deepEqual(requests, [], href)
+    assert.match(failures.join('\n'), /HTTPS|credential|approved|private|loopback/i, href)
+  }
+})
+
 test('release link probes reject malformed statuses and unsafe locations before fetching again', async () => {
   const unsafeLocations = [
     'http://127.0.0.1:4173/loop',
@@ -502,6 +694,92 @@ test('rendered link scans inspect metadata and structured-data URLs', () => {
   const result = validateRenderedLinks({ buildRoot: root, files: [linksFixture] })
 
   assert.match(result.failures.join('\n'), /must use HTTPS|preview or non-canonical external host/i)
+})
+
+test('rendered link scans reject private, link-local, preview, and credential-bearing URLs', () => {
+  const unsafeUrls = [
+    'https://service.local/',
+    'https://service.local./',
+    'https://service.internal/',
+    'https://service.internal./',
+    'https://localhost:4173/',
+    'https://localhost./',
+    'https://127.0.0.1/',
+    'https://127.0.0.1./',
+    'https://0.0.0.0/',
+    'https://10.0.0.1/',
+    'https://172.16.0.1/',
+    'https://192.168.0.1/',
+    'https://169.254.169.254/',
+    'https://[::1]/',
+    'https://[::]/',
+    'https://[fe80::1]/',
+    'https://[::ffff:127.0.0.1]/',
+    'https://[::ffff:192.168.1.1]/',
+    'https://[::ffff:7f00:1]/',
+    'https://preview.example.invalid/',
+    'https://user:pass@status.terrascale.tech/private',
+  ]
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'terrascale-rendered-links-'))
+  const fixture = path.join(temporaryRoot, 'unsafe-links.html')
+  writeFileSync(fixture, unsafeUrls.map((href) => `<a href="${href}">unsafe</a>`).join('\n'))
+
+  try {
+    const result = validateRenderedLinks({ buildRoot: root, files: [fixture] })
+    for (const href of unsafeUrls) assert.ok(result.failures.some((failure) => failure.includes(href)), href)
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true })
+  }
+})
+
+test('rendered validation rejects protocol-relative metadata and JSON-LD URLs', () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'terrascale-protocol-relative-'))
+  const fixture = path.join(temporaryRoot, 'protocol-relative.html')
+  writeFileSync(fixture, `
+    <a href="https://status.terrascale.tech">status</a>
+    <meta property="og:url" content="//evil.example/metadata">
+    <script type="application/ld+json">{"url":"//evil.example/structured"}</script>
+  `)
+
+  try {
+    const result = validateRenderedLinks({ buildRoot: root, files: [fixture] })
+    assert.ok(result.failures.filter((failure) => /protocol-relative links are not allowed/i.test(failure)).length >= 2)
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true })
+  }
+})
+
+test('rendered external link inventory includes metadata and structured-data URLs for bounded probes', async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'terrascale-rendered-inventory-'))
+  const fixture = path.join(temporaryRoot, 'inventory.html')
+  const urls = [
+    'https://status.terrascale.tech',
+    'https://docs.terrascale.tech/en/security/',
+    'https://docs.terrascale.tech/en/support/',
+  ]
+  writeFileSync(fixture, `
+    <a href="${urls[0]}">status</a>
+    <meta property="og:url" content="${urls[1]}">
+    <script type="application/ld+json">{"url":"${urls[2]}"}</script>
+  `)
+
+  try {
+    const result = validateRenderedLinks({ buildRoot: root, files: [fixture] })
+    const normalizedUrls = urls.map((href) => href.replace(/\/$/, ''))
+    assert.deepEqual(new Set(normalizedUrls), new Set([...result.externalLinks].filter((href) => normalizedUrls.includes(href))))
+    const requests = []
+    const failures = await probeExternalLinks([...result.externalLinks], {
+      allowedHosts: new Set(urls.map((href) => new URL(href).hostname)),
+      fetchImpl: async (url) => {
+        requests.push(url)
+        return new Response('ok', { status: 200 })
+      },
+    })
+    assert.deepEqual(failures, [])
+    assert.deepEqual(new Set(requests), new Set(normalizedUrls))
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true })
+  }
 })
 
 test('rendered link scans fail closed on material parse errors', () => {
