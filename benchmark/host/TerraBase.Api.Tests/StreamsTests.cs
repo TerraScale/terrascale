@@ -439,28 +439,6 @@ public sealed class StreamsTests
         var (status, _) = await HostHarness.SendAsync(caller, "/v1/streams/ws");
         await Assert.That(status).IsEqualTo(400);
     }
-}
-
-/// <summary>The stream-queue reader half the drop row needs: drains with a bound.</summary>
-file static class BackboneStreamReading
-{
-    /// <summary>Reads the next frame of the stream with a timeout bound.</summary>
-    /// <param name="stream">The stream.</param>
-    /// <param name="within">The bound.</param>
-    /// <returns>The frame, or <c>null</c> when the stream ended or the bound elapsed.</returns>
-    public static async Task<StreamEvent?> ReadAsync(this BackboneStream stream, TimeSpan within)
-    {
-        using var bound = new CancellationTokenSource(within);
-        try
-        {
-            return await stream.ReadAsync(bound.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            return null;
-        }
-    }
-
     /// <summary>
     /// Folds shed while a drop marker sat queued-but-unread survive the
     /// marker's delivery: the next region's marker carries a boundary no
@@ -537,10 +515,37 @@ file static class BackboneStreamReading
 
         await Assert.That(second).IsNotNull();
         // The second marker must not point past the folds shed while the
-        // first marker waited: its boundary stays within that span instead
-        // of jumping to region 2's own oldest.
-        await Assert.That(second!.ResumeFrom).IsLessThanOrEqualTo(boundaryAfterFirst + 40);
+        // first marker waited: its boundary stays within region 1.5's span
+        // (at most its last written sequence) instead of jumping to region
+        // 2's own oldest. boundaryAfterFirst pins that the drain really
+        // reached the marker (it is at most the queue's depth).
+        await Assert.That(boundaryAfterFirst).IsLessThanOrEqualTo(64ul);
+        const ulong region15Last = 100;
+        await Assert.That(second!.ResumeFrom).IsLessThanOrEqualTo(region15Last);
         await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
     }
+
+}
+
+/// <summary>The stream-queue reader half the drop row needs: drains with a bound.</summary>
+file static class BackboneStreamReading
+{
+    /// <summary>Reads the next frame of the stream with a timeout bound.</summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="within">The bound.</param>
+    /// <returns>The frame, or <c>null</c> when the stream ended or the bound elapsed.</returns>
+    public static async Task<StreamEvent?> ReadAsync(this BackboneStream stream, TimeSpan within)
+    {
+        using var bound = new CancellationTokenSource(within);
+        try
+        {
+            return await stream.ReadAsync(bound.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
 
 }
