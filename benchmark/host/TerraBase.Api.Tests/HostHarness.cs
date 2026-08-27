@@ -21,7 +21,9 @@ public sealed class HostHarness : IAsyncDisposable
     private HostHarness(HostBundle bundle)
     {
         this.bundle = bundle;
-        this.Http = new HttpClient { BaseAddress = new Uri(bundle.App.Urls.First()) };
+        // A bounded request timeout: a request that never completes
+        // fails with its identity instead of hanging the suite.
+        this.Http = new HttpClient { BaseAddress = new Uri(bundle.App.Urls.First()), Timeout = TimeSpan.FromSeconds(30) };
     }
 
     /// <summary>The supervisor under the host.</summary>
@@ -53,7 +55,7 @@ public sealed class HostHarness : IAsyncDisposable
     /// <returns>The configured client.</returns>
     public HttpClient As(string principal, string tenant)
     {
-        var client = new HttpClient { BaseAddress = this.Http.BaseAddress };
+        var client = new HttpClient { BaseAddress = this.Http.BaseAddress, Timeout = TimeSpan.FromSeconds(30) };
         client.DefaultRequestHeaders.Add("X-TB-Principal", principal);
         client.DefaultRequestHeaders.Add("X-TB-Tenant", tenant);
         return client;

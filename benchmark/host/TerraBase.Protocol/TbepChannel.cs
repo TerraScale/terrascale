@@ -4,6 +4,7 @@
 
 namespace TerraBase.Protocol;
 
+using System.Linq;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Channels;
@@ -512,7 +513,35 @@ public sealed class TbepChannel : IAsyncDisposable
             this.pending.Remove(frame.Causation, out completion);
         }
 
-        completion?.TrySetResult(frame);
+        if (completion is not null)
+        {
+            completion.TrySetResult(frame);
+            return;
+        }
+
+        // A decode-level refusal: the engine could not parse the frame,
+        // so its error frame names no causation (the refused frame's
+        // identity is unreadable by construction). The engine processes
+        // a connection's frames in arrival order and answers in that
+        // order, so the oldest still-pending call is the refused one —
+        // the refusal surfaces to that caller as its typed error, never
+        // as a hang; the connection stays usable for the next frame.
+        if (frame.Kind == TbepRegistry.KindCode("Error"))
+        {
+            TaskCompletionSource<TbepWire.Frame>? refused = null;
+            lock (this.gate)
+            {
+                foreach (var correlation in this.pending.Keys.OrderBy(key => key))
+                {
+                    if (this.pending.Remove(correlation, out refused))
+                    {
+                        break;
+                    }
+                }
+            }
+
+            refused?.TrySetResult(frame);
+        }
     }
 
     private void FailPending(TbepException failure)

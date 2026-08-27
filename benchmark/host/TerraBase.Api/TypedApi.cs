@@ -1141,7 +1141,11 @@ public sealed class TypedApi
             case TbepException typed when typed.Code is not null:
                 var status = typed.Code.Variant switch
                 {
-                    "InvalidRequest" or "IdempotencyPairing" => StatusCodes.Status400BadRequest,
+                    // The caller's frame was rejected by the codec or the
+                    // operation contract: fix the request.
+                    "InvalidRequest" or "IdempotencyPairing" or "MalformedFrame" or "UnknownFrameKind"
+                        or "DigestMismatch" or "UnsupportedVersion" or "UnboundChannel" or "AlreadyBound"
+                        => StatusCodes.Status400BadRequest,
                     "OperationRefused" => StatusCodes.Status501NotImplemented,
                     "SessionRefused" or "SubscriptionRefused" => StatusCodes.Status410Gone,
                     "CheckpointRefused" => StatusCodes.Status409Conflict,

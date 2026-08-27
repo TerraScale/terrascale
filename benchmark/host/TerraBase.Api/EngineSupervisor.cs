@@ -379,6 +379,17 @@ public sealed class EngineSupervisor : IAsyncDisposable
                 return;
             }
 
+            // The restart budget is re-checked at recovery time, under
+            // the recovery gate: a loss that queued while budget
+            // remained must not restart past the policy when an earlier
+            // loss already spent it — the honest answer then is the
+            // truthful unavailable state, never a surprise generation.
+            if (this.Options.ManagedBinary is null || this.restarts >= this.Options.MaxRestarts)
+            {
+                this.SetStatus(EngineStatus.Unavailable);
+                return;
+            }
+
             this.SetStatus(EngineStatus.Starting);
             await Task.Delay(this.Options.RestartDelay, cancellationToken).ConfigureAwait(false);
             await this.EnsureEngineAsync(cancellationToken).ConfigureAwait(false);
