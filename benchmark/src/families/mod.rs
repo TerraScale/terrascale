@@ -31,7 +31,16 @@
 //! ([`SchemaDefinition`], [`SchemaVersion`], [`SchemaFormatError`]) surface
 //! here. Schema-free collections keep their exact prior behavior; the schema
 //! decision record is `docs/families/schemas.md`.
+//!
+//! GAP-F01 adds the attachment content plane under the public
+//! [`attachments`](crate::families::attachments) module: digest-addressed,
+//! deduplicated byte storage for attachment content with bounded
+//! segment-by-segment readers, V1-pinned range and disposal semantics, and
+//! explicit size limits. The plane records the engine-side halves of the
+//! PB-3007/PB-3045 backup and migration obligations; its decision record is
+//! `docs/families/attachment-content-plane.md`.
 
+pub mod attachments;
 pub mod migrations;
 mod payloads;
 pub(crate) mod schemas;
