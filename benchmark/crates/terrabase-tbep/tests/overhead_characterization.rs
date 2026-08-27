@@ -47,6 +47,19 @@ fn allocations() -> u64 {
     ALLOCATIONS.swap(0, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Serializes every test that measures through the global allocation
+/// counter: the counter is process-global and the default test harness
+/// runs this binary's tests on parallel threads, so two measuring tests
+/// overlapping would each count the other's allocations. The lock makes
+/// every measured window single-tenant (poisoned is fine — a panicked
+/// measurement leaves the counter's semantics intact for the next test).
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Takes the measurement lock for one test.
+fn measure_exclusively() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// One `io::Write` sink that counts its write calls: the deterministic
 /// stand-in for syscall counting.
 #[derive(Default)]
@@ -76,6 +89,7 @@ impl std::io::Write for CountingWriter {
 #[test]
 #[allow(clippy::too_many_lines, reason = "one representative frame per written budget class")]
 fn every_registry_kind_overhead_stays_within_the_fixed_bound() {
+    let _measure = measure_exclusively();
     // Code sweep: every u16 either decodes to exactly one registered kind
     // or fails; the registry is closed under its codes.
     let mut kinds: Vec<FrameKind> = Vec::new();
@@ -215,6 +229,7 @@ fn every_registry_kind_overhead_stays_within_the_fixed_bound() {
 /// same frame.
 #[test]
 fn stream_write_uses_one_buffer_and_one_write_call() {
+    let _measure = measure_exclusively();
     let frame = TbepFrame::seal(
         SyncDeltaPullResponse {
             session_id: 1,
