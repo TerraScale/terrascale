@@ -27,8 +27,8 @@ use crate::{
     engine::{CommitOutcome, Engine, EngineConfig},
     operations::QueryInput,
     query::{
-        OrderDirection, OrderingKey, QueryCondition, QueryOrdering, QueryPaging, QueryPredicate,
-        QueryProjection, QuerySource, QuerySpec, StalenessMode, StalenessPolicy,
+        NullsPlacement, OrderDirection, OrderingKey, QueryCondition, QueryOrdering, QueryPaging,
+        QueryPredicate, QueryProjection, QuerySource, QuerySpec, StalenessMode, StalenessPolicy,
     },
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
@@ -176,11 +176,15 @@ fn parity_corpus(engine: &Engine, tag: &str) -> ReadSnapshot {
 /// The shape of one execution vector's equivalent typed specification.
 struct Typed {
     conditions: Vec<QueryCondition>,
-    ordering: Vec<(&'static str, OrderDirection)>,
+    ordering: Vec<TypedOrdering>,
     projection: Option<Vec<&'static str>>,
     offset: u64,
     limit: Option<u32>,
 }
+
+/// The ordering shape of one typed equivalent: field, direction, and an
+/// optional explicit nulls placement.
+type TypedOrdering = (&'static str, OrderDirection, Option<NullsPlacement>);
 
 /// One execution conformance vector.
 struct Vector {
@@ -207,8 +211,13 @@ fn spec_of(typed: &Typed) -> QuerySpec {
             typed
                 .ordering
                 .iter()
-                .map(|(field, direction)| {
-                    OrderingKey::try_new(field, *direction).expect("valid key")
+                .map(|(field, direction, nulls)| {
+                    OrderingKey::try_new_with_nulls(
+                        field,
+                        *direction,
+                        nulls.unwrap_or(NullsPlacement::Implicit),
+                    )
+                    .expect("valid key")
                 })
                 .collect(),
         )
@@ -467,29 +476,31 @@ fn projection_ordering_paging_vectors() -> Vec<Vector> {
             expected_projection: None,
             typed: Typed {
                 conditions: vec![equals("country", string("NO"))],
-                ordering: vec![("age", OrderDirection::Ascending)],
+                ordering: vec![("age", OrderDirection::Ascending, None)],
                 projection: None,
                 offset: 0,
                 limit: None,
             },
         },
-        // R69: explicit null placement that agrees with the seam's total
-        // document order — `note` is a string on bob, null on ada, and
-        // absent elsewhere, so descending puts the string first, then null,
-        // then the missing three by ascending age.
+        // R69: explicit null placement — `note` is a string on bob, null
+        // on ada, and absent elsewhere, so `desc nulls last` puts the string
+        // first and holds the whole missing-and-null group last; inside the
+        // block the seam's missing-before-null order keeps ada after the
+        // missing three. The typed equivalent carries the same explicit
+        // placement (GAP-EVAL).
         Vector {
             name: "nulls-placement",
             rows: &["R69"],
             rql: "from Users order by Note desc nulls last, Age as long",
             tql: "from users order by note desc nulls last, age",
             parameters: vec![],
-            expected_ids: &["users/2", "users/1", "users/4", "users/5", "users/3"],
+            expected_ids: &["users/2", "users/4", "users/5", "users/3", "users/1"],
             expected_projection: None,
             typed: Typed {
                 conditions: vec![],
                 ordering: vec![
-                    ("note", OrderDirection::Descending),
-                    ("age", OrderDirection::Ascending),
+                    ("note", OrderDirection::Descending, Some(NullsPlacement::Last)),
+                    ("age", OrderDirection::Ascending, None),
                 ],
                 projection: None,
                 offset: 0,
@@ -507,7 +518,7 @@ fn projection_ordering_paging_vectors() -> Vec<Vector> {
             expected_projection: None,
             typed: Typed {
                 conditions: vec![],
-                ordering: vec![("age", OrderDirection::Descending)],
+                ordering: vec![("age", OrderDirection::Descending, None)],
                 projection: None,
                 offset: 1,
                 limit: Some(2),

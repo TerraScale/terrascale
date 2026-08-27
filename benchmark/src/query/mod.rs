@@ -33,10 +33,10 @@ pub use result::{
     StalenessReport,
 };
 pub use spec::{
-    IndexNamespace, MAX_CONDITIONS, MAX_FIELD_BYTES, MAX_ORDERING_KEYS, MAX_PAGE_LIMIT,
-    MAX_PROJECTION_FIELDS, MAX_STALENESS_INDEXES, OrderDirection, OrderingKey, QueryCondition,
-    QueryOrdering, QueryPaging, QueryPredicate, QueryProjection, QuerySource, QuerySpec,
-    StalenessMode, StalenessPolicy,
+    IndexNamespace, MAX_CONDITIONS, MAX_FIELD_BYTES, MAX_IN_VALUES, MAX_LOADS, MAX_ORDERING_KEYS,
+    MAX_PAGE_LIMIT, MAX_PROJECTION_FIELDS, MAX_STALENESS_INDEXES, NullsPlacement, OrderDirection,
+    OrderingKey, QueryCondition, QueryLoad, QueryOrdering, QueryPaging, QueryPredicate,
+    QueryProjection, QuerySource, QuerySpec, StalenessMode, StalenessPolicy,
 };
 #[allow(
     unused_imports,
@@ -245,6 +245,7 @@ impl<'engine> QueryStore<'engine> {
                 spec.projection().clone(),
                 spec.paging(),
                 spec.staleness().clone(),
+                spec.loads().to_vec(),
                 spec.tenant_claim().clone(),
                 spec.deadline(),
                 spec.cancellation(),

@@ -3,26 +3,29 @@
 //! Lowering is exact or fails closed: every construct the current seam cannot
 //! express without changing results is rejected with
 //! [`TqlErrorClass::UnsupportedForPlanning`] naming the construct and its
-//! position. The lowerable surface today is the seam's own grammar: one user
+//! position. The lowerable surface is the seam's own grammar: one user
 //! collection (aliased or not), a flat conjunction of top-level field
-//! comparisons and presence tests against literals or bound parameters, an
-//! ordering over top-level fields whose explicit nulls placement agrees with
-//! the seam's total document order, a top-level field projection without
-//! renaming, and the page bounds. Everything else in `tql/1.0` parses and
-//! checks, then fails closed here until the seam gains the shapes ADR 0009
-//! lists for it; that extension belongs to the seam owner, not this packet.
+//! comparisons, presence tests, inclusive ranges (`between`), membership
+//! (`in`, `all in`), and the string pattern functions against literals or
+//! bound parameters; an ordering over top-level fields with any explicit
+//! nulls placement; a top-level field projection without renaming, extended
+//! with load-alias names and fields of loaded references; the reference
+//! bindings of a `load` clause; and the page bounds. Everything else in
+//! `tql/1.0` parses and checks, then fails closed here until the seam gains
+//! the shapes ADR 0009 lists for it; that extension belongs to the seam
+//! owner, not this packet.
 
 use super::{
     TqlError, TqlErrorClass, TqlParameters,
     ast::{
         BinaryOperator, Direction, Expression, ExpressionKind, Literal, LogicalOperator,
-        NullsOrder, PageBound, PageBoundKind, PathRoot, PathSegment, ProjectionKind, SourceKind,
-        TqlPath, TqlQuery,
+        NullsOrder, PageBound, PageBoundKind, PathRoot, PathSegment, ProjectionKind, Quantifier,
+        SourceKind, TqlPath, TqlQuery,
     },
 };
 use crate::query::spec::{
-    OrderDirection, OrderingKey, QueryCondition, QueryOrdering, QueryPaging, QueryPredicate,
-    QueryProjection, QuerySource, StalenessMode, StalenessPolicy,
+    NullsPlacement, OrderDirection, OrderingKey, QueryCondition, QueryLoad, QueryOrdering,
+    QueryPaging, QueryPredicate, QueryProjection, QuerySource, StalenessMode, StalenessPolicy,
 };
 use crate::query::{QueryInput, QueryPlan, QuerySpec, QueryStore};
 use crate::types::{Cancellation, CollectionName, Deadline, DocumentValue, TenantId};
@@ -62,9 +65,7 @@ fn lower_inner(
 ) -> Result<QuerySpec, TqlError> {
     let source_alias = query.source.alias.as_deref();
     let source = lower_source(query)?;
-    if let Some(load) = query.loads.first() {
-        return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "load", load.span));
-    }
+    let loads = lower_loads(query, source_alias)?;
     if let Some(key) = query.grouping.first() {
         return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "group by", key.span));
     }
@@ -73,11 +74,11 @@ fn lower_inner(
     }
     let predicate = lower_predicate(query, source_alias, parameters)?;
     let ordering = lower_ordering(query, source_alias)?;
-    let projection = lower_projection(query, source_alias)?;
+    let projection = lower_projection(query, source_alias, &loads)?;
     let paging = lower_paging(query, parameters)?;
     let staleness = StalenessPolicy::try_new(StalenessMode::Strict, Vec::new())
         .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, query.span))?;
-    QuerySpec::try_new(
+    let spec = QuerySpec::try_new(
         tenant_claim,
         source,
         predicate,
@@ -88,7 +89,26 @@ fn lower_inner(
         deadline,
         cancellation,
     )
-    .map_err(|_| TqlError::plain(TqlErrorClass::InvalidRequest, query.span))
+    .map_err(|_| TqlError::plain(TqlErrorClass::InvalidRequest, query.span))?;
+    spec.with_loads(loads).map_err(|_| TqlError::plain(TqlErrorClass::InvalidRequest, query.span))
+}
+
+/// Lowers the `load` clause into reference-resolution bindings. A load path
+/// is the seam's top-level field form — a bare member or one member under
+/// the source alias — and any other path shape (nested navigation, a
+/// metadata root) has no seam plan. The array-alias load of V1 has no
+/// `tql/1.0` spelling, so nothing here needs to reject it.
+fn lower_loads(query: &TqlQuery, source_alias: Option<&str>) -> Result<Vec<QueryLoad>, TqlError> {
+    let mut loads = Vec::new();
+    for load in &query.loads {
+        let field = path_field(&load.path, source_alias).ok_or_else(|| {
+            TqlError::at(TqlErrorClass::UnsupportedForPlanning, "load", load.span)
+        })?;
+        let binding = QueryLoad::try_new(&field, &load.alias)
+            .map_err(|_| TqlError::at(TqlErrorClass::InvalidIdentifier, &load.alias, load.span))?;
+        loads.push(binding);
+    }
+    Ok(loads)
 }
 
 /// Lowers and compiles one checked TQL query through the one compile seam.
@@ -208,21 +228,86 @@ fn lower_condition(
                 QueryCondition::Missing { field }
             })
         }
+        ExpressionKind::Call(call)
+            if call.name == "starts_with"
+                || call.name == "ends_with"
+                || call.name == "contains" =>
+        {
+            let (field, pattern) = pattern_arguments(call, source_alias, parameters, conjunct)?;
+            Ok(match call.name.as_str() {
+                "starts_with" => QueryCondition::StartsWith { field, value: pattern },
+                "ends_with" => QueryCondition::EndsWith { field, value: pattern },
+                _ => QueryCondition::Contains { field, value: pattern },
+            })
+        }
+        ExpressionKind::Between { expr, low, high } => {
+            let field =
+                simple_field(expr, source_alias).ok_or_else(|| unsupported_expression(expr))?;
+            let low = literal_or_bound(low, parameters)?;
+            let high = literal_or_bound(high, parameters)?;
+            Ok(QueryCondition::Between { field, low, high })
+        }
+        ExpressionKind::In { quantifier, expr, list } => {
+            let field =
+                simple_field(expr, source_alias).ok_or_else(|| unsupported_expression(expr))?;
+            let mut values = Vec::with_capacity(list.len());
+            for item in list {
+                values.push(literal_or_bound(item, parameters)?);
+            }
+            Ok(match quantifier {
+                Quantifier::Any => QueryCondition::In { field, values },
+                Quantifier::All => QueryCondition::AllIn { field, values },
+            })
+        }
         _ => Err(unsupported_expression(conjunct)),
     }
+}
+
+/// Resolves one pattern call's arguments: the seam field and the string
+/// pattern. The registry checks the call's shape; this resolves its values.
+fn pattern_arguments(
+    call: &super::ast::FunctionCall,
+    source_alias: Option<&str>,
+    parameters: &TqlParameters,
+    conjunct: &Expression,
+) -> Result<(String, String), TqlError> {
+    let field =
+        call.args.first().and_then(|argument| simple_field(argument, source_alias)).ok_or_else(
+            || TqlError::at(TqlErrorClass::UnsupportedForPlanning, "call", conjunct.span),
+        )?;
+    let pattern = call
+        .args
+        .get(1)
+        .map(|pattern| literal_or_bound(pattern, parameters))
+        .transpose()
+        .map_err(|_| TqlError::at(TqlErrorClass::UnsupportedForPlanning, "call", conjunct.span))?
+        .and_then(|value| match value {
+            DocumentValue::String(text) => Some(text),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            TqlError::at(TqlErrorClass::UnsupportedForPlanning, "call", conjunct.span)
+        })?;
+    Ok((field, pattern))
 }
 
 /// Resolves one expression to the seam's top-level field form: a bare member
 /// path, or one member under the source alias. Metadata roots, navigation
 /// segments, and non-path expressions have no seam field.
 fn simple_field(expression: &Expression, source_alias: Option<&str>) -> Option<String> {
-    let ExpressionKind::Path(TqlPath { root, segments, .. }) = &expression.kind else {
+    let ExpressionKind::Path(path) = &expression.kind else {
         return None;
     };
-    let PathRoot::Member(name) = root else {
+    path_field(path, source_alias)
+}
+
+/// Resolves one path to the seam's top-level field form: a bare member, or
+/// one member under the source alias.
+fn path_field(path: &TqlPath, source_alias: Option<&str>) -> Option<String> {
+    let PathRoot::Member(name) = &path.root else {
         return None;
     };
-    match segments.as_slice() {
+    match path.segments.as_slice() {
         [] if Some(name.as_str()) != source_alias => Some(name.clone()),
         [PathSegment::Member(field)] if Some(name.as_str()) == source_alias => Some(field.clone()),
         _ => None,
@@ -290,20 +375,19 @@ fn lower_ordering(query: &TqlQuery, source_alias: Option<&str>) -> Result<QueryO
             None | Some(Direction::Ascending) => OrderDirection::Ascending,
             Some(Direction::Descending) => OrderDirection::Descending,
         };
-        // The seam's total document order sorts missing and null first and
-        // reverses wholesale under descending, so `asc nulls first` and
-        // `desc nulls last` are the exact spellings and any other explicit
-        // placement has no seam plan.
-        let placement_agrees = match key.nulls {
-            None => true,
-            Some(NullsOrder::First) => direction == OrderDirection::Ascending,
-            Some(NullsOrder::Last) => direction == OrderDirection::Descending,
-        };
-        if !placement_agrees {
-            return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "nulls", key.span));
-        }
-        let ordering_key = OrderingKey::try_new(&field, direction)
-            .map_err(|_| TqlError::at(TqlErrorClass::InvalidIdentifier, &field, key.span))?;
+        // An explicit placement is direction-independent — the seam's
+        // ordering key carries it for either direction — and an omitted
+        // placement stays the seam's own total document order.
+        let nulls = key.nulls.map(|nulls| match nulls {
+            NullsOrder::First => NullsPlacement::First,
+            NullsOrder::Last => NullsPlacement::Last,
+        });
+        let ordering_key = OrderingKey::try_new_with_nulls(
+            &field,
+            direction,
+            nulls.unwrap_or(NullsPlacement::Implicit),
+        )
+        .map_err(|_| TqlError::at(TqlErrorClass::InvalidIdentifier, &field, key.span))?;
         keys.push(ordering_key);
     }
     QueryOrdering::try_new(keys)
@@ -311,10 +395,12 @@ fn lower_ordering(query: &TqlQuery, source_alias: Option<&str>) -> Result<QueryO
 }
 
 /// Lowers the projection: the whole document, or a top-level field subset
-/// without renaming.
+/// without renaming, where a load alias names the referenced document and
+/// `alias.field` names one of its fields.
 fn lower_projection(
     query: &TqlQuery,
     source_alias: Option<&str>,
+    loads: &[QueryLoad],
 ) -> Result<QueryProjection, TqlError> {
     if query.projection.distinct {
         return Err(TqlError::at(
@@ -326,6 +412,7 @@ fn lower_projection(
     match &query.projection.kind {
         ProjectionKind::WholeDocument => Ok(QueryProjection::whole_document()),
         ProjectionKind::Items(items) => {
+            let load_aliases: Vec<&str> = loads.iter().map(QueryLoad::alias).collect();
             let mut names: Vec<String> = Vec::new();
             for item in items {
                 if item.alias.is_some() {
@@ -335,7 +422,7 @@ fn lower_projection(
                         item.span,
                     ));
                 }
-                let field = simple_field(&item.expr, source_alias)
+                let field = qualified_field(&item.expr, source_alias, &load_aliases)
                     .ok_or_else(|| unsupported_expression(&item.expr))?;
                 names.push(field);
             }
@@ -343,6 +430,32 @@ fn lower_projection(
             QueryProjection::fields(&borrowed)
                 .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, query.span))
         }
+    }
+}
+
+/// Resolves one projection item to its projected name: a load alias alone
+/// projects the referenced document (`alias`), a member under a load alias
+/// projects one of its fields (`alias.field`), and every other path takes
+/// the seam's top-level source-field form.
+fn qualified_field(
+    expression: &Expression,
+    source_alias: Option<&str>,
+    load_aliases: &[&str],
+) -> Option<String> {
+    let ExpressionKind::Path(TqlPath { root, segments, .. }) = &expression.kind else {
+        return None;
+    };
+    let PathRoot::Member(name) = root else {
+        return None;
+    };
+    match segments.as_slice() {
+        [] if load_aliases.contains(&name.as_str()) => Some(name.clone()),
+        [PathSegment::Member(field)] if load_aliases.contains(&name.as_str()) => {
+            Some(format!("{name}.{field}"))
+        }
+        [] if Some(name.as_str()) != source_alias => Some(name.clone()),
+        [PathSegment::Member(field)] if Some(name.as_str()) == source_alias => Some(field.clone()),
+        _ => None,
     }
 }
 

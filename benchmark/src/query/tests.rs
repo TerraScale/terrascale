@@ -1156,7 +1156,8 @@ fn materialization_checkpoint_stops_a_query_whose_bound_expired_after_the_scan()
         })
         .collect();
     assert_eq!(
-        super::execute::materialize(&model, &ordered).unwrap_err(),
+        super::execute::materialize(&model, &ordered, &std::collections::BTreeMap::new())
+            .unwrap_err(),
         QueryError::Cancelled,
         "the first materialization checkpoint must stop the query before any row"
     );
@@ -1185,7 +1186,12 @@ fn materialization_checkpoint_stops_a_query_whose_bound_expired_after_the_scan()
             )
         })
         .collect();
-    let rows = super::execute::materialize(live_plan.model(), &ordered).expect("materializes");
+    let rows = super::execute::materialize(
+        live_plan.model(),
+        &ordered,
+        &std::collections::BTreeMap::new(),
+    )
+    .expect("materializes");
     assert_eq!(rows.len(), 55, "the offset skips and the limit caps");
     assert_eq!(rows[0].document().id().as_str(), "doc-010");
     assert_eq!(rows[54].document().id().as_str(), "doc-064");
@@ -1560,6 +1566,1075 @@ fn nan_and_non_finite_numbers_keep_a_total_deterministic_order() {
             }
         }
     }
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// GAP-EVAL (#62): engine query evaluator parity contract tests.
+//
+// V1 evidence is the pinned source identity fa99b9257776dbe625e6a2388c74c9ce
+// under ../.worktrees/terrabase-v1-fa99b925-readonly (cited per test); the
+// row-level gap analysis is docs/parity/ps-02-query-sweep.md (PB-4004,
+// PB-4006, PB-4013 and the GAP-Q1..Q5 labels). The close-out dispositions
+// live in docs/query/gap-eval-evaluator-parity.md.
+// ---------------------------------------------------------------------------
+
+/// Q1 (PB-4004): V1 `NotEquals` matches documents that do not carry the
+/// field. Both V1 engines build the same shape: Lucene is
+/// `MatchAllDocs MUST` + `Term MUST_NOT`
+/// (src/TerraBase.Server/Documents/Queries/LuceneQueryHelper.cs:43-70) and
+/// Corax is `AllEntries AndNot TermQuery`
+/// (src/TerraBase.Server/Documents/Indexes/Persistence/Corax/QueryOptimizer/
+/// CoraxBooleanItem.cs:210-222), so an absent field is never excluded. A
+/// null literal is the explicit-null entry only (`Field != null` excludes
+/// present nulls and nothing else; CoraxBooleanItem.cs:50-54), and `= null`
+/// matches the explicit null sentinel, never absence.
+#[test]
+fn v1_not_equals_matches_missing_and_pins_null_semantics() {
+    let (dir, engine) = open_engine("gap-eval-q1");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document(
+                "doc-absent",
+                "users",
+                &[("name", DocumentValue::String("a".to_owned()))],
+            ),
+            object_document(
+                "doc-null",
+                "users",
+                &[("name", DocumentValue::String("b".to_owned())), ("tag", DocumentValue::Null)],
+            ),
+            object_document(
+                "doc-x",
+                "users",
+                &[
+                    ("name", DocumentValue::String("c".to_owned())),
+                    ("tag", DocumentValue::String("x".to_owned())),
+                ],
+            ),
+            object_document(
+                "doc-y",
+                "users",
+                &[
+                    ("name", DocumentValue::String("d".to_owned())),
+                    ("tag", DocumentValue::String("y".to_owned())),
+                ],
+            ),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+
+    let run = |conditions: Vec<QueryCondition>| -> Vec<String> {
+        let query = spec(
+            "tenant-a",
+            "users",
+            predicate(conditions),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        );
+        let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+        let result = store.execute(&plan, &snapshot).expect("executes");
+        row_ids(&result)
+    };
+
+    // `tag != 'x'`: absent, present null, and every other value all match.
+    let mut matched = run(vec![QueryCondition::NotEquals {
+        field: "tag".to_owned(),
+        value: DocumentValue::String("x".to_owned()),
+    }]);
+    matched.sort();
+    assert_eq!(matched, ["doc-absent", "doc-null", "doc-y"]);
+
+    // `tag != null`: excludes the present null only; absence still matches.
+    let mut matched = run(vec![QueryCondition::NotEquals {
+        field: "tag".to_owned(),
+        value: DocumentValue::Null,
+    }]);
+    matched.sort();
+    assert_eq!(matched, ["doc-absent", "doc-x", "doc-y"]);
+
+    // `tag = null`: the explicit null only, never absence.
+    assert_eq!(
+        run(vec![QueryCondition::Equals { field: "tag".to_owned(), value: DocumentValue::Null }]),
+        ["doc-null"]
+    );
+
+    // Exists includes the present null; Missing is absence only.
+    let mut matched = run(vec![QueryCondition::Exists { field: "tag".to_owned() }]);
+    matched.sort();
+    assert_eq!(matched, ["doc-null", "doc-x", "doc-y"]);
+    assert_eq!(run(vec![QueryCondition::Missing { field: "tag".to_owned() }]), ["doc-absent"]);
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Q2 (PB-4006): the predicate path compares integers and numbers by exact
+/// mathematical value, the same rule the order-by path already applies
+/// (`compare_integer_with_number`, and the W3-2 residual recorded at
+/// docs/query/w3-query-index.md:398-406). Above 2^53 the float spacing
+/// exceeds one, so a widening comparison would call `Integer(2^53 + 1)` and
+/// `Number(2^53.0)` equal; V1 indexes longs and doubles as exact distinct
+/// terms (LuceneQueryBuilder.cs:202-226 keeps Long and Double field types
+/// apart), so the exact comparison is the V1-faithful rule.
+#[test]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "2^53 is exactly representable in f64; the boundary is the point of the test"
+)]
+fn predicate_comparison_is_exact_across_integer_and_number_domains() {
+    let (dir, engine) = open_engine("gap-eval-q2-exact");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let two_pow_53: i64 = 9_007_199_254_740_992;
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("big-int", "users", &[("n", DocumentValue::Integer(two_pow_53 + 1))]),
+            object_document(
+                "big-float",
+                "users",
+                &[("n", DocumentValue::Number(two_pow_53 as f64))],
+            ),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let run = |conditions: Vec<QueryCondition>| -> Vec<String> {
+        let query = spec(
+            "tenant-a",
+            "users",
+            predicate(conditions),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        );
+        let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+        let mut ids = row_ids(&store.execute(&plan, &snapshot).expect("executes"));
+        ids.sort();
+        ids
+    };
+
+    // The exact rule orders Integer(2^53 + 1) above Number(2^53.0); the
+    // widening residual called them equal, which is the red this test pins.
+    assert_eq!(
+        run(vec![QueryCondition::GreaterThan {
+            field: "n".to_owned(),
+            value: DocumentValue::Number(two_pow_53 as f64)
+        }]),
+        ["big-int"]
+    );
+    assert_eq!(
+        run(vec![QueryCondition::LessThan {
+            field: "n".to_owned(),
+            value: DocumentValue::Integer(two_pow_53 + 1)
+        }]),
+        ["big-float"]
+    );
+    // Equal stays exact and symmetric at the boundary itself.
+    assert_eq!(
+        run(vec![QueryCondition::GreaterOrEqual {
+            field: "n".to_owned(),
+            value: DocumentValue::Number(two_pow_53 as f64)
+        }]),
+        ["big-float", "big-int"]
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Q2 (PB-4006): V1 orders date-valued fields through the exact tick domain:
+/// a date literal becomes ticks and compares as a long
+/// (LuceneQueryBuilder.cs:473-505 `TranslateDateRangeQuery` and
+/// `TryUseTime`; CoraxBooleanItem.cs:98-107 does the same conversion). V2
+/// has no date literal in the typed value domain, so the pinned mapping is:
+/// dates as tick integers ride the exact integer order, and ISO-8601 date
+/// strings ride the lexicographic string order, which is identical for
+/// same-format timestamps. The close-out record files this as the accepted
+/// V2 mapping rather than a native date domain.
+#[test]
+fn date_valued_fields_order_exactly_in_the_integer_and_string_domains() {
+    let (dir, engine) = open_engine("gap-eval-q2-dates");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document(
+                "t-1",
+                "ticks",
+                &[("at", DocumentValue::Integer(638_000_000_000_000_001))],
+            ),
+            object_document(
+                "t-3",
+                "ticks",
+                &[("at", DocumentValue::Integer(638_000_000_000_000_003))],
+            ),
+            object_document(
+                "t-2",
+                "ticks",
+                &[("at", DocumentValue::Integer(638_000_000_000_000_002))],
+            ),
+            object_document(
+                "s-1",
+                "stamps",
+                &[("stamp", DocumentValue::String("2026-08-26T10:00:00Z".to_owned()))],
+            ),
+            object_document(
+                "s-2",
+                "stamps",
+                &[("stamp", DocumentValue::String("2026-08-26T09:59:59Z".to_owned()))],
+            ),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let run = |collection: &str, field: &str| -> Vec<String> {
+        let query = spec(
+            "tenant-a",
+            collection,
+            predicate(Vec::new()),
+            ordering(vec![(field, OrderDirection::Ascending)]),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        );
+        let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+        row_ids(&store.execute(&plan, &snapshot).expect("executes"))
+    };
+    assert_eq!(run("ticks", "at"), ["t-1", "t-2", "t-3"]);
+    assert_eq!(run("stamps", "stamp"), ["s-2", "s-1"]);
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Q3 (PB-4010): V1 `intersect(...)` intersects the results of its argument
+/// predicates — the arguments are visited as where clauses
+/// (src/TerraBase.Server/Documents/Queries/QueryMetadata.cs:2433-2440) and
+/// the match is the conjunction. The seam's predicate conjunction is that
+/// semantics; this pin proves a two-argument intersect is exactly the
+/// two-condition conjunction over the same documents.
+#[test]
+fn intersect_semantics_is_the_predicate_conjunction() {
+    let (dir, engine) = open_engine("gap-eval-q3-intersect");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document(
+                "both",
+                "users",
+                &[
+                    ("age", DocumentValue::Integer(30)),
+                    ("region", DocumentValue::String("emea".to_owned())),
+                ],
+            ),
+            object_document(
+                "age-only",
+                "users",
+                &[
+                    ("age", DocumentValue::Integer(30)),
+                    ("region", DocumentValue::String("apac".to_owned())),
+                ],
+            ),
+            object_document(
+                "region-only",
+                "users",
+                &[
+                    ("age", DocumentValue::Integer(50)),
+                    ("region", DocumentValue::String("emea".to_owned())),
+                ],
+            ),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let query = spec(
+        "tenant-a",
+        "users",
+        predicate(vec![
+            QueryCondition::Equals { field: "age".to_owned(), value: DocumentValue::Integer(30) },
+            QueryCondition::Equals {
+                field: "region".to_owned(),
+                value: DocumentValue::String("emea".to_owned()),
+            },
+        ]),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(0, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+    );
+    let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+    assert_eq!(row_ids(&store.execute(&plan, &snapshot).expect("executes")), ["both"]);
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Q2 (PB-4006): BETWEEN pins V1's `BuildBetween` exactly
+/// (CoraxBooleanItem.cs:105-160): a null bound is unbounded; both bounds
+/// unbounded matches every document that carries the field, explicit null
+/// included ("matching lucene results, nulls included"); only the upper
+/// bound unbounded also admits explicit nulls (the null term is OR-ed in);
+/// only the lower bound unbounded is the plain upper comparison; two bounds
+/// are the inclusive range over orderable values, which explicit null and
+/// absence never satisfy.
+#[test]
+fn between_pins_v1_null_bound_semantics() {
+    let (dir, engine) = open_engine("gap-eval-q2-between");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let between = |low: DocumentValue, high: DocumentValue| QueryCondition::Between {
+        field: "n".to_owned(),
+        low,
+        high,
+    };
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("absent", "users", &[("name", DocumentValue::String("a".to_owned()))]),
+            object_document("null-n", "users", &[("n", DocumentValue::Null)]),
+            object_document("one", "users", &[("n", DocumentValue::Integer(1))]),
+            object_document("five", "users", &[("n", DocumentValue::Integer(5))]),
+            object_document("nine", "users", &[("n", DocumentValue::Integer(9))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let run = |condition: QueryCondition| -> Vec<String> {
+        let query = spec(
+            "tenant-a",
+            "users",
+            predicate(vec![condition]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        );
+        let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+        let mut ids = row_ids(&store.execute(&plan, &snapshot).expect("executes"));
+        ids.sort();
+        ids
+    };
+    let null = DocumentValue::Null;
+    let int = |value: i64| DocumentValue::Integer(value);
+
+    // Both bounds unbounded: exists-or-null, absence excluded.
+    assert_eq!(run(between(null.clone(), null.clone())), ["five", "nine", "null-n", "one"]);
+    // Lower unbounded: the upper comparison only; null and absence excluded.
+    assert_eq!(run(between(null.clone(), int(5))), ["five", "one"]);
+    // Upper unbounded: the lower comparison OR the explicit null.
+    assert_eq!(run(between(int(5), null.clone())), ["five", "nine", "null-n"]);
+    // Two bounds: the inclusive range over orderable values.
+    assert_eq!(run(between(int(1), int(5))), ["five", "one"]);
+    assert_eq!(run(between(int(2), int(4))), Vec::<String>::new());
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Q3 (PB-4005): `in` is V1's In operator and V1's index flattens array
+/// values into terms, so one operator covers scalar membership and
+/// `ContainsAny` over array fields (LuceneQueryBuilder.cs:383-400;
+/// AbstractDocumentQuery.cs:1499-1510). `all in` is `ContainsAll` — every
+/// listed value must be carried (CoraxQueryBuilder.cs:623-633), and the
+/// empty list matches everything (the client lowers an empty `ContainsAll`
+/// to `TrueToken`, AbstractDocumentQuery.cs:1516-1537). Absence matches
+/// neither.
+#[test]
+fn in_and_all_in_pin_v1_membership_and_array_semantics() {
+    let (dir, engine) = open_engine("gap-eval-q3-in");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("absent", "users", &[("name", DocumentValue::String("a".to_owned()))]),
+            object_document("scalar", "users", &[("tag", DocumentValue::String("red".to_owned()))]),
+            object_document(
+                "array",
+                "users",
+                &[(
+                    "tag",
+                    DocumentValue::Array(vec![
+                        DocumentValue::String("red".to_owned()),
+                        DocumentValue::String("green".to_owned()),
+                    ]),
+                )],
+            ),
+            object_document("other", "users", &[("tag", DocumentValue::String("blue".to_owned()))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let values = |items: &[&str]| {
+        items.iter().map(|item| DocumentValue::String((*item).to_owned())).collect::<Vec<_>>()
+    };
+    let run = |condition: QueryCondition| -> Vec<String> {
+        let query = spec(
+            "tenant-a",
+            "users",
+            predicate(vec![condition]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        );
+        let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+        let mut ids = row_ids(&store.execute(&plan, &snapshot).expect("executes"));
+        ids.sort();
+        ids
+    };
+
+    // Any-match: the scalar, the array carrying one of the values, never
+    // absence.
+    assert_eq!(
+        run(QueryCondition::In { field: "tag".to_owned(), values: values(&["red", "blue"]) }),
+        ["array", "other", "scalar"]
+    );
+    assert_eq!(
+        run(QueryCondition::In { field: "tag".to_owned(), values: values(&["green"]) }),
+        ["array"]
+    );
+    // Every listed value carried: only the array with both.
+    assert_eq!(
+        run(QueryCondition::AllIn { field: "tag".to_owned(), values: values(&["red", "green"]) }),
+        ["array"]
+    );
+    // The empty lists: any-of-nothing matches nothing; all-of-nothing is
+    // V1's TrueToken and matches everything, absence included.
+    assert_eq!(
+        run(QueryCondition::In { field: "tag".to_owned(), values: Vec::new() }),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        run(QueryCondition::AllIn { field: "tag".to_owned(), values: Vec::new() }),
+        ["absent", "array", "other", "scalar"]
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Q3 (PB-4007): prefix, suffix, and substring conditions match the string
+/// domain — a string field directly, or any string element of an array
+/// field, because V1's flattened term space is per-value
+/// (LuceneQueryBuilder.cs:423-426 lowers the pattern methods). Matching is
+/// case-sensitive: the exact-mode V1 behavior; the analyzed-mode differences
+/// are gated on the analyzer foundation (GAP-Q13) and recorded in the
+/// close-out.
+#[test]
+fn pattern_conditions_pin_prefix_suffix_and_substring_semantics() {
+    let (dir, engine) = open_engine("gap-eval-q3-pattern");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document(
+                "plain",
+                "users",
+                &[("name", DocumentValue::String("Adelaide".to_owned()))],
+            ),
+            object_document(
+                "array",
+                "users",
+                &[(
+                    "name",
+                    DocumentValue::Array(vec![
+                        DocumentValue::String("Ada".to_owned()),
+                        DocumentValue::String("Grace".to_owned()),
+                    ]),
+                )],
+            ),
+            object_document(
+                "other",
+                "users",
+                &[("name", DocumentValue::String("madam".to_owned()))],
+            ),
+            object_document("null-name", "users", &[("name", DocumentValue::Null)]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let run = |condition: QueryCondition| -> Vec<String> {
+        let query = spec(
+            "tenant-a",
+            "users",
+            predicate(vec![condition]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        );
+        let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+        let mut ids = row_ids(&store.execute(&plan, &snapshot).expect("executes"));
+        ids.sort();
+        ids
+    };
+
+    assert_eq!(
+        run(QueryCondition::StartsWith { field: "name".to_owned(), value: "Ad".to_owned() }),
+        ["array", "plain"]
+    );
+    assert_eq!(
+        run(QueryCondition::EndsWith { field: "name".to_owned(), value: "ide".to_owned() }),
+        ["plain"]
+    );
+    assert_eq!(
+        run(QueryCondition::Contains { field: "name".to_owned(), value: "aid".to_owned() }),
+        ["plain"]
+    );
+    // Case-sensitive exact matching: 'ad' does not match 'Adelaide'.
+    assert_eq!(
+        run(QueryCondition::StartsWith { field: "name".to_owned(), value: "ad".to_owned() }),
+        Vec::<String>::new()
+    );
+    // Non-string values never match a pattern.
+    assert_eq!(
+        run(QueryCondition::Contains { field: "name".to_owned(), value: "a".to_owned() }),
+        ["array", "other", "plain"]
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Q4 (PB-4013): explicit nulls placement is direction-independent — V1
+/// maps First to "nulls before values" and Last to "nulls after values"
+/// under both ascending and descending sorts (Ordering.cs:15-43 and the
+/// Corax mapping CoraxQueryBuilder.cs:1334-1339). The missing-and-null
+/// group moves as one block, because an index sort cannot distinguish an
+/// absent field from an explicit null; inside the block the seam's tracer
+/// order (missing before null) stays.
+#[test]
+fn explicit_nulls_placement_is_direction_independent() {
+    use super::NullsPlacement;
+    let (dir, engine) = open_engine("gap-eval-q4-nulls");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("absent", "users", &[("name", DocumentValue::String("a".to_owned()))]),
+            object_document("null-a", "users", &[("a", DocumentValue::Null)]),
+            object_document("one", "users", &[("a", DocumentValue::Integer(1))]),
+            object_document("three", "users", &[("a", DocumentValue::Integer(3))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let run = |direction: OrderDirection, placement: NullsPlacement| -> Vec<String> {
+        let key = OrderingKey::try_new_with_nulls("a", direction, placement).expect("valid key");
+        let query = spec(
+            "tenant-a",
+            "users",
+            predicate(Vec::new()),
+            QueryOrdering::try_new(vec![key]).expect("valid ordering"),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        );
+        let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+        row_ids(&store.execute(&plan, &snapshot).expect("executes"))
+    };
+
+    assert_eq!(
+        run(OrderDirection::Ascending, NullsPlacement::First),
+        ["absent", "null-a", "one", "three"]
+    );
+    assert_eq!(
+        run(OrderDirection::Descending, NullsPlacement::First),
+        ["absent", "null-a", "three", "one"]
+    );
+    assert_eq!(
+        run(OrderDirection::Ascending, NullsPlacement::Last),
+        ["one", "three", "absent", "null-a"]
+    );
+    assert_eq!(
+        run(OrderDirection::Descending, NullsPlacement::Last),
+        ["three", "one", "absent", "null-a"]
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Q4 (PB-4013): seeded random ordering is deterministic per seed. V1
+/// derives the permutation from the seed argument (CoraxQueryBuilder.cs:
+/// 1343-1347; RandomFieldComparator.cs:20-24) and V1's two engines already
+/// disagree on the sequence for one seed, so the parity contract pinned
+/// here is determinism and seed sensitivity, never one canonical sequence.
+#[test]
+fn random_with_seed_orders_deterministically_per_seed() {
+    let (dir, engine) = open_engine("gap-eval-q4-random");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let documents: Vec<Document> = (0..32)
+        .map(|index| {
+            object_document(
+                &format!("doc-{index:02}"),
+                "users",
+                &[("n", DocumentValue::Integer(i64::from(index)))],
+            )
+        })
+        .collect();
+    commit_documents(&engine, &tenant_scope, "op-1", documents);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let run = |seed: u64| -> Vec<String> {
+        let query = spec(
+            "tenant-a",
+            "users",
+            predicate(Vec::new()),
+            QueryOrdering::random_with_seed(seed),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        );
+        let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+        row_ids(&store.execute(&plan, &snapshot).expect("executes"))
+    };
+
+    let first = run(42);
+    let again = run(42);
+    assert_eq!(first, again, "one seed keeps one order across executions");
+    let other = run(43);
+    assert_ne!(first, other, "a different seed moves the order");
+    // The shuffle is a permutation: no document is lost or duplicated.
+    let mut sorted = first.clone();
+    sorted.sort();
+    let mut expected: Vec<String> = (0..32).map(|index| format!("doc-{index:02}")).collect();
+    expected.sort();
+    assert_eq!(sorted, expected);
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Q5 (PB-4015): `load` resolves the referenced source document. V1 binds
+/// each alias to the document whose id the path reads
+/// (QueryMetadata.cs:1082-1136) and the projected value comes from that
+/// source document; serving a projection from stored index fields is the
+/// GAP-Q6-gated half and does not exist here. A reference that resolves to
+/// no document binds null (docs/tql/spec.md Section 4.2), and an absent
+/// field of a resolved reference is omitted, staying distinct from a
+/// present null.
+#[test]
+fn loads_resolve_referenced_source_documents_into_projection() {
+    use super::QueryLoad;
+    let (dir, engine) = open_engine("gap-eval-q5-load");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document(
+                "order-1",
+                "orders",
+                &[
+                    ("total", DocumentValue::Integer(10)),
+                    ("customerId", DocumentValue::String("customer-1".to_owned())),
+                ],
+            ),
+            object_document(
+                "order-2",
+                "orders",
+                &[
+                    ("total", DocumentValue::Integer(20)),
+                    ("customerId", DocumentValue::String("customer-2".to_owned())),
+                ],
+            ),
+            object_document(
+                "order-3",
+                "orders",
+                &[
+                    ("total", DocumentValue::Integer(30)),
+                    ("customerId", DocumentValue::String("customer-x".to_owned())),
+                ],
+            ),
+            object_document(
+                "customer-1",
+                "customers",
+                &[("name", DocumentValue::String("Ada".to_owned()))],
+            ),
+            object_document(
+                "customer-2",
+                "customers",
+                &[("region", DocumentValue::String("emea".to_owned()))],
+            ),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let query = spec(
+        "tenant-a",
+        "orders",
+        predicate(Vec::new()),
+        ordering(vec![("total", OrderDirection::Ascending)]),
+        projection_fields(&["total", "c.name"]),
+        paging(0, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+    )
+    .with_loads(vec![QueryLoad::try_new("customerId", "c").expect("valid load")])
+    .expect("loads bind");
+    let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+    let result = store.execute(&plan, &snapshot).expect("executes");
+    let fields_of = |position: usize| {
+        result.rows()[position]
+            .projected()
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.clone()))
+            .collect::<Vec<_>>()
+    };
+    // The referenced source document's field, resolved by id across the
+    // collection boundary.
+    assert_eq!(
+        fields_of(0),
+        [
+            ("total", DocumentValue::Integer(10)),
+            ("c.name", DocumentValue::String("Ada".to_owned()))
+        ]
+    );
+    // A resolved reference without the field omits it.
+    assert_eq!(fields_of(1), [("total", DocumentValue::Integer(20))]);
+    // A reference to no document binds null and navigation yields null.
+    assert_eq!(
+        fields_of(2),
+        [("total", DocumentValue::Integer(30)), ("c.name", DocumentValue::Null)]
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// GAP-EVAL repair (Q2 rider): NaN is unordered, so every ordering condition
+/// against a NaN literal is false in the mixed Integer/Number arms exactly as
+/// it already is in the same-domain Number arm (`ordered_f64` is
+/// `partial_cmp`, and V1's numeric range terms never match NaN either).
+/// Documents provably carry `Number(NaN)` (the order-by corpus above), and
+/// the Q2 exact-comparison rewrite routed the predicate's mixed arms through
+/// `compare_integer_with_number`, whose finite-only precondition the rank
+/// gate enforces only in the order-by path: with a NaN literal both sign
+/// gates are false and `NaN.trunc() as i128` saturates to 0, so the
+/// predicate decided against a phantom 0 — `Integer(5)` answered
+/// `> Number(NaN)` true, and a `Between` with a NaN bound admitted half the
+/// range (`Integer(-3)` but not `Integer(5)`).
+#[test]
+fn mixed_nan_literals_make_every_ordering_condition_false() {
+    let (dir, engine) = open_engine("gap-eval-q2-nan-literals");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("neg", "users", &[("n", DocumentValue::Integer(-3))]),
+            object_document("zero", "users", &[("n", DocumentValue::Integer(0))]),
+            object_document("five", "users", &[("n", DocumentValue::Integer(5))]),
+            object_document("nan-doc", "users", &[("n", DocumentValue::Number(f64::NAN))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let run = |condition: QueryCondition| -> Vec<String> {
+        let query = spec(
+            "tenant-a",
+            "users",
+            predicate(vec![condition]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        );
+        let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+        let mut ids = row_ids(&store.execute(&plan, &snapshot).expect("executes"));
+        ids.sort();
+        ids
+    };
+    let nan = || DocumentValue::Number(f64::NAN);
+    let field = "n";
+
+    // Integer documents against Number(NaN) literals: no value orders
+    // against NaN, so no inequality holds in either direction and neither
+    // inclusive form falls back to equality.
+    assert_eq!(
+        run(QueryCondition::GreaterThan { field: field.to_owned(), value: nan() }),
+        Vec::<String>::new(),
+        "Integer(5) must not answer > Number(NaN) through a phantom 0"
+    );
+    assert_eq!(
+        run(QueryCondition::LessThan { field: field.to_owned(), value: nan() }),
+        Vec::<String>::new(),
+        "Integer(-3) must not answer < Number(NaN)"
+    );
+    assert_eq!(
+        run(QueryCondition::GreaterOrEqual { field: field.to_owned(), value: nan() }),
+        Vec::<String>::new(),
+        "Integer(0) must not answer >= Number(NaN) as phantom equality"
+    );
+    assert_eq!(
+        run(QueryCondition::LessOrEqual { field: field.to_owned(), value: nan() }),
+        Vec::<String>::new(),
+        "Integer(0) must not answer <= Number(NaN) as phantom equality"
+    );
+
+    // A Between with either NaN bound is unordered on that side, so the
+    // inclusive range matches nothing — not half of it.
+    assert_eq!(
+        run(QueryCondition::Between {
+            field: field.to_owned(),
+            low: DocumentValue::Integer(-10),
+            high: nan(),
+        }),
+        Vec::<String>::new(),
+        "a NaN upper bound must not admit Integer(-3) by comparing against 0"
+    );
+    assert_eq!(
+        run(QueryCondition::Between {
+            field: field.to_owned(),
+            low: nan(),
+            high: DocumentValue::Integer(10),
+        }),
+        Vec::<String>::new(),
+        "a NaN lower bound must not admit Integer(0) and Integer(5)"
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// GAP-EVAL repair (Q2 rider, symmetric half): the phantom-0 defect also
+/// crossed the encodings the other way — a `Number(NaN)` document compared
+/// against an `Integer` literal ran the same helper with the operands
+/// swapped, so the NaN document answered `>=` and `<=` an integer through a
+/// phantom equality. NaN stays unordered on that side too, while the
+/// infinities keep their sign-gate answers (every integer is below `+inf`
+/// and above `-inf`), which pins that the fix routes NaN only.
+#[test]
+fn nan_documents_answer_no_integer_inequality_and_infinities_keep_their_signs() {
+    let (dir, engine) = open_engine("gap-eval-q2-nan-documents");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("neg", "users", &[("n", DocumentValue::Integer(-3))]),
+            object_document("zero", "users", &[("n", DocumentValue::Integer(0))]),
+            object_document("five", "users", &[("n", DocumentValue::Integer(5))]),
+            object_document("nan-doc", "users", &[("n", DocumentValue::Number(f64::NAN))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let run = |condition: QueryCondition| -> Vec<String> {
+        let query = spec(
+            "tenant-a",
+            "users",
+            predicate(vec![condition]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        );
+        let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+        let mut ids = row_ids(&store.execute(&plan, &snapshot).expect("executes"));
+        ids.sort();
+        ids
+    };
+    let field = "n";
+
+    // A Number(NaN) document against Integer literals: the NaN document
+    // answers no integer inequality (phantom equality against 0 used to
+    // satisfy >= and <=).
+    assert_eq!(
+        run(QueryCondition::GreaterOrEqual {
+            field: field.to_owned(),
+            value: DocumentValue::Integer(0)
+        }),
+        ["five", "zero"],
+        "Number(NaN) must not answer >= Integer(0)"
+    );
+    assert_eq!(
+        run(QueryCondition::LessOrEqual {
+            field: field.to_owned(),
+            value: DocumentValue::Integer(0)
+        }),
+        ["neg", "zero"],
+        "Number(NaN) must not answer <= Integer(0)"
+    );
+
+    // The infinities keep their sign-gate answers: every integer is below
+    // +inf and above -inf, and the NaN document still answers nothing.
+    assert_eq!(
+        run(QueryCondition::LessThan {
+            field: field.to_owned(),
+            value: DocumentValue::Number(f64::INFINITY)
+        }),
+        ["five", "neg", "zero"]
+    );
+    assert_eq!(
+        run(QueryCondition::GreaterThan {
+            field: field.to_owned(),
+            value: DocumentValue::Number(f64::NEG_INFINITY)
+        }),
+        ["five", "neg", "zero"]
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// GAP-EVAL repair (Q5 rider): a load resolves a bare id by the engine's own
+/// identifier rule, not by silent last-wins. Storage keys documents by
+/// tenant, collection, and identifier, and nothing forbids reusing one
+/// identifier across a tenant's collections, so one bare id can name two
+/// stored documents; the engine's identifier-only point read
+/// (`Transaction::read` → `read_document_at` → `find_by_document_id`) serves
+/// the first match in canonical key order. The load map was built
+/// last-wins over the same snapshot, so the same id answered two different
+/// ways. The map now keeps the first match in canonical key order: the load
+/// binds exactly the document the point read serves. The decision is
+/// recorded in docs/query/gap-eval-evaluator-parity.md.
+#[test]
+fn loads_resolve_a_reused_id_the_way_the_point_read_does() {
+    use super::QueryLoad;
+    let (dir, engine) = open_engine("gap-eval-q5-reuse");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document(
+                "order-1",
+                "orders",
+                &[
+                    ("total", DocumentValue::Integer(1)),
+                    ("refId", DocumentValue::String("shared-1".to_owned())),
+                ],
+            ),
+            // The same document id committed in two collections of one
+            // tenant: "alpha" sorts before "beta" in canonical key order, so
+            // the point read serves the alpha copy.
+            object_document(
+                "shared-1",
+                "alpha",
+                &[("marker", DocumentValue::String("alpha-copy".to_owned()))],
+            ),
+            object_document(
+                "shared-1",
+                "beta",
+                &[("marker", DocumentValue::String("beta-copy".to_owned()))],
+            ),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+
+    // The engine's identifier-only read, the rule the load must agree with.
+    let operation = OperationId::try_new("op-read").expect("valid identifier");
+    let transaction = engine.begin(&tenant_scope, snapshot.clone(), operation).expect("begins");
+    let point_read = transaction
+        .read(&DocumentId::try_new("shared-1").expect("valid identifier"))
+        .expect("reads");
+    let point_read = point_read.expect("the reused id resolves for the point read");
+    assert_eq!(point_read.collection().as_str(), "alpha");
+    drop(transaction);
+
+    let store = engine.queries();
+    let query = spec(
+        "tenant-a",
+        "orders",
+        predicate(Vec::new()),
+        QueryOrdering::default(),
+        projection_fields(&["total", "r.marker", "r"]),
+        paging(0, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+    )
+    .with_loads(vec![QueryLoad::try_new("refId", "r").expect("valid load")])
+    .expect("loads bind");
+    let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+    let result = store.execute(&plan, &snapshot).expect("executes");
+    assert_eq!(row_ids(&result), ["order-1"]);
+    let projected = result.rows()[0]
+        .projected()
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.clone()))
+        .collect::<Vec<_>>();
+    // The qualified field and the bare alias both read the alpha copy — the
+    // same document the point read served — never the beta copy that
+    // last-wins keyed.
+    assert_eq!(
+        projected,
+        [
+            ("total", DocumentValue::Integer(1)),
+            ("r.marker", DocumentValue::String("alpha-copy".to_owned())),
+            ("r", object(&[("marker", DocumentValue::String("alpha-copy".to_owned()))])),
+        ]
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// GAP-EVAL rider: the optimizer's demand derivation must classify the
+/// expanded conditions — a dynamic query carrying them selects or creates
+/// its index and still answers, rather than failing closed on an
+/// unclassified condition (charter PD-2026-08-26-09: no query silently
+/// scans without its index).
+#[test]
+fn dynamic_queries_with_expanded_conditions_select_through_the_optimizer() {
+    let (dir, engine) = open_engine("gap-eval-optimizer");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document(
+                "one",
+                "users",
+                &[
+                    ("tag", DocumentValue::String("red".to_owned())),
+                    ("age", DocumentValue::Integer(5)),
+                    ("name", DocumentValue::String("anne".to_owned())),
+                ],
+            ),
+            object_document("two", "users", &[("tag", DocumentValue::String("blue".to_owned()))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let query = spec(
+        "tenant-a",
+        "users",
+        predicate(vec![
+            QueryCondition::In {
+                field: "tag".to_owned(),
+                values: vec![DocumentValue::String("red".to_owned())],
+            },
+            QueryCondition::Between {
+                field: "age".to_owned(),
+                low: DocumentValue::Integer(1),
+                high: DocumentValue::Integer(9),
+            },
+            QueryCondition::StartsWith { field: "name".to_owned(), value: "a".to_owned() },
+        ]),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(0, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+    );
+    let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+    let result = store.execute(&plan, &snapshot).expect("executes and selects");
+    assert_eq!(row_ids(&result), ["one"]);
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
 }

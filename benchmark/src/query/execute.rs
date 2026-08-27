@@ -173,13 +173,28 @@ pub(crate) fn execute_with_view(
             matched.push(document);
         }
     }
+    // Reference resolution for the loads clause: one bounded id lookup per
+    // load, served from the same materialized snapshot view. The map spans
+    // every collection of the tenant, because a reference is an id, not a
+    // collection-qualified pointer. Storage keys documents by tenant,
+    // collection, and identifier, and nothing forbids reusing one id across a
+    // tenant's collections, so the first document in canonical key order
+    // wins: the same first-match rule the engine's identifier-only point read
+    // applies (`find_by_document_id` through `read_document_at`), so a load
+    // and a point read never disagree about which document one bare id names.
+    let mut by_id: std::collections::BTreeMap<&str, &Document> = std::collections::BTreeMap::new();
+    if !query.loads().is_empty() {
+        for document in &documents {
+            by_id.entry(document.id().as_str()).or_insert(document);
+        }
+    }
     // Bounded checkpoint at the scan/sort boundary: a bound that expired
     // during the scan stops the query before the sort starts.
     check_bounds(query.deadline(), query.cancellation_signal())?;
     let mut ordered: Vec<Document> = matched.into_iter().cloned().collect();
     ordered.sort_by(|left, right| model::compare_documents(query.ordering(), left, right));
     let matched_count = u64::try_from(ordered.len()).unwrap_or(u64::MAX);
-    let rows = materialize(query, &ordered)?;
+    let rows = materialize(query, &ordered, &by_id)?;
 
     let index_generation = staleness
         .observations()
@@ -204,12 +219,24 @@ pub(crate) fn execute_with_view(
 pub(crate) fn materialize(
     query: &NormalizedQuery,
     ordered: &[Document],
+    by_id: &std::collections::BTreeMap<&str, &Document>,
 ) -> Result<Vec<QueryRow>, QueryError> {
     let offset = usize::try_from(query.paging().offset()).unwrap_or(usize::MAX);
     let limit = query
         .paging()
         .limit()
         .map_or(usize::MAX, |limit| usize::try_from(limit).unwrap_or(usize::MAX));
+    // One shape per load clause, built once for the whole page: per-row
+    // resolution and projection only read the shapes, never rebuild them.
+    let load_shapes: Vec<LoadShape> = query
+        .loads()
+        .iter()
+        .map(|load| LoadShape {
+            field: load.field().to_owned(),
+            alias: load.alias().to_owned(),
+            dotted: format!("{}.", load.alias()),
+        })
+        .collect();
     let mut rows = Vec::new();
     for (position, document) in ordered.iter().enumerate() {
         if position % CHECKPOINT_INTERVAL == 0 {
@@ -221,21 +248,96 @@ pub(crate) fn materialize(
         if rows.len() >= limit {
             break;
         }
-        rows.push(QueryRow::new(document.clone(), project(query, document)));
+        let loads = resolve_loads(&load_shapes, document, by_id);
+        rows.push(QueryRow::new(document.clone(), project(query, document, &loads)));
     }
     Ok(rows)
 }
 
+/// One load clause precomputed once per query: the source field, the alias,
+/// and the alias's dotted prefix. Projection runs per matched row and per
+/// projection name, so formatting the prefix (or re-cloning the alias) inside
+/// that loop would allocate per row per name; the shapes are built once in
+/// [`materialize`] instead.
+struct LoadShape {
+    field: String,
+    alias: String,
+    dotted: String,
+}
+
+/// One resolved load binding: the clause's shape, and the referenced
+/// document or `None` when the reference resolved to no document (which
+/// binds null).
+type ResolvedLoad<'a> = (&'a LoadShape, Option<&'a Document>);
+
+/// Resolves the loads clause of one matched document.
+///
+/// A load reads its field's string value as a document id; a missing field,
+/// a non-string value, or an unknown id resolves to nothing and the alias
+/// binds null — the TQL reference contract (Section 4.2 of
+/// `docs/tql/spec.md`) and V1's id-lookup `LOAD` agree on that shape. An id
+/// reused across the tenant's collections resolves to the first document in
+/// canonical key order, the rule of the engine's identifier-only point read.
+fn resolve_loads<'a>(
+    shapes: &'a [LoadShape],
+    document: &Document,
+    by_id: &std::collections::BTreeMap<&str, &'a Document>,
+) -> Vec<ResolvedLoad<'a>> {
+    shapes
+        .iter()
+        .map(|shape| {
+            let referenced = match model::field_of(document, shape.field.as_str()) {
+                Some(DocumentValue::String(id)) => by_id.get(id.as_str()).copied(),
+                _ => None,
+            };
+            (shape, referenced)
+        })
+        .collect()
+}
+
 /// Projects one matched document into its row fields.
-fn project(query: &NormalizedQuery, document: &Document) -> Vec<(String, DocumentValue)> {
+///
+/// A projection name that names a load alias (`alias`) or a field of one
+/// (`alias.field`) reads the resolved referenced document: the alias itself
+/// projects the referenced document object, its qualified field projects
+/// that document's field, a null binding projects null, and an absent field
+/// of a resolved reference is omitted exactly as an absent source field is.
+/// Every other name reads the matched source document.
+fn project(
+    query: &NormalizedQuery,
+    document: &Document,
+    loads: &[ResolvedLoad<'_>],
+) -> Vec<(String, DocumentValue)> {
     let DocumentValue::Object(fields) = document.value() else {
         return Vec::new();
     };
-    match query.projection().selected() {
-        None => fields.iter().map(|(name, value)| (name.clone(), value.clone())).collect(),
-        Some(selected) => selected
-            .iter()
-            .filter_map(|name| fields.get(name).map(|value| (name.clone(), value.clone())))
-            .collect(),
-    }
+    let Some(selected) = query.projection().selected() else {
+        return fields.iter().map(|(name, value)| (name.clone(), value.clone())).collect();
+    };
+    selected
+        .iter()
+        .filter_map(|name| {
+            for (shape, referenced) in loads {
+                if name == &shape.alias {
+                    let value =
+                        referenced.map_or(DocumentValue::Null, |document| document.value().clone());
+                    return Some((name.clone(), value));
+                }
+                if let Some(field) = name.strip_prefix(shape.dotted.as_str()) {
+                    return match referenced {
+                        // A null binding navigates to null; the projected
+                        // field is present with a null value.
+                        None => Some((name.clone(), DocumentValue::Null)),
+                        Some(document) => match document.value() {
+                            DocumentValue::Object(referenced_fields) => referenced_fields
+                                .get(field)
+                                .map(|value| (name.clone(), value.clone())),
+                            _ => None,
+                        },
+                    };
+                }
+            }
+            fields.get(name).map(|value| (name.clone(), value.clone()))
+        })
+        .collect()
 }

@@ -73,8 +73,8 @@ class**)** (accepted-difference surface, fail-closed by design).
 | R08 | `and` / `or` (2) | `and`: lowers-and-executes; `or`: not-planned(`or`) |
 | R09, R10 | `not`; combined `and not`/`or not` (2) | not-planned(`not`) |
 | R11 | parenthesized expressions (2) | lowers-and-executes |
-| R12 | `between` (2) | not-planned(`between`) |
-| R13, R14 | `in`; `all in` (2) | not-planned(`in`) |
+| R12 | `between` (2) | lowers (GAP-EVAL seam extension) |
+| R13, R14 | `in`; `all in` (2) | lowers (GAP-EVAL seam extension) |
 | R15 | `true`/`false`/`null` literals (2) | lowers-and-executes |
 | R16, R17 | string escapes; long/double literals (3) | lowers-and-executes |
 | R18, R19, R20 | `$name` parameters; studio prefix; JSON body (3) | lowers-and-executes |
@@ -88,9 +88,9 @@ class**)** (accepted-difference surface, fail-closed by design).
 | R31 | `select distinct` (5) | not-planned(`distinct`) |
 | R32 | JS projection → typed constructors (5) | not-planned(`object constructor`) |
 | R33, R84 | `declare function` (5, 11) | rejected(`ParseError`) — flagship |
-| R34 | load-alias projections (5) | not-planned(`load`) |
+| R34 | load-alias projections (5) | computed half not-planned(`object constructor`); the load binding itself lowers (GAP-EVAL) |
 | R36 | `exists` (6) | lowers-and-executes |
-| R37, R38 | `startsWith`/`endsWith` → snake_case (6) | not-planned(`call`) |
+| R37, R38 | `startsWith`/`endsWith` → snake_case (6) | lowers (GAP-EVAL seam extension) |
 | R39 | `exact` (6) | not-planned(`call`) |
 | R40, R41, R72 | `search`; `boost`; `score()` (6, 8) | gated |
 | R61, R62 | `vector.search`; embedding bind (6) | gated |
@@ -101,7 +101,7 @@ class**)** (accepted-difference surface, fail-closed by design).
 | R68 | `asc`/`desc`/`ascending`/`descending` (8) | lowers-and-executes |
 | R69 | `nulls first`/`nulls last` (8) | lowers-and-executes |
 | R75, R76, R77 | `limit n`; comma form; `offset` (9) | lowers-and-executes |
-| R80 | `load path as alias` (10) | not-planned(`load`) |
+| R80 | `load path as alias` (10) | the clause lowers with alias-qualified projections (GAP-EVAL); a `where` over the loaded alias stays not-planned(`path`) |
 | R81 | `include path` (10) | not-planned(`include`) |
 | R42–R56, R58, R59 (registry rejections) | `regex`, `lucene`, `fuzzy`, `proximity`, `moreLikeThis`, `intersect`, `cmpxchg`, `counters`, `revisions`, `array`, `highlight`, `explanations`, `timings`, `now`, `today`, `timeseries`, `last` (6) | rejected(`UnknownFunction`), except `last`: rejected(`ParseError`) — `last` is a reserved word |
 | R67 | `group by … with <method>` (7) | rejected(`ParseError`) |
