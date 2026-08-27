@@ -16,11 +16,12 @@ under the run's temp directory.
 
 Outcome: **PASS** (6/6 checks).
 
+
 | Check | Outcome | Detail |
 | --- | --- | --- |
 | `ts resumed from its durable checkpoint and observed every committed update` | pass | final checkpoint storage sequence 5 (5 committed updates) |
 | `net resumed from its durable checkpoint and observed every committed update` | pass | final checkpoint storage sequence 5 (5 committed updates) |
 | `the TS session surfaced the drop through its documented failure ladder, then re-set up from the durable checkpoint` | pass | status transitions ['connecting', 'live', 'reconnecting', 'failed', 'closed', 'connecting', 'live']; the re-setup resumed from the durable checkpoint |
 | `the .NET session re-set up by resuming from its durable checkpoint` | pass | 1 resumed setups after the drop |
-| `the stale session identity was answered by the fresh host (never silently re-served)` | pass | stale-identity answers: [('HttpRequestException', None, 'An error occurred while sending the request.'), ('InvalidOperationException', None, "The requested operation requires an element of type 'Boolean', but the target element has type 'Null'.")] |
+| `the stale session identity was answered by the fresh host (never silently re-served)` | pass | stale-identity answers: [('InvalidOperationException', None, "The requested operation requires an element of type 'Boolean', but the target element has type 'Null'.")] |
 | `no duplicate application beyond the documented at-least-once identities` | pass | 0 duplicate batches |

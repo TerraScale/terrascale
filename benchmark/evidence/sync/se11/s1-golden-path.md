@@ -16,6 +16,7 @@ under the run's temp directory.
 
 Outcome: **PASS** (14/14 checks).
 
+
 | Check | Outcome | Detail |
 | --- | --- | --- |
 | `ts reaches the vector-predicted final checkpoint` | pass | storage sequence 27 (27 = 3 seeded + 16 established + 8 repeated) |

@@ -16,10 +16,11 @@ under the run's temp directory.
 
 Outcome: **PASS** (6/6 checks).
 
+
 | Check | Outcome | Detail |
 | --- | --- | --- |
 | `the host closed the stream with the resume-able engine-generation-lost frame` | pass | close reason engine-generation-lost |
-| `the durable checkpoint ahead of a fresh in-memory generation is answered by the typed refusal (both cores)` | pass | ts resume-path errors [('engine_failure', None)] (the typed engine_failure: checkpoint end ahead of the server); net resume-path errors [('InvalidOperationException', None), ('InvalidOperationException', None)] (the same refusal body, surfaced through the recorded parse defect) |
+| `the durable checkpoint ahead of a fresh in-memory generation is answered by the typed refusal (both cores)` | pass | ts resume-path errors [('engine_failure', None)] (the typed engine_failure: checkpoint end ahead of the server); net resume-path errors [('host-failure', 500), ('InvalidOperationException', None), ('InvalidOperationException', None)] (the same refusal body, surfaced through the recorded parse defect) |
 | `the ended session is answered truthfully (410 session-ended), never re-served` | pass | stale-identity answers [('InvalidOperationException', None)] (the .NET core surfaces the 410 body through the recorded parse defect) |
 | `ts converged on the fresh generation with no lost committed update among its commits` | pass | final checkpoint storage sequence 3 (3 post-recovery commits) |
 | `net converged on the fresh generation with no lost committed update among its commits` | pass | final checkpoint storage sequence 3 (3 post-recovery commits) |

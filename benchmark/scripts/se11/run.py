@@ -1147,6 +1147,7 @@ def scenario_tbep_link_loss(home: pathlib.Path, run_root: pathlib.Path) -> Facts
             {"op": "gate", "name": "net-fresh-go"},
             {"op": "dispose"},
             {"op": "connect"},
+            {"op": "watch", "ms": 2000},
             {"op": "mutate", "key": "op-s4-004", "document": "d-04", "put": {"f000": "post-recovery-net"}},
             {"op": "mutate", "key": "op-s4-005", "document": "d-05", "put": {"f000": "post-recovery-net-2"}},
             {"op": "waitCheckpoint", "sequence": 3, "timeoutMs": 30000},
