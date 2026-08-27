@@ -1,6 +1,6 @@
 {
   "descriptorVersion": 1,
-  "routeCount": 159,
+  "routeCount": 161,
   "routes": [
     {
       "base": "auth",
@@ -29523,6 +29523,9 @@
               "siblings": {
                 "resolved": {
                   "properties": {
+                    "acceptedTerms": {
+                      "type": "boolean"
+                    },
                     "code": {
                       "type": "string"
                     },
@@ -29534,6 +29537,9 @@
                     },
                     "redirectUri": {
                       "type": "string"
+                    },
+                    "termsVersion": {
+                      "type": "string"
                     }
                   },
                   "type": "object"
@@ -29541,6 +29547,9 @@
                 "siblings": {
                   "resolved": {
                     "properties": {
+                      "acceptedTerms": {
+                        "type": "boolean"
+                      },
                       "code": {
                         "type": "string"
                       },
@@ -29552,6 +29561,9 @@
                       },
                       "redirectUri": {
                         "type": "string"
+                      },
+                      "termsVersion": {
+                        "type": "string"
                       }
                     },
                     "type": "object"
@@ -29560,6 +29572,9 @@
               },
               "resolved": {
                 "properties": {
+                  "acceptedTerms": {
+                    "type": "boolean"
+                  },
                   "code": {
                     "type": "string"
                   },
@@ -29570,6 +29585,9 @@
                     "type": "string"
                   },
                   "redirectUri": {
+                    "type": "string"
+                  },
+                  "termsVersion": {
                     "type": "string"
                   }
                 },
@@ -29586,6 +29604,9 @@
                 "siblings": {
                   "resolved": {
                     "properties": {
+                      "acceptedTerms": {
+                        "type": "boolean"
+                      },
                       "code": {
                         "type": "string"
                       },
@@ -29597,6 +29618,9 @@
                       },
                       "redirectUri": {
                         "type": "string"
+                      },
+                      "termsVersion": {
+                        "type": "string"
                       }
                     },
                     "type": "object"
@@ -29604,6 +29628,9 @@
                   "siblings": {
                     "resolved": {
                       "properties": {
+                        "acceptedTerms": {
+                          "type": "boolean"
+                        },
                         "code": {
                           "type": "string"
                         },
@@ -29615,6 +29642,9 @@
                         },
                         "redirectUri": {
                           "type": "string"
+                        },
+                        "termsVersion": {
+                          "type": "string"
                         }
                       },
                       "type": "object"
@@ -29623,6 +29653,9 @@
                 },
                 "resolved": {
                   "properties": {
+                    "acceptedTerms": {
+                      "type": "boolean"
+                    },
                     "code": {
                       "type": "string"
                     },
@@ -29633,6 +29666,9 @@
                       "type": "string"
                     },
                     "redirectUri": {
+                      "type": "string"
+                    },
+                    "termsVersion": {
                       "type": "string"
                     }
                   },
@@ -29753,6 +29789,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -29830,6 +29869,9 @@
                                       "format": "ulid",
                                       "type": "string"
                                     }
+                                  },
+                                  "username": {
+                                    "type": "string"
                                   }
                                 },
                                 "type": "object"
@@ -30277,6 +30319,9 @@
                                           "format": "ulid",
                                           "type": "string"
                                         }
+                                      },
+                                      "username": {
+                                        "type": "string"
                                       }
                                     },
                                     "type": "object"
@@ -30390,6 +30435,9 @@
                                             "format": "ulid",
                                             "type": "string"
                                           }
+                                        },
+                                        "username": {
+                                          "type": "string"
                                         }
                                       },
                                       "type": "object"
@@ -30468,6 +30516,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -31166,6 +31217,9 @@
                                     "format": "ulid",
                                     "type": "string"
                                   }
+                                },
+                                "username": {
+                                  "type": "string"
                                 }
                               },
                               "type": "object"
@@ -34004,6 +34058,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -34081,6 +34138,9 @@
                                       "format": "ulid",
                                       "type": "string"
                                     }
+                                  },
+                                  "username": {
+                                    "type": "string"
                                   }
                                 },
                                 "type": "object"
@@ -34528,6 +34588,9 @@
                                           "format": "ulid",
                                           "type": "string"
                                         }
+                                      },
+                                      "username": {
+                                        "type": "string"
                                       }
                                     },
                                     "type": "object"
@@ -34641,6 +34704,9 @@
                                             "format": "ulid",
                                             "type": "string"
                                           }
+                                        },
+                                        "username": {
+                                          "type": "string"
                                         }
                                       },
                                       "type": "object"
@@ -34719,6 +34785,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -35417,6 +35486,9 @@
                                     "format": "ulid",
                                     "type": "string"
                                   }
+                                },
+                                "username": {
+                                  "type": "string"
                                 }
                               },
                               "type": "object"
@@ -35897,6 +35969,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -35974,6 +36049,9 @@
                                       "format": "ulid",
                                       "type": "string"
                                     }
+                                  },
+                                  "username": {
+                                    "type": "string"
                                   }
                                 },
                                 "type": "object"
@@ -36421,6 +36499,9 @@
                                           "format": "ulid",
                                           "type": "string"
                                         }
+                                      },
+                                      "username": {
+                                        "type": "string"
                                       }
                                     },
                                     "type": "object"
@@ -36534,6 +36615,9 @@
                                             "format": "ulid",
                                             "type": "string"
                                           }
+                                        },
+                                        "username": {
+                                          "type": "string"
                                         }
                                       },
                                       "type": "object"
@@ -36612,6 +36696,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -37310,6 +37397,9 @@
                                     "format": "ulid",
                                     "type": "string"
                                   }
+                                },
+                                "username": {
+                                  "type": "string"
                                 }
                               },
                               "type": "object"
@@ -37972,6 +38062,9 @@
                         "error": {
                           "type": "string"
                         },
+                        "fullName": {
+                          "type": "string"
+                        },
                         "pendingAuthenticationToken": {
                           "type": "string"
                         },
@@ -37993,6 +38086,9 @@
                             "format": "ulid",
                             "type": "string"
                           }
+                        },
+                        "username": {
+                          "type": "string"
                         }
                       },
                       "type": "object"
@@ -38004,6 +38100,9 @@
                             "type": "string"
                           },
                           "error": {
+                            "type": "string"
+                          },
+                          "fullName": {
                             "type": "string"
                           },
                           "pendingAuthenticationToken": {
@@ -38033,6 +38132,9 @@
                               "format": "ulid",
                               "type": "string"
                             }
+                          },
+                          "username": {
+                            "type": "string"
                           }
                         },
                         "type": "object"
@@ -38045,6 +38147,9 @@
                         "type": "string"
                       },
                       "error": {
+                        "type": "string"
+                      },
+                      "fullName": {
                         "type": "string"
                       },
                       "pendingAuthenticationToken": {
@@ -38062,6 +38167,9 @@
                           "format": "ulid",
                           "type": "string"
                         }
+                      },
+                      "username": {
+                        "type": "string"
                       }
                     },
                     "type": "object"
@@ -38224,6 +38332,9 @@
                         "error": {
                           "type": "string"
                         },
+                        "fullName": {
+                          "type": "string"
+                        },
                         "pendingAuthenticationToken": {
                           "type": "string"
                         },
@@ -38245,6 +38356,9 @@
                             "format": "ulid",
                             "type": "string"
                           }
+                        },
+                        "username": {
+                          "type": "string"
                         }
                       },
                       "type": "object"
@@ -38256,6 +38370,9 @@
                             "type": "string"
                           },
                           "error": {
+                            "type": "string"
+                          },
+                          "fullName": {
                             "type": "string"
                           },
                           "pendingAuthenticationToken": {
@@ -38285,6 +38402,9 @@
                               "format": "ulid",
                               "type": "string"
                             }
+                          },
+                          "username": {
+                            "type": "string"
                           }
                         },
                         "type": "object"
@@ -38297,6 +38417,9 @@
                         "type": "string"
                       },
                       "error": {
+                        "type": "string"
+                      },
+                      "fullName": {
                         "type": "string"
                       },
                       "pendingAuthenticationToken": {
@@ -38314,6 +38437,9 @@
                           "format": "ulid",
                           "type": "string"
                         }
+                      },
+                      "username": {
+                        "type": "string"
                       }
                     },
                     "type": "object"
@@ -38692,6 +38818,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -38769,6 +38898,9 @@
                                       "format": "ulid",
                                       "type": "string"
                                     }
+                                  },
+                                  "username": {
+                                    "type": "string"
                                   }
                                 },
                                 "type": "object"
@@ -38886,6 +39018,9 @@
                                           "format": "ulid",
                                           "type": "string"
                                         }
+                                      },
+                                      "username": {
+                                        "type": "string"
                                       }
                                     },
                                     "type": "object"
@@ -38999,6 +39134,9 @@
                                             "format": "ulid",
                                             "type": "string"
                                           }
+                                        },
+                                        "username": {
+                                          "type": "string"
                                         }
                                       },
                                       "type": "object"
@@ -39077,6 +39215,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -39176,6 +39317,9 @@
                                     "format": "ulid",
                                     "type": "string"
                                   }
+                                },
+                                "username": {
+                                  "type": "string"
                                 }
                               },
                               "type": "object"
@@ -39406,6 +39550,9 @@
                             "format": "ulid",
                             "type": "string"
                           }
+                        },
+                        "username": {
+                          "type": "string"
                         }
                       },
                       "type": "object"
@@ -39519,6 +39666,9 @@
                               "format": "ulid",
                               "type": "string"
                             }
+                          },
+                          "username": {
+                            "type": "string"
                           }
                         },
                         "type": "object"
@@ -39597,6 +39747,9 @@
                           "format": "ulid",
                           "type": "string"
                         }
+                      },
+                      "username": {
+                        "type": "string"
                       }
                     },
                     "type": "object"
@@ -39875,6 +40028,9 @@
                             "format": "ulid",
                             "type": "string"
                           }
+                        },
+                        "username": {
+                          "type": "string"
                         }
                       },
                       "type": "object"
@@ -39988,6 +40144,9 @@
                               "format": "ulid",
                               "type": "string"
                             }
+                          },
+                          "username": {
+                            "type": "string"
                           }
                         },
                         "type": "object"
@@ -40066,6 +40225,9 @@
                           "format": "ulid",
                           "type": "string"
                         }
+                      },
+                      "username": {
+                        "type": "string"
                       }
                     },
                     "type": "object"
@@ -40946,16 +41108,16 @@
       "base": "api",
       "client": "onboarding",
       "method": "POST",
-      "operation": "validatePaymentMethod",
-      "operationId": "ValidateOnboardingPayment",
+      "operation": "registerOnboardingPaymentMethod",
+      "operationId": "RegisterOnboardingPayment",
       "parameters": [],
-      "pathTemplate": "/api/v1/onboarding/payment-method/validate",
+      "pathTemplate": "/api/v1/onboarding/payment-method/register",
       "request": {
         "content": [
           {
             "mediaType": "application/json",
             "schema": {
-              "$ref": "#/components/schemas/ValidateOnboardingPaymentRequest",
+              "$ref": "#/components/schemas/RegisterOnboardingPaymentRequest",
               "siblings": {
                 "resolved": {
                   "properties": {
@@ -40991,7 +41153,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ValidateOnboardingPaymentRequest",
+                "$ref": "#/components/schemas/RegisterOnboardingPaymentRequest",
                 "siblings": {
                   "resolved": {
                     "properties": {
@@ -41014,6 +41176,691 @@
                 },
                 "resolved": {
                   "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingStateResponse",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "accountInformationCompleted": {
+                          "type": "boolean"
+                        },
+                        "completed": {
+                          "type": "boolean"
+                        },
+                        "displayName": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string"
+                        },
+                        "mfaDecision": {
+                          "type": "string"
+                        },
+                        "nextStep": {
+                          "type": "string"
+                        },
+                        "organizationId": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/components/schemas/Ulid",
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              },
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "organizationOwnerAssigned": {
+                          "type": "boolean"
+                        },
+                        "paymentMethodLinkedToOrganization": {
+                          "type": "boolean"
+                        },
+                        "paymentMethodRegistered": {
+                          "type": "boolean"
+                        },
+                        "paymentMethodValidated": {
+                          "type": "boolean"
+                        },
+                        "paymentValidationStatus": {
+                          "type": "string"
+                        },
+                        "phoneNumber": {
+                          "type": "string"
+                        },
+                        "projectBackupRegion": {
+                          "type": "string"
+                        },
+                        "projectId": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/components/schemas/Ulid",
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              },
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "projectOwnerAssigned": {
+                          "type": "boolean"
+                        },
+                        "projectPrimaryRegions": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "steps": {
+                          "items": {
+                            "$ref": "#/components/schemas/OnboardingStepStateResponse",
+                            "siblings": {
+                              "resolved": {
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "state"
+                                ],
+                                "type": "object"
+                              }
+                            },
+                            "resolved": {
+                              "properties": {
+                                "key": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "state"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "type": "array"
+                        },
+                        "subscriptionOrTrialActive": {
+                          "type": "boolean"
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "userId": {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "userId",
+                        "email",
+                        "displayName",
+                        "phoneNumber",
+                        "accountInformationCompleted",
+                        "paymentMethodRegistered",
+                        "paymentMethodValidated",
+                        "paymentValidationStatus",
+                        "mfaDecision",
+                        "organizationId",
+                        "organizationOwnerAssigned",
+                        "paymentMethodLinkedToOrganization",
+                        "subscriptionOrTrialActive",
+                        "projectId",
+                        "projectOwnerAssigned",
+                        "projectPrimaryRegions",
+                        "projectBackupRegion",
+                        "completed",
+                        "status",
+                        "nextStep",
+                        "steps",
+                        "updatedAt"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "accountInformationCompleted": {
+                            "type": "boolean"
+                          },
+                          "completed": {
+                            "type": "boolean"
+                          },
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "email": {
+                            "type": "string"
+                          },
+                          "mfaDecision": {
+                            "type": "string"
+                          },
+                          "nextStep": {
+                            "type": "string"
+                          },
+                          "organizationId": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "$ref": "#/components/schemas/Ulid",
+                                "siblings": {
+                                  "resolved": {
+                                    "format": "ulid",
+                                    "type": "string"
+                                  },
+                                  "siblings": {
+                                    "resolved": {
+                                      "format": "ulid",
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            ]
+                          },
+                          "organizationOwnerAssigned": {
+                            "type": "boolean"
+                          },
+                          "paymentMethodLinkedToOrganization": {
+                            "type": "boolean"
+                          },
+                          "paymentMethodRegistered": {
+                            "type": "boolean"
+                          },
+                          "paymentMethodValidated": {
+                            "type": "boolean"
+                          },
+                          "paymentValidationStatus": {
+                            "type": "string"
+                          },
+                          "phoneNumber": {
+                            "type": "string"
+                          },
+                          "projectBackupRegion": {
+                            "type": "string"
+                          },
+                          "projectId": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "$ref": "#/components/schemas/Ulid",
+                                "siblings": {
+                                  "resolved": {
+                                    "format": "ulid",
+                                    "type": "string"
+                                  },
+                                  "siblings": {
+                                    "resolved": {
+                                      "format": "ulid",
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            ]
+                          },
+                          "projectOwnerAssigned": {
+                            "type": "boolean"
+                          },
+                          "projectPrimaryRegions": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "steps": {
+                            "items": {
+                              "$ref": "#/components/schemas/OnboardingStepStateResponse",
+                              "siblings": {
+                                "resolved": {
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "state"
+                                  ],
+                                  "type": "object"
+                                },
+                                "siblings": {
+                                  "resolved": {
+                                    "properties": {
+                                      "key": {
+                                        "type": "string"
+                                      },
+                                      "state": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "key",
+                                      "state"
+                                    ],
+                                    "type": "object"
+                                  }
+                                }
+                              },
+                              "resolved": {
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "state"
+                                ],
+                                "type": "object"
+                              }
+                            },
+                            "type": "array"
+                          },
+                          "subscriptionOrTrialActive": {
+                            "type": "boolean"
+                          },
+                          "updatedAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "userId": {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "userId",
+                          "email",
+                          "displayName",
+                          "phoneNumber",
+                          "accountInformationCompleted",
+                          "paymentMethodRegistered",
+                          "paymentMethodValidated",
+                          "paymentValidationStatus",
+                          "mfaDecision",
+                          "organizationId",
+                          "organizationOwnerAssigned",
+                          "paymentMethodLinkedToOrganization",
+                          "subscriptionOrTrialActive",
+                          "projectId",
+                          "projectOwnerAssigned",
+                          "projectPrimaryRegions",
+                          "projectBackupRegion",
+                          "completed",
+                          "status",
+                          "nextStep",
+                          "steps",
+                          "updatedAt"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "accountInformationCompleted": {
+                        "type": "boolean"
+                      },
+                      "completed": {
+                        "type": "boolean"
+                      },
+                      "displayName": {
+                        "type": "string"
+                      },
+                      "email": {
+                        "type": "string"
+                      },
+                      "mfaDecision": {
+                        "type": "string"
+                      },
+                      "nextStep": {
+                        "type": "string"
+                      },
+                      "organizationId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "organizationOwnerAssigned": {
+                        "type": "boolean"
+                      },
+                      "paymentMethodLinkedToOrganization": {
+                        "type": "boolean"
+                      },
+                      "paymentMethodRegistered": {
+                        "type": "boolean"
+                      },
+                      "paymentMethodValidated": {
+                        "type": "boolean"
+                      },
+                      "paymentValidationStatus": {
+                        "type": "string"
+                      },
+                      "phoneNumber": {
+                        "type": "string"
+                      },
+                      "projectBackupRegion": {
+                        "type": "string"
+                      },
+                      "projectId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "projectOwnerAssigned": {
+                        "type": "boolean"
+                      },
+                      "projectPrimaryRegions": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "steps": {
+                        "items": {
+                          "$ref": "#/components/schemas/OnboardingStepStateResponse",
+                          "resolved": {
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "state"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "type": "array"
+                      },
+                      "subscriptionOrTrialActive": {
+                        "type": "boolean"
+                      },
+                      "updatedAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "userId": {
+                        "$ref": "#/components/schemas/Ulid",
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "userId",
+                      "email",
+                      "displayName",
+                      "phoneNumber",
+                      "accountInformationCompleted",
+                      "paymentMethodRegistered",
+                      "paymentMethodValidated",
+                      "paymentValidationStatus",
+                      "mfaDecision",
+                      "organizationId",
+                      "organizationOwnerAssigned",
+                      "paymentMethodLinkedToOrganization",
+                      "subscriptionOrTrialActive",
+                      "projectId",
+                      "projectOwnerAssigned",
+                      "projectPrimaryRegions",
+                      "projectBackupRegion",
+                      "completed",
+                      "status",
+                      "nextStep",
+                      "steps",
+                      "updatedAt"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "onboarding.paymentMethod.register",
+      "sdkRequestType": "RegisterOnboardingPaymentMethodRequest",
+      "sdkResponseType": "OnboardingState",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "sessionId": "cs_test_onboarding"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "onboarding",
+      "method": "POST",
+      "operation": "validatePaymentMethod",
+      "operationId": "ValidateOnboardingPayment",
+      "parameters": [],
+      "pathTemplate": "/api/v1/onboarding/payment-method/validate",
+      "request": {
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/ValidateOnboardingPaymentRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "developmentBypass": {
+                      "description": "Development-only flag that marks the payment method as locally verified without a provider.",
+                      "type": "boolean"
+                    },
+                    "sessionId": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "developmentBypass": {
+                        "description": "Development-only flag that marks the payment method as locally verified without a provider.",
+                        "type": "boolean"
+                      },
+                      "sessionId": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "developmentBypass": {
+                    "description": "Development-only flag that marks the payment method as locally verified without a provider.",
+                    "type": "boolean"
+                  },
+                  "sessionId": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateOnboardingPaymentRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "developmentBypass": {
+                        "description": "Development-only flag that marks the payment method as locally verified without a provider.",
+                        "type": "boolean"
+                      },
+                      "sessionId": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "developmentBypass": {
+                          "description": "Development-only flag that marks the payment method as locally verified without a provider.",
+                          "type": "boolean"
+                        },
+                        "sessionId": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "developmentBypass": {
+                      "description": "Development-only flag that marks the payment method as locally verified without a provider.",
+                      "type": "boolean"
+                    },
                     "sessionId": {
                       "type": "string"
                     }
@@ -50622,6 +51469,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -50699,6 +51549,9 @@
                                       "format": "ulid",
                                       "type": "string"
                                     }
+                                  },
+                                  "username": {
+                                    "type": "string"
                                   }
                                 },
                                 "type": "object"
@@ -51146,6 +51999,9 @@
                                           "format": "ulid",
                                           "type": "string"
                                         }
+                                      },
+                                      "username": {
+                                        "type": "string"
                                       }
                                     },
                                     "type": "object"
@@ -51259,6 +52115,9 @@
                                             "format": "ulid",
                                             "type": "string"
                                           }
+                                        },
+                                        "username": {
+                                          "type": "string"
                                         }
                                       },
                                       "type": "object"
@@ -51337,6 +52196,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -52035,6 +52897,9 @@
                                     "format": "ulid",
                                     "type": "string"
                                   }
+                                },
+                                "username": {
+                                  "type": "string"
                                 }
                               },
                               "type": "object"
@@ -55815,6 +56680,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -55892,6 +56760,9 @@
                                       "format": "ulid",
                                       "type": "string"
                                     }
+                                  },
+                                  "username": {
+                                    "type": "string"
                                   }
                                 },
                                 "type": "object"
@@ -56339,6 +57210,9 @@
                                           "format": "ulid",
                                           "type": "string"
                                         }
+                                      },
+                                      "username": {
+                                        "type": "string"
                                       }
                                     },
                                     "type": "object"
@@ -56452,6 +57326,9 @@
                                             "format": "ulid",
                                             "type": "string"
                                           }
+                                        },
+                                        "username": {
+                                          "type": "string"
                                         }
                                       },
                                       "type": "object"
@@ -56530,6 +57407,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -57228,6 +58108,9 @@
                                     "format": "ulid",
                                     "type": "string"
                                   }
+                                },
+                                "username": {
+                                  "type": "string"
                                 }
                               },
                               "type": "object"
@@ -57799,6 +58682,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -57876,6 +58762,9 @@
                                       "format": "ulid",
                                       "type": "string"
                                     }
+                                  },
+                                  "username": {
+                                    "type": "string"
                                   }
                                 },
                                 "type": "object"
@@ -57993,6 +58882,9 @@
                                           "format": "ulid",
                                           "type": "string"
                                         }
+                                      },
+                                      "username": {
+                                        "type": "string"
                                       }
                                     },
                                     "type": "object"
@@ -58106,6 +58998,9 @@
                                             "format": "ulid",
                                             "type": "string"
                                           }
+                                        },
+                                        "username": {
+                                          "type": "string"
                                         }
                                       },
                                       "type": "object"
@@ -58184,6 +59079,9 @@
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "username": {
+                                      "type": "string"
                                     }
                                   },
                                   "type": "object"
@@ -58283,6 +59181,9 @@
                                     "format": "ulid",
                                     "type": "string"
                                   }
+                                },
+                                "username": {
+                                  "type": "string"
                                 }
                               },
                               "type": "object"
@@ -58532,6 +59433,9 @@
                             "format": "ulid",
                             "type": "string"
                           }
+                        },
+                        "username": {
+                          "type": "string"
                         }
                       },
                       "type": "object"
@@ -58645,6 +59549,9 @@
                               "format": "ulid",
                               "type": "string"
                             }
+                          },
+                          "username": {
+                            "type": "string"
                           }
                         },
                         "type": "object"
@@ -58723,6 +59630,9 @@
                           "format": "ulid",
                           "type": "string"
                         }
+                      },
+                      "username": {
+                        "type": "string"
                       }
                     },
                     "type": "object"
@@ -59286,6 +60196,9 @@
                         "error": {
                           "type": "string"
                         },
+                        "fullName": {
+                          "type": "string"
+                        },
                         "pendingAuthenticationToken": {
                           "type": "string"
                         },
@@ -59307,6 +60220,9 @@
                             "format": "ulid",
                             "type": "string"
                           }
+                        },
+                        "username": {
+                          "type": "string"
                         }
                       },
                       "type": "object"
@@ -59318,6 +60234,9 @@
                             "type": "string"
                           },
                           "error": {
+                            "type": "string"
+                          },
+                          "fullName": {
                             "type": "string"
                           },
                           "pendingAuthenticationToken": {
@@ -59347,6 +60266,9 @@
                               "format": "ulid",
                               "type": "string"
                             }
+                          },
+                          "username": {
+                            "type": "string"
                           }
                         },
                         "type": "object"
@@ -59359,6 +60281,9 @@
                         "type": "string"
                       },
                       "error": {
+                        "type": "string"
+                      },
+                      "fullName": {
                         "type": "string"
                       },
                       "pendingAuthenticationToken": {
@@ -59376,6 +60301,9 @@
                           "format": "ulid",
                           "type": "string"
                         }
+                      },
+                      "username": {
+                        "type": "string"
                       }
                     },
                     "type": "object"
@@ -59557,6 +60485,9 @@
                         "error": {
                           "type": "string"
                         },
+                        "fullName": {
+                          "type": "string"
+                        },
                         "pendingAuthenticationToken": {
                           "type": "string"
                         },
@@ -59578,6 +60509,9 @@
                             "format": "ulid",
                             "type": "string"
                           }
+                        },
+                        "username": {
+                          "type": "string"
                         }
                       },
                       "type": "object"
@@ -59589,6 +60523,9 @@
                             "type": "string"
                           },
                           "error": {
+                            "type": "string"
+                          },
+                          "fullName": {
                             "type": "string"
                           },
                           "pendingAuthenticationToken": {
@@ -59618,6 +60555,9 @@
                               "format": "ulid",
                               "type": "string"
                             }
+                          },
+                          "username": {
+                            "type": "string"
                           }
                         },
                         "type": "object"
@@ -59630,6 +60570,9 @@
                         "type": "string"
                       },
                       "error": {
+                        "type": "string"
+                      },
+                      "fullName": {
                         "type": "string"
                       },
                       "pendingAuthenticationToken": {
@@ -59647,6 +60590,9 @@
                           "format": "ulid",
                           "type": "string"
                         }
+                      },
+                      "username": {
+                        "type": "string"
                       }
                     },
                     "type": "object"
@@ -71151,6 +72097,667 @@
         "headers": [
           {
             "name": "accept",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "onboarding",
+      "method": "PUT",
+      "operation": "updateMfaDecision",
+      "operationId": "UpdateOnboardingMfa",
+      "parameters": [],
+      "pathTemplate": "/api/v1/onboarding/mfa-decision",
+      "request": {
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/UpdateOnboardingMfaRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "configureLater": {
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "configureLater": {
+                        "type": "boolean"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "configureLater": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOnboardingMfaRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "configureLater": {
+                        "type": "boolean"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "configureLater": {
+                          "type": "boolean"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "configureLater": {
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingStateResponse",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "accountInformationCompleted": {
+                          "type": "boolean"
+                        },
+                        "completed": {
+                          "type": "boolean"
+                        },
+                        "displayName": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string"
+                        },
+                        "mfaDecision": {
+                          "type": "string"
+                        },
+                        "nextStep": {
+                          "type": "string"
+                        },
+                        "organizationId": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/components/schemas/Ulid",
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              },
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "organizationOwnerAssigned": {
+                          "type": "boolean"
+                        },
+                        "paymentMethodLinkedToOrganization": {
+                          "type": "boolean"
+                        },
+                        "paymentMethodRegistered": {
+                          "type": "boolean"
+                        },
+                        "paymentMethodValidated": {
+                          "type": "boolean"
+                        },
+                        "paymentValidationStatus": {
+                          "type": "string"
+                        },
+                        "phoneNumber": {
+                          "type": "string"
+                        },
+                        "projectBackupRegion": {
+                          "type": "string"
+                        },
+                        "projectId": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/components/schemas/Ulid",
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              },
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "projectOwnerAssigned": {
+                          "type": "boolean"
+                        },
+                        "projectPrimaryRegions": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "steps": {
+                          "items": {
+                            "$ref": "#/components/schemas/OnboardingStepStateResponse",
+                            "siblings": {
+                              "resolved": {
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "state"
+                                ],
+                                "type": "object"
+                              }
+                            },
+                            "resolved": {
+                              "properties": {
+                                "key": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "state"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "type": "array"
+                        },
+                        "subscriptionOrTrialActive": {
+                          "type": "boolean"
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "userId": {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "userId",
+                        "email",
+                        "displayName",
+                        "phoneNumber",
+                        "accountInformationCompleted",
+                        "paymentMethodRegistered",
+                        "paymentMethodValidated",
+                        "paymentValidationStatus",
+                        "mfaDecision",
+                        "organizationId",
+                        "organizationOwnerAssigned",
+                        "paymentMethodLinkedToOrganization",
+                        "subscriptionOrTrialActive",
+                        "projectId",
+                        "projectOwnerAssigned",
+                        "projectPrimaryRegions",
+                        "projectBackupRegion",
+                        "completed",
+                        "status",
+                        "nextStep",
+                        "steps",
+                        "updatedAt"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "accountInformationCompleted": {
+                            "type": "boolean"
+                          },
+                          "completed": {
+                            "type": "boolean"
+                          },
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "email": {
+                            "type": "string"
+                          },
+                          "mfaDecision": {
+                            "type": "string"
+                          },
+                          "nextStep": {
+                            "type": "string"
+                          },
+                          "organizationId": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "$ref": "#/components/schemas/Ulid",
+                                "siblings": {
+                                  "resolved": {
+                                    "format": "ulid",
+                                    "type": "string"
+                                  },
+                                  "siblings": {
+                                    "resolved": {
+                                      "format": "ulid",
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            ]
+                          },
+                          "organizationOwnerAssigned": {
+                            "type": "boolean"
+                          },
+                          "paymentMethodLinkedToOrganization": {
+                            "type": "boolean"
+                          },
+                          "paymentMethodRegistered": {
+                            "type": "boolean"
+                          },
+                          "paymentMethodValidated": {
+                            "type": "boolean"
+                          },
+                          "paymentValidationStatus": {
+                            "type": "string"
+                          },
+                          "phoneNumber": {
+                            "type": "string"
+                          },
+                          "projectBackupRegion": {
+                            "type": "string"
+                          },
+                          "projectId": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "$ref": "#/components/schemas/Ulid",
+                                "siblings": {
+                                  "resolved": {
+                                    "format": "ulid",
+                                    "type": "string"
+                                  },
+                                  "siblings": {
+                                    "resolved": {
+                                      "format": "ulid",
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            ]
+                          },
+                          "projectOwnerAssigned": {
+                            "type": "boolean"
+                          },
+                          "projectPrimaryRegions": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "steps": {
+                            "items": {
+                              "$ref": "#/components/schemas/OnboardingStepStateResponse",
+                              "siblings": {
+                                "resolved": {
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "state"
+                                  ],
+                                  "type": "object"
+                                },
+                                "siblings": {
+                                  "resolved": {
+                                    "properties": {
+                                      "key": {
+                                        "type": "string"
+                                      },
+                                      "state": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "key",
+                                      "state"
+                                    ],
+                                    "type": "object"
+                                  }
+                                }
+                              },
+                              "resolved": {
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "state"
+                                ],
+                                "type": "object"
+                              }
+                            },
+                            "type": "array"
+                          },
+                          "subscriptionOrTrialActive": {
+                            "type": "boolean"
+                          },
+                          "updatedAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "userId": {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "userId",
+                          "email",
+                          "displayName",
+                          "phoneNumber",
+                          "accountInformationCompleted",
+                          "paymentMethodRegistered",
+                          "paymentMethodValidated",
+                          "paymentValidationStatus",
+                          "mfaDecision",
+                          "organizationId",
+                          "organizationOwnerAssigned",
+                          "paymentMethodLinkedToOrganization",
+                          "subscriptionOrTrialActive",
+                          "projectId",
+                          "projectOwnerAssigned",
+                          "projectPrimaryRegions",
+                          "projectBackupRegion",
+                          "completed",
+                          "status",
+                          "nextStep",
+                          "steps",
+                          "updatedAt"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "accountInformationCompleted": {
+                        "type": "boolean"
+                      },
+                      "completed": {
+                        "type": "boolean"
+                      },
+                      "displayName": {
+                        "type": "string"
+                      },
+                      "email": {
+                        "type": "string"
+                      },
+                      "mfaDecision": {
+                        "type": "string"
+                      },
+                      "nextStep": {
+                        "type": "string"
+                      },
+                      "organizationId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "organizationOwnerAssigned": {
+                        "type": "boolean"
+                      },
+                      "paymentMethodLinkedToOrganization": {
+                        "type": "boolean"
+                      },
+                      "paymentMethodRegistered": {
+                        "type": "boolean"
+                      },
+                      "paymentMethodValidated": {
+                        "type": "boolean"
+                      },
+                      "paymentValidationStatus": {
+                        "type": "string"
+                      },
+                      "phoneNumber": {
+                        "type": "string"
+                      },
+                      "projectBackupRegion": {
+                        "type": "string"
+                      },
+                      "projectId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "projectOwnerAssigned": {
+                        "type": "boolean"
+                      },
+                      "projectPrimaryRegions": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "steps": {
+                        "items": {
+                          "$ref": "#/components/schemas/OnboardingStepStateResponse",
+                          "resolved": {
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "state"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "type": "array"
+                      },
+                      "subscriptionOrTrialActive": {
+                        "type": "boolean"
+                      },
+                      "updatedAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "userId": {
+                        "$ref": "#/components/schemas/Ulid",
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "userId",
+                      "email",
+                      "displayName",
+                      "phoneNumber",
+                      "accountInformationCompleted",
+                      "paymentMethodRegistered",
+                      "paymentMethodValidated",
+                      "paymentValidationStatus",
+                      "mfaDecision",
+                      "organizationId",
+                      "organizationOwnerAssigned",
+                      "paymentMethodLinkedToOrganization",
+                      "subscriptionOrTrialActive",
+                      "projectId",
+                      "projectOwnerAssigned",
+                      "projectPrimaryRegions",
+                      "projectBackupRegion",
+                      "completed",
+                      "status",
+                      "nextStep",
+                      "steps",
+                      "updatedAt"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "onboarding.mfaDecision.update",
+      "sdkRequestType": "UpdateOnboardingMfaRequest",
+      "sdkResponseType": "OnboardingState",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "configureLater": true
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
             "value": "application/json"
           }
         ],
