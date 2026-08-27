@@ -13,7 +13,6 @@
 # table below and add `crates/terrabase-sync-conformance` to the root
 # `members` list (the SE-05 report records that as a collision action).
 
-[workspace]
 
 [package]
 name = "terrabase-sync-conformance"
