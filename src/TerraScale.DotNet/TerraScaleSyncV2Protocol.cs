@@ -423,7 +423,12 @@ public sealed record TerraScaleSyncV2Checkpoint(
 
         var storageSequence = BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(1, 8));
         var count = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(9, 4));
-        if (bytes.Length < 13 + ((int)count * 12))
+        // The pair count is bounded by the bytes that remain before any
+        // allocation: a count whose pairs cannot fit the encoding is a
+        // typed truncation, never an untyped capacity failure or an
+        // overflowed truncation check. The bound also proves the count
+        // fits int (a span's length already does).
+        if (count > (ulong)((bytes.Length - 13L) / 12L))
         {
             throw new TerraScaleSyncV2ProtocolException(
                 TerraScaleSyncV2ProtocolError.MalformedFrame,
@@ -1932,7 +1937,9 @@ public ref struct SyncV2Reader
 
     private ReadOnlySpan<byte> Take(int count)
     {
-        if (offset + count > bytes.Length)
+        // Long arithmetic: a bounded count near int.MaxValue must not
+        // wrap the offset check into a negative (and so pass it).
+        if ((long)offset + count > bytes.Length)
         {
             throw new TerraScaleSyncV2ProtocolException(
                 TerraScaleSyncV2ProtocolError.MalformedFrame,

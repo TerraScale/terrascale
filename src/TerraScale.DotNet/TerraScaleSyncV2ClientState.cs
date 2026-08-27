@@ -71,8 +71,11 @@ public sealed class TerraScaleSyncV2ClientState
     /// <summary>How many full-state snapshots the session adopted (initial sync and forced resyncs).</summary>
     public ulong ResyncsAdopted { get; private set; }
 
-    /// <summary>How many server-acknowledged mutations the session submitted.</summary>
+    /// <summary>How many mutations the host durably applied (applied outcomes only).</summary>
     public ulong MutationsAcknowledged { get; private set; }
+
+    /// <summary>How many mutations the host refused (typed rejections, never acknowledged).</summary>
+    public ulong MutationsRejected { get; private set; }
 
     /// <summary>Records the server's setup answer: its checkpoint and the retained floor.</summary>
     /// <param name="server">The server's checkpoint.</param>
@@ -142,12 +145,25 @@ public sealed class TerraScaleSyncV2ClientState
     /// <summary>The last observed trigger, or <c>null</c> before the first one.</summary>
     public (string Collection, ulong Sequence, string OperationId)? LastTrigger { get; private set; }
 
-    /// <summary>Counts one server-acknowledged mutation (server-ack-only; nothing applies locally).</summary>
-    public void CountMutation()
+    /// <summary>
+    /// Counts one mutation answer (server-ack-only; nothing applies
+    /// locally): applied outcomes acknowledge, refusals reject — a
+    /// rejection is never an acknowledged mutation.
+    /// </summary>
+    /// <param name="outcome">The host's answer to the mutation.</param>
+    public void CountMutation(TerraScaleSyncV2MutationOutcome outcome)
     {
+        ArgumentNullException.ThrowIfNull(outcome);
         lock (gate)
         {
-            MutationsAcknowledged++;
+            if (outcome is TerraScaleSyncV2MutationApplied)
+            {
+                MutationsAcknowledged++;
+            }
+            else
+            {
+                MutationsRejected++;
+            }
         }
     }
 }

@@ -301,8 +301,10 @@ public sealed class TerraScaleSyncV2SessionTests
         await Assert.That(refusal.Reason).IsEqualTo("session_closed");
         await Assert.That(refusal.Code).IsEqualTo(TerraScaleSyncV2ErrorCode.SessionClosed);
 
-        // A rejection is never an acknowledged mutation: only applied outcomes count.
+        // A rejection is never an acknowledged mutation: only applied
+        // outcomes count, refusals carry their own counter.
         await Assert.That(session.State.MutationsAcknowledged).IsEqualTo(0ul);
+        await Assert.That(session.State.MutationsRejected).IsEqualTo(1ul);
     }
 
     /// <summary>A dropped stream reconnects with the Last-Event-ID of the last observed trigger.</summary>
@@ -436,6 +438,8 @@ public sealed class TerraScaleSyncV2SessionTests
         host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
         host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
         host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x12], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
         using var http = CreateClient(host);
         await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
         var updates = session.UpdatesAsync().GetAsyncEnumerator();
@@ -462,9 +466,14 @@ public sealed class TerraScaleSyncV2SessionTests
         await DisposeEnumeratorAsync(updates);
     }
 
-    /// <summary>Multi-line data joins with a newline and strips at most one leading space (the SSE field-value rule).</summary>
+    /// <summary>
+    /// Multi-line data accumulates across its lines (the spec join is
+    /// parseable JSON when split at a token boundary), and a field value
+    /// strips at most one leading space: a two-space event name is not the
+    /// trigger name.
+    /// </summary>
     [Test]
-    public async Task MultiLineDataJoinsWithNewlinesAndPreservesLeadingSpace()
+    public async Task MultiLineDataAccumulatesAndFieldValuesStripAtMostOneSpace()
     {
         using var host = await LoopbackSyncV2Host.StartAsync();
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
@@ -485,13 +494,31 @@ public sealed class TerraScaleSyncV2SessionTests
         _ = await host.NextRequestAsync();
         var connection = await host.NextStreamConnectionAsync();
 
-        // Two data lines whose spec join (newline, one leading space
-        // stripped) is the JSON `{"collection":"a\n b",...}`.
+        // Two data lines split at a JSON token boundary: the spec join
+        // puts a newline between them, which is JSON whitespace — the
+        // trigger parses and drives its pull.
         await connection.WriteRawAsync(
-            "id: 7\nevent: trigger\ndata: {\"subscriptionId\":1,\"collection\":\"a\ndata:  b\",\"sequence\":4,\"operationId\":\"op-4\",\"kind\":\"trigger\"}\n\n");
+            "id: 7\nevent: trigger\ndata: {\"subscriptionId\":1,\ndata:  \"collection\":\"orders\",\"sequence\":4,\"operationId\":\"op-4\",\"kind\":\"trigger\"}\n\n");
         await Assert.That(await deltaUpdate).IsTrue();
+        await Assert.That(updates.Current.Kind).IsEqualTo(TerraScaleSyncV2SyncUpdateKind.DeltaApplied);
         await Assert.That(session.State.TriggersObserved).IsEqualTo(1ul);
-        await Assert.That(session.State.LastTrigger!.Value.Collection).IsEqualTo("a\n b");
+        await Assert.That(session.State.LastTrigger!.Value.Collection).IsEqualTo("orders");
+
+        // Event A's pull is fully observed before the non-trigger arrives.
+        var delta = await host.NextRequestAsync();
+        await Assert.That(delta.Path).IsEqualTo("/v1/sync/sessions/7/delta");
+        var ack = await host.NextRequestAsync();
+        await Assert.That(ack.Path).IsEqualTo("/v1/sync/sessions/7/ack");
+        _ = await host.DrainRequestsAsync();
+
+        // A two-space event name keeps its second space (at most one is
+        // stripped): it is not the trigger name, so no pull and no count.
+        await connection.WriteRawAsync(
+            "id: 8\nevent:  trigger\ndata: {\"subscriptionId\":1,\"collection\":\"orders\",\"sequence\":9,\"operationId\":\"op-9\",\"kind\":\"trigger\"}\n\n");
+        await Task.Delay(200);
+        await Assert.That(host.HasPendingRequests).IsFalse();
+        await Assert.That(session.State.TriggersObserved).IsEqualTo(1ul);
+        await Assert.That(session.State.LastTrigger!.Value.Sequence).IsEqualTo(4ul);
         await DisposeEnumeratorAsync(updates);
     }
 
@@ -521,12 +548,12 @@ public sealed class TerraScaleSyncV2SessionTests
         _ = await host.NextRequestAsync();
         var first = await host.NextStreamConnectionAsync();
 
-        // A well-formed but oversize trigger event (far past the default
+        // A well-formed but oversize trigger event (past the default
         // one-megabyte event bound): the reader ends the stream and the
         // live loop reconnects instead of buffering or dispatching it.
         await first.WriteRawAsync(
-            "id: 9\nevent: trigger\ndata: {\"subscriptionId\":1,\"collection\":\"" + new string('x', 2 * 1024 * 1024) + "\",\"sequence\":4,\"operationId\":\"op-4\",\"kind\":\"trigger\"}\n\n");
-        var reconnect = await host.NextRequestAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            "id: 9\nevent: trigger\ndata: {\"subscriptionId\":1,\"collection\":\"" + new string('x', 1024 * 1024 + 4096) + "\",\"sequence\":4,\"operationId\":\"op-4\",\"kind\":\"trigger\"}\n\n");
+        var reconnect = await host.NextRequestAsync().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(reconnect.Path).IsEqualTo("/v1/streams");
         var second = await host.NextStreamConnectionAsync();
         await Assert.That(session.State.TriggersObserved).IsEqualTo(0ul);

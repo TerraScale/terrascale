@@ -120,6 +120,23 @@ public sealed record TerraScaleSyncV2SessionOptions
     /// <summary>The sync sessions endpoint path. The default is <c>/v1/sync/sessions</c>.</summary>
     public string SessionsPath { get; init; } = "/v1/sync/sessions";
 
+    /// <summary>
+    /// The largest one server-sent event (any single field line or the
+    /// accumulated data of one event) may occupy. A larger event ends the
+    /// stream — the live loop reconnects; it is never buffered or
+    /// dispatched. The default is one mebibyte.
+    /// </summary>
+    public int MaxStreamEventBytes { get; init; } = 1024 * 1024;
+
+    /// <summary>
+    /// The largest host response body the session decodes (the host
+    /// surface's counterpart of the frame layer's
+    /// <see cref="TerraScaleSyncV2Protocol.MaxFrameBytes"/>; sized for the
+    /// base64 of one maximal payload plus its JSON envelope). A larger
+    /// body is the typed host failure. The default is 32 mebibytes.
+    /// </summary>
+    public long MaxHostBodyBytes { get; init; } = 32L * 1024 * 1024;
+
     internal void Validate()
     {
         if (Collection.Length is < 1 or > 128
@@ -149,6 +166,16 @@ public sealed record TerraScaleSyncV2SessionOptions
         if (SessionsPath.Length == 0 || !SessionsPath.StartsWith("/", StringComparison.Ordinal))
         {
             throw new ArgumentException("SessionsPath must be an absolute path.", nameof(SessionsPath));
+        }
+
+        if (MaxStreamEventBytes < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MaxStreamEventBytes), "MaxStreamEventBytes must be at least one byte.");
+        }
+
+        if (MaxHostBodyBytes < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MaxHostBodyBytes), "MaxHostBodyBytes must be at least one byte.");
         }
     }
 }
@@ -250,7 +277,8 @@ public sealed record TerraScaleSyncV2SyncUpdate(
 /// <summary>
 /// A typed failure of the API host surface: the HTTP status, the host's
 /// error code, the bounded detail, the resync marker a checkpoint
-/// refusal carries, and the retryability derived from the status.
+/// refusal carries, the retained floor such a refusal states, and the
+/// retryability derived from the status.
 /// </summary>
 public sealed class TerraScaleSyncV2HostException : Exception
 {
@@ -259,17 +287,20 @@ public sealed class TerraScaleSyncV2HostException : Exception
     /// <param name="code">The host's error code.</param>
     /// <param name="detail">The bounded detail text.</param>
     /// <param name="resyncRequired">Whether the failure demands a snapshot resync.</param>
+    /// <param name="floor">The retained floor the host stated, when it sent one.</param>
     public TerraScaleSyncV2HostException(
         HttpStatusCode statusCode,
         string code,
         string? detail,
-        bool resyncRequired = false)
+        bool resyncRequired = false,
+        TerraScaleSyncV2Checkpoint? floor = null)
         : base(detail is { Length: > 0 } ? $"{code}: {detail}" : code)
     {
         StatusCode = statusCode;
         Code = code;
         Detail = detail;
         ResyncRequired = resyncRequired;
+        Floor = floor;
     }
 
     /// <summary>The HTTP status.</summary>
@@ -283,6 +314,9 @@ public sealed class TerraScaleSyncV2HostException : Exception
 
     /// <summary>Whether the failure carries the host's resync-required marker.</summary>
     public bool ResyncRequired { get; }
+
+    /// <summary>The retained floor the host stated in its refusal body, or <c>null</c> when it did not send one.</summary>
+    public TerraScaleSyncV2Checkpoint? Floor { get; }
 
     /// <summary>Whether the failure is transient (retry after re-resolving): unavailable, gateway, or throttling statuses.</summary>
     public bool Retryable => StatusCode is HttpStatusCode.ServiceUnavailable
@@ -302,6 +336,13 @@ public sealed class TerraScaleSyncV2HostException : Exception
 /// </summary>
 public sealed class TerraScaleSyncV2Session : IAsyncDisposable
 {
+    /// <summary>
+    /// How many times the live loop re-opens an ended session before it
+    /// gives up with the typed host failure. The counter resets on a
+    /// successful pull; every re-open pays the reconnect backoff.
+    /// </summary>
+    internal const int MaxSessionReopens = 3;
+
     private readonly HttpClient http;
     private readonly TerraScaleSyncV2ClientOptions clientOptions;
     private readonly TerraScaleSyncV2SessionOptions options;
@@ -393,7 +434,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
         ObjectDisposedException.ThrowIf(disposed.IsCancellationRequested, this);
         var current = await EnsureSessionAsync(cancellationToken).ConfigureAwait(false);
         using var request = NewRequest(HttpMethod.Post, $"{options.SessionsPath}/{current.SessionId}/snapshot");
-        using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         var snapshot = await ReadAsync(response, static body => new TerraScaleSyncV2SnapshotPull(
             CodecOf(body.RootElement.GetProperty("payloadCodec").GetString()!),
             Convert.FromBase64String(body.RootElement.GetProperty("payload").GetString()!),
@@ -417,7 +458,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
         using var request = NewRequest(HttpMethod.Post, $"{options.SessionsPath}/{current.SessionId}/ack");
         request.Content = JsonContent(
             new SyncV2AckRequest { Checkpoint = Convert.ToBase64String(State.Checkpoint.ToBytes()) });
-        using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         _ = await ReadAsync(response, static body => body.RootElement.GetProperty("sessionId").GetUInt64(), cancellationToken).ConfigureAwait(false);
     }
 
@@ -458,7 +499,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
                 }
                 : new SyncV2ChangeRequest { Delete = true },
         });
-        using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         var outcome = await ReadAsync(response, static body =>
         {
             var element = body.RootElement.GetProperty("outcome");
@@ -474,7 +515,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
                     $"unknown mutation outcome {other}"),
             };
         }, cancellationToken).ConfigureAwait(false);
-        State.CountMutation();
+        State.CountMutation(outcome);
         return outcome;
     }
 
@@ -488,7 +529,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
         ObjectDisposedException.ThrowIf(disposed.IsCancellationRequested, this);
         var current = await EnsureSessionAsync(cancellationToken).ConfigureAwait(false);
         using var request = NewRequest(HttpMethod.Post, $"{options.SessionsPath}/{current.SessionId}/close");
-        using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         _ = await ReadAsync(response, static body => body.RootElement.GetProperty("sessionId").GetUInt64(), cancellationToken).ConfigureAwait(false);
     }
 
@@ -498,10 +539,12 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
     /// every content-free trigger by pulling delta batches from the
     /// checkpoint until current, acknowledging as it goes — push the
     /// hint, pull the delta; there is no polling. A dropped stream
-    /// reconnects with the last observed event id; an ended session is
-    /// re-opened by resuming from the durable checkpoint; a resync
-    /// demand adopts a full snapshot. The loop runs only while the
-    /// caller enumerates it.
+    /// reconnects with the last observed event id; a transiently refused
+    /// stream open (an engine blip) reconnects the same way; an ended
+    /// session is re-opened by resuming from the durable checkpoint,
+    /// bounded to <see cref="MaxSessionReopens"/> backed-off attempts
+    /// before the typed failure surfaces; a resync demand adopts a full
+    /// snapshot. The loop runs only while the caller enumerates it.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The live updates.</returns>
@@ -550,10 +593,18 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
                     continue;
                 }
 
-                var trigger = JsonSerializer.Deserialize(data, SyncV2JsonContext.Default.SyncV2TriggerEvent);
-                if (trigger is not null)
+                try
                 {
-                    State.ObserveTrigger(trigger.Collection, trigger.Sequence, trigger.OperationId);
+                    var trigger = JsonSerializer.Deserialize(data, SyncV2JsonContext.Default.SyncV2TriggerEvent);
+                    if (trigger is not null)
+                    {
+                        State.ObserveTrigger(trigger.Collection, trigger.Sequence, trigger.OperationId);
+                    }
+                }
+                catch (JsonException)
+                {
+                    // A malformed hint is content-free noise: count nothing
+                    // and still run the pull — the pull is authoritative.
                 }
 
                 foreach (var update in await PullWithRecoveryAsync(linked.Token).ConfigureAwait(false))
@@ -610,11 +661,14 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
     private async Task<List<TerraScaleSyncV2SyncUpdate>> PullWithRecoveryAsync(CancellationToken cancellationToken)
     {
         var attempts = 0;
+        var reopens = 0;
         while (true)
         {
             try
             {
-                return await PullUntilCurrentAsync(cancellationToken).ConfigureAwait(false);
+                var updates = await PullUntilCurrentAsync(cancellationToken).ConfigureAwait(false);
+                reopens = 0;
+                return updates;
             }
             catch (TerraScaleSyncV2HostException failure) when (failure.Retryable && attempts < 3)
             {
@@ -628,8 +682,22 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
             {
                 if (failure.StatusCode == HttpStatusCode.Gone)
                 {
+                    if (reopens >= MaxSessionReopens)
+                    {
+                        // A host that ends every re-opened session is given
+                        // up on: the typed failure surfaces instead of an
+                        // unbounded re-open loop.
+                        throw;
+                    }
+
                     // The session ended with the host's generation: re-open
-                    // it by resuming from the durable checkpoint.
+                    // it by resuming from the durable checkpoint, paying the
+                    // reconnect backoff between attempts.
+                    reopens++;
+                    reconnectDelay = reconnectDelay == TimeSpan.Zero
+                        ? options.ReconnectDelay
+                        : TimeSpan.FromTicks(Math.Min(reconnectDelay.Ticks * 2, options.MaximumReconnectDelay.Ticks));
+                    await Task.Delay(reconnectDelay, cancellationToken).ConfigureAwait(false);
                     accepted = null;
                     _ = await SetupAsync(cancellationToken).ConfigureAwait(false);
                     continue;
@@ -699,7 +767,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
             Collection = options.Collection,
             Resume = resume is null ? null : Convert.ToBase64String(resume.ToBytes()),
         });
-        using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         return await ReadAsync(response, static body => new TerraScaleSyncV2SessionAccepted(
             body.RootElement.GetProperty("sessionId").GetUInt64(),
             TerraScaleSyncV2Checkpoint.FromBytes(Convert.FromBase64String(body.RootElement.GetProperty("checkpoint").GetString()!)),
@@ -714,12 +782,15 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
         {
             From = Convert.ToBase64String(from.ToBytes()),
         });
-        using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             var failure = await HostFailureAsync(response, cancellationToken).ConfigureAwait(false);
             if (failure.Code == "checkpoint-refused" && failure.ResyncRequired)
             {
+                // The host states its retained floor in the refusal body;
+                // carry it into the pull (the documented fallback when the
+                // host sent none is the initial checkpoint).
                 return new TerraScaleSyncV2DeltaPull(
                     TerraScaleSyncV2DeltaPullKind.ResyncRequired,
                     TerraScaleSyncV2PayloadCodec.LoroDelta1,
@@ -727,25 +798,27 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
                     null,
                     0,
                     false,
-                    TerraScaleSyncV2Checkpoint.Initial);
+                    failure.Floor ?? TerraScaleSyncV2Checkpoint.Initial);
             }
 
             throw failure;
         }
 
-        await using var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        using var document = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken).ConfigureAwait(false);
-        var commits = document.RootElement.GetProperty("commits").GetUInt64();
-        var next = TerraScaleSyncV2Checkpoint.FromBytes(Convert.FromBase64String(document.RootElement.GetProperty("next").GetString()!));
-        var payload = Convert.FromBase64String(document.RootElement.GetProperty("payload").GetString()!);
-        return new TerraScaleSyncV2DeltaPull(
-            commits == 0 ? TerraScaleSyncV2DeltaPullKind.UpToDate : TerraScaleSyncV2DeltaPullKind.Delta,
-            CodecOf(document.RootElement.GetProperty("payloadCodec").GetString()!),
-            payload,
-            next,
-            commits,
-            document.RootElement.GetProperty("singleCommitOversize").GetBoolean(),
-            null);
+        return await ReadAsync(response, static body =>
+        {
+            var root = body.RootElement;
+            var commits = root.GetProperty("commits").GetUInt64();
+            var next = TerraScaleSyncV2Checkpoint.FromBytes(Convert.FromBase64String(root.GetProperty("next").GetString()!));
+            var payload = Convert.FromBase64String(root.GetProperty("payload").GetString()!);
+            return new TerraScaleSyncV2DeltaPull(
+                commits == 0 ? TerraScaleSyncV2DeltaPullKind.UpToDate : TerraScaleSyncV2DeltaPullKind.Delta,
+                CodecOf(root.GetProperty("payloadCodec").GetString()!),
+                payload,
+                next,
+                commits,
+                root.GetProperty("singleCommitOversize").GetBoolean(),
+                null);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async IAsyncEnumerable<(ulong? Id, string Name, string Data)> ReadStreamEventsAsync(
@@ -762,29 +835,39 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
                 lastEventId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
-        HttpResponseMessage response;
-        Stream stream;
+        HttpResponseMessage? response = null;
+        Stream? stream = null;
         try
         {
             response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                throw await HostFailureAsync(response, cancellationToken).ConfigureAwait(false);
+                var failure = await HostFailureAsync(response, cancellationToken).ConfigureAwait(false);
+                response.Dispose();
+                throw failure;
             }
 
             stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception failure) when (failure is HttpRequestException or IOException or SocketException)
+        catch (Exception failure) when (failure is HttpRequestException or IOException or SocketException
+            or (TerraScaleSyncV2HostException { Retryable: true }))
         {
-            // The connection did not open: the stream ends and the live loop reconnects.
+            // The connection did not open, or the host refused it
+            // transiently (an engine blip answers 503/502/504/429): the
+            // stream ends and the live loop reconnects. Non-retryable
+            // refusals keep propagating, and the response is disposed on
+            // every exit.
+            response?.Dispose();
             yield break;
         }
 
         reconnectDelay = TimeSpan.Zero;
-        await using (stream)
-        using (response)
-        using (var reader = new StreamReader(stream, new UTF8Encoding(false)))
+        var maxEvent = options.MaxStreamEventBytes;
+        await using (stream!)
+        using (response!)
+        using (var reader = new StreamReader(stream!, new UTF8Encoding(false)))
         {
+        var lines = new SyncV2BoundedLineReader(reader);
         ulong? eventId = null;
         var eventName = "message";
         var data = new StringBuilder();
@@ -793,7 +876,13 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
             string? line;
             try
             {
-                line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+                line = await lines.ReadLineAsync(maxEvent, cancellationToken).ConfigureAwait(false);
+            }
+            catch (SyncV2OversizeEventException)
+            {
+                // A field line past the event bound: bounded reading ends
+                // the stream; the live loop reconnects.
+                yield break;
             }
             catch (Exception failure) when (failure is HttpRequestException or IOException or SocketException or ObjectDisposedException)
             {
@@ -821,22 +910,95 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
 
             if (line.StartsWith("id:", StringComparison.Ordinal))
             {
-                if (ulong.TryParse(line[3..].Trim(), out var parsed))
+                if (ulong.TryParse(FieldValue(line, 3).Trim(), out var parsed))
                 {
                     eventId = parsed;
                 }
             }
             else if (line.StartsWith("event:", StringComparison.Ordinal))
             {
-                eventName = line[6..].Trim();
+                eventName = FieldValue(line, 6);
             }
             else if (line.StartsWith("data:", StringComparison.Ordinal))
             {
-                _ = data.Append(line[5..].TrimStart());
+                if (data.Length > 0)
+                {
+                    _ = data.Append('\n');
+                }
+
+                _ = data.Append(FieldValue(line, 5));
+                if (data.Length > maxEvent)
+                {
+                    // The accumulated event is past the bound: end the
+                    // stream instead of buffering it without limit.
+                    yield break;
+                }
             }
         }
         }
     }
+
+    /// <summary>
+    /// Reads newline-terminated lines (an optional trailing carriage
+    /// return is stripped) with a hard per-line bound: a line that grows
+    /// past the bound throws instead of buffering without limit. Chars
+    /// read past the first line's terminator are retained for the next
+    /// line, so one chunked read never loses the events it carried.
+    /// </summary>
+    private sealed class SyncV2BoundedLineReader
+    {
+        private readonly StreamReader reader;
+        private string pending = string.Empty;
+
+        /// <summary>Initializes the reader.</summary>
+        /// <param name="reader">The decoded stream reader.</param>
+        public SyncV2BoundedLineReader(StreamReader reader)
+        {
+            this.reader = reader;
+        }
+
+        /// <summary>Reads the next line, or <c>null</c> at the end of the stream.</summary>
+        /// <param name="maxChars">The hard per-line bound in characters.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The line, or <c>null</c>.</returns>
+        public async Task<string?> ReadLineAsync(int maxChars, CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                var terminator = this.pending.IndexOf('\n');
+                if (terminator >= 0)
+                {
+                    var line = this.pending[..terminator];
+                    this.pending = this.pending[(terminator + 1)..];
+                    return line.EndsWith('\r') ? line[..^1] : line;
+                }
+
+                var buffer = new char[256];
+                var read = await this.reader.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    var rest = this.pending;
+                    this.pending = string.Empty;
+                    return rest.Length == 0 ? null : rest;
+                }
+
+                this.pending += new string(buffer, 0, read);
+                if (this.pending.IndexOf('\n') < 0 && this.pending.Length > maxChars)
+                {
+                    throw new SyncV2OversizeEventException();
+                }
+            }
+        }
+    }
+
+    /// <summary>The SSE field value: the text after the field name, with at most one leading space stripped.</summary>
+    /// <param name="line">The field line.</param>
+    /// <param name="prefixLength">The field name's length (including the colon).</param>
+    /// <returns>The field value.</returns>
+    private static string FieldValue(string line, int prefixLength) =>
+        line.Length > prefixLength && line[prefixLength] == ' '
+            ? line[(prefixLength + 1)..]
+            : line[prefixLength..];
 
     private HttpRequestMessage NewRequest(HttpMethod method, string path)
     {
@@ -852,7 +1014,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
             Headers = { ContentType = new("application/json") { CharSet = "utf-8" } },
         };
 
-    private static async Task<T> ReadAsync<T>(
+    private async Task<T> ReadAsync<T>(
         HttpResponseMessage response,
         Func<JsonDocument, T> select,
         CancellationToken cancellationToken)
@@ -862,17 +1024,65 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
             throw await HostFailureAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
-        await using var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        using var document = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var bytes = await ReadBodyAsync(response, options.MaxHostBodyBytes, cancellationToken).ConfigureAwait(false);
+        using var document = JsonDocument.Parse(bytes);
         return select(document);
     }
 
-    private static async Task<TerraScaleSyncV2HostException> HostFailureAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    /// <summary>
+    /// Reads a host response body with a hard bound: the declared length
+    /// is checked first and at most one byte past the bound is read, so a
+    /// host body is never buffered without limit.
+    /// </summary>
+    /// <param name="response">The response.</param>
+    /// <param name="cap">The bound in bytes.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The body bytes (never longer than the bound).</returns>
+    private static async Task<byte[]> ReadBodyAsync(
+        HttpResponseMessage response,
+        long cap,
+        CancellationToken cancellationToken)
     {
-        var detail = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (response.Content.Headers.ContentLength is { } declared && declared > cap)
+        {
+            throw HostBodyTooLarge(response, cap);
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var buffered = new MemoryStream((int)Math.Min(cap, 1024 * 1024));
+        var buffer = new byte[16 * 1024];
+        while (true)
+        {
+            var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                return buffered.ToArray();
+            }
+
+            if (buffered.Length + read > cap)
+            {
+                throw HostBodyTooLarge(response, cap);
+            }
+
+            await buffered.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static TerraScaleSyncV2HostException HostBodyTooLarge(HttpResponseMessage response, long cap) => new(
+        response.StatusCode,
+        "host-failure",
+        $"the response body exceeds the decode bound of {cap} bytes");
+
+    private async Task<TerraScaleSyncV2HostException> HostFailureAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        // Error bodies are bounded well below the full body bound: a
+        // detail is diagnostic text, never a payload.
+        var bytes = await ReadBodyAsync(response, Math.Min(options.MaxHostBodyBytes, 64 * 1024), cancellationToken).ConfigureAwait(false);
+        var detail = Encoding.UTF8.GetString(bytes);
         string? code = null;
         string? message = null;
         var resync = false;
+        TerraScaleSyncV2Checkpoint? floor = null;
         try
         {
             using var document = JsonDocument.Parse(detail);
@@ -890,6 +1100,19 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
             {
                 resync = resyncElement.GetBoolean();
             }
+
+            if (document.RootElement.TryGetProperty("floor", out var floorElement) && floorElement.GetString() is { Length: > 0 } floorText)
+            {
+                try
+                {
+                    floor = TerraScaleSyncV2Checkpoint.FromBytes(Convert.FromBase64String(floorText));
+                }
+                catch (Exception failure) when (failure is FormatException or TerraScaleSyncV2ProtocolException)
+                {
+                    // A floor that does not decode is absent: the refusal
+                    // still surfaces, without a stated floor.
+                }
+            }
         }
         catch (JsonException)
         {
@@ -900,7 +1123,8 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
             response.StatusCode,
             code ?? "host-failure",
             message ?? (detail.Length == 0 ? null : detail),
-            resync);
+            resync,
+            floor);
     }
 
     private static TerraScaleSyncV2PayloadCodec CodecOf(string name) => name switch
@@ -1037,6 +1261,16 @@ internal sealed record SyncV2TriggerEvent
     public string OperationId { get; init; } = "";
 
     public string Kind { get; init; } = "";
+}
+
+/// <summary>One event-stream field line (or accumulated event) passed the configured event bound.</summary>
+internal sealed class SyncV2OversizeEventException : Exception
+{
+    /// <summary>Initializes the bound marker.</summary>
+    public SyncV2OversizeEventException()
+        : base("the event-stream line exceeds the configured event bound")
+    {
+    }
 }
 
 /// <summary>Source-generated JSON metadata of the API host surface (camelCase).</summary>
