@@ -1,14 +1,15 @@
-//! The HiLo identity-distribution contract (GAP-F09).
+//! The `HiLo` identity-distribution contract (GAP-F09).
 //!
 //! GAP-D01 ownership class 12 gave V2 save-time identity allocation inside
 //! the save transaction; this module is the distribution layer on top of
-//! the same identity family — V1's client-side HiLo generator, moved
+//! the same identity family — V1's client-side `HiLo` generator, moved
 //! engine-side. A [`HiLoDistributor`] reserves whole blocks of one
 //! identity name and mints locally from the reserved block, so the engine
 //! round trip happens once per block, not once per id.
 //!
+//!
 //! The discipline is the contract
-//! (`docs/families/hilo-identity-distribution.md`):
+//! ([`docs/families/hilo-identity-distribution.md`](../../docs/families/hilo-identity-distribution.md)):
 //!
 //! - D1: blocks are owner-fenced allocations of the identity family — the
 //!   caller commits the planned [`IdentityWrite`] through the owning
@@ -66,7 +67,7 @@ pub enum BlockDurability {
     SurvivesOwnerLoss,
 }
 
-/// HiLo distribution failures.
+/// `HiLo` distribution failures.
 ///
 /// Every case is typed and carries no document value, storage detail,
 /// path, credential, or private implementation type.
@@ -156,7 +157,7 @@ enum Phase {
     Live { block: HiLoBlock, cursor: u64 },
 }
 
-/// One HiLo distributor: the engine-side counterpart of V1's client
+/// One `HiLo` distributor: the engine-side counterpart of V1's client
 /// `AsyncHiLoIdGenerator`, holding one identity name's live block.
 #[derive(Debug)]
 pub struct HiLoDistributor {
@@ -279,7 +280,7 @@ impl HiLoDistributor {
     /// Returns [`HiLoError::InvalidPhase`] when no allocation is planned.
     pub fn allocation_committed(&mut self) -> Result<(), HiLoError> {
         match self.phase {
-            Phase::Planned { next, burn: true } => {
+            Phase::Planned { burn: true, .. } => {
                 self.burned = self.burned.saturating_add(self.block_size);
                 self.phase = Phase::Idle;
                 Ok(())
@@ -375,7 +376,7 @@ impl HiLoDistributor {
             .entries()
             .iter()
             .find(|entry| entry.name() == self.name)
-            .map(|entry| entry.next())
+            .map(super::payloads::IdentityEntry::next)
             .ok_or(HiLoError::Family(FamilyError::InvalidRequest))
     }
 }

@@ -1,4 +1,4 @@
-//! In-crate HiLo identity-distribution tests for the GAP-F09 packet.
+//! In-crate `HiLo` identity-distribution tests for the GAP-F09 packet.
 //!
 //! Each test reads as one distribution scenario over the engine's identity
 //! family: a distributor plans an allocation, the caller commits it through

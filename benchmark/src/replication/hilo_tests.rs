@@ -1,5 +1,5 @@
-//! The GAP-F09 HiLo distribution lane: the member-loss proofs that need
-//! the replication doubles.
+//! The GAP-F09 `HiLo` distribution lane: the member-loss proofs that
+//! need the replication doubles.
 //!
 //! These tests drive the identity-distribution contract of
 //! `src/families/hilo/` (decision record
@@ -13,6 +13,11 @@
 //! through transport pump calls (no threads, no async runtimes, no
 //! sleeps), and create no Recovery, Replication-lane receipt beyond the
 //! run logs, or Benchmark claim.
+
+#![allow(
+    clippy::similar_names,
+    reason = "fixtures bind per-member values whose canonical names differ by one character (m_a1/m_b1/m_g1)"
+)]
 
 use std::{
     path::PathBuf,
@@ -53,7 +58,7 @@ fn open_member(tag: &str, id: &str, topology: &TopologyView) -> ReplicationMembe
     .expect("member opens")
 }
 
-/// Three Regions, one Member each; `owner` owns the HiLo range at `epoch`.
+/// Three Regions, one Member each; `owner` owns the `hilo` range at `epoch`.
 fn hilo_topology(owner: &str, epoch: u64) -> TopologyView {
     TopologyView::new()
         .with_region("r-alpha")
