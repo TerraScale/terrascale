@@ -18,10 +18,11 @@ use crate::engine::{
     CommitError, CommitOutcome, DurableResolution, Engine, EngineConfig, EngineConfigError,
     EngineError, EngineOpenError, UnknownReason,
 };
-use crate::storage::FaultPoint;
+use crate::replication::SharedTombstoneRetention;
+use crate::storage::{CompactionPolicy, CompactionRequest, FaultPoint, HistoryReclaimOutcome};
 use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
-    OperationId, RetryDisposition, TenantId, TenantScope,
+    OperationId, RetryDisposition, StorageSequence, TenantId, TenantScope,
 };
 
 fn location(tag: &str) -> PathBuf {
@@ -79,6 +80,22 @@ fn commit_put(
     let mut transaction =
         engine.begin(&scope, snapshot, operation(operation_name)).expect("begins");
     transaction.put(document(id, "users", text), expected).expect("stages");
+    transaction.commit(durability)
+}
+
+fn commit_delete(
+    engine: &Engine,
+    tenant_name: &str,
+    operation_name: &str,
+    id: &str,
+    expected: ExpectedVersion,
+    durability: LocalDurability,
+) -> CommitOutcome {
+    let scope = tenant_scope(engine, tenant_name);
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    let mut transaction =
+        engine.begin(&scope, snapshot, operation(operation_name)).expect("begins");
+    transaction.delete(document_id(id), expected).expect("stages");
     transaction.commit(durability)
 }
 
@@ -1969,5 +1986,191 @@ fn snapshot_documents_from_serves_bounded_windows_and_validates_the_view() {
         "a snapshot from the closed instance is rejected"
     );
     drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Seeds the compaction workload through the public transaction seam: two
+/// live documents, one deleted document whose tombstone is the tracked
+/// evidence, and one trailing put so the delete lands inside the window a
+/// history-reclaim pass gives up (the head record itself is always kept,
+/// decision record D2).
+fn seed_compaction_workload(engine: &Engine) {
+    committed(commit_put(
+        engine,
+        "tenant-a",
+        "op-put-1",
+        "doc-1",
+        "v1",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    committed(commit_put(
+        engine,
+        "tenant-a",
+        "op-put-2",
+        "doc-2",
+        "v2",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    committed(commit_delete(
+        engine,
+        "tenant-a",
+        "op-delete-1",
+        "doc-2",
+        ExpectedVersion::Exact(1),
+        LocalDurability::Synced,
+    ));
+    committed(commit_put(
+        engine,
+        "tenant-a",
+        "op-put-3",
+        "doc-3",
+        "v3",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+}
+
+/// The no-loss shape the compaction workload must keep: both live documents
+/// readable, the deleted one absent.
+fn assert_compaction_workload_intact(engine: &Engine) {
+    assert!(read_document(engine, "tenant-a", "doc-1").is_some(), "doc-1 survives");
+    assert!(read_document(engine, "tenant-a", "doc-2").is_none(), "doc-2 stays deleted");
+    assert!(read_document(engine, "tenant-a", "doc-3").is_some(), "doc-3 survives");
+}
+
+/// The production retention-driving path with data (GAP-S1 D5):
+/// [`Engine::compact_with_retention`] on an engine that actually committed —
+/// the declaration half (bound, held facts, non-deletion watermark) and the
+/// prologue half (restart re-derivation from the durable store) both run
+/// with a real window here.
+#[test]
+fn compact_with_retention_declares_and_rederives_the_bound_on_a_data_bearing_engine() {
+    let (dir, engine) = open_engine("compact-retention-data");
+    seed_compaction_workload(&engine);
+    let head = StorageSequence::new(4);
+    assert_eq!(engine.servable_history_start().expect("window"), Some(StorageSequence::new(1)));
+
+    // First pass: the window [1, 4) is given up after its evidence is
+    // durable, and the engine declares the new bound to the watermark from
+    // the window it just extracted.
+    let retention = SharedTombstoneRetention::new();
+    let receipt = engine
+        .compact_with_retention(
+            CompactionRequest::new(CompactionPolicy::ReclaimHistory),
+            &retention,
+        )
+        .expect("the data-bearing pass runs");
+    assert_eq!(receipt.history_reclaim(), HistoryReclaimOutcome::Reclaimed { bound: head });
+    assert_eq!(receipt.journaled_head(), Some(head));
+    assert_eq!(receipt.evidence_extracted(), 1, "the tombstone was extracted");
+    assert_eq!(receipt.evidence_retained(), 1);
+    retention.with_lock(|state| {
+        assert_eq!(state.history_bound(), Some(head), "the bound is declared");
+        assert_eq!(state.held_evidence_count(), 1, "the tombstone is held");
+        assert_eq!(
+            state.non_deletion_through(&tenant("tenant-a")),
+            Some(StorageSequence::new(2)),
+            "the window's newest put is the recorded non-deletion fact"
+        );
+        let evidence = state.deletion_evidence_above(&tenant("tenant-a"), StorageSequence::new(0));
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].id().as_str(), "doc-2");
+        assert_eq!(evidence[0].sequence(), StorageSequence::new(3));
+        assert_eq!(evidence[0].operation().as_str(), "op-delete-1");
+        assert_eq!(evidence[0].durability(), LocalDurability::Synced);
+    });
+    assert_compaction_workload_intact(&engine);
+    engine.shutdown().expect("shuts down");
+
+    // Restart: the durable prologue alone re-derives a fresh watermark —
+    // this second pass is a plain Reclaim, so nothing after the prologue
+    // declares anything; every observation below comes from the store.
+    let reopened = reopen_engine(&dir);
+    assert_compaction_workload_intact(&reopened);
+    assert_eq!(reopened.servable_history_start().expect("window"), Some(head));
+    let fresh = SharedTombstoneRetention::new();
+    let second = reopened
+        .compact_with_retention(CompactionRequest::new(CompactionPolicy::Reclaim), &fresh)
+        .expect("the second pass runs");
+    assert_eq!(second.history_reclaim(), HistoryReclaimOutcome::NotRequested);
+    fresh.with_lock(|state| {
+        assert_eq!(
+            state.history_bound(),
+            Some(head),
+            "the prologue restored the durably declared bound"
+        );
+        assert_eq!(state.held_evidence_count(), 1, "the durable fact was held");
+        assert_eq!(
+            state.non_deletion_through(&tenant("tenant-a")),
+            Some(StorageSequence::new(2)),
+            "the bound record's non-deletion fact was restored"
+        );
+        let evidence = state.deletion_evidence_above(&tenant("tenant-a"), StorageSequence::new(0));
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].id().as_str(), "doc-2");
+        assert_eq!(
+            evidence[0].stamp(),
+            crate::replication::ReplicationClockStamp::new(0, 0),
+            "re-derived evidence carries the origin stamp (stamps are process-local, D3)"
+        );
+    });
+    assert_compaction_workload_intact(&reopened);
+    reopened.shutdown().expect("shuts down");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The floor the watermark holds is lowered into the pass (GAP-S1 D5): a
+/// handle whose floor sits above the tombstone makes the pass skip the
+/// below-floor fact durably — a disclosed count, never a silent drop —
+/// while the bound is still declared and nothing below-floor is written
+/// to the durable store.
+#[test]
+fn compact_with_retention_lowers_the_watermarks_floor_into_the_pass() {
+    let (dir, engine) = open_engine("compact-retention-floor");
+    seed_compaction_workload(&engine);
+    let retention = SharedTombstoneRetention::new();
+    retention
+        .with_lock(|state| state.advance_floor(StorageSequence::new(4)).expect("the floor rises"));
+
+    let receipt = engine
+        .compact_with_retention(
+            CompactionRequest::new(CompactionPolicy::ReclaimHistory),
+            &retention,
+        )
+        .expect("the pass runs");
+    assert_eq!(
+        receipt.history_reclaim(),
+        HistoryReclaimOutcome::Reclaimed { bound: StorageSequence::new(4) }
+    );
+    assert_eq!(receipt.evidence_extracted(), 1);
+    assert_eq!(receipt.evidence_retained(), 0, "the below-floor fact is not written durably");
+    assert_eq!(receipt.evidence_below_floor(), 1, "the skip is a disclosed count");
+    retention.with_lock(|state| {
+        assert_eq!(state.history_bound(), Some(StorageSequence::new(4)));
+        assert_eq!(state.held_evidence_count(), 0, "the watermark holds nothing below its floor");
+        assert_eq!(
+            state.non_deletion_through(&tenant("tenant-a")),
+            Some(StorageSequence::new(2)),
+            "the non-deletion fact is independent of the floor"
+        );
+    });
+    assert_compaction_workload_intact(&engine);
+    engine.shutdown().expect("shuts down");
+
+    // The durable store holds the bound and no below-floor fact: a fresh
+    // handle re-derived by the prologue after the restart holds nothing.
+    let reopened = reopen_engine(&dir);
+    let fresh = SharedTombstoneRetention::new();
+    reopened
+        .compact_with_retention(CompactionRequest::new(CompactionPolicy::Reclaim), &fresh)
+        .expect("the second pass runs");
+    fresh.with_lock(|state| {
+        assert_eq!(state.history_bound(), Some(StorageSequence::new(4)));
+        assert_eq!(state.held_evidence_count(), 0, "no below-floor fact was written durably");
+    });
+    assert_compaction_workload_intact(&reopened);
+    reopened.shutdown().expect("shuts down");
     std::fs::remove_dir_all(&dir).ok();
 }

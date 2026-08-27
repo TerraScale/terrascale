@@ -29,6 +29,21 @@ pub(crate) enum FaultPoint {
     /// only the observable divergence between the journaled high-water mark
     /// and the published sequence (repair F2).
     JournalAppend,
+    /// Fail the compaction checkpoint's manifest publication, after the
+    /// checkpoint root file is written and synced (GAP-S1 D4).
+    CompactionCheckpointPublish,
+    /// Fail the compaction pass immediately before the write-ahead log is
+    /// truncated to the checkpoint (GAP-S1 D4).
+    CompactionWalTruncate,
+    /// Fail the compaction pass after the retained-evidence records are
+    /// appended but before they are synced (GAP-S1 D4).
+    CompactionEvidenceSync,
+    /// Fail the compaction pass after the retained evidence and bound are
+    /// durably synced but before the journal is rewritten (GAP-S1 D4).
+    CompactionJournalRewrite,
+    /// Fail the compaction pass immediately before superseded root files
+    /// are reclaimed (GAP-S1 D4).
+    CompactionRootReclaim,
 }
 
 /// The armed plan. `None` means no fault fires, which is the only state

@@ -204,8 +204,16 @@ implementation; no public type moved, because the module had no public items.
 ## Limits
 
 - Roots are full tables: every commit rewrites the complete document set of
-  the tenant's root. There is no delta or segment format and no compaction.
-- The root history grows without garbage collection.
+  the tenant's root. There is no delta or segment format; the per-commit
+  write-amplification half of this limit stands. The *accumulation* half is
+  closed by GAP-S1 compaction (ticket #81,
+  `docs/storage/gaps1-storage-compaction.md`): superseded root files, the
+  write-ahead log a checkpoint replaces, and — under the retained-evidence
+  gates — publication history below a durable bound are reclaimable by a
+  caller-driven pass.
+- The root history grows without garbage collection on disk (GAP-S1 closes
+  the durable half; the in-memory root-history map is still process-lifetime,
+  per the GAP-S1 record's Limits).
 - `Buffered` publication is in-memory only, so its data is lost on process
   exit by design; only its resolution metadata survives.
 - **Explicit operational limit: a `Buffered` commit interrupted between the
@@ -221,8 +229,15 @@ implementation; no public type moved, because the module had no public items.
   their durable WAL group is rolled forward at reopen and a `Published`
   record is appended for it. This is the "retain `Pending` with an explicit
   operational limit" clause of the durable-resolution contract.
-- No lock file, no concurrent-Engine protocol, no encryption, no compaction,
-  and no backup or restore.
+  *Narrowed by GAP-S1* (ticket #81): a storage compaction checkpoint makes
+  the published table — `Buffered` tail included — durable, so a
+  checkpointed `Buffered` commit's `Ready` root identity becomes the
+  published root and it resolves `Committed` after the reopen (at the
+  requested level; resolution caps every claim at what the operation asked
+  for). Stores that never compact keep the full limit above.
+- No lock file, no concurrent-Engine protocol, no encryption, and no backup
+  or restore. (Compaction landed with GAP-S1, ticket #81; backup/restore with
+  the BK wave.)
 - The torn-tail rule classifies damage by position: a corrupted length field
   inside an early frame can make the remainder of the log look like one
   trailing torn frame, in which case recovery truncates at that frame and the
