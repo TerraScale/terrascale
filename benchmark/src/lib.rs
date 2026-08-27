@@ -25,6 +25,7 @@ pub mod migration;
 pub mod operations;
 pub mod query;
 pub mod replication;
+pub mod session;
 pub mod sharding;
 pub mod storage;
 pub mod streaming;
@@ -65,6 +66,11 @@ pub use replication::{
     AcknowledgementLevel, AcknowledgementReport, ConflictRecord, Convergence, MemberId, RegionId,
     ReplicationConfig, ReplicationCursor, ReplicationError, ReplicationOutcome, ReplicationReceipt,
     ReplicationStatus, TopologyView,
+};
+pub use session::{
+    AfterSaveEvent, BeforeDeleteEvent, BeforeDeleteHook, BeforeStoreEvent, BeforeStoreHook,
+    DocumentChanges, FieldChange, FieldChangeKind, Session, SessionCommand, SessionError,
+    SessionHookVeto, SessionOptions, SessionStream, SessionTracking, SessionTransactionMode,
 };
 pub use streaming::{
     ChangeEvent, ChangeFilter, ChangeKind, DocumentStreamSelector, StreamBatch, StreamCompletion,

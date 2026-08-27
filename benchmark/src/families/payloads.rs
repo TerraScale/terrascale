@@ -226,6 +226,12 @@ pub struct AttachmentWrite {
 }
 
 impl AttachmentWrite {
+    /// Replaces the operation identity in place. Crate-internal: the
+    /// session seam (GAP-D01) rebinds deferred commands to the save
+    /// transaction's identity, which the family stage contract requires.
+    pub(crate) fn rebase_operation(&mut self, operation: OperationId) {
+        self.operation_id = operation;
+    }
     /// Creates a validated attachment mutation.
     ///
     /// # Errors
@@ -491,6 +497,12 @@ pub struct CounterBatchWrite {
 }
 
 impl CounterBatchWrite {
+    /// Replaces the operation identity in place. Crate-internal: the
+    /// session seam (GAP-D01) rebinds deferred commands to the save
+    /// transaction's identity, which the family stage contract requires.
+    pub(crate) fn rebase_operation(&mut self, operation: OperationId) {
+        self.operation_id = operation;
+    }
     /// Creates a validated counter batch from named operations.
     ///
     /// # Errors
@@ -874,6 +886,12 @@ pub struct TimeSeriesBatchWrite {
 }
 
 impl TimeSeriesBatchWrite {
+    /// Replaces the operation identity in place. Crate-internal: the
+    /// session seam (GAP-D01) rebinds deferred commands to the save
+    /// transaction's identity, which the family stage contract requires.
+    pub(crate) fn rebase_operation(&mut self, operation: OperationId) {
+        self.operation_id = operation;
+    }
     /// Creates a validated time-series batch.
     ///
     /// # Errors
@@ -1198,6 +1216,12 @@ pub struct RevisionWrite {
 }
 
 impl RevisionWrite {
+    /// Replaces the operation identity in place. Crate-internal: the
+    /// session seam (GAP-D01) rebinds deferred commands to the save
+    /// transaction's identity, which the family stage contract requires.
+    pub(crate) fn rebase_operation(&mut self, operation: OperationId) {
+        self.operation_id = operation;
+    }
     /// Creates a validated revision command.
     ///
     /// # Errors
@@ -1415,6 +1439,12 @@ pub struct CompareExchangeWrite {
 }
 
 impl CompareExchangeWrite {
+    /// Replaces the operation identity in place. Crate-internal: the
+    /// session seam (GAP-D01) rebinds deferred commands to the save
+    /// transaction's identity, which the family stage contract requires.
+    pub(crate) fn rebase_operation(&mut self, operation: OperationId) {
+        self.operation_id = operation;
+    }
     /// Creates a validated compare-exchange condition.
     ///
     /// # Errors
@@ -1652,6 +1682,12 @@ pub struct IdentityWrite {
 }
 
 impl IdentityWrite {
+    /// Replaces the operation identity in place. Crate-internal: the
+    /// session seam (GAP-D01) rebinds deferred commands to the save
+    /// transaction's identity, which the family stage contract requires.
+    pub(crate) fn rebase_operation(&mut self, operation: OperationId) {
+        self.operation_id = operation;
+    }
     /// Creates a validated identity request.
     ///
     /// # Errors
@@ -1850,6 +1886,12 @@ pub struct LifecycleWrite {
 }
 
 impl LifecycleWrite {
+    /// Replaces the operation identity in place. Crate-internal: the
+    /// session seam (GAP-D01) rebinds deferred commands to the save
+    /// transaction's identity, which the family stage contract requires.
+    pub(crate) fn rebase_operation(&mut self, operation: OperationId) {
+        self.operation_id = operation;
+    }
     /// Creates a validated lifecycle update.
     ///
     /// # Errors
@@ -2048,6 +2090,12 @@ pub struct ArchivalWrite {
 }
 
 impl ArchivalWrite {
+    /// Replaces the operation identity in place. Crate-internal: the
+    /// session seam (GAP-D01) rebinds deferred commands to the save
+    /// transaction's identity, which the family stage contract requires.
+    pub(crate) fn rebase_operation(&mut self, operation: OperationId) {
+        self.operation_id = operation;
+    }
     /// Creates a validated archival update.
     ///
     /// # Errors
@@ -2446,6 +2494,12 @@ pub struct ValidationWrite {
 }
 
 impl ValidationWrite {
+    /// Replaces the operation identity in place. Crate-internal: the
+    /// session seam (GAP-D01) rebinds deferred commands to the save
+    /// transaction's identity, which the family stage contract requires.
+    pub(crate) fn rebase_operation(&mut self, operation: OperationId) {
+        self.operation_id = operation;
+    }
     /// Creates a validated policy update. A `None` schema clears the
     /// collection's policy.
     ///
@@ -2672,6 +2726,12 @@ pub struct TombstoneWrite {
 }
 
 impl TombstoneWrite {
+    /// Replaces the operation identity in place. Crate-internal: the
+    /// session seam (GAP-D01) rebinds deferred commands to the save
+    /// transaction's identity, which the family stage contract requires.
+    pub(crate) fn rebase_operation(&mut self, operation: OperationId) {
+        self.operation_id = operation;
+    }
     /// Creates a validated tombstone operation.
     ///
     /// # Errors
