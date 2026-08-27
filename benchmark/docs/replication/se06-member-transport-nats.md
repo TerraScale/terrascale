@@ -39,11 +39,20 @@ the recorded integrator action, see "Integrator wiring notes"):
   provider, `rcgen` lane CA): one endpoint per Member on loopback, one
   certificate per Member (no shared Member credentials), mutual TLS, one
   uni stream per frame. Pumps flush outbound and drive inbound
-  concurrently inside a bounded wall-clock window (the peer's `accept`
-  must be polled for a connecting handshake to complete — the flush and
-  the inbound driver run joined, with every flush failure counted as an
-  observable drop, never a silent loss). Tick-valued protocol vocabulary
-  throughout; receipts record measured ticks as run facts.
+  concurrently and end on a causal completion condition, not a clock: the
+  peer's `accept` must be polled for a connecting handshake to complete —
+  the flush and the inbound driver run joined — and a pump returns only
+  once every frame it wrote to a socket has been read off the wire by the
+  addressed Member (explicit drain accounting: frames taken, written, and
+  still awaited, with arrival attributed by peer endpoint address). The
+  inbound driver keeps every accepted connection as readiness state across
+  passes and pumps, because a frame written on an existing connection is
+  readable only while that connection's streams are polled. Socket futures
+  are polled with short bounded timeouts so an idle pass returns to the
+  loop that decides on causality; a generous hang guard bounds a
+  pathological drain only, and its expiry is counted as observable drops,
+  never a silent loss. Tick-valued protocol vocabulary throughout;
+  receipts record measured ticks as run facts.
 - `src/journal.rs` — the lane's durable per-Member publication journal
   (magic+version header, SHA-256 per record, fsync per commit): global
   sequence, per-tenant sequences, servable-history bound, the durable
@@ -122,7 +131,11 @@ Focused extras beyond the list: the codec's adversarial fail-closed suite
 expiry at the member boundary and the measured-overhead budget check), the
 in-process composite determinism double-run, the socket lane's
 restart-and-rejoin catch-up from the durable cursor without operator
-intervention, the socket lane's bytes-on-wire budget check, and the eight
+intervention, the socket lane's bytes-on-wire budget check, the socket
+lane's pump-causality suite (`tests/quic_lane_determinism.rs`, four tests:
+one pump is a complete delivery step over a fresh connection, across every
+direction of a fresh lane, and at a full direction bound, and the fault
+controls — not the clock — decide what a pump delivers), and the eight
 red-then-green NATS usage tests.
 
 ## The 11 fault classes over real links
@@ -162,6 +175,9 @@ rejections in both directions.
    limit recorded.
 3. `se06-nats-usage-audit.md` — the NATS boundary audit artifact and its
    unrun note (no live `nats-server` in this environment).
+4. `se06-quic-lane-determinism.md` — the warden-repair receipt: the
+   pre-fix flake under host load, the causal-drain fix, and the 5-run
+   streaks idle and loaded.
 
 ## Salvage note (predecessor partial work)
 
@@ -198,15 +214,61 @@ before implementation).
 4. Charter/AGENTS wording already states the NATS role; no doc outside
    this record and the evidence files was touched.
 
-## Checks (this packet, from the crate root)
+## Warden repair loop 1: socket-lane determinism (MAJOR)
 
+Finding: the engine-socket suite was wall-clock dependent — each pump
+drained socket traffic inside a fixed wall-clock window, ended its inbound
+loop as soon as a poll came back quiet, and read streams only from
+connections accepted inside the same pass — so under host load the same
+script delivered different frames (five of 22 contract scenarios failed in
+one loaded run, two in another; the receipt under
+`evidence/replication/se06-quic-lane-determinism.md` records both). The
+fix removes the wall-clock dependence rather than widening it:
+
+1. A pump ends on a causal completion condition, never a duration: the
+   drain keeps explicit progress accounting (frames taken from the
+   outbound queues, frames written to sockets, frames still awaited) and
+   returns once nothing written is still awaited, with arrival attributed
+   by peer endpoint address. The wall-clock pump window
+   (`QuicLane::with_pump_window`, `DEFAULT_PUMP_WINDOW`) is gone from the
+   public seam — delivery has no size in milliseconds any more.
+2. Readiness is retained state, not a timing coincidence: every accepted
+   connection stays in a per-Member set across passes and pumps (a frame
+   written on an existing connection is readable only while that
+   connection's streams are polled) and leaves the set only when the peer
+   closes it.
+3. Socket futures are still polled with a short bounded timeout, but the
+   timeout only returns an idle pass to the loop that decides on causality;
+   a generous hang guard bounds a pathological drain only and its expiry is
+   accounted as observable drops on the directions still waiting.
+4. Red-then-green: `tests/quic_lane_determinism.rs` pins the contract
+   (one pump is a complete delivery step over a fresh connection, across
+   every direction of a fresh lane, and at a full direction bound, with
+   zero drops on a healthy lane; the W4 fault controls — partition, bounded
+   drop, hold-back — decide what a pump delivers, as tick facts). It was
+   red under host load on the pre-fix lane and is green on the fixed lane
+   idle and loaded.
+5. A pump with nothing to deliver advances the clock and touches no socket
+   (previously every pump paid the window even when idle), which is also
+   why the socket suite runs faster after the fix.
+
+No assertion in the 22 contract scenarios was weakened, renamed, or
+dropped; no test is `#[ignore]`d, because after the causal drain no timing
+property in this suite is inherently wall-clock.
+
+## Checks (this packet, from the crate root)
 - `cargo fmt --all -- --check` — pass
-- `cargo test --offline --locked` — 69 passed, 0 failed (6 lib unit, 24
+- `cargo test --offline --locked` — 73 passed, 0 failed (6 lib unit, 24
   in-process contract, 9 envelope discipline, 8 NATS usage, 22
-  engine-socket contract)
-- `cargo clippy --offline --locked --all-targets --all-features -- -D warnings` — pass
+  engine-socket contract, 4 socket-lane determinism)
+- `cargo +1.97.1 clippy --offline --locked --all-targets --all-features -- -D warnings` — pass
 - `cargo doc --offline --locked --no-deps` — pass (missing_docs denied at
   compile)
+- Socket-lane streaks (the warden's acceptance condition): the
+  engine-socket contract suite passed 5 consecutive runs idle and 5
+  consecutive runs under full-CPU host load, and the determinism suite
+  passed the same 5+5 — receipts in
+  `evidence/replication/se06-quic-lane-determinism.md`.
 - The engine workspace at the repository root is untouched by this packet
   (the crate is a standalone workspace root), so `scripts/check.sh`'s
   repository gates are unaffected until the integrator wiring above.

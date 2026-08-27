@@ -9,8 +9,10 @@
 //! outcome assertions, two lanes.
 //!
 //! Lane-scoped non-claims: the QUIC lane's pumps drain real socket traffic
-//! inside a bounded wall-clock window, so its measured tick counts are facts
-//! of one run, never reproducible constants; the assertions below therefore
+//! to a causal completion condition (every flushed frame is read off the
+//! wire before the pump returns), so a pump is a complete delivery step and
+//! the scripts below drive fixed pump counts; the tick counts a run measures
+//! are facts of that run, never reproducible constants, so the assertions
 //! check outcomes, not tick values, except where the script itself fixes the
 //! pumps.
 

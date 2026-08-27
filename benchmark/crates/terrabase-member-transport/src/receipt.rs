@@ -57,8 +57,8 @@ pub enum LaneKind {
     /// The engine-socket lane: real QUIC sockets between member endpoints on
     /// loopback; the lane clock stays tick-based and every protocol
     /// vocabulary remains tick-valued, while each pump drains real socket
-    /// traffic inside a bounded wall-clock window (a fixture fact, never a
-    /// timing claim).
+    /// traffic to a causal completion condition — every flushed frame has
+    /// been read off the wire (a fixture fact, never a timing claim).
     EngineSocket,
 }
 

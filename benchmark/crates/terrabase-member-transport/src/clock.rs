@@ -6,8 +6,9 @@
 //! reproducible by driving the same pumps. The engine-socket lane keeps the
 //! same tick-based clock for all protocol vocabulary (issued/expiry stamps,
 //! deadlines, RTO and convergence intervals); its pumps additionally drain
-//! real socket traffic inside a bounded wall-clock window, which is a
-//! fixture fact of that lane kind only and never a timing claim.
+//! real socket traffic to a causal completion condition — every frame a
+//! pump wrote to a socket has been read off the wire — which is a fixture
+//! fact of that lane kind only and never a timing claim.
 
 /// A deterministic instant of the lane's clock.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

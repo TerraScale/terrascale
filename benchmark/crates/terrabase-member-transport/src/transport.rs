@@ -202,7 +202,8 @@ pub trait MemberTransport {
 
     /// Advances the lane clock by one tick and releases every hold-back that
     /// came due, driving the underlying lane (for the socket lane: flushing
-    /// pending sends and draining received frames inside a bounded window).
+    /// pending sends and draining received frames until every flushed frame
+    /// has arrived — a causal condition, never an elapsed-time one).
     fn pump(&mut self);
 
     /// Returns the current instant of the lane clock.

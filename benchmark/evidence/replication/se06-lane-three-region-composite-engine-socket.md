@@ -21,7 +21,8 @@ capability.
   — no broker between Members.
 - Clock: the lane clock stays tick-based (one tick per pump; every protocol
   vocabulary value is a tick); each pump additionally drains real socket
-  traffic inside a bounded wall-clock window. No wall-clock value appears in
+  traffic to a causal completion condition — every flushed frame is read
+  off the wire before the pump returns. No wall-clock value appears in
   the receipt.
 - The 23 W4 contract scenarios re-run over this lane in
   `tests/quic_contract_scenarios.rs`; the full 11-class fault vocabulary
@@ -78,10 +79,13 @@ claim: none beyond the lane; lane-scoped facts only
   detection and view-application window), convergence naming every surviving
   Member, and both PD-13 D1 budget checks passing.
 - Tick counts are facts of this run: the script fixes the pump count
-  between its steps, and every scripted delivery landed inside its pump
-  window in this run — that is why the values equal the in-process lane's.
-  A slower run could observe more ticks for the same outcomes; the
-  assertions check outcomes, not tick values.
+  between its steps, and a socket-lane pump is a complete delivery step
+  (it returns only once every frame it flushed has been read off the wire),
+  which is why the values equal the in-process lane's. A slower host still
+  observes the same outcomes; the assertions check outcomes, not tick
+  values, and the pump-causality contract itself is pinned by
+  `tests/quic_lane_determinism.rs` with the streak receipt under
+  `se06-quic-lane-determinism.md`.
 - Bytes-on-wire: measured per frame class at the socket lane's delivery
   boundary. The socket lane frames each envelope with a four-byte length
   prefix on the wire; the counters measure envelope bytes, as the receipt's

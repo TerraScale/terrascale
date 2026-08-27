@@ -78,7 +78,7 @@ pub use member::{
     ReplicationOutcome, TenantDenial, catch_up_gap, dispatch_report_deliveries, level_satisfied,
     normalize_level, observe_convergence, observe_region_loss, strongest_satisfied_level,
 };
-pub use quic::{DEFAULT_PUMP_WINDOW, QuicLane, QuicLaneError};
+pub use quic::{QuicLane, QuicLaneError};
 pub use receipt::{
     BYTES_ON_WIRE_DEFINITION, BytesOnWire, CONVERGENCE_DEFINITION, FrameClassBytes, LAG_DEFINITION,
     LaneKind, LaneReceipt, RPO_DEFINITION, RTO_DEFINITION,

@@ -9,10 +9,14 @@
 //! Outcome assertions are identical to the in-process file; the two
 //! lane-specific differences are recorded facts, not assertions: the lane
 //! clock stays tick-based while each pump additionally drains real socket
-//! traffic inside a bounded wall-clock window, so tick counts are facts of
-//! one run and the determinism double-run stays an in-process property; and
-//! the degenerate-lattice, receipt-secret-safety, and composite scenarios
-//! assert outcomes over the socket lane with wider acknowledgement windows.
+//! traffic to a causal completion condition — every flushed frame is read
+//! off the wire before the pump returns, so a pump is a complete delivery
+//! step and no outcome depends on elapsed time (the pump-causality contract
+//! itself is pinned in `tests/quic_lane_determinism.rs`), while tick counts
+//! stay facts of one run and the determinism double-run stays an
+//! in-process property; and the degenerate-lattice, receipt-secret-safety,
+//! and composite scenarios assert outcomes over the socket lane with wider
+//! acknowledgement windows.
 
 #![allow(
     clippy::similar_names,

@@ -8,8 +8,9 @@
 //! re-proven on real transports.
 //!
 //! Outcomes are asserted, not timings: the socket lane's tick counts are
-//! facts of one run (its pumps drain real socket traffic inside a bounded
-//! wall-clock window), so only script-fixed pump counts are compared.
+//! facts of one run (its pumps drain real socket traffic to a causal
+//! completion condition — every flushed frame is read off the wire before
+//! the pump returns), so only script-fixed pump counts are compared.
 
 #![allow(
     clippy::similar_names,
