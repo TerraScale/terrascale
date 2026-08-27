@@ -756,8 +756,8 @@ impl QuerySpec {
     ///
     /// Returns [`RequestValidationError::InvalidQuery`] when the clause list
     /// is longer than
-    /// [`MAX_INCLUDES`](includes::MAX_INCLUDES). Each clause is validated by
-    /// its own constructor.
+    /// [`MAX_INCLUDES`](crate::query::includes::MAX_INCLUDES). Each clause is
+    /// validated by its own constructor.
     pub fn with_includes(
         mut self,
         includes: Vec<IncludeClause>,

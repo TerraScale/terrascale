@@ -19,3 +19,6 @@ __pycache__/
 !/evidence/recovery/
 !/evidence/benchmarks/
 /benches/results/
+
+# Fleet builder worktrees (never tracked)
+/.worktrees/

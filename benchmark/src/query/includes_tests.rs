@@ -528,14 +528,13 @@ fn document_includes_refuse_a_reference_cycle_as_a_typed_error() {
     .expect_err("a cycle must refuse");
     assert_eq!(refused, QueryError::IncludeCycle);
 
-    // A self-reference is a one-step cycle and refuses at depth 2, the
-    // first depth that expands the referenced document.
-    put_documents(&engine, "t", vec![object_document("row/2", "rows", &[])]);
     let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn document_includes_refuse_a_self_reference_cycle() {
+    // A self-reference is a one-step cycle and refuses at depth 2, the
+    // first depth that expands the referenced document.
     let (dir, engine) = open_engine("self-cycle");
     put_documents(
         &engine,
@@ -613,9 +612,129 @@ fn document_includes_refuse_past_the_include_document_bound() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// ---------------------------------------------------------------------------
-// Counter and time-series includes
-// ---------------------------------------------------------------------------
+#[test]
+fn document_includes_accept_the_include_document_bound_exactly() {
+    let (dir, engine) = open_engine("bound-at");
+    // Exactly the bound's worth of distinct referenced documents: the set
+    // materializes — the refusal fires only past the bound, never at it.
+    let bound = super::includes::MAX_INCLUDE_DOCUMENTS;
+    let references: Vec<String> = (0..bound).map(|index| format!("y{index:04}")).collect();
+    let mut documents =
+        vec![object_document("row/1", "rows", &[("refs", string_values(&references))])];
+    for reference in &references {
+        documents.push(object_document(reference, "users", &[]));
+    }
+    put_documents(&engine, "t", documents);
+    let result = execute_with_includes(
+        &engine,
+        "t",
+        "rows",
+        vec![IncludeClause::documents(document_include("refs", 1))],
+    )
+    .expect("the include set materializes at the bound");
+    assert_eq!(result.includes().documents().len(), bound);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn document_includes_truncate_a_cycle_that_closes_through_a_result_row() {
+    let (dir, engine) = open_engine("row-cycle");
+    // The walk leaves the row, reaches `a`, and `a` points back at the
+    // row itself. A row is a level-0 gather source, not a gather target —
+    // the V1 `AddToIgnore` truncation this contract carries — so the
+    // back edge is not walked and the query answers instead of refusing.
+    put_documents(
+        &engine,
+        "t",
+        vec![
+            object_document("row/1", "rows", &[("next", DocumentValue::String("a".into()))]),
+            object_document("a", "users", &[("next", DocumentValue::String("row/1".into()))]),
+        ],
+    );
+    let result = execute_with_includes(
+        &engine,
+        "t",
+        "rows",
+        vec![IncludeClause::documents(document_include("next", 2))],
+    )
+    .expect("a cycle closing through a row truncates, it does not refuse");
+    assert_eq!(include_document_ids(result.includes()), vec!["a".to_owned()]);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn document_includes_materialize_only_the_querying_tenants_documents() {
+    let (dir, engine) = open_engine("tenant-split");
+    // The same document identifiers exist in two tenants with
+    // distinguishing content. Tenant `t` queries; its include set must
+    // carry tenant `t`'s material only, at every depth of the walk — the
+    // chain resolves through this tenant's `b`, never the other tenant's.
+    put_documents(
+        &engine,
+        "t",
+        vec![
+            object_document("row/1", "rows", &[("next", DocumentValue::String("a".into()))]),
+            object_document(
+                "a",
+                "users",
+                &[
+                    ("mark", DocumentValue::String("tenant-t".into())),
+                    ("next", DocumentValue::String("b".into())),
+                ],
+            ),
+            object_document(
+                "b",
+                "users",
+                &[("mark", DocumentValue::String("tenant-t-deep".into()))],
+            ),
+        ],
+    );
+    put_documents(
+        &engine,
+        "u",
+        vec![
+            object_document("row/1", "rows", &[("next", DocumentValue::String("a".into()))]),
+            object_document(
+                "a",
+                "users",
+                &[
+                    ("mark", DocumentValue::String("tenant-u".into())),
+                    ("next", DocumentValue::String("b".into())),
+                ],
+            ),
+            object_document(
+                "b",
+                "users",
+                &[("mark", DocumentValue::String("tenant-u-deep".into()))],
+            ),
+        ],
+    );
+    let result = execute_with_includes(
+        &engine,
+        "t",
+        "rows",
+        vec![IncludeClause::documents(document_include("next", 2))],
+    )
+    .expect("executes");
+    assert_eq!(include_document_ids(result.includes()), vec!["a".to_owned(), "b".to_owned()]);
+    let marks: Vec<String> = result
+        .includes()
+        .documents()
+        .iter()
+        .map(|document| match document.value() {
+            DocumentValue::Object(fields) => match fields.get("mark") {
+                Some(DocumentValue::String(mark)) => mark.as_str().to_owned(),
+                _ => String::new(),
+            },
+            _ => String::new(),
+        })
+        .collect();
+    assert_eq!(marks, vec!["tenant-t".to_owned(), "tenant-t-deep".to_owned()]);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
 
 #[test]
 fn counter_includes_read_named_counters_through_the_family_seam() {

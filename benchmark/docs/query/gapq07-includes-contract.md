@@ -93,7 +93,7 @@ shape, and the typed seam has no template surface. **accepted-difference**.
 **Depth.** V1's document includes are exactly one level deep:
 `IncludeDocumentsCommand.Gather(Document)` collects the referenced ids of
 the result rows and `Fill` loads them, but `Fill` never calls `Gather` again
-(`src/TerraBase.Server/Documents/Includes/IncludeDocumentsCommand.cs:79-163`)
+(`src/TerraBase.Server/Documents/Includes/IncludeDocumentsCommand.cs` — `Gather(Document)`:50-71, `Fill`:126-163)
 — the included documents are never themselves gathered from. `depth = 1` is
 therefore V1 parity and is the default.
 
@@ -106,7 +106,7 @@ level counter runs exactly `depth` times and never recurses past it.
 **The row's own document.** V1's `AddToIgnore(document.Id)` puts each result
 row's own identifier into `_idsToIgnore` unless the query is a projection,
 so a row is never re-materialized as an include of itself
-(`IncludeDocumentsCommand.cs:115-133`). V2 keeps that rule: a reference that
+(`IncludeDocumentsCommand.cs:60`, method at `:172-181`). V2 keeps that rule: a reference that
 resolves to a document already carried as a row of this result is not
 materialized into the include set. V1's special case for the include path
 literally spelling `id` (`Constants.Documents.Indexing.Fields.
@@ -167,18 +167,28 @@ duplicate name, and an invalid optional prefix.
 
 **`QueryError::IncludeCycle`.** Chaining introduces the possibility of a
 reference cycle: `A`'s path names `B`, and `B`'s path names `A`. The
-materializer tracks every document identifier it has already *gathered
-from*. When a later level gathers an identifier that is already in that
-expanded set, some chain reaches a document it already left, which is a
-cycle — the query refuses with `IncludeCycle` rather than following it.
+materializer records the reference *edges* it actually walks — one edge
+per (gather source, resolved gather target) pair — into a finite graph,
+and a three-color depth-first search over that graph reports a back edge
+as a cycle: the query refuses with `IncludeCycle` rather than following
+it.
 
-That rule is exact, not approximate: a document reappearing as a gather
-*target* after having been a gather *source* implies a path from that
-document back to itself through the include graph, because gathering is
-deterministic per document. A diamond (`A → B`, `A → C`, `B → D`, `C → D`)
-is not a cycle and does not refuse — `D` has never been a gather source, so
-`D` is simply materialized once. Deduplication is the set semantics V1
-already applies through its `HashSet<string> _includedIds`.
+The rule is exact over the traversed graph, not approximate: edges are
+recorded whether or not the target is new at that step, so a reference
+that closes a loop through any *resolved non-row* document refuses. A
+diamond (`A → B`, `A → C`, `B → D`, `C → D`) is not a cycle and does not
+refuse — `D` is simply materialized once. Deduplication is the set
+semantics V1 already applies through its `HashSet<string> _includedIds`.
+
+One edge shape is deliberately absent from the graph: an edge whose
+target is a *row* of the result. Rows are level-0 gather sources, and V1
+puts every result row's id on the ignore set before gathering
+(`AddToIgnore`, `IncludeDocumentsCommand.cs:60`/`172-181`), so a
+reference back to a row truncates exactly as an unresolved reference
+does — it is never walked as a gather target, and a "cycle" that closes
+through a row answers instead of refusing. That truncation is V1 parity,
+pinned by
+`document_includes_truncate_a_cycle_that_closes_through_a_result_row`.
 
 **`QueryError::IncludeBoundExceeded`.** Depth bounds the number of levels,
 not the width. A single array field can carry an unbounded number of
@@ -252,7 +262,7 @@ the backbone.
 
 - **accepted-difference — exact identifiers.** V1 gathers and resolves
   include identifiers with `StringComparer.OrdinalIgnoreCase`
-  (`IncludeDocumentsCommand.cs:93`). V2's identifier rules are exact-match
+  (`IncludeDocumentsCommand.cs:58`, also `:180`). V2's identifier rules are exact-match
   with no case folding, consistent with the loads clause, the point read,
   and every other identifier comparison at this seam. Folding case would
   make an include disagree with the rest of the seam.
@@ -271,9 +281,15 @@ the backbone.
   a null binding on the projection side.
 - **accepted-difference — one family read per target.** Counter and
   time-series includes read through `FamilyStore::read`, one read per
-  distinct target. No performance claim is made about that shape, and none
-  may be: no benchmark lane was entered and no Benchmark Receipt exists for
-  this packet.
+  distinct target. The read count carries no numeric typed bound of its
+  own (unlike the document include's `MAX_INCLUDE_DOCUMENTS`): it is
+  page-window-bounded — one read per distinct target referenced by the
+  rows of the page being materialized, width bounded per read by the
+  family retention policy — and wall-clock bounded by the deadline
+  checkpoints every read passes through (`INCLUDE_READ_WINDOW` when the
+  plan carries no deadline). No performance claim is made about that
+  shape, and none may be: no benchmark lane was entered and no Benchmark
+  Receipt exists for this packet.
 
 ## Limits
 

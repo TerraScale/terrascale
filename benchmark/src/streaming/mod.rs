@@ -719,7 +719,12 @@ impl StreamBatch {
     /// The set is materialized from exactly the query rows sliced into
     /// this batch, so the union of every batch's include set equals the
     /// include set of one paged execution over the same plan and window.
-    /// A plan without include clauses, and every non-query source, carries
+    /// That union is a *set* equality: each batch's set is internally
+    /// canonical (ascending ids, sorted names), but a consumer
+    /// concatenating include documents across batches gets batch-local
+    /// order, not global-ascending order — re-sort on merge if the
+    /// order matters. A plan without include clauses, and every
+    /// non-query source, carries
     /// an empty set.
     #[must_use]
     pub const fn includes(&self) -> &crate::query::IncludeSet {
