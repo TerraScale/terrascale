@@ -292,6 +292,7 @@ export class SyncV2SessionError extends Error {
 
 const maxDrainBatches = 4096;
 const reconnectDelayDefault = 100;
+const maxSafeInteger = 9_007_199_254_740_991n;
 
 /**
  * A `terrascale.sync.v2` client session over the API host: HTTP session
@@ -754,7 +755,12 @@ function validateIdempotencyKey(key: string): void {
   }
 }
 
-/** Serializes one mutation value to the host's one-discriminator JSON value DTO. */
+/**
+ * Serializes one mutation value to the host's one-discriminator JSON value
+ * DTO. A bigint outside the exactly representable integer range is refused
+ * fail-closed: routing it through `Number` would silently round the durable
+ * write (9223372036854775809n would reach the host as 9223372036854776000).
+ */
 function jsonValueOf(value: SyncV2Value): Record<string, unknown> {
   if (value === null) {
     return { null: true };
@@ -763,6 +769,12 @@ function jsonValueOf(value: SyncV2Value): Record<string, unknown> {
     return { boolean: value };
   }
   if (typeof value === "bigint") {
+    if (value > maxSafeInteger || value < -maxSafeInteger) {
+      throw new SyncV2SessionError(
+        "invalid_mutation_value",
+        "an integer mutation value exceeds the exactly representable integer range",
+      );
+    }
     return { integer: Number(value) };
   }
   if (typeof value === "number") {

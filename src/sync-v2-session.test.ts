@@ -5,6 +5,7 @@ import {
   syncV2CanonicalCheckpoint,
   syncV2CheckpointFromBytes,
   syncV2CheckpointToBytes,
+  SyncV2SessionError,
   TerraScaleSyncV2Session,
   type SyncV2Fetch,
   type SyncV2Value,
@@ -500,6 +501,48 @@ describe("TerraScaleSyncV2Session over the API host HTTP/SSE surface", () => {
       true,
       "disconnect closes the host session",
     );
+  });
+
+  test("a bigint outside the safely representable integer range is refused before any request", async () => {
+    const host = new FixtureApiHost();
+    const session = createSession(host);
+    await session.connect();
+    const mutationsBefore = host.requests.filter((request) => request.path.endsWith("/mutations")).length;
+
+    // 2^63 + 1: the JSON DTO would flatten it through Number and silently
+    // corrupt the durable write (9223372036854775809 -> 9223372036854776000).
+    const beyondSafe = 9_223_372_036_854_775_809n;
+    await assert.rejects(
+      session.executeMutation({ Document: "d-01", Put: { seq: beyondSafe } }, "idem-big"),
+      (error: unknown) => {
+        assert.ok(error instanceof SyncV2SessionError, "the refusal is typed");
+        assert.equal(error.code, "invalid_mutation_value");
+        return true;
+      },
+    );
+    await assert.rejects(
+      session.executeMutation({ Document: "d-01", Put: { seq: -beyondSafe } }, "idem-big"),
+      (error: unknown) => error instanceof SyncV2SessionError,
+    );
+    assert.equal(
+      host.requests.filter((request) => request.path.endsWith("/mutations")).length,
+      mutationsBefore,
+      "the out-of-range value never reaches the host",
+    );
+
+    // The safe boundary itself still serializes: MAX_SAFE_INTEGER rides the
+    // integer discriminator exactly.
+    const applied = await session.executeMutation(
+      { Document: "d-02", Put: { seq: 9_007_199_254_740_991n } },
+      "idem-safe",
+    );
+    assert.equal(applied.Outcome, "applied");
+    const safeRequest = host.requests
+      .filter((request) => request.path.endsWith("/mutations"))
+      .at(-1);
+    const put = (safeRequest?.body as { change: { put: Array<{ name: string; value: unknown }> } }).change.put;
+    assert.deepEqual(put, [{ name: "seq", value: { integer: 9_007_199_254_740_991 } }]);
+    await session.disconnect();
   });
 
   test("construction fails closed without the backend-supplied tenant context", () => {
