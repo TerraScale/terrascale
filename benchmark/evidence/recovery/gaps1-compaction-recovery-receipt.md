@@ -13,9 +13,13 @@ directories.
 - Branch: `fleet/gaps1-2`, base `develop` @ `8e4c4c5`
 - Module family: `src/storage/**` (new `compaction.rs`, `retained.rs`,
   `compaction_tests.rs`; modified `file.rs`, `ledger.rs`, `root.rs`,
-  `faults.rs`, `mod.rs`), `src/engine/mod.rs`,
-  `src/replication/{retention,mod}.rs`,
-  `tests/recovery/compaction_public.rs`
+  `faults.rs`, `mod.rs`), `src/engine/{mod,tests}.rs`,
+  `src/replication/{retention,mod}.rs` and
+  `src/replication/retention_tests.rs`,
+  `tests/recovery/compaction_public.rs`. Repair loop 1 added the
+  two data-bearing engine declaration tests, the retained-declaration
+  rows, the retained-store length-field fail-closed bound, and this
+  receipt's drill-teeth section.
 - Decision record: `docs/storage/gaps1-storage-compaction.md` (D1..D7)
 - Storage format: `TBV2FORMAT` version 1, unchanged. GAP-S1 adds one
   file (`retained`) and shortens two existing artifacts under existing
@@ -34,16 +38,17 @@ From the worktree root, toolchain from `rust-toolchain.toml`,
 - `cargo fmt --all` — applied; `git diff` reviewed
 - `cargo +1.97.1 clippy --offline --locked --all-targets -- -D warnings`
   — pass, zero warnings
-- `cargo test --offline --locked` — pass (664 lib tests + all
-  integration targets, 0 failures; includes the 10 compaction drills and
-  the 5 public-seam tests below)
+- `cargo test --offline --locked` — pass (668 lib tests + all
+  integration targets, 0 failures; includes the 11 compaction drills,
+  the two data-bearing engine declaration tests, the
+  retained-declaration rows, and the 5 public-seam tests below)
 - `cargo test --workspace --offline --locked` — pass (every crate and
   integration target, 0 failures)
 - `bash scripts/check.sh` with `env -u RUSTUP_TOOLCHAIN`,
   `TERRABASE_V1_ROOT` pointing at the parent-supplied pinned read-only
   TerraBase V1 checkout and `TERRASCALE_WORKSPACE_ROOT` at the workspace
   root (both private host paths redacted) — exit 0, all repository
-  stages pass: fmt, check, release tests (664 lib tests and every
+  stages pass: fmt, check, release tests (668 lib tests and every
   integration target, including the compaction kill-point matrix, 0
   failures), clippy with warnings denied, doc build, parity inventory
   (258 items, schema 1.0), tooling tests, license metadata, secret scan,
@@ -104,6 +109,16 @@ post-rewrite retry converge — decision record D5).
   scannable); a checksum-flipped byte mid-file fails the open with
   `FormatMismatch` rather than serving a prefix of the evidence a
   declared bound rests on.
+- `an_impossible_declared_length_fails_the_open_and_a_legal_torn_tail_still_truncates`
+  — the length-field shape of the same discipline (added in repair
+  loop 1): a mid-file frame whose 4-byte length header is corrupted to
+  a value no legal record could carry fails the open with
+  `FormatMismatch` instead of being read as a torn tail and silently
+  truncating every later fact and bound record; a frame declaring a
+  legal length whose payload is cut off by EOF keeps the genuine
+  torn-tail reading and truncates to the verified prefix. Observed red
+  against the unfixed code (the open succeeded, `err() == None` — the
+  silent truncation), green after the maximum-legal-record bound.
 - `a_truncated_wal_with_a_corrupt_manifest_recovers_from_the_newest_root`
   — the D7 recovery drill: after a `Reclaim` pass (WAL empty), a corrupt
   manifest no longer has WAL frames to rebuild from, and recovery bases
@@ -134,16 +149,111 @@ post-rewrite retry converge — decision record D5).
   `RefusedUnservableWindow`, disclosed, safe phases still run.
 - `a_watermark_carrying_pass_leaves_the_handle_fail_closed_and_repeatable`
   — `Engine::compact_with_retention` with the public
-  `SharedTombstoneRetention` handle: no durable state seeds nothing,
-  declares nothing, the watermark stays observably untouched; repeatable
-  on the same location and after a restart.
+  `SharedTombstoneRetention` handle on an empty, never-journaled
+  engine: the prologue seeds nothing, the refused reclaim declares
+  nothing, the watermark stays observably untouched; repeatable on the
+  same location and after a restart. This is the refused/empty shape
+  only — the data-bearing declaration and prologue run in the engine
+  test named below.
 - `compaction_composes_with_the_public_backup_and_restore_seam` — the
   compacted engine stays a legal backup source (full then incremental,
   chain verifies two points, restore into a fresh target reopens as a
   real engine location, no path crosses the receipt seam).
-- `the_compaction_error_surface_is_typed` — the error surface is
-  `CompactionError::Storage`, never a panic or partial receipt (the
-  injected-failure path is exercised by the in-crate kill drills).
+- `a_healthy_pass_returns_a_typed_success_receipt` (renamed in repair
+  loop 1 from `the_compaction_error_surface_is_typed`, which asserted
+  only `Ok`) — a healthy pass returns a complete typed receipt, never a
+  panic or a partial one; the typed `CompactionError::Storage` branch
+  is exercised by the in-crate kill-point drills, which arm the
+  pass's fault points and assert the pass aborts with the error.
+
+## What the lane ran: the production declaration path with data (`src/engine/tests.rs`)
+
+- `compact_with_retention_declares_and_rederives_the_bound_on_a_data_bearing_engine`
+  (added in repair loop 1) — `Engine::compact_with_retention` on an
+  engine that committed real documents through the public transaction
+  seam (two puts, one delete whose tombstone is the tracked evidence,
+  one trailing put): the first pass reclaims the window `[1, 4)` and
+  the engine declares the bound to the watermark from the window it
+  just extracted — asserted are the declared bound, the held tombstone
+  (id, sequence, operation identity, durability), and
+  `non_deletion_through`; the engine then reopens and a plain `Reclaim`
+  pass with a fresh watermark handle proves the durable prologue alone
+  re-derives the bound, the fact, the non-deletion watermark, and the
+  origin-stamp degradation. Passed on its first run against the
+  existing implementation: it pins already-correct behavior that had
+  no coverage, not a defect fix.
+- `compact_with_retention_lowers_the_watermarks_floor_into_the_pass`
+  (`src/engine/tests.rs`, added in repair loop 1) — the floor the
+  watermark holds is lowered into the pass: a handle whose floor sits
+  above the tombstone makes the pass skip the below-floor fact durably
+  (disclosed count, nothing below-floor written to the store, bound
+  still declared), and the restarted engine's prologue re-derives the
+  bound while holding nothing. Green on first run — coverage gap
+  closed, not a behavioral repair.
+- `a_retained_declaration_is_gated_and_merges_non_deletion_facts_by_max`
+  (`src/replication/retention_tests.rs`, added in repair loop 1) —
+  direct rows for `TombstoneRetention::declare_history_bound_retained`:
+  `BoundBeyondWindow`, `EvidenceNotDurable`, `BoundRegression`, and the
+  non-deletion max-merge (a lower seen value and a `None` row never
+  lower a recorded fact, a higher one raises it). Also green on first
+  run — a coverage gap closed, not a behavioral repair.
+
+## Drill teeth: the mutation kills this lane observed
+
+Each drill class below was killed by one mutation, applied, observed
+red, and reverted (the warden's own demonstration is the first row;
+every other row was re-verified the same way in repair loop 1):
+
+- Kill-point matrix / divergence-gate exemption: removing
+  `entry.sequence >= durable_bound` from `history_reclaim_gate` makes
+  `kill_points_inside_the_compaction_sequence_lose_nothing` fail with
+  `RefusedDivergence { diverged: 3 }` where the retry must converge to
+  `Reclaimed { bound: 4 }`.
+- Reclaim phases: removing the WAL truncation makes
+  `reclaim_pass_truncates_the_wal_and_removes_superseded_roots` fail
+  "the checkpointed WAL is truncated" (829 bytes left, 0 expected).
+- History-reclaim window: skipping `rewrite_journal` makes
+  `history_reclaim_gives_up_the_window_and_holds_the_evidence_durally`
+  fail (servable start stays `Some(1)` instead of rising to `Some(4)`).
+- Divergence gate: removing the `diverged > 0` refusal makes
+  `history_reclaim_refuses_while_evidence_below_the_bound_is_diverged`
+  fail (`Reclaimed { bound: 3 }` where `RefusedDivergence { diverged: 1 }`
+  is required).
+- Retention floor: removing the below-floor skip makes
+  `history_reclaim_honors_the_retention_floor` fail "the below-floor
+  fact is disclosed" (0 counted, 1 expected).
+- Damage discipline: gating off the mid-file fail-closed branch in
+  `FileStorage::open` makes
+  `a_torn_retained_store_tail_is_truncated_and_midfile_damage_fails_closed`
+  fail (the damaged store opened instead of `FormatMismatch`); the new
+  length-overrun drill additionally has its own genuine red run above.
+  (A checksum-validation-disable mutation was absorbed by the parse
+  path — the drill's damage shape fails parsing independently — so the
+  classification gate is the mutation that kills.)
+- D7 recovery: skipping the newest-verifying-root fallback base makes
+  `a_truncated_wal_with_a_corrupt_manifest_recovers_from_the_newest_root`
+  fail "doc-1 survives".
+- Buffered tail (D6): checkpointing an empty table makes
+  `a_checkpoint_makes_a_buffered_tail_durable_and_resolvable` fail
+  "the checkpointed Buffered commit's data survived the process exit".
+- Replay identity (D6): making the replay lookup require a journal
+  record makes `replay_identity_survives_compaction` fail — the
+  same-identity retry was rejected as a conflict instead of replaying,
+  because the pass no longer serves the sequence the record named.
+- Store idempotency: removing the store's fact dedup makes
+  `a_killed_pass_between_the_store_and_the_journal_is_idempotent_on_retry`
+  fail "the durable fact was not re-appended" (1 appended, 0 expected).
+- Engine declaration: skipping the post-pass
+  `declare_history_bound_from_commits` makes the data-bearing engine
+  test fail "the bound is declared" (`None` vs `Some(4)`).
+- Engine prologue: skipping the durable prologue makes the same test
+  fail "the prologue restored the durably declared bound" (`None` vs
+  `Some(4)`).
+- Engine floor lowering: making `compact_with_retention` ignore the
+  handle's retention floor makes
+  `compact_with_retention_lowers_the_watermarks_floor_into_the_pass`
+  fail "the below-floor fact is not written durably" (1 written,
+  0 expected).
 
 ## Servable-history interaction (ticket criterion)
 
@@ -154,9 +264,12 @@ raises the first term physically (the rewritten journal opens with a
 high-water mark carrying the pre-pass head, so `journaled_high_water`
 never regresses) and the second by declaration with
 `durably_held = true` backed by the synced store — the GAP-R02 D2.3
-assertion made honest by this packet's durable retained-evidence store,
-driven in production by `Engine::compact_with_retention`'s prologue
-(restart re-derivation) and declaration.
+assertion made honest by this packet's durable retained-evidence store.
+The production driver is observed with data by
+`compact_with_retention_declares_and_rederives_the_bound_on_a_data_bearing_engine`
+(`src/engine/tests.rs`): the declaration half on the first pass, the
+prologue's restart re-derivation on the reopened engine; the
+public-seam file exercises the same driver's refused/empty shapes.
 
 ## No-loss statement
 

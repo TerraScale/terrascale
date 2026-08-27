@@ -2057,7 +2057,10 @@ fn compact_with_retention_declares_and_rederives_the_bound_on_a_data_bearing_eng
     // the window it just extracted.
     let retention = SharedTombstoneRetention::new();
     let receipt = engine
-        .compact_with_retention(CompactionRequest::new(CompactionPolicy::ReclaimHistory), &retention)
+        .compact_with_retention(
+            CompactionRequest::new(CompactionPolicy::ReclaimHistory),
+            &retention,
+        )
         .expect("the data-bearing pass runs");
     assert_eq!(receipt.history_reclaim(), HistoryReclaimOutcome::Reclaimed { bound: head });
     assert_eq!(receipt.journaled_head(), Some(head));
@@ -2112,6 +2115,60 @@ fn compact_with_retention_declares_and_rederives_the_bound_on_a_data_bearing_eng
             crate::replication::ReplicationClockStamp::new(0, 0),
             "re-derived evidence carries the origin stamp (stamps are process-local, D3)"
         );
+    });
+    assert_compaction_workload_intact(&reopened);
+    reopened.shutdown().expect("shuts down");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The floor the watermark holds is lowered into the pass (GAP-S1 D5): a
+/// handle whose floor sits above the tombstone makes the pass skip the
+/// below-floor fact durably — a disclosed count, never a silent drop —
+/// while the bound is still declared and nothing below-floor is written
+/// to the durable store.
+#[test]
+fn compact_with_retention_lowers_the_watermarks_floor_into_the_pass() {
+    let (dir, engine) = open_engine("compact-retention-floor");
+    seed_compaction_workload(&engine);
+    let retention = SharedTombstoneRetention::new();
+    retention
+        .with_lock(|state| state.advance_floor(StorageSequence::new(4)).expect("the floor rises"));
+
+    let receipt = engine
+        .compact_with_retention(
+            CompactionRequest::new(CompactionPolicy::ReclaimHistory),
+            &retention,
+        )
+        .expect("the pass runs");
+    assert_eq!(
+        receipt.history_reclaim(),
+        HistoryReclaimOutcome::Reclaimed { bound: StorageSequence::new(4) }
+    );
+    assert_eq!(receipt.evidence_extracted(), 1);
+    assert_eq!(receipt.evidence_retained(), 0, "the below-floor fact is not written durably");
+    assert_eq!(receipt.evidence_below_floor(), 1, "the skip is a disclosed count");
+    retention.with_lock(|state| {
+        assert_eq!(state.history_bound(), Some(StorageSequence::new(4)));
+        assert_eq!(state.held_evidence_count(), 0, "the watermark holds nothing below its floor");
+        assert_eq!(
+            state.non_deletion_through(&tenant("tenant-a")),
+            Some(StorageSequence::new(2)),
+            "the non-deletion fact is independent of the floor"
+        );
+    });
+    assert_compaction_workload_intact(&engine);
+    engine.shutdown().expect("shuts down");
+
+    // The durable store holds the bound and no below-floor fact: a fresh
+    // handle re-derived by the prologue after the restart holds nothing.
+    let reopened = reopen_engine(&dir);
+    let fresh = SharedTombstoneRetention::new();
+    reopened
+        .compact_with_retention(CompactionRequest::new(CompactionPolicy::Reclaim), &fresh)
+        .expect("the second pass runs");
+    fresh.with_lock(|state| {
+        assert_eq!(state.history_bound(), Some(StorageSequence::new(4)));
+        assert_eq!(state.held_evidence_count(), 0, "no below-floor fact was written durably");
     });
     assert_compaction_workload_intact(&reopened);
     reopened.shutdown().expect("shuts down");

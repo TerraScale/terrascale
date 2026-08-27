@@ -111,7 +111,15 @@ Damage discipline: a torn or checksum-failing **trailing** record is an
 interrupted append — truncated at open. The same damage **mid-file** fails
 the open with `FormatMismatch`: the store backs every below-bound
 declaration, and silently serving a prefix of the evidence would be
-delayed data loss, the exact defect GAP-R02 exists to prevent.
+delayed data loss, the exact defect GAP-R02 exists to prevent. The
+torn-tail reading is bounded by a maximum legal record size (facts and
+bound records have a small bounded payload): a length header declaring
+more than any legal record could carry cannot be an interrupted append —
+interrupted appends only ever produce prefixes of legal frames — so it
+is integrity damage wherever it sits, and the open fails closed instead
+of silently truncating every record behind a corrupted length field. A
+frame declaring a legal length whose payload is cut off by end of file
+keeps the torn-tail reading.
 
 Stamps: D-3 clock stamps are process-local lane state (GAP-R02's recorded
 residual); the store does not persist them. Evidence re-derived from the
@@ -272,6 +280,12 @@ below the loaded base sequence still receives its `Published` ledger
 record when recovery finds none (`record_publication` is idempotent), so
 the commit resolves `Committed` and a same-identity retry replays — with
 a verified manifest the guard no-ops, because the record already exists.
+The attribution in that record is **at the loaded base**: the root id it
+names is the base root the rebuild loaded, not the commit's own root
+identity, which the fallback path never observed (the loaded table
+already reflects the commit's writes, so no per-commit root is written
+for it either). The resolution and replay semantics are unchanged; only
+the recorded root identity is coarser than a normally published commit's.
 The commit's *journal* record is deliberately not reconstructed on this
 path: a correct write set cannot be derived without the pre-commit table,
 and a fabricated one would poison retained-evidence extraction. The
@@ -318,16 +332,32 @@ run.
 
 - Focused in-crate drills: `src/storage/compaction_tests.rs` — the
   kill-point matrix (D4), the divergence and unreadable-window gates
-  (D5), the retention floor, the store's damage discipline (D3), the
+  (D5), the retention floor, the store's damage discipline (D3,
+  including the corrupted-length-field shape), the
   corrupt-manifest-after-truncation recovery (D7), the Buffered-tail
   escalation and replay-identity preservation (D6), high-water and
   window survival across the rewrite, and kill-then-retry idempotency.
+- The production declaration path with data: `src/engine/tests.rs` —
+  `compact_with_retention_declares_and_rederives_the_bound_on_a_data_bearing_engine`
+  drives `Engine::compact_with_retention` on an engine that committed
+  real documents: the declaration (bound, held tombstone,
+  `non_deletion_through`) on the first pass, and the durable prologue's
+  restart re-derivation on the reopened engine;
+  `compact_with_retention_lowers_the_watermarks_floor_into_the_pass`
+  proves the handle's retention floor is lowered into the pass. The
+  watermark form the
+  prologue uses, `declare_history_bound_retained`, has direct rows in
+  `src/replication/retention_tests.rs` (its three refusal gates and the
+  non-deletion max-merge).
 - Public-seam tests: `tests/recovery/compaction_public.rs` — the typed
-  request and bounded progress/fact reporting, the history-reclaim
-  declaration with a watermark handle, restart re-derivation through the
-  prologue, and composition with the public backup/restore seam.
+  request and bounded progress/fact reporting, the fail-closed
+  unservable-window refusal and the fail-closed empty-handle shape of
+  `Engine::compact_with_retention`, and composition with the public
+  backup/restore seam. The data-bearing shapes live in the in-crate
+  tests above (`TenantScope` has no public constructor by design).
 - Recovery Receipt (exclusive lane): `evidence/recovery/
-  gaps1-compaction-recovery-receipt.md`.
+  gaps1-compaction-recovery-receipt.md`, including its per-drill-class
+  mutation-kill record.
 
 No performance claim is made anywhere in this packet: compaction facts
 are counts and byte lengths observed by tests, never speed statements

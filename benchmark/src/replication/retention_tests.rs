@@ -280,12 +280,19 @@ fn a_retained_declaration_is_gated_and_merges_non_deletion_facts_by_max() {
 
     // D2.3: the restored evidence must be asserted durable.
     let refused = retention
-        .declare_history_bound_retained(sequence(4), sequence(4), &[(tenant("tenant-a"), Some(sequence(2)))], false)
+        .declare_history_bound_retained(
+            sequence(4),
+            sequence(4),
+            &[(tenant("tenant-a"), Some(sequence(2)))],
+            false,
+        )
         .expect_err("the store-backed declaration must assert durability");
     assert_eq!(refused, RetentionRefusal::EvidenceNotDurable { bound: sequence(4) });
     assert_eq!(retention.history_bound(), None, "the bound did not move");
-    assert!(retention.non_deletion_through(&tenant("tenant-a")).is_none(),
-        "a refused declaration records no non-deletion fact");
+    assert!(
+        retention.non_deletion_through(&tenant("tenant-a")).is_none(),
+        "a refused declaration records no non-deletion fact"
+    );
     assert_eq!(retention.refusals().len(), 2, "each refusal is observable");
 
     // The accepted restoration records the bound and the store's facts.

@@ -4,11 +4,13 @@
 //! `Engine::open`, the crate-root compaction types, and — for the retention
 //! integration — the public `terrabase_v2::replication` watermark handle.
 //! `TenantScope` has no public constructor by design (Platform creates it
-//! after authorization), so the data-bearing compaction drills — the
-//! kill-point matrix, the divergence and retention-floor gates, the
-//! retained-evidence store's damage discipline — are proved by the in-crate
-//! suite at `src/storage/compaction_tests.rs`. This file proves what an
-//! external caller of the seam can construct and observe: the typed
+//! after authorization), so the data-bearing compaction drills are in-crate:
+//! the kill-point matrix, the divergence and retention-floor gates, and the
+//! retained-evidence store's damage discipline at
+//! `src/storage/compaction_tests.rs`, and the data-bearing retention-driving
+//! path (`Engine::compact_with_retention` with real commits, plus its
+//! restart re-derivation) at `src/engine/tests.rs`. This file proves what
+//! an external caller of the seam can construct and observe: the typed
 //! request, the bounded progress and fact reporting, the fail-closed
 //! history gate on an unservable journal, restart idempotency, and
 //! composition with the public backup/restore seam.
@@ -184,17 +186,21 @@ fn compaction_composes_with_the_public_backup_and_restore_seam() {
     std::fs::remove_dir_all(&target).ok();
 }
 
-/// The error surface is typed and closed: an injected durable failure is
-/// reported as [`CompactionError::Storage`], never as a panic or a partial
-/// success receipt.
+/// A healthy pass returns a typed success receipt through the public seam —
+/// never a panic and never a partial receipt. The scope is the healthy path
+/// only: this file cannot inject storage faults (the armable fault points are
+/// private to the crate), so the typed `CompactionError::Storage` branch is
+/// exercised by the in-crate kill-point drills at
+/// `src/storage/compaction_tests.rs`, and the data-bearing declaration path
+/// by `src/engine/tests.rs`.
 #[test]
-fn the_compaction_error_surface_is_typed() {
-    let (_dir, engine) = open_engine("typed-error");
+fn a_healthy_pass_returns_a_typed_success_receipt() {
+    let (_dir, engine) = open_engine("typed-success");
     let outcome: Result<CompactionReceipt, CompactionError> =
         engine.compact(CompactionRequest::new(CompactionPolicy::Reclaim));
     assert!(
         outcome.is_ok(),
-        "a healthy empty pass succeeds; the typed error path is exercised by the in-crate kill-point drills"
+        "a healthy empty pass succeeds with a complete receipt, never a panic or a partial one"
     );
     std::fs::remove_dir_all(&_dir).ok();
 }
