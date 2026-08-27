@@ -50,6 +50,9 @@ internal static class TerraScaleApiE2E
     private const string MissingAdministrationSupportNoteConfigurationReason =
         "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_ADMIN_BEARER_TOKEN, TERRASCALE_E2E_ADMIN_SUPPORT_NOTE_PROJECT_ID, TERRASCALE_E2E_ENABLE_ADMIN_SUPPORT_NOTE_CREATE=true, and TERRASCALE_E2E_ADMIN_SUPPORT_NOTE_CONFIRMED_ISOLATED_DISPOSABLE_ENVIRONMENT=true to run the irreversible support-note E2E test.";
 
+    private const string MissingClientJourneyConfigurationReason =
+        "Set TERRASCALE_E2E_BASE_URL, TERRASCALE_E2E_API_KEY, TERRASCALE_E2E_PROJECT_ID, TERRASCALE_E2E_DATABASE_ID, and TERRASCALE_E2E_ENVIRONMENT_ID to run the customer-journey SDK E2E test.";
+
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingAccessLifecycleLocks = new(StringComparer.Ordinal);
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> BillingCheckoutLocks = new(StringComparer.Ordinal);
@@ -157,6 +160,13 @@ internal static class TerraScaleApiE2E
         string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ENABLE_ADMIN_SUPPORT_NOTE_CREATE"), "true", StringComparison.OrdinalIgnoreCase) &&
         string.Equals(Environment.GetEnvironmentVariable("TERRASCALE_E2E_ADMIN_SUPPORT_NOTE_CONFIRMED_ISOLATED_DISPOSABLE_ENVIRONMENT"), "true", StringComparison.OrdinalIgnoreCase);
 
+    public static bool IsClientJourneyConfigured =>
+        BaseAddress is not null &&
+        !string.IsNullOrWhiteSpace(ApiKey) &&
+        !string.IsNullOrWhiteSpace(ProjectId) &&
+        !string.IsNullOrWhiteSpace(DatabaseId) &&
+        !string.IsNullOrWhiteSpace(EnvironmentId);
+
     public static bool HasCompleteAuthenticationConfiguration => IsConfigured || IsBearerConfigured;
 
     public static string SkipReason => MissingApiKeyConfigurationReason;
@@ -188,6 +198,8 @@ internal static class TerraScaleApiE2E
     public static string AdministrationPricingPlanUpdateSkipReason => MissingAdministrationPricingPlanUpdateConfigurationReason;
 
     public static string AdministrationSupportNoteSkipReason => MissingAdministrationSupportNoteConfigurationReason;
+
+    public static string ClientJourneySkipReason => MissingClientJourneyConfigurationReason;
 
     public static Uri? BaseAddress =>
         Uri.TryCreate(Environment.GetEnvironmentVariable("TERRASCALE_E2E_BASE_URL"), UriKind.Absolute, out var uri)
@@ -225,6 +237,10 @@ internal static class TerraScaleApiE2E
     public static string AdminSupportNoteProjectId => Required("TERRASCALE_E2E_ADMIN_SUPPORT_NOTE_PROJECT_ID");
 
     public static string ProjectId => Required("TERRASCALE_E2E_PROJECT_ID");
+
+    public static string DatabaseId => Required("TERRASCALE_E2E_DATABASE_ID");
+
+    public static string EnvironmentId => Required("TERRASCALE_E2E_ENVIRONMENT_ID");
 
     public static string Repository => Required("TERRASCALE_E2E_REPOSITORY");
 
@@ -454,4 +470,11 @@ internal sealed class RequiresTerraScaleAdministrationSupportNoteAttribute()
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
         Task.FromResult(!TerraScaleApiE2E.IsAdministrationSupportNoteConfigured);
+}
+
+internal sealed class RequiresTerraScaleClientJourneyAttribute()
+    : SkipAttribute(TerraScaleApiE2E.ClientJourneySkipReason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(!TerraScaleApiE2E.IsClientJourneyConfigured);
 }
