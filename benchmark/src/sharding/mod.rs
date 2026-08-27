@@ -58,6 +58,9 @@
 //! No sharded performance claim is made or implied.
 
 mod bucket;
+pub mod coordination;
+#[cfg(test)]
+mod coordination_tests;
 pub(crate) mod hash;
 mod indexing;
 mod migration;
