@@ -32,7 +32,6 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
     private readonly ConcurrentDictionary<string, ulong> nextSequences = new();
     private readonly object idGate = new();
     private ulong nextSession;
-    private ulong nextSubscription;
 
     /// <summary>Initializes the scripted engine at a UDS path.</summary>
     /// <param name="path">The socket path.</param>
@@ -221,12 +220,10 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                 case "BackboneSubscribeRequest":
                 {
                     var body = MessagePackSerializer.Deserialize<BackboneSubscribeRequest>(request.Body, TbepOptions.Strict);
-                    ulong id;
-                    lock (this.idGate)
-                    {
-                        id = ++this.nextSubscription;
-                    }
-
+                    // The real engine honors the caller-assigned
+                    // subscription identity (host.rs); so does the
+                    // fixture — the host's hub owns the id space.
+                    var id = body.SubscriptionId;
                     this.subscriptionTenants[id] = tenant!;
                     subscriptions.Add((id, body.Collections));
                     var from = body.From.Variant == "Sequence" ? (ulong)body.From.Payload! : 1ul;

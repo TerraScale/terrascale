@@ -59,19 +59,23 @@ public sealed class HostHarness : IAsyncDisposable
         return client;
     }
 
-    /// <summary>Posts JSON and reads the answer's status and body.</summary>
+    /// <summary>Sends a JSON request and reads the answer's status and body.</summary>
     /// <param name="client">The caller's client.</param>
     /// <param name="path">The path.</param>
     /// <param name="body">The request body, or <c>null</c> for none.</param>
     /// <param name="idempotencyKey">The idempotency key, when the operation is a mutation.</param>
+    /// <param name="method">The method; the default is GET without a body and POST with one.</param>
     /// <returns>The status and the parsed JSON document.</returns>
     public static async Task<(int Status, JsonDocument Body)> SendAsync(
         HttpClient client,
         string path,
         object? body = null,
-        string? idempotencyKey = null)
+        string? idempotencyKey = null,
+        string? method = null)
     {
-        using var request = new HttpRequestMessage(body is null ? HttpMethod.Get : HttpMethod.Post, path);
+        using var request = new HttpRequestMessage(
+            method is null ? (body is null ? HttpMethod.Get : HttpMethod.Post) : new HttpMethod(method),
+            path);
         if (body is not null)
         {
             request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");

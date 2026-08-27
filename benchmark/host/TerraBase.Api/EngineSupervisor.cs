@@ -585,23 +585,20 @@ public sealed class EngineSupervisor : IAsyncDisposable
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
-            if (File.Exists(path))
+            try
             {
-                try
-                {
-                    var probe = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-                    await probe.ConnectAsync(new UnixDomainSocketEndPoint(path), cancellationToken).ConfigureAwait(false);
-                    probe.Dispose();
-                    return;
-                }
-                catch (SocketException)
-                {
-                    // The engine created the socket but is not listening
-                    // yet; keep waiting within the bound.
-                }
+                // The readiness probe rides the sanctioned client (the
+                // SE-14 TBEP path) — the supervisor owns no raw socket:
+                // the engine serves when it accepts a client connection.
+                await using var probe = TbepChannel.Connect(path);
+                return;
             }
-
-            await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
+            catch (Exception failure) when (failure is SocketException or ObjectDisposedException)
+            {
+                // The engine socket does not serve yet; keep waiting
+                // within the bound.
+                await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
+            }
         }
 
         throw new EngineUnavailableException($"the engine socket {path} did not serve within the start bound");
