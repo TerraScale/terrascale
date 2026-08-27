@@ -51,17 +51,20 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   for (const job of ["bootstrap", "plan", "release-tests", "release-e2e", "release-artifacts", "release-contract-fixture", "release-version-availability", "candidate", "promote"]) {
     assert.match(jobDefinition(workflow, job), /forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main'/u);
   }
-  assert.match(jobDefinition(workflow, "bootstrap"), /secrets\.DEPLOY_CLI_READ_TOKEN/u);
+  // 0addfcf ("ci: pull the toolbox image from the TerraScale container
+  // registry") switched the bootstrap credential source to the org registry
+  // package token; the env-var name it feeds stayed DEPLOY_CLI_READ_TOKEN.
+  assert.match(jobDefinition(workflow, "bootstrap"), /secrets\.REGISTRY_TOKEN/u);
   assert.doesNotMatch(jobDefinition(workflow, "bootstrap"), /^    env:/mu);
   for (const job of ["pr-static", "pr-build"]) {
     assert.match(jobDefinition(workflow, job), /forgejo\.event_name == 'pull_request'/u);
     assert.doesNotMatch(jobDefinition(workflow, job), /forgejo\.base_ref/u);
-    assert.doesNotMatch(jobDefinition(workflow, job), /secrets\.[A-Z0-9_]+/u);
+    assert.doesNotMatch(jobSteps(workflow, job), /secrets\.[A-Z0-9_]+/u);
     assert.doesNotMatch(jobDefinition(workflow, job), /(?:CANDIDATE_STORE_TOKEN|DEPLOY_CLI_READ_TOKEN|NPM_TOKEN|candidate-store|upload-artifact)/u);
   }
   for (const job of ["pr-static", "pr-build"]) {
     assert.doesNotMatch(jobDefinition(workflow, job), /(?:needs:|download-artifact|terrascale-deploy)/u);
-    assert.doesNotMatch(jobDefinition(workflow, job), /secrets\.[A-Z0-9_]+/u);
+    assert.doesNotMatch(jobSteps(workflow, job), /secrets\.[A-Z0-9_]+/u);
     assert.equal((jobDefinition(workflow, job).match(/persist-credentials: false/gu) ?? []).length, 1);
   }
   assert.match(jobDefinition(workflow, "promotion-admission"), /name: promotion\/admission/u);
@@ -69,7 +72,8 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.base_ref \}\}" = main/u);
   assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.head_ref \}\}" = develop/u);
   assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.event\.pull_request\.head\.repo\.full_name \}\}" = "\$\{\{ forgejo\.repository \}\}"/u);
-  assert.doesNotMatch(jobDefinition(workflow, "promotion-admission"), /(?:secrets\.|candidate-store|upload-artifact|download-artifact|terrascale-deploy)/u);
+  assert.doesNotMatch(jobSteps(workflow, "promotion-admission"), /secrets\./u);
+  assert.doesNotMatch(jobDefinition(workflow, "promotion-admission"), /(?:candidate-store|upload-artifact|download-artifact|terrascale-deploy)/u);
   assert.match(jobDefinition(workflow, "pr-static"), /git -c credential\.helper= clone --depth 1 --branch develop https:\/\/git\.terrascale\.tech\/TerraScale\/TerraScale\.Documentation\.git Documentation/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm ci/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm run typecheck/u);
@@ -466,6 +470,16 @@ function jobDefinition(workflow: string, job: string): string {
   const remaining = workflow.slice(start);
   const next = remaining.slice(1).search(/\n  [a-z][a-z0-9-]+:\n/u);
   return next === -1 ? remaining : remaining.slice(0, next + 1);
+}
+
+/**
+ * A job definition with its `container:` block removed: since 0addfcf every
+ * container job pulls the org-registry toolbox image with
+ * secrets.REGISTRY_USER/REGISTRY_TOKEN, so the no-secrets guards below hold
+ * over the job's own steps, not the runner-level image pull.
+ */
+function jobSteps(workflow: string, job: string): string {
+  return jobDefinition(workflow, job).replace(/\n    container:\n(?:[ ]{6,}.*\n?)+/u, "");
 }
 
 function assertCredentialStepIsFinal(workflow: string, job: string, credential: string): void {
