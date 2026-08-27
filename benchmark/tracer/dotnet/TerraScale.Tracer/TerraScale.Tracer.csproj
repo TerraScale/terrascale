@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- TerraScale.Tracer — the SE-11 .NET SDK tracer: one console process -->
+  <!-- embedding the real TerraScale.DotNet sync-v2 client (the sibling     -->
+  <!-- TerraScale.DotNet checkout, read-only) against the TerraBase C# API  -->
+  <!-- host, driven by a scripted plan, emitting the same uniform JSONL     -->
+  <!-- observation log as the TypeScript tracer.                            -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <LangVersion>preview</LangVersion>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Terrabase.Tracer</RootNamespace>
+  </PropertyGroup>
+
+  <!-- The sibling TerraScale.DotNet checkout. The default resolves the
+       standard TerraScale workspace clone layout relative to this
+       worktree; TERRASCALE_DOTNET_SDK overrides it (a fresh checkout
+       records its own layout). Never edited, never committed to. -->
+  <PropertyGroup>
+    <TerraScaleDotNetSdk Condition="'$(TERRASCALE_DOTNET_SDK)' != ''">$(TERRASCALE_DOTNET_SDK)</TerraScaleDotNetSdk>
+    <TerraScaleDotNetSdk Condition="'$(TerraScaleDotNetSdk)' == ''">../../../../../../TerraScale.DotNet/src/TerraScale.DotNet/TerraScale.DotNet.csproj</TerraScaleDotNetSdk>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(TerraScaleDotNetSdk)" />
+  </ItemGroup>
+
+</Project>
