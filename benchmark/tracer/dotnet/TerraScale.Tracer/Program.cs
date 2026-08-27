@@ -74,7 +74,7 @@ public sealed class SdkTracer
     private readonly ObservationLog log;
     private readonly string gates;
     private readonly string checkpointFile;
-    private readonly CancellationTokenSource stopped = new();
+    private CancellationTokenSource stopped = new();
     private HttpClient? http;
     private TerraScaleSyncV2Client? client;
     private TerraScaleSyncV2Session? session;
@@ -326,7 +326,10 @@ public sealed class SdkTracer
 
             this.session = null;
             this.liveLoop = null;
-            this.stopped.TryReset();
+            // A fresh cancellation source per session: a reset of the
+            // cancelled one is not guaranteed once callbacks registered,
+            // and the next session must not inherit a cancelled token.
+            this.stopped = new CancellationTokenSource();
             this.http?.Dispose();
             this.http = null;
             this.Log(new { t = "closed" });

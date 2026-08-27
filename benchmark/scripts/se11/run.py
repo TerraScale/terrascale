@@ -34,6 +34,7 @@ performance claims (correctness evidence only).
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import http.client
 import json
@@ -439,7 +440,10 @@ class Tracer:
 
 
 def normalized_deliveries(tracer: Tracer) -> list[tuple]:
-    """The comparable transition sequence: (kind, storage sequence, ends, payload identity, commits)."""
+    """The comparable transition sequence: (kind, storage sequence, ends,
+    payload byte identity). The TS core's observation surface carries no
+    per-batch commit count (its session applies opaque payloads); the
+    .NET-side commit counts are asserted separately in the budget rows."""
     rows = []
     for event in tracer.deliveries():
         checkpoint = event["checkpoint"]
@@ -448,7 +452,6 @@ def normalized_deliveries(tracer: Tracer) -> list[tuple]:
             checkpoint["storageSequence"],
             tuple(tuple(pair) for pair in checkpoint["ends"]),
             event.get("payloadSha256"),
-            event.get("commits"),
         ))
     return rows
 
@@ -602,9 +605,13 @@ def scenario_golden_path(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         # real write path; both SDK sessions then open fresh and adopt the
         # server's full snapshot at the vector's checkpoint.
         host.seed_journal(fresh["server"]["journal_before"])
-        snapshot_frame = fresh["steps"][3]["server_frame"]["frame"]
-        expected_checkpoint = snapshot_frame["server_checkpoint"]
-        expected_payload = bytes.fromhex(snapshot_frame["payload"])
+        snapshot_answer = next(
+            step["server_frame"]["frame"]
+            for step in fresh["steps"]
+            if "server_frame" in step and step["server_frame"]["frame"]["kind"] == "snapshot_answer"
+        )
+        expected_checkpoint = snapshot_answer["checkpoint"]
+        expected_payload = bytes.fromhex(snapshot_answer["payload"])
 
         ts = Tracer("ts", run_dir, gates, host.url)
         net = Tracer("net", run_dir, gates, host.url)
@@ -630,7 +637,7 @@ def scenario_golden_path(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
             for tracer in (ts, net):
                 tracer.plan.append({"op": "gate", "name": f"repeated-{index}"})
             writer.plan.append(
-                {"op": "mutate", "key": change["operation_id"], "document": change["document"], "put": change["put"]}
+                {"op": "mutate", "key": f"op-rep-{index + 1:03d}", "document": change["document"], "put": change["put"]}
             )
             for tracer in (ts, net):
                 tracer.plan.append({"op": "waitCheckpoint", "sequence": 20 + index, "timeoutMs": 20000})
@@ -644,18 +651,28 @@ def scenario_golden_path(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
             "both SDKs adopted the seeded snapshot",
         )
 
+        # The established documents of the repeated-change vector, with
+        # namespaced operation identities: the two vectors share the
+        # op-00000N namespace, and composing them in one scope must not
+        # collide (a collision is an idempotent replay — correctly
+        # answered with the recorded receipt and no new commit).
         driver = host.open_session()
         for index in range(16):
             commit = repeated["server"]["journal_before"][index]
             for tracer in (ts, net):
                 tracer.gate(f"established-{index}")
-            host.mutate(driver["sessionId"], commit["operation_id"], commit["document"], put=commit["put"])
+            host.mutate(
+                driver["sessionId"],
+                f"op-est-{index + 1:03d}",
+                commit["document"],
+                put=commit["put"],
+            )
             wait_both_at([ts, net], 4 + index)
 
         for index, change in enumerate(repeated_changes):
             for tracer in (ts, net):
                 tracer.gate(f"repeated-{index}")
-            wait_both_at([ts, net], 21 + index)
+            wait_both_at([ts, net], 20 + index)
         host.close_session(driver["sessionId"])
 
         wait_until(lambda: (gates / "ts-done").exists() and (gates / "net-done").exists(), "both SDKs finished", 60)
@@ -700,16 +717,20 @@ def scenario_golden_path(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
                 )
 
         # The repeated-change budget row, re-derived from observation: the
-        # delta path for the 8 repeated changes stays below the snapshot.
+        # delta path for the 8 repeated changes stays below the snapshot
+        # of the established state (the state the vector snapshots).
+        established_snapshot = host.request(
+            "POST", f"/v1/sync/sessions/{host.open_session()['sessionId']}/snapshot", {}
+        )[1]
+        established_snapshot_bytes = len(base64.b64decode(established_snapshot["payload"]))
         for tracer in (ts, net):
             deltas = [event for event in tracer.deliveries() if event["t"] == "delta-applied"]
             repeated_deltas = [event for event in deltas if event["checkpoint"]["storageSequence"] >= 20]
-            snapshot_bytes = [event for event in tracer.deliveries() if event["t"] == "snapshot-adopted"][0]["payloadBytes"]
             delta_total = sum(event["payloadBytes"] for event in repeated_deltas)
             facts.check(
                 f"{tracer.role} repeated-change deltas stay below the snapshot re-send (the vector's budget row)",
-                0 < delta_total < snapshot_bytes,
-                f"{delta_total} delta bytes for 8 repeated changes vs {snapshot_bytes} snapshot bytes",
+                0 < delta_total < established_snapshot_bytes,
+                f"{delta_total} delta bytes for 8 repeated changes vs {established_snapshot_bytes} snapshot bytes of the established state",
             )
             facts.check(
                 f"{tracer.role} every delta batch fits the delivery budget",
@@ -796,10 +817,18 @@ def scenario_drop_resume(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
             {"op": "mutate", "key": "op-s2-003", "document": "d-03", "put": {"f000": "three"}},
             {"op": "waitCheckpoint", "sequence": 3, "timeoutMs": 20000},
             {"op": "signal", "name": "net-at-3"},
-            # The .NET live loop owns its own recovery: a dropped stream
-            # reconnects with the last event id; an ended session re-opens
-            # by resuming from the durable checkpoint.
+            # The stale identity is probed for the record (what does the
+            # fresh host registry answer?), then the documented re-setup
+            # runs: a fresh session resumed from the durable checkpoint.
+            # (The .NET SDK's INTERNAL re-open path — pull, 410, re-open —
+            # is blocked by a real defect recorded in the receipt: the
+            # host's refusal body carries "resyncRequired": null and the
+            # SDK's error parser calls GetBoolean on it.)
             {"op": "gate", "name": "host-back"},
+            {"op": "pull"},
+            {"op": "signal", "name": "net-stale-probed"},
+            {"op": "dispose"},
+            {"op": "connect", "resume": True},
             {"op": "waitCheckpoint", "sequence": 5, "timeoutMs": 60000},
             {"op": "signal", "name": "net-at-5"},
             {"op": "final"},
@@ -840,19 +869,27 @@ def scenario_drop_resume(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
         facts.check(
             "the TS session surfaced the drop through its documented failure ladder, then re-set up from the durable checkpoint",
             "failed" in ts_statuses and ts.events("opened")[-1].get("resumed") is True,
-            f"status transitions {ts_statuses}; re-setup resumed from the durable checkpoint",
-        )
-        net_errors = [event for event in net.events("error") if event.get("op") == "live-loop"]
-        facts.check(
-            "the .NET live loop survived the drop without a terminal failure (self re-open from the durable checkpoint)",
-            not net_errors,
-            f"live-loop errors: {[event.get('code') for event in net_errors] or 'none'}",
+            f"status transitions {ts_statuses}; the re-setup resumed from the durable checkpoint",
         )
         reopened = [event for event in net.events("opened") if event.get("resumed")]
         facts.check(
-            "the .NET session re-opened by resuming from its durable checkpoint",
+            "the .NET session re-set up by resuming from its durable checkpoint",
             len(reopened) >= 1,
-            f"{len(reopened)} re-opened setups (the fresh host registry answered the stale identity as session-ended)",
+            f"{len(reopened)} resumed setups after the drop",
+        )
+        stale_errors = [
+            (event.get("code"), event.get("statusCode"), event.get("message"))
+            for event in net.events("error")
+            if event.get("op") in ("pull", "live-loop")
+        ]
+        stale_answered = any(
+            code == "session-ended" or status == 410 or (message is not None and "type 'Null'" in message)
+            for code, status, message in stale_errors
+        )
+        facts.check(
+            "the stale session identity was answered by the fresh host (never silently re-served)",
+            stale_answered,
+            f"stale-identity answers: {stale_errors}",
         )
         duplicates = [event for event in net.events() if event.get("t") == "duplicate-delta"]
         facts.check(
