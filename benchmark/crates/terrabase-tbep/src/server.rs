@@ -15,7 +15,14 @@
 //! Concurrency model: the engine core stays synchronous and
 //! zero-dependency; all transport concern lives here. One thread per
 //! connection (reader loop), one writer thread per connection, and one
-//! drainer thread per backbone subscription. Server correlation ids are
+//! drainer thread per backbone subscription. Every outbound path — the
+//! connection's answers and the subscription drainers — hands off
+//! through one bounded channel per connection
+//! ([`OUTBOUND_DEPTH`] frames) with an explicit slow-consumer policy: a
+//! consumer a full depth behind is a slow consumer, the connection is
+//! closed (and the subscription's stream ends) rather than buffered
+//! without bound — never a blocked engine thread, never unbounded
+//! serving memory. Server correlation ids are
 //! assigned by the connection's reader loop from 1; unsolicited
 //! notification frames carry correlation `0` and causation equal to the
 //! subscription they belong to (the spec's supervision rule), so frame
@@ -30,8 +37,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::Sender;
-use std::sync::mpsc::channel;
+use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::TrySendError;
+use std::sync::mpsc::sync_channel;
 use std::thread::JoinHandle;
 
 use crate::envelope::EnvelopeError;
@@ -46,6 +54,14 @@ use crate::host::TbepNotification;
 
 /// The socket-file permission the UDS binding enforces: owner-only.
 pub const SOCKET_MODE: u32 = 0o600;
+
+/// The outbound channel depth per connection: the small, explicit bound
+/// a consumer may fall behind before the slow-consumer policy applies.
+/// A consumer a full depth behind has the connection closed under it
+/// (and each subscription's drainer stops) — the verdict stays bounded
+/// and typed instead of buffering without bound or blocking the
+/// engine's serving thread.
+pub const OUTBOUND_DEPTH: usize = 64;
 
 /// A binding failure.
 #[derive(Debug)]
@@ -153,9 +169,12 @@ enum Outbound {
 
 struct Connection {
     host: Arc<dyn TbepHost>,
-    outbound: Sender<Outbound>,
+    outbound: SyncSender<Outbound>,
     tenant: Option<String>,
     correlation: u64,
+    /// The slow-consumer verdict: the outbound channel filled to its
+    /// depth; the reader loop closes the connection when it is set.
+    slow: bool,
 }
 
 impl Connection {
@@ -164,10 +183,27 @@ impl Connection {
         self.correlation
     }
 
-    fn send(&self, frame: TbepFrame) {
-        // A closed channel means the writer ended first; the connection
-        // is done either way.
-        let _ = self.outbound.send(Outbound::Frame(frame));
+    /// Hands one unit to the writer thread under the slow-consumer
+    /// policy.
+    ///
+    /// A full bounded channel marks the connection a slow consumer (the
+    /// reader loop then ends it); a closed channel means the writer
+    /// ended first and the connection is done either way. Neither ever
+    /// blocks the engine's serving thread.
+    fn send_outbound(&mut self, unit: Outbound) {
+        if let Err(TrySendError::Full(_)) = self.outbound.try_send(unit) {
+            self.slow = true;
+        }
+    }
+
+    fn send(&mut self, frame: TbepFrame) {
+        self.send_outbound(Outbound::Frame(frame));
+    }
+
+    /// Queues the graceful close marker (best effort: a slow consumer
+    /// with a full channel is closed by the reader loop instead).
+    fn close(&mut self) {
+        self.send_outbound(Outbound::Close);
     }
 
     fn error_frame(&mut self, causation: u64, code: ErrorCode, detail: &str) {
@@ -191,7 +227,7 @@ fn serve_connection(stream: UnixStream, host: Arc<dyn TbepHost>) {
     // side closes the last borrowed fd when the connection ends, so a
     // peer blocked on read observes the close.
     drop(stream);
-    let (outbound_sender, outbound_receiver) = channel::<Outbound>();
+    let (outbound_sender, outbound_receiver) = sync_channel::<Outbound>(OUTBOUND_DEPTH);
     // A spawn failure ends this connection; the reader sees the closed
     // channel on its next answer and the loop exits.
     let _writer_spawn = std::thread::Builder::new().name("tbep-writer".into()).spawn(move || {
@@ -211,7 +247,7 @@ fn serve_connection(stream: UnixStream, host: Arc<dyn TbepHost>) {
         }
     });
     let mut connection =
-        Connection { host, outbound: outbound_sender, tenant: None, correlation: 0 };
+        Connection { host, outbound: outbound_sender, tenant: None, correlation: 0, slow: false };
     let mut reader = reader;
     loop {
         let frame = match TbepFrame::read_stream(&mut reader) {
@@ -219,7 +255,7 @@ fn serve_connection(stream: UnixStream, host: Arc<dyn TbepHost>) {
             Ok(None) => break,
             Err(EnvelopeError::UnsupportedVersion(_version)) => {
                 connection.error_frame(0, ErrorCode::UnsupportedVersion, "unknown wire version");
-                let _ = connection.outbound.send(Outbound::Close);
+                connection.close();
                 break;
             }
             Err(EnvelopeError::FrameTooLarge(bound)) => {
@@ -232,7 +268,7 @@ fn serve_connection(stream: UnixStream, host: Arc<dyn TbepHost>) {
                     ErrorCode::FrameTooLarge,
                     &format!("frame exceeds {bound}"),
                 );
-                let _ = connection.outbound.send(Outbound::Close);
+                connection.close();
                 break;
             }
             Err(
@@ -264,11 +300,20 @@ fn serve_connection(stream: UnixStream, host: Arc<dyn TbepHost>) {
             Err(EnvelopeError::Io(_)) => break,
         };
         let closing = dispatch(&mut connection, &frame);
-        if closing {
-            let _ = connection.outbound.send(Outbound::Close);
+        if closing || connection.slow {
+            connection.close();
             break;
         }
     }
+    if connection.slow {
+        // The slow-consumer verdict: the connection ends now, not after
+        // a backlog only a faster consumer could drain. The shutdown
+        // fails the writer's pending writes immediately, which ends the
+        // writer and (through the closed channel) every drainer of this
+        // connection.
+        let _ = reader.shutdown(std::net::Shutdown::Both);
+    }
+    drop(connection);
     // Closing the sender ends the writer thread after its queue drains.
 }
 
@@ -286,12 +331,20 @@ fn dispatch(connection: &mut Connection, frame: &TbepFrame) -> bool {
                 return false;
             }
             match connection.host.bind_channel(&body) {
-                Ok(response) => respond(connection, causation, response),
+                Ok(response) => {
+                    // The tenant binds the channel exactly when the host
+                    // accepted the binding (PD-2026-08-26-11 D1 fails
+                    // closed): a refused bind — a draining host refuses
+                    // every new binding — leaves the channel unbound, so
+                    // the next tenant-scoped frame is refused, never
+                    // served under a tenant the host never accepted.
+                    connection.tenant = Some(body.tenant);
+                    respond(connection, causation, response);
+                }
                 Err(error) => {
                     connection.error_frame(causation, error.error_code(), &error.detail());
                 }
             }
-            connection.tenant = Some(body.tenant);
         }
         TbepBody::SupervisionHealthRequest(_) => match connection.host.health() {
             Ok(response) => respond(connection, causation, response),
@@ -369,7 +422,15 @@ fn dispatch(connection: &mut Connection, frame: &TbepFrame) -> bool {
                 match connection.host.backbone_subscribe(&tenant, &body) {
                     Ok((response, feed)) => {
                         respond(connection, causation, response);
-                        spawn_drainer(connection.outbound.clone(), body.subscription_id, feed);
+                        // The drainer's lifetime is the connection's: it
+                        // ends when the feed closes or the bounded
+                        // outbound channel applies the slow-consumer
+                        // policy; the handle detaches on drop.
+                        drop(spawn_drainer(
+                            connection.outbound.clone(),
+                            body.subscription_id,
+                            feed,
+                        ));
                     }
                     Err(error) => {
                         connection.error_frame(causation, error.error_code(), &error.detail());
@@ -475,28 +536,144 @@ fn respond<B: Into<TbepBody>>(connection: &mut Connection, causation: u64, body:
 }
 
 fn spawn_drainer(
-    outbound: Sender<Outbound>,
+    outbound: SyncSender<Outbound>,
     subscription_id: u64,
     feed: std::sync::mpsc::Receiver<TbepNotification>,
-) {
-    let _ = std::thread::Builder::new().name("tbep-subscription".into()).spawn(move || {
-        for notification in feed {
-            let frame = match notification {
-                TbepNotification::Batch(body) => notification_frame(subscription_id, body.into()),
-                TbepNotification::Trigger(body) => notification_frame(subscription_id, body.into()),
-                TbepNotification::Closed(body) => notification_frame(subscription_id, body.into()),
-            };
-            if let Ok(frame) = frame
-                && outbound.send(Outbound::Frame(frame)).is_err()
-            {
-                break;
+) -> JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("tbep-subscription".into())
+        .spawn(move || {
+            for notification in feed {
+                let frame = match notification {
+                    TbepNotification::Batch(body) => {
+                        notification_frame(subscription_id, body.into())
+                    }
+                    TbepNotification::Trigger(body) => {
+                        notification_frame(subscription_id, body.into())
+                    }
+                    TbepNotification::Closed(body) => {
+                        notification_frame(subscription_id, body.into())
+                    }
+                };
+                if let Ok(frame) = frame {
+                    // The same bounded depth and slow-consumer policy as the
+                    // connection's answers: a consumer a full depth behind
+                    // ends this subscription's stream (the connection is
+                    // closed under it) rather than queueing without bound.
+                    if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
+                        outbound.try_send(Outbound::Frame(frame))
+                    {
+                        break;
+                    }
+                }
             }
-        }
-    });
+        })
+        .expect("the drainer thread spawns")
 }
 
 fn notification_frame(subscription_id: u64, body: TbepBody) -> Result<TbepFrame, EnvelopeError> {
     // Unsolicited pushes carry correlation 0 and causation naming the
     // subscription they belong to (the spec's notification rule).
     TbepFrame::seal(body, 0, subscription_id, None)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::TrySendError;
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    use crate::host::SyncDeliveryHost;
+
+    fn connection_over(outbound: SyncSender<Outbound>) -> Connection {
+        Connection {
+            host: Arc::new(SyncDeliveryHost::new(1)),
+            outbound,
+            tenant: None,
+            correlation: 0,
+            slow: false,
+        }
+    }
+
+    fn notification() -> TbepNotification {
+        TbepNotification::Trigger(crate::generated::TriggerNotification {
+            subscription_id: 42,
+            collection: "orders".into(),
+            sequence: 1,
+            operation_id: "op-01".into(),
+        })
+    }
+
+    fn outbound_frame() -> Outbound {
+        let frame = match notification() {
+            TbepNotification::Trigger(body) => notification_frame(42, body.into()),
+            _ => unreachable!("the fixture builds a trigger"),
+        }
+        .expect("seals");
+        Outbound::Frame(frame)
+    }
+
+    #[test]
+    fn a_full_outbound_channel_marks_the_connection_a_slow_consumer() {
+        // The outbound channel is bounded with a small depth; a writer
+        // that falls a full depth behind is a slow consumer and the
+        // connection is closed — never buffered without bound, never
+        // blocking the engine's serving thread.
+        let (outbound, receiver) = sync_channel::<Outbound>(1);
+        let mut connection = connection_over(outbound);
+        connection.send_outbound(outbound_frame());
+        assert!(!connection.slow, "the depth-one channel takes its first frame");
+
+        connection.send_outbound(outbound_frame());
+        assert!(connection.slow, "a full outbound channel marks the slow consumer");
+
+        // The queued unit is still delivered to the writer.
+        assert!(matches!(receiver.recv_timeout(Duration::from_secs(5)), Ok(Outbound::Frame(_))));
+    }
+
+    #[test]
+    fn the_drainer_stops_at_the_bounded_depth() {
+        // The subscription drainer hands off to the same bounded
+        // outbound channel: when the consumer is a full depth behind,
+        // the drainer stops (the subscription stream ends for that
+        // connection) instead of queueing every notification. The count
+        // is taken after the drainer ends, so the row is deterministic.
+        let (outbound, receiver) = sync_channel::<Outbound>(2);
+        let (feed, feed_receiver) = channel();
+        let drainer = spawn_drainer(outbound, 42, feed_receiver);
+        for _ in 0..6 {
+            feed.send(notification()).expect("the feed accepts the notification");
+        }
+        drop(feed);
+        drainer.join().expect("the drainer ends on the full channel");
+        let mut delivered = 0;
+        while receiver.recv_timeout(Duration::from_secs(5)).is_ok() {
+            delivered += 1;
+        }
+        assert_eq!(
+            delivered, 2,
+            "the drainer stops at the bounded depth, not after queueing every notification"
+        );
+    }
+
+    #[test]
+    fn a_disconnected_outbound_channel_is_not_a_slow_consumer() {
+        // A closed channel means the writer ended first; the connection
+        // is done either way, and the distinct failure is not recorded
+        // as the slow-consumer verdict.
+        let (outbound, receiver) = sync_channel::<Outbound>(1);
+        drop(receiver);
+        let mut connection = connection_over(outbound);
+        match connection.outbound.try_send(outbound_frame()) {
+            Err(TrySendError::Disconnected(_)) => {}
+            other => panic!("the dropped receiver disconnects, got {other:?}"),
+        }
+        connection.send_outbound(outbound_frame());
+        assert!(!connection.slow, "disconnected is not the slow-consumer verdict");
+    }
 }

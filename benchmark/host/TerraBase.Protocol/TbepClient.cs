@@ -18,6 +18,8 @@ public sealed class TbepClient : IAsyncDisposable
     private readonly Socket socket;
     private readonly NetworkStream stream;
     private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly object inboxLock = new();
+    private readonly Queue<TbepWire.Frame> inbox = new();
     private ulong correlation;
     private string? tenant;
 
@@ -160,13 +162,29 @@ public sealed class TbepClient : IAsyncDisposable
         return MessagePackSerializer.Deserialize<BackboneSubscribeResponse>(answer.Body, TbepOptions.Strict);
     }
 
-    /// <summary>Reads the next frame from the channel (an answer or an unsolicited notification).</summary>
+    /// <summary>
+    /// Reads the next frame from the channel (an answer or an unsolicited
+    /// notification). Frames a subscription streamed while a call was in
+    /// flight were buffered by that call; they surface here first, in
+    /// arrival order, before the socket is read again.
+    /// </summary>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>The next frame.</returns>
     /// <exception cref="TbepWire.WireException">A hostile frame arrived.</exception>
-    public async Task<TbepWire.Frame> ReadFrameAsync(CancellationToken cancellationToken = default) =>
-        await TbepWire.ReadFrame(this.stream).ConfigureAwait(false)
+    public async Task<TbepWire.Frame> ReadFrameAsync(CancellationToken cancellationToken = default)
+    {
+        lock (this.inboxLock)
+        {
+            if (this.inbox.Count > 0)
+            {
+                return this.inbox.Dequeue();
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return await TbepWire.ReadFrame(this.stream).ConfigureAwait(false)
             ?? throw new TbepException("the engine closed the channel");
+    }
 
     /// <summary>Reads one typed notification body off the channel.</summary>
     /// <typeparam name="T">The body type.</typeparam>
@@ -215,11 +233,17 @@ public sealed class TbepClient : IAsyncDisposable
                     throw new TbepException(operation, error.Code, error.Detail);
                 }
 
-                // Unsolicited notifications stay with the caller's next
-                // read; a strict client may dispatch them here when it
-                // owns subscriptions.
+                // An unsolicited notification (correlation 0, causation
+                // naming its subscription) that races this call is
+                // buffered for the client's next ReadFrameAsync — in
+                // arrival order — never consumed and discarded.
                 if (answer.Correlation == 0)
                 {
+                    lock (this.inboxLock)
+                    {
+                        this.inbox.Enqueue(answer);
+                    }
+
                     continue;
                 }
 

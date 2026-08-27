@@ -14,6 +14,7 @@
 use std::io::Read as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,9 +24,12 @@ use terrabase_tbep::SyncDeliveryHost;
 use terrabase_tbep::TbepFrame;
 use terrabase_tbep::TbepServer;
 use terrabase_tbep::generated::AdminStatusRequest;
+use terrabase_tbep::generated::BackboneAcknowledgeRequest;
 use terrabase_tbep::generated::BackboneSubscribeRequest;
+use terrabase_tbep::generated::BackboneUnsubscribeRequest;
 use terrabase_tbep::generated::ChannelBindRequest;
 use terrabase_tbep::generated::DocumentReadRequest;
+use terrabase_tbep::generated::ErrorCode;
 use terrabase_tbep::generated::MutationOutcome;
 use terrabase_tbep::generated::QueryCancelRequest;
 use terrabase_tbep::generated::ShutdownReason;
@@ -37,6 +41,7 @@ use terrabase_tbep::generated::SyncCheckpointAckRequest;
 use terrabase_tbep::generated::SyncDeltaPullRequest;
 use terrabase_tbep::generated::SyncField;
 use terrabase_tbep::generated::SyncMutationSubmitRequest;
+use terrabase_tbep::generated::SyncSessionCloseRequest;
 use terrabase_tbep::generated::SyncSessionSetupRequest;
 use terrabase_tbep::generated::SyncSnapshotPullRequest;
 use terrabase_tbep::generated::TbepBody;
@@ -373,4 +378,142 @@ fn two_connections_bind_independent_channels() {
     let _ = first.shutdown(std::net::Shutdown::Both);
     let _ = second.shutdown(std::net::Shutdown::Both);
     server.shutdown();
+}
+
+/// One additional driven client connection over an already bound socket
+/// (the tenant-isolation rows drive two bound channels against one
+/// server).
+struct Client {
+    stream: UnixStream,
+    correlation: u64,
+}
+
+impl Client {
+    fn connect(socket: &Path) -> Self {
+        Self { stream: UnixStream::connect(socket).expect("the client connects"), correlation: 0 }
+    }
+
+    fn call(
+        &mut self,
+        body: impl Into<TbepBody>,
+        idempotency: Option<&IdempotencyKey>,
+    ) -> TbepFrame {
+        self.correlation += 1;
+        let frame =
+            TbepFrame::seal(body, self.correlation, 0, idempotency).expect("the body seals");
+        frame.write_stream(&mut self.stream).expect("the client writes");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let answer = TbepFrame::read_stream(&mut self.stream)
+                .expect("the stream stays healthy")
+                .expect("a frame arrives");
+            if answer.causation() == self.correlation {
+                return answer;
+            }
+            // Unsolicited notifications interleave; the caller's
+            // subscriptions own those.
+            assert!(
+                answer.correlation() == 0,
+                "an unexpected solicited frame arrived: {:?}",
+                answer.kind()
+            );
+            assert!(std::time::Instant::now() < deadline, "the answer never arrived");
+        }
+    }
+
+    fn bind_channel(&mut self, tenant: &str) {
+        let answer = self
+            .call(ChannelBindRequest { principal: "backend".into(), tenant: tenant.into() }, None);
+        assert!(matches!(answer.body(), TbepBody::ChannelBindResponse(_)), "binds {tenant}");
+    }
+
+    fn error_code(answer: &TbepFrame) -> ErrorCode {
+        match answer.body() {
+            TbepBody::Error(error) => error.code,
+            other => panic!("expected the typed refusal, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_refused_bind_leaves_the_channel_unbound() {
+    // The channel binding fails closed (PD-2026-08-26-11 D1): a bind the
+    // host refuses — a draining host refuses every new binding — must not
+    // bind the tenant. The next tenant-scoped frame on that connection is
+    // refused as unbound, never served.
+    let fixture = Fixture::bind("refused-bind");
+    // Another connection drains the host; that connection then closes by
+    // the supervision contract, but the host state stays draining.
+    let mut drainer = Client::connect(&fixture.socket);
+    drainer.bind_channel("tenant-a");
+    let shutdown =
+        drainer.call(SupervisionShutdownRequest { reason: ShutdownReason::Operator }, None);
+    assert!(matches!(shutdown.body(), TbepBody::SupervisionShutdownResponse(_)));
+
+    let mut client = Client::connect(&fixture.socket);
+    let answer = client
+        .call(ChannelBindRequest { principal: "backend".into(), tenant: "tenant-a".into() }, None);
+    let code = Client::error_code(&answer);
+    assert_eq!(code, ErrorCode::OperationRefused, "the draining host refuses the bind");
+
+    // The refused bind must leave the channel unbound: the follow-up
+    // tenant-scoped frame is refused as unbound, not served.
+    let answer =
+        client.call(SyncSessionSetupRequest { collection: "orders".into(), resume: None }, None);
+    assert_eq!(Client::error_code(&answer), ErrorCode::UnboundChannel);
+}
+
+#[test]
+fn sessions_and_subscriptions_are_isolated_between_bound_tenants() {
+    // The engine enforces tenant isolation between bound channels
+    // (PD-2026-08-26-11 D1): a session or subscription belongs to the
+    // tenant whose channel created it, and every lifecycle frame —
+    // checkpoint ack, close, backbone acknowledge, unsubscribe — from
+    // another tenant's channel is refused with the typed refusal.
+    let fixture = Fixture::bind("tenant-isolation");
+    let mut owner = Client::connect(&fixture.socket);
+    let mut attacker = Client::connect(&fixture.socket);
+    owner.bind_channel("tenant-a");
+    attacker.bind_channel("tenant-b");
+
+    let setup_answer =
+        owner.call(SyncSessionSetupRequest { collection: "orders".into(), resume: None }, None);
+    let (session_id, checkpoint) = match setup_answer.body() {
+        TbepBody::SyncSessionSetupResponse(response) => {
+            (response.session_id, response.checkpoint.clone())
+        }
+        other => panic!("expected a session, got {other:?}"),
+    };
+    let subscribe_answer = owner.call(
+        BackboneSubscribeRequest {
+            subscription_id: 42,
+            collections: Some(vec!["orders".into()]),
+            from: SubscriptionStart::Live,
+        },
+        None,
+    );
+    assert!(matches!(subscribe_answer.body(), TbepBody::BackboneSubscribeResponse(_)));
+
+    // The attacker's channel cannot touch tenant-a's session.
+    let answer = attacker
+        .call(SyncCheckpointAckRequest { session_id, checkpoint: checkpoint.clone() }, None);
+    assert_eq!(Client::error_code(&answer), ErrorCode::SessionRefused);
+    let answer = attacker.call(SyncSessionCloseRequest { session_id }, None);
+    assert_eq!(Client::error_code(&answer), ErrorCode::SessionRefused);
+
+    // Nor tenant-a's subscription.
+    let answer = attacker
+        .call(BackboneAcknowledgeRequest { subscription_id: 42, through_sequence: 0 }, None);
+    assert_eq!(Client::error_code(&answer), ErrorCode::SubscriptionRefused);
+    let answer = attacker.call(BackboneUnsubscribeRequest { subscription_id: 42 }, None);
+    assert_eq!(Client::error_code(&answer), ErrorCode::SubscriptionRefused);
+
+    // The refused lifecycle frames changed nothing: the owner's channel
+    // still acks, unsubscribes, and closes its own session.
+    let answer = owner.call(SyncCheckpointAckRequest { session_id, checkpoint }, None);
+    assert!(matches!(answer.body(), TbepBody::SyncCheckpointAckResponse(_)));
+    let answer = owner.call(BackboneUnsubscribeRequest { subscription_id: 42 }, None);
+    assert!(matches!(answer.body(), TbepBody::BackboneUnsubscribeResponse(_)));
+    let answer = owner.call(SyncSessionCloseRequest { session_id }, None);
+    assert!(matches!(answer.body(), TbepBody::SyncSessionCloseResponse(_)));
 }

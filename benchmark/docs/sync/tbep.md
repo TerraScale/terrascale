@@ -196,7 +196,17 @@ Notable rows:
   sync-delivery family: server-ack-only, the idempotency key is the
   at-least-once retry identity, and a retried key answers the recorded
   receipt (PD-2026-08-26-12 D2). No optimistic patches exist on this
-  channel.
+  channel. The serving domain of its field values is **scalar** (the
+  adopted core's `SyncValue` knows null, bool, int, float, string): the
+  wire value type stays recursive (composites decode and re-encode
+  byte-exact in both languages — the corpus's composite row pins it),
+  and a composite field value is answered with the typed
+  `invalid_body` rejection, never silently coerced. The applied-key
+  registry of that retry identity is bounded: each scope retains the
+  most recent 128 receipts (the checkpoint window), drop-oldest, so a
+  retry older than that horizon — behind more than a full retained
+  window of mutations — may re-apply. That at-least-once caveat is the
+  documented cost of bounded serving memory.
 
 ## The channel binding and tenant isolation
 
@@ -211,6 +221,21 @@ backend-supplied context, bound once per connection:
 4. A tenant-scoped frame before the binding is refused
    (`unbound_channel`); a second bind on the same connection is refused
    (`already_bound`).
+
+The binding fails closed: the tenant binds the channel exactly when the
+engine accepted the binding — a refused bind (a draining engine refuses
+every new binding) leaves the channel **unbound**, so the next
+tenant-scoped frame on that connection is refused as `unbound_channel`,
+never served under a tenant the engine never accepted.
+
+Tenant isolation extends over the whole session and subscription
+lifecycle, engine-enforced: every sync session and backbone subscription
+records the tenant of the channel that created it, and a lifecycle frame
+— `sync.checkpoint_ack`, `sync.session_close`, `backbone.acknowledge`,
+`backbone.unsubscribe` — that names another tenant's session or
+subscription is refused with the typed refusal (`session_refused` /
+`subscription_refused`, detail `bound to another channel`) and changes
+nothing: the owner's channel keeps full lifecycle ownership.
 
 There is no authentication at this boundary by design — the boundary is
 local and same-user; customer authentication and authorization live
@@ -231,6 +256,13 @@ exclusively at the TerraScale Platform (PD-2026-08-26-11 D1).
   usable for the next frame; unrecoverable positions (unknown version,
   oversized declared prefix) close it. Graceful shutdown and end of
   stream close it cleanly.
+- The slow-consumer policy: every outbound path of one connection —
+  its answers and its subscription drainers — hands off through one
+  bounded channel of 64 frames. A consumer that falls a full depth
+  behind is closed out: the connection ends (never a blocked engine
+  thread, never unbounded serving memory) and each subscription's
+  stream stops. The same verdict the sync core's `slow-consumer`
+  budget row records, re-profiled onto the engine channel.
 
 ## Bytes-on-wire budget (PD-2026-08-26-13 D1)
 
@@ -277,17 +309,26 @@ delivery frames here carry the already-batched payloads.
   frames with their recorded failures, replayed by both languages).
 - The UDS end-to-end suite (`tests/server_uds.rs`) drives every frame
   family the shipped host owns over a real socket: channel binding
-  (including the `0600` permission and the unbound/already-bound
-  refusals), the sync-delivery family end to end (session, mutation
-  with idempotent retry, delta and snapshot pulls, checkpoint acks),
+  (including the `0600` permission, the unbound/already-bound
+  refusals, and the fail-closed refused bind), tenant isolation over
+  the session and subscription lifecycle (two bound channels), the
+  sync-delivery family end to end (session, mutation with idempotent
+  retry, delta and snapshot pulls, checkpoint acks),
   the backbone subscription streams (ordered batches then the
   content-free trigger), the topology/admin reads, the supervision
   contract, and the `query.cancel` live signal.
+- The C# interleaving row (`TerraBase.Protocol.Tests/
+  TbepClientInterleavingTests.cs`) pins the client's unsolicited-frame
+  contract against a scripted engine over a real UDS pair: the batch
+  and trigger that race an in-flight call are buffered and surface, in
+  arrival order, from the next `ReadFrameAsync` — never consumed and
+  discarded.
 
 ## Deployment shape and named integrator actions
 
 The engine process hosts one `TbepServer` behind a
-[`TbepHost`](../crate docs) seam. Two hosts ship:
+[`TbepHost`](../../crates/terrabase-tbep/src/host.rs) seam. Two hosts
+ship:
 
 - `SyncDeliveryHost` — the real serving half over `terrabase-sync-core`
   (the adopted base engine): sync sessions, budgeted delta and snapshot

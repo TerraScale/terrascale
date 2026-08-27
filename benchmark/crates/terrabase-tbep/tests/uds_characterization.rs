@@ -133,14 +133,11 @@ fn same_host_uds_round_trip_characterization() {
     println!("control_mean_us: {}", control.mean().as_micros());
     println!("control_p50_us: {}", control.percentile(1, 2).as_micros());
     println!("control_p99_us: {}", control.percentile(99, 100).as_micros());
-    println!("control_max_us: {}", control.0.last().map_or_default(std::time::Duration::as_micros));
+    println!("control_max_us: {}", control.0.last().map_or(0, std::time::Duration::as_micros));
     println!("mutation_mean_us: {}", mutations.mean().as_micros());
     println!("mutation_p50_us: {}", mutations.percentile(1, 2).as_micros());
     println!("mutation_p99_us: {}", mutations.percentile(99, 100).as_micros());
-    println!(
-        "mutation_max_us: {}",
-        mutations.0.last().map_or_default(std::time::Duration::as_micros)
-    );
+    println!("mutation_max_us: {}", mutations.0.last().map_or(0, std::time::Duration::as_micros));
 
     let _ = stream.shutdown(std::net::Shutdown::Both);
     server.shutdown();

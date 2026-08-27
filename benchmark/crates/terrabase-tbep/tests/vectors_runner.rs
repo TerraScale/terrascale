@@ -365,11 +365,36 @@ fn build_corpus() -> Vec<(String, Value)> {
         Some(&IdempotencyKey::new("op-42").expect("key")),
     )
     .expect("seals");
+    // The wire schema declares the full recursive value type, and the
+    // serving core's domain is scalar: a composite field value is legal
+    // on the wire (both languages must decode and re-encode it
+    // byte-exact) and is answered with the typed invalid_body rejection
+    // — never silently coerced.
+    let composite_mutation = TbepFrame::seal(
+        SyncMutationSubmitRequest {
+            session_id: 1,
+            document: "d-02".into(),
+            change: SyncChange::Put(vec![
+                SyncField {
+                    name: "tags".into(),
+                    value: TbepValue::Array(vec![TbepValue::String("x".into())]),
+                },
+                SyncField {
+                    name: "nested".into(),
+                    value: TbepValue::Object(vec![("a".into(), TbepValue::Integer(1))]),
+                },
+            ]),
+        },
+        13,
+        0,
+        Some(&IdempotencyKey::new("op-composite").expect("key")),
+    )
+    .expect("seals");
     corpus.push((
         "sync-session".into(),
         json!({
             "category": "sync-session",
-            "description": "The sync-delivery family (PD-2026-08-26-12): session setup and one server-ack mutation whose idempotency key is the at-least-once retry identity; no optimistic patches exist on this channel.",
+            "description": "The sync-delivery family (PD-2026-08-26-12): session setup and one server-ack mutation whose idempotency key is the at-least-once retry identity; no optimistic patches exist on this channel. The composite-valued mutation is legal on the wire (the value type is recursive) and is rejected by the serving host with the typed invalid_body outcome — the scalar serving domain, never silent coercion.",
             "protocol": "terrabase.engine.protocol",
             "wire_version": 1,
             "schema": "terrabase.engine.protocol/vector-corpus@1",
@@ -379,6 +404,7 @@ fn build_corpus() -> Vec<(String, Value)> {
                         SyncSessionSetupRequest { collection: "orders".into(), resume: Some(vec![1, 2, 3, 4]) },
                         6, 0, None).expect("seals")),
                 scenario_frame("SyncMutationSubmitRequest", &mutation),
+                scenario_frame("SyncMutationSubmitRequest", &composite_mutation),
             ],
             "adversarial": [],
         }),
