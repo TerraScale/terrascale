@@ -44,8 +44,8 @@ pub use engine::{
     BulkIngestRequest, CommitError, CommitOutcome, CommitReceipt, DurableResolution, Engine,
     EngineClosed, EngineConfig, EngineError, EngineOpenError, EngineShutdownError,
     IngestBatchReceipt, IngestConflictMode, IngestReceipt, IngestRefusal, IngestRefusalReason,
-    IngestStream, IngestTermination, Transaction, UnknownCommit, UnknownReason,
-    MAX_INGEST_BATCH_DOCUMENTS, MAX_INGEST_REFUSAL_DETAILS,
+    IngestStream, IngestTermination, MAX_INGEST_BATCH_DOCUMENTS, MAX_INGEST_REFUSAL_DETAILS,
+    Transaction, UnknownCommit, UnknownReason,
 };
 pub use families::{
     FamilyError, FamilyKind, FamilyReadContext, FamilyReadRequest, FamilyReadResult, FamilyStore,

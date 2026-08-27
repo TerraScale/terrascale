@@ -39,8 +39,8 @@ use std::{collections::BTreeMap, fmt};
 use crate::engine::{CommitError, CommitOutcome, Engine, EngineError, UnknownReason};
 use crate::operations::RequestValidationError;
 use crate::types::{
-    CollectionName, Deadline, Document, DocumentId, ExpectedVersion, LocalDurability,
-    OperationId, StorageSequence, TenantScope,
+    CollectionName, Deadline, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
+    StorageSequence, TenantScope,
 };
 
 /// The maximum number of documents one forming batch holds.
@@ -100,12 +100,7 @@ impl BulkIngestRequest {
         if deadline.is_expired() {
             return Err(RequestValidationError::InvalidDeadline);
         }
-        Ok(Self {
-            conflict,
-            durability,
-            batch_documents: MAX_INGEST_BATCH_DOCUMENTS,
-            deadline,
-        })
+        Ok(Self { conflict, durability, batch_documents: MAX_INGEST_BATCH_DOCUMENTS, deadline })
     }
 
     /// Selects the batch bound: how many documents one forming batch holds
@@ -503,12 +498,17 @@ impl<'engine> IngestStream<'engine> {
                 FlushOutcome::Stopped => return receipt,
             }
         }
-        // Source exhausted: publish the final partial batch. The
-        // cancellation gate runs once more so a stop between the last pull
-        // and this commit claims nothing for the forming documents.
+        // Source exhausted: publish the final partial batch. Both liveness
+        // gates run once more so a stop between the last pull and this
+        // commit claims nothing for the forming documents.
         if !forming.is_empty() {
             if cancellation.is_cancelled() {
                 receipt.termination = IngestTermination::Cancelled;
+                receipt.aborted += forming_pulls;
+                return receipt;
+            }
+            if request.deadline().is_expired() {
+                receipt.termination = IngestTermination::Deadline;
                 receipt.aborted += forming_pulls;
                 return receipt;
             }
@@ -619,7 +619,11 @@ fn flush_batch(
 }
 
 /// Folds an engine-level failure into the receipt and reports the stop.
-fn engine_stop(receipt: &mut IngestReceipt, forming_pulls: u64, error: EngineError) -> FlushOutcome {
+fn engine_stop(
+    receipt: &mut IngestReceipt,
+    forming_pulls: u64,
+    error: EngineError,
+) -> FlushOutcome {
     receipt.aborted += forming_pulls;
     receipt.termination = IngestTermination::Engine(error);
     FlushOutcome::Stopped

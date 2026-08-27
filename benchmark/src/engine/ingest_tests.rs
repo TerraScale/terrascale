@@ -18,8 +18,8 @@ use std::{
 
 use crate::engine::{
     BulkIngestRequest, CommitError, DurableResolution, Engine, EngineConfig, EngineError,
-    FaultPoint, IngestConflictMode, IngestRefusalReason, IngestTermination, UnknownReason,
-    MAX_INGEST_BATCH_DOCUMENTS, MAX_INGEST_REFUSAL_DETAILS,
+    FaultPoint, IngestConflictMode, IngestRefusalReason, IngestTermination,
+    MAX_INGEST_BATCH_DOCUMENTS, MAX_INGEST_REFUSAL_DETAILS, UnknownReason,
 };
 use crate::operations::RequestValidationError;
 use crate::types::{
@@ -88,13 +88,12 @@ fn read_value(engine: &Engine, scope: &TenantScope, id: &str) -> Option<String> 
     let transaction = engine
         .begin(scope, snapshot, OperationId::try_new("read-probe").expect("valid"))
         .expect("begins");
-    transaction
-        .read(&DocumentId::try_new(id).expect("valid identifier"))
-        .expect("reads")
-        .and_then(|document| match document.value() {
+    transaction.read(&DocumentId::try_new(id).expect("valid identifier")).expect("reads").and_then(
+        |document| match document.value() {
             DocumentValue::String(text) => Some(text.clone()),
             _ => None,
-        })
+        },
+    )
 }
 
 #[test]
@@ -104,7 +103,8 @@ fn bulk_ingest_commits_across_multiple_batches_and_reconciles() {
     let documents: Vec<Document> =
         (0..20).map(|index| document(&format!("users/{index}"), "users", "v")).collect();
 
-    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents, &signal());
+    let receipt =
+        engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents, &signal());
 
     assert_eq!(receipt.attempted(), 20);
     assert_eq!(receipt.committed(), 20);
@@ -147,8 +147,7 @@ fn bulk_ingest_never_materializes_the_whole_batch() {
         // transaction here, so a fresh snapshot observes every publication
         // the stream already made.
         let pull = pulls.fetch_add(1, Ordering::SeqCst) + 1;
-        let published =
-            probe.read_snapshot(&probe_scope).expect("probe snapshot").sequence().get();
+        let published = probe.read_snapshot(&probe_scope).expect("probe snapshot").sequence().get();
         let commits = published.saturating_sub(baseline);
         // Every document before the cursor is either committed in a closed
         // batch or inside the single forming batch (plus the document being
@@ -159,7 +158,8 @@ fn bulk_ingest_never_materializes_the_whole_batch() {
         document
     });
 
-    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(source, &signal());
+    let receipt =
+        engine.ingest_stream(&scope, request(8)).expect("stream opens").run(source, &signal());
 
     let violations = violations.lock().expect("violation log");
     assert!(
@@ -183,7 +183,8 @@ fn bulk_ingest_refuses_invalid_documents_without_aborting() {
         documents.push(document(&format!("users/{index}"), "users", "after"));
     }
 
-    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents, &signal());
+    let receipt =
+        engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents, &signal());
 
     assert_eq!(receipt.attempted(), 9);
     assert_eq!(receipt.committed(), 8, "the valid documents on both sides of the refusal commit");
@@ -215,7 +216,8 @@ fn bulk_ingest_duplicate_keys_last_write_wins_within_a_batch() {
         document("users/1", "users", "second"),
     ];
 
-    let receipt = engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents, &signal());
+    let receipt =
+        engine.ingest_stream(&scope, request(8)).expect("stream opens").run(documents, &signal());
 
     assert_eq!(receipt.attempted(), 3);
     assert_eq!(receipt.committed(), 3, "both pulls of the duplicate key are accounted committed");
@@ -235,8 +237,9 @@ fn bulk_ingest_create_only_rejects_on_existing_document_without_false_success() 
     // The pre-existing document makes the second batch's create expectation
     // conflict at the commit seam.
     let snapshot = engine.read_snapshot(&scope).expect("snapshot");
-    let mut seed =
-        engine.begin(&scope, snapshot, OperationId::try_new("seed").expect("valid")).expect("begins");
+    let mut seed = engine
+        .begin(&scope, snapshot, OperationId::try_new("seed").expect("valid"))
+        .expect("begins");
     seed.put(document("users/existing", "users", "old"), ExpectedVersion::Any).expect("stages");
     assert!(matches!(
         seed.commit(LocalDurability::Written),
@@ -259,7 +262,8 @@ fn bulk_ingest_create_only_rejects_on_existing_document_without_false_success() 
     .try_with_batch_documents(8)
     .expect("valid batch bound");
 
-    let receipt = engine.ingest_stream(&scope, create_only).expect("stream opens").run(documents, &signal());
+    let receipt =
+        engine.ingest_stream(&scope, create_only).expect("stream opens").run(documents, &signal());
 
     assert_eq!(receipt.attempted(), 12);
     assert_eq!(receipt.committed(), 8, "only the first batch committed");
@@ -319,7 +323,8 @@ fn bulk_ingest_unknown_commit_aborts_without_claiming_success() {
     .try_with_batch_documents(8)
     .expect("valid batch bound");
 
-    let receipt = engine.ingest_stream(&scope, synced).expect("stream opens").run(documents, &signal());
+    let receipt =
+        engine.ingest_stream(&scope, synced).expect("stream opens").run(documents, &signal());
 
     assert_eq!(receipt.attempted(), 3);
     assert_eq!(receipt.committed(), 0, "an unknown outcome is never counted committed");
@@ -405,8 +410,8 @@ fn bulk_ingest_expired_deadline_stops_the_stream_typed() {
         )
         .expect("stream opens");
     std::thread::sleep(Duration::from_millis(100));
-    let receipt =
-        stream.run((0..6).map(|index| document(&format!("users/{index}"), "users", "v")), &signal());
+    let receipt = stream
+        .run((0..6).map(|index| document(&format!("users/{index}"), "users", "v")), &signal());
 
     assert_eq!(receipt.attempted(), 0);
     assert_eq!(receipt.committed(), 0);
@@ -418,8 +423,10 @@ fn bulk_ingest_expired_deadline_stops_the_stream_typed() {
 fn bulk_ingest_empty_source_completes_with_zero_counts() {
     let engine = open_engine("empty");
     let scope = scope(&engine);
-    let receipt =
-        engine.ingest_stream(&scope, request(8)).expect("stream opens").run(std::iter::empty(), &signal());
+    let receipt = engine
+        .ingest_stream(&scope, request(8))
+        .expect("stream opens")
+        .run(std::iter::empty(), &signal());
 
     assert_eq!(receipt.attempted(), 0);
     assert_eq!(receipt.committed(), 0);
@@ -508,8 +515,12 @@ fn bulk_ingest_requests_reject_invalid_shapes() {
     let deadline = Deadline::after(Duration::from_nanos(1)).expect("valid at construction");
     std::thread::sleep(Duration::from_millis(2));
     assert_eq!(
-        BulkIngestRequest::try_new(IngestConflictMode::Overwrite, LocalDurability::Written, deadline)
-            .err(),
+        BulkIngestRequest::try_new(
+            IngestConflictMode::Overwrite,
+            LocalDurability::Written,
+            deadline
+        )
+        .err(),
         Some(RequestValidationError::InvalidDeadline),
         "an elapsed deadline is refused at construction"
     );
