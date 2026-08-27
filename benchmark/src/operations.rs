@@ -37,6 +37,8 @@ pub enum RequestValidationError {
     InvalidFamilyPayload,
     /// A typed query was invalid.
     InvalidQuery,
+    /// A typed document patch was invalid.
+    InvalidPatch,
 }
 
 /// Validation failures for V1-compatible query input.

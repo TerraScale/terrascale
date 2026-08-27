@@ -243,10 +243,10 @@ The typed refusal set is closed:
 | `PatchError::Construction(RequestValidationError)` | malformed path or patch shape, refused at construction before any data access |
 | `PatchError::MissingTarget` | the document does not exist (and the caller did not use `AddOrPatch`) — V1 parity, `JsonPatchCommand.cs:37-40` |
 | `PatchError::StaleTarget` | the observed version contradicts `expected` |
-| `PatchError::PathNotFound` | `Replace`/`Remove`/`Increment`-on-a-missing-intermediate addressed a path that does not exist |
-| `PatchError::TypeMismatch` | a segment addressed a container of the wrong kind (field into a non-object, index into a non-array, missing array parent), or `Increment` on a non-integer |
+| `PatchError::PathNotFound` | an addressed position does not exist: a `Replace`/`Remove` target, an out-of-bounds array index, or a walk through an absent member |
+| `PatchError::TypeMismatch` | a segment addressed a container of the wrong kind (field into a non-object, index into a non-array or a missing array — arrays are never materialized), or `Increment` on a non-integer |
 | `PatchError::ArithmeticOverflow` | checked `Increment` overflow |
-| `PatchError::Engine(EngineError)` | the underlying transaction read failed |
+| `PatchError::Engine(EngineError)` | the underlying transaction read or staging failed, including the document structural limits and collection schema enforcement the write path already runs |
 
 **No partial writes, by construction.** Every operation applies to a
 working clone; a refusal at any step abandons the clone and returns before
@@ -343,11 +343,17 @@ Everything lives in `src/engine/patch.rs`, exported through the engine
 module: `PatchPath` and its segments, `PatchOperation`, `DocumentPatch`,
 `AddOrPatch`, `PatchOutcome`, `PatchError`, and
 `apply_document_patch(&mut Transaction<'_>, ...)`. The engine write path
-itself needed no hook: the function composes `Transaction::read_in_collection`
+needed exactly one minimal hook: `Document::set_value` (`src/types.rs`),
+a crate-private in-place value replacement that keeps identity, collection,
+and metadata, so a staged patch carries the version its expectation was
+checked against. The seam otherwise composes `Transaction::read_in_collection`
 and `Transaction::put`, which already enforce limits, schemas, expected
-versions, and atomic publication. The `PublicOperation` registry, host, and
-MCP surfaces are deliberately untouched — those are the operations/adapter
-waves' regions, and this packet owns the typed seam beneath them.
+versions, and atomic publication; construction refusals add one
+`RequestValidationError::InvalidPatch` variant to the shared closed set,
+following the pattern `InvalidFamilyPayload` and `InvalidQuery` set. The
+`PublicOperation` registry, host, and MCP surfaces are deliberately
+untouched — those are the operations/adapter waves' regions, and this
+packet owns the typed seam beneath them.
 
 ## V1 differences recorded
 
