@@ -26,6 +26,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::identifier::validate_topology_identifier;
+use super::retention::{
+    RetentionAdvance, RetentionCompaction, RetentionConsumer, RetentionRefusal,
+    SharedTombstoneRetention, TombstoneRetention,
+};
 use super::status::member_health;
 use super::topology::MAX_CATCH_UP_BATCH;
 use super::transport::{FrameSelector, ReplicationFrame, ReplicationNetwork, StampedCommit};
@@ -50,6 +54,11 @@ use crate::types::{
 
 /// The bounded number of commits one catch-up round requests by default.
 pub(crate) const DEFAULT_CATCH_UP_BATCH: u32 = 32;
+
+/// The page size of the journal extraction a history-bound declaration
+/// performs (GAP-R02): the window is read in bounded pages so a wide
+/// declaration never materializes an unbounded read.
+const WINDOW_PAGE_LIMIT: u32 = 1024;
 
 /// The maximum number of tenant-isolation denials one member retains.
 ///
@@ -135,6 +144,13 @@ pub(crate) struct ReplicationMember {
     depositions: Vec<Deposition>,
     /// The last rejoin rejection, when rejoin validation refused admission.
     last_rejection: Option<RejoinRejection>,
+    /// The tombstone retention watermark (GAP-R02): the retention floor,
+    /// the retained deletion evidence, and the consumer floors this member
+    /// learns from the catch-up requests it answers. The shared handle is
+    /// the one watermark a backup plan or migration driver holds too.
+    retention: SharedTombstoneRetention,
+    /// The observable deletion-evidence servings this member performed.
+    evidence_servings: Vec<EvidenceServing>,
     activated: bool,
     answered: bool,
 }
@@ -206,6 +222,8 @@ impl ReplicationMember {
             fenced: Vec::new(),
             depositions: Vec::new(),
             last_rejection: None,
+            retention: SharedTombstoneRetention::new(),
+            evidence_servings: Vec::new(),
             activated: false,
             answered: false,
         };
@@ -221,6 +239,160 @@ impl ReplicationMember {
     /// Returns the member's Engine, or `None` while it is closed.
     pub(crate) fn engine(&self) -> Option<&Engine> {
         self.engine.as_ref()
+    }
+
+    /// Returns a point-in-time snapshot of the member's tombstone
+    /// retention watermark.
+    ///
+    /// The watermark's transitions are explicit typed operations
+    /// ([`Self::advance_tombstone_retention`],
+    /// [`Self::declare_history_bound`],
+    /// [`Self::observe_retention_consumer`]), never a side effect of the
+    /// data plane; a snapshot is a copy, and the live state moves only
+    /// through those operations.
+    pub(crate) fn tombstone_retention(&self) -> TombstoneRetention {
+        self.retention.snapshot()
+    }
+
+    /// Returns the shared handle to the member's watermark.
+    ///
+    /// The handle is the one watermark: a backup plan that carries it
+    /// reads the member's retained evidence and records its chain's anchor
+    /// in the same state the member's own transitions move.
+    pub(crate) fn shared_tombstone_retention(&self) -> SharedTombstoneRetention {
+        self.retention.clone()
+    }
+
+    /// Advances the tombstone retention floor.
+    ///
+    /// # Errors
+    ///
+    /// Returns the watermark's typed refusal — a consumer still needs
+    /// evidence below the candidate, the candidate regresses the floor, or
+    /// a configured cap would be passed — and the floor does not move.
+    pub(crate) fn advance_tombstone_retention(
+        &mut self,
+        candidate: StorageSequence,
+    ) -> Result<RetentionAdvance, RetentionRefusal> {
+        self.retention.with_lock(|watermark| watermark.advance_floor(candidate))
+    }
+
+    /// Declares that this member's publication history below `bound` has
+    /// been given up, extracting the window's deletion evidence from the
+    /// journal first.
+    ///
+    /// The extraction is the D2 rule: history is not given up until the
+    /// deletion evidence of the window is handed to the watermark, and the
+    /// `durably_held` assertion is what makes the retained set provable
+    /// after the journal no longer covers it. No engine component gives up
+    /// journal history today, so this is the seam the storage compaction
+    /// path (GAP-S1) will drive.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed with [`DeclareBoundError::Engine`] when the window's
+    /// commits cannot be extracted — the declaration is refused rather than
+    /// proceeding with an empty extraction, because a window whose facts
+    /// were never read is a window whose evidence was silently dropped —
+    /// and with [`DeclareBoundError::Refusal`] for the watermark's typed
+    /// refusal: a bound past the journal's durable head (decision D2.4 —
+    /// the window must fully exist, so the extraction never silently stops
+    /// at the journal's end), a regressing bound, or evidence that is not
+    /// durably held. A refused declaration does not move the bound.
+    pub(crate) fn declare_history_bound(
+        &mut self,
+        bound: StorageSequence,
+        durably_held: bool,
+    ) -> Result<RetentionCompaction, DeclareBoundError> {
+        let engine = self.engine.as_ref().ok_or(MemberError::EngineClosed)?;
+        let head = engine.journaled_high_water().map_err(MemberError::from)?.unwrap_or_default();
+        let from =
+            self.retention.with_lock(|watermark| watermark.history_bound()).unwrap_or_default();
+        let window = self.window_stamped_commits(from, bound, head)?;
+        self.retention
+            .with_lock(|watermark| {
+                watermark.declare_history_bound_from_commits(bound, head, &window, durably_held)
+            })
+            .map_err(DeclareBoundError::Refusal)
+    }
+
+    /// Records one consumer floor on the watermark: a backup chain's base
+    /// boundary or a migration's read floor.
+    ///
+    /// Member consumers are recorded automatically from the catch-up
+    /// requests this member answers; [`Self::seed_retention_consumers`]
+    /// seats the rest.
+    pub(crate) fn observe_retention_consumer(
+        &mut self,
+        consumer: RetentionConsumer,
+        floor: Option<StorageSequence>,
+    ) -> super::retention::ConsumerObservation {
+        self.retention.with_lock(|watermark| watermark.observe_consumer(consumer, floor))
+    }
+
+    /// Seeds the watermark's member consumers from the seated topology.
+    ///
+    /// Every member the view seats is registered for every committed
+    /// tenant at its known floor — `None` when it has never requested that
+    /// tenant — so an offline member holds the watermark from the moment it
+    /// is seated, not from the moment it first talks. Seeding never lowers
+    /// a recorded floor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::EngineClosed`] and the engine's typed
+    /// failures.
+    pub(crate) fn seed_retention_consumers(&mut self) -> Result<(), MemberError> {
+        let engine = self.engine.as_ref().ok_or(MemberError::EngineClosed)?;
+        let tenants = engine.committed_tenants().map_err(MemberError::from)?;
+        let seated = self
+            .config
+            .topology()
+            .members()
+            .filter(|member| *member != &self.id)
+            .cloned()
+            .collect::<Vec<_>>();
+        for member in seated {
+            for tenant in &tenants {
+                let known = self
+                    .advisory
+                    .get(&(tenant.clone(), member.clone()))
+                    .and_then(|progress| progress.applied_through);
+                // A member that has never requested this tenant is recorded
+                // with no floor: it needs all of that tenant's evidence.
+                self.retention.with_lock(|watermark| {
+                    watermark.observe_consumer(
+                        RetentionConsumer::Member {
+                            member: member.clone(),
+                            tenant: tenant.clone(),
+                        },
+                        known,
+                    );
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns the observable deletion-evidence servings this member
+    /// performed.
+    pub(crate) fn evidence_servings(&self) -> &[EvidenceServing] {
+        &self.evidence_servings
+    }
+
+    /// Returns the oldest sequence this member can serve history from: the
+    /// engine's journal bound, raised by any history bound the watermark
+    /// declared.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::EngineClosed`] and the engine's typed
+    /// failures.
+    pub(crate) fn effective_servable_start(&self) -> Result<Option<StorageSequence>, MemberError> {
+        let engine = self.engine.as_ref().ok_or(MemberError::EngineClosed)?;
+        let journal_start = engine.servable_history_start().map_err(MemberError::from)?;
+        let declared = self.retention.with_lock(|watermark| watermark.history_bound());
+        Ok(journal_start.max(declared))
     }
 
     /// Commits one write request locally at the explicit acknowledgement
@@ -662,6 +834,10 @@ impl ReplicationMember {
     /// Returns [`MemberError::CrossTenant`] when a request named another
     /// tenant, [`MemberError::EngineClosed`], and the engine's typed
     /// failures otherwise.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one serving pass: consumer floors, the tombstone half of a below-bound catch-up, and the batch itself"
+    )]
     pub(crate) fn serve_catch_up(
         &mut self,
         network: &mut ReplicationNetwork,
@@ -669,7 +845,6 @@ impl ReplicationMember {
     ) -> Result<usize, MemberError> {
         let tenant = scope.tenant().clone();
         self.refresh_clock_from(network.now());
-        let engine = self.engine.as_ref().ok_or(MemberError::EngineClosed)?;
         let requests = network.receive(&self.id, FrameSelector::Requests);
         let mut admitted = Vec::new();
         let mut denials = Vec::new();
@@ -697,14 +872,78 @@ impl ReplicationMember {
         }
         let mut served = 0;
         for (requester, after, limit) in admitted {
+            // Every answered request is a consumer-floor observation: this
+            // member learns each requester's durable progress in its own
+            // sequence space, which is what the retention floor is bounded
+            // by (GAP-R02 decision D3).
+            self.retention.with_lock(|watermark| {
+                watermark.observe_consumer(
+                    RetentionConsumer::Member { member: requester.clone(), tenant: tenant.clone() },
+                    after,
+                );
+            });
+            let servable_from = self.effective_servable_start()?;
+            let gap_below = catch_up_gap(after, servable_from);
+            // The tombstone half of a below-bound catch-up: when the
+            // watermark holds the deletion evidence above the requester's
+            // cursor and the window holds no put it missed, the retained
+            // facts complete the requester's history below the bound and
+            // the batch above serves from the bound instead of naming a
+            // gap.
+            let mut serving_after = after;
+            let mut gap_for_batch = gap_below;
+            if gap_below.is_some() {
+                let cursor = after.unwrap_or_default();
+                let covered = self.retention.with_lock(|watermark| {
+                    let floor = watermark.retention_floor();
+                    floor.get() <= cursor.get()
+                        && watermark
+                            .non_deletion_through(&tenant)
+                            .is_none_or(|through| through.get() <= cursor.get())
+                });
+                if covered {
+                    let (evidence, floor, non_deletion_through) =
+                        self.retention.with_lock(|watermark| {
+                            (
+                                watermark.deletion_evidence_above(&tenant, cursor),
+                                watermark.retention_floor(),
+                                watermark.non_deletion_through(&tenant),
+                            )
+                        });
+                    let bound = servable_from.unwrap_or_default();
+                    network
+                        .send(
+                            &self.id,
+                            &requester,
+                            ReplicationFrame::DeletionEvidenceBatch {
+                                source: self.id.clone(),
+                                tenant: tenant.clone(),
+                                evidence,
+                                servable_from: bound,
+                                retention_floor: floor,
+                                non_deletion_through,
+                            },
+                        )
+                        .map_err(|_| MemberError::TransportFull)?;
+                    self.record_evidence_serving(EvidenceServing::new(
+                        tenant.clone(),
+                        requester.clone(),
+                        bound,
+                    ));
+                    serving_after = Some(StorageSequence::new(bound.get().saturating_sub(1)));
+                    gap_for_batch = None;
+                }
+            }
             let batch = build_catch_up_batch(
-                engine,
+                self.engine.as_ref().ok_or(MemberError::EngineClosed)?,
                 &self.id,
                 &tenant,
-                after,
+                serving_after,
                 limit,
                 &self.operation_stamps,
                 self.hlc,
+                servable_from,
+                gap_for_batch,
             )?;
             network.send(&self.id, &requester, batch).map_err(|_| MemberError::TransportFull)?;
             served += 1;
@@ -763,6 +1002,11 @@ impl ReplicationMember {
         self.refresh_clock_from(network.now());
         let frames = network.receive(&self.id, FrameSelector::Deliveries);
         let mut batches = Vec::new();
+        // The tombstone half of the pass: retained evidence applied below
+        // the source's history bound (GAP-R02), counted separately from
+        // journaled commits so a report can name an evidence-only pass.
+        let mut evidence_applied = 0;
+        let mut evidence_duplicates = 0;
         for frame in frames {
             match frame {
                 ReplicationFrame::CatchUpBatch {
@@ -806,6 +1050,92 @@ impl ReplicationMember {
                         });
                     }
                     batches.push(CatchUpDelivery { source, commits, through, tenant_high_water });
+                }
+                ReplicationFrame::DeletionEvidenceBatch {
+                    source,
+                    tenant: evidence_tenant,
+                    evidence,
+                    servable_from,
+                    retention_floor,
+                    non_deletion_through,
+                } => {
+                    if evidence_tenant != tenant {
+                        self.record_denial(TenantDenial::new(
+                            DenialSeam::ApplyDelivery,
+                            tenant.clone(),
+                            evidence_tenant.clone(),
+                            source.clone(),
+                        ));
+                        return Err(MemberError::CrossTenant {
+                            scope: tenant,
+                            attempted: evidence_tenant,
+                        });
+                    }
+                    // The retained window must cover this member's cursor.
+                    // A source whose retention floor sits above the cursor
+                    // cannot prove the deletions this member missed, and a
+                    // put this member missed below the bound is not
+                    // reconstructable from evidence at all — both are the
+                    // typed gap failure, never a silent skip.
+                    let cursor = self
+                        .advisory
+                        .get(&(tenant.clone(), source.clone()))
+                        .and_then(|progress| progress.applied_through)
+                        .unwrap_or_default();
+                    if retention_floor.get() > cursor.get()
+                        || non_deletion_through.is_some_and(|through| through.get() > cursor.get())
+                    {
+                        return Err(MemberError::GapUnservable {
+                            tenant: tenant.clone(),
+                            cursor,
+                            servable_from,
+                        });
+                    }
+                    let mut applied = 0;
+                    let mut duplicates = 0;
+                    for fact in &evidence {
+                        // One retained fact replays as the delete it
+                        // published: the same ledger identity, version
+                        // binding, and key-state recording as a journaled
+                        // delivery, so a duplicate evidence delivery
+                        // resolves by identity and never deletes a key a
+                        // different write owns.
+                        let stamped = StampedCommit::new(
+                            fact.stamp(),
+                            PublishedCommit::new(
+                                tenant.clone(),
+                                fact.operation().clone(),
+                                fact.sequence(),
+                                fact.durability(),
+                                vec![PublishedWrite::Delete {
+                                    collection: fact.collection().cloned(),
+                                    id: fact.id().clone(),
+                                    version_at_delete: fact.version_at_delete(),
+                                }],
+                            ),
+                        );
+                        match self.apply_one(scope, &stamped, &source)? {
+                            ApplyStep::Applied => applied += 1,
+                            ApplyStep::Duplicate => duplicates += 1,
+                        }
+                    }
+                    // The evidence completed this member's history below
+                    // the bound (no put was missed), so its advisory
+                    // progress for this source may move to the bound: the
+                    // next request resumes incrementally from there.
+                    let progress = self.advisory.entry((tenant.clone(), source.clone())).or_insert(
+                        SourceProgress {
+                            source: source.clone(),
+                            applied_through: None,
+                            tenant_high_water: None,
+                        },
+                    );
+                    progress.applied_through = max_sequence(
+                        progress.applied_through,
+                        Some(StorageSequence::new(servable_from.get().saturating_sub(1))),
+                    );
+                    evidence_applied += applied;
+                    evidence_duplicates += duplicates;
                 }
                 ReplicationFrame::Push { source, range, epoch, tenant: push_tenant, commits } => {
                     if push_tenant != tenant {
@@ -856,6 +1186,8 @@ impl ReplicationMember {
         }
 
         let mut report = ApplyReport { batches: batches.len(), ..ApplyReport::default() };
+        report.applied += evidence_applied;
+        report.duplicates_resolved += evidence_duplicates;
         // The pass merge is keyed by (source, sequence): two sources' journals
         // are independent sequence spaces, and one source's sequence-1 commit
         // must never overwrite another's.
@@ -1559,6 +1891,87 @@ impl ReplicationMember {
         }
         self.fallbacks.push(fallback);
     }
+
+    /// Records one deletion-evidence serving, evicting the oldest beyond
+    /// the bound.
+    fn record_evidence_serving(&mut self, serving: EvidenceServing) {
+        if self.evidence_servings.len() >= MAX_OBSERVATION_LOGS {
+            self.evidence_servings.remove(0);
+        }
+        self.evidence_servings.push(serving);
+    }
+
+    /// Returns the journal's commits of every tenant in `(from, to)`, the
+    /// half-open extraction window a history-bound declaration hands to
+    /// the watermark, paired with the stamps this member minted or
+    /// recorded for them.
+    ///
+    /// This is the extraction window a history-bound declaration hands to
+    /// the watermark: the commits whose deletion evidence must be retained
+    /// before the history below the bound is given up. A commit this
+    /// member holds no stamp for is paired with the origin clock, the same
+    /// fallback the catch-up batch uses.
+    ///
+    /// The window must fully exist (decision D2.4): `to` past the journal's
+    /// durable head is refused before any page is read. The per-tenant
+    /// paging stops at each tenant's last commit — a sparse tenant is not
+    /// truncation — so the journal's head, not the paging, is the fact the
+    /// guard compares against. Without the guard the extraction would
+    /// silently stop at the journal's end and hand the watermark a window
+    /// that never covered `(head, to)`, giving that range up as if it were
+    /// empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeclareBoundError::Refusal`] with the recorded
+    /// [`RetentionRefusal::BoundBeyondWindow`] when `to` exceeds the
+    /// journal's durable head, [`DeclareBoundError::Engine`] when the
+    /// engine is closed, and the engine's typed failures otherwise.
+    fn window_stamped_commits(
+        &self,
+        from: StorageSequence,
+        to: StorageSequence,
+        journal_head: StorageSequence,
+    ) -> Result<Vec<StampedCommit>, DeclareBoundError> {
+        if to.get() > journal_head.get() {
+            let refusal = RetentionRefusal::BoundBeyondWindow { head: journal_head, candidate: to };
+            return Err(self.retention.with_lock(|watermark| {
+                watermark.observe_refusal(refusal.clone());
+                DeclareBoundError::Refusal(refusal)
+            }));
+        }
+        let engine = self.engine.as_ref().ok_or(MemberError::EngineClosed)?;
+        let mut window = Vec::new();
+        for tenant in engine.committed_tenants().map_err(MemberError::from)? {
+            let mut after = from;
+            loop {
+                let page = engine
+                    .tenant_commits(&tenant, after, WINDOW_PAGE_LIMIT)
+                    .map_err(MemberError::from)?;
+                if page.is_empty() {
+                    break;
+                }
+                let reached = page.last().is_none_or(|commit| commit.sequence().get() >= to.get());
+                for commit in &page {
+                    if commit.sequence().get() >= to.get() {
+                        continue;
+                    }
+                    let stamp = self
+                        .operation_stamps
+                        .get(commit.operation_id())
+                        .copied()
+                        .unwrap_or(ReplicationClockStamp::new(0, 0));
+                    window.push(StampedCommit::new(stamp, commit.clone()));
+                }
+                after = page.last().map_or(after, PublishedCommit::sequence);
+                if reached {
+                    break;
+                }
+            }
+        }
+        window.sort_by_key(|stamped| stamped.commit.sequence());
+        Ok(window)
+    }
 }
 
 /// One write request a member commits locally at a named acknowledgement
@@ -1862,6 +2275,10 @@ fn commit_locally(
 
 /// Builds one catch-up batch from the serving member's journal.
 #[allow(
+    clippy::too_many_arguments,
+    reason = "one batch assembly: the requester's cursor, the batch bound, the stamps, and the gap fact it resolved"
+)]
+#[allow(
     dead_code,
     reason = "driven and observed by the W4-REPLICATION R-1 lane tests; the production acquisition seam lands with R-2/R-3"
 )]
@@ -1873,9 +2290,9 @@ fn build_catch_up_batch(
     limit: u32,
     operation_stamps: &BTreeMap<OperationId, ReplicationClockStamp>,
     server_clock: ReplicationClockStamp,
+    servable_from: Option<StorageSequence>,
+    gap_below: Option<StorageSequence>,
 ) -> Result<ReplicationFrame, MemberError> {
-    let servable_from = engine.servable_history_start().map_err(MemberError::from)?;
-    let gap_below = catch_up_gap(after, servable_from);
     let (commits, through) = if gap_below.is_some() {
         // Serving below the servable bound would silently skip a gap, so
         // the batch is empty and the gap is named instead.
@@ -2107,6 +2524,49 @@ impl CatchUpFallback {
     }
 }
 
+/// One observable deletion-evidence serving (GAP-R02).
+///
+/// The serving is the tombstone half of a below-bound catch-up: the member
+/// answered a requester whose cursor fell below its effective history bound
+/// with the retained evidence above that cursor. It is observable so a lane
+/// or operator can tell evidence service from a plain batch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "driven and observed by the GAP-R02 tests; the production acquisition seam lands later"
+)]
+pub(crate) struct EvidenceServing {
+    tenant: TenantId,
+    requester: MemberId,
+    through: StorageSequence,
+}
+
+#[allow(
+    dead_code,
+    reason = "driven and observed by the GAP-R02 tests; the production acquisition seam lands later"
+)]
+impl EvidenceServing {
+    /// Records one serving from its facts.
+    fn new(tenant: TenantId, requester: MemberId, through: StorageSequence) -> Self {
+        Self { tenant, requester, through }
+    }
+
+    /// Returns the tenant the evidence belonged to.
+    pub(crate) fn tenant(&self) -> &TenantId {
+        &self.tenant
+    }
+
+    /// Returns the member the evidence was served to.
+    pub(crate) fn requester(&self) -> &MemberId {
+        &self.requester
+    }
+
+    /// Returns the history bound the evidence was retained below.
+    pub(crate) fn through(&self) -> StorageSequence {
+        self.through
+    }
+}
+
 /// One observable rejoin rejection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(
@@ -2240,6 +2700,29 @@ impl From<EngineError> for MemberError {
 impl From<EngineOpenError> for MemberError {
     fn from(error: EngineOpenError) -> Self {
         Self::EngineOpen(error)
+    }
+}
+
+/// The typed failure of one history-bound declaration (GAP-R02).
+///
+/// Extraction is part of the declaration, not a precondition of it: a
+/// window the engine cannot read fails the whole declaration, because
+/// treating an unreadable window as an empty one would give up history
+/// whose deletion evidence was never extracted — the exact delayed data
+/// loss the watermark exists to prevent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DeclareBoundError {
+    /// The engine's typed failure: the window could not be extracted, so
+    /// history was not given up.
+    Engine(MemberError),
+    /// The watermark refused the declaration; its refusal is recorded in
+    /// the watermark's bounded observation log.
+    Refusal(RetentionRefusal),
+}
+
+impl From<MemberError> for DeclareBoundError {
+    fn from(error: MemberError) -> Self {
+        Self::Engine(error)
     }
 }
 

@@ -79,6 +79,7 @@ use super::records::{MemberWriter, Record, SealedMember};
 use codec::{identity_of_body, parse_manifest, render_body, with_identity};
 
 use crate::engine::{CommitOutcome, Engine};
+use crate::replication::SharedTombstoneRetention;
 use crate::storage::PublishedCommit;
 use crate::types::{
     Cancellation, CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability,
@@ -182,12 +183,31 @@ pub(crate) struct SmugglerExportPlan {
     selection: ExportSelection,
     tenants: Option<Vec<TenantId>>,
     member_bound_bytes: u64,
+    retention: Option<SharedTombstoneRetention>,
 }
 
 impl SmugglerExportPlan {
     /// Plans an export of exactly the selected families.
     pub(crate) fn for_selection(selection: ExportSelection) -> Self {
-        Self { selection, tenants: None, member_bound_bytes: DEFAULT_MEMBER_BOUND_BYTES }
+        Self {
+            selection,
+            tenants: None,
+            member_bound_bytes: DEFAULT_MEMBER_BOUND_BYTES,
+            retention: None,
+        }
+    }
+
+    /// Carries the tombstone retention watermark the export serves retained
+    /// deletion evidence from (GAP-R02 decision D4).
+    ///
+    /// A tombstone-selected export then emits the journal's delete records
+    /// plus every retained fact below the source's declared history bound,
+    /// so a migrated store inherits the same deletion proof the source
+    /// holds. The export is state-based, so a put below the bound cannot
+    /// diverge it.
+    pub(crate) fn with_retention(mut self, retention: SharedTombstoneRetention) -> Self {
+        self.retention = Some(retention);
+        self
     }
 
     /// Limits the export to the selected tenants' scopes.
@@ -470,7 +490,21 @@ fn export_into(
             }
         }
         if plan.selection.contains(ExportFamily::Tombstones) {
-            let deletes = journal_deletes(engine, tenant, boundary)?;
+            // The retained half (GAP-R02): a delete below the source's
+            // declared history bound is emitted from the retained evidence
+            // and never re-read from a journal that no longer holds it, so
+            // a delete is written exactly once whichever half serves it.
+            let bound = plan
+                .retention
+                .as_ref()
+                .and_then(|retention| retention.with_lock(|watermark| watermark.history_bound()))
+                .filter(|bound| bound.get() <= boundary.get());
+            let mut deletes = journal_deletes(engine, tenant, boundary, bound)?;
+            if let Some(retention) = &plan.retention
+                && let Some(bound) = bound
+            {
+                deletes.extend(retained_deletes(retention, tenant, bound));
+            }
             let entry = tenant_counts.entry(tenant.clone()).or_default();
             entry.2 = deletes.len() as u64;
             for delete in deletes {
@@ -527,12 +561,41 @@ fn live_state_at(
     Ok(live)
 }
 
+/// Returns the retained deletion evidence of one tenant below the source's
+/// declared history bound, as archive delete records (GAP-R02).
+///
+/// Every retained fact above the export's floor and below its boundary is
+/// one record; a fact the journal still serves (the pre-compaction state of
+/// every engine today) is skipped here because `journal_deletes` already
+/// emitted it.
+fn retained_deletes(
+    retention: &SharedTombstoneRetention,
+    tenant: &TenantId,
+    bound: StorageSequence,
+) -> Vec<Record> {
+    retention
+        .with_lock(|watermark| {
+            watermark.deletion_evidence_above(tenant, StorageSequence::default())
+        })
+        .into_iter()
+        .filter(|fact| fact.sequence().get() < bound.get())
+        .map(|fact| Record::Delete {
+            tenant: fact.tenant().clone(),
+            collection: fact.collection().map(|name| name.as_str().to_owned()),
+            id: fact.id().as_str().to_owned(),
+            version_at_delete: fact.version_at_delete(),
+            durability: fact.durability(),
+        })
+        .collect()
+}
+
 /// Collects one tenant's journal delete records up to `boundary`, in
 /// journal order.
 fn journal_deletes(
     engine: &Engine,
     tenant: &TenantId,
     boundary: StorageSequence,
+    retained_from: Option<StorageSequence>,
 ) -> Result<Vec<Record>, SmugglerError> {
     let unavailable = |_| SmugglerError::TargetIncompatible;
     let mut deletes = Vec::new();
@@ -545,6 +608,12 @@ fn journal_deletes(
         let reached = page.last().is_none_or(|commit| commit.sequence().get() >= boundary.get());
         for commit in &page {
             if commit.sequence().get() > boundary.get() {
+                continue;
+            }
+            // A commit below the declared history bound belongs to the
+            // discarded window: its deletion evidence is served from the
+            // watermark instead.
+            if retained_from.is_some_and(|start| commit.sequence().get() < start.get()) {
                 continue;
             }
             for write in commit.writes() {

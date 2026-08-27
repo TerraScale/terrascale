@@ -700,3 +700,103 @@ fn import_applies_tombstones_as_engine_deletes() {
     assert_eq!(documents.len(), 3, "order-3 stays deleted by its imported tombstone");
     assert!(documents.iter().all(|document| document.id().as_str() != "order-3"));
 }
+
+// ---------------------------------------------------------------------------
+// Tombstone retention watermark (GAP-R02)
+// ---------------------------------------------------------------------------
+
+/// Builds one shared watermark whose history bound sits above the seeded
+/// delete, with the window's deletion evidence extracted from the journal.
+/// The bound is the journal's own durable head, so the window fully exists
+/// (decision D2.4).
+fn watermark_above_seeded_delete(engine: &Engine) -> crate::replication::SharedTombstoneRetention {
+    use crate::replication::{ReplicationClockStamp, SharedTombstoneRetention, StampedCommit};
+
+    let handle = SharedTombstoneRetention::new();
+    let bound = engine.journaled_high_water().expect("high water").unwrap_or_default();
+    let mut window = Vec::new();
+    let mut after = crate::types::StorageSequence::default();
+    loop {
+        let page = engine
+            .tenant_commits(&TenantId::try_new("alpha").expect("valid"), after, 1024)
+            .expect("journal page");
+        if page.is_empty() {
+            break;
+        }
+        let reached = page.last().is_none_or(|commit| commit.sequence().get() >= bound.get());
+        for commit in &page {
+            if commit.sequence().get() < bound.get() {
+                window.push(StampedCommit::new(ReplicationClockStamp::new(0, 0), commit.clone()));
+            }
+        }
+        after = page.last().map_or(after, crate::storage::PublishedCommit::sequence);
+        if reached {
+            break;
+        }
+    }
+    handle.with_lock(|watermark| {
+        watermark
+            .declare_history_bound_from_commits(bound, bound, &window, true)
+            .expect("the window declares cleanly");
+    });
+    handle
+}
+
+#[test]
+fn a_tombstone_export_carries_the_retained_evidence_below_the_bound() {
+    let (_dir, engine) = open_engine("gapr02-smuggler");
+    seed_source(&engine);
+    let destination = export_destination("gapr02-smuggler-dest");
+    let retention = watermark_above_seeded_delete(&engine);
+    retention.with_lock(|watermark| {
+        assert_eq!(watermark.held_evidence_count(), 1, "the seeded delete is retained");
+    });
+
+    // Without the watermark the export emits the journal's own delete
+    // record; with it, the retained fact below the declared bound stands in
+    // — one tombstone either way, never two.
+    let plain = run_smuggler_export(
+        &engine,
+        &super::SmugglerExportPlan::for_selection(ExportSelection::all()),
+        &destination,
+    )
+    .expect("exports without a watermark");
+    assert_eq!(plain.count(ExportFamily::Tombstones), 1);
+
+    let destination_two = export_destination("gapr02-smuggler-dest-two");
+    let retained = run_smuggler_export(
+        &engine,
+        &super::SmugglerExportPlan::for_selection(ExportSelection::all())
+            .with_retention(retention.clone()),
+        &destination_two,
+    )
+    .expect("exports with the watermark");
+    assert_eq!(
+        retained.count(ExportFamily::Tombstones),
+        1,
+        "the retained fact replaces the journal record, it does not duplicate it"
+    );
+    assert_eq!(
+        plain.identity(),
+        retained.identity(),
+        "the retained fact encodes the same logical delete, so the artifact is identical"
+    );
+
+    // A floor advanced past the retained fact removes it from the artifact:
+    // the export discloses exactly what the watermark holds.
+    retention.with_lock(|watermark| {
+        watermark.advance_floor(crate::types::StorageSequence::new(u64::MAX)).expect("no consumer");
+    });
+    let destination_three = export_destination("gapr02-smuggler-dest-three");
+    let discarded = run_smuggler_export(
+        &engine,
+        &super::SmugglerExportPlan::for_selection(ExportSelection::all()).with_retention(retention),
+        &destination_three,
+    )
+    .expect("exports after the floor advanced");
+    assert_eq!(
+        discarded.count(ExportFamily::Tombstones),
+        0,
+        "a discarded tombstone is not silently invented from the journal below the bound"
+    );
+}

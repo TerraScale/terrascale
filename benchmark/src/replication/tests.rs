@@ -50,7 +50,11 @@ fn location(tag: &str) -> PathBuf {
 }
 
 /// Opens one replication member over a fresh durable Engine location.
-fn open_member(tag: &str, id: &str, topology: &TopologyView) -> (PathBuf, ReplicationMember) {
+pub(super) fn open_member(
+    tag: &str,
+    id: &str,
+    topology: &TopologyView,
+) -> (PathBuf, ReplicationMember) {
     let dir = location(tag);
     std::fs::remove_dir_all(&dir).ok();
     let config = ReplicationConfig::try_new(topology.clone()).expect("valid replication config");
@@ -117,7 +121,7 @@ fn single_member_topology(region: &str, member: &str, range: &str) -> TopologyVi
 
 /// Two Regions, one Member each: `owner` owns `range`'s write path and
 /// `follower` replicates it from the publication history.
-fn two_member_topology(owner: &str, follower: &str, range: &str) -> TopologyView {
+pub(super) fn two_member_topology(owner: &str, follower: &str, range: &str) -> TopologyView {
     TopologyView::new()
         .with_region("r-alpha")
         .expect("valid region")
@@ -148,7 +152,7 @@ fn delete_request(range: &str, operation_name: &str, id: &str) -> ReplicationWri
 }
 
 /// Commits one document on a member and returns the publication sequence.
-fn member_put(
+pub(super) fn member_put(
     member: &mut ReplicationMember,
     tenant_name: &str,
     range: &str,
@@ -163,8 +167,23 @@ fn member_put(
         .sequence()
 }
 
+/// Commits one delete on a member and returns the publication sequence.
+pub(super) fn member_delete(
+    member: &mut ReplicationMember,
+    tenant_name: &str,
+    range: &str,
+    operation_name: &str,
+    id: &str,
+) -> StorageSequence {
+    let tenant_scope = scope(member, tenant_name);
+    member
+        .commit_write(&tenant_scope, delete_request(range, operation_name, id))
+        .expect("local delete commits")
+        .sequence()
+}
+
 /// Reads one tenant's documents through the member's Engine snapshot.
-fn documents_of(member: &ReplicationMember, tenant_name: &str) -> Vec<Document> {
+pub(super) fn documents_of(member: &ReplicationMember, tenant_name: &str) -> Vec<Document> {
     let tenant_scope = scope(member, tenant_name);
     let engine = member.engine().expect("engine open");
     let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
@@ -172,7 +191,7 @@ fn documents_of(member: &ReplicationMember, tenant_name: &str) -> Vec<Document> 
 }
 
 /// The journal-recorded commits of one tenant on a member.
-fn journal_of(member: &ReplicationMember, tenant_name: &str) -> Vec<PublishedCommit> {
+pub(super) fn journal_of(member: &ReplicationMember, tenant_name: &str) -> Vec<PublishedCommit> {
     member
         .engine()
         .expect("engine open")
@@ -181,7 +200,7 @@ fn journal_of(member: &ReplicationMember, tenant_name: &str) -> Vec<PublishedCom
 }
 
 /// Drives one explicit catch-up exchange: request, pump, serve, pump, apply.
-fn exchange_once(
+pub(super) fn exchange_once(
     network: &mut ReplicationNetwork,
     source: &mut ReplicationMember,
     source_tenant: &str,
