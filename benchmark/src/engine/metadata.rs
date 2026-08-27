@@ -85,8 +85,11 @@ const V1_DB_ID_BYTES: usize = 22;
 /// "unchanged" on equality and "current" otherwise, and a conditional load
 /// serves only an exact match. The contract deliberately carries no
 /// ordering; convergence ordering belongs to the `(stamp, Member)` total
-/// order of ADR-0004 D-3, which lives in the replication lane.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// order of ADR-0004 D-3, which lives in the replication lane. The type
+/// derives no `Ord`/`PartialOrd` on purpose: an order here would afford
+/// exactly the recency misuse D-3 assigns elsewhere (warden MINOR at
+/// integration, 2026-08-27).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DocumentVersionContract {
     version: u64,
     sequence: StorageSequence,

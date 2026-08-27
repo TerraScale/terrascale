@@ -1,9 +1,17 @@
 # Document metadata and change-vector contract decision record (GAP-D02, ticket #59)
 
-Status: **proposed** — recorded by the GAP-D02 builder for parent
-ratification. This record owns the V1→V2 change-identity mapping, the
-exists/HEAD read contract, the conditional-load (If-Match) contract, and
-the migration-mapping artifact the V1→V2 logical migration (#44) consumes.
+Status: **accepted** — ratified by the parent at integration, 2026-08-27,
+on review of D1-D4 against ADR-0004 D-3, the rejected alternatives, both
+gate verdicts (inspector GO with four NOTEs, warden PASS), and the warden's
+fresh receipts (658 tests green, full check.sh EXIT 0, STRICT V1
+QUALIFICATION PASSED). The warden's two MINORs are landed by the same
+integrator commit that flips this status: the `Ord`/`PartialOrd` derives are
+dropped from `DocumentVersionContract` so the type enforces D1's
+no-ordering rule instead of merely documenting it, and the fail-closed
+parse bounds are pinned by tests. This record owns the V1→V2 change-identity
+mapping, the exists/HEAD read contract, the conditional-load (If-Match)
+contract, and the migration-mapping artifact the V1→V2 logical migration
+(#44) consumes.
 The implementation in this packet lands behind this record; every changed
 path is inside this packet's write scope (`src/engine/metadata.rs`,
 `src/engine/metadata_tests.rs`, `src/engine/mod.rs` declarations,

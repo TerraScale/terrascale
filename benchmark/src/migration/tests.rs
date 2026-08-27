@@ -771,3 +771,72 @@ fn first_segment(source: &std::path::Path) -> PathBuf {
     names.sort();
     source.join(names.first().expect("a segment exists"))
 }
+
+/// A V1 document value carrying `@metadata.@change-vector`, V1's embedding
+/// of the change vector in the document body (GAP-D02 D1 wiring).
+fn metadata_value(name: &str, vector: &str) -> DocumentValue {
+    let mut fields = std::collections::BTreeMap::new();
+    fields.insert("name".to_owned(), DocumentValue::String(name.to_owned()));
+    let mut metadata = std::collections::BTreeMap::new();
+    metadata.insert("@change-vector".to_owned(), DocumentValue::String(vector.to_owned()));
+    fields.insert("@metadata".to_owned(), DocumentValue::Object(metadata));
+    DocumentValue::Object(fields)
+}
+
+/// A well-formed V1 vector: two entries, V1's exact grammar (base-26 tag,
+/// decimal etag, 22-character database identity).
+const TWO_ENTRY_VECTOR: &str = "A:5-AAAAAAAAAAAAAAAAAAAAAA, B:12-BBBBBBBBBBBBBBBBBBBBBB";
+
+#[test]
+fn migration_records_v1_change_vector_provenance_in_the_report() {
+    let (_dir, engine) = open_engine("cv-provenance");
+    let source = write_fixture(
+        "cv-provenance-src",
+        &[
+            document_record(
+                "alpha",
+                "Orders",
+                "order-1",
+                metadata_value("first", TWO_ENTRY_VECTOR),
+                1,
+            ),
+            document_record("alpha", "Orders", "order-2", text("no metadata here"), 1),
+        ],
+    );
+
+    let report = run_migration(&engine, &scope(&engine, "alpha"), &source, &default_options())
+        .expect("runs");
+
+    assert_eq!(report.converted_documents(), 2, "both documents convert as before");
+    assert_eq!(report.change_vectors_carried(), 1, "one carried a vector");
+    let arities = report.change_vector_arities();
+    assert_eq!(arities.len(), 1, "one arity observed");
+    assert_eq!(arities.get(&2), Some(&1), "the carried vector held two entries");
+    // Provenance is not identity: the migrated document's value carries the
+    // @metadata dictionary it arrived with, and its V2 identity is the one
+    // its first V2 publication assigned.
+    assert_eq!(live_documents(&engine, "alpha").len(), 2);
+}
+
+#[test]
+fn migration_fails_closed_on_a_malformed_carried_change_vector() {
+    let (_dir, engine) = open_engine("cv-corrupt");
+    let source = write_fixture(
+        "cv-corrupt-src",
+        &[document_record(
+            "alpha",
+            "Orders",
+            "order-1",
+            metadata_value("broken", "not a change vector"),
+            1,
+        )],
+    );
+
+    let report = run_migration(&engine, &scope(&engine, "alpha"), &source, &default_options());
+
+    assert_eq!(report.err(), Some(MigrationError::RecordCorrupt));
+    assert!(
+        live_documents(&engine, "alpha").is_empty(),
+        "the record fails closed before any write"
+    );
+}

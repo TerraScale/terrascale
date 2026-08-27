@@ -54,9 +54,10 @@
 //!   and applies as one increment, so a target that already holds the value
 //!   is a duplicate application, and duplicates are prevented by operation
 //!   identity, not by subtraction. Compare-exchange values convert through
-//!   the missing-key condition; the V1 raft index is not preserved (the
-//!   V1→V2 change-vector and metadata mapping is owned by GAP-D02, #59,
-//!   and is consumed here as a recorded dependency once it lands).
+//!   the missing-key condition; the V1 raft index is not preserved, and a
+//!   carried V1 change vector is recorded as provenance only under the
+//!   GAP-D02 decision record (`docs/engine/metadata-change-vector-contract.md`):
+//!   no V1 fact becomes a live V2 identity.
 //! - V1 storage-internal structures, unreferenced blobs, Platform-owned
 //!   configuration, and V1 index definitions are dropped with a count and
 //!   a reason — never silently. Unselected kinds are dropped as unselected,
@@ -95,11 +96,12 @@
 //! Decoding materializes one segment at a time; a streaming decoder is an
 //! open improvement, not a claim. Counter records apply as increments of
 //! the V1 value, which is exact on a fresh target and safe on a resumed
-//! one only because operation identity prevents double application. The
-//! V1→V2 change-vector and metadata mapping (V1 change vectors, etags) is
-//! owned by GAP-D02 (#59); until it lands, compare-exchange values convert
-//! through the missing-key condition and no V1 raft index or change vector
-//! is preserved — the dependency is recorded, not silently dropped. This
+//! one only because operation identity prevents double application. A
+//! document's V1 change vector, when its value carries one, is recorded in
+//! the run's report as provenance (arity histogram) under the GAP-D02
+//! decision record `docs/engine/metadata-change-vector-contract.md`; a
+//! vector that fails V1's grammar fails closed, and no V1 raft index or
+//! change vector becomes a live V2 identity. This
 //! module is proved by focused tests through the public seam. It makes no
 //! recovery, durability, or performance claim: formal Recovery Receipts
 //! belong to the exclusive recovery lane.
@@ -764,6 +766,9 @@ pub struct MigrationReport {
     loss: MigrationLossMatrix,
     resume_position: u64,
     verification: MigrationVerification,
+    /// The recorded V1 change-vector provenance of this run's resolved
+    /// document records (GAP-D02 D1): entry arity to document count.
+    change_vector_arities: BTreeMap<u32, u64>,
 }
 
 impl MigrationReport {
@@ -803,6 +808,22 @@ impl MigrationReport {
     #[must_use]
     pub fn collapsed_revisions(&self) -> u64 {
         self.collapsed_revisions
+    }
+
+    /// Returns how many of this run's resolved document records carried a
+    /// V1 change vector, recorded as provenance per GAP-D02 D1 — never as
+    /// identity: every migrated document receives a fresh V2 identity from
+    /// its first V2 publication.
+    #[must_use]
+    pub fn change_vectors_carried(&self) -> u64 {
+        self.change_vector_arities.values().copied().sum()
+    }
+
+    /// Returns the entry-arity histogram of the recorded V1 change-vector
+    /// provenance: entry count to document count.
+    #[must_use]
+    pub fn change_vector_arities(&self) -> &BTreeMap<u32, u64> {
+        &self.change_vector_arities
     }
 
     /// Returns the run's loss matrix.
@@ -934,6 +955,45 @@ fn applied_ordinals(
 /// The document identity a `LatestOnly` deferral tracks.
 type DocumentKey = (String, String, String);
 
+/// Records the V1 change-vector provenance of one resolved document record
+/// (GAP-D02 D1, `docs/engine/metadata-change-vector-contract.md`).
+///
+/// The vector is provenance, never identity: the migrated document's V2
+/// identity comes from its first V2 publication, exactly as before this
+/// wiring. A carried vector that fails V1's grammar fails closed as
+/// [`MigrationError::RecordCorrupt`] — it is never silently stripped.
+fn record_change_vector_provenance(
+    arities: &mut BTreeMap<u32, u64>,
+    record: &MigrationRecord,
+) -> Result<(), MigrationError> {
+    let MigrationRecord::Document { value, .. } = record else {
+        return Ok(());
+    };
+    let Some(text) = v1_change_vector_text(value) else {
+        return Ok(());
+    };
+    let vector =
+        crate::engine::V1ChangeVector::parse(&text).map_err(|_| MigrationError::RecordCorrupt)?;
+    let mapping = crate::engine::V1ChangeVectorMapping::from_vector(&vector);
+    *arities.entry(mapping.entry_count()).or_default() += 1;
+    Ok(())
+}
+
+/// Reads `@metadata.@change-vector` out of one document value — V1's
+/// embedding of the vector in the document body.
+fn v1_change_vector_text(value: &DocumentValue) -> Option<String> {
+    let DocumentValue::Object(fields) = value else {
+        return None;
+    };
+    let DocumentValue::Object(metadata) = fields.get("@metadata")? else {
+        return None;
+    };
+    match metadata.get("@change-vector")? {
+        DocumentValue::String(text) => Some(text.clone()),
+        _ => None,
+    }
+}
+
 /// The mutable state of one executing migration run.
 struct Run {
     manifest: MigrationManifest,
@@ -954,6 +1014,10 @@ struct Run {
     /// The deferred newest document record of the current key under the
     /// `LatestOnly` policy: its key, its record ordinal, and the record.
     deferred: Option<(DocumentKey, u64, MigrationRecord)>,
+    /// The recorded V1 change-vector provenance of this run's resolved
+    /// document records (GAP-D02 D1): an arity histogram, bounded by the
+    /// V1 vector entry bound.
+    change_vector_arities: BTreeMap<u32, u64>,
 }
 
 impl Run {
@@ -978,6 +1042,7 @@ impl Run {
             resume_position: 0,
             already_applied,
             deferred: None,
+            change_vector_arities: BTreeMap::new(),
         }
     }
 
@@ -1082,6 +1147,14 @@ impl Run {
             return Ok(());
         }
         self.check_cancellation()?;
+        // GAP-D02 D1 wiring: a carried V1 change vector is recorded as
+        // provenance before the record's write — a vector that fails V1's
+        // grammar fails closed here, never after a durable write. The
+        // report is per-run; a resumed run's provenance covers what that
+        // run resolved.
+        if kind == MigrationKind::Document {
+            record_change_vector_provenance(&mut self.change_vector_arities, record)?;
+        }
         let commit = Self::stage_and_commit(target, &scope, operation.clone(), record);
         match commit {
             Application::Applied => {
@@ -1195,6 +1268,7 @@ impl Run {
                 segment_digests_verified: true,
                 counts_reconciled: true,
             },
+            change_vector_arities: self.change_vector_arities.clone(),
         })
     }
 

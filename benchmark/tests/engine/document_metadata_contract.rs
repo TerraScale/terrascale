@@ -169,3 +169,44 @@ fn v1_change_vector_parse_fails_closed() {
         "an entry without its database identity is malformed"
     );
 }
+
+#[test]
+fn v1_change_vector_parse_bounds_fail_closed() {
+    // The contract's recorded bounds (GAP-D02, warden MINOR at integration):
+    // inputs past 4096 bytes or 64 entries fail closed as Malformed rather
+    // than parsing — pinned here, not just documented.
+    let oversized = format!("A:5-{}", "X".repeat(4_100));
+    assert_eq!(
+        V1ChangeVector::parse(&oversized).err(),
+        Some(V1ChangeVectorError::Malformed),
+        "a text past MAX_V1_CHANGE_VECTOR_BYTES fails closed"
+    );
+
+    let mut many = String::new();
+    for index in 0..65 {
+        if index > 0 {
+            many.push_str(", ");
+        }
+        many.push_str(&format!("A:{index}-{DB_ID_A}"));
+    }
+    assert!(
+        many.len() <= 4_096,
+        "the fixture stays inside the byte bound so the entry bound is what refuses it"
+    );
+    assert_eq!(
+        V1ChangeVector::parse(&many).err(),
+        Some(V1ChangeVectorError::Malformed),
+        "a vector past MAX_V1_CHANGE_VECTOR_ENTRIES fails closed"
+    );
+
+    // Exactly at the bounds still parses: the bounds are bounds, not
+    // off-by-one cliffs.
+    let mut at_bound = String::new();
+    for index in 0..64 {
+        if index > 0 {
+            at_bound.push_str(", ");
+        }
+        at_bound.push_str(&format!("A:{index}-{DB_ID_A}"));
+    }
+    assert_eq!(V1ChangeVector::parse(&at_bound).expect("64 entries parse").entries().len(), 64);
+}
