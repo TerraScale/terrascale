@@ -1173,6 +1173,12 @@ def scenario_slow_consumer(home: pathlib.Path, run_root: pathlib.Path) -> Facts:
             "(the pull is authoritative: both fast consumers reached every commit with zero duplicates)",
         )
     finally:
+        # The same tracer teardown the other scenarios run: on a green
+        # path the tracers have already wait()-exited, and on an
+        # orchestrator-side exception this ends them now instead of
+        # leaving them to age out on their plan timeouts.
+        ts.stop()
+        net.stop()
         host.stop()
     return facts
 
