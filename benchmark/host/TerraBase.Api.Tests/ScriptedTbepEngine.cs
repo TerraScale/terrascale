@@ -83,7 +83,7 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
         using var writeGate = new SemaphoreSlim(1, 1);
         var correlation = 0ul;
         var tenant = default(string?);
-        var subscriptions = new List<(ulong Id, string[]? Collections)>();
+        var subscriptions = new List<Subscription>();
         while (!cancellationToken.IsCancellationRequested)
         {
             TbepWire.Frame? request;
@@ -225,11 +225,17 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                     // fixture — the host's hub owns the id space.
                     var id = body.SubscriptionId;
                     this.subscriptionTenants[id] = tenant!;
-                    subscriptions.Add((id, body.Collections));
                     var from = body.From.Variant == "Sequence" ? (ulong)body.From.Payload! : 1ul;
                     var journal = this.journals.GetOrAdd(tenant!, []);
-                    var events = journal.Where(e => e.Sequence >= from).ToArray();
+                    // The replay is collection-filtered and the
+                    // subscription's cursor starts after it — both the
+                    // real engine's semantics.
+                    var events = journal
+                        .Where(@event => @event.Sequence >= from)
+                        .Where(@event => body.Collections is null || body.Collections.Contains(@event.Collection))
+                        .ToArray();
                     var start = events.Length > 0 ? events[^1].Sequence + 1 : from;
+                    subscriptions.Add(new Subscription(id, body.Collections, start));
                     await this.AnswerAsync(
                         stream,
                         writeGate,
@@ -252,9 +258,10 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                 case "BackboneAcknowledgeRequest":
                 {
                     var body = MessagePackSerializer.Deserialize<BackboneAcknowledgeRequest>(request.Body, TbepOptions.Strict);
-                    if (!this.subscriptionTenants.TryGetValue(body.SubscriptionId, out var owner) || owner != tenant)
+                    this.subscriptionTenants.TryGetValue(body.SubscriptionId, out var owner);
+                    if (owner is null || owner != tenant)
                     {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "subscription").ConfigureAwait(false);
+                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "subscription", owner).ConfigureAwait(false);
                         continue;
                     }
 
@@ -270,14 +277,15 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                 case "BackboneUnsubscribeRequest":
                 {
                     var body = MessagePackSerializer.Deserialize<BackboneUnsubscribeRequest>(request.Body, TbepOptions.Strict);
-                    if (!this.subscriptionTenants.TryGetValue(body.SubscriptionId, out var owner) || owner != tenant)
+                    this.subscriptionTenants.TryGetValue(body.SubscriptionId, out var owner);
+                    if (owner is null || owner != tenant)
                     {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "subscription").ConfigureAwait(false);
+                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "subscription", owner).ConfigureAwait(false);
                         continue;
                     }
 
                     this.subscriptionTenants.TryRemove(body.SubscriptionId, out _);
-                    subscriptions.RemoveAll(s => s.Id == body.SubscriptionId);
+                    subscriptions.RemoveAll(subscription => subscription.Id == body.SubscriptionId);
                     await this.NotifyAsync(
                         stream,
                         writeGate,
@@ -314,9 +322,10 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                 case "SyncDeltaPullRequest":
                 {
                     var body = MessagePackSerializer.Deserialize<SyncDeltaPullRequest>(request.Body, TbepOptions.Strict);
-                    if (!this.sessionTenants.TryGetValue(body.SessionId, out var owner) || owner != tenant)
+                    this.sessionTenants.TryGetValue(body.SessionId, out var owner);
+                    if (owner is null || owner != tenant)
                     {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session").ConfigureAwait(false);
+                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
                         continue;
                     }
 
@@ -349,9 +358,10 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                 case "SyncSnapshotPullRequest":
                 {
                     var body = MessagePackSerializer.Deserialize<SyncSnapshotPullRequest>(request.Body, TbepOptions.Strict);
-                    if (!this.sessionTenants.TryGetValue(body.SessionId, out var owner) || owner != tenant)
+                    this.sessionTenants.TryGetValue(body.SessionId, out var owner);
+                    if (owner is null || owner != tenant)
                     {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session").ConfigureAwait(false);
+                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
                         continue;
                     }
 
@@ -374,9 +384,10 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                 case "SyncCheckpointAckRequest":
                 {
                     var body = MessagePackSerializer.Deserialize<SyncCheckpointAckRequest>(request.Body, TbepOptions.Strict);
-                    if (!this.sessionTenants.TryGetValue(body.SessionId, out var owner) || owner != tenant)
+                    this.sessionTenants.TryGetValue(body.SessionId, out var owner);
+                    if (owner is null || owner != tenant)
                     {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session").ConfigureAwait(false);
+                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
                         continue;
                     }
 
@@ -392,9 +403,10 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                 case "SyncMutationSubmitRequest":
                 {
                     var body = MessagePackSerializer.Deserialize<SyncMutationSubmitRequest>(request.Body, TbepOptions.Strict);
-                    if (!this.sessionTenants.TryGetValue(body.SessionId, out var owner) || owner != tenant)
+                    this.sessionTenants.TryGetValue(body.SessionId, out var owner);
+                    if (owner is null || owner != tenant)
                     {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session").ConfigureAwait(false);
+                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
                         continue;
                     }
 
@@ -438,9 +450,10 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                 case "SyncSessionCloseRequest":
                 {
                     var body = MessagePackSerializer.Deserialize<SyncSessionCloseRequest>(request.Body, TbepOptions.Strict);
-                    if (!this.sessionTenants.TryGetValue(body.SessionId, out var owner) || owner != tenant)
+                    this.sessionTenants.TryGetValue(body.SessionId, out var owner);
+                    if (owner is null || owner != tenant)
                     {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session").ConfigureAwait(false);
+                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
                         continue;
                     }
 
@@ -496,13 +509,13 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
 
                 case "SupervisionShutdownRequest":
                     this.Draining = true;
-                    foreach (var (id, _) in subscriptions)
+                    foreach (var subscription in subscriptions)
                     {
                         await this.NotifyAsync(
                             stream,
                             writeGate,
-                            id,
-                            new SubscriptionClosed { SubscriptionId = id, Reason = SubscriptionCloseReason.ShuttingDown() }).ConfigureAwait(false);
+                            subscription.Id,
+                            new SubscriptionClosed { SubscriptionId = subscription.Id, Reason = SubscriptionCloseReason.ShuttingDown() }).ConfigureAwait(false);
                     }
 
                     await this.AnswerAsync(
@@ -541,7 +554,7 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
     private async Task BroadcastAsync(
         string tenant,
         string collection,
-        List<(ulong Id, string[]? Collections)> subscriptions,
+        List<Subscription> subscriptions,
         NetworkStream stream,
         SemaphoreSlim writeGate)
     {
@@ -552,38 +565,43 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
             events = [.. journal];
         }
 
-        foreach (var (id, collections) in subscriptions)
+        foreach (var subscription in subscriptions)
         {
-            if (collections is not null && !collections.Contains(collection))
+            if (subscription.Collections is not null && !subscription.Collections.Contains(collection))
             {
                 continue;
             }
 
-            var matching = events.Where(e => e.Collection == collection).ToArray();
+            // Only the events after the subscription's cursor — the
+            // real engine never re-batches what a consumer already
+            // received.
+            var matching = events
+                .Where(@event => @event.Sequence >= subscription.Next && @event.Collection == collection)
+                .ToArray();
             if (matching.Length == 0)
             {
                 continue;
             }
 
-            var next = matching[^1].Sequence + 1;
+            subscription.Next = matching[^1].Sequence + 1;
             await this.NotifyAsync(
                 stream,
                 writeGate,
-                id,
+                subscription.Id,
                 new SubscriptionBatch
                 {
-                    SubscriptionId = id,
+                    SubscriptionId = subscription.Id,
                     FromSequence = matching[0].Sequence,
                     Events = matching,
-                    NextSequence = next,
+                    NextSequence = subscription.Next,
                 }).ConfigureAwait(false);
             await this.NotifyAsync(
                 stream,
                 writeGate,
-                id,
+                subscription.Id,
                 new TriggerNotification
                 {
-                    SubscriptionId = id,
+                    SubscriptionId = subscription.Id,
                     Collection = collection,
                     Sequence = matching[^1].Sequence,
                     OperationId = matching[^1].OperationId,
@@ -593,9 +611,23 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
 
     private static byte[] CheckpointOf(ulong commits) => [(byte)(commits & 0xff), 0x6f, 0x70];
 
-    private async Task RefuseLifecycleAsync(NetworkStream stream, SemaphoreSlim writeGate, ulong causation, string kind) =>
-        await this.ErrorAsync(stream, writeGate, causation, kind == "session" ? ErrorCode.SessionRefused() : ErrorCode.SubscriptionRefused(), "bound to another channel")
-            .ConfigureAwait(false);
+    private async Task RefuseLifecycleAsync(
+        NetworkStream stream,
+        SemaphoreSlim writeGate,
+        ulong causation,
+        string kind,
+        string? owner)
+    {
+        // The real engine's two typed refusals (host.rs): an unknown id
+        // and another tenant's id are distinct details.
+        var detail = owner is null ? $"unknown {kind}" : "bound to another channel";
+        await this.ErrorAsync(
+            stream,
+            writeGate,
+            causation,
+            kind == "session" ? ErrorCode.SessionRefused() : ErrorCode.SubscriptionRefused(),
+            detail).ConfigureAwait(false);
+    }
 
     private async Task AnswerAsync<T>(NetworkStream stream, SemaphoreSlim writeGate, string operation, ulong causation, T body)
     {
@@ -654,5 +686,18 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
         }
 
         this.stopped.Dispose();
+    }
+
+    /// <summary>One live backbone subscription of a connection: its identity, filter, and cursor.</summary>
+    private sealed class Subscription(ulong id, string[]? collections, ulong next)
+    {
+        /// <summary>The caller-assigned subscription identity.</summary>
+        public ulong Id { get; } = id;
+
+        /// <summary>The collection filter, or <c>null</c> for every collection.</summary>
+        public string[]? Collections { get; } = collections;
+
+        /// <summary>The next sequence this subscription has not served.</summary>
+        public ulong Next { get; set; } = next;
     }
 }

@@ -32,6 +32,7 @@ public static class TerraBaseHost
         var supervisor = new EngineSupervisor(options, audit);
         var hub = new BackboneHub(supervisor, audit);
         var app = builder.Build();
+        app.UseWebSockets();
         TypedApi.MapApi(app, supervisor, hub, audit);
         return new HostBundle(app, supervisor, hub, audit);
     }

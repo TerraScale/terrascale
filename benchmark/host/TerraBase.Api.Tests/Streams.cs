@@ -23,10 +23,17 @@ public sealed class SseReader : IAsyncDisposable
     /// <summary>Opens one SSE stream.</summary>
     /// <param name="client">The caller's client.</param>
     /// <param name="query">The stream query (collections, from).</param>
+    /// <param name="lastEventId">The reconnect's last-seen event id, when resuming.</param>
     /// <returns>The reader over the live response.</returns>
-    public static async Task<SseReader> OpenAsync(HttpClient client, string query)
+    public static async Task<SseReader> OpenAsync(HttpClient client, string query, string? lastEventId = null)
     {
-        var response = await client.GetAsync($"/v1/streams{(query.Length > 0 ? $"?{query}" : string.Empty)}", HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/streams{(query.Length > 0 ? $"?{query}" : string.Empty)}");
+        if (lastEventId is not null)
+        {
+            request.Headers.Add("Last-Event-ID", lastEventId);
+        }
+
+        var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
@@ -37,7 +44,7 @@ public sealed class SseReader : IAsyncDisposable
         return new SseReader(response, new StreamReader(stream, Encoding.UTF8));
     }
 
-    /// <summary>Reads the next event, or <c>null</c> when the stream ended.</summary>
+    /// <summary>Reads the next event, or <c>null</c> when the stream ended or the read was canceled.</summary>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>The event.</returns>
     public async Task<SseEvent?> ReadAsync(CancellationToken cancellationToken = default)
@@ -46,8 +53,22 @@ public sealed class SseReader : IAsyncDisposable
         var name = "message";
         var data = new StringBuilder();
         string? line;
-        while ((line = await this.reader.ReadLineAsync(cancellationToken).ConfigureAwait(false)) is not null)
+        while (true)
         {
+            try
+            {
+                line = await this.reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+
+            if (line is null)
+            {
+                return null;
+            }
+
             if (line.Length == 0)
             {
                 if (id is not null || data.Length > 0)
@@ -71,8 +92,6 @@ public sealed class SseReader : IAsyncDisposable
                 data.AppendLine(line["data: ".Length..]);
             }
         }
-
-        return null;
     }
 
     /// <summary>Reads the next event of the given name, skipping the others.</summary>

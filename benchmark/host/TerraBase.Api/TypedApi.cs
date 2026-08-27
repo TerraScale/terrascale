@@ -252,15 +252,19 @@ public sealed class TypedApi
         }
 
         var caller = this.ResolveCaller(context);
+        var idempotencyKey = context.Request.Headers["Idempotency-Key"].ToString();
         try
         {
             var put = new DocumentPut { Id = document, Collection = collection, Body = body?.ToValue() ?? TbepValue.Null };
+            // The operation id of a mutation is its idempotency key —
+            // the retry identity — never the per-request trace id, so a
+            // retried write names the same journal operation.
             var answer = await this.supervisor
                 .CallAsync(
                     caller.Tenant,
                     caller.Principal,
                     "document.write",
-                    channel => channel.DocumentWriteAsync(put, Expected(context), context.TraceIdentifier, context.Request.Headers["Idempotency-Key"].ToString(), cancellationToken))
+                    channel => channel.DocumentWriteAsync(put, Expected(context), idempotencyKey, idempotencyKey, cancellationToken))
                 .ConfigureAwait(false);
             return Results.Json(WriteOutcomeDto.Of(answer.Outcome));
         }
@@ -293,6 +297,7 @@ public sealed class TypedApi
         }
 
         var caller = this.ResolveCaller(context);
+        var idempotencyKey = context.Request.Headers["Idempotency-Key"].ToString();
         try
         {
             var answer = await this.supervisor
@@ -300,7 +305,7 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "document.delete",
-                    channel => channel.DocumentDeleteAsync(collection, document, Expected(context), context.TraceIdentifier, context.Request.Headers["Idempotency-Key"].ToString(), cancellationToken))
+                    channel => channel.DocumentDeleteAsync(collection, document, Expected(context), idempotencyKey, idempotencyKey, cancellationToken))
                 .ConfigureAwait(false);
             return Results.Json(WriteOutcomeDto.Of(answer.Outcome));
         }
@@ -413,7 +418,7 @@ public sealed class TypedApi
                             Name = name,
                             RequestCodec = request.RequestCodec,
                             Request = request.RequestBytes,
-                            OperationId = context.TraceIdentifier,
+                            OperationId = context.Request.Headers["Idempotency-Key"].ToString(),
                         },
                         context.Request.Headers["Idempotency-Key"].ToString(),
                         cancellationToken))
@@ -1035,14 +1040,18 @@ public sealed class TypedApi
         return (collections, null);
     }
 
-    private static ulong? FromSequence(HttpContext context, string headerOrQuery)
+    private static ulong? FromSequence(HttpContext context, string lastEventId)
     {
+        // An explicit <c>from</c> query is an inclusive replay start; the
+        // SSE <c>Last-Event-ID</c> header names the last event the
+        // consumer saw, so the resume point is strictly after it — the
+        // reconnect replays exactly the missed events, no duplicates.
         if (context.Request.Query["from"].ToString() is { Length: > 0 } fromQuery && ulong.TryParse(fromQuery, out var parsed))
         {
             return parsed;
         }
 
-        return headerOrQuery.Length > 0 && ulong.TryParse(headerOrQuery, out var fromHeader) ? fromHeader : null;
+        return lastEventId.Length > 0 && ulong.TryParse(lastEventId, out var lastSeen) ? lastSeen + 1 : null;
     }
 
     private static ExpectedVersion Expected(HttpContext context)
