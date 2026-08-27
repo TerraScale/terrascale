@@ -948,6 +948,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
     private sealed class SyncV2BoundedLineReader
     {
         private readonly StreamReader reader;
+        private readonly char[] chunk = new char[256];
         private string pending = string.Empty;
 
         /// <summary>Initializes the reader.</summary>
@@ -973,8 +974,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
                     return line.EndsWith('\r') ? line[..^1] : line;
                 }
 
-                var buffer = new char[256];
-                var read = await this.reader.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                var read = await this.reader.ReadAsync(this.chunk, cancellationToken).ConfigureAwait(false);
                 if (read == 0)
                 {
                     var rest = this.pending;
@@ -982,7 +982,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
                     return rest.Length == 0 ? null : rest;
                 }
 
-                this.pending += new string(buffer, 0, read);
+                this.pending += new string(this.chunk, 0, read);
                 if (this.pending.IndexOf('\n') < 0 && this.pending.Length > maxChars)
                 {
                     throw new SyncV2OversizeEventException();

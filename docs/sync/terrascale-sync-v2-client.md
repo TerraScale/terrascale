@@ -1,7 +1,9 @@
 # The native `terrascale.sync.v2` sync client (SE-10)
 
 Status: implementation record for the SE-10 packet
-(TerraScale/TerraScale.DotNet#9), 2026-08-27. Authority: workspace
+(TerraScale/TerraScale.DotNet#9), 2026-08-27, updated by repair loop 1
+(same day: typed decode bounds, live-loop resilience, and host-surface
+bounds from the packet review). Authority: workspace
 charter PD-2026-08-26-12 (native-language SDK clients, no wasm/C-ABI
 embeddings, server-ack-only mutations), PD-2026-08-26-13 D3
 (trigger-driven delta pulls), PD-2026-08-26-11 D1 (the API host's local
@@ -94,24 +96,45 @@ construction with an actionable error rather than a silent 401.
   checkpoint and retained floor.
 - `PullDeltaAsync` posts the delta pull from the session's checkpoint
   and applies the answer; `PullSnapshotAsync` adopts a full state;
-  `AcknowledgeCheckpointAsync` bounds retransmission.
+  `AcknowledgeCheckpointAsync` bounds retransmission. A resync-required
+  refusal (409 with the resync marker) carries the retained floor the
+  host stated in its refusal body into the typed outcome (the initial
+  checkpoint when the host sent none).
 - `MutateAsync` is **server-ack-only** (PD-2026-08-26-12 D2): the typed
   write plus the caller's idempotency key; the answer is the applied
   receipt or the typed refusal. Nothing applies locally — the change
-  reaches the session's state only through the delivery path. This
-  records the accepted v1/v2 behavioral difference: the v2 surface has
-  no optimistic-patch API to remove because none was ever added to it;
-  the v1 session surface in this package is untouched.
+  reaches the session's state only through the delivery path. The
+  delivery accounting counts applied outcomes only
+  (`MutationsAcknowledged`); refusals carry their own counter
+  (`MutationsRejected`) — a rejection is never an acknowledged
+  mutation. This records the accepted v1/v2 behavioral difference: the
+  v2 surface has no optimistic-patch API to remove because none was
+  ever added to it; the v1 session surface in this package is
+  untouched.
 - `UpdatesAsync` is the trigger-driven live loop: it opens the session
   (adopting the server snapshot when fresh), subscribes to
   `/v1/streams?collections=<c>`, and answers every content-free trigger
   by pulling delta batches until current and acknowledging — **push the
   hint, pull the delta**; there is no polling (PD-2026-08-26-13 D3). A
-  dropped stream reconnects with `Last-Event-ID`; an ended session
-  (HTTP 410) is re-opened by resuming from the durable checkpoint; a
-  resync demand (HTTP 409 with the resync marker) adopts a full
-  snapshot. The loop runs only while the caller enumerates it — there
-  is no hidden background work (the SDK safety rule).
+  dropped stream reconnects with `Last-Event-ID`; a transiently refused
+  stream open (503/502/504/429 — an engine blip) reconnects the same
+  way instead of faulting the enumeration; a malformed trigger hint is
+  content-free noise (nothing counted, the pull still runs); an ended
+  session (HTTP 410) is re-opened by resuming from the durable
+  checkpoint, bounded to three backed-off re-opens before the typed
+  failure surfaces; a resync demand (HTTP 409 with the resync marker)
+  adopts a full snapshot. The loop runs only while the caller
+  enumerates it — there is no hidden background work (the SDK safety
+  rule).
+- The event stream is read under bounds: multi-line data joins with a
+  newline, a field value strips at most one leading space (the SSE
+  rule), and any field line or accumulated event past
+  `MaxStreamEventBytes` (default one mebibyte) ends the stream — the
+  live loop reconnects rather than buffering without limit. Host
+  response bodies are read under `MaxHostBodyBytes` (default 32
+  mebibytes, the host-surface counterpart of the frame layer's decode
+  bound); a body past it is the typed host failure, never an unbounded
+  parse.
 - Delivery payloads (`loro-delta/1`, `loro-snapshot/1`) are opaque at
   this layer by the wrapped-Loro decision: the codec never re-encodes
   them, and consumers hand the bytes to their document layer. The
@@ -123,13 +146,25 @@ construction with an actionable error rather than a silent 401.
 `TerraScaleSyncV2HostException` carries the HTTP status, the host's
 typed error code (`unauthorized`, `checkpoint-refused`,
 `session-ended`, `engine-unavailable`, ...), the bounded detail, the
-resync marker, and a status-derived retryability. In the live loop the
-recoverable cases are handled (reconnect, re-setup, resync); on the
-explicit call path they surface to the caller.
+resync marker, the retained floor a resync refusal states, and a
+status-derived retryability. In the live loop the recoverable cases
+are handled (reconnect, re-setup, resync); on the explicit call path
+they surface to the caller. The codec's refusals are the typed
+`TerraScaleSyncV2ProtocolException` everywhere — including the
+checkpoint decode, whose pair count is bounded by the bytes that
+remain before any allocation, and the body reader's bounds-checked
+take, so a crafted frame cannot escape the typed vocabulary through
+an untyped capacity or overflow failure.
 
 ## Tests
 
 - `TerraScaleSyncV2GoldenVectorTests`: the conformance harness above.
+  Expected corpus counts are derived by recounting the structurally
+  present entries in the same pass (with a greater-than-zero sanity
+  bound), never hand-tuned literals; the checkpoint pair-count and
+  reader-overflow rows pin the typed fail-closed decode; and the
+  digest-mismatch row pins that a flipped body byte decodes, fails
+  `Verify()`, and leaves the kind and idempotency key readable.
 - `TerraScaleSyncV2SessionTests`: real-HTTP integration rows against a
   loopback host serving the API host's documented sync-session and
   stream endpoints (the SDK must not reference server projects; the
@@ -137,12 +172,20 @@ explicit call path they surface to the caller.
   prove: setup/resume request shapes; snapshot adoption and
   acknowledgement; trigger-driven immediate pulls with a quiet window
   proving no polling; at-least-once duplicate detection; the
-  resync-required snapshot path; server-ack-only mutations (receipt
-  returned, checkpoint unmoved, retried key, typed refusal); stream
-  drop reconnect with `Last-Event-ID`; ended-session resume from the
-  durable checkpoint; the local gate; the typed conflict without the
-  resync marker; disposal cancelling the live enumeration; the
-  engine-unavailable surface; and construction-time validation.
+  resync-required snapshot path with the host-stated floor carried
+  into the pull; server-ack-only mutations (receipt returned,
+  checkpoint unmoved, retried key, typed refusal, rejection never
+  acknowledged); a retryable stream-open refusal reconnecting instead
+  of faulting the loop; a malformed trigger hint counted nothing with
+  the pull still run; multi-line data accumulation and the
+  one-leading-space field-value rule; oversize events ending the
+  stream (not the loop) and oversize host bodies answered with the
+  typed refusal; stream drop reconnect with `Last-Event-ID`;
+  ended-session resume from the durable checkpoint plus the bounded
+  give-up when the host ends every session; the local gate; the typed
+  conflict without the resync marker; disposal cancelling the live
+  enumeration; the engine-unavailable surface; and construction-time
+  validation.
 
 A live API host is not exercised here: the TerraBaseV2 host is a
 read-only sibling repo and this package must not reference it. The
