@@ -31,6 +31,8 @@
 //! let _ = status.convergence();
 //! ```
 
+#[cfg(test)]
+mod hilo_tests;
 mod identifier;
 #[cfg(test)]
 mod lane;
