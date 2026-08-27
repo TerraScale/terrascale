@@ -97,15 +97,15 @@ public sealed record TerraScaleClientOptions
         }
 
         var normalizedRegion = NormalizeRegion(PreferredRegion);
-        if (RegionAffinity == TerraScaleRegionAffinity.Strict && normalizedRegion is null)
-        {
-            throw new ArgumentException("Strict regional affinity requires PreferredRegion.", nameof(PreferredRegion));
-        }
-
         PreferredRegion = normalizedRegion;
         if (RegionAffinity == TerraScaleRegionAffinity.Strict)
         {
-            BaseAddress = ResolveStrictRegionalBaseAddress(BaseAddress, normalizedRegion!);
+            if (normalizedRegion is null)
+            {
+                throw new ArgumentException("Strict regional affinity requires PreferredRegion.", nameof(PreferredRegion));
+            }
+
+            BaseAddress = ResolveStrictRegionalBaseAddress(BaseAddress, normalizedRegion);
         }
 
         var hasApiKey = !string.IsNullOrWhiteSpace(ApiKey);

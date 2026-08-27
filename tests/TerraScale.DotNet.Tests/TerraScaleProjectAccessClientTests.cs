@@ -71,7 +71,12 @@ public sealed class TerraScaleProjectAccessClientTests
 
         var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Access.RemoveTeamMemberAsync("project-a", "user-a"));
 
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        if (exception is null)
+        {
+            throw new InvalidOperationException("The forbidden response fixture did not produce an API exception.");
+        }
+
+        await Assert.That(exception.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(exception.ErrorCode).IsEqualTo("access_denied");
     }
 
@@ -84,7 +89,12 @@ public sealed class TerraScaleProjectAccessClientTests
 
         var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Access.RemoveTeamMemberAsync("project-a", "user-a"));
 
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        if (exception is null)
+        {
+            throw new InvalidOperationException("The successful response fixture did not produce an API exception.");
+        }
+
+        await Assert.That(exception.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]
@@ -225,10 +235,12 @@ public sealed class TerraScaleProjectAccessClientTests
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            var requestUri = request.RequestUri
+                ?? throw new InvalidOperationException("The request URI fixture is missing.");
             var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
             Requests.Add(new RecordedRequest(
                 request.Method,
-                request.RequestUri!.GetComponents(UriComponents.AbsoluteUri, UriFormat.UriEscaped),
+                requestUri.GetComponents(UriComponents.AbsoluteUri, UriFormat.UriEscaped),
                 body,
                 Header(request, "X-TerraScale-Auth-Key"),
                 Header(request, "X-TerraScale-Project-Id")));

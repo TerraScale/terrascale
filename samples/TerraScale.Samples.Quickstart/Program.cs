@@ -27,11 +27,25 @@ var client = new TerraScaleClient(
         IdempotencyKeyFactory = static () => $"quickstart-{Guid.NewGuid():N}"
     });
 
-var target = configuration.EnvironmentId is { Length: > 0 }
-    ? client.ForEnvironment(configuration.DatabaseId!, configuration.EnvironmentId)
-    : configuration.DatabaseId is { Length: > 0 }
-        ? client.ForDatabase(configuration.DatabaseId)
-        : client;
+TerraScaleClient target;
+if (configuration.EnvironmentId is { Length: > 0 } environmentId)
+{
+    if (configuration.DatabaseId is not { Length: > 0 } databaseId)
+    {
+        throw new InvalidOperationException(
+            "TERRASCALE_DATABASE_ID is required when TERRASCALE_ENVIRONMENT_ID is set.");
+    }
+
+    target = client.ForEnvironment(databaseId, environmentId);
+}
+else if (configuration.DatabaseId is { Length: > 0 } databaseId)
+{
+    target = client.ForDatabase(databaseId);
+}
+else
+{
+    target = client;
+}
 
 var suffix = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 var repository = await target.Repositories.CreateAsync(

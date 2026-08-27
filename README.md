@@ -38,7 +38,9 @@ The repo also contains the EF Core source integration package:
 dotnet add package TerraScale.EntityFrameworkCore
 ```
 
-Release qualification uses one immutable package archive. `scripts/verify-package-candidate.sh` packs the SDK once, checks its metadata and archive contents, restores those exact bytes into a clean `net10.0` consumer, builds the consumer, and prints the SHA-256 digest. Orchestrator can pass an existing candidate with `--package` and its expected `--sha256` digest so verification never rebuilds or silently substitutes a different archive.
+Release qualification uses one immutable package archive. `scripts/verify-package-candidate.sh` refuses to pack a dirty checkout, checks its metadata and archive contents, requires the nuspec repository commit to equal the exact source revision, restores those exact bytes into a clean `net10.0` consumer outside this repository, builds the consumer, and prints the source revision and SHA-256 digest. Orchestrator can pass an existing candidate with `--package`, its expected `--sha256` digest, and (when validating a candidate from a different checkout) `--source-revision` so verification never rebuilds or silently substitutes a different archive.
+
+The manual CI package-byte lane consumes the protected handoff path, digest, and source revision supplied by the release coordinator. It does not repack or publish a substitute. The runner must already have the immutable package staged; protected artifact transfer is an external release gate, and a missing or unresolved handoff fails closed.
 
 Live customer-journey, tenant-isolation, intended-feed download, and publication evidence remain release admission checks. Source compilation and the local package-consumer build do not replace them. Compatibility with the Public Alpha API candidate is recorded by the release admission process once that candidate and its digest are available; this package does not claim live qualification on its own.
 

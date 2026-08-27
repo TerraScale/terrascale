@@ -75,7 +75,7 @@ public sealed class TerraScaleAdministrationClientTests
         var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => CreateClient(httpClient).Administration.GetOverviewAsync());
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(exception.ErrorCode).IsEqualTo("TERRASCALE-ADMIN-OWNER-REQUIRED");
+        await Assert.That(exception.ErrorCode).IsEqualTo("admin_owner_required");
     }
 
     [Test]
@@ -133,7 +133,7 @@ public sealed class TerraScaleAdministrationClientTests
         await Assert.That(oversizedKey).IsNotNull();
         await Assert.That(blankAttempt).IsNotNull();
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(exception.ErrorCode).IsEqualTo("TERRASCALE-ADMIN-OWNER-REQUIRED");
+        await Assert.That(exception.ErrorCode).IsEqualTo("admin_owner_required");
     }
 
     private static TerraScaleClient CreateClient(HttpClient httpClient) => new(httpClient, new TerraScaleClientOptions
@@ -153,7 +153,7 @@ public sealed class TerraScaleAdministrationClientTests
             Requests.Add(new RecordedRequest(request.RequestUri!.ToString(), body, idempotencyKeys?.SingleOrDefault()));
             var response = statusCode == HttpStatusCode.OK
                 ? request.Method == HttpMethod.Delete ? "true" : request.RequestUri!.AbsolutePath.EndsWith("/plans", StringComparison.Ordinal) && request.Method == HttpMethod.Get ? "[]" : "{}"
-                : "{\"code\":\"TERRASCALE-ADMIN-OWNER-REQUIRED\",\"message\":\"Platform owner role required.\"}";
+                : "{\"code\":\"admin_owner_required\",\"message\":\"Platform owner role required.\"}";
             return new HttpResponseMessage(statusCode) { Content = new StringContent(response, Encoding.UTF8, "application/json") };
         }
     }

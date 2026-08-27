@@ -33,7 +33,9 @@ public sealed class TerraScaleEntitySourceE2ETests
 
             var found = await set.FindAsync(id);
             await Assert.That(found).IsNotNull();
-            await Assert.That(found!.Status).IsEqualTo("paid");
+            var foundOrder = found
+                ?? throw new InvalidOperationException("The upserted order could not be found in the real repository.");
+            await Assert.That(foundOrder.Status).IsEqualTo("paid");
 
             var queried = await set.QueryAsync($"from '{TerraScaleApiE2E.Repository}'", take: 100);
             await Assert.That(queried.Any(order => order.Id == id)).IsTrue();
@@ -52,7 +54,8 @@ public sealed class TerraScaleEntitySourceE2ETests
         services.AddDbContext<OrdersContext>(options => options.UseTerraScaleSource());
         services.AddTerraScaleEntityFrameworkCore<OrdersContext>(options =>
         {
-            options.BaseAddress = TerraScaleApiE2E.BaseAddress!;
+            options.BaseAddress = TerraScaleApiE2E.BaseAddress
+                ?? throw new InvalidOperationException(TerraScaleApiE2E.SkipReason);
             options.ApiKey = TerraScaleApiE2E.ApiKey;
             options.ProjectId = TerraScaleApiE2E.ProjectId;
             options.RepositoryNameResolver = _ => TerraScaleApiE2E.Repository;
@@ -75,7 +78,8 @@ public sealed class TerraScaleEntitySourceE2ETests
         services.AddDbContext<OrdersContext>(options => options.UseTerraScaleSource());
         services.AddTerraScaleEntityFrameworkCore<OrdersContext>(options =>
         {
-            options.BaseAddress = TerraScaleApiE2E.BaseAddress!;
+            options.BaseAddress = TerraScaleApiE2E.BaseAddress
+                ?? throw new InvalidOperationException(TerraScaleApiE2E.BearerSkipReason);
             options.BearerTokenProvider = cancellationToken =>
             {
                 cancellationToken.ThrowIfCancellationRequested();

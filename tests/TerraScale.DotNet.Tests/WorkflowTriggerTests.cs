@@ -8,6 +8,7 @@ public sealed class WorkflowTriggerTests
 {
     private const string PinnedCheckout = "https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803";
     private const string TrustedMainCondition = "${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}";
+    private const string ManualPackageValidationCondition = "${{ forgejo.event_name == 'workflow_dispatch' }}";
 
     [Test]
     public async Task PullRequestsToDevelopAndMainRunOnlyIsolatedSecretlessValidation()
@@ -16,10 +17,11 @@ public sealed class WorkflowTriggerTests
         var parsedWorkflow = ParseWorkflow(workflow);
         var jobs = parsedWorkflow.Jobs;
         var unexpectedJobs = jobs.Keys
-            .Except(["pr-validation", "trusted-candidate-required"], StringComparer.Ordinal)
+            .Except(["package-byte-validation", "pr-validation", "trusted-candidate-required"], StringComparer.Ordinal)
             .ToArray();
 
         await Assert.That(workflow).Contains("  pull_request:\n    branches: [develop, main]");
+        await Assert.That(workflow).Contains("  workflow_dispatch:\n");
         await Assert.That(unexpectedJobs.Length).IsEqualTo(0);
         await Assert.That(FindWorkflowPolicyViolations(parsedWorkflow).Length).IsEqualTo(0);
     }
@@ -230,7 +232,7 @@ public sealed class WorkflowTriggerTests
                  {
                      "secrets", "${{ vars.", "REGISTRY_TOKEN", "FORGEJO_TOKEN",
                      "--store-password-in-clear-text", "candidate-store", "build-candidate",
-                     "candidate-manifest", "ci promote", "upload-artifact", "download-artifact",
+                     "candidate-manifest", "ci promote", "download-artifact",
                      "terrascale-deploy", "dotnet tool", "resolve-cli", "publish", "sign"
                  })
         {
@@ -326,13 +328,14 @@ public sealed class WorkflowTriggerTests
 
     private static bool IsPullRequestReachable(YamlMappingNode job)
     {
-        return GetScalar(job, "if") != TrustedMainCondition;
+        var condition = GetScalar(job, "if");
+        return condition != TrustedMainCondition && condition != ManualPackageValidationCondition;
     }
 
     private static string[] ActionReferences(YamlNode node) =>
         [.. MappingNodes(node)
             .Select(mapping => GetScalar(mapping, "uses"))
-            .Where(value => value is not null)!];
+            .OfType<string>()];
 
     private static bool HasMappingKey(YamlNode node, string key) =>
         MappingNodes(node).Any(mapping => GetValue(mapping, key) is not null);
@@ -566,9 +569,13 @@ public sealed class WorkflowTriggerTests
             root = root.Parent;
         }
 
-        await Assert.That(root).IsNotNull();
+        if (root is not DirectoryInfo workflowRoot)
+        {
+            throw new DirectoryNotFoundException("The repository root containing the workflow was not found.");
+        }
+
         return (await File.ReadAllTextAsync(
-            Path.Combine(root!.FullName, ".forgejo", "workflows", "ci.yml"))).ReplaceLineEndings("\n");
+            Path.Combine(workflowRoot.FullName, ".forgejo", "workflows", "ci.yml"))).ReplaceLineEndings("\n");
     }
 
     private sealed record ParsedWorkflow(

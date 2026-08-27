@@ -20,10 +20,12 @@ public sealed class TerraScaleBackupConfirmationRequestTests
             "database-a",
             new TerraScaleBackupConfirmationPlanRequest("session-a"));
 
-        await Assert.That(handler.Request!.Method).IsEqualTo(HttpMethod.Post);
-        await Assert.That(handler.Request.Uri).IsEqualTo("https://api.example.invalid/api/v1/projects/project-a/databases/database-a/backups:plan");
-        await Assert.That(handler.Request.Body).IsEqualTo("{\"operationSessionId\":\"session-a\"}");
-        await Assert.That(handler.Request.IdempotencyKey).IsNull();
+        var planRequest = handler.Request
+            ?? throw new InvalidOperationException("The backup plan request fixture is missing.");
+        await Assert.That(planRequest.Method).IsEqualTo(HttpMethod.Post);
+        await Assert.That(planRequest.Uri).IsEqualTo("https://api.example.invalid/api/v1/projects/project-a/databases/database-a/backups:plan");
+        await Assert.That(planRequest.Body).IsEqualTo("{\"operationSessionId\":\"session-a\"}");
+        await Assert.That(planRequest.IdempotencyKey).IsNull();
     }
 
     [Test]
@@ -41,10 +43,12 @@ public sealed class TerraScaleBackupConfirmationRequestTests
             new TerraScaleBackupConfirmationExecuteRequest("session-a", "confirmation-a"),
             " caller-key ");
 
-        await Assert.That(handler.Request!.Method).IsEqualTo(HttpMethod.Post);
-        await Assert.That(handler.Request.Uri).IsEqualTo("https://api.example.invalid/api/v1/projects/project-a/databases/database-a/backups:execute");
-        await Assert.That(handler.Request.Body).IsEqualTo("{\"operationSessionId\":\"session-a\",\"confirmationToken\":\"confirmation-a\"}");
-        await Assert.That(handler.Request.IdempotencyKey).IsEqualTo("caller-key");
+        var executeRequest = handler.Request
+            ?? throw new InvalidOperationException("The backup execute request fixture is missing.");
+        await Assert.That(executeRequest.Method).IsEqualTo(HttpMethod.Post);
+        await Assert.That(executeRequest.Uri).IsEqualTo("https://api.example.invalid/api/v1/projects/project-a/databases/database-a/backups:execute");
+        await Assert.That(executeRequest.Body).IsEqualTo("{\"operationSessionId\":\"session-a\",\"confirmationToken\":\"confirmation-a\"}");
+        await Assert.That(executeRequest.IdempotencyKey).IsEqualTo("caller-key");
         await Assert.That(execution.Job.BackupId).IsEqualTo("backup-a");
         await Assert.That(execution.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
         await Assert.That(execution.IdempotencyReplayed).IsTrue();
@@ -122,9 +126,11 @@ public sealed class TerraScaleBackupConfirmationRequestTests
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            var requestUri = request.RequestUri
+                ?? throw new InvalidOperationException("The request URI fixture is missing.");
             Request = new RecordedRequest(
                 request.Method,
-                request.RequestUri!.ToString(),
+                requestUri.ToString(),
                 request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken),
                 request.Headers.TryGetValues("Idempotency-Key", out var values) ? values.Single() : null);
             var response = new HttpResponseMessage(statusCode)

@@ -91,8 +91,12 @@ public sealed class TerraScaleSavedQueriesClientTests
             """, new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
         await Assert.That(json).IsEqualTo("{\"name\":\"Orders\",\"query\":\"from Orders\",\"repositoryId\":null}");
-        await Assert.That(response).IsNotNull();
-        await Assert.That(response!.RepositoryId).IsNull();
+        if (response is null)
+        {
+            throw new InvalidOperationException("The saved query fixture did not deserialize.");
+        }
+
+        await Assert.That(response.RepositoryId).IsNull();
         await Assert.That(response.UpdatedAt).IsEqualTo(DateTimeOffset.Parse("2026-08-05T13:00:00+00:00"));
         await Assert.That(JsonSerializer.Serialize(response, new JsonSerializerOptions(JsonSerializerDefaults.Web)).Contains("revision", StringComparison.OrdinalIgnoreCase)).IsFalse();
     }
@@ -130,9 +134,11 @@ public sealed class TerraScaleSavedQueriesClientTests
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            var requestUri = request.RequestUri
+                ?? throw new InvalidOperationException("The request URI fixture is missing.");
             Requests.Add(new RecordedRequest(
                 request.Method,
-                request.RequestUri!.ToString(),
+                requestUri.ToString(),
                 request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken),
                 request.Headers.TryGetValues("Idempotency-Key", out var values) ? values.Single() : null));
 

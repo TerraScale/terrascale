@@ -42,7 +42,12 @@ public sealed class TerraScaleDatabaseBranchesClientTests
             HttpMethod.Post,
             "https://api.example.invalid/api/v1/projects/project-a/database-branches",
             "{\"sourceDatabaseId\":\"database-a\"}"));
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        if (exception is null)
+        {
+            throw new InvalidOperationException("The unavailable branch fixture did not produce an API exception.");
+        }
+
+        await Assert.That(exception.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(exception.ErrorCode).IsEqualTo("TERRASCALE-5001");
     }
 
@@ -74,9 +79,11 @@ public sealed class TerraScaleDatabaseBranchesClientTests
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            var requestUri = request.RequestUri
+                ?? throw new InvalidOperationException("The request URI fixture is missing.");
             Request = new RecordedRequest(
                 request.Method,
-                request.RequestUri!.ToString(),
+                requestUri.ToString(),
                 request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken));
             return new HttpResponseMessage(statusCode)
             {

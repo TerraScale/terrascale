@@ -57,7 +57,12 @@ public sealed class TerraScaleSavedQueriesV3ClientTests
 
         var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.SavedQueriesV3.ListAsync("project-a"));
 
-        await Assert.That(exception!.StatusCode).IsEqualTo(statusCode);
+        if (exception is null)
+        {
+            throw new InvalidOperationException("The saved query v3 error fixture did not produce an API exception.");
+        }
+
+        await Assert.That(exception.StatusCode).IsEqualTo(statusCode);
         await Assert.That(exception.ErrorCode).IsEqualTo("TERRASCALE-1400");
     }
 
@@ -74,7 +79,9 @@ public sealed class TerraScaleSavedQueriesV3ClientTests
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            Request = new RecordedRequest(request.Method, request.RequestUri!.ToString());
+            var requestUri = request.RequestUri
+                ?? throw new InvalidOperationException("The request URI fixture is missing.");
+            Request = new RecordedRequest(request.Method, requestUri.ToString());
             return Task.FromResult(new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")

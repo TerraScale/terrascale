@@ -56,9 +56,16 @@ public sealed class TerraScaleSavedQueriesV2ClientTests
             new TerraScaleUpdateSavedQueryV2Request("Orders", "from Orders", "stale-opaque-revision")));
 
         await Assert.That(missingRevision).IsNotNull();
-        await Assert.That(conflict!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        if (conflict is null)
+        {
+            throw new InvalidOperationException("The stale revision fixture did not produce an API exception.");
+        }
+
+        await Assert.That(conflict.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(conflict.ErrorCode).IsEqualTo("TERRASCALE-1401");
-        await Assert.That(conflict.ResponseBody!.Contains("stale-opaque-revision", StringComparison.Ordinal)).IsFalse();
+        var responseBody = conflict.ResponseBody
+            ?? throw new InvalidOperationException("The stale revision API exception did not include a response body.");
+        await Assert.That(responseBody.Contains("stale-opaque-revision", StringComparison.Ordinal)).IsFalse();
     }
 
     [Test]
@@ -71,9 +78,17 @@ public sealed class TerraScaleSavedQueriesV2ClientTests
             {"savedQueryId":"saved-query-a","projectId":"project-a","name":"Orders","query":"from Orders","repositoryId":null,"createdAt":"2026-08-05T12:00:00+00:00","updatedAt":"2026-08-05T13:00:00+00:00"}
             """, new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
-        await Assert.That(v2).IsNotNull();
-        await Assert.That(v2![0].Revision).IsEqualTo("opaque-revision");
-        await Assert.That(v1).IsNotNull();
+        if (v2 is null || v2.Count == 0)
+        {
+            throw new InvalidOperationException("The saved query v2 fixture did not deserialize any items.");
+        }
+
+        if (v1 is null)
+        {
+            throw new InvalidOperationException("The saved query v1 fixture did not deserialize.");
+        }
+
+        await Assert.That(v2[0].Revision).IsEqualTo("opaque-revision");
         await Assert.That(JsonSerializer.Serialize(v1, new JsonSerializerOptions(JsonSerializerDefaults.Web)).Contains("revision", StringComparison.OrdinalIgnoreCase)).IsFalse();
     }
 
@@ -91,7 +106,9 @@ public sealed class TerraScaleSavedQueriesV2ClientTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-            Requests.Add(new RecordedRequest(request.Method, request.RequestUri!.ToString(), body));
+            var requestUri = request.RequestUri
+                ?? throw new InvalidOperationException("The request URI fixture is missing.");
+            Requests.Add(new RecordedRequest(request.Method, requestUri.ToString(), body));
 
             if (returnConflictForUpdate && request.Method == HttpMethod.Put)
             {
@@ -101,7 +118,7 @@ public sealed class TerraScaleSavedQueriesV2ClientTests
                 };
             }
 
-            var response = request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.EndsWith("saved-queries", StringComparison.Ordinal)
+            var response = request.Method == HttpMethod.Get && requestUri.AbsolutePath.EndsWith("saved-queries", StringComparison.Ordinal)
                 ? "[{\"savedQueryId\":\"saved-query-a\",\"projectId\":\"project-a\",\"name\":\"Orders\",\"query\":\"from Orders\",\"repositoryId\":null,\"createdAt\":\"2026-08-05T12:00:00+00:00\",\"updatedAt\":\"2026-08-05T13:00:00+00:00\",\"revision\":\"opaque-revision\"}]"
                 : request.Method == HttpMethod.Put
                     ? "{\"savedQueryId\":\"saved-query-a\",\"projectId\":\"project-a\",\"name\":\"Recent paid orders\",\"query\":\"from Orders where Paid = true\",\"repositoryId\":null,\"createdAt\":\"2026-08-05T12:00:00+00:00\",\"updatedAt\":\"2026-08-05T13:00:00+00:00\",\"revision\":\"new-opaque-revision\"}"

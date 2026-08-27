@@ -58,8 +58,12 @@ public sealed class TerraScaleBillingClientTests
             """, new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
         await Assert.That(json).IsEqualTo("{\"enabled\":true}");
-        await Assert.That(plan).IsNotNull();
-        await Assert.That(plan!.AnnualStripePriceId).IsEqualTo("price-year");
+        if (plan is null)
+        {
+            throw new InvalidOperationException("The pricing plan fixture did not deserialize.");
+        }
+
+        await Assert.That(plan.AnnualStripePriceId).IsEqualTo("price-year");
         await Assert.That(plan.IncludedUsage[0].Unit).IsEqualTo("requests");
         await Assert.That(plan.Provider).IsEqualTo("polar");
         await Assert.That(plan.MonthlyPriceId).IsEqualTo("polar-month");
@@ -126,8 +130,12 @@ public sealed class TerraScaleBillingClientTests
 
         await Assert.That(account.Provider).IsEqualTo("stripe");
         await Assert.That(invoice.RefundedAmountCents).IsEqualTo(250L);
-        await Assert.That(deserialized).IsNotNull();
-        await Assert.That(deserialized!.RefundedAmountCents).IsEqualTo(0L);
+        if (deserialized is null)
+        {
+            throw new InvalidOperationException("The billing invoice fixture did not deserialize.");
+        }
+
+        await Assert.That(deserialized.RefundedAmountCents).IsEqualTo(0L);
     }
 
     [Test]
@@ -150,7 +158,12 @@ public sealed class TerraScaleBillingClientTests
         var forbidden = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Billing.ListAccessAsync("organization-a"));
 
         await Assert.That(invalidKey).IsNotNull();
-        await Assert.That(forbidden!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        if (forbidden is null)
+        {
+            throw new InvalidOperationException("The forbidden billing fixture did not produce an API exception.");
+        }
+
+        await Assert.That(forbidden.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(forbidden.ErrorCode).IsEqualTo("billing_access_denied");
         await Assert.That(forbidden.RequestId).IsEqualTo("request-a");
     }
@@ -220,7 +233,9 @@ public sealed class TerraScaleBillingClientTests
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (request.RequestUri!.AbsolutePath == "/api/v1/pricing/plans")
+            var requestUri = request.RequestUri
+                ?? throw new InvalidOperationException("The request URI fixture is missing.");
+            if (requestUri.AbsolutePath == "/api/v1/pricing/plans")
             {
                 PricingRequestIncludedCredentials = request.Headers.Authorization is not null ||
                     request.Headers.Contains("X-TerraScale-Auth-Key") ||
@@ -229,7 +244,7 @@ public sealed class TerraScaleBillingClientTests
 
             Requests.Add(new BillingRecordedRequest(
                 request.Method,
-                request.RequestUri!.ToString(),
+                requestUri.ToString(),
                 request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken),
                 request.Headers.TryGetValues("Idempotency-Key", out var values) ? values.Single() : null));
 
@@ -242,7 +257,7 @@ public sealed class TerraScaleBillingClientTests
                 };
             }
 
-            var body = request.RequestUri!.AbsolutePath switch
+            var body = requestUri.AbsolutePath switch
             {
                 "/api/v1/pricing/plans" => "[{\"planId\":\"plan-a\",\"name\":\"Pro\",\"currency\":\"USD\",\"monthlyBaseCents\":1000,\"annualBaseCents\":10000,\"includedUsage\":[{\"name\":\"operations\",\"quantity\":1000000,\"unit\":\"requests\"}],\"key\":\"pro\",\"provider\":\"polar\",\"monthlyPriceId\":\"polar-month\",\"annualPriceId\":\"polar-year\",\"monthlyPolarProductId\":\"product-month\",\"annualPolarProductId\":\"product-year\",\"monthlyStripePriceId\":null,\"annualStripePriceId\":\"price-year\",\"monthlyTrialDays\":14,\"annualTrialDays\":30,\"visible\":true,\"maxRegions\":3,\"operationOverageCentsPerMillion\":100,\"storageOverageCentsPerGbRegion\":20}]",
                 "/api/v1/organizations/organization-a/billing/checkout-sessions" => "{\"sessionId\":\"checkout-a\",\"url\":\"https://checkout.example.test/session\"}",

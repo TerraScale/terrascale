@@ -38,8 +38,12 @@ public sealed class TerraScaleEnvironmentsClientTests
             {"environmentId":"environment-a","projectId":"project-a","databaseId":"database-a","name":"Preview","deleted":true,"physicalDatabaseDeleted":false,"repositoriesDeleted":0}
             """, new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
-        await Assert.That(response).IsNotNull();
-        await Assert.That(response!.Status).IsNull();
+        if (response is null)
+        {
+            throw new InvalidOperationException("The deleted environment fixture did not deserialize.");
+        }
+
+        await Assert.That(response.Status).IsNull();
         await Assert.That(response.OperationId).IsNull();
         await Assert.That(response.RetryAt).IsNull();
     }
@@ -52,9 +56,11 @@ public sealed class TerraScaleEnvironmentsClientTests
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            var requestUri = request.RequestUri
+                ?? throw new InvalidOperationException("The request URI fixture is missing.");
             Request = new RecordedRequest(
                 request.Method,
-                request.RequestUri!.ToString(),
+                requestUri.ToString(),
                 request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken));
             return new HttpResponseMessage(HttpStatusCode.OK)
             {

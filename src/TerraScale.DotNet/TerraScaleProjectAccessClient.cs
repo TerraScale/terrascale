@@ -94,7 +94,8 @@ public sealed class TerraScaleProjectAccessClient
     private void ValidateProjectId(string projectId) => client.ValidateConfiguredProjectId(projectId);
 
     private static JsonTypeInfo<T> TypeInfo<T>() =>
-        (JsonTypeInfo<T>)TerraScaleProjectAccessJsonContext.Default.GetTypeInfo(typeof(T))!;
+        TerraScaleProjectAccessJsonContext.Default.GetTypeInfo(typeof(T)) as JsonTypeInfo<T>
+        ?? throw new InvalidOperationException($"JSON metadata for {typeof(T)} is not available in the project-access context.");
 }
 
 /// <summary>

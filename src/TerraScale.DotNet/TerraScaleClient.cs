@@ -331,10 +331,22 @@ public sealed class TerraScaleClient
         bool allowUnkeyedPutRetry = true)
     {
         using var activity = StartActivity(method, requestUri);
+        Func<HttpContent?> contentFactory;
+        if (body is null)
+        {
+            contentFactory = static () => null;
+        }
+        else
+        {
+            var resolvedRequestTypeInfo = requestTypeInfo
+                ?? throw new InvalidOperationException("A request JSON type descriptor is required when a request body is present.");
+            contentFactory = () => JsonContent.Create(body, resolvedRequestTypeInfo);
+        }
+
         using var response = await SendWithRetriesAsync(
             method,
             requestUri,
-            body is null ? static () => null : () => JsonContent.Create(body, requestTypeInfo!),
+            contentFactory,
             RequestAuthenticationMode.Authenticated,
             configureRequest: null,
             activity,

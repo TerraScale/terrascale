@@ -27,7 +27,8 @@ public sealed class TerraScaleClientE2ETests
             httpClient,
             new TerraScaleClientOptions
             {
-                BaseAddress = TerraScaleApiE2E.BaseAddress!,
+                BaseAddress = TerraScaleApiE2E.BaseAddress
+                    ?? throw new InvalidOperationException(TerraScaleApiE2E.SkipReason),
                 ApiKey = TerraScaleApiE2E.ApiKey,
                 ProjectId = TerraScaleApiE2E.ProjectId
             });
@@ -56,7 +57,10 @@ public sealed class TerraScaleClientE2ETests
 
             var missing = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
                 client.Databases.GetAsync(deleted.DatabaseId));
-            await Assert.That(missing!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            await Assert.That(missing).IsNotNull();
+            var missingException = missing
+                ?? throw new InvalidOperationException("The missing database request did not return an API exception.");
+            await Assert.That(missingException.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
         finally
         {
@@ -80,7 +84,10 @@ public sealed class TerraScaleClientE2ETests
                 "database-a",
                 new TerraScaleDeleteDatabaseOptions("database-b")));
 
-        await Assert.That(exception!.ParamName).IsEqualTo("options");
+        await Assert.That(exception).IsNotNull();
+        var argumentException = exception
+            ?? throw new InvalidOperationException("The mismatched database confirmation did not throw an argument exception.");
+        await Assert.That(argumentException.ParamName).IsEqualTo("options");
     }
 
     [Test]
@@ -97,7 +104,10 @@ public sealed class TerraScaleClientE2ETests
                 "database-a",
                 new TerraScaleDeleteDatabaseOptions("database-b")));
 
-        await Assert.That(exception!.ParamName).IsEqualTo("options");
+        await Assert.That(exception).IsNotNull();
+        var argumentException = exception
+            ?? throw new InvalidOperationException("The mismatched project database confirmation did not throw an argument exception.");
+        await Assert.That(argumentException.ParamName).IsEqualTo("options");
     }
 
     [Test]
@@ -178,7 +188,10 @@ public sealed class TerraScaleClientE2ETests
         var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
             client.Databases.ListAsync(take: 1));
 
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(exception).IsNotNull();
+        var apiException = exception
+            ?? throw new InvalidOperationException("The invalid bearer token request did not return an API exception.");
+        await Assert.That(apiException.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
     [Test]
@@ -218,7 +231,10 @@ public sealed class TerraScaleClientE2ETests
         var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
             client.Documents.GetAsync(TerraScaleApiE2E.Repository, missingId));
 
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(exception).IsNotNull();
+        var apiException = exception
+            ?? throw new InvalidOperationException("The missing document request did not return an API exception.");
+        await Assert.That(apiException.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
     [Test]
@@ -270,9 +286,14 @@ public sealed class TerraScaleClientE2ETests
             var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
                 client.Documents.GetAsync(repository, $"sdk-e2e-missing/{Guid.NewGuid():N}"));
 
-            await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-            await Assert.That(exception.RequestId).IsNotNull();
-            await Assert.That(exception.RequestId!.StartsWith(requestIdPrefix, StringComparison.Ordinal)).IsTrue();
+            await Assert.That(exception).IsNotNull();
+            var apiException = exception
+                ?? throw new InvalidOperationException("The missing document request did not return an API exception.");
+            await Assert.That(apiException.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            await Assert.That(apiException.RequestId).IsNotNull();
+            var requestId = apiException.RequestId
+                ?? throw new InvalidOperationException("The API exception did not include a request ID.");
+            await Assert.That(requestId.StartsWith(requestIdPrefix, StringComparison.Ordinal)).IsTrue();
         }
         finally
         {
@@ -363,7 +384,10 @@ public sealed class TerraScaleClientE2ETests
 
             var missingDeleted = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
                 client.Documents.GetAsync(repository, deleteCandidate.Id));
-            await Assert.That(missingDeleted!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            await Assert.That(missingDeleted).IsNotNull();
+            var missingException = missingDeleted
+                ?? throw new InvalidOperationException("The deleted document request did not return an API exception.");
+            await Assert.That(missingException.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
         finally
         {

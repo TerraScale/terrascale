@@ -251,7 +251,9 @@ public sealed class TerraScaleSyncLiveQuery<T> :
             return (T)(object)result.Value.Clone();
         }
 
-        return result.Value.Deserialize(typeInfo!);
+        var resolvedTypeInfo = typeInfo
+            ?? throw new InvalidOperationException("A JSON type descriptor is required for a typed live query.");
+        return result.Value.Deserialize(resolvedTypeInfo);
     }
 
     /// <inheritdoc />

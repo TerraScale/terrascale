@@ -19,7 +19,10 @@ public sealed class TerraScaleRegionalConsistencyTests
                 PreferredRegion = "-invalid"
             }));
 
-        await Assert.That(exception!.ParamName).IsEqualTo("PreferredRegion");
+        await Assert.That(exception).IsNotNull();
+        var argumentException = exception
+            ?? throw new InvalidOperationException("The invalid preferred region did not throw an argument exception.");
+        await Assert.That(argumentException.ParamName).IsEqualTo("PreferredRegion");
     }
 
     [Test]
@@ -36,7 +39,10 @@ public sealed class TerraScaleRegionalConsistencyTests
                 RegionAffinity = (TerraScaleRegionAffinity)99
             }));
 
-        await Assert.That(exception!.ParamName).IsEqualTo("RegionAffinity");
+        await Assert.That(exception).IsNotNull();
+        var argumentException = exception
+            ?? throw new InvalidOperationException("The unknown region affinity did not throw an argument exception.");
+        await Assert.That(argumentException.ParamName).IsEqualTo("RegionAffinity");
     }
 
     [Test]
@@ -60,8 +66,14 @@ public sealed class TerraScaleRegionalConsistencyTests
                 RetryDelay = TimeSpan.FromSeconds(30.001)
             }));
 
-        await Assert.That(attemptsException!.ParamName).IsEqualTo("MaxRetryAttempts");
-        await Assert.That(delayException!.ParamName).IsEqualTo("RetryDelay");
+        await Assert.That(attemptsException).IsNotNull();
+        await Assert.That(delayException).IsNotNull();
+        var retryAttemptsException = attemptsException
+            ?? throw new InvalidOperationException("The unbounded retry attempts did not throw an argument exception.");
+        var retryDelayException = delayException
+            ?? throw new InvalidOperationException("The excessive retry delay did not throw an argument exception.");
+        await Assert.That(retryAttemptsException.ParamName).IsEqualTo("MaxRetryAttempts");
+        await Assert.That(retryDelayException.ParamName).IsEqualTo("RetryDelay");
     }
 
     [Test]
@@ -98,7 +110,8 @@ public sealed class TerraScaleRegionalConsistencyTests
             httpClient,
             new TerraScaleClientOptions
             {
-                BaseAddress = TerraScaleApiE2E.BaseAddress!,
+                BaseAddress = TerraScaleApiE2E.BaseAddress
+                    ?? throw new InvalidOperationException(TerraScaleApiE2E.SkipReason),
                 ApiKey = TerraScaleApiE2E.ApiKey,
                 ProjectId = TerraScaleApiE2E.ProjectId,
                 SessionConsistency = TerraScaleSessionConsistency.Automatic
@@ -113,8 +126,10 @@ public sealed class TerraScaleRegionalConsistencyTests
             await Assert.That(created.ChangeToken).IsNotNull();
             await Assert.That(created.SessionConsistencyToken).IsNotNull();
 
-            var originalChangeToken = created.ChangeToken!;
-            var originalSessionToken = created.SessionConsistencyToken!;
+            var originalChangeToken = created.ChangeToken
+                ?? throw new InvalidOperationException("The created document did not include a change token.");
+            var originalSessionToken = created.SessionConsistencyToken
+                ?? throw new InvalidOperationException("The created document did not include a session consistency token.");
             var updated = await client.Documents.UpsertAsync(
                 repository,
                 created.Id,
@@ -132,8 +147,11 @@ public sealed class TerraScaleRegionalConsistencyTests
                     new { quantity = 3 },
                     new TerraScaleDocumentMutationOptions(originalChangeToken)));
 
-            await Assert.That(conflict!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-            await Assert.That(conflict.ErrorCode).IsEqualTo("TERRASCALE-1401");
+            await Assert.That(conflict).IsNotNull();
+            var conflictException = conflict
+                ?? throw new InvalidOperationException("The stale mutation did not return an API exception.");
+            await Assert.That(conflictException.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            await Assert.That(conflictException.ErrorCode).IsEqualTo("TERRASCALE-1401");
 
             var consistentRead = await client.Documents.GetAsync(
                 repository,
@@ -157,7 +175,8 @@ public sealed class TerraScaleRegionalConsistencyTests
             httpClient,
             new TerraScaleClientOptions
             {
-                BaseAddress = TerraScaleApiE2E.BaseAddress!,
+                BaseAddress = TerraScaleApiE2E.BaseAddress
+                    ?? throw new InvalidOperationException(TerraScaleApiE2E.SkipReason),
                 ApiKey = TerraScaleApiE2E.ApiKey,
                 ProjectId = TerraScaleApiE2E.ProjectId,
                 SessionConsistency = TerraScaleSessionConsistency.Automatic
@@ -249,7 +268,8 @@ public sealed class TerraScaleRegionalConsistencyTests
             httpClient,
             new TerraScaleClientOptions
             {
-                BaseAddress = TerraScaleApiE2E.BaseAddress!,
+                BaseAddress = TerraScaleApiE2E.BaseAddress
+                    ?? throw new InvalidOperationException(TerraScaleApiE2E.RegionalRoutingSkipReason),
                 ApiKey = TerraScaleApiE2E.ApiKey,
                 ProjectId = TerraScaleApiE2E.ProjectId,
                 PreferredRegion = TerraScaleApiE2E.RegionalRoutingRegion,
@@ -261,11 +281,16 @@ public sealed class TerraScaleRegionalConsistencyTests
                 TerraScaleApiE2E.Repository,
                 $"sdk-e2e-routing-missing/{Guid.NewGuid():N}"));
 
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(exception.Routing).IsNotNull();
-        await Assert.That(exception.Routing!.EdgeRegion).IsNotNull();
-        await Assert.That(exception.Routing.ServingRegion).IsNotNull();
-        await Assert.That(exception.Routing.RouteMode).IsNotNull();
+        await Assert.That(exception).IsNotNull();
+        var apiException = exception
+            ?? throw new InvalidOperationException("The missing regional document did not return an API exception.");
+        await Assert.That(apiException.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(apiException.Routing).IsNotNull();
+        var routing = apiException.Routing
+            ?? throw new InvalidOperationException("The regional API exception did not include routing metadata.");
+        await Assert.That(routing.EdgeRegion).IsNotNull();
+        await Assert.That(routing.ServingRegion).IsNotNull();
+        await Assert.That(routing.RouteMode).IsNotNull();
     }
 
     [Test]
@@ -297,7 +322,8 @@ public sealed class TerraScaleRegionalConsistencyTests
             httpClient,
             new TerraScaleClientOptions
             {
-                BaseAddress = TerraScaleApiE2E.BaseAddress!,
+                BaseAddress = TerraScaleApiE2E.BaseAddress
+                    ?? throw new InvalidOperationException(TerraScaleApiE2E.RegionalFailureSkipReason),
                 ApiKey = TerraScaleApiE2E.ApiKey,
                 ProjectId = TerraScaleApiE2E.ProjectId,
                 PreferredRegion = TerraScaleApiE2E.RegionalUnavailableRegion,
@@ -311,8 +337,11 @@ public sealed class TerraScaleRegionalConsistencyTests
                 TerraScaleApiE2E.Repository,
                 $"sdk-e2e-unavailable-region/{Guid.NewGuid():N}"));
 
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(exception.IsRegionalUnavailable).IsTrue();
+        await Assert.That(exception).IsNotNull();
+        var apiException = exception
+            ?? throw new InvalidOperationException("The unavailable regional request did not return an API exception.");
+        await Assert.That(apiException.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(apiException.IsRegionalUnavailable).IsTrue();
 
         Activity[] capturedActivities;
         lock (activities)
@@ -343,7 +372,10 @@ public sealed class TerraScaleRegionalConsistencyTests
                 "document-a",
                 new TerraScaleDocumentMutationOptions("   ")));
 
-        await Assert.That(exception!.ParamName).IsEqualTo("mutationOptions");
+        await Assert.That(exception).IsNotNull();
+        var argumentException = exception
+            ?? throw new InvalidOperationException("The invalid expected change token did not throw an argument exception.");
+        await Assert.That(argumentException.ParamName).IsEqualTo("mutationOptions");
     }
 
     private static async Task DeleteIfPresentAsync(

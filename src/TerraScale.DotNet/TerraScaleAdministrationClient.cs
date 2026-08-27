@@ -196,7 +196,8 @@ public sealed class TerraScaleAdministrationClient
         client.SendJsonAsync(method, route, request, TypeInfo<TRequest>(), TypeInfo<TResponse>(), cancellationToken);
 
     private static JsonTypeInfo<T> TypeInfo<T>() =>
-        (JsonTypeInfo<T>)TerraScaleAdminJsonContext.Default.GetTypeInfo(typeof(T))!;
+        TerraScaleAdminJsonContext.Default.GetTypeInfo(typeof(T)) as JsonTypeInfo<T>
+        ?? throw new InvalidOperationException($"JSON metadata for {typeof(T)} is not available in the administration context.");
 }
 
 /// <summary>Page returned by a platform administration list operation.</summary>

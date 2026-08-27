@@ -239,7 +239,10 @@ public sealed class TerraScaleSyncTransportIntegrationTests
                         current => JsonSerializer.SerializeToElement(
                             new
                             {
-                                count = current!.Value.GetProperty("count").GetInt32() + 1
+                                count = (current ?? throw new InvalidOperationException(
+                                    "The optimistic patch requires an existing query value."))
+                                    .GetProperty("count")
+                                    .GetInt32() + 1
                             }))
                 ]));
         var mutation = await ReadAsync<TerraScaleSyncExecuteMutationMessage>(
@@ -359,7 +362,9 @@ public sealed class TerraScaleSyncTransportIntegrationTests
             TerraScaleSyncMessageType.AcknowledgeTransition);
         await using var values = live.GetAsyncEnumerator();
         await Assert.That(await values.MoveNextAsync()).IsTrue();
-        await Assert.That(values.Current.Value.GetProperty("data").GetString()!.Length)
+        var data = values.Current.Value.GetProperty("data").GetString()
+            ?? throw new InvalidOperationException("The transition result must contain a data string.");
+        await Assert.That(data.Length)
             .IsEqualTo(largeValue.Length);
     }
 
@@ -378,7 +383,8 @@ public sealed class TerraScaleSyncTransportIntegrationTests
             httpClient,
             new TerraScaleClientOptions
             {
-                BaseAddress = httpClient.BaseAddress!,
+                BaseAddress = httpClient.BaseAddress
+                    ?? throw new InvalidOperationException("The test HTTP client requires a base address."),
                 BearerToken = bearerTokenProvider is null ? "test-token" : null,
                 BearerTokenProvider = bearerTokenProvider
             });
@@ -511,8 +517,12 @@ public sealed class TerraScaleSyncTransportIntegrationTests
             buffer.AsSpan(0, length),
             typeof(TerraScaleSyncEnvelope<TPayload>),
             TerraScaleSyncJsonContext.Default);
-        await Assert.That(envelope).IsNotNull();
-        await Assert.That(envelope!.MessageType).IsEqualTo(expected);
+        if (envelope is null)
+        {
+            throw new InvalidOperationException("The test server returned an empty Sync envelope.");
+        }
+
+        await Assert.That(envelope.MessageType).IsEqualTo(expected);
         return envelope;
     }
 

@@ -1235,9 +1235,9 @@ public sealed class TerraScaleSyncSession : IAsyncDisposable
             !physical.Token.IsCancellationRequested &&
             !cancellationToken.IsCancellationRequested)
         {
-            if (buffered)
+            if (buffered && bytes is { } bufferedBytes)
             {
-                Interlocked.Add(ref physical.BufferedBytes, -bytes!.Length);
+                Interlocked.Add(ref physical.BufferedBytes, -bufferedBytes.Length);
             }
 
             physical.RewindMessageSequence(messageSequence);
@@ -1248,9 +1248,9 @@ public sealed class TerraScaleSyncSession : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            if (buffered)
+            if (buffered && bytes is { } bufferedBytes)
             {
-                Interlocked.Add(ref physical.BufferedBytes, -bytes!.Length);
+                Interlocked.Add(ref physical.BufferedBytes, -bufferedBytes.Length);
             }
 
             physical.RewindMessageSequence(messageSequence);

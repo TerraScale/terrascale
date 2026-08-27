@@ -21,11 +21,12 @@ public sealed class TerraScaleApiE2ETests
         var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
             ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
         var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            standardBearer.Administration.GetOverviewAsync());
+            standardBearer.Administration.GetOverviewAsync())
+            ?? throw new InvalidOperationException("Expected the standard bearer to be denied administration overview access.");
 
         await Assert.That(overview.Organizations).IsGreaterThanOrEqualTo(0);
         await Assert.That(overview.Regions).IsNotNull();
-        await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
     }
 
     [Test]
@@ -53,7 +54,8 @@ public sealed class TerraScaleApiE2ETests
         var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
             ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
         var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            standardBearer.Administration.ListDeadLetteredPaymentWebhooksAsync());
+            standardBearer.Administration.ListDeadLetteredPaymentWebhooksAsync())
+            ?? throw new InvalidOperationException("Expected the standard bearer to be denied administration read access.");
 
         await Assert.That(organizations.Items).IsNotNull();
         await Assert.That(projects.Items).IsNotNull();
@@ -63,7 +65,7 @@ public sealed class TerraScaleApiE2ETests
         await Assert.That(audit.Items).IsNotNull();
         await Assert.That(notifications.Items).IsNotNull();
         await Assert.That(deadLetters.Items).IsNotNull();
-        await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
     }
 
     [Test]
@@ -84,11 +86,12 @@ public sealed class TerraScaleApiE2ETests
         var standardBearer = TerraScaleApiE2E.CreateBearerProviderClient(static _ =>
             ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
         var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            standardBearer.Administration.GetPaymentWebhookAsync(provider, eventId));
+            standardBearer.Administration.GetPaymentWebhookAsync(provider, eventId))
+            ?? throw new InvalidOperationException("Expected the standard bearer to be denied webhook access.");
 
         await Assert.That(replay.EventId).IsEqualTo(eventId);
         await Assert.That(replay.Provider).IsEqualTo(provider);
-        await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
     }
 
     [Test]
@@ -115,11 +118,13 @@ public sealed class TerraScaleApiE2ETests
                 ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
             await RequireNonOwnerAdminDeniedAsync(standardBearer);
             var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-                standardBearer.Administration.DisableUserAsync(userId, "must not be persisted"));
+                standardBearer.Administration.DisableUserAsync(userId, "must not be persisted"))
+                ?? throw new InvalidOperationException("Expected the standard bearer to be denied user disable access.");
             var enableDenied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-                standardBearer.Administration.EnableUserAsync(userId));
-            await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-            await Assert.That(enableDenied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+                standardBearer.Administration.EnableUserAsync(userId))
+                ?? throw new InvalidOperationException("Expected the standard bearer to be denied user enable access.");
+            await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            await Assert.That(enableDenied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         }
         finally
         {
@@ -151,8 +156,9 @@ public sealed class TerraScaleApiE2ETests
             ValueTask.FromResult(TerraScaleApiE2E.BearerToken));
         await RequireNonOwnerAdminDeniedAsync(standardBearer);
         var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            standardBearer.Administration.DeleteUserAsync(userId));
-        await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            standardBearer.Administration.DeleteUserAsync(userId))
+            ?? throw new InvalidOperationException("Expected the standard bearer to be denied user deletion access.");
+        await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
 
         var deleted = await owner.Administration.DeleteUserAsync(userId);
         await Assert.That(target.Owner).IsFalse();
@@ -184,21 +190,26 @@ public sealed class TerraScaleApiE2ETests
                 Name: "must not be created",
                 Currency: "USD",
                 MonthlyBaseCents: 100,
-                AnnualBaseCents: 100)));
+                AnnualBaseCents: 100)))
+            ?? throw new InvalidOperationException("Expected the standard bearer to be denied pricing-plan creation access.");
         var updatePlan = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            standardBearer.Administration.UpdatePricingPlanAsync(planId, new TerraScaleAdminPricingPlanRequest(Name: "must not be updated")));
+            standardBearer.Administration.UpdatePricingPlanAsync(planId, new TerraScaleAdminPricingPlanRequest(Name: "must not be updated")))
+            ?? throw new InvalidOperationException("Expected the standard bearer to be denied pricing-plan update access.");
         var deletePlan = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            standardBearer.Administration.DeletePricingPlanAsync(planId));
+            standardBearer.Administration.DeletePricingPlanAsync(planId))
+            ?? throw new InvalidOperationException("Expected the standard bearer to be denied pricing-plan deletion access.");
         var supportNote = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            standardBearer.Administration.CreateSupportNoteAsync(new TerraScaleAdminCreateSupportNoteRequest(null, null, null, "must not be persisted")));
+            standardBearer.Administration.CreateSupportNoteAsync(new TerraScaleAdminCreateSupportNoteRequest(null, null, null, "must not be persisted")))
+            ?? throw new InvalidOperationException("Expected the standard bearer to be denied support-note creation access.");
         var replay = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            standardBearer.Administration.ReplayPaymentWebhookAsync(provider, eventId, $"forbidden-replay-{Guid.NewGuid():N}"));
+            standardBearer.Administration.ReplayPaymentWebhookAsync(provider, eventId, $"forbidden-replay-{Guid.NewGuid():N}"))
+            ?? throw new InvalidOperationException("Expected the standard bearer to be denied webhook replay access.");
 
-        await Assert.That(createPlan!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(updatePlan!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(deletePlan!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(supportNote!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(replay!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(createPlan.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(updatePlan.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(deletePlan.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(supportNote.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
 
         var plansAfter = await owner.Administration.ListPricingPlansAsync();
         var planAfter = plansAfter
@@ -350,9 +361,10 @@ public sealed class TerraScaleApiE2ETests
         var client = TerraScaleApiE2E.CreateInvalidBearerProviderClient();
 
         var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            client.Billing.ListAccessAsync("01ARZ3NDEKTSV4RRFFQ69G5FAV"));
+            client.Billing.ListAccessAsync("01ARZ3NDEKTSV4RRFFQ69G5FAV"))
+            ?? throw new InvalidOperationException("Expected an invalid bearer token to be rejected.");
 
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(exception.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
     [Test]
@@ -398,8 +410,9 @@ public sealed class TerraScaleApiE2ETests
             await Assert.That(revoked.Enabled).IsFalse();
 
             var forbidden = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-                client.Billing.ListAccessAsync(forbiddenOrganizationId));
-            await Assert.That(forbidden!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+                client.Billing.ListAccessAsync(forbiddenOrganizationId))
+                ?? throw new InvalidOperationException("Expected cross-organization billing access to be forbidden.");
+            await Assert.That(forbidden.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         }
         finally
         {
@@ -430,10 +443,11 @@ public sealed class TerraScaleApiE2ETests
             RequiredEnvironment("TERRASCALE_E2E_PROJECT_ACCESS_LOW_PRIVILEGE_BEARER_TOKEN"));
         var members = await owner.Access.ListTeamMembersAsync(projectId, take: 1);
         var denied = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            lowerPrivilege.Access.ListTeamMembersAsync(projectId, take: 1));
+            lowerPrivilege.Access.ListTeamMembersAsync(projectId, take: 1))
+            ?? throw new InvalidOperationException("Expected the lower-privilege bearer to be denied team-member access.");
 
         await Assert.That(members.Items).IsNotNull();
-        await Assert.That(denied!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
     }
 
     [Test]
@@ -475,11 +489,12 @@ public sealed class TerraScaleApiE2ETests
                     PlanId = TerraScaleApiE2E.BillingCheckoutInvalidPlanId,
                     BillingInterval = TerraScaleApiE2E.BillingCheckoutInterval,
                     Provider = plan.Provider
-                }));
+                }))
+            ?? throw new InvalidOperationException("Expected checkout creation with an invalid plan to fail.");
 
         await Assert.That(checkout.SessionId).IsNotEmpty();
         await Assert.That(checkout.Url).IsNotEmpty();
-        await Assert.That(invalid!.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound).IsTrue();
+        await Assert.That(invalid.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound).IsTrue();
     }
 
     [Test]
@@ -579,9 +594,10 @@ public sealed class TerraScaleApiE2ETests
         var currentProject = await GetCurrentProjectAsync(client);
 
         var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            client.ProjectUsage.GetHistoryAsync(currentProject.ProjectId, "all"));
+            client.ProjectUsage.GetHistoryAsync(currentProject.ProjectId, "all"))
+            ?? throw new InvalidOperationException("Expected an unsupported usage-history range to be rejected.");
 
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(exception.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
     }
 
     [Test]
@@ -620,8 +636,9 @@ public sealed class TerraScaleApiE2ETests
             created = null;
 
             var missing = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-                client.ProjectDatabases.GetAsync(currentProject.ProjectId, deleted.DatabaseId));
-            await Assert.That(missing!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+                client.ProjectDatabases.GetAsync(currentProject.ProjectId, deleted.DatabaseId))
+                ?? throw new InvalidOperationException("Expected the deleted project database lookup to fail.");
+            await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
         finally
         {
@@ -658,8 +675,9 @@ public sealed class TerraScaleApiE2ETests
             var unavailable = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
                 client.DatabaseBranches.RequestCloneAsync(
                     currentProject.ProjectId,
-                    new TerraScaleCreateDatabaseBranchRequest(database.DatabaseId)));
-            await Assert.That(unavailable!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+                    new TerraScaleCreateDatabaseBranchRequest(database.DatabaseId)))
+                ?? throw new InvalidOperationException("Expected database branch cloning to be unavailable.");
+            await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
             await Assert.That(unavailable.ErrorCode).IsEqualTo("TERRASCALE-5001");
         }
         finally
@@ -696,8 +714,9 @@ public sealed class TerraScaleApiE2ETests
         {
             var invalid = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.SavedQueries.CreateAsync(
                 currentProject.ProjectId,
-                new TerraScaleSaveQueryRequest(name, new string('q', 8001))));
-            await Assert.That(invalid!.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+                new TerraScaleSaveQueryRequest(name, new string('q', 8001))))
+                ?? throw new InvalidOperationException("Expected an oversized saved query to be rejected.");
+            await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
 
             created = await replayClient.SavedQueries.CreateAsync(currentProject.ProjectId, createRequest);
             var replayed = await replayClient.SavedQueries.CreateAsync(currentProject.ProjectId, createRequest);
@@ -762,8 +781,9 @@ public sealed class TerraScaleApiE2ETests
             var stale = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.SavedQueriesV2.UpdateAsync(
                 currentProject.ProjectId,
                 created.SavedQueryId,
-                new TerraScaleUpdateSavedQueryV2Request("Stale revision", "from Orders", loaded.Revision)));
-            await Assert.That(stale!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+                new TerraScaleUpdateSavedQueryV2Request("Stale revision", "from Orders", loaded.Revision)))
+                ?? throw new InvalidOperationException("Expected a stale saved-query revision to be rejected.");
+            await Assert.That(stale.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
             await Assert.That(stale.ErrorCode).IsEqualTo("TERRASCALE-1401");
         }
         finally
@@ -911,8 +931,9 @@ public sealed class TerraScaleApiE2ETests
             created = null;
 
             var missing = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-                client.Queues.GetAsync(currentProject.ProjectId, deletedQueueId));
-            await Assert.That(missing!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+                client.Queues.GetAsync(currentProject.ProjectId, deletedQueueId))
+                ?? throw new InvalidOperationException("Expected the deleted project queue lookup to fail.");
+            await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
         finally
         {
@@ -976,8 +997,9 @@ public sealed class TerraScaleApiE2ETests
                 createdEnvironment = null;
 
                 var missing = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-                    client.Environments.GetAsync(currentProject.ProjectId, database.DatabaseId, deleted.EnvironmentId));
-                await Assert.That(missing!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+                    client.Environments.GetAsync(currentProject.ProjectId, database.DatabaseId, deleted.EnvironmentId))
+                    ?? throw new InvalidOperationException("Expected the deleted environment lookup to fail.");
+                await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             }
             else
             {
@@ -1039,9 +1061,9 @@ public sealed class TerraScaleApiE2ETests
             await Assert.That(created.ApiKey.EnvironmentId).IsEqualTo(environment.EnvironmentId);
 
             var listed = await client.ApiKeys.ListAsync(currentProject.ProjectId, limit: 100);
-            var listedKey = listed.ApiKeys.SingleOrDefault(apiKey => apiKey.KeyId == created.ApiKey.KeyId);
-            await Assert.That(listedKey).IsNotNull();
-            await Assert.That(listedKey!.IsActive).IsTrue();
+            var listedKey = listed.ApiKeys.SingleOrDefault(apiKey => apiKey.KeyId == created.ApiKey.KeyId)
+                ?? throw new InvalidOperationException("Expected the newly created API key to be listed.");
+            await Assert.That(listedKey.IsActive).IsTrue();
 
             var rotated = await client.ApiKeys.RotateAsync(currentProject.ProjectId, created.ApiKey.KeyId);
             await Assert.That(rotated.ApiKey.KeyId).IsEqualTo(created.ApiKey.KeyId);

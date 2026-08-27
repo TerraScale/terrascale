@@ -170,8 +170,8 @@ public sealed class TerraScaleSyncIdJsonConverter : JsonConverter<TerraScaleSync
         JsonSerializerOptions options)
     {
         var value = reader.TokenType == JsonTokenType.String ? reader.GetString() : null;
-        return TerraScaleSyncId.IsCanonical(value)
-            ? new TerraScaleSyncId(value!)
+        return value is { } canonicalValue && TerraScaleSyncId.IsCanonical(canonicalValue)
+            ? new TerraScaleSyncId(canonicalValue)
             : throw new JsonException("Sync identifiers must be canonical ULID strings.");
     }
 

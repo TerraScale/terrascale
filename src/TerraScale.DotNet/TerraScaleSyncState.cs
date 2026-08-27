@@ -689,7 +689,12 @@ public static class TerraScaleSyncStateReducer
             return true;
         }
 
-        return JsonElement.DeepEquals(current.Result.Value, next.Result!.Value);
+        if (current.Result is not { } currentResult || next.Result is not { } nextResult)
+        {
+            return false;
+        }
+
+        return JsonElement.DeepEquals(currentResult, nextResult);
     }
 
     private static bool IsValidError(TerraScaleSyncError? error) =>

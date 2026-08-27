@@ -5,6 +5,12 @@ on:
     branches: [develop, main]
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      handoff_manifest:
+        description: Path to the immutable JSON package handoff staged by the protected release handoff
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,6 +20,55 @@ concurrency:
   cancel-in-progress: ${{ forgejo.event_name == 'pull_request' }}
 
 jobs:
+  package-byte-validation:
+    name: package/byte-validation (immutable handoff)
+    if: ${{ forgejo.event_name == 'workflow_dispatch' }}
+    runs-on: terrascale-untrusted
+    permissions:
+      contents: read
+    env:
+      HANDOFF_MANIFEST_INPUT: ${{ inputs.handoff_manifest }}
+      FORGEJO_EVENT_NAME: ${{ forgejo.event_name }}
+      FORGEJO_REF: ${{ forgejo.ref }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: refs/heads/develop
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify protected source and consume immutable package handoff
+        run: |
+          test "$FORGEJO_EVENT_NAME" = workflow_dispatch
+          test "$FORGEJO_REF" = refs/heads/develop
+          test -n "$HANDOFF_MANIFEST_INPUT"
+          case "$HANDOFF_MANIFEST_INPUT" in
+            "$RUNNER_TEMP"/*) ;;
+            *) echo 'handoff manifest must be staged under RUNNER_TEMP' >&2; exit 1 ;;
+          esac
+          test -f "$HANDOFF_MANIFEST_INPUT"
+          test ! -L "$HANDOFF_MANIFEST_INPUT"
+          HANDOFF_MANIFEST_PATH="$RUNNER_TEMP/terrascale-dotnet-package-handoff.json"
+          if test "$HANDOFF_MANIFEST_INPUT" != "$HANDOFF_MANIFEST_PATH"; then
+            cp -- "$HANDOFF_MANIFEST_INPUT" "$HANDOFF_MANIFEST_PATH"
+          fi
+          test ! -L "$HANDOFF_MANIFEST_PATH"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/develop)"
+          test "$(git rev-parse HEAD^{tree})" = "$(git rev-parse refs/remotes/origin/develop^{tree})"
+          TERRASCALE_PACKAGE_RECEIPT_PATH="$RUNNER_TEMP/terrascale-dotnet-package-verification.json" \
+            ./scripts/verify-package-candidate.sh --handoff "$HANDOFF_MANIFEST_PATH"
+          test -s "$RUNNER_TEMP/terrascale-dotnet-package-verification.json"
+      - name: Re-run focused candidate regression fixtures
+        run: |
+          TERRASCALE_PACKAGE_RECEIPT_PATH= \
+            tests/TerraScale.DotNet.Tests/verify-package-candidate-tests.sh \
+            --handoff "$RUNNER_TEMP/terrascale-dotnet-package-handoff.json"
+      - name: Upload verification receipt
+        uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e
+        with:
+          name: terrascale-dotnet-package-verification
+          path: ${{ runner.temp }}/terrascale-dotnet-package-verification.json
+
   pr-validation:
     name: pr/validation (build, test, contracts)
     if: ${{ forgejo.event_name == 'pull_request' }}
