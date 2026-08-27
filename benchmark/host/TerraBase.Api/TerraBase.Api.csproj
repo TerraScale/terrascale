@@ -24,4 +24,10 @@
     <ProjectReference Include="..\TerraBase.Protocol\TerraBase.Protocol.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The supervision rows of the test family drive real engine-process
+         loss on the supervisor's own managed process handle. -->
+    <InternalsVisibleTo Include="TerraBase.Api.Tests" />
+  </ItemGroup>
+
 </Project>

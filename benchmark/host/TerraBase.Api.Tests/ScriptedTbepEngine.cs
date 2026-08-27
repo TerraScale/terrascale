@@ -30,6 +30,7 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
     private readonly ConcurrentDictionary<ulong, string> subscriptionTenants = new();
     private readonly ConcurrentDictionary<string, List<ChangeEvent>> journals = new();
     private readonly ConcurrentDictionary<string, ulong> nextSequences = new();
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, CommitReceipt>> appliedKeys = new();
     private readonly object idGate = new();
     private ulong nextSession;
 
@@ -303,6 +304,14 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                 case "SyncSessionSetupRequest":
                 {
                     var body = MessagePackSerializer.Deserialize<SyncSessionSetupRequest>(request.Body, TbepOptions.Strict);
+                    if (body.Resume is { } resume && !Decodes(resume))
+                    {
+                        // The real engine refuses a resume checkpoint that
+                        // does not decode, fail-closed.
+                        await this.ErrorAsync(stream, writeGate, request.Correlation, ErrorCode.CheckpointRefused(), "the resume checkpoint does not decode").ConfigureAwait(false);
+                        continue;
+                    }
+
                     ulong id;
                     lock (this.idGate)
                     {
@@ -391,6 +400,12 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                         continue;
                     }
 
+                    if (!Decodes(body.Checkpoint))
+                    {
+                        await this.ErrorAsync(stream, writeGate, request.Correlation, ErrorCode.CheckpointRefused(), "the checkpoint does not decode").ConfigureAwait(false);
+                        continue;
+                    }
+
                     await this.AnswerAsync(
                         stream,
                         writeGate,
@@ -427,7 +442,37 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                         continue;
                     }
 
-                    var sequence = this.Commit(tenant!, "orders", request.Idempotency ?? "op", body.Document);
+                    // At-least-once: a retried key answers the recorded
+                    // receipt (the real engine's bounded applied-key
+                    // registry, 128 receipts per scope, drop-oldest).
+                    var key = request.Idempotency ?? "op";
+                    var receipts = this.appliedKeys.GetOrAdd(tenant!, _ => new ConcurrentDictionary<string, CommitReceipt>());
+                    if (receipts.TryGetValue(key, out var recorded))
+                    {
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "sync.mutation_submit",
+                            request.Correlation,
+                            new SyncMutationSubmitResponse
+                            {
+                                SessionId = body.SessionId,
+                                Outcome = MutationOutcome.Applied(recorded),
+                            }).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    var sequence = this.Commit(tenant!, "orders", key, body.Document);
+                    var receipt = new CommitReceipt { Sequence = sequence, Version = sequence, OperationId = key };
+                    lock (receipts)
+                    {
+                        receipts[key] = receipt;
+                        while (receipts.Count > 128)
+                        {
+                            receipts.TryRemove(receipts.Keys.First(), out _);
+                        }
+                    }
+
                     await this.BroadcastAsync(tenant!, "orders", subscriptions, stream, writeGate).ConfigureAwait(false);
                     await this.AnswerAsync(
                         stream,
@@ -437,12 +482,7 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                         new SyncMutationSubmitResponse
                         {
                             SessionId = body.SessionId,
-                            Outcome = MutationOutcome.Applied(new CommitReceipt
-                            {
-                                Sequence = sequence,
-                                Version = sequence,
-                                OperationId = request.Idempotency ?? "op",
-                            }),
+                            Outcome = MutationOutcome.Applied(receipt),
                         }).ConfigureAwait(false);
                     break;
                 }
@@ -610,6 +650,9 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
     }
 
     private static byte[] CheckpointOf(ulong commits) => [(byte)(commits & 0xff), 0x6f, 0x70];
+
+    private static bool Decodes(byte[] checkpoint) =>
+        checkpoint.Length == 3 && checkpoint[1] == 0x6f && checkpoint[2] == 0x70;
 
     private async Task RefuseLifecycleAsync(
         NetworkStream stream,

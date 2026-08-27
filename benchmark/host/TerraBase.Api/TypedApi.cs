@@ -744,6 +744,15 @@ public sealed class TypedApi
                 detail: $"session {answer.SessionId}, collection {request.Collection}, generation {this.supervisor.Generation}");
             return Results.Json(new SyncSessionDto(answer.SessionId, answer.Checkpoint, answer.RetainedFloor));
         }
+        catch (TbepException failure) when (failure.Code?.Variant == "CheckpointRefused")
+        {
+            // A resume checkpoint that does not decode: the consumer
+            // resyncs by opening a fresh session (or pulling a snapshot
+            // on one it owns).
+            return Results.Json(
+                new ErrorDto("checkpoint-refused", failure.Detail) { ResyncRequired = true },
+                statusCode: StatusCodes.Status409Conflict);
+        }
         catch (Exception failure)
         {
             return this.Failure(failure, caller);

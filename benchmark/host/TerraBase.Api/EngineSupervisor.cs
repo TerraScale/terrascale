@@ -60,6 +60,13 @@ public sealed class EngineSupervisor : IAsyncDisposable
     /// <summary>The completed restart count.</summary>
     public int Restarts => Volatile.Read(ref this.restarts);
 
+    /// <summary>
+    /// The managed engine process of the current generation, when this
+    /// supervisor spawned one (the supervision surface: the test family
+    /// drives real process loss on it).
+    /// </summary>
+    internal Process? EngineProcess => Volatile.Read(ref this.engineProcess);
+
     /// <summary>The supervisor's own lifecycle state.</summary>
     public EngineStatus Status
     {
