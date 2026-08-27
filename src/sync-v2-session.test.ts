@@ -44,6 +44,28 @@ class FixtureApiHost {
   #refusalsRemaining = 0;
   #nextSessionId = 1;
   #lastStreamId = 0;
+  #trafficRefusal: { readonly status: number; readonly code: string; readonly detail: string } | null = null;
+
+  /**
+   * Refuses every session-scoped request (deltas, snapshots, acks, streams)
+   * with a typed error body, the shape a host emits after session expiry
+   * (session_closed) or under sustained overload (overloaded).
+   */
+  public refuseSessionTraffic(status: number, code: string, detail: string): void {
+    this.#trafficRefusal = { status, code, detail };
+    this.closeStreams();
+  }
+
+  public restoreSessionTraffic(): void {
+    this.#trafficRefusal = null;
+  }
+
+  /** Restores served traffic after a short delay (a blip, not an outage). */
+  public restoreSessionTrafficSoon(delayMs = 20): void {
+    setTimeout(() => {
+      this.#trafficRefusal = null;
+    }, delayMs);
+  }
 
   public scriptDeltaRefusal(detail: string): void {
     this.#deltaScript = { kind: "refuse", detail };
@@ -95,6 +117,16 @@ class FixtureApiHost {
       idempotencyKey: headers.get("idempotency-key") ?? undefined,
       lastEventId: headers.get("last-event-id") ?? undefined,
     });
+
+    if (
+      this.#trafficRefusal !== null
+      && (url.pathname.startsWith("/v1/sync/sessions/") || (method === "GET" && url.pathname === "/v1/streams"))
+    ) {
+      return Response.json(
+        { code: this.#trafficRefusal.code, detail: this.#trafficRefusal.detail },
+        { status: this.#trafficRefusal.status },
+      );
+    }
 
     if (method === "POST" && url.pathname === "/v1/sync/sessions") {
       const request = rawBody as { collection: string; resume?: string };
@@ -268,7 +300,10 @@ async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<voi
   }
 }
 
-function createSession(host: FixtureApiHost, options?: { resume?: string }): TerraScaleSyncV2Session {
+function createSession(
+  host: FixtureApiHost,
+  options?: { resume?: string; reconnectDelayMs?: number; maxReconnectAttempts?: number },
+): TerraScaleSyncV2Session {
   return new TerraScaleSyncV2Session({
     Url: "https://api.terrascale.test",
     Collection: "orders",
@@ -276,6 +311,8 @@ function createSession(host: FixtureApiHost, options?: { resume?: string }): Ter
     Tenant: "tenant-a",
     Fetch: host.fetch,
     ResumeCheckpoint: options?.resume,
+    ReconnectDelayMilliseconds: options?.reconnectDelayMs,
+    MaxReconnectAttempts: options?.maxReconnectAttempts,
   });
 }
 
@@ -584,6 +621,86 @@ describe("TerraScaleSyncV2Session over the API host HTTP/SSE surface", () => {
         return true;
       },
     );
+  });
+
+  test("host session expiry is a terminal failure with a recorded LastError and bounded retries", async () => {
+    const host = new FixtureApiHost();
+    host.commit("orders");
+    const session = createSession(host);
+    await session.connect();
+    assert.equal(session.getStatus(), "live");
+
+    host.refuseSessionTraffic(410, "session_closed", "the host session expired");
+    await waitFor(() => session.getStatus() === "failed");
+
+    assert.equal(session.getStoreSnapshot().Status, "failed");
+    const lastError = session.getStoreSnapshot().LastError;
+    assert.ok(lastError !== undefined, "LastError records the terminal failure");
+    assert.match(lastError, /session_closed/u);
+
+    // The retry ladder is bounded: after the terminal transition no further
+    // session-scoped requests leave the client.
+    const deltas = () => host.requests.filter((request) => request.path.endsWith("/delta")).length;
+    const streams = () => host.requests.filter((request) => request.method === "GET" && request.path === "/v1/streams").length;
+    const deltasAtFailure = deltas();
+    const streamsAtFailure = streams();
+    assert.ok(streamsAtFailure <= 4, `the retry count is bounded (stream attempts: ${streamsAtFailure})`);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(deltas(), deltasAtFailure, "no delta POSTs after the terminal failure");
+    assert.equal(streams(), streamsAtFailure, "no stream reconnects after the terminal failure");
+
+    // The terminal session no longer speaks for a host session; the
+    // documented re-setup is a fresh connect (or a new session resumed from
+    // the durable checkpoint, which survives the failure).
+    await assert.rejects(
+      session.executeMutation({ Document: "d-01", Put: { status: "x" } }, "idem-after"),
+      (error: unknown) => error instanceof SyncV2SessionError && error.code === "session_closed",
+    );
+    await session.disconnect();
+  });
+
+  test("sustained transient failures exhaust the bounded backoff ladder and fail terminally", async () => {
+    const host = new FixtureApiHost();
+    host.commit("orders");
+    const session = createSession(host, { reconnectDelayMs: 1 });
+    await session.connect();
+    assert.equal(session.getStatus(), "live");
+
+    host.refuseSessionTraffic(503, "overloaded", "injected sustained overload");
+    await waitFor(() => session.getStatus() === "failed");
+
+    const snapshot = session.getStoreSnapshot();
+    assert.equal(snapshot.Status, "failed");
+    assert.ok(snapshot.LastError !== undefined, "LastError records the exhaustion");
+    const streams = () => host.requests.filter((request) => request.method === "GET" && request.path === "/v1/streams").length;
+    const streamsAtFailure = streams();
+    // The default ladder is 8 attempts over the initial healthy stream —
+    // bounded, not an unbounded fixed-interval storm.
+    assert.ok(streamsAtFailure <= 12, `the retry ladder is bounded (stream attempts: ${streamsAtFailure})`);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(streams(), streamsAtFailure, "the ladder stops after exhaustion");
+    await session.disconnect();
+  });
+
+  test("a transient failure inside the ladder recovers to live and resets the ladder", async () => {
+    const host = new FixtureApiHost();
+    host.commit("orders");
+    const session = createSession(host, { reconnectDelayMs: 1 });
+    await session.connect();
+
+    // One overloaded round trip, then the host recovers: the session must
+    // ride the ladder back to live (not fail) and be able to do it again.
+    host.refuseSessionTraffic(503, "overloaded", "a short overload");
+    host.restoreSessionTrafficSoon();
+    await waitFor(() =>
+      host.requests.filter((request) => request.method === "GET" && request.path === "/v1/streams").length >= 2);
+    await waitFor(() => session.getStoreSnapshot().Status === "live");
+
+    host.commit("orders");
+    host.pushTrigger("orders", 2);
+    await waitFor(() => session.getCheckpoint().storage_sequence === 2n);
+    assert.equal(session.getStatus(), "live");
+    await session.disconnect();
   });
 
   test("construction fails closed without the backend-supplied tenant context", () => {

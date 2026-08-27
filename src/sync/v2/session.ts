@@ -111,8 +111,10 @@ export type TerraScaleSyncV2SessionOptions = {
   readonly StreamFactory?: SyncV2StreamFactory | undefined;
   /** Document materialization from payload bytes (memory-only otherwise). */
   readonly Materializer?: SyncV2DocumentMaterializer | undefined;
-  /** The reconnect delay after a lost stream, in milliseconds (default 100). */
+  /** The base reconnect delay in milliseconds; the ladder doubles it per attempt, jitters, and caps at 30 000 (default 100). */
   readonly ReconnectDelayMilliseconds?: number | undefined;
+  /** The reconnect-attempt bound; exhaustion fails the session terminally (default 8). */
+  readonly MaxReconnectAttempts?: number | undefined;
 };
 
 /** One server-ack-only mutation request. Exactly one of `Put` or `Delete` applies. */
@@ -245,7 +247,10 @@ export class TerraScaleSyncV2Store {
       AppliedPayloadCodec: update.appliedCodec ?? current.AppliedPayloadCodec,
       AppliedDeltaBatches: update.appliedDeltaBatches ?? current.AppliedDeltaBatches,
       AdoptedSnapshots: update.adoptedSnapshots ?? current.AdoptedSnapshots,
-      LastError: update.lastError ?? current.LastError,
+      // A present (possibly undefined) lastError key replaces the recorded
+      // error; an absent key preserves it — a status transition through
+      // setStatus clears a stale error, an application commit keeps it.
+      LastError: "lastError" in update ? update.lastError : current.LastError,
     });
     if (next === current) {
       return;
@@ -292,13 +297,51 @@ export class SyncV2SessionError extends Error {
 
 const maxDrainBatches = 4096;
 const reconnectDelayDefault = 100;
+const maxReconnectAttemptsDefault = 8;
+const reconnectDelayCapMilliseconds = 30_000;
 const maxSafeInteger = 9_007_199_254_740_991n;
+
+/**
+ * The failure codes a reconnect cannot fix: the host session identity is
+ * gone (closed on the host side) or the principal/tenant context is
+ * refused. Retrying these would spin against a refusal that only a fresh
+ * setup (or new credentials) can clear.
+ */
+const terminalSessionErrorCodes: ReadonlySet<string> = new Set([
+  "session_closed",
+  "scope_refused",
+  "http_401",
+  "http_403",
+]);
+
+function isTerminalSessionFailure(error: unknown): boolean {
+  return error instanceof SyncV2SessionError && terminalSessionErrorCodes.has(error.code);
+}
+
+function errorMessageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /**
  * A `terrascale.sync.v2` client session over the API host: HTTP session
  * setup with checkpoint resume, SSE trigger notifications that drive
  * immediate checkpoint-bounded delta pulls, snapshot adoption on
  * resync-required, and server-ack-only idempotent mutations.
+ *
+ * ## Failure and recovery
+ *
+ * Background failures (a trigger-driven drain, a reconnect tick, a lost
+ * stream) route through one typed surface: transient failures record
+ * `LastError` on the store and climb a bounded exponential-backoff ladder
+ * (`ReconnectDelayMilliseconds` base, jittered, capped at 30 s, at most
+ * `MaxReconnectAttempts` attempts; a recovered tick resets the ladder and
+ * clears the error). Terminal codes — `session_closed`, `scope_refused`,
+ * `http_401`, `http_403` — and ladder exhaustion transition the session to
+ * the terminal `failed` state with `LastError` recorded and the host
+ * session identity dropped. The documented re-setup after a terminal
+ * failure is a fresh `connect()` (which performs a new host setup resumed
+ * from the surviving client checkpoint) or a new session constructed with
+ * the durable `ResumeCheckpoint`; the checkpoint survives the failure.
  */
 export class TerraScaleSyncV2Session {
   readonly #options: TerraScaleSyncV2SessionOptions;
@@ -313,6 +356,7 @@ export class TerraScaleSyncV2Session {
   #disposed = false;
   #status: SyncV2ConnectionStatus = "idle";
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  #reconnectAttempts = 0;
 
   public constructor(options: TerraScaleSyncV2SessionOptions) {
     if (options.Url.length === 0 || !/^https?:/u.test(options.Url)) {
@@ -621,34 +665,107 @@ export class TerraScaleSyncV2Session {
         }
         if (event.event === "trigger" || event.event === "batch" || event.event === "drop") {
           // Push the hint, pull the delta: the trigger is advisory and
-          // the checkpoint-bounded pull is authoritative.
-          void this.#drainDeltas().catch(() => {
-            this.#setStatus("reconnecting");
+          // the checkpoint-bounded pull is authoritative. A drain failure
+          // rides the typed failure surface (and its retry ladder), never
+          // a silent status flip.
+          void this.#drainDeltas().catch((error: unknown) => {
+            this.#handleBackgroundFailure(error);
           });
         }
       },
-      () => this.#scheduleStreamReconnect(),
+      (error) => this.#onStreamEnded(error),
     );
   }
 
-  #scheduleStreamReconnect(): void {
-    if (this.#disposed || this.#sessionId === null) {
+  #onStreamEnded(error: unknown): void {
+    if (this.#disposed || this.#sessionId === null || this.#status === "failed") {
       return;
     }
-    this.#setStatus("reconnecting");
-    this.#stream = undefined;
-    const delay = this.#options.ReconnectDelayMilliseconds ?? reconnectDelayDefault;
+    if (isTerminalSessionFailure(error)) {
+      this.#failTerminally(error);
+      return;
+    }
+    this.#scheduleStreamReconnect(error === undefined ? undefined : errorMessageOf(error));
+  }
+
+  /**
+   * The single failure surface of background work (trigger-driven drains,
+   * reconnect-tick drains, stream ends). Terminal codes fail the session
+   * immediately; transient failures record LastError and climb the bounded
+   * exponential-backoff ladder.
+   */
+  #handleBackgroundFailure(error: unknown): void {
+    if (this.#disposed || this.#sessionId === null || this.#status === "failed") {
+      return;
+    }
+    if (isTerminalSessionFailure(error)) {
+      this.#failTerminally(error);
+      return;
+    }
+    this.#scheduleStreamReconnect(errorMessageOf(error));
+  }
+
+  /**
+   * The terminal transition: the failure is recorded on the store
+   * (LastError), the stream and any pending reconnect are torn down, and
+   * the host session identity is dropped — the documented re-setup is a
+   * fresh `connect()` (a new host session resumed from the surviving
+   * client checkpoint) or a new session constructed with the durable
+   * `ResumeCheckpoint`.
+   */
+  #failTerminally(error: unknown): void {
+    if (this.#status === "failed") {
+      return;
+    }
+    this.#closeStream();
+    this.#sessionId = null;
+    this.#status = "failed";
+    this.#store.fail(error);
+  }
+
+  #scheduleStreamReconnect(lastError?: string | undefined): void {
+    if (this.#disposed || this.#sessionId === null || this.#status === "failed") {
+      return;
+    }
+    if (this.#reconnectTimer !== undefined) {
+      // A tick is already scheduled: failures that arrive together (the
+      // stream end and the drain of the same tick) climb one ladder.
+      return;
+    }
+    const maxAttempts = this.#options.MaxReconnectAttempts ?? maxReconnectAttemptsDefault;
+    if (this.#reconnectAttempts >= maxAttempts) {
+      this.#failTerminally(new SyncV2SessionError(
+        "reconnect_exhausted",
+        `the stream did not recover within ${maxAttempts} reconnect attempts`,
+      ));
+      return;
+    }
+    this.#setStatus("reconnecting", lastError);
+    this.#closeStream();
+    const base = this.#options.ReconnectDelayMilliseconds ?? reconnectDelayDefault;
+    const attempt = this.#reconnectAttempts;
+    this.#reconnectAttempts += 1;
+    // Exponential backoff with multiplicative jitter, hard-capped: a
+    // sustained transient outage retries a bounded number of times with
+    // growing, decorrelated spacing instead of a fixed-interval storm.
+    const capped = Math.min(reconnectDelayCapMilliseconds, base * 2 ** attempt);
+    const delay = Math.max(0, Math.round(capped * (0.5 + Math.random() / 2)));
     this.#reconnectTimer = setTimeout(() => {
       this.#reconnectTimer = undefined;
-      if (this.#disposed || this.#sessionId === null) {
+      if (this.#disposed || this.#sessionId === null || this.#status === "failed") {
         return;
       }
       this.#openStream();
       void this.#drainDeltas().then(() => {
         if (this.#status === "reconnecting") {
+          // A completed reconnect-tick drain is recovery: the ladder
+          // resets and the recorded transient error clears.
+          this.#reconnectAttempts = 0;
           this.#setStatus("live");
         }
-      }).catch(() => undefined);
+      }).catch((error: unknown) => {
+        this.#handleBackgroundFailure(error);
+      });
     }, delay);
   }
 
@@ -657,8 +774,11 @@ export class TerraScaleSyncV2Session {
       clearTimeout(this.#reconnectTimer);
       this.#reconnectTimer = undefined;
     }
-    this.#stream?.close();
+    // Drop the reference before closing so a factory whose close() reports
+    // an end synchronously cannot re-enter the reconnect path.
+    const stream = this.#stream;
     this.#stream = undefined;
+    stream?.close();
   }
 
   #contextHeaders(): Record<string, string> {
@@ -687,9 +807,9 @@ export class TerraScaleSyncV2Session {
     return response;
   }
 
-  #setStatus(status: SyncV2ConnectionStatus): void {
+  #setStatus(status: SyncV2ConnectionStatus, lastError?: string | undefined): void {
     this.#status = status;
-    this.#store.setStatus(status);
+    this.#store.setStatus(status, lastError);
   }
 
   #throwIfDisposed(): void {
@@ -871,8 +991,14 @@ function sseOverFetchWith(
         headers: { ...headers, accept: "text/event-stream" },
         signal: controller.signal,
       });
-      if (!response.ok || response.body === null) {
-        throw new SyncV2SessionError(`http_${response.status}`, "the stream endpoint refused the subscription");
+      if (!response.ok) {
+        // The refusal rides the same typed surface as every other host
+        // answer (body code included), so terminal refusals — an expired
+        // host session, an auth/scope rejection — are classified.
+        throw await sessionErrorOf(response);
+      }
+      if (response.body === null) {
+        throw new SyncV2SessionError("malformed_frame", "the stream endpoint answered without a body");
       }
       const reader = response.body.getReader();
       for (;;) {
