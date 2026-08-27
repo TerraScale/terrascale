@@ -662,6 +662,50 @@ fn idempotent_operations_reach_a_fixed_point() {
 }
 
 #[test]
+fn remove_twice_refuses_the_second_application_typed() {
+    let engine = seeded_engine("remove-twice");
+    let remove = || patch(vec![PatchOperation::Remove { path: field_path(&["tags"]) }]);
+
+    let scope = tenant_scope(&engine, "t");
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    let mut transaction = engine.begin(&scope, snapshot, operation("patch-1")).expect("begins");
+    assert_eq!(
+        apply_document_patch(
+            &mut transaction,
+            &collection("users"),
+            &document_id("users/1"),
+            ExpectedVersion::Any,
+            &remove(),
+        )
+        .expect("removes"),
+        PatchOutcome::Applied
+    );
+    assert!(matches!(
+        transaction.commit(LocalDurability::Synced),
+        crate::engine::CommitOutcome::Committed(_)
+    ));
+
+    let scope = tenant_scope(&engine, "t");
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    let mut transaction = engine.begin(&scope, snapshot, operation("patch-2")).expect("begins");
+    // `Remove` is idempotent in the value sense — the document stays at the
+    // post-remove value — but the fail-closed form of that determinism is a
+    // typed refusal on the second application, never a silent no-op.
+    assert_eq!(
+        apply_document_patch(
+            &mut transaction,
+            &collection("users"),
+            &document_id("users/1"),
+            ExpectedVersion::Any,
+            &remove(),
+        )
+        .expect_err("the removed target no longer exists"),
+        PatchError::PathNotFound
+    );
+    assert!(transaction.staged_writes().is_empty());
+}
+
+#[test]
 fn increment_is_not_idempotent_by_design() {
     let engine = seeded_engine("increment-twice");
     let increment =

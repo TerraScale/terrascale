@@ -240,7 +240,7 @@ The typed refusal set is closed:
 
 | Error | Meaning |
 | --- | --- |
-| `PatchError::Construction(RequestValidationError)` | malformed path or patch shape, refused at construction before any data access |
+| `PatchError::Construction(RequestValidationError)` | the application-time defense against a malformed shape; construction itself refuses malformed paths and patches as `RequestValidationError` (`EmptyField`, `InvalidPatch`) at the constructors, before any data access |
 | `PatchError::MissingTarget` | the document does not exist (and the caller did not use `AddOrPatch`) — V1 parity, `JsonPatchCommand.cs:37-40` |
 | `PatchError::StaleTarget` | the observed version contradicts `expected` |
 | `PatchError::PathNotFound` | an addressed position does not exist: a `Replace`/`Remove` target, an out-of-bounds array index, or a walk through an absent member |
