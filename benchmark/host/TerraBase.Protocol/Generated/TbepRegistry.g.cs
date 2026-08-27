@@ -59,6 +59,7 @@ public static partial class TbepRegistry
         ("subscription", 65536),
         ("trigger", 256),
         ("delivery", 65536),
+        ("observation", 65536),
     ];
 }
 
@@ -1571,6 +1572,333 @@ public sealed class SyncChangeFormatter : IMessagePackFormatter<SyncChange?>
     }
 }
 
+/// <summary>The generated `conflict_outcome_kind` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(ConflictOutcomeKindFormatter))]
+public sealed class ConflictOutcomeKind : IEquatable<ConflictOutcomeKind>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `winner` variant.</summary>
+    public static ConflictOutcomeKind Winner() => new() { Variant = "Winner", Tag = (byte)1 };
+    /// <summary>The `deposed_owner_retained` variant.</summary>
+    public static ConflictOutcomeKind DeposedOwnerRetained() => new() { Variant = "DeposedOwnerRetained", Tag = (byte)2 };
+    /// <summary>The `untrusted_clock` variant.</summary>
+    public static ConflictOutcomeKind UntrustedClock() => new() { Variant = "UntrustedClock", Tag = (byte)3 };
+
+    /// <inheritdoc/>
+    public bool Equals(ConflictOutcomeKind? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ConflictOutcomeKind);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="ConflictOutcomeKind"/>.</summary>
+public sealed class ConflictOutcomeKindFormatter : IMessagePackFormatter<ConflictOutcomeKind?>
+{
+    /// <inheritdoc/>
+    public ConflictOutcomeKind Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            throw TbepWire.FormatException("nil is not a ConflictOutcomeKind");
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Winner carries no payload");
+            }
+            return new ConflictOutcomeKind { Variant = "Winner", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("DeposedOwnerRetained carries no payload");
+            }
+            return new ConflictOutcomeKind { Variant = "DeposedOwnerRetained", Tag = tag };
+        }
+        if (tag == (byte)3)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("UntrustedClock carries no payload");
+            }
+            return new ConflictOutcomeKind { Variant = "UntrustedClock", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown ConflictOutcomeKind tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, ConflictOutcomeKind? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            throw TbepWire.FormatException("nil is not a ConflictOutcomeKind");
+        }
+        switch (value.Variant)
+        {
+            case "Winner":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "DeposedOwnerRetained":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            case "UntrustedClock":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)3);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown ConflictOutcomeKind variant");
+        }
+    }
+}
+
+/// <summary>The generated `denial_seam` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(DenialSeamFormatter))]
+public sealed class DenialSeam : IEquatable<DenialSeam>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `serve_request` variant.</summary>
+    public static DenialSeam ServeRequest() => new() { Variant = "ServeRequest", Tag = (byte)1 };
+    /// <summary>The `apply_delivery` variant.</summary>
+    public static DenialSeam ApplyDelivery() => new() { Variant = "ApplyDelivery", Tag = (byte)2 };
+
+    /// <inheritdoc/>
+    public bool Equals(DenialSeam? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as DenialSeam);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="DenialSeam"/>.</summary>
+public sealed class DenialSeamFormatter : IMessagePackFormatter<DenialSeam?>
+{
+    /// <inheritdoc/>
+    public DenialSeam Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            throw TbepWire.FormatException("nil is not a DenialSeam");
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("ServeRequest carries no payload");
+            }
+            return new DenialSeam { Variant = "ServeRequest", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("ApplyDelivery carries no payload");
+            }
+            return new DenialSeam { Variant = "ApplyDelivery", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown DenialSeam tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, DenialSeam? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            throw TbepWire.FormatException("nil is not a DenialSeam");
+        }
+        switch (value.Variant)
+        {
+            case "ServeRequest":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "ApplyDelivery":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown DenialSeam variant");
+        }
+    }
+}
+
+/// <summary>The generated `replication_status` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(ReplicationStatusFormatter))]
+public sealed class ReplicationStatus : IEquatable<ReplicationStatus>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `assigned` variant.</summary>
+    public static ReplicationStatus Assigned() => new() { Variant = "Assigned", Tag = (byte)1 };
+    /// <summary>The `active` variant.</summary>
+    public static ReplicationStatus Active() => new() { Variant = "Active", Tag = (byte)2 };
+    /// <summary>The `responsive` variant.</summary>
+    public static ReplicationStatus Responsive() => new() { Variant = "Responsive", Tag = (byte)3 };
+    /// <summary>The `stale` variant.</summary>
+    public static ReplicationStatus Stale() => new() { Variant = "Stale", Tag = (byte)4 };
+    /// <summary>The `unavailable` variant.</summary>
+    public static ReplicationStatus Unavailable() => new() { Variant = "Unavailable", Tag = (byte)5 };
+    /// <summary>The `degraded` variant.</summary>
+    public static ReplicationStatus Degraded() => new() { Variant = "Degraded", Tag = (byte)6 };
+    /// <summary>The `unknown` variant.</summary>
+    public static ReplicationStatus Unknown() => new() { Variant = "Unknown", Tag = (byte)7 };
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationStatus? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationStatus);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="ReplicationStatus"/>.</summary>
+public sealed class ReplicationStatusFormatter : IMessagePackFormatter<ReplicationStatus?>
+{
+    /// <inheritdoc/>
+    public ReplicationStatus Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            throw TbepWire.FormatException("nil is not a ReplicationStatus");
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Assigned carries no payload");
+            }
+            return new ReplicationStatus { Variant = "Assigned", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Active carries no payload");
+            }
+            return new ReplicationStatus { Variant = "Active", Tag = tag };
+        }
+        if (tag == (byte)3)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Responsive carries no payload");
+            }
+            return new ReplicationStatus { Variant = "Responsive", Tag = tag };
+        }
+        if (tag == (byte)4)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Stale carries no payload");
+            }
+            return new ReplicationStatus { Variant = "Stale", Tag = tag };
+        }
+        if (tag == (byte)5)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Unavailable carries no payload");
+            }
+            return new ReplicationStatus { Variant = "Unavailable", Tag = tag };
+        }
+        if (tag == (byte)6)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Degraded carries no payload");
+            }
+            return new ReplicationStatus { Variant = "Degraded", Tag = tag };
+        }
+        if (tag == (byte)7)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Unknown carries no payload");
+            }
+            return new ReplicationStatus { Variant = "Unknown", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown ReplicationStatus tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, ReplicationStatus? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            throw TbepWire.FormatException("nil is not a ReplicationStatus");
+        }
+        switch (value.Variant)
+        {
+            case "Assigned":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "Active":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            case "Responsive":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)3);
+                return;
+            case "Stale":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)4);
+                return;
+            case "Unavailable":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)5);
+                return;
+            case "Degraded":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)6);
+                return;
+            case "Unknown":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)7);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown ReplicationStatus variant");
+        }
+    }
+}
+
 /// <summary>The `document_body` frame body.</summary>
 [MessagePackObject]
 public sealed class DocumentBody : IEquatable<DocumentBody>
@@ -1726,6 +2054,198 @@ public sealed class SyncField : IEquatable<SyncField>
     public override int GetHashCode()
     {
         return System.HashCode.Combine(Name, Value);
+    }
+}
+
+/// <summary>The `clock_stamp` frame body.</summary>
+[MessagePackObject]
+public sealed class ClockStamp : IEquatable<ClockStamp>
+{
+    /// <summary>The `ticks` field.</summary>
+    [Key(0)]
+    public required ulong Ticks { get; init; }
+    /// <summary>The `counter` field.</summary>
+    [Key(1)]
+    public required ulong Counter { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(ClockStamp? other) => other is not null
+        && TbepRegistry.FieldEquals(Ticks, other.Ticks)
+        && TbepRegistry.FieldEquals(Counter, other.Counter);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ClockStamp);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Ticks, Counter);
+    }
+}
+
+/// <summary>The `conflict_outcome` frame body.</summary>
+[MessagePackObject]
+public sealed class ConflictOutcome : IEquatable<ConflictOutcome>
+{
+    /// <summary>The `kind` field.</summary>
+    [Key(0)]
+    public required ConflictOutcomeKind Kind { get; init; }
+    /// <summary>The `member` field.</summary>
+    [Key(1)]
+    public required string Member { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(ConflictOutcome? other) => other is not null
+        && TbepRegistry.FieldEquals(Kind, other.Kind)
+        && TbepRegistry.FieldEquals(Member, other.Member);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ConflictOutcome);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Kind, Member);
+    }
+}
+
+/// <summary>The `conflict_record` frame body.</summary>
+[MessagePackObject]
+public sealed class ConflictRecord : IEquatable<ConflictRecord>
+{
+    /// <summary>The `tenant` field.</summary>
+    [Key(0)]
+    public required string Tenant { get; init; }
+    /// <summary>The `operations` field.</summary>
+    [Key(1)]
+    public required string[] Operations { get; init; }
+    /// <summary>The `members` field.</summary>
+    [Key(2)]
+    public required string[] Members { get; init; }
+    /// <summary>The `clocks` field.</summary>
+    [Key(3)]
+    public required ClockStamp[] Clocks { get; init; }
+    /// <summary>The `outcome` field.</summary>
+    [Key(4)]
+    public required ConflictOutcome Outcome { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(ConflictRecord? other) => other is not null
+        && TbepRegistry.FieldEquals(Tenant, other.Tenant)
+        && TbepRegistry.FieldEquals(Operations, other.Operations)
+        && TbepRegistry.FieldEquals(Members, other.Members)
+        && TbepRegistry.FieldEquals(Clocks, other.Clocks)
+        && TbepRegistry.FieldEquals(Outcome, other.Outcome);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ConflictRecord);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Tenant, Operations, Members, Clocks, Outcome);
+    }
+}
+
+/// <summary>The `fenced_record` frame body.</summary>
+[MessagePackObject]
+public sealed class FencedRecord : IEquatable<FencedRecord>
+{
+    /// <summary>The `range` field.</summary>
+    [Key(0)]
+    public required string Range { get; init; }
+    /// <summary>The `batch_epoch` field.</summary>
+    [Key(1)]
+    public required ulong BatchEpoch { get; init; }
+    /// <summary>The `highest_epoch` field.</summary>
+    [Key(2)]
+    public required ulong HighestEpoch { get; init; }
+    /// <summary>The `source` field.</summary>
+    [Key(3)]
+    public required string Source { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(FencedRecord? other) => other is not null
+        && TbepRegistry.FieldEquals(Range, other.Range)
+        && TbepRegistry.FieldEquals(BatchEpoch, other.BatchEpoch)
+        && TbepRegistry.FieldEquals(HighestEpoch, other.HighestEpoch)
+        && TbepRegistry.FieldEquals(Source, other.Source);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as FencedRecord);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Range, BatchEpoch, HighestEpoch, Source);
+    }
+}
+
+/// <summary>The `deposition_record` frame body.</summary>
+[MessagePackObject]
+public sealed class DepositionRecord : IEquatable<DepositionRecord>
+{
+    /// <summary>The `range` field.</summary>
+    [Key(0)]
+    public required string Range { get; init; }
+    /// <summary>The `held_epoch` field.</summary>
+    [Key(1)]
+    public required ulong HeldEpoch { get; init; }
+    /// <summary>The `owner_epoch` field.</summary>
+    [Key(2)]
+    public required ulong OwnerEpoch { get; init; }
+    /// <summary>The `new_owner` field.</summary>
+    [Key(3)]
+    public required string NewOwner { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(DepositionRecord? other) => other is not null
+        && TbepRegistry.FieldEquals(Range, other.Range)
+        && TbepRegistry.FieldEquals(HeldEpoch, other.HeldEpoch)
+        && TbepRegistry.FieldEquals(OwnerEpoch, other.OwnerEpoch)
+        && TbepRegistry.FieldEquals(NewOwner, other.NewOwner);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as DepositionRecord);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Range, HeldEpoch, OwnerEpoch, NewOwner);
+    }
+}
+
+/// <summary>The `denial_record` frame body.</summary>
+[MessagePackObject]
+public sealed class DenialRecord : IEquatable<DenialRecord>
+{
+    /// <summary>The `seam` field.</summary>
+    [Key(0)]
+    public required DenialSeam Seam { get; init; }
+    /// <summary>The `scope_tenant` field.</summary>
+    [Key(1)]
+    public required string ScopeTenant { get; init; }
+    /// <summary>The `attempted_tenant` field.</summary>
+    [Key(2)]
+    public required string AttemptedTenant { get; init; }
+    /// <summary>The `counterparty` field.</summary>
+    [Key(3)]
+    public required string Counterparty { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(DenialRecord? other) => other is not null
+        && TbepRegistry.FieldEquals(Seam, other.Seam)
+        && TbepRegistry.FieldEquals(ScopeTenant, other.ScopeTenant)
+        && TbepRegistry.FieldEquals(AttemptedTenant, other.AttemptedTenant)
+        && TbepRegistry.FieldEquals(Counterparty, other.Counterparty);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as DenialRecord);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Seam, ScopeTenant, AttemptedTenant, Counterparty);
     }
 }
 
@@ -2755,6 +3275,276 @@ public sealed class AdminStatusResponse : IEquatable<AdminStatusResponse>
     }
 }
 
+/// <summary>The `replication_conflicts_request` frame body.</summary>
+[MessagePackObject]
+public sealed class ReplicationConflictsRequest : IEquatable<ReplicationConflictsRequest>
+{
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationConflictsRequest? other) => other is not null
+        ;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationConflictsRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return typeof(ReplicationConflictsRequest).GetHashCode();
+    }
+}
+
+/// <summary>The `replication_conflicts_response` frame body.</summary>
+[MessagePackObject]
+public sealed class ReplicationConflictsResponse : IEquatable<ReplicationConflictsResponse>
+{
+    /// <summary>The `member` field.</summary>
+    [Key(0)]
+    public required string Member { get; init; }
+    /// <summary>The `records` field.</summary>
+    [Key(1)]
+    public required ConflictRecord[] Records { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationConflictsResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Member, other.Member)
+        && TbepRegistry.FieldEquals(Records, other.Records);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationConflictsResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Member, Records);
+    }
+}
+
+/// <summary>The `replication_fenced_request` frame body.</summary>
+[MessagePackObject]
+public sealed class ReplicationFencedRequest : IEquatable<ReplicationFencedRequest>
+{
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationFencedRequest? other) => other is not null
+        ;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationFencedRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return typeof(ReplicationFencedRequest).GetHashCode();
+    }
+}
+
+/// <summary>The `replication_fenced_response` frame body.</summary>
+[MessagePackObject]
+public sealed class ReplicationFencedResponse : IEquatable<ReplicationFencedResponse>
+{
+    /// <summary>The `member` field.</summary>
+    [Key(0)]
+    public required string Member { get; init; }
+    /// <summary>The `records` field.</summary>
+    [Key(1)]
+    public required FencedRecord[] Records { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationFencedResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Member, other.Member)
+        && TbepRegistry.FieldEquals(Records, other.Records);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationFencedResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Member, Records);
+    }
+}
+
+/// <summary>The `replication_depositions_request` frame body.</summary>
+[MessagePackObject]
+public sealed class ReplicationDepositionsRequest : IEquatable<ReplicationDepositionsRequest>
+{
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationDepositionsRequest? other) => other is not null
+        ;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationDepositionsRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return typeof(ReplicationDepositionsRequest).GetHashCode();
+    }
+}
+
+/// <summary>The `replication_depositions_response` frame body.</summary>
+[MessagePackObject]
+public sealed class ReplicationDepositionsResponse : IEquatable<ReplicationDepositionsResponse>
+{
+    /// <summary>The `member` field.</summary>
+    [Key(0)]
+    public required string Member { get; init; }
+    /// <summary>The `records` field.</summary>
+    [Key(1)]
+    public required DepositionRecord[] Records { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationDepositionsResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Member, other.Member)
+        && TbepRegistry.FieldEquals(Records, other.Records);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationDepositionsResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Member, Records);
+    }
+}
+
+/// <summary>The `replication_cursor_request` frame body.</summary>
+[MessagePackObject]
+public sealed class ReplicationCursorRequest : IEquatable<ReplicationCursorRequest>
+{
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationCursorRequest? other) => other is not null
+        ;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationCursorRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return typeof(ReplicationCursorRequest).GetHashCode();
+    }
+}
+
+/// <summary>The `replication_cursor_response` frame body.</summary>
+[MessagePackObject]
+public sealed class ReplicationCursorResponse : IEquatable<ReplicationCursorResponse>
+{
+    /// <summary>The `member` field.</summary>
+    [Key(0)]
+    public required string Member { get; init; }
+    /// <summary>The `position` field.</summary>
+    [Key(1)]
+    public ulong? Position { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationCursorResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Member, other.Member)
+        && TbepRegistry.FieldEquals(Position, other.Position);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationCursorResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Member, Position);
+    }
+}
+
+/// <summary>The `replication_health_request` frame body.</summary>
+[MessagePackObject]
+public sealed class ReplicationHealthRequest : IEquatable<ReplicationHealthRequest>
+{
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationHealthRequest? other) => other is not null
+        ;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationHealthRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return typeof(ReplicationHealthRequest).GetHashCode();
+    }
+}
+
+/// <summary>The `replication_health_response` frame body.</summary>
+[MessagePackObject]
+public sealed class ReplicationHealthResponse : IEquatable<ReplicationHealthResponse>
+{
+    /// <summary>The `member` field.</summary>
+    [Key(0)]
+    public required string Member { get; init; }
+    /// <summary>The `status` field.</summary>
+    [Key(1)]
+    public required ReplicationStatus Status { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationHealthResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Member, other.Member)
+        && TbepRegistry.FieldEquals(Status, other.Status);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationHealthResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Member, Status);
+    }
+}
+
+/// <summary>The `replication_denials_request` frame body.</summary>
+[MessagePackObject]
+public sealed class ReplicationDenialsRequest : IEquatable<ReplicationDenialsRequest>
+{
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationDenialsRequest? other) => other is not null
+        ;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationDenialsRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return typeof(ReplicationDenialsRequest).GetHashCode();
+    }
+}
+
+/// <summary>The `replication_denials_response` frame body.</summary>
+[MessagePackObject]
+public sealed class ReplicationDenialsResponse : IEquatable<ReplicationDenialsResponse>
+{
+    /// <summary>The `member` field.</summary>
+    [Key(0)]
+    public required string Member { get; init; }
+    /// <summary>The `records` field.</summary>
+    [Key(1)]
+    public required DenialRecord[] Records { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(ReplicationDenialsResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Member, other.Member)
+        && TbepRegistry.FieldEquals(Records, other.Records);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReplicationDenialsResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Member, Records);
+    }
+}
+
 /// <summary>The `supervision_health_request` frame body.</summary>
 [MessagePackObject]
 public sealed class SupervisionHealthRequest : IEquatable<SupervisionHealthRequest>
@@ -3017,6 +3807,18 @@ public enum TbepFrameKind : ushort
     TopologyReadRequest = 304,
     /// <summary>Code 305 (host-to-engine; topology).</summary>
     AdminStatusRequest = 305,
+    /// <summary>Code 306 (host-to-engine; replication).</summary>
+    ReplicationConflictsRequest = 306,
+    /// <summary>Code 307 (host-to-engine; replication).</summary>
+    ReplicationFencedRequest = 307,
+    /// <summary>Code 308 (host-to-engine; replication).</summary>
+    ReplicationDepositionsRequest = 308,
+    /// <summary>Code 309 (host-to-engine; replication).</summary>
+    ReplicationCursorRequest = 309,
+    /// <summary>Code 310 (host-to-engine; replication).</summary>
+    ReplicationHealthRequest = 310,
+    /// <summary>Code 311 (host-to-engine; replication).</summary>
+    ReplicationDenialsRequest = 311,
     /// <summary>Code 320 (host-to-engine; supervision).</summary>
     ChannelBindRequest = 320,
     /// <summary>Code 321 (host-to-engine; supervision).</summary>
@@ -3059,6 +3861,18 @@ public enum TbepFrameKind : ushort
     TopologyReadResponse = 560,
     /// <summary>Code 561 (engine-to-host; topology).</summary>
     AdminStatusResponse = 561,
+    /// <summary>Code 562 (engine-to-host; replication).</summary>
+    ReplicationConflictsResponse = 562,
+    /// <summary>Code 563 (engine-to-host; replication).</summary>
+    ReplicationFencedResponse = 563,
+    /// <summary>Code 564 (engine-to-host; replication).</summary>
+    ReplicationDepositionsResponse = 564,
+    /// <summary>Code 565 (engine-to-host; replication).</summary>
+    ReplicationCursorResponse = 565,
+    /// <summary>Code 566 (engine-to-host; replication).</summary>
+    ReplicationHealthResponse = 566,
+    /// <summary>Code 567 (engine-to-host; replication).</summary>
+    ReplicationDenialsResponse = 567,
     /// <summary>Code 576 (engine-to-host; supervision).</summary>
     ChannelBindResponse = 576,
     /// <summary>Code 577 (engine-to-host; supervision).</summary>
@@ -3098,6 +3912,12 @@ public static partial class TbepRegistry
         (293, "SyncSessionCloseRequest", "sync", "delivery", "host-to-engine", false),
         (304, "TopologyReadRequest", "topology", "control", "host-to-engine", false),
         (305, "AdminStatusRequest", "topology", "control", "host-to-engine", false),
+        (306, "ReplicationConflictsRequest", "replication", "observation", "host-to-engine", false),
+        (307, "ReplicationFencedRequest", "replication", "observation", "host-to-engine", false),
+        (308, "ReplicationDepositionsRequest", "replication", "observation", "host-to-engine", false),
+        (309, "ReplicationCursorRequest", "replication", "observation", "host-to-engine", false),
+        (310, "ReplicationHealthRequest", "replication", "observation", "host-to-engine", false),
+        (311, "ReplicationDenialsRequest", "replication", "observation", "host-to-engine", false),
         (320, "ChannelBindRequest", "supervision", "control", "host-to-engine", false),
         (321, "SupervisionHealthRequest", "supervision", "control", "host-to-engine", false),
         (322, "SupervisionShutdownRequest", "supervision", "control", "host-to-engine", false),
@@ -3119,6 +3939,12 @@ public static partial class TbepRegistry
         (549, "SyncSessionCloseResponse", "sync", "delivery", "engine-to-host", false),
         (560, "TopologyReadResponse", "topology", "control", "engine-to-host", false),
         (561, "AdminStatusResponse", "topology", "control", "engine-to-host", false),
+        (562, "ReplicationConflictsResponse", "replication", "observation", "engine-to-host", false),
+        (563, "ReplicationFencedResponse", "replication", "observation", "engine-to-host", false),
+        (564, "ReplicationDepositionsResponse", "replication", "observation", "engine-to-host", false),
+        (565, "ReplicationCursorResponse", "replication", "observation", "engine-to-host", false),
+        (566, "ReplicationHealthResponse", "replication", "observation", "engine-to-host", false),
+        (567, "ReplicationDenialsResponse", "replication", "observation", "engine-to-host", false),
         (576, "ChannelBindResponse", "supervision", "control", "engine-to-host", false),
         (577, "SupervisionHealthResponse", "supervision", "control", "engine-to-host", false),
         (578, "SupervisionShutdownResponse", "supervision", "control", "engine-to-host", false),
@@ -3156,6 +3982,12 @@ public static partial class TbepRegistry
         new OperationRow("sync.session_close", 293, 549, false, ["new-capability: terrascale.sync.v2 serving seam (PD-2026-08-26-12)"]),
         new OperationRow("topology.read", 304, 560, false, ["PB-5019", "PB-5036"]),
         new OperationRow("admin.status", 305, 561, false, ["PB-5032"]),
+        new OperationRow("replication.conflicts", 306, 562, false, ["PB-5022", "PB-5035"]),
+        new OperationRow("replication.fenced", 307, 563, false, ["PB-5035", "new-capability: typed fenced-leader history observation (ADR-0004 D-1 fencing evidence)"]),
+        new OperationRow("replication.depositions", 308, 564, false, ["PB-5035", "new-capability: typed deposition observation of ownership transitions (ADR-0004 D-1)"]),
+        new OperationRow("replication.cursor", 309, 565, false, ["PB-5031", "PB-5033", "PB-5035"]),
+        new OperationRow("replication.health", 310, 566, false, ["PB-5032", "PB-5035"]),
+        new OperationRow("replication.denials", 311, 567, false, ["PB-5035", "new-capability: typed tenant-isolation denial observation (engine-enforced isolation evidence)"]),
         new OperationRow("supervision.health", 321, 577, false, ["PB-5032"]),
         new OperationRow("supervision.shutdown", 322, 578, false, ["new-capability: engine-process supervision contract (PD-2026-08-26-02 D2)"]),
     ];

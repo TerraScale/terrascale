@@ -54,6 +54,7 @@ pub const BUDGETS: &[(&str, usize)] = &[
     ("subscription", 65536),
     ("trigger", 256),
     ("delivery", 65536),
+    ("observation", 65536),
 ];
 
 /// The generated `error_code` closed vocabulary.
@@ -1604,6 +1605,345 @@ impl<'de> serde::Deserialize<'de> for SyncChange {
     }
 }
 
+/// The generated `conflict_outcome_kind` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ConflictOutcomeKind {
+    /// The `winner` row (code 1).
+    Winner,
+    /// The `deposed_owner_retained` row (code 2).
+    DeposedOwnerRetained,
+    /// The `untrusted_clock` row (code 3).
+    UntrustedClock,
+}
+
+impl ConflictOutcomeKind {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Winner => 1,
+            Self::DeposedOwnerRetained => 2,
+            Self::UntrustedClock => 3,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::Winner),
+            2 => Some(Self::DeposedOwnerRetained),
+            3 => Some(Self::UntrustedClock),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for ConflictOutcomeKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Winner => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::DeposedOwnerRetained => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+            Self::UntrustedClock => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&3u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ConflictOutcomeKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ConflictOutcomeKind;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a conflict_outcome_kind array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ConflictOutcomeKind::Winner)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ConflictOutcomeKind::DeposedOwnerRetained)
+                    }
+                    3 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ConflictOutcomeKind::UntrustedClock)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown conflict_outcome_kind code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `denial_seam` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DenialSeam {
+    /// The `serve_request` row (code 1).
+    ServeRequest,
+    /// The `apply_delivery` row (code 2).
+    ApplyDelivery,
+}
+
+impl DenialSeam {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::ServeRequest => 1,
+            Self::ApplyDelivery => 2,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::ServeRequest),
+            2 => Some(Self::ApplyDelivery),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for DenialSeam {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::ServeRequest => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::ApplyDelivery => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DenialSeam {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = DenialSeam;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a denial_seam array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(DenialSeam::ServeRequest)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(DenialSeam::ApplyDelivery)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown denial_seam code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `replication_status` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ReplicationStatus {
+    /// The `assigned` row (code 1).
+    Assigned,
+    /// The `active` row (code 2).
+    Active,
+    /// The `responsive` row (code 3).
+    Responsive,
+    /// The `stale` row (code 4).
+    Stale,
+    /// The `unavailable` row (code 5).
+    Unavailable,
+    /// The `degraded` row (code 6).
+    Degraded,
+    /// The `unknown` row (code 7).
+    Unknown,
+}
+
+impl ReplicationStatus {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Assigned => 1,
+            Self::Active => 2,
+            Self::Responsive => 3,
+            Self::Stale => 4,
+            Self::Unavailable => 5,
+            Self::Degraded => 6,
+            Self::Unknown => 7,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::Assigned),
+            2 => Some(Self::Active),
+            3 => Some(Self::Responsive),
+            4 => Some(Self::Stale),
+            5 => Some(Self::Unavailable),
+            6 => Some(Self::Degraded),
+            7 => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for ReplicationStatus {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Assigned => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::Active => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+            Self::Responsive => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&3u8)?;
+                tuple.end()
+            }
+            Self::Stale => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&4u8)?;
+                tuple.end()
+            }
+            Self::Unavailable => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&5u8)?;
+                tuple.end()
+            }
+            Self::Degraded => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&6u8)?;
+                tuple.end()
+            }
+            Self::Unknown => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&7u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationStatus {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationStatus;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_status array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ReplicationStatus::Assigned)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ReplicationStatus::Active)
+                    }
+                    3 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ReplicationStatus::Responsive)
+                    }
+                    4 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ReplicationStatus::Stale)
+                    }
+                    5 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ReplicationStatus::Unavailable)
+                    }
+                    6 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ReplicationStatus::Degraded)
+                    }
+                    7 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ReplicationStatus::Unknown)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown replication_status code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
 /// The `document_body` frame body.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DocumentBody {
@@ -1876,6 +2216,345 @@ impl<'de> serde::Deserialize<'de> for SyncField {
                 Ok(Self::Value {
                     name,
                     value,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `clock_stamp` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClockStamp {
+    /// The `ticks` field.
+    pub ticks: u64,
+    /// The `counter` field.
+    pub counter: u64,
+}
+
+impl serde::Serialize for ClockStamp {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.ticks)?;
+        tuple.serialize_element(&self.counter)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ClockStamp {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ClockStamp;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a clock_stamp array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let ticks = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let counter = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    ticks,
+                    counter,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `conflict_outcome` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConflictOutcome {
+    /// The `kind` field.
+    pub kind: ConflictOutcomeKind,
+    /// The `member` field.
+    pub member: String,
+}
+
+impl serde::Serialize for ConflictOutcome {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.kind)?;
+        tuple.serialize_element(&self.member.as_str())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ConflictOutcome {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ConflictOutcome;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a conflict_outcome array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let kind = seq
+                    .next_element::<ConflictOutcomeKind>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let member = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    kind,
+                    member,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `conflict_record` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConflictRecord {
+    /// The `tenant` field.
+    pub tenant: String,
+    /// The `operations` field.
+    pub operations: Vec<String>,
+    /// The `members` field.
+    pub members: Vec<String>,
+    /// The `clocks` field.
+    pub clocks: Vec<ClockStamp>,
+    /// The `outcome` field.
+    pub outcome: ConflictOutcome,
+}
+
+impl serde::Serialize for ConflictRecord {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(5)?;
+        tuple.serialize_element(&self.tenant.as_str())?;
+        tuple.serialize_element(&self.operations.as_slice())?;
+        tuple.serialize_element(&self.members.as_slice())?;
+        tuple.serialize_element(&self.clocks.as_slice())?;
+        tuple.serialize_element(&self.outcome)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ConflictRecord {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ConflictRecord;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a conflict_record array of 5 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tenant = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let operations = seq
+                    .next_element::<Vec<String>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let members = seq
+                    .next_element::<Vec<String>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let clocks = seq
+                    .next_element::<Vec<ClockStamp>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let outcome = seq
+                    .next_element::<ConflictOutcome>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(5, &self));
+                }
+                Ok(Self::Value {
+                    tenant,
+                    operations,
+                    members,
+                    clocks,
+                    outcome,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `fenced_record` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FencedRecord {
+    /// The `range` field.
+    pub range: String,
+    /// The `batch_epoch` field.
+    pub batch_epoch: u64,
+    /// The `highest_epoch` field.
+    pub highest_epoch: u64,
+    /// The `source` field.
+    pub source: String,
+}
+
+impl serde::Serialize for FencedRecord {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(4)?;
+        tuple.serialize_element(&self.range.as_str())?;
+        tuple.serialize_element(&self.batch_epoch)?;
+        tuple.serialize_element(&self.highest_epoch)?;
+        tuple.serialize_element(&self.source.as_str())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for FencedRecord {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = FencedRecord;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a fenced_record array of 4 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let range = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let batch_epoch = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let highest_epoch = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let source = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(4, &self));
+                }
+                Ok(Self::Value {
+                    range,
+                    batch_epoch,
+                    highest_epoch,
+                    source,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `deposition_record` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DepositionRecord {
+    /// The `range` field.
+    pub range: String,
+    /// The `held_epoch` field.
+    pub held_epoch: u64,
+    /// The `owner_epoch` field.
+    pub owner_epoch: u64,
+    /// The `new_owner` field.
+    pub new_owner: String,
+}
+
+impl serde::Serialize for DepositionRecord {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(4)?;
+        tuple.serialize_element(&self.range.as_str())?;
+        tuple.serialize_element(&self.held_epoch)?;
+        tuple.serialize_element(&self.owner_epoch)?;
+        tuple.serialize_element(&self.new_owner.as_str())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DepositionRecord {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = DepositionRecord;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a deposition_record array of 4 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let range = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let held_epoch = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let owner_epoch = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let new_owner = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(4, &self));
+                }
+                Ok(Self::Value {
+                    range,
+                    held_epoch,
+                    owner_epoch,
+                    new_owner,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `denial_record` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DenialRecord {
+    /// The `seam` field.
+    pub seam: DenialSeam,
+    /// The `scope_tenant` field.
+    pub scope_tenant: String,
+    /// The `attempted_tenant` field.
+    pub attempted_tenant: String,
+    /// The `counterparty` field.
+    pub counterparty: String,
+}
+
+impl serde::Serialize for DenialRecord {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(4)?;
+        tuple.serialize_element(&self.seam)?;
+        tuple.serialize_element(&self.scope_tenant.as_str())?;
+        tuple.serialize_element(&self.attempted_tenant.as_str())?;
+        tuple.serialize_element(&self.counterparty.as_str())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DenialRecord {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = DenialRecord;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a denial_record array of 4 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let seam = seq
+                    .next_element::<DenialSeam>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let scope_tenant = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let attempted_tenant = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let counterparty = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(4, &self));
+                }
+                Ok(Self::Value {
+                    seam,
+                    scope_tenant,
+                    attempted_tenant,
+                    counterparty,
                 })
             }
         }
@@ -4016,6 +4695,556 @@ impl crate::codec::WireBody for AdminStatusResponse {
     }
 }
 
+/// The `replication_conflicts_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicationConflictsRequest {
+}
+
+impl serde::Serialize for ReplicationConflictsRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_tuple(0)?.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationConflictsRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationConflictsRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_conflicts_request array of 0 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let _ = &mut seq;
+                Ok(Self::Value {
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for ReplicationConflictsRequest {
+    const KIND: FrameKind = FrameKind::ReplicationConflictsRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `replication_conflicts_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicationConflictsResponse {
+    /// The `member` field.
+    pub member: String,
+    /// The `records` field.
+    pub records: Vec<ConflictRecord>,
+}
+
+impl serde::Serialize for ReplicationConflictsResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.member.as_str())?;
+        tuple.serialize_element(&self.records.as_slice())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationConflictsResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationConflictsResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_conflicts_response array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let member = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let records = seq
+                    .next_element::<Vec<ConflictRecord>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    member,
+                    records,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for ReplicationConflictsResponse {
+    const KIND: FrameKind = FrameKind::ReplicationConflictsResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.member, 128, "member")?;
+        crate::codec::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
+        Ok(())
+    }
+}
+
+/// The `replication_fenced_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicationFencedRequest {
+}
+
+impl serde::Serialize for ReplicationFencedRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_tuple(0)?.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationFencedRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationFencedRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_fenced_request array of 0 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let _ = &mut seq;
+                Ok(Self::Value {
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for ReplicationFencedRequest {
+    const KIND: FrameKind = FrameKind::ReplicationFencedRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `replication_fenced_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicationFencedResponse {
+    /// The `member` field.
+    pub member: String,
+    /// The `records` field.
+    pub records: Vec<FencedRecord>,
+}
+
+impl serde::Serialize for ReplicationFencedResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.member.as_str())?;
+        tuple.serialize_element(&self.records.as_slice())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationFencedResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationFencedResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_fenced_response array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let member = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let records = seq
+                    .next_element::<Vec<FencedRecord>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    member,
+                    records,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for ReplicationFencedResponse {
+    const KIND: FrameKind = FrameKind::ReplicationFencedResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.member, 128, "member")?;
+        crate::codec::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
+        Ok(())
+    }
+}
+
+/// The `replication_depositions_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicationDepositionsRequest {
+}
+
+impl serde::Serialize for ReplicationDepositionsRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_tuple(0)?.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationDepositionsRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationDepositionsRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_depositions_request array of 0 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let _ = &mut seq;
+                Ok(Self::Value {
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for ReplicationDepositionsRequest {
+    const KIND: FrameKind = FrameKind::ReplicationDepositionsRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `replication_depositions_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicationDepositionsResponse {
+    /// The `member` field.
+    pub member: String,
+    /// The `records` field.
+    pub records: Vec<DepositionRecord>,
+}
+
+impl serde::Serialize for ReplicationDepositionsResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.member.as_str())?;
+        tuple.serialize_element(&self.records.as_slice())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationDepositionsResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationDepositionsResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_depositions_response array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let member = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let records = seq
+                    .next_element::<Vec<DepositionRecord>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    member,
+                    records,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for ReplicationDepositionsResponse {
+    const KIND: FrameKind = FrameKind::ReplicationDepositionsResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.member, 128, "member")?;
+        crate::codec::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
+        Ok(())
+    }
+}
+
+/// The `replication_cursor_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicationCursorRequest {
+}
+
+impl serde::Serialize for ReplicationCursorRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_tuple(0)?.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationCursorRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationCursorRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_cursor_request array of 0 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let _ = &mut seq;
+                Ok(Self::Value {
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for ReplicationCursorRequest {
+    const KIND: FrameKind = FrameKind::ReplicationCursorRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `replication_cursor_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicationCursorResponse {
+    /// The `member` field.
+    pub member: String,
+    /// The `position` field.
+    pub position: Option<u64>,
+}
+
+impl serde::Serialize for ReplicationCursorResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.member.as_str())?;
+        tuple.serialize_element(&self.position.as_ref())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationCursorResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationCursorResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_cursor_response array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let member = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let position = seq
+                    .next_element::<Option<u64>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    member,
+                    position,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for ReplicationCursorResponse {
+    const KIND: FrameKind = FrameKind::ReplicationCursorResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.member, 128, "member")?;
+        Ok(())
+    }
+}
+
+/// The `replication_health_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicationHealthRequest {
+}
+
+impl serde::Serialize for ReplicationHealthRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_tuple(0)?.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationHealthRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationHealthRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_health_request array of 0 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let _ = &mut seq;
+                Ok(Self::Value {
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for ReplicationHealthRequest {
+    const KIND: FrameKind = FrameKind::ReplicationHealthRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `replication_health_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicationHealthResponse {
+    /// The `member` field.
+    pub member: String,
+    /// The `status` field.
+    pub status: ReplicationStatus,
+}
+
+impl serde::Serialize for ReplicationHealthResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.member.as_str())?;
+        tuple.serialize_element(&self.status)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationHealthResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationHealthResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_health_response array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let member = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let status = seq
+                    .next_element::<ReplicationStatus>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    member,
+                    status,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for ReplicationHealthResponse {
+    const KIND: FrameKind = FrameKind::ReplicationHealthResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.member, 128, "member")?;
+        Ok(())
+    }
+}
+
+/// The `replication_denials_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicationDenialsRequest {
+}
+
+impl serde::Serialize for ReplicationDenialsRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_tuple(0)?.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationDenialsRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationDenialsRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_denials_request array of 0 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let _ = &mut seq;
+                Ok(Self::Value {
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for ReplicationDenialsRequest {
+    const KIND: FrameKind = FrameKind::ReplicationDenialsRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `replication_denials_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicationDenialsResponse {
+    /// The `member` field.
+    pub member: String,
+    /// The `records` field.
+    pub records: Vec<DenialRecord>,
+}
+
+impl serde::Serialize for ReplicationDenialsResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.member.as_str())?;
+        tuple.serialize_element(&self.records.as_slice())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReplicationDenialsResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReplicationDenialsResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a replication_denials_response array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let member = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let records = seq
+                    .next_element::<Vec<DenialRecord>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    member,
+                    records,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for ReplicationDenialsResponse {
+    const KIND: FrameKind = FrameKind::ReplicationDenialsResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.member, 128, "member")?;
+        crate::codec::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
+        Ok(())
+    }
+}
+
 /// The `supervision_health_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SupervisionHealthRequest {
@@ -4508,6 +5737,18 @@ pub enum FrameKind {
     TopologyReadRequest,
     /// Code 305 (host-to-engine; topology).
     AdminStatusRequest,
+    /// Code 306 (host-to-engine; replication).
+    ReplicationConflictsRequest,
+    /// Code 307 (host-to-engine; replication).
+    ReplicationFencedRequest,
+    /// Code 308 (host-to-engine; replication).
+    ReplicationDepositionsRequest,
+    /// Code 309 (host-to-engine; replication).
+    ReplicationCursorRequest,
+    /// Code 310 (host-to-engine; replication).
+    ReplicationHealthRequest,
+    /// Code 311 (host-to-engine; replication).
+    ReplicationDenialsRequest,
     /// Code 320 (host-to-engine; supervision).
     ChannelBindRequest,
     /// Code 321 (host-to-engine; supervision).
@@ -4550,6 +5791,18 @@ pub enum FrameKind {
     TopologyReadResponse,
     /// Code 561 (engine-to-host; topology).
     AdminStatusResponse,
+    /// Code 562 (engine-to-host; replication).
+    ReplicationConflictsResponse,
+    /// Code 563 (engine-to-host; replication).
+    ReplicationFencedResponse,
+    /// Code 564 (engine-to-host; replication).
+    ReplicationDepositionsResponse,
+    /// Code 565 (engine-to-host; replication).
+    ReplicationCursorResponse,
+    /// Code 566 (engine-to-host; replication).
+    ReplicationHealthResponse,
+    /// Code 567 (engine-to-host; replication).
+    ReplicationDenialsResponse,
     /// Code 576 (engine-to-host; supervision).
     ChannelBindResponse,
     /// Code 577 (engine-to-host; supervision).
@@ -4588,6 +5841,12 @@ impl FrameKind {
             Self::SyncSessionCloseRequest => 293,
             Self::TopologyReadRequest => 304,
             Self::AdminStatusRequest => 305,
+            Self::ReplicationConflictsRequest => 306,
+            Self::ReplicationFencedRequest => 307,
+            Self::ReplicationDepositionsRequest => 308,
+            Self::ReplicationCursorRequest => 309,
+            Self::ReplicationHealthRequest => 310,
+            Self::ReplicationDenialsRequest => 311,
             Self::ChannelBindRequest => 320,
             Self::SupervisionHealthRequest => 321,
             Self::SupervisionShutdownRequest => 322,
@@ -4609,6 +5868,12 @@ impl FrameKind {
             Self::SyncSessionCloseResponse => 549,
             Self::TopologyReadResponse => 560,
             Self::AdminStatusResponse => 561,
+            Self::ReplicationConflictsResponse => 562,
+            Self::ReplicationFencedResponse => 563,
+            Self::ReplicationDepositionsResponse => 564,
+            Self::ReplicationCursorResponse => 565,
+            Self::ReplicationHealthResponse => 566,
+            Self::ReplicationDenialsResponse => 567,
             Self::ChannelBindResponse => 576,
             Self::SupervisionHealthResponse => 577,
             Self::SupervisionShutdownResponse => 578,
@@ -4641,6 +5906,12 @@ impl FrameKind {
             293 => Some(Self::SyncSessionCloseRequest),
             304 => Some(Self::TopologyReadRequest),
             305 => Some(Self::AdminStatusRequest),
+            306 => Some(Self::ReplicationConflictsRequest),
+            307 => Some(Self::ReplicationFencedRequest),
+            308 => Some(Self::ReplicationDepositionsRequest),
+            309 => Some(Self::ReplicationCursorRequest),
+            310 => Some(Self::ReplicationHealthRequest),
+            311 => Some(Self::ReplicationDenialsRequest),
             320 => Some(Self::ChannelBindRequest),
             321 => Some(Self::SupervisionHealthRequest),
             322 => Some(Self::SupervisionShutdownRequest),
@@ -4662,6 +5933,12 @@ impl FrameKind {
             549 => Some(Self::SyncSessionCloseResponse),
             560 => Some(Self::TopologyReadResponse),
             561 => Some(Self::AdminStatusResponse),
+            562 => Some(Self::ReplicationConflictsResponse),
+            563 => Some(Self::ReplicationFencedResponse),
+            564 => Some(Self::ReplicationDepositionsResponse),
+            565 => Some(Self::ReplicationCursorResponse),
+            566 => Some(Self::ReplicationHealthResponse),
+            567 => Some(Self::ReplicationDenialsResponse),
             576 => Some(Self::ChannelBindResponse),
             577 => Some(Self::SupervisionHealthResponse),
             578 => Some(Self::SupervisionShutdownResponse),
@@ -4695,6 +5972,12 @@ impl FrameKind {
             Self::SyncSessionCloseRequest => "SyncSessionCloseRequest",
             Self::TopologyReadRequest => "TopologyReadRequest",
             Self::AdminStatusRequest => "AdminStatusRequest",
+            Self::ReplicationConflictsRequest => "ReplicationConflictsRequest",
+            Self::ReplicationFencedRequest => "ReplicationFencedRequest",
+            Self::ReplicationDepositionsRequest => "ReplicationDepositionsRequest",
+            Self::ReplicationCursorRequest => "ReplicationCursorRequest",
+            Self::ReplicationHealthRequest => "ReplicationHealthRequest",
+            Self::ReplicationDenialsRequest => "ReplicationDenialsRequest",
             Self::ChannelBindRequest => "ChannelBindRequest",
             Self::SupervisionHealthRequest => "SupervisionHealthRequest",
             Self::SupervisionShutdownRequest => "SupervisionShutdownRequest",
@@ -4716,6 +5999,12 @@ impl FrameKind {
             Self::SyncSessionCloseResponse => "SyncSessionCloseResponse",
             Self::TopologyReadResponse => "TopologyReadResponse",
             Self::AdminStatusResponse => "AdminStatusResponse",
+            Self::ReplicationConflictsResponse => "ReplicationConflictsResponse",
+            Self::ReplicationFencedResponse => "ReplicationFencedResponse",
+            Self::ReplicationDepositionsResponse => "ReplicationDepositionsResponse",
+            Self::ReplicationCursorResponse => "ReplicationCursorResponse",
+            Self::ReplicationHealthResponse => "ReplicationHealthResponse",
+            Self::ReplicationDenialsResponse => "ReplicationDenialsResponse",
             Self::ChannelBindResponse => "ChannelBindResponse",
             Self::SupervisionHealthResponse => "SupervisionHealthResponse",
             Self::SupervisionShutdownResponse => "SupervisionShutdownResponse",
@@ -4748,6 +6037,12 @@ impl FrameKind {
             Self::SyncSessionCloseRequest => "sync",
             Self::TopologyReadRequest => "topology",
             Self::AdminStatusRequest => "topology",
+            Self::ReplicationConflictsRequest => "replication",
+            Self::ReplicationFencedRequest => "replication",
+            Self::ReplicationDepositionsRequest => "replication",
+            Self::ReplicationCursorRequest => "replication",
+            Self::ReplicationHealthRequest => "replication",
+            Self::ReplicationDenialsRequest => "replication",
             Self::ChannelBindRequest => "supervision",
             Self::SupervisionHealthRequest => "supervision",
             Self::SupervisionShutdownRequest => "supervision",
@@ -4769,6 +6064,12 @@ impl FrameKind {
             Self::SyncSessionCloseResponse => "sync",
             Self::TopologyReadResponse => "topology",
             Self::AdminStatusResponse => "topology",
+            Self::ReplicationConflictsResponse => "replication",
+            Self::ReplicationFencedResponse => "replication",
+            Self::ReplicationDepositionsResponse => "replication",
+            Self::ReplicationCursorResponse => "replication",
+            Self::ReplicationHealthResponse => "replication",
+            Self::ReplicationDenialsResponse => "replication",
             Self::ChannelBindResponse => "supervision",
             Self::SupervisionHealthResponse => "supervision",
             Self::SupervisionShutdownResponse => "supervision",
@@ -4801,6 +6102,12 @@ impl FrameKind {
             Self::SyncSessionCloseRequest => "delivery",
             Self::TopologyReadRequest => "control",
             Self::AdminStatusRequest => "control",
+            Self::ReplicationConflictsRequest => "observation",
+            Self::ReplicationFencedRequest => "observation",
+            Self::ReplicationDepositionsRequest => "observation",
+            Self::ReplicationCursorRequest => "observation",
+            Self::ReplicationHealthRequest => "observation",
+            Self::ReplicationDenialsRequest => "observation",
             Self::ChannelBindRequest => "control",
             Self::SupervisionHealthRequest => "control",
             Self::SupervisionShutdownRequest => "control",
@@ -4822,6 +6129,12 @@ impl FrameKind {
             Self::SyncSessionCloseResponse => "delivery",
             Self::TopologyReadResponse => "control",
             Self::AdminStatusResponse => "control",
+            Self::ReplicationConflictsResponse => "observation",
+            Self::ReplicationFencedResponse => "observation",
+            Self::ReplicationDepositionsResponse => "observation",
+            Self::ReplicationCursorResponse => "observation",
+            Self::ReplicationHealthResponse => "observation",
+            Self::ReplicationDenialsResponse => "observation",
             Self::ChannelBindResponse => "control",
             Self::SupervisionHealthResponse => "control",
             Self::SupervisionShutdownResponse => "control",
@@ -4877,6 +6190,12 @@ pub const FRAME_ROWS: &[FrameRow] = &[
     FrameRow { code: 293, kind: "SyncSessionCloseRequest", family: "sync", class: "delivery" },
     FrameRow { code: 304, kind: "TopologyReadRequest", family: "topology", class: "control" },
     FrameRow { code: 305, kind: "AdminStatusRequest", family: "topology", class: "control" },
+    FrameRow { code: 306, kind: "ReplicationConflictsRequest", family: "replication", class: "observation" },
+    FrameRow { code: 307, kind: "ReplicationFencedRequest", family: "replication", class: "observation" },
+    FrameRow { code: 308, kind: "ReplicationDepositionsRequest", family: "replication", class: "observation" },
+    FrameRow { code: 309, kind: "ReplicationCursorRequest", family: "replication", class: "observation" },
+    FrameRow { code: 310, kind: "ReplicationHealthRequest", family: "replication", class: "observation" },
+    FrameRow { code: 311, kind: "ReplicationDenialsRequest", family: "replication", class: "observation" },
     FrameRow { code: 320, kind: "ChannelBindRequest", family: "supervision", class: "control" },
     FrameRow { code: 321, kind: "SupervisionHealthRequest", family: "supervision", class: "control" },
     FrameRow { code: 322, kind: "SupervisionShutdownRequest", family: "supervision", class: "control" },
@@ -4898,6 +6217,12 @@ pub const FRAME_ROWS: &[FrameRow] = &[
     FrameRow { code: 549, kind: "SyncSessionCloseResponse", family: "sync", class: "delivery" },
     FrameRow { code: 560, kind: "TopologyReadResponse", family: "topology", class: "control" },
     FrameRow { code: 561, kind: "AdminStatusResponse", family: "topology", class: "control" },
+    FrameRow { code: 562, kind: "ReplicationConflictsResponse", family: "replication", class: "observation" },
+    FrameRow { code: 563, kind: "ReplicationFencedResponse", family: "replication", class: "observation" },
+    FrameRow { code: 564, kind: "ReplicationDepositionsResponse", family: "replication", class: "observation" },
+    FrameRow { code: 565, kind: "ReplicationCursorResponse", family: "replication", class: "observation" },
+    FrameRow { code: 566, kind: "ReplicationHealthResponse", family: "replication", class: "observation" },
+    FrameRow { code: 567, kind: "ReplicationDenialsResponse", family: "replication", class: "observation" },
     FrameRow { code: 576, kind: "ChannelBindResponse", family: "supervision", class: "control" },
     FrameRow { code: 577, kind: "SupervisionHealthResponse", family: "supervision", class: "control" },
     FrameRow { code: 578, kind: "SupervisionShutdownResponse", family: "supervision", class: "control" },
@@ -4947,6 +6272,18 @@ pub enum TbepBody {
     TopologyReadRequest(TopologyReadRequest),
     /// The `AdminStatusRequest` body.
     AdminStatusRequest(AdminStatusRequest),
+    /// The `ReplicationConflictsRequest` body.
+    ReplicationConflictsRequest(ReplicationConflictsRequest),
+    /// The `ReplicationFencedRequest` body.
+    ReplicationFencedRequest(ReplicationFencedRequest),
+    /// The `ReplicationDepositionsRequest` body.
+    ReplicationDepositionsRequest(ReplicationDepositionsRequest),
+    /// The `ReplicationCursorRequest` body.
+    ReplicationCursorRequest(ReplicationCursorRequest),
+    /// The `ReplicationHealthRequest` body.
+    ReplicationHealthRequest(ReplicationHealthRequest),
+    /// The `ReplicationDenialsRequest` body.
+    ReplicationDenialsRequest(ReplicationDenialsRequest),
     /// The `ChannelBindRequest` body.
     ChannelBindRequest(ChannelBindRequest),
     /// The `SupervisionHealthRequest` body.
@@ -4989,6 +6326,18 @@ pub enum TbepBody {
     TopologyReadResponse(TopologyReadResponse),
     /// The `AdminStatusResponse` body.
     AdminStatusResponse(AdminStatusResponse),
+    /// The `ReplicationConflictsResponse` body.
+    ReplicationConflictsResponse(ReplicationConflictsResponse),
+    /// The `ReplicationFencedResponse` body.
+    ReplicationFencedResponse(ReplicationFencedResponse),
+    /// The `ReplicationDepositionsResponse` body.
+    ReplicationDepositionsResponse(ReplicationDepositionsResponse),
+    /// The `ReplicationCursorResponse` body.
+    ReplicationCursorResponse(ReplicationCursorResponse),
+    /// The `ReplicationHealthResponse` body.
+    ReplicationHealthResponse(ReplicationHealthResponse),
+    /// The `ReplicationDenialsResponse` body.
+    ReplicationDenialsResponse(ReplicationDenialsResponse),
     /// The `ChannelBindResponse` body.
     ChannelBindResponse(ChannelBindResponse),
     /// The `SupervisionHealthResponse` body.
@@ -5079,6 +6428,30 @@ impl From<AdminStatusRequest> for TbepBody {
     fn from(value: AdminStatusRequest) -> Self { Self::AdminStatusRequest(value) }
 }
 
+impl From<ReplicationConflictsRequest> for TbepBody {
+    fn from(value: ReplicationConflictsRequest) -> Self { Self::ReplicationConflictsRequest(value) }
+}
+
+impl From<ReplicationFencedRequest> for TbepBody {
+    fn from(value: ReplicationFencedRequest) -> Self { Self::ReplicationFencedRequest(value) }
+}
+
+impl From<ReplicationDepositionsRequest> for TbepBody {
+    fn from(value: ReplicationDepositionsRequest) -> Self { Self::ReplicationDepositionsRequest(value) }
+}
+
+impl From<ReplicationCursorRequest> for TbepBody {
+    fn from(value: ReplicationCursorRequest) -> Self { Self::ReplicationCursorRequest(value) }
+}
+
+impl From<ReplicationHealthRequest> for TbepBody {
+    fn from(value: ReplicationHealthRequest) -> Self { Self::ReplicationHealthRequest(value) }
+}
+
+impl From<ReplicationDenialsRequest> for TbepBody {
+    fn from(value: ReplicationDenialsRequest) -> Self { Self::ReplicationDenialsRequest(value) }
+}
+
 impl From<ChannelBindRequest> for TbepBody {
     fn from(value: ChannelBindRequest) -> Self { Self::ChannelBindRequest(value) }
 }
@@ -5163,6 +6536,30 @@ impl From<AdminStatusResponse> for TbepBody {
     fn from(value: AdminStatusResponse) -> Self { Self::AdminStatusResponse(value) }
 }
 
+impl From<ReplicationConflictsResponse> for TbepBody {
+    fn from(value: ReplicationConflictsResponse) -> Self { Self::ReplicationConflictsResponse(value) }
+}
+
+impl From<ReplicationFencedResponse> for TbepBody {
+    fn from(value: ReplicationFencedResponse) -> Self { Self::ReplicationFencedResponse(value) }
+}
+
+impl From<ReplicationDepositionsResponse> for TbepBody {
+    fn from(value: ReplicationDepositionsResponse) -> Self { Self::ReplicationDepositionsResponse(value) }
+}
+
+impl From<ReplicationCursorResponse> for TbepBody {
+    fn from(value: ReplicationCursorResponse) -> Self { Self::ReplicationCursorResponse(value) }
+}
+
+impl From<ReplicationHealthResponse> for TbepBody {
+    fn from(value: ReplicationHealthResponse) -> Self { Self::ReplicationHealthResponse(value) }
+}
+
+impl From<ReplicationDenialsResponse> for TbepBody {
+    fn from(value: ReplicationDenialsResponse) -> Self { Self::ReplicationDenialsResponse(value) }
+}
+
 impl From<ChannelBindResponse> for TbepBody {
     fn from(value: ChannelBindResponse) -> Self { Self::ChannelBindResponse(value) }
 }
@@ -5211,6 +6608,12 @@ impl TbepBody {
             Self::SyncSessionCloseRequest(_) => FrameKind::SyncSessionCloseRequest,
             Self::TopologyReadRequest(_) => FrameKind::TopologyReadRequest,
             Self::AdminStatusRequest(_) => FrameKind::AdminStatusRequest,
+            Self::ReplicationConflictsRequest(_) => FrameKind::ReplicationConflictsRequest,
+            Self::ReplicationFencedRequest(_) => FrameKind::ReplicationFencedRequest,
+            Self::ReplicationDepositionsRequest(_) => FrameKind::ReplicationDepositionsRequest,
+            Self::ReplicationCursorRequest(_) => FrameKind::ReplicationCursorRequest,
+            Self::ReplicationHealthRequest(_) => FrameKind::ReplicationHealthRequest,
+            Self::ReplicationDenialsRequest(_) => FrameKind::ReplicationDenialsRequest,
             Self::ChannelBindRequest(_) => FrameKind::ChannelBindRequest,
             Self::SupervisionHealthRequest(_) => FrameKind::SupervisionHealthRequest,
             Self::SupervisionShutdownRequest(_) => FrameKind::SupervisionShutdownRequest,
@@ -5232,6 +6635,12 @@ impl TbepBody {
             Self::SyncSessionCloseResponse(_) => FrameKind::SyncSessionCloseResponse,
             Self::TopologyReadResponse(_) => FrameKind::TopologyReadResponse,
             Self::AdminStatusResponse(_) => FrameKind::AdminStatusResponse,
+            Self::ReplicationConflictsResponse(_) => FrameKind::ReplicationConflictsResponse,
+            Self::ReplicationFencedResponse(_) => FrameKind::ReplicationFencedResponse,
+            Self::ReplicationDepositionsResponse(_) => FrameKind::ReplicationDepositionsResponse,
+            Self::ReplicationCursorResponse(_) => FrameKind::ReplicationCursorResponse,
+            Self::ReplicationHealthResponse(_) => FrameKind::ReplicationHealthResponse,
+            Self::ReplicationDenialsResponse(_) => FrameKind::ReplicationDenialsResponse,
             Self::ChannelBindResponse(_) => FrameKind::ChannelBindResponse,
             Self::SupervisionHealthResponse(_) => FrameKind::SupervisionHealthResponse,
             Self::SupervisionShutdownResponse(_) => FrameKind::SupervisionShutdownResponse,
@@ -5267,6 +6676,12 @@ impl TbepBody {
             Self::SyncSessionCloseRequest(body) => crate::codec::encode_body(body),
             Self::TopologyReadRequest(body) => crate::codec::encode_body(body),
             Self::AdminStatusRequest(body) => crate::codec::encode_body(body),
+            Self::ReplicationConflictsRequest(body) => crate::codec::encode_body(body),
+            Self::ReplicationFencedRequest(body) => crate::codec::encode_body(body),
+            Self::ReplicationDepositionsRequest(body) => crate::codec::encode_body(body),
+            Self::ReplicationCursorRequest(body) => crate::codec::encode_body(body),
+            Self::ReplicationHealthRequest(body) => crate::codec::encode_body(body),
+            Self::ReplicationDenialsRequest(body) => crate::codec::encode_body(body),
             Self::ChannelBindRequest(body) => crate::codec::encode_body(body),
             Self::SupervisionHealthRequest(body) => crate::codec::encode_body(body),
             Self::SupervisionShutdownRequest(body) => crate::codec::encode_body(body),
@@ -5288,6 +6703,12 @@ impl TbepBody {
             Self::SyncSessionCloseResponse(body) => crate::codec::encode_body(body),
             Self::TopologyReadResponse(body) => crate::codec::encode_body(body),
             Self::AdminStatusResponse(body) => crate::codec::encode_body(body),
+            Self::ReplicationConflictsResponse(body) => crate::codec::encode_body(body),
+            Self::ReplicationFencedResponse(body) => crate::codec::encode_body(body),
+            Self::ReplicationDepositionsResponse(body) => crate::codec::encode_body(body),
+            Self::ReplicationCursorResponse(body) => crate::codec::encode_body(body),
+            Self::ReplicationHealthResponse(body) => crate::codec::encode_body(body),
+            Self::ReplicationDenialsResponse(body) => crate::codec::encode_body(body),
             Self::ChannelBindResponse(body) => crate::codec::encode_body(body),
             Self::SupervisionHealthResponse(body) => crate::codec::encode_body(body),
             Self::SupervisionShutdownResponse(body) => crate::codec::encode_body(body),
@@ -5323,6 +6744,12 @@ impl TbepBody {
             FrameKind::SyncSessionCloseRequest => Ok(Self::SyncSessionCloseRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::TopologyReadRequest => Ok(Self::TopologyReadRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::AdminStatusRequest => Ok(Self::AdminStatusRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::ReplicationConflictsRequest => Ok(Self::ReplicationConflictsRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::ReplicationFencedRequest => Ok(Self::ReplicationFencedRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::ReplicationDepositionsRequest => Ok(Self::ReplicationDepositionsRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::ReplicationCursorRequest => Ok(Self::ReplicationCursorRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::ReplicationHealthRequest => Ok(Self::ReplicationHealthRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::ReplicationDenialsRequest => Ok(Self::ReplicationDenialsRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::ChannelBindRequest => Ok(Self::ChannelBindRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::SupervisionHealthRequest => Ok(Self::SupervisionHealthRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::SupervisionShutdownRequest => Ok(Self::SupervisionShutdownRequest(crate::codec::decode_body(bytes)?)),
@@ -5344,6 +6771,12 @@ impl TbepBody {
             FrameKind::SyncSessionCloseResponse => Ok(Self::SyncSessionCloseResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::TopologyReadResponse => Ok(Self::TopologyReadResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::AdminStatusResponse => Ok(Self::AdminStatusResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::ReplicationConflictsResponse => Ok(Self::ReplicationConflictsResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::ReplicationFencedResponse => Ok(Self::ReplicationFencedResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::ReplicationDepositionsResponse => Ok(Self::ReplicationDepositionsResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::ReplicationCursorResponse => Ok(Self::ReplicationCursorResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::ReplicationHealthResponse => Ok(Self::ReplicationHealthResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::ReplicationDenialsResponse => Ok(Self::ReplicationDenialsResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::ChannelBindResponse => Ok(Self::ChannelBindResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::SupervisionHealthResponse => Ok(Self::SupervisionHealthResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::SupervisionShutdownResponse => Ok(Self::SupervisionShutdownResponse(crate::codec::decode_body(bytes)?)),
@@ -5550,6 +6983,67 @@ pub const OPERATIONS: &[OperationRow] = &[
         mutation: false,
         parity: &[
             "PB-5032",
+        ],
+    },
+    OperationRow {
+        name: "replication.conflicts",
+        request_code: 306,
+        response_code: 562,
+        mutation: false,
+        parity: &[
+            "PB-5022",
+            "PB-5035",
+        ],
+    },
+    OperationRow {
+        name: "replication.fenced",
+        request_code: 307,
+        response_code: 563,
+        mutation: false,
+        parity: &[
+            "PB-5035",
+            "new-capability: typed fenced-leader history observation (ADR-0004 D-1 fencing evidence)",
+        ],
+    },
+    OperationRow {
+        name: "replication.depositions",
+        request_code: 308,
+        response_code: 564,
+        mutation: false,
+        parity: &[
+            "PB-5035",
+            "new-capability: typed deposition observation of ownership transitions (ADR-0004 D-1)",
+        ],
+    },
+    OperationRow {
+        name: "replication.cursor",
+        request_code: 309,
+        response_code: 565,
+        mutation: false,
+        parity: &[
+            "PB-5031",
+            "PB-5033",
+            "PB-5035",
+        ],
+    },
+    OperationRow {
+        name: "replication.health",
+        request_code: 310,
+        response_code: 566,
+        mutation: false,
+        parity: &[
+            "PB-5032",
+            "PB-5035",
+        ],
+    },
+    OperationRow {
+        name: "replication.denials",
+        request_code: 311,
+        response_code: 567,
+        mutation: false,
+        parity: &[
+            "PB-5035",
+            "new-capability: typed tenant-isolation denial observation (engine-enforced isolation evidence)",
         ],
     },
     OperationRow {

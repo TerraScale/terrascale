@@ -49,6 +49,10 @@
     {
       "class": "delivery",
       "wire_bytes": 65536
+    },
+    {
+      "class": "observation",
+      "wire_bytes": 65536
     }
   ],
   "category": "adversarial-rejection",
