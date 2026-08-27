@@ -1279,3 +1279,298 @@ fn progress_disclosures_are_bounded_while_the_total_stays_exact() {
     assert!(result.skipped_items().iter().any(|s| s.document().as_str() == "doc-1"));
     assert_eq!(result.manifest().disclosures(), total as u64);
 }
+
+// ---------------------------------------------------------------------------
+// Tombstone retention watermark (GAP-R02)
+// ---------------------------------------------------------------------------
+
+/// Builds one shared watermark whose history bound sits at `bound`, with
+/// the window's deletion evidence extracted from the engine's journal —
+/// exactly what the storage compaction path will declare in production,
+/// and what no engine component declares today.
+fn watermark_at(
+    engine: &Engine,
+    bound: StorageSequence,
+) -> crate::replication::SharedTombstoneRetention {
+    use crate::replication::StampedCommit;
+    use crate::replication::{ReplicationClockStamp, SharedTombstoneRetention};
+
+    let handle = SharedTombstoneRetention::new();
+    let mut window = Vec::new();
+    for tenant in engine.committed_tenants().expect("committed tenants") {
+        let mut after = StorageSequence::default();
+        loop {
+            let page = engine.tenant_commits(&tenant, after, 1024).expect("journal page");
+            if page.is_empty() {
+                break;
+            }
+            let reached = page.last().is_none_or(|commit| commit.sequence().get() >= bound.get());
+            for commit in &page {
+                if commit.sequence().get() < bound.get() {
+                    window
+                        .push(StampedCommit::new(ReplicationClockStamp::new(0, 0), commit.clone()));
+                }
+            }
+            after = page.last().map_or(after, crate::storage::PublishedCommit::sequence);
+            if reached {
+                break;
+            }
+        }
+    }
+    handle.with_lock(|watermark| {
+        watermark
+            .declare_history_bound_from_commits(bound, &window, true)
+            .expect("the window declares cleanly");
+    });
+    handle
+}
+
+/// One `(collection, identifier, value)` fact of a restored document.
+type KeyedValue = (String, String, DocumentValue);
+
+/// Reads one tenant's live documents back from a restored location.
+fn read_back(location: &PathBuf, tenant_name: &str) -> Vec<KeyedValue> {
+    let engine =
+        Engine::open(EngineConfig::durable(location).expect("durable location")).expect("reopens");
+    let tenant_scope = scope(&engine, tenant_name);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let documents = engine.snapshot_documents(&tenant_scope, &snapshot).expect("reads back");
+    engine.shutdown().expect("shuts down");
+    documents
+        .into_iter()
+        .map(|document| {
+            (
+                document.collection().as_str().to_owned(),
+                document.id().as_str().to_owned(),
+                document.value().clone(),
+            )
+        })
+        .collect()
+}
+
+fn sorted(values: Vec<KeyedValue>) -> Vec<KeyedValue> {
+    let mut values = values;
+    values.sort_by(|left, right| {
+        (left.0.as_str(), left.1.as_str()).cmp(&(right.0.as_str(), right.1.as_str()))
+    });
+    values
+}
+
+#[test]
+fn an_incremental_below_the_history_bound_restores_without_resurrecting() {
+    let (_dir, engine) = open_engine("gapr02-chain");
+    let destination = location("gapr02-chain-dest");
+    let target = location("gapr02-chain-target");
+
+    // The chain's root covers the first two publications.
+    committed(put(
+        &engine,
+        "alpha",
+        "op-1",
+        "doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
+    committed(put(
+        &engine,
+        "alpha",
+        "op-2",
+        "doc-2",
+        "users",
+        text("two"),
+        LocalDurability::Synced,
+    ));
+    let full = run_backup(&engine, BackupPlan::full(), &destination).expect("the chain root");
+    let base = full.manifest().boundary_sequence();
+
+    // While the chain rests, the source deletes a document and writes a new
+    // one, then gives up the history below the newer publications.
+    let delete_at = committed(delete(&engine, "alpha", "op-3", "doc-1"));
+    let put_at = committed(put(
+        &engine,
+        "alpha",
+        "op-4",
+        "doc-3",
+        "users",
+        text("three"),
+        LocalDurability::Synced,
+    ));
+    assert!(delete_at > base, "the delete is above the chain's base");
+    let retention = watermark_at(&engine, put_at);
+    retention.with_lock(|watermark| {
+        assert_eq!(watermark.held_evidence_count(), 1, "the delete is retained");
+        assert_eq!(
+            watermark.non_deletion_through(&tenant("alpha")),
+            Some(base),
+            "no put below the bound is above the chain's base"
+        );
+    });
+
+    // The incremental below the declared bound archives the retained delete
+    // and the journal range above the bound.
+    let incremental = run_backup(
+        &engine,
+        BackupPlan::incremental_since(base).with_retention(retention.clone()),
+        &destination,
+    )
+    .expect("the below-bound link archives the retained evidence");
+    assert_eq!(incremental.manifest().deletes(), 1, "the retained delete is a bound fact");
+    assert_eq!(incremental.manifest().documents(), 1, "doc-3 is the only archived document");
+    assert_eq!(incremental.manifest().base_sequence(), Some(base));
+    assert!(verify_latest_chain(&destination).is_ok(), "the chain verifies");
+
+    // The chain restores without resurrecting the deleted document.
+    let receipt = crate::backup::RestorePlan::restore_latest(&destination, &target)
+        .expect("chain restore runs");
+    assert_eq!(receipt.chain_depth(), 2);
+    assert_eq!(receipt.expected_deletes(), 1);
+    assert_eq!(receipt.decoded_deletes(), 1);
+    assert_eq!(receipt.restored_documents(), 2, "doc-2 and doc-3 survive");
+    assert_eq!(
+        sorted(read_back(&target, "alpha")),
+        sorted(vec![
+            ("users".to_owned(), "doc-2".to_owned(), text("two")),
+            ("users".to_owned(), "doc-3".to_owned(), text("three")),
+        ]),
+        "doc-1 stays deleted: the retained evidence survived the bound"
+    );
+}
+
+#[test]
+fn an_incremental_below_the_bound_fails_closed_when_the_window_holds_a_missed_put() {
+    let (_dir, engine) = open_engine("gapr02-missed-put");
+    let destination = location("gapr02-missed-put-dest");
+
+    committed(put(
+        &engine,
+        "alpha",
+        "op-1",
+        "doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
+    let full = run_backup(&engine, BackupPlan::full(), &destination).expect("the chain root");
+    let base = full.manifest().boundary_sequence();
+
+    // A put the chain has not seen lands below the declared bound, so the
+    // window is not provable from deletion evidence alone.
+    let missed = committed(put(
+        &engine,
+        "alpha",
+        "op-2",
+        "doc-2",
+        "users",
+        text("two"),
+        LocalDurability::Synced,
+    ));
+    let after = committed(delete(&engine, "alpha", "op-3", "doc-2"));
+    let retention = watermark_at(&engine, after);
+    retention.with_lock(|watermark| {
+        assert_eq!(watermark.non_deletion_through(&tenant("alpha")), Some(missed));
+    });
+
+    let error = run_backup(
+        &engine,
+        BackupPlan::incremental_since(base).with_retention(retention),
+        &destination,
+    )
+    .expect_err("a put the chain missed below the bound is not provable");
+    assert_eq!(error, BackupError::SourceUnavailable, "the failure is typed and fail-closed");
+}
+
+#[test]
+fn an_incremental_below_the_bound_fails_closed_when_the_floor_is_above_the_base() {
+    let (_dir, engine) = open_engine("gapr02-floor");
+    let destination = location("gapr02-floor-dest");
+
+    committed(put(
+        &engine,
+        "alpha",
+        "op-1",
+        "doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
+    committed(put(
+        &engine,
+        "alpha",
+        "op-2",
+        "doc-2",
+        "users",
+        text("two"),
+        LocalDurability::Synced,
+    ));
+    let full = run_backup(&engine, BackupPlan::full(), &destination).expect("the chain root");
+    let base = full.manifest().boundary_sequence();
+
+    committed(delete(&engine, "alpha", "op-3", "doc-1"));
+    let boundary = engine.journaled_high_water().expect("high water").unwrap_or_default();
+    let retention = watermark_at(&engine, boundary);
+    // The watermark already discarded the evidence below the chain's base:
+    // the chain is not servable from this source anymore.
+    retention
+        .with_lock(|watermark| watermark.advance_floor(boundary).expect("no consumer blocks it"));
+
+    let error = run_backup(
+        &engine,
+        BackupPlan::incremental_since(base).with_retention(retention),
+        &destination,
+    )
+    .expect_err("a base below the retention floor is not provable");
+    assert_eq!(error, BackupError::SourceUnavailable);
+}
+
+#[test]
+fn an_incremental_run_records_its_chain_anchor_on_the_watermark() {
+    let (_dir, engine) = open_engine("gapr02-anchor");
+    let destination = location("gapr02-anchor-dest");
+
+    committed(put(
+        &engine,
+        "alpha",
+        "op-1",
+        "doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
+    let full = run_backup(&engine, BackupPlan::full(), &destination).expect("the chain root");
+    let base = full.manifest().boundary_sequence();
+
+    committed(delete(&engine, "alpha", "op-2", "doc-1"));
+    let boundary = engine.journaled_high_water().expect("high water").unwrap_or_default();
+    let retention = watermark_at(&engine, boundary);
+
+    run_backup(
+        &engine,
+        BackupPlan::incremental_since(base).with_retention(retention.clone()),
+        &destination,
+    )
+    .expect("the link archives");
+
+    let consumers = retention.with_lock(|watermark| watermark.consumers());
+    let anchor = consumers
+        .iter()
+        .find_map(|(consumer, floor)| match consumer {
+            crate::replication::RetentionConsumer::BackupChain { identity } => {
+                Some((identity.clone(), *floor))
+            }
+            _ => None,
+        })
+        .expect("the run recorded its chain's anchor");
+    assert_eq!(
+        anchor,
+        (full.manifest().identity().to_owned(), Some(base)),
+        "the anchor is the base recovery point at its boundary"
+    );
+
+    // The chain's anchor holds the watermark: its deletion evidence cannot
+    // be discarded below the boundary while the chain is anchored there.
+    let refusal = retention
+        .with_lock(|watermark| watermark.advance_floor(boundary))
+        .expect_err("the chain still needs the evidence above its base");
+    assert!(matches!(refusal, crate::replication::RetentionRefusal::ConsumerBelowFloor { .. }));
+}

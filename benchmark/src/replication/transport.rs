@@ -19,6 +19,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+use super::retention::DeletionEvidence;
 use super::{MemberId, ReplicationClockStamp, ReplicationInstant};
 use crate::storage::PublishedCommit;
 use crate::types::{StorageSequence, TenantId};
@@ -127,6 +128,31 @@ pub(crate) enum ReplicationFrame {
         /// The pushed commits with their writer clock stamps.
         commits: Vec<StampedCommit>,
     },
+    /// One member serves the deletion evidence a requester below its
+    /// history bound still needs (GAP-R02).
+    ///
+    /// The batch is the tombstone half of a below-bound catch-up: the
+    /// retained facts above the requester's cursor, the bound they were
+    /// retained against, the retention floor they are held above, and the
+    /// tenant's highest non-deletion sequence below the bound — the fact
+    /// that tells the requester whether evidence alone completes its
+    /// catch-up or whether it must fall back to a full state transfer.
+    DeletionEvidenceBatch {
+        /// The member serving the evidence.
+        source: MemberId,
+        /// The tenant the evidence belongs to.
+        tenant: TenantId,
+        /// The retained deletion facts above the requester's cursor, in
+        /// sequence order.
+        evidence: Vec<DeletionEvidence>,
+        /// The history bound the evidence was retained below.
+        servable_from: StorageSequence,
+        /// The source's retention floor.
+        retention_floor: StorageSequence,
+        /// The tenant's highest non-deletion sequence below the bound, or
+        /// `None` when every publication below the bound was a delete.
+        non_deletion_through: Option<StorageSequence>,
+    },
 }
 
 /// Which frames a receive drains from a member's inbound links.
@@ -155,7 +181,9 @@ impl FrameSelector {
             (Self::Requests, ReplicationFrame::CatchUpRequest { .. })
                 | (
                     Self::Deliveries,
-                    ReplicationFrame::CatchUpBatch { .. } | ReplicationFrame::Push { .. }
+                    ReplicationFrame::CatchUpBatch { .. }
+                        | ReplicationFrame::Push { .. }
+                        | ReplicationFrame::DeletionEvidenceBatch { .. }
                 )
         )
     }

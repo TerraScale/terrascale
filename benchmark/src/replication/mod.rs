@@ -39,6 +39,9 @@ mod lane_tests;
 mod member;
 #[cfg(test)]
 mod repair_tests;
+mod retention;
+#[cfg(test)]
+mod retention_tests;
 mod status;
 mod topology;
 mod transport;
@@ -47,6 +50,22 @@ mod transport;
 mod tests;
 
 use crate::types::{OperationId, StorageSequence, TenantId};
+
+// The tombstone retention watermark is module-level public (GAP-R02): the
+// backup seam carries it on a `BackupPlan`, so it is reachable as
+// `terrabase_v2::replication::*` while staying out of the crate root's
+// re-export list, which the integrator owns.
+pub use retention::{
+    ConsumerObservation, DeletionEvidence, MAX_RETENTION_REFUSALS, RetentionAdvance,
+    RetentionCompaction, RetentionConsumer, RetentionRefusal, SharedTombstoneRetention,
+    TombstoneRetention,
+};
+
+// The journal-extraction pair a history-bound declaration hands the
+// watermark (GAP-R02): crate-visible under test so the backup suite builds
+// the same window the member extracts from its own journal.
+#[cfg(test)]
+pub(crate) use transport::StampedCommit;
 
 /// A deterministic instant of the replication lane's clock.
 ///
