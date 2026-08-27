@@ -110,6 +110,15 @@ fn allocate(
     Ok(())
 }
 
+/// Returns the distributor's most recently allocated block, whether it is
+/// still pending or already acknowledged.
+fn current_block(distributor: &HiLoDistributor) -> crate::families::hilo::HiLoBlock {
+    distributor
+        .pending_block()
+        .or(distributor.live_block())
+        .expect("a block was just allocated")
+}
+
 /// Reports whether one member durably holds one operation — the fact the
 /// acknowledgement mapping is derived from, never assumed.
 fn holds_durably(member: &ReplicationMember, member_scope: &TenantScope, operation_name: &str) -> bool {
@@ -156,7 +165,7 @@ fn hilo_member_loss_never_rehands_the_dead_owners_allocated_blocks() {
     let mut owner = HiLoDistributor::try_new("orders".to_owned(), 32).expect("valid distributor");
     allocate(&mut m_a1, &scope_a1, &mut owner, "hilo-burn-a1").expect("the burn commits");
     allocate(&mut m_a1, &scope_a1, &mut owner, "hilo-block-a1").expect("the block commits");
-    let first = owner.pending_block().expect("the first block is pending");
+    let first = current_block(&owner);
     catch_up(&mut network, &mut m_a1, &scope_a1, &mut m_b1, &scope_b1);
     assert!(
         holds_durably(&m_b1, &scope_b1, "hilo-block-a1"),
@@ -173,7 +182,7 @@ fn hilo_member_loss_never_rehands_the_dead_owners_allocated_blocks() {
     // The owner allocates its NEXT block and dies before it reaches any
     // other member: the in-flight allocation nobody else received.
     allocate(&mut m_a1, &scope_a1, &mut owner, "hilo-block-a2").expect("the in-flight block commits");
-    let in_flight = owner.pending_block().expect("the in-flight block is pending");
+    let in_flight = current_block(&owner);
     assert_eq!(in_flight.low(), 64, "the in-flight block starts past the acknowledged one");
     m_a1.close();
 
@@ -192,9 +201,22 @@ fn hilo_member_loss_never_rehands_the_dead_owners_allocated_blocks() {
     let mut replacement =
         HiLoDistributor::try_new("orders".to_owned(), 32).expect("valid distributor");
     allocate(&mut m_g1, &scope_g1, &mut replacement, "hilo-burn-g1").expect("the burn commits");
+    // The first allocation of a fresh distributor is the transition burn:
+    // none of its ids may be handed out. This is the assertion the dead
+    // owner's in-flight block lives or dies by — a first allocation that
+    // mints hands out exactly the range the dead owner allocated.
+    let minted_from_burn = replacement.next_id().expect("minting is typed");
+    assert!(
+        minted_from_burn.is_none(),
+        "the transition burn mints nothing: id {minted_from_burn:?} would re-hand the dead owner's in-flight block {in_flight:?}"
+    );
+    assert!(
+        replacement.pending_block().is_none() && replacement.live_block().is_none(),
+        "a burn is neither pending nor live"
+    );
     assert_eq!(replacement.burned(), 32, "the replacement burned one block");
     allocate(&mut m_g1, &scope_g1, &mut replacement, "hilo-block-g1").expect("the block commits");
-    let replacement_block = replacement.pending_block().expect("the replacement block is pending");
+    let replacement_block = current_block(&replacement);
     assert_eq!(
         replacement_block.low(),
         in_flight.high(),
@@ -223,6 +245,7 @@ fn hilo_member_loss_never_rehands_the_dead_owners_allocated_blocks() {
         vec![96, 97, 98, 99, 100],
         "the replacement's ids start above everything the dead owner allocated"
     );
+    assert_eq!(replacement.burned(), 32, "the replacement burned one block");
 }
 
 /// Decision D1 on the lane: once a replacement appears at a raised epoch,
@@ -241,7 +264,7 @@ fn hilo_deposed_owner_cannot_allocate_after_the_replacement_appears() {
     let mut owner = HiLoDistributor::try_new("orders".to_owned(), 32).expect("valid distributor");
     allocate(&mut m_a1, &scope_a1, &mut owner, "hilo-burn-a1").expect("the burn commits");
     allocate(&mut m_a1, &scope_a1, &mut owner, "hilo-block-a1").expect("the block commits");
-    let deposed_block = owner.pending_block().expect("the deposed owner's block is pending");
+    let deposed_block = current_block(&owner);
 
     // The replacement appears at a raised epoch; the deposed owner adopts
     // the view and its next allocation is refused by admission fencing.
@@ -262,12 +285,20 @@ fn hilo_deposed_owner_cannot_allocate_after_the_replacement_appears() {
     let mut replacement =
         HiLoDistributor::try_new("orders".to_owned(), 32).expect("valid distributor");
     allocate(&mut m_g1, &scope_g1, &mut replacement, "hilo-burn-g1").expect("the burn commits");
+    // The replacement's first allocation is its transition burn: nothing
+    // in it may be handed out, and it covers the fenced owner's possible
+    // in-flight window exactly (decision D4).
+    assert_eq!(
+        replacement.next_id().expect("minting is typed"),
+        None,
+        "the transition burn mints nothing"
+    );
+    assert_eq!(replacement.burned(), 32, "the burn covers the fenced in-flight window");
     allocate(&mut m_g1, &scope_g1, &mut replacement, "hilo-block-g1").expect("the block commits");
-    let block = replacement.pending_block().expect("the replacement block is pending");
+    let block = current_block(&replacement);
     assert_eq!(
         block.low(),
         deposed_block.high(),
         "the replacement hands out past the deposed owner's last allocated block"
     );
-    assert_eq!(replacement.burned(), 32, "the burn covers the fenced in-flight window");
 }
