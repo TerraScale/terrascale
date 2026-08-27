@@ -164,7 +164,7 @@ public static class Commands
     private static async Task<int> WriteAsync(CliGrammar.Command command, ITerraBaseSurface surface, OutputWriter output, CancellationToken cancellation)
     {
         var (collection, document) = (command.Operands[0], command.Operands[1]);
-        using var parsed = JsonDocument.Parse(command.Operands[2]);
+        using var parsed = ParseBody(command.Operands[2]);
         var key = command.Option("idempotency-key", $"cli-{Guid.NewGuid():N}");
         var answer = await surface.WriteDocumentAsync(collection, document, parsed.RootElement.Clone(), ExpectedOf(command), key, cancellation).ConfigureAwait(false);
         return WriteOf(output, command.DisplayName, "written", answer);
@@ -180,7 +180,7 @@ public static class Commands
 
     private static async Task<int> QueryAsync(CliGrammar.Command command, string text, ITerraBaseSurface surface, OutputWriter output, CancellationToken cancellation)
     {
-        var maxItems = uint.Parse(command.Option("max-items", "256"), System.Globalization.CultureInfo.InvariantCulture);
+        var maxItems = ParseCount(command.Option("max-items", "256"), "--max-items");
         var answer = await surface.ExecuteQueryAsync(text, maxItems, cancellation).ConfigureAwait(false);
 
         output.Envelope(command.DisplayName, "result", writer =>
@@ -225,8 +225,8 @@ public static class Commands
     {
         var follow = command.Options.ContainsKey("follow");
         var resume = ParseUlong(command.Option("from", "1"), "--from");
-        var idle = int.Parse(command.Option("idle", "1000"), System.Globalization.CultureInfo.InvariantCulture);
-        var maxEvents = command.Options.TryGetValue("max-events", out var bound) && int.TryParse(bound, out var parsed) ? parsed : default(int?);
+        var idle = ParseBound(command.Option("idle", "1000"), "--idle");
+        var maxEvents = command.Options.TryGetValue("max-events", out var bound) ? ParseBound(bound, "--max-events") : default(int?);
         var collections = command.Options.TryGetValue("collections", out var filter)
             ? filter.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             : null;
@@ -425,7 +425,7 @@ public static class Commands
 
     private static async Task<int> AuditAsync(CliGrammar.Command command, ITerraBaseSurface surface, OutputWriter output, CancellationToken cancellation)
     {
-        var limit = int.Parse(command.Option("limit", "100"), System.Globalization.CultureInfo.InvariantCulture);
+        var limit = ParseBound(command.Option("limit", "100"), "--limit");
         var records = await surface.ReadAuditAsync(limit, cancellation).ConfigureAwait(false);
         output.Envelope(command.DisplayName, "result", records);
         if (records.ValueKind == JsonValueKind.Object && records.TryGetProperty("records", out var list) && list.ValueKind == JsonValueKind.Array)
@@ -590,11 +590,61 @@ public static class Commands
     private static string BodyOf(DocumentReadOutcome document) =>
         document.Body is { } body ? body.GetRawText() : "null";
 
-    private static string? ExpectedOf(CliGrammar.Command command) =>
-        command.Options.TryGetValue("expected", out var expected) ? expected : null;
+    private static string? ExpectedOf(CliGrammar.Command command)
+    {
+        if (!command.Options.TryGetValue("expected", out var expected))
+        {
+            return null;
+        }
+
+        // Both modes refuse the same malformed conditional before any
+        // call is sent, so the host mode cannot forward an unvalidated
+        // expected-version header the engine would have to answer.
+        return expected is "any" || ulong.TryParse(expected, out _)
+            ? expected
+            : throw new SurfaceUsageException($"--expected is any or an exact version, not \"{expected}\"");
+    }
+
+    /// <summary>
+    /// Parses the body operand of <c>document write</c> fail-closed: a body that
+    /// is not JSON is a usage refusal, never an unhandled parse failure.
+    /// </summary>
+    /// <param name="body">The body operand.</param>
+    /// <returns>The parsed body document.</returns>
+    private static JsonDocument ParseBody(string body)
+    {
+        try
+        {
+            return JsonDocument.Parse(body);
+        }
+        catch (JsonException failure)
+        {
+            throw new SurfaceUsageException($"the document write body is one JSON document, not \"{Snippet(body)}\" ({failure.Message})");
+        }
+    }
+
+    private static string Snippet(string text) => text.Length <= 32 ? text : $"{text[..32]}…";
 
     private static ulong ParseUlong(string text, string name) =>
         ulong.TryParse(text, out var value) ? value : throw new SurfaceUsageException($"{name} is a sequence number, not \"{text}\"");
+
+    /// <summary>Parses a non-negative count option (<c>--max-items</c>) fail-closed.</summary>
+    /// <param name="text">The option value.</param>
+    /// <param name="name">The option's name, for the bounded refusal.</param>
+    /// <returns>The count.</returns>
+    private static uint ParseCount(string text, string name) =>
+        uint.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var value)
+            ? value
+            : throw new SurfaceUsageException($"{name} is a whole number of items, not \"{text}\"");
+
+    /// <summary>Parses a positive bound option (<c>--idle</c>, <c>--max-events</c>, <c>--limit</c>) fail-closed, before the tail or the read opens.</summary>
+    /// <param name="text">The option value.</param>
+    /// <param name="name">The option's name, for the bounded refusal.</param>
+    /// <returns>The bound.</returns>
+    private static int ParseBound(string text, string name) =>
+        int.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var value) && value > 0
+            ? value
+            : throw new SurfaceUsageException($"{name} is a positive whole number, not \"{text}\"");
 
     private static void Notice(OutputWriter output, string command, string kind, ulong checkpoint, string? human = null)
     {

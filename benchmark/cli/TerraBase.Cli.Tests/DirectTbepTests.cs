@@ -178,6 +178,12 @@ public sealed class DirectTbepTests
 
             await Assert.That(reconnect).IsTrue();
 
+            // The engine stays away for a while: the tail keeps retrying
+            // its re-subscription without crashing on the dead connection.
+            await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            await Assert.That(run.IsCompleted).IsFalse();
+            await Assert.That(run.IsFaulted).IsFalse();
+
             // A fresh engine takes the same socket: the tail must
             // re-subscribe from its checkpoint and deliver the new commit.
             var (fresh, _) = await EngineHarness.SpawnAsync(socket);

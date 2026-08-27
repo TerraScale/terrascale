@@ -13,9 +13,10 @@ using System.Text.Json;
 /// <c>mode</c>, then exactly one payload property (<c>result</c>,
 /// <c>event</c>, or <c>notice</c>) — on standard output, with error
 /// envelopes on standard error. Human output uses the glossary
-/// vocabulary exactly. Neither output ever carries a credential: none
-/// exists on this local surface, and the backend-supplied context is
-/// never echoed.
+/// vocabulary exactly, and a typed error is one bounded human line,
+/// never a raw JSON envelope. Neither output ever carries a
+/// credential: none exists on this local surface, and the
+/// backend-supplied context is never echoed.
 /// </summary>
 public sealed class OutputWriter
 {
@@ -72,12 +73,22 @@ public sealed class OutputWriter
     public void Envelope(string command, string payloadProperty, JsonElement payload) =>
         this.Envelope(command, payloadProperty, writer => payload.WriteTo(writer));
 
-    /// <summary>Writes the typed error envelope on standard error.</summary>
+    /// <summary>
+    /// Writes the typed error on standard error: the error envelope in the
+    /// machine convention, one bounded human line in the human convention —
+    /// never a raw JSON envelope in a human terminal.
+    /// </summary>
     /// <param name="command">The command's display name.</param>
     /// <param name="code">The closed error code.</param>
     /// <param name="detail">The bounded detail.</param>
     public void Error(string command, string code, string detail)
     {
+        if (!this.Machine)
+        {
+            this.HumanError($"{command} {code}: {detail}");
+            return;
+        }
+
         using var buffer = new MemoryStream();
         using (var writer = new Utf8JsonWriter(buffer, this.options))
         {
@@ -96,8 +107,8 @@ public sealed class OutputWriter
         this.stderr.Flush();
     }
 
-    /// <summary>Writes the usage error as a bounded human line (machine envelopes are written by the entry).</summary>
-    /// <param name="detail">The bounded usage detail.</param>
+    /// <summary>Writes one bounded human error line on standard error (the human convention's shape of a typed error).</summary>
+    /// <param name="detail">The bounded error detail.</param>
     public void HumanError(string detail)
     {
         if (this.Machine)
@@ -130,7 +141,10 @@ public sealed class OutputWriter
         {
             this.Envelope("help", "result", writer =>
             {
-                writer.WriteStartArray("help");
+                // The payload value of the help envelope is the array of
+                // lines: the envelope has already written the payload's
+                // property name, so the value starts here.
+                writer.WriteStartArray();
                 foreach (var line in lines)
                 {
                     writer.WriteStringValue(line);

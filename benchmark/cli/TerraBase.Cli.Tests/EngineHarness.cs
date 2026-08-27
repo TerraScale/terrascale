@@ -106,8 +106,15 @@ public static class EngineHarness
         var build = await RunAsync(cargo, [.. arguments], home).ConfigureAwait(false);
         if (!build)
         {
-            // A stale lockless cache is the one offline failure mode that a
-            // networked retry fixes; retry once without the offline pin.
+            // A networked retry is opt-in (TERRABASE_TEST_CARGO_ONLINE=1):
+            // the documented contract never reaches for the network on a
+            // build the operator pinned to offline.
+            if (Environment.GetEnvironmentVariable("TERRABASE_TEST_CARGO_ONLINE") != "1")
+            {
+                throw new InvalidOperationException(
+                    "the real-engine harness failed to build offline; set TERRABASE_TEST_CARGO_ONLINE=1 to allow a networked retry (see the cargo diagnostics above)");
+            }
+
             var online = await RunAsync(cargo, ["+1.97.1", "build", "--release"], home).ConfigureAwait(false);
             if (!online)
             {
@@ -187,7 +194,25 @@ public static class EngineHarness
     public static async Task<(Process Process, string Socket)> SpawnAsync(string? socket)
     {
         var binary = await BinaryPathAsync().ConfigureAwait(false);
-        socket ??= SocketPath();
+        if (socket is null)
+        {
+            socket = SocketPath();
+        }
+        else
+        {
+            // A named path is a restart: the killed engine's socket file
+            // still exists, so its presence would not mean the new engine
+            // bound. Removing it first makes the file's return the signal
+            // the wait below polls for.
+            try
+            {
+                File.Delete(socket);
+            }
+            catch (IOException)
+            {
+                // The engine removes a stale path on bind regardless.
+            }
+        }
         var info = new ProcessStartInfo
         {
             FileName = binary,

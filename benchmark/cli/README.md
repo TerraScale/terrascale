@@ -20,7 +20,7 @@ surfaces use `System.Text.Json` only. The workspace-pinned .NET SDK
 | --- | --- |
 | `TerraBase.Cli` | The CLI: grammar, configuration, the host-mode and direct-mode surfaces, the output conventions, the `changes` tail with checkpoint resume. |
 | `TerraBase.Cli.Tests` | The SE-13 test family (TUnit): grammar/configuration and machine-output contract rows, live API host fixture rows (the real engine process under the real ASP.NET host — the SE-08 harness pattern), the dropped-connection checkpoint-resume row, and the direct-TBEP rows. |
-| `TerraBase.Cli.sln` | The family's solution metadata. |
+| `TerraBase.Cli.slnx` | The family's solution metadata. |
 
 ## Command grammar
 
@@ -55,13 +55,20 @@ exit codes: 0 completed, 1 usage, 2 typed refusal, 3 unavailable
 ```
 
 The grammar fails closed: an unknown option, an unknown command, a
-missing operand, or an option outside its command is a usage error
-(exit 1) that runs nothing. `document write` takes the body as plain
-JSON (a file's worth of it as one shell argument) and converts it
-exactly into the host's typed value form; `--idempotency-key` pins the
-retry identity of a mutation (a generated key otherwise — scripts
-should pin their own). `--expected any|VERSION` maps the typed
-expected-version conditional.
+missing operand, an option outside its command, or a malformed operand
+or option value is a usage error (exit 1) that runs nothing — never a
+crash and never a guessed invocation. Typed values are validated before
+anything is sent: `--max-items` is a whole number, `--idle`,
+`--max-events`, and `--limit` are positive whole numbers, `--from` and
+`QUERY-ID` are sequence numbers, `--expected` is `any` or an exact
+version in both modes, and the `document write` body is one JSON
+document (a non-JSON body is refused with its bounded reason, and
+`--idle`/`--max-events` are refused before the subscription opens, not
+after it). `document write` takes the body as plain JSON (a file's
+worth of it as one shell argument) and converts it exactly into the
+host's typed value form; `--idempotency-key` pins the retry identity of
+a mutation (a generated key otherwise — scripts should pin their own).
+`--expected any|VERSION` maps the typed expected-version conditional.
 
 ## The two modes
 
@@ -77,11 +84,15 @@ counters.
 a local engine process over the SE-14 client: the channel binds once
 to the backend-supplied context, then serves typed calls and the
 backbone subscription's unsolicited notifications on one connection.
-`changes` subscribes the Change Event Backbone directly and re-subscribes
-from its checkpoint when the engine channel drops. Honest limits: the
-sync-session registry, the audit log, and the metrics are the API
-host's tracked state — `sessions` answers the engine's own counters
-with `available: false`, and `audit`/`metrics` fail closed as
+When that connection is lost the surface rebuilds it (re-Connect and
+re-Bind over the same socket) once per failed call, a following tail's
+parked read is released with the drop, and the tail re-subscribes from
+its checkpoint — so an engine that dies under `changes --follow` is
+survived: the reconnect notice prints, and an engine that takes the
+same socket back up is followed from where the tail stood. Honest
+limits: the sync-session registry, the audit log, and the metrics are
+the API host's tracked state — `sessions` answers the engine's own
+counters with `available: false`, and `audit`/`metrics` fail closed as
 host-surface commands.
 
 ## The `changes` tail
@@ -117,10 +128,13 @@ ever appears (tested).
 
 **Human output** (default) uses the glossary vocabulary exactly:
 Engine, TopologyView, Region, Member, Failure Domain, Sync Session,
-Change Event Backbone, Change Notification, TQL. The topology summary
-is truthful: when the engine publishes no TopologyView at its
-binding, the summary says `not reported` — it never invents a Region
-or Member.
+Change Event Backbone, Change Notification, TQL. A typed error in
+human mode is one bounded human line on standard error
+(`terrabase: <command> <code>: <detail>`), never a raw JSON envelope;
+the machine error envelope belongs to the machine convention. The
+topology summary is truthful: when the engine publishes no
+TopologyView at its binding, the summary says `not reported` — it
+never invents a Region or Member.
 
 ## Truthful limits (the named integrator action)
 
@@ -143,7 +157,7 @@ session — labels the local gate checks, never secrets — and the CLI
 never logs them.
 
 Packaging: the projects build with the workspace-pinned .NET SDK
-(`dotnet build cli/TerraBase.Cli.sln`, warnings-as-errors). For an
+(`dotnet build cli/TerraBase.Cli.slnx`, warnings-as-errors). For an
 operator install, publish the framework-dependent executable and put
 it on `PATH` as `terrabase`:
 
@@ -163,7 +177,9 @@ cd cli
 dotnet run --project TerraBase.Cli -- help
 dotnet run --project TerraBase.Cli -- status                     # host mode
 dotnet run --project TerraBase.Cli -- --mode tbep --socket /path/to/engine.sock status
-dotnet test TerraBase.Cli.Tests                                  # the SE-13 family
+dotnet run --project TerraBase.Cli.Tests                          # the SE-13 family (the .NET 10+ SDK
+                                                                  # rejects VSTest mode, so the family
+                                                                  # runs its own test executable)
 ```
 
 The live-host rows build the repository's actual engine server into a
