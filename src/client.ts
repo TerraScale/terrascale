@@ -2353,7 +2353,6 @@ function toSignupRequest(request: Models.RegisterRequest) {
     firstName,
     lastName,
     fullName: (request.fullName ?? request.displayName ?? "").trim(),
-    username: request.username?.trim().toLowerCase() ?? "",
     acceptedTerms: request.acceptedTerms ?? false,
     termsVersion: request.termsVersion ?? "",
     verifyUrl: request.verifyUrl ?? request.redirectUrl ?? "",
