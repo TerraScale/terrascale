@@ -87,7 +87,10 @@ Three receipts land under `evidence/benchmarks/`:
 (including the E-12 compression decision), and
 `se07-tbep-overhead-receipt.md` (including the E-15 characterization
 runs). Each records: exact source identity (base and changed commit),
-launcher command, profile (`--release`, matching `scripts/check.sh`),
+launcher command, profile (`--release` for the recorded counters, plus
+the dev-profile workspace run the gate now also requires — added by the
+SE-07 warden repair after a debug-only frame-header assertion proved
+green in every release gate and red in dev),
 lane configuration, the red (pre-change) and green (post-change)
 counter values, the per-comparison verdict from the exact vocabulary,
 objective status against PD-2026-08-26-03 (which stays `inconclusive`

@@ -87,6 +87,11 @@ const MAX_PACKING_PROBES: usize = 3;
 /// the budget, never by a consumer's backlog.
 const PACKING_PROBE_BOUND_MULTIPLIER: usize = 2;
 
+/// The fixed header size of a frame's wire encoding: one version tag byte
+/// plus four little-endian `u64` fields (correlation, causation, digest,
+/// body length) — 1 + 4 * 8 = 33 bytes before the body.
+const FRAME_HEADER_BYTES: usize = 33;
+
 /// The error type of the sync-core seam.
 #[derive(Debug, PartialEq)]
 pub enum SyncCoreError {
@@ -987,14 +992,18 @@ impl SyncFrame {
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let body_len = self.body.encoded_len();
-        let mut bytes = Vec::with_capacity(body_len + 34);
+        let mut bytes = Vec::with_capacity(body_len + FRAME_HEADER_BYTES);
         bytes.push(1);
         bytes.extend_from_slice(&self.correlation.value().to_le_bytes());
         bytes.extend_from_slice(&self.causation.value().to_le_bytes());
         bytes.extend_from_slice(&self.digest.0.to_le_bytes());
         bytes.extend_from_slice(&(body_len as u64).to_le_bytes());
         self.body.emit_digest_input(|chunk| bytes.extend_from_slice(chunk));
-        debug_assert_eq!(bytes.len(), body_len + 34, "the emitted body matches its length");
+        debug_assert_eq!(
+            bytes.len(),
+            body_len + FRAME_HEADER_BYTES,
+            "the emitted body matches its length"
+        );
         bytes
     }
 

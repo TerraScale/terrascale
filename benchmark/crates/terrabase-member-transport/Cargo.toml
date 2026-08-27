@@ -39,3 +39,9 @@ tokio = { version = "1", default-features = false, features = ["rt-multi-thread"
 # dependency tree at exactly the engine-socket set, with no second digest crate
 # (and no second `cpufeatures`) in the eventual unified workspace lock.
 ring = "0.17"
+
+[dev-dependencies]
+# Hostile decode probes re-sign corrupted frames with the crate's own
+# digest backend (a test-only use of the already-direct dependency, so the
+# workspace lock and the engine-socket crypto closure stay unchanged).
+ring = "0.17"

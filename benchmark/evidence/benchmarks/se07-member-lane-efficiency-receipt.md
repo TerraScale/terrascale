@@ -18,6 +18,10 @@ wall-clock quantity is claimed anywhere in this receipt.
   - `cargo test --offline --locked --release -p terrabase-member-transport --test efficiency_budgets -- --nocapture`
   - Red (pre-change) run: same command at base `33dd166` before the
     implementation landed (the adapter's first run; captured below).
+  - Dev-profile runs added by the warden repair below:
+    `cargo test --offline --locked -p terrabase-member-transport --test efficiency_budgets`
+    — green 10/10 at the repaired source (both repair rows below are red
+    at the packet commit `81c595d` in the same dev profile).
 - Profile: `--release` (the profile `scripts/check.sh` gates on).
 - Lane: the in-process member lane (`InProcessLane`), three-Region
   topology, six durable member journals under the system temp root, the
@@ -60,6 +64,34 @@ wall-clock quantity is claimed anywhere in this receipt.
   per-operation semantics.
 - The journal gains a point-lookup `document_collection` used by the
   apply path; `documents_at` remains for whole-state reads.
+
+## Warden repair loop 1 (this repair)
+
+Two warden findings repaired; both red values below were captured by this
+repair at the packet commit `81c595d` (dev profile, the same adapter),
+not at the packet's pre-SE-07 base — these are defects the packet itself
+introduced or left open.
+
+| Finding | Red (packet commit `81c595d`) | Green (this repair) |
+| --- | --- | --- |
+| MINOR — `send_push_batch` fenced a whole batch under the LAST operation's (range, epoch) | a mixed batch (`op-fence-main`, range `main` at epoch 1; `op-fence-aux`, range `aux` at epoch 4) returned `Ok(2)` and sent **one** push frame claiming `range="aux" epoch=4` while carrying **both** commits — a `main`-range commit rode fenced under the `aux` identity, which the receiver's D-1 apply-time fencing judges the whole batch by | the same batch refuses with the typed `MemberError::MixedFencingIdentity { first: ("main", 1), other: ("aux", 4) }` and sends nothing (`pending == 0`); a uniform batch on the same writer still sends and carries both commits, so the E-3/E-4 batching economy is unchanged |
+| NOTE — AckBatch / commit decode capacity trusted the declared element count | a digest-valid frame declaring 262,144 ack reports over a payload that holds 2 spent **8,388,680 bytes** in the decode window — dominated by the 262,144 × 32 B = 8,388,608 B report-vector reservation the declared count alone drove — before failing closed on truncation | decode capacity is bounded by the payload's own bytes — `declared.min(remaining / min_wire_bytes)` per element class (5 B per ack report, 32 B per commit, 13 B per write — each an exact lower bound of that element's wire form) — so the same probe allocates payload-proportional memory and still fails closed (`Truncated`) |
+
+Named tests added to the adapter:
+`a_mixed_fencing_batch_refuses_instead_of_fencing_under_one_identity`
+and `hostile_element_counts_do_not_amplify_decode_memory`. The fencing
+invariant is now documented on `send_push_batch`: one frame fences every
+commit it carries under exactly one (range, epoch) identity, so a caller
+holding operations that span identities sends one batch per pair and the
+mixed batch is refused before anything is sent. The hostile-decode probe
+re-signs its corrupted frame with the crate's own digest backend, a
+test-only use of the already-direct `ring` dependency (the workspace
+lock and the engine-socket crypto closure are unchanged).
+
+Also repaired with this packet (recorded in the sync-core receipt): the
+finish protocol now runs the whole workspace in the dev profile —
+839 passed / 0 failed / 3 ignored across 36 test binaries — which is how
+both rows above were measured.
 
 ## Invalid / failed runs retained
 

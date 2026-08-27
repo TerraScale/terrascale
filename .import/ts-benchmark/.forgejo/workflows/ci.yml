@@ -19,6 +19,12 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Build
         run: cargo check --workspace --locked
+      # Dev profile first: debug_assert! contracts compile out under
+      # --release, so a release-only run cannot gate them (SE-07 warden
+      # repair: an off-by-one frame-header assertion was green in every
+      # release gate and deterministically red in dev).
+      - name: Test (dev profile)
+        run: cargo test --workspace --locked
       - name: Test
         run: cargo test --workspace --locked --release
       - name: Clippy

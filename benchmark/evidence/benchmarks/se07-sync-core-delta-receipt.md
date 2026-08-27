@@ -14,6 +14,11 @@ quantity is claimed anywhere in this receipt.
 - Launcher command (repository root, offline, locked):
   `cargo test --offline --locked --release -p terrabase-sync-core --test delta_efficiency -- --nocapture`
   (red run: same command at base `33dd166`).
+- Launcher command added by the warden repair below (dev profile, the
+  profile `debug_assert!` contracts compile in):
+  `cargo test --offline --locked -p terrabase-sync-core --test delta_efficiency`
+  — green 3/3 at the repaired source; deterministically red at the packet
+  commit (values in the repair section).
 - Profile: `--release`; fixture: the E-8 workload of 6,000 small commits
   (two fields each) under a 64 KiB batch budget, checkpoint window 8,192.
 - Correctness gates in force: the sync-core contract suite (11 tests),
@@ -75,6 +80,48 @@ for no measured gain. Revisit trigger (recorded): any future measured
 workload whose bytes-on-wire per delivered change exceeds its written
 budget — that measurement, not intuition, reopens this decision.
 
+## Warden repair loop 1: the frame-header assertion and the dev-profile gate
+
+Two repairs landed after the packet's warden inspection; both are
+recorded here because they change what this receipt's numbers mean.
+
+**MAJOR — off-by-one `debug_assert` in `SyncFrame::to_bytes`.** The
+packet's code asserted a 34-byte frame header for the 33-byte header the
+encoder actually emits (one version tag byte plus four little-endian
+`u64` fields: correlation, causation, digest, body length). The wire
+bytes were always correct — `from_bytes` reads the same 33-byte header,
+which is why every release-profile suite was green — but the assertion's
+arithmetic was wrong by one, and `debug_assert!` compiles out under
+`--release`, so no gate in force ran it. Red run, dev profile, at the
+packet commit `81c595d`:
+
+```
+cargo test --offline --locked -p terrabase-sync-core --test delta_efficiency
+  => frame_encode_allocations_meet_the_budget FAILED
+     assertion `left == right` failed: the emitted body matches its length
+       left: 587
+      right: 588
+     (2 passed, 1 failed; deterministic, also under --test-threads=1)
+```
+
+The repair names the width (`FRAME_HEADER_BYTES = 33`) and uses it for
+both the capacity reservation and the assertion; green is 3/3 in dev and
+the release values above are unchanged (the E-10 measurement itself was
+never wrong — the defect was in the debug-only assertion, not in the
+emitted bytes). The adapter's serialization mutex is now poison-tolerant
+(`unwrap_or_else(PoisonError::into_inner)`, the member-lane adapter's
+discipline), so a sibling test's panic cannot replace the real failure
+with a `PoisonError` unwrap.
+
+**MINOR — the receipts never ran the adapters in the dev profile.** The
+packet's finish protocol ran `cargo test` in `--release` only, which is
+exactly why the MAJOR above survived every gate. The dev-profile
+workspace run is now a required receipt and a gate step
+(`scripts/check.sh` and CI run `cargo test --workspace --locked` before
+the release run). Green at the repaired source:
+`cargo test --offline --locked --workspace` — 839 passed, 0 failed,
+3 ignored across 36 test binaries, exit 0.
+
 ## Invalid / failed runs retained
 
 - The first green run of `frame_encode_allocations_meet_the_budget`
@@ -88,3 +135,12 @@ budget — that measurement, not intuition, reopens this decision.
   threads. Both measurement-method corrections are part of the adapter;
   the recorded green value is 1 with samples `[1, 1, 1, 1, 1]`.
 - No run was discarded for disagreeing with a desired outcome.
+- Honest history on E-10 (added by the warden repair): the green value
+  of 1 allocation was a **release-only** measurement before the repair —
+  the same adapter was deterministically red in the dev profile at the
+  packet commit (the frame-header `debug_assert` above), so "green" as
+  originally recorded meant "green in the one profile the receipts ran."
+  Both profiles are green at the repaired source, and the recorded
+  value of 1 stands for both (the dev-profile adapter prints the same
+  `E-10: seal+encode allocations: 1 (samples [1, 1, 1, 1, 1]), 587 wire
+  bytes`).

@@ -475,6 +475,17 @@ pub enum MemberError {
         /// The highest epoch this member has seen for the range.
         highest_epoch: u64,
     },
+    /// A batched push named operations whose (range, epoch) fencing
+    /// identities do not resolve to one. A single frame fences every
+    /// commit it carries under one identity, so a mixed batch is refused
+    /// before anything is sent rather than fenced under whichever
+    /// identity the sender resolved last.
+    MixedFencingIdentity {
+        /// The (range, epoch) the first served operation resolved to.
+        first: (String, u64),
+        /// The divergent (range, epoch) that refused the batch.
+        other: (String, u64),
+    },
     /// A cross-tenant attempt was denied at the seam.
     CrossTenant {
         /// The tenant the member's scope named.
@@ -1279,10 +1290,22 @@ impl LaneMember {
     /// skipped; the returned count is the number of commits the frame
     /// carried.
     ///
+    /// Fencing invariant: one frame fences every commit it carries under
+    /// exactly one (range, epoch) identity, so the named operations must
+    /// all resolve to the same (range, epoch) — the receiver's apply-time
+    /// fencing (D-1) judges the whole batch by the frame's single claimed
+    /// identity. A batch whose operations span ranges or epochs is
+    /// refused with [`MemberError::MixedFencingIdentity`] before anything
+    /// is sent, never fenced under whichever identity the sender happened
+    /// to resolve last; a caller holding such operations sends one batch
+    /// per (range, epoch) pair.
+    ///
     /// # Errors
     ///
     /// Returns [`MemberError::NotOwner`] when none of the operations are
-    /// this member's committed writes, and the transport's typed failure.
+    /// this member's committed writes,
+    /// [`MemberError::MixedFencingIdentity`] when they resolve to more
+    /// than one (range, epoch), and the transport's typed failure.
     pub fn send_push_batch(
         &mut self,
         transport: &mut dyn MemberTransport,
@@ -1291,8 +1314,7 @@ impl LaneMember {
         operations: &[OperationId],
     ) -> Result<usize, MemberError> {
         let mut commits = Vec::with_capacity(operations.len());
-        let mut range: Option<String> = None;
-        let mut epoch = 1;
+        let mut fencing: Option<(String, u64)> = None;
         for operation in operations {
             let Some(operation_range) = self.operation_ranges.get(operation).cloned() else {
                 continue;
@@ -1300,11 +1322,20 @@ impl LaneMember {
             let Some(found) = self.find_commit(tenant, operation) else {
                 continue;
             };
-            epoch = self.config.topology.owner_epoch_of(&operation_range).unwrap_or(1);
-            range = Some(operation_range);
+            let epoch = self.config.topology.owner_epoch_of(&operation_range).unwrap_or(1);
+            let identity = (operation_range, epoch);
+            if let Some(sealed) = &fencing
+                && *sealed != identity
+            {
+                return Err(MemberError::MixedFencingIdentity {
+                    first: sealed.clone(),
+                    other: identity,
+                });
+            }
+            fencing = Some(identity);
             commits.push(found);
         }
-        let Some(range) = range else {
+        let Some((range, epoch)) = fencing else {
             return Err(MemberError::NotOwner { range: String::new() });
         };
         let pushed = commits.len();

@@ -555,6 +555,12 @@ impl<'a> Cursor<'a> {
         self.offset >= self.bytes.len()
     }
 
+    /// The bytes the cursor has not consumed yet — the declared payload's
+    /// own bound on how many elements can possibly follow.
+    fn remaining(&self) -> usize {
+        self.bytes.len() - self.offset
+    }
+
     fn take_bytes(&mut self, len: usize) -> Result<&'a [u8], EnvelopeError> {
         if self.bytes.len() - self.offset < len {
             return Err(EnvelopeError::Truncated);
@@ -737,6 +743,24 @@ fn encode_write(out: &mut Vec<u8>, write: &LaneWrite) -> Result<(), EnvelopeErro
     Ok(())
 }
 
+/// The minimum wire bytes one decoded element of each repeated payload
+/// sequence occupies: every counted field at its empty minimum (a `u32`
+/// string length of zero still costs its 4 width bytes). Capacity planning
+/// bounds a declared element count by these lower bounds against the
+/// bytes the declared payload actually holds, so a hostile count inside a
+/// digest-valid frame can never pre-allocate more than
+/// payload-proportional memory (the count alone is not trusted for
+/// capacity; the elements themselves still fail closed on truncation).
+const MIN_ACK_REPORT_WIRE_BYTES: usize = 5;
+const MIN_COMMIT_WIRE_BYTES: usize = 32;
+const MIN_WRITE_WIRE_BYTES: usize = 13;
+
+/// The decode capacity for a declared element count: the count, bounded by
+/// how many elements the cursor's remaining bytes could possibly hold.
+fn bounded_capacity(cursor: &Cursor<'_>, declared: usize, min_wire_bytes: usize) -> usize {
+    declared.min(cursor.remaining() / min_wire_bytes)
+}
+
 fn decode_payload(cursor: &mut Cursor<'_>, kind: FrameKind) -> Result<Payload, EnvelopeError> {
     match kind {
         FrameKind::CatchUpRequest => {
@@ -790,7 +814,8 @@ fn decode_payload(cursor: &mut Cursor<'_>, kind: FrameKind) -> Result<Payload, E
             if count > MAX_PAYLOAD_BYTES {
                 return Err(EnvelopeError::MalformedLength);
             }
-            let mut reports = Vec::with_capacity(count);
+            let mut reports =
+                Vec::with_capacity(bounded_capacity(cursor, count, MIN_ACK_REPORT_WIRE_BYTES));
             for _ in 0..count {
                 let operation = OperationId::try_new(&take_str(cursor)?)
                     .map_err(|_| EnvelopeError::FieldTooLarge)?;
@@ -811,7 +836,7 @@ fn decode_commits(cursor: &mut Cursor<'_>) -> Result<Vec<LaneCommit>, EnvelopeEr
     if count > MAX_PAYLOAD_BYTES {
         return Err(EnvelopeError::MalformedLength);
     }
-    let mut commits = Vec::with_capacity(count);
+    let mut commits = Vec::with_capacity(bounded_capacity(cursor, count, MIN_COMMIT_WIRE_BYTES));
     for _ in 0..count {
         let operation =
             OperationId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
@@ -821,7 +846,8 @@ fn decode_commits(cursor: &mut Cursor<'_>) -> Result<Vec<LaneCommit>, EnvelopeEr
         if writes_count > MAX_PAYLOAD_BYTES {
             return Err(EnvelopeError::MalformedLength);
         }
-        let mut writes = Vec::with_capacity(writes_count);
+        let mut writes =
+            Vec::with_capacity(bounded_capacity(cursor, writes_count, MIN_WRITE_WIRE_BYTES));
         for _ in 0..writes_count {
             writes.push(decode_write(cursor)?);
         }

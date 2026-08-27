@@ -45,7 +45,10 @@ unsafe impl GlobalAlloc for CountingAlloc {
 static ALLOCATOR: CountingAlloc = CountingAlloc;
 
 /// Serializes the tests of this binary: allocation counting is exact only
-/// when no sibling test allocates concurrently on another thread.
+/// when no sibling test allocates concurrently on another thread. The lock
+/// is poison-tolerant (a panicking sibling must not take the rest of the
+/// adapter's measurements down with it — the same discipline as the
+/// member-lane adapter).
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Reads and clears the allocation counter.
@@ -83,7 +86,7 @@ fn core_with_commits(commits: usize) -> SyncCore {
 /// never exceeds it multi-commit, and preserves the seam's flags.
 #[test]
 fn delta_batch_utilization_meets_the_written_budget() {
-    let _guard = SERIAL.lock().expect("serialization lock");
+    let _guard = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let budget = 64 * 1024;
     let core = core_with_commits(6000);
     // The backlog is far above the budget: the retained boundary sizes
@@ -112,7 +115,7 @@ fn delta_batch_utilization_meets_the_written_budget() {
 /// most two heap allocations.
 #[test]
 fn frame_encode_allocations_meet_the_budget() {
-    let _guard = SERIAL.lock().expect("serialization lock");
+    let _guard = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let payload: Vec<u8> = (0..256_u16).flat_map(u16::to_le_bytes).collect();
     let checkpoint = SyncCheckpoint::from_ends(vec![(1, 4)], 9);
     // The measured count is the minimum of repeated runs: allocation
@@ -152,7 +155,7 @@ fn frame_encode_allocations_meet_the_budget() {
 /// the delivery budget (the compression decision's input).
 #[test]
 fn client_link_frames_stay_within_their_written_budgets() {
-    let _guard = SERIAL.lock().expect("serialization lock");
+    let _guard = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     // Heartbeat: exactly the fixed envelope.
     let heartbeat =
         SyncV2Frame::seal(SyncV2Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)

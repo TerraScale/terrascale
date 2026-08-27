@@ -15,6 +15,12 @@ reference baselines and statistical gates are SE-15's deliverable.
     (red run: same command at base `33dd166`).
   - `cargo test --offline --locked --release -p terrabase-tbep --test uds_characterization -- --ignored --nocapture`
     (E-15, the existing SE-14 harness re-run).
+  - Dev-profile run added by the warden repair (the packet's receipts had
+    run `--release` only):
+    `cargo test --offline --locked -p terrabase-tbep` — green across the
+    crate's 7 suites, `overhead_characterization` 2/2; no defect was found
+    in this crate's dev-profile behavior (the off-by-one debug assertion
+    the same loop caught in sync-core had no counterpart here).
 - Profile: `--release`. Environment of the E-15 run: Linux x86-64, 28
   CPUs, otherwise-unloaded builder; one connection, synchronous
   request/answer, 200 discarded warm-up rounds (the SE-14 method,

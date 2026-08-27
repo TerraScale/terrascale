@@ -28,6 +28,7 @@ The individual checks are useful while editing:
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace --locked
+cargo test --workspace --locked
 cargo test --workspace --locked --release
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo doc --workspace --no-deps --locked

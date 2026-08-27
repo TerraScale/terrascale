@@ -16,9 +16,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use terrabase_member_transport::nats_usage::{ConfigName, ConfigRecord, LaneSettings, UsageError};
 use terrabase_member_transport::{
     AcknowledgementLevel, CollectionName, DEFAULT_CATCH_UP_BATCH, DispatchReport, DocumentId,
-    Envelope, FrameKind, InProcessLane, LaneConfig, LaneDocument, LaneMember, LaneWriteRequest,
-    MemberError, MemberId, MemberTransport, OperationId, Payload, ReplicationOutcome, TenantId,
-    TopologyView, encode, lane_topology,
+    Envelope, EnvelopeError, FrameKind, InProcessLane, LaneConfig, LaneDocument, LaneMember,
+    LaneWriteRequest, MAX_PAYLOAD_BYTES, MemberError, MemberId, MemberTransport, OperationId,
+    Payload, ReplicationOutcome, TenantId, TopologyView, decode, encode, lane_topology,
 };
 
 /// The shared tenant of the efficiency fixtures.
@@ -34,10 +34,16 @@ struct CountingAlloc;
 
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 
+/// The bytes allocated in a measured window: the size side of the counter,
+/// used where the defect is capacity amplification rather than count.
+static ALLOCATED_BYTES: AtomicU64 = AtomicU64::new(0);
+
 #[allow(unsafe_code)]
 unsafe impl GlobalAlloc for CountingAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        ALLOCATED_BYTES
+            .fetch_add(u64::try_from(layout.size()).unwrap_or(u64::MAX), Ordering::Relaxed);
         unsafe { System.alloc(layout) }
     }
 
@@ -56,6 +62,11 @@ static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Reads and clears the allocation counter.
 fn allocations() -> u64 {
     ALLOCATIONS.swap(0, Ordering::Relaxed)
+}
+
+/// Reads and clears the allocated-bytes counter.
+fn allocated_bytes() -> u64 {
+    ALLOCATED_BYTES.swap(0, Ordering::Relaxed)
 }
 
 /// One unique temporary directory per open.
@@ -491,6 +502,155 @@ fn batched_acknowledgement_uses_bounded_frames_per_round() {
          {OPERATIONS} operations)"
     );
     harness.clean_up();
+}
+
+// --- Repair (warden loop 1): the batched push's fencing invariant --------------
+
+/// One three-Region topology whose writer owns two ranges at different
+/// epochs — the fixture a mixed fencing batch must refuse under.
+fn two_range_topology() -> TopologyView {
+    let mut view = TopologyView::new();
+    for region in ["r-alpha", "r-beta", "r-gamma"] {
+        view = view.with_region(region).expect("valid region");
+    }
+    for (member, region) in [("m-a1", "r-alpha"), ("m-b1", "r-beta"), ("m-g1", "r-gamma")] {
+        view = view.with_member(member, region, &format!("fd-{region}")).expect("valid member");
+    }
+    view.with_owner_at_epoch("main", "m-a1", 1)
+        .expect("valid owner")
+        .with_owner_at_epoch("aux", "m-a1", 4)
+        .expect("valid owner")
+        .validated()
+        .expect("valid two-range topology")
+}
+
+/// One lane-configured member over a custom topology and fresh location.
+fn open_member_on(topology: &TopologyView, name: &str) -> LaneMember {
+    let config = LaneConfig { topology: topology.clone(), catch_up_batch: DEFAULT_CATCH_UP_BATCH };
+    LaneMember::try_new(config, MemberId::try_new(name).expect("valid id"), &temp_dir(name))
+        .expect("member opens")
+}
+
+/// Commits one operation on `writer` in the named range.
+fn commit_one(writer: &mut LaneMember, operation: &str, range: &str, document: &str) {
+    let request =
+        LaneWriteRequest::new(OperationId::try_new(operation).expect("valid operation"), range)
+            .expect("valid request")
+            .with_put(LaneDocument {
+                id: DocumentId::try_new(document).expect("valid document"),
+                collection: CollectionName::try_new("users").expect("valid collection"),
+                value: "fencing-value".to_owned(),
+            });
+    writer.commit_write(&tenant(), request).expect("write commits");
+}
+
+/// A batched push whose named operations do not resolve to a single
+/// (range, epoch) fencing identity refuses with the typed error and sends
+/// nothing: one frame fences every commit it carries under one identity,
+/// so a mixed batch must never ride fenced under whichever identity the
+/// sender happened to resolve last.
+#[test]
+fn a_mixed_fencing_batch_refuses_instead_of_fencing_under_one_identity() {
+    let _guard = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let topology = two_range_topology();
+    let mut writer = open_member_on(&topology, "m-a1");
+    let peer = open_member_on(&topology, "m-b1");
+    commit_one(&mut writer, "op-fence-main", "main", "doc-fence-main");
+    commit_one(&mut writer, "op-fence-main-2", "main", "doc-fence-main-2");
+    commit_one(&mut writer, "op-fence-aux", "aux", "doc-fence-aux");
+
+    let mut lane = InProcessLane::new();
+    let mixed = writer.send_push_batch(
+        &mut lane,
+        peer.id(),
+        &tenant(),
+        &[
+            OperationId::try_new("op-fence-main").expect("valid operation"),
+            OperationId::try_new("op-fence-aux").expect("valid operation"),
+        ],
+    );
+    assert!(
+        matches!(mixed, Err(MemberError::MixedFencingIdentity { first: (_, 1), other: (_, 4) })),
+        "a mixed (range, epoch) batch must refuse with the typed error, got {mixed:?}"
+    );
+    assert_eq!(lane.pending(peer.id()), 0, "the refused batch sends nothing");
+
+    // The uniform batch on the same writer still sends and carries every
+    // named commit (the invariant must not cost the batching itself).
+    let uniform = writer
+        .send_push_batch(
+            &mut lane,
+            peer.id(),
+            &tenant(),
+            &[
+                OperationId::try_new("op-fence-main").expect("valid operation"),
+                OperationId::try_new("op-fence-main-2").expect("valid operation"),
+            ],
+        )
+        .expect("a uniform (range, epoch) batch sends");
+    assert_eq!(uniform, 2, "the uniform batch carries both commits");
+    assert!(lane.pending(peer.id()) > 0, "the uniform batch reaches the wire");
+}
+
+// --- Repair (warden loop 1): decode capacity is payload-bounded ------------------
+
+/// A hostile element count inside a digest-valid frame must not amplify
+/// decode memory: the decoder's element capacity is bounded by the bytes
+/// the declared payload actually holds, never by the declared count alone.
+#[test]
+fn hostile_element_counts_do_not_amplify_decode_memory() {
+    use terrabase_member_transport::envelope::DIGEST_BYTES;
+
+    let _guard = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let probe = Envelope {
+        kind: FrameKind::AckBatch,
+        message_id: 7,
+        correlation_id: None,
+        causation_id: None,
+        idempotency_key: None,
+        source: MemberId::try_new("m-a1").expect("valid member"),
+        target: MemberId::try_new("m-b1").expect("valid member"),
+        issued_at: terrabase_member_transport::LaneInstant::at_ticks(0),
+        expires_at: None,
+        range: Some("main".to_owned()),
+        epoch: Some(1),
+        payload: Payload::AckBatch {
+            tenant: tenant(),
+            reports: vec![
+                (OperationId::try_new("op-cap-a").expect("valid operation"), true),
+                (OperationId::try_new("op-cap-b").expect("valid operation"), false),
+            ],
+        },
+    };
+    let frame = encode(&probe).expect("the probe frame encodes");
+    let mut hostile = frame.bytes.clone();
+    // The payload layout is fixed by the codec: the tenant string (u32
+    // length plus bytes), then the report count. Rewrite the count to the
+    // payload bound — the largest value the fail-closed check admits.
+    let payload_start = hostile.len() - DIGEST_BYTES - frame.payload_len;
+    let count_at = payload_start + 4 + TENANT.len();
+    hostile[count_at..count_at + 4].copy_from_slice(
+        &u32::try_from(MAX_PAYLOAD_BYTES).expect("the payload bound fits a u32").to_le_bytes(),
+    );
+    // Re-sign so the digest barrier passes and the probe reaches the
+    // payload decode — the discipline under test is the decoder's own
+    // memory bound, not the digest.
+    let signed_len = hostile.len() - DIGEST_BYTES;
+    let digest = ring::digest::digest(&ring::digest::SHA256, &hostile[..signed_len]);
+    hostile[signed_len..].copy_from_slice(digest.as_ref());
+
+    allocated_bytes();
+    let outcome = decode(&hostile);
+    let spent = allocated_bytes();
+    assert!(
+        matches!(outcome, Err(EnvelopeError::Truncated)),
+        "the lying count still fails closed: {outcome:?}"
+    );
+    assert!(
+        spent <= 64 * 1024,
+        "decode of a declared count of {MAX_PAYLOAD_BYTES} must pre-allocate at most \
+         payload-proportional memory, spent {spent} bytes"
+    );
 }
 
 /// Keeps the topology export referenced so the fixture is self-describing.
