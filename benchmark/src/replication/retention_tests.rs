@@ -158,7 +158,9 @@ fn advancing_the_floor_discards_only_the_evidence_below_it() {
         evidence("tenant-a", "doc-2", 4),
         evidence("tenant-b", "doc-1", 2),
     ];
-    assert_eq!(retention.hold(&facts), 3, "every fact at or above the floor is held");
+    let held = retention.hold(&facts);
+    assert_eq!(held.held(), 3, "every fact at or above the floor is held");
+    assert_eq!(held.below_floor_skipped(), 0, "the floor started at zero");
     assert_eq!(retention.held_evidence_count(), 3);
     let advance = retention.advance_floor(sequence(3)).expect("the consumer allows three");
     assert_eq!(advance.discarded(), 2, "only the facts below the floor went away");
@@ -173,7 +175,9 @@ fn advancing_the_floor_discards_only_the_evidence_below_it() {
 #[test]
 fn one_key_keeps_only_its_newest_evidence() {
     let mut retention = TombstoneRetention::new(None);
-    retention.hold(&[evidence("tenant-a", "doc-1", 2), evidence("tenant-a", "doc-1", 6)]);
+    let held =
+        retention.hold(&[evidence("tenant-a", "doc-1", 2), evidence("tenant-a", "doc-1", 6)]);
+    assert_eq!(held.below_floor_skipped(), 0, "the floor never rose above zero");
     assert_eq!(retention.held_evidence_count(), 1, "a subsumed delete carries no new fact");
     let served = retention.deletion_evidence_above(&tenant("tenant-a"), sequence(0));
     assert_eq!(served[0].sequence().get(), 6);
@@ -183,20 +187,21 @@ fn one_key_keeps_only_its_newest_evidence() {
 fn a_history_declaration_is_monotone_and_requires_durable_evidence() {
     let mut retention = TombstoneRetention::new(None);
     let refused = retention
-        .declare_history_bound(sequence(4), false)
+        .declare_history_bound(sequence(4), sequence(4), false)
         .expect_err("the retained set is not durable");
     assert_eq!(refused, RetentionRefusal::EvidenceNotDurable { bound: sequence(4) });
     assert_eq!(retention.history_bound(), None, "the bound did not move");
 
     let declared = retention
-        .declare_history_bound(sequence(4), true)
+        .declare_history_bound(sequence(4), sequence(4), true)
         .expect("an empty window declares cleanly");
     assert_eq!(declared.bound().get(), 4);
     assert_eq!(declared.held(), 0);
     assert_eq!(declared.below_floor_discarded(), 0);
 
-    let regression =
-        retention.declare_history_bound(sequence(2), true).expect_err("the bound only rises");
+    let regression = retention
+        .declare_history_bound(sequence(2), sequence(4), true)
+        .expect_err("the bound only rises");
     assert_eq!(
         regression,
         RetentionRefusal::BoundRegression { current: sequence(4), candidate: sequence(2) }
@@ -213,13 +218,68 @@ fn a_history_declaration_names_the_consumers_below_the_bound() {
     retention
         .observe_consumer(member_consumer("m-caught-up", "tenant-a"), Some(sequence(9)))
         .expect_recorded();
-    let declared =
-        retention.declare_history_bound(sequence(5), true).expect("the declaration is accepted");
+    let declared = retention
+        .declare_history_bound(sequence(5), sequence(5), true)
+        .expect("the declaration is accepted");
     assert_eq!(
         declared.consumers_below_bound(),
         &[member_consumer("m-offline", "tenant-a")],
         "the disclosure names who will need evidence or a state transfer"
     );
+}
+
+#[test]
+fn a_declared_bound_may_not_exceed_the_journals_durable_head() {
+    // Decision D2.4 at the watermark contract level: the declaration carries
+    // the journal's durable head, and a bound past it is refused — the range
+    // (head, bound) would be given up as if it were empty, and every
+    // publication landing there afterwards would be neither servable from
+    // the journal nor held as evidence.
+    let mut retention = TombstoneRetention::new(None);
+    let refused = retention
+        .declare_history_bound(sequence(5), sequence(4), true)
+        .expect_err("the window below five does not exist below a head of four");
+    assert_eq!(
+        refused,
+        RetentionRefusal::BoundBeyondWindow { head: sequence(4), candidate: sequence(5) }
+    );
+    assert_eq!(retention.history_bound(), None, "the bound did not move");
+    assert_eq!(retention.refusals().len(), 1, "the refusal is observable");
+    // The journal's own head is the limit: a window ending at it fully
+    // exists, and a bound one past a later head is still refused.
+    retention
+        .declare_history_bound(sequence(4), sequence(4), true)
+        .expect("a window ending at the head fully exists");
+    let refused = retention
+        .declare_history_bound(sequence(6), sequence(5), true)
+        .expect_err("six is past a head of five");
+    assert_eq!(
+        refused,
+        RetentionRefusal::BoundBeyondWindow { head: sequence(5), candidate: sequence(6) }
+    );
+}
+
+#[test]
+fn holding_discloses_the_facts_dropped_below_the_floor() {
+    // The same disclosure discipline as advance_floor and declare: a fact
+    // the floor discards is counted, never silently dropped.
+    let mut retention = TombstoneRetention::new(None);
+    retention
+        .observe_consumer(member_consumer("m-a", "tenant-a"), Some(sequence(9)))
+        .expect_recorded();
+    retention.advance_floor(sequence(3)).expect("the floor rises first");
+    let held = retention.hold(&[
+        evidence("tenant-a", "doc-kept", 4),
+        evidence("tenant-a", "doc-old", 1),
+        evidence("tenant-b", "doc-old", 2),
+    ]);
+    assert_eq!(held.held(), 1, "only the above-floor fact is held");
+    assert_eq!(
+        held.below_floor_skipped(),
+        2,
+        "the below-floor drops are a disclosed count, never a silent drop"
+    );
+    assert_eq!(retention.held_evidence_count(), 1);
 }
 
 /// One retained fact for the contract fixtures: a delete of `id` at
@@ -650,6 +710,123 @@ fn a_history_declaration_whose_window_cannot_be_extracted_fails_closed() {
         1,
         "the evidence extracted before the failure is still held"
     );
+
+    for dir in dirs {
+        std::fs::remove_dir_all(dir).ok();
+    }
+}
+
+#[test]
+fn a_member_refuses_a_declared_bound_past_its_journals_durable_head() {
+    // Decision D2.4: a declared bound may not exceed the journal's durable
+    // head — the window must fully exist. The extraction used to stop
+    // silently at the journal's end and the declaration proceeded with a
+    // window that never covered (head, bound), giving that range up as if
+    // it were empty.
+    let (dirs, mut source, _follower) = fixture("over-range-bound");
+    crate::replication::tests::member_put(&mut source, "tenant-a", "main", "op-1", "doc-1", "v1");
+    let head = crate::replication::tests::member_put(
+        &mut source,
+        "tenant-a",
+        "main",
+        "op-2",
+        "doc-2",
+        "v2",
+    );
+    for over in [1, 5] {
+        let candidate = StorageSequence::new(head.get() + over);
+        let error = source
+            .declare_history_bound(candidate, true)
+            .expect_err("the window below the candidate does not fully exist");
+        assert_eq!(
+            error,
+            crate::replication::member::DeclareBoundError::Refusal(
+                RetentionRefusal::BoundBeyondWindow { head, candidate }
+            ),
+            "head+{over} is past the journal's durable head"
+        );
+    }
+    assert_eq!(source.tombstone_retention().history_bound(), None, "no bound moved");
+    assert_eq!(
+        source.tombstone_retention().refusals().len(),
+        2,
+        "each refusal is recorded in the bounded observation log"
+    );
+
+    for dir in dirs {
+        std::fs::remove_dir_all(dir).ok();
+    }
+}
+
+#[test]
+fn an_over_range_bound_refuses_instead_of_black_holing_the_window() {
+    // The warden's black-hole repro: a bound declared at head+5 used to be
+    // accepted with the extraction window silently truncated at the
+    // journal's end. The follower's cursor then jumped to bound-1 on the
+    // evidence path, a publication inside (head, bound) was served by
+    // neither the journal nor the retained evidence, and every later
+    // exchange reported caught up while the follower had silently
+    // diverged. The refusal is the fix.
+    let (dirs, mut source, mut follower) = fixture("black-hole-window");
+    let mut network = crate::replication::transport::ReplicationNetwork::new();
+
+    crate::replication::tests::member_put(&mut source, "tenant-a", "main", "op-1", "doc-1", "v1");
+    let head = crate::replication::tests::member_put(
+        &mut source,
+        "tenant-a",
+        "main",
+        "op-2",
+        "doc-2",
+        "v2",
+    );
+    let report = crate::replication::tests::exchange_once(
+        &mut network,
+        &mut source,
+        "tenant-a",
+        &mut follower,
+        "tenant-a",
+    );
+    assert!(report.caught_up(), "the follower starts caught up: {report:?}");
+    assert_eq!(follower.advisory_progress(&tenant("tenant-a")), Some(head));
+
+    // The over-range declaration is refused (D2.4), so no bound exists and
+    // the journal remains the whole truth.
+    let phantom = StorageSequence::new(head.get() + 5);
+    let error = source
+        .declare_history_bound(phantom, true)
+        .expect_err("the window below the phantom bound does not fully exist");
+    assert_eq!(
+        error,
+        crate::replication::member::DeclareBoundError::Refusal(
+            RetentionRefusal::BoundBeyondWindow { head, candidate: phantom }
+        ),
+        "the phantom bound is refused"
+    );
+
+    // A publication lands inside the range the phantom bound would have
+    // given up. Because the declaration was refused, the journal still
+    // serves it and the follower converges instead of silently missing it.
+    let put_at = crate::replication::tests::member_put(
+        &mut source,
+        "tenant-a",
+        "main",
+        "op-3",
+        "doc-3",
+        "v3",
+    );
+    assert!(put_at.get() < phantom.get(), "the put is inside the refused window");
+    let report = crate::replication::tests::exchange_once(
+        &mut network,
+        &mut source,
+        "tenant-a",
+        &mut follower,
+        "tenant-a",
+    );
+    assert!(report.caught_up(), "the follower catches up: {report:?}");
+    let documents = crate::replication::tests::documents_of(&follower, "tenant-a");
+    let ids = documents.iter().map(|document| document.id().as_str()).collect::<Vec<_>>();
+    assert_eq!(ids, vec!["doc-1", "doc-2", "doc-3"], "nothing was black-holed");
+    assert_eq!(follower.advisory_progress(&tenant("tenant-a")), Some(put_at));
 
     for dir in dirs {
         std::fs::remove_dir_all(dir).ok();

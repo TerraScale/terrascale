@@ -849,10 +849,34 @@ fn resolve_boundary(
             // the retained deletion evidence, and only when the watermark
             // holds it above the base and the discarded window holds no put
             // the chain would miss.
+            //
+            // Decision D2.4 gates it first: a declared bound may not exceed
+            // the journal's durable head — the window must fully exist. A
+            // watermark declared against another engine's journal (or a
+            // stale one) would otherwise make this run serve from a phantom
+            // bound whose `(head, bound)` range is in neither the journal
+            // nor the retained evidence, and the chain would silently miss
+            // it. The refusal is recorded on the watermark's bounded log
+            // exactly as a declaration refusal is.
             let declared = plan
                 .retention
                 .as_ref()
                 .map(|retention| retention.with_lock(|watermark| watermark.history_bound()));
+            if let Some(bound) = declared.flatten()
+                && bound.get() > proven.get()
+            {
+                if let Some(retention) = &plan.retention {
+                    retention.with_lock(|watermark| {
+                        watermark.observe_refusal(
+                            crate::replication::RetentionRefusal::BoundBeyondWindow {
+                                head: proven,
+                                candidate: bound,
+                            },
+                        );
+                    });
+                }
+                return Err(BackupError::SourceUnavailable);
+            }
             let effective = match (servable_start, declared.flatten()) {
                 (Some(journal), Some(bound)) => Some(journal.max(bound)),
                 (Some(journal), None) => Some(journal),

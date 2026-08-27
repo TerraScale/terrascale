@@ -1288,6 +1288,11 @@ fn progress_disclosures_are_bounded_while_the_total_stays_exact() {
 /// the window's deletion evidence extracted from the engine's journal —
 /// exactly what the storage compaction path will declare in production,
 /// and what no engine component declares today.
+///
+/// The declaration carries this engine's own durable head (decision D2.4:
+/// a declared bound may not exceed it), so the handle is honest for the
+/// engine it was declared against — a caller reusing it against another
+/// engine is the run gate's to refuse.
 fn watermark_at(
     engine: &Engine,
     bound: StorageSequence,
@@ -1318,8 +1323,9 @@ fn watermark_at(
         }
     }
     handle.with_lock(|watermark| {
+        let head = engine.journaled_high_water().expect("high water").unwrap_or_default();
         watermark
-            .declare_history_bound_from_commits(bound, &window, true)
+            .declare_history_bound_from_commits(bound, head, &window, true)
             .expect("the window declares cleanly");
     });
     handle
@@ -1573,4 +1579,87 @@ fn an_incremental_run_records_its_chain_anchor_on_the_watermark() {
         .with_lock(|watermark| watermark.advance_floor(boundary))
         .expect_err("the chain still needs the evidence above its base");
     assert!(matches!(refusal, crate::replication::RetentionRefusal::ConsumerBelowFloor { .. }));
+}
+
+#[test]
+fn an_incremental_refuses_a_declared_bound_past_the_journals_durable_head() {
+    // Decision D2.4 (GAP-R02): a declared bound may not exceed the journal's
+    // durable head — the window must fully exist. The watermark here was
+    // declared honestly against another engine's journal (the one way an
+    // over-range bound reaches a plan): this run's source cannot cover it,
+    // and the run must fail closed instead of serving from a phantom bound
+    // whose (head, bound) range is in neither the journal nor the retained
+    // evidence — the exact range a chain would silently miss.
+    let (_dir_a, engine_a) = open_engine("gapr02-foreign-window");
+    committed(put(
+        &engine_a,
+        "alpha",
+        "f-op-1",
+        "f-doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
+    committed(put(
+        &engine_a,
+        "alpha",
+        "f-op-2",
+        "f-doc-2",
+        "users",
+        text("two"),
+        LocalDurability::Synced,
+    ));
+    // Only deletes follow, so a chain based at sequence two stays provable
+    // from the deletion evidence alone: the over-range bound is the one
+    // fact that must refuse this run.
+    for index in 3..=7 {
+        committed(delete(&engine_a, "alpha", &format!("f-op-{index}"), "f-doc-1"));
+    }
+    let head_a = engine_a.journaled_high_water().expect("high water").unwrap_or_default();
+    assert_eq!(head_a.get(), 7, "the foreign journal covers both bounds");
+
+    let (_dir_b, engine_b) = open_engine("gapr02-short-journal");
+    committed(put(
+        &engine_b,
+        "alpha",
+        "op-1",
+        "doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
+    committed(put(
+        &engine_b,
+        "alpha",
+        "op-2",
+        "doc-2",
+        "users",
+        text("two"),
+        LocalDurability::Synced,
+    ));
+    let destination = location("gapr02-over-range-dest");
+    let full = run_backup(&engine_b, BackupPlan::full(), &destination).expect("the chain root");
+    let base = full.manifest().boundary_sequence();
+    let head_b = engine_b.journaled_high_water().expect("high water").unwrap_or_default();
+    assert_eq!(base, head_b, "the chain is anchored at this journal's head");
+
+    for over in [1, 5] {
+        let bound = StorageSequence::new(head_b.get() + over);
+        assert!(
+            bound.get() <= head_a.get(),
+            "the foreign declaration was honest where it was made"
+        );
+        let retention = watermark_at(&engine_a, bound);
+        let error = run_backup(
+            &engine_b,
+            BackupPlan::incremental_since(base).with_retention(retention),
+            &destination,
+        )
+        .expect_err("a declared bound past this journal's head is not provable");
+        assert_eq!(
+            error,
+            BackupError::SourceUnavailable,
+            "head+{over} does not fully exist in this source"
+        );
+    }
 }

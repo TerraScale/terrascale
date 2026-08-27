@@ -83,13 +83,17 @@ fn the_watermark_contract_is_public_and_fail_closed() {
     );
 
     // History is not given up before the retained evidence is durable, and
-    // the declaration discloses who sits below the bound.
+    // the declaration discloses who sits below the bound. The journal head
+    // the declaration carries is the zero sequence here — the one a public
+    // caller can construct — and the bound sits at it, so the window (a
+    // bound past the journal's durable head is refused, decision D2.4)
+    // fully exists.
     let bound = zero();
     assert_eq!(
-        watermark.declare_history_bound(bound, false),
+        watermark.declare_history_bound(bound, bound, false),
         Err(RetentionRefusal::EvidenceNotDurable { bound })
     );
-    let declared = watermark.declare_history_bound(bound, true).expect("declares cleanly");
+    let declared = watermark.declare_history_bound(bound, bound, true).expect("declares cleanly");
     assert_eq!(declared.bound(), bound);
     assert_eq!(declared.held(), 0);
     assert_eq!(declared.below_floor_discarded(), 0);

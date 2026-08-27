@@ -47,7 +47,7 @@ below).
 | PB-3013 `counters-backup-and-replication` | GAP-F07's counter tombstone (delete-wins, re-creation fenced by `TombstoneConflict`) is a live record on the generic plane, so its retention is exactly this packet's watermark; the decision record's limits section states this. |
 | PB-5013 / PB-6010..PB-6023 backup rows | The below-bound incremental is a new capability on an existing row's seam, not a new row; the fail-closed `SourceUnavailable` cases are unchanged behavior for a plan without a watermark. |
 | PB-5024 `replication-anti-entropy-and-catch-up` | A member below the bound that missed a put still needs a full state transfer; this packet's limits name it so the anti-entropy owner sees the boundary. |
-| PB-5008 (GAP-S1 storage compaction, #81) | The declared history bound, the extraction-before-discard rule, and the durability-before-discard refusal are the contract compaction must satisfy; GAP-S1 owns the durable retained-evidence store and the production declaration. |
+| PB-5008 (GAP-S1 storage compaction, #81) | The declared history bound, the extraction-before-discard rule, the durability-before-discard refusal, and the window-must-fully-exist rule (D2.4: a declared bound may not exceed the journal's durable head) are the contract compaction must satisfy; GAP-S1 owns the durable retained-evidence store and the production declaration. |
 
 ## Proposed follow-ups (for the parent to file or fold)
 

@@ -707,6 +707,8 @@ fn import_applies_tombstones_as_engine_deletes() {
 
 /// Builds one shared watermark whose history bound sits above the seeded
 /// delete, with the window's deletion evidence extracted from the journal.
+/// The bound is the journal's own durable head, so the window fully exists
+/// (decision D2.4).
 fn watermark_above_seeded_delete(engine: &Engine) -> crate::replication::SharedTombstoneRetention {
     use crate::replication::{ReplicationClockStamp, SharedTombstoneRetention, StampedCommit};
 
@@ -734,7 +736,7 @@ fn watermark_above_seeded_delete(engine: &Engine) -> crate::replication::SharedT
     }
     handle.with_lock(|watermark| {
         watermark
-            .declare_history_bound_from_commits(bound, &window, true)
+            .declare_history_bound_from_commits(bound, bound, &window, true)
             .expect("the window declares cleanly");
     });
     handle

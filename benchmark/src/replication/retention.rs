@@ -21,7 +21,10 @@
 //! `servable_history_start` in one direction only
 //! (`max(engine bound, declared bound)`), and a declaration that gives up
 //! history must hand the window's deletion evidence over and assert it is
-//! durably held before the bound may move.
+//! durably held before the bound may move. The declared bound also may not
+//! exceed the journal's durable head (decision D2.4): the window must
+//! fully exist, or the range between the journal's end and the bound would
+//! be given up as if it were empty.
 //!
 //! Deletion evidence is content-free by construction: identity, version,
 //! sequence, operation, stamp, and durability. A tombstone that kept the
@@ -315,6 +318,17 @@ pub enum RetentionRefusal {
         /// The bound that was refused.
         bound: StorageSequence,
     },
+    /// The candidate bound exceeds the journal's durable head, so the
+    /// window below it does not fully exist (decision record D2.4). The
+    /// range between the journal's end and the candidate would be given up
+    /// as if it were empty — every publication landing there afterwards
+    /// would be servable by neither the journal nor the retained evidence.
+    BoundBeyondWindow {
+        /// The journal's durable head at declaration time.
+        head: StorageSequence,
+        /// The refused candidate.
+        candidate: StorageSequence,
+    },
 }
 
 /// The outcome of one accepted floor advance.
@@ -322,6 +336,30 @@ pub enum RetentionRefusal {
 pub struct RetentionAdvance {
     floor: StorageSequence,
     discarded: usize,
+}
+
+/// The outcome of one retained-evidence hold.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetentionHold {
+    held: usize,
+    below_floor_skipped: usize,
+}
+
+impl RetentionHold {
+    /// Returns how many facts landed in the retained set — a newer fact of
+    /// the same key lands by replacing the one it subsumes, so this counts
+    /// landings, while one key keeps only its newest fact.
+    #[must_use]
+    pub const fn held(self) -> usize {
+        self.held
+    }
+
+    /// Returns how many facts fell below the retention floor and were
+    /// therefore not held — a disclosed count, never a silent drop.
+    #[must_use]
+    pub const fn below_floor_skipped(self) -> usize {
+        self.below_floor_skipped
+    }
 }
 
 impl RetentionAdvance {
@@ -506,17 +544,21 @@ impl TombstoneRetention {
             .map(|(consumer, floor)| (consumer.clone(), *floor))
     }
 
-    /// Retains deletion evidence, returning how many facts were held.
+    /// Retains deletion evidence, disclosing both counts.
     ///
     /// Facts below the retention floor are not held — the floor is the
-    /// discard boundary — and one key keeps only its newest fact, because
-    /// a delete that a later delete of the same key subsumes carries no
-    /// additional information for a consumer that must end with the key
-    /// absent.
-    pub fn hold(&mut self, evidence: &[DeletionEvidence]) -> usize {
+    /// discard boundary — and the count dropped below it is disclosed,
+    /// exactly as [`Self::advance_floor`] and
+    /// [`Self::declare_history_bound`] disclose theirs, never silently
+    /// dropped. One key keeps only its newest fact, because a delete that a
+    /// later delete of the same key subsumes carries no additional
+    /// information for a consumer that must end with the key absent.
+    pub fn hold(&mut self, evidence: &[DeletionEvidence]) -> RetentionHold {
         let mut held = 0;
+        let mut below_floor_skipped = 0;
         for fact in evidence {
             if fact.sequence.get() < self.floor.get() {
+                below_floor_skipped += 1;
                 continue;
             }
             let key = (fact.tenant.clone(), fact.id.clone());
@@ -528,7 +570,7 @@ impl TombstoneRetention {
                 }
             }
         }
-        held
+        RetentionHold { held, below_floor_skipped }
     }
 
     /// Returns how many facts the retained set holds.
@@ -621,9 +663,10 @@ impl TombstoneRetention {
     pub fn declare_history_bound(
         &mut self,
         bound: StorageSequence,
+        journal_head: StorageSequence,
         durably_held: bool,
     ) -> Result<RetentionCompaction, RetentionRefusal> {
-        self.declare_history_bound_from_commits(bound, &[], durably_held)
+        self.declare_history_bound_from_commits(bound, journal_head, &[], durably_held)
     }
 
     /// Declares that publication history below `bound` has been given up,
@@ -638,19 +681,32 @@ impl TombstoneRetention {
     /// the bound — the fact that decides whether a consumer below the
     /// bound can be served completely by evidence alone.
     ///
+    /// `journal_head` is the engine's durable journal head at declaration
+    /// time: the watermark never reads the journal, so the caller hands it
+    /// this one fact. Decision D2.4 — a declared bound may not exceed the
+    /// journal's durable head, because the window must fully exist.
+    ///
     /// # Errors
     ///
-    /// Fails closed with [`RetentionRefusal::BoundRegression`] for a
-    /// candidate below the declared bound and
-    /// [`RetentionRefusal::EvidenceNotDurable`] when the retained set is
-    /// not asserted durable. A refused declaration does not move the
-    /// bound.
+    /// Fails closed with [`RetentionRefusal::BoundBeyondWindow`] for a
+    /// candidate past the journal's durable head,
+    /// [`RetentionRefusal::BoundRegression`] for a candidate below the
+    /// declared bound, and [`RetentionRefusal::EvidenceNotDurable`] when
+    /// the retained set is not asserted durable. A refused declaration does
+    /// not move the bound.
     pub(crate) fn declare_history_bound_from_commits(
         &mut self,
         bound: StorageSequence,
+        journal_head: StorageSequence,
         window: &[StampedCommit],
         durably_held: bool,
     ) -> Result<RetentionCompaction, RetentionRefusal> {
+        if bound.get() > journal_head.get() {
+            let refusal =
+                RetentionRefusal::BoundBeyondWindow { head: journal_head, candidate: bound };
+            self.record_refusal(refusal.clone());
+            return Err(refusal);
+        }
         if let Some(current) = self.bound
             && bound.get() < current.get()
         {
@@ -723,6 +779,17 @@ impl TombstoneRetention {
             self.refusals.pop_front();
         }
         self.refusals.push_back(refusal);
+    }
+
+    /// Records one refusal without attempting a transition.
+    ///
+    /// For a caller that enforces a watermark rule at its own seam, with
+    /// the engine facts the watermark cannot read — the member's D2.4
+    /// journal-head gate before window extraction, or a backup run's gate
+    /// on a bound its source cannot cover: the refusal those seams return
+    /// owes the same bounded-log observability a transition refusal has.
+    pub(crate) fn observe_refusal(&mut self, refusal: RetentionRefusal) {
+        self.record_refusal(refusal);
     }
 
     /// Iterates the recorded consumers and their floors.

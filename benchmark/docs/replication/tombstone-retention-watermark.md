@@ -96,7 +96,7 @@ effective history bound = max(engine servable_history_start,
 The watermark never *lowers* the servable bound and never claims
 retention the journal cannot prove. Raising the effective bound is a
 declaration the storage seam makes to the watermark
-(`declare_history_bound`), and the watermark enforces three rules on it:
+(`declare_history_bound`), and the watermark enforces four rules on it:
 
 1. **Monotone.** The bound only rises (`BoundRegression` otherwise).
 2. **Extraction before discard.** The declaring caller hands the deletion
@@ -115,6 +115,20 @@ declaration the storage seam makes to the watermark
    recovery interaction: a crash between "history discarded" and
    "evidence durable" would be silent delayed data loss, so the ordering
    is enforced as a refusal, not a convention.
+4. **The window must fully exist (D2.4).** A declared bound may not exceed
+   the journal's durable head — the window must fully exist. The
+   declaration carries the journal's durable head as a caller-handed fact
+   (the watermark never reads the journal), and a bound past it is refused
+   (`BoundBeyondWindow`); the member's extraction refuses the same
+   candidate before reading a page, so the extraction never silently
+   stops at the journal's end, and a backup run whose plan carries a
+   bound its source cannot cover fails closed the same way. Without the
+   rule, a bound declared past the head gives up the range
+   `(head, bound)` as if it were empty: every publication landing there
+   afterwards would be servable by neither the journal nor the retained
+   evidence, a follower's cursor would jump past the head on the evidence
+   path, and later exchanges would report caught up while the follower
+   had silently diverged.
 
 The declaration also records, per tenant, the **highest non-deletion
 sequence below the bound** (`non_deletion_through`). That single fact
@@ -129,10 +143,18 @@ by deletion evidence alone (D4).
 | Backup chain | the base recovery point's boundary sequence | the backup run, when the plan carries the watermark |
 | Migration, per tenant | the migration's read floor | the migration driver (the smuggler export is state-based and registers no floor; an incremental migration would) |
 
-A member that has never requested a tenant is seeded at floor `None` by
-the serving member's topology seeding, so an offline member blocks the
-watermark from the moment it is seated — not from the moment it first
-talks.
+A member that has never requested a tenant can be seeded at floor `None`
+by the serving member's explicit topology seeding
+(`ReplicationMember::seed_retention_consumers`), so an offline member
+blocks the watermark from the moment it is seated — not from the moment it
+first talks. **That is what seeding does when a caller drives it; no
+production path drives it yet.** Seeding is the caller's duty, and until
+the seam that owns member lifecycles (the GAP-S1 compaction driver, or the
+member acquisition path that lands with it) performs it, a seated member
+the source has never heard from holds the watermark only from the first
+request the source answers for it — or never, if it never talks. Until
+then, an operator who needs the seated-silent guarantee must seed
+explicitly, exactly as the tests do.
 
 ## D4 — Serving below the bound: deletion evidence, not history
 
@@ -216,6 +238,21 @@ and (per tenant) non_deletion_through <= c       (no put was missed)
   compaction path. No engine component gives up journal history today, so
   in production the declared bound stays `None` and every behavior in
   this packet is byte-identical to the pre-packet tree.
+- Topology seeding (D3) has no production caller. It is an explicit,
+  tested operation the declaring/calling seam must drive; until the
+  member-lifecycle owner (GAP-S1's compaction driver or the member
+  acquisition path) performs it, a seated-but-silent member holds the
+  watermark only once the source has answered one of its requests.
+- `BackupChain` consumers are recorded when an incremental run anchors on
+  a chain point, but nothing forgets them when a chain is pruned. The
+  prune path that would own this — BK-04's `enforce_retention`
+  (`src/backup/schedule/retention.rs`) — operates on destination
+  directories and manifests only and holds no watermark handle, so the
+  forgetting cannot be wired from this packet's write scope. Residual
+  owner: the backup service seam that eventually holds both the schedule
+  and the watermark (BK-04 follow-on or the GAP-S1 driver) must call
+  `forget_consumer` for a pruned chain's identity, or a pruned chain
+  holds the retention floor forever.
 - A member below the bound that missed a put still requires a full state
   transfer (PB-5024 anti-entropy); this record does not build one.
 - The counter-record tombstone GAP-F07 D2 mints (a live record that keeps
@@ -226,8 +263,9 @@ and (per tenant) non_deletion_through <= c       (no put was missed)
 ## Evidence
 
 Focused tests: `src/replication/retention_tests.rs` (contract rules,
-member catch-up below the bound, fail-closed put-missed case),
-`src/backup/tests.rs` (chain below the bound), and
+member catch-up below the bound, fail-closed put-missed case, the D2.4
+over-range refusals and the black-hole regression), `src/backup/tests.rs`
+(chain below the bound, the D2.4 run gate), and
 `tests/recovery/tombstone_retention_public.rs` (public backup/restore
 seam). Lane receipts: `evidence/replication/gapr02-tombstone-retention-lane-receipt.md`.
 WS-PARITY proposals: `docs/parity/gapr02-ws-parity-proposals.md`.

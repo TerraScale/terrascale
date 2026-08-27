@@ -57,8 +57,8 @@ use crate::types::{OperationId, StorageSequence, TenantId};
 // re-export list, which the integrator owns.
 pub use retention::{
     ConsumerObservation, DeletionEvidence, MAX_RETENTION_REFUSALS, RetentionAdvance,
-    RetentionCompaction, RetentionConsumer, RetentionRefusal, SharedTombstoneRetention,
-    TombstoneRetention,
+    RetentionCompaction, RetentionConsumer, RetentionHold, RetentionRefusal,
+    SharedTombstoneRetention, TombstoneRetention,
 };
 
 // The journal-extraction pair a history-bound declaration hands the

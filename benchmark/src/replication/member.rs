@@ -295,19 +295,23 @@ impl ReplicationMember {
     /// proceeding with an empty extraction, because a window whose facts
     /// were never read is a window whose evidence was silently dropped —
     /// and with [`DeclareBoundError::Refusal`] for the watermark's typed
-    /// refusal (a regressing bound, or evidence that is not durably held).
-    /// A refused declaration does not move the bound.
+    /// refusal: a bound past the journal's durable head (decision D2.4 —
+    /// the window must fully exist, so the extraction never silently stops
+    /// at the journal's end), a regressing bound, or evidence that is not
+    /// durably held. A refused declaration does not move the bound.
     pub(crate) fn declare_history_bound(
         &mut self,
         bound: StorageSequence,
         durably_held: bool,
     ) -> Result<RetentionCompaction, DeclareBoundError> {
+        let engine = self.engine.as_ref().ok_or(MemberError::EngineClosed)?;
+        let head = engine.journaled_high_water().map_err(MemberError::from)?.unwrap_or_default();
         let from =
             self.retention.with_lock(|watermark| watermark.history_bound()).unwrap_or_default();
-        let window = self.window_stamped_commits(from, bound)?;
+        let window = self.window_stamped_commits(from, bound, head)?;
         self.retention
             .with_lock(|watermark| {
-                watermark.declare_history_bound_from_commits(bound, &window, durably_held)
+                watermark.declare_history_bound_from_commits(bound, head, &window, durably_held)
             })
             .map_err(DeclareBoundError::Refusal)
     }
@@ -1908,15 +1912,34 @@ impl ReplicationMember {
     /// member holds no stamp for is paired with the origin clock, the same
     /// fallback the catch-up batch uses.
     ///
+    /// The window must fully exist (decision D2.4): `to` past the journal's
+    /// durable head is refused before any page is read. The per-tenant
+    /// paging stops at each tenant's last commit — a sparse tenant is not
+    /// truncation — so the journal's head, not the paging, is the fact the
+    /// guard compares against. Without the guard the extraction would
+    /// silently stop at the journal's end and hand the watermark a window
+    /// that never covered `(head, to)`, giving that range up as if it were
+    /// empty.
+    ///
     /// # Errors
     ///
-    /// Returns [`MemberError::EngineClosed`] and the engine's typed
-    /// failures.
+    /// Returns [`DeclareBoundError::Refusal`] with the recorded
+    /// [`RetentionRefusal::BoundBeyondWindow`] when `to` exceeds the
+    /// journal's durable head, [`DeclareBoundError::Engine`] when the
+    /// engine is closed, and the engine's typed failures otherwise.
     fn window_stamped_commits(
         &self,
         from: StorageSequence,
         to: StorageSequence,
-    ) -> Result<Vec<StampedCommit>, MemberError> {
+        journal_head: StorageSequence,
+    ) -> Result<Vec<StampedCommit>, DeclareBoundError> {
+        if to.get() > journal_head.get() {
+            let refusal = RetentionRefusal::BoundBeyondWindow { head: journal_head, candidate: to };
+            return Err(self.retention.with_lock(|watermark| {
+                watermark.observe_refusal(refusal.clone());
+                DeclareBoundError::Refusal(refusal)
+            }));
+        }
         let engine = self.engine.as_ref().ok_or(MemberError::EngineClosed)?;
         let mut window = Vec::new();
         for tenant in engine.committed_tenants().map_err(MemberError::from)? {
