@@ -59,7 +59,7 @@ transactions. The observable contract, from source:
 - **Where V1 continues on a per-document problem (client side).** The
   client-side protocol checks — empty id, id ending with `|`
   (`VerifyValidId`, `BulkInsertOperation.cs:528-539`; pinned test
-  `test/TerraBase.EndToEndTests/Client/BulkInsert/BulkInserts.cs:139-152`) —
+  `test/TerraBase.EndToEndTests/Client/BulkInsert/BulkInserts.cs:134-146`) —
   throw to the caller *before anything reaches the stream*: the operation
   object stays usable, so a caller that catches can keep storing. Inside a
   batch, `SkipOverwriteIfUnchanged` skips unchanged documents and continues
