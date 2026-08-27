@@ -186,6 +186,10 @@ fn map_query_error(error: QueryError) -> EngineError {
         QueryError::IndexNotReady => EngineError::StorageFailure,
         QueryError::Deadline => EngineError::Deadline,
         QueryError::Cancelled => EngineError::Cancelled,
+        // Both include refusals are typed rejections of the query's own
+        // include set, not a storage condition: the malformed-request
+        // category the adapter maps rejected query rules to.
+        QueryError::IncludeCycle | QueryError::IncludeBoundExceeded => EngineError::InvalidDocument,
         QueryError::StorageFailure => EngineError::StorageFailure,
     }
 }

@@ -8,6 +8,7 @@
 
 use std::cmp::Ordering;
 
+use super::includes::IncludeClause;
 use super::spec::{
     NullsPlacement, OrderDirection, QueryCondition, QueryLoad, QueryOrdering, QueryPaging,
     QueryPredicate, QueryProjection, QuerySource, StalenessPolicy,
@@ -24,6 +25,7 @@ pub(crate) struct NormalizedQuery {
     paging: QueryPaging,
     staleness: StalenessPolicy,
     loads: Vec<QueryLoad>,
+    includes: Vec<IncludeClause>,
     tenant_claim: Option<TenantId>,
     deadline: Option<Deadline>,
     cancellation: Option<Cancellation>,
@@ -43,6 +45,7 @@ impl NormalizedQuery {
         tenant_claim: TenantId,
         deadline: Deadline,
         cancellation: Cancellation,
+        includes: Vec<IncludeClause>,
     ) -> Self {
         Self {
             source,
@@ -52,6 +55,7 @@ impl NormalizedQuery {
             paging,
             staleness,
             loads,
+            includes,
             tenant_claim: Some(tenant_claim),
             deadline: Some(deadline),
             cancellation: Some(cancellation),
@@ -61,6 +65,8 @@ impl NormalizedQuery {
     /// Builds an unbound model, the shape the V1-compatible grammar produces:
     /// the grammar has no tenant, deadline, or cancellation clause, so those
     /// stay unbound and the snapshot supplies the tenant binding at execution.
+    /// The grammar has no include clause either, so an unbound model
+    /// materializes nothing.
     pub(crate) fn unbound(
         source: QuerySource,
         predicate: QueryPredicate,
@@ -77,6 +83,7 @@ impl NormalizedQuery {
             paging,
             staleness,
             loads: Vec::new(),
+            includes: Vec::new(),
             tenant_claim: None,
             deadline: None,
             cancellation: None,
@@ -116,6 +123,11 @@ impl NormalizedQuery {
     /// Returns the reference-resolution loads in declaration order.
     pub(crate) fn loads(&self) -> &[QueryLoad] {
         &self.loads
+    }
+
+    /// Returns the include clauses in declaration order.
+    pub(crate) fn includes(&self) -> &[IncludeClause] {
+        &self.includes
     }
 
     /// Returns the tenant claim, or `None` for the unbound V1 form.

@@ -166,6 +166,12 @@ fn map_query_error(error: QueryError) -> StreamError {
         QueryError::InvalidSpec | QueryError::IndexNotReady => StreamError::InvalidSource,
         QueryError::Deadline => StreamError::Deadline,
         QueryError::Cancelled => StreamError::Cancelled,
+        // Both include refusals are typed rejections of the plan's own
+        // include set: a reference cycle reachable within the declared
+        // depth, or a set that would pass the include document bound. The
+        // stream reports them the way it reports any other source the plan
+        // names and the seam refuses.
+        QueryError::IncludeCycle | QueryError::IncludeBoundExceeded => StreamError::InvalidSource,
         QueryError::StorageFailure => StreamError::EngineClosed,
     }
 }
@@ -577,6 +583,7 @@ fn document_batch(
             .cursor(CursorPosition::Documents { after: resume, exhausted: complete }),
         completion: complete.then_some(StreamCompletion::EndOfStream),
         index_generation: None,
+        includes: crate::query::IncludeSet::default(),
     })
 }
 
@@ -587,6 +594,7 @@ fn terminal_batch(binding: &CursorBinding, position: CursorPosition) -> super::S
         next_cursor: binding.cursor(position),
         completion: Some(StreamCompletion::EndOfStream),
         index_generation: None,
+        includes: crate::query::IncludeSet::default(),
     }
 }
 
@@ -623,7 +631,11 @@ fn selector_matches(selector: &DocumentStreamSelector, document: &Document) -> b
 /// and slices the plan's bounded result window at the cursor offset, so the
 /// memory a query stream holds is bounded by the plan's page limit, never
 /// by the matched set. The batch reports the index generation that
-/// execution used, faithfully `None` for an index-less execution.
+/// execution used, faithfully `None` for an index-less execution, and
+/// materializes the plan's includes over exactly the rows it sliced into
+/// this batch — the same materialization the paged execution runs over its
+/// own page, so the union of every batch's include set equals the paged
+/// execution's.
 fn query_batch(
     engine: &Engine,
     snapshot: &ReadSnapshot,
@@ -646,6 +658,7 @@ fn query_batch(
             next_cursor: binding.cursor(CursorPosition::Query { offset, exhausted: true }),
             completion: Some(StreamCompletion::EndOfStream),
             index_generation: result.index_generation().cloned(),
+            includes: crate::query::IncludeSet::default(),
         };
         return Ok(batch);
     }
@@ -653,6 +666,7 @@ fn query_batch(
     let end = offset_index.saturating_add(limit_index).min(rows.len());
     let items: Vec<StreamItem> =
         rows[offset_index..end].iter().cloned().map(StreamItem::QueryRow).collect();
+    let includes = batch_includes(engine, snapshot, plan, &rows[offset_index..end])?;
     let consumed = u64::try_from(end - offset_index).unwrap_or(u64::MAX);
     let next_offset = offset.saturating_add(consumed);
     let complete = next_offset >= u64::try_from(rows.len()).unwrap_or(u64::MAX);
@@ -662,7 +676,39 @@ fn query_batch(
             .cursor(CursorPosition::Query { offset: next_offset, exhausted: complete }),
         completion: complete.then_some(StreamCompletion::EndOfStream),
         index_generation: result.index_generation().cloned(),
+        includes,
     })
+}
+
+/// Materializes one batch's includes over exactly the rows it carries.
+///
+/// The snapshot view is re-read here rather than borrowed from the
+/// execution, because the execution's view is private to it; the snapshot
+/// is immutable, so the two reads observe the same documents and reference
+/// resolution applies the same first-match rule the loads clause applies.
+/// A plan without include clauses materializes nothing and reads nothing.
+fn batch_includes(
+    engine: &Engine,
+    snapshot: &ReadSnapshot,
+    plan: &QueryPlan,
+    rows: &[crate::query::QueryRow],
+) -> Result<crate::query::IncludeSet, StreamError> {
+    if plan.includes().is_empty() || rows.is_empty() {
+        return Ok(crate::query::IncludeSet::default());
+    }
+    let scope = TenantScope::from_parts(snapshot.tenant().clone(), snapshot.engine_identity());
+    let documents =
+        engine.snapshot_documents(&scope, snapshot).map_err(|_| StreamError::EngineClosed)?;
+    crate::query::includes::materialize(
+        engine,
+        snapshot,
+        &documents,
+        rows,
+        plan.includes(),
+        plan.model().deadline(),
+        plan.model().cancellation_signal(),
+    )
+    .map_err(map_query_error)
 }
 
 /// Serves one time-series batch by slicing the family seam's page.
@@ -722,6 +768,7 @@ fn time_series_batch(
             .cursor(CursorPosition::TimeSeries { offset: next_offset, exhausted: complete }),
         completion: complete.then_some(StreamCompletion::EndOfStream),
         index_generation: None,
+        includes: crate::query::IncludeSet::default(),
     })
 }
 
@@ -753,5 +800,6 @@ fn family_batch(
         next_cursor: binding.cursor(CursorPosition::Family { exhausted: true }),
         completion: Some(StreamCompletion::EndOfStream),
         index_generation: None,
+        includes: crate::query::IncludeSet::default(),
     })
 }

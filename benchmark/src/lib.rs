@@ -59,8 +59,10 @@ pub use operations::{
     RequestValidationError, V1QueryText,
 };
 pub use query::{
-    QueryError, QueryOrdering, QueryPaging, QueryPlan, QueryPredicate, QueryProjection,
-    QueryResult, QuerySource, QuerySpec, QueryStore, StalenessPolicy,
+    CounterInclude, DocumentInclude, IncludeClause, IncludePath, IncludeSet, IncludedCounters,
+    IncludedTimeSeries, QueryError, QueryOrdering, QueryPaging, QueryPlan, QueryPredicate,
+    QueryProjection, QueryResult, QuerySource, QuerySpec, QueryStore, StalenessPolicy,
+    TimeSeriesInclude,
 };
 pub use replication::{
     AcknowledgementLevel, AcknowledgementReport, ConflictRecord, Convergence, MemberId, RegionId,

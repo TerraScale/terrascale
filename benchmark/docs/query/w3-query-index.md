@@ -393,8 +393,15 @@ seam.
   and every 64 materialized rows — and are proved through the crate-private
   model reference; the wire adapter owns the live-signal lifecycle later.
 - Fields are top-level only; there are no nested paths, aliases, parameters,
-  aggregations, grouping, distinct, includes, suggestions, spatial, vector, or
+  aggregations, grouping, distinct, suggestions, spatial, vector, or
   streaming forms, and no query explanation, timing, or statistics output.
+  Includes are no longer a limit here: GAP-Q07 (ticket #64) added the typed
+  includes contract — document paths, counters, and time-series, with stream
+  includes and the stream/page equivalence proof — in
+  `src/query/includes.rs`; see `docs/query/gapq07-includes-contract.md`.
+  An include path is the one place this seam walks dotted segments, because
+  V1's include walker does; predicate, ordering, and projection fields stay
+  top-level.
 - The a3 exact comparison originally covered the `order by` comparator
   only, and range predicate evaluation (`>`, `>=`, `<`, `<=`) widened an
   `Integer` operand into `f64` against a `Number`. GAP-EVAL (ticket #62)
