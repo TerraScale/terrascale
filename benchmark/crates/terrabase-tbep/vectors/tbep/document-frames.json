@@ -1,0 +1,28 @@
+{
+  "adversarial": [],
+  "category": "document-frames",
+  "description": "Typed document operations: the read carries no key; the write carries its idempotency key (the retry identity) and the expected-version contract.",
+  "frames": [
+    {
+      "body": "92a66f7264657273a4642d3031",
+      "causation": 0,
+      "correlation": 3,
+      "idempotency": null,
+      "kind": "DocumentReadRequest",
+      "overhead_bytes": 23,
+      "wire": "9701cd01010300c0cfb013160e22b5340cc40d92a66f7264657273a4642d3031"
+    },
+    {
+      "body": "9393a4642d3031a66f726465727392069292a46e6f74659204a5666972737492a3717479920203920307a56f702d3031",
+      "causation": 0,
+      "correlation": 2,
+      "idempotency": "retry-01",
+      "kind": "DocumentWriteRequest",
+      "overhead_bytes": 31,
+      "wire": "9701cd01020200a872657472792d3031cf15ad37bef29d5ed9c4309393a4642d3031a66f726465727392069292a46e6f74659204a5666972737492a3717479920203920307a56f702d3031"
+    }
+  ],
+  "protocol": "terrabase.engine.protocol",
+  "schema": "terrabase.engine.protocol/vector-corpus@1",
+  "wire_version": 1
+}
