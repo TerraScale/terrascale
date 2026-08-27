@@ -300,6 +300,9 @@ public sealed class TerraScaleSyncV2SessionTests
         var refusal = (TerraScaleSyncV2MutationRefusal)outcome;
         await Assert.That(refusal.Reason).IsEqualTo("session_closed");
         await Assert.That(refusal.Code).IsEqualTo(TerraScaleSyncV2ErrorCode.SessionClosed);
+
+        // A rejection is never an acknowledged mutation: only applied outcomes count.
+        await Assert.That(session.State.MutationsAcknowledged).IsEqualTo(0ul);
     }
 
     /// <summary>A dropped stream reconnects with the Last-Event-ID of the last observed trigger.</summary>
@@ -382,6 +385,229 @@ public sealed class TerraScaleSyncV2SessionTests
         await Assert.That(Convert.FromBase64String(resumeSetup!.Json().GetProperty("resume").GetString()!).SequenceEqual(next.ToBytes())).IsTrue();
         await session.DisposeAsync();
         _ = await Assert.ThrowsAsync<OperationCanceledException>(() => recovery);
+        await DisposeEnumeratorAsync(updates);
+    }
+
+    /// <summary>A retryable stream-open failure (an engine blip) reconnects instead of faulting the live loop.</summary>
+    [Test]
+    public async Task ARetryableStreamFailureReconnectsInsteadOfFaulting()
+    {
+        using var host = await LoopbackSyncV2Host.StartAsync();
+        var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
+        var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 8)], 4);
+        host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
+        host.Script.StreamRefusalsRemaining = 1;
+        using var http = CreateClient(host);
+        await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders")
+        {
+            ReconnectDelay = TimeSpan.FromMilliseconds(30),
+        });
+        var updates = session.UpdatesAsync().GetAsyncEnumerator();
+        await Assert.That(await updates.MoveNextAsync()).IsTrue();
+
+        var deltaUpdate = updates.MoveNextAsync().AsTask();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+
+        // The refused open (503: the engine generation is down) is answered
+        // by a reconnect, never by faulting the enumeration.
+        var reconnect = await host.NextRequestAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.That(reconnect.Path).IsEqualTo("/v1/streams");
+        var connection = await host.NextStreamConnectionAsync();
+        await connection.TriggerAsync(5, "orders", 4, "op-4");
+        await Assert.That(await deltaUpdate).IsTrue();
+        await Assert.That(updates.Current.Kind).IsEqualTo(TerraScaleSyncV2SyncUpdateKind.DeltaApplied);
+        await DisposeEnumeratorAsync(updates);
+    }
+
+    /// <summary>A malformed trigger hint is content-free noise: it counts nothing and never kills the loop.</summary>
+    [Test]
+    public async Task AMalformedTriggerHintDoesNotKillTheLoop()
+    {
+        using var host = await LoopbackSyncV2Host.StartAsync();
+        var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
+        var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 8)], 4);
+        host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
+        using var http = CreateClient(host);
+        await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
+        var updates = session.UpdatesAsync().GetAsyncEnumerator();
+        await Assert.That(await updates.MoveNextAsync()).IsTrue();
+
+        var firstUpdate = updates.MoveNextAsync().AsTask();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        var connection = await host.NextStreamConnectionAsync();
+
+        // A malformed hint: still a pull (the pull is authoritative), never a fault.
+        await connection.WriteRawAsync("id: 5\nevent: trigger\ndata: {not-json\n\n");
+        await Assert.That(await firstUpdate).IsTrue();
+        await Assert.That(updates.Current.Kind).IsEqualTo(TerraScaleSyncV2SyncUpdateKind.DeltaApplied);
+        await Assert.That(session.State.TriggersObserved).IsEqualTo(0ul);
+
+        // A well-formed hint afterwards still drives the loop.
+        var secondUpdate = updates.MoveNextAsync().AsTask();
+        await connection.TriggerAsync(6, "orders", 5, "op-5");
+        await Assert.That(await secondUpdate).IsTrue();
+        await Assert.That(session.State.TriggersObserved).IsEqualTo(1ul);
+        await DisposeEnumeratorAsync(updates);
+    }
+
+    /// <summary>Multi-line data joins with a newline and strips at most one leading space (the SSE field-value rule).</summary>
+    [Test]
+    public async Task MultiLineDataJoinsWithNewlinesAndPreservesLeadingSpace()
+    {
+        using var host = await LoopbackSyncV2Host.StartAsync();
+        var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
+        var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 8)], 4);
+        host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
+        using var http = CreateClient(host);
+        await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
+        var updates = session.UpdatesAsync().GetAsyncEnumerator();
+        await Assert.That(await updates.MoveNextAsync()).IsTrue();
+
+        var deltaUpdate = updates.MoveNextAsync().AsTask();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        var connection = await host.NextStreamConnectionAsync();
+
+        // Two data lines whose spec join (newline, one leading space
+        // stripped) is the JSON `{"collection":"a\n b",...}`.
+        await connection.WriteRawAsync(
+            "id: 7\nevent: trigger\ndata: {\"subscriptionId\":1,\"collection\":\"a\ndata:  b\",\"sequence\":4,\"operationId\":\"op-4\",\"kind\":\"trigger\"}\n\n");
+        await Assert.That(await deltaUpdate).IsTrue();
+        await Assert.That(session.State.TriggersObserved).IsEqualTo(1ul);
+        await Assert.That(session.State.LastTrigger!.Value.Collection).IsEqualTo("a\n b");
+        await DisposeEnumeratorAsync(updates);
+    }
+
+    /// <summary>An event beyond the stream-event bound ends the stream (bounded reading), never the loop.</summary>
+    [Test]
+    public async Task OversizeStreamEventsEndTheStreamNotTheLoop()
+    {
+        using var host = await LoopbackSyncV2Host.StartAsync();
+        var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
+        var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 8)], 4);
+        host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
+        using var http = CreateClient(host);
+        await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders")
+        {
+            ReconnectDelay = TimeSpan.FromMilliseconds(30),
+        });
+        var updates = session.UpdatesAsync().GetAsyncEnumerator();
+        await Assert.That(await updates.MoveNextAsync()).IsTrue();
+
+        var deltaUpdate = updates.MoveNextAsync().AsTask();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        var first = await host.NextStreamConnectionAsync();
+
+        // A well-formed but oversize trigger event (far past the default
+        // one-megabyte event bound): the reader ends the stream and the
+        // live loop reconnects instead of buffering or dispatching it.
+        await first.WriteRawAsync(
+            "id: 9\nevent: trigger\ndata: {\"subscriptionId\":1,\"collection\":\"" + new string('x', 2 * 1024 * 1024) + "\",\"sequence\":4,\"operationId\":\"op-4\",\"kind\":\"trigger\"}\n\n");
+        var reconnect = await host.NextRequestAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.That(reconnect.Path).IsEqualTo("/v1/streams");
+        var second = await host.NextStreamConnectionAsync();
+        await Assert.That(session.State.TriggersObserved).IsEqualTo(0ul);
+
+        await second.TriggerAsync(5, "orders", 4, "op-4");
+        await Assert.That(await deltaUpdate).IsTrue();
+        await Assert.That(updates.Current.Kind).IsEqualTo(TerraScaleSyncV2SyncUpdateKind.DeltaApplied);
+        await Assert.That(session.State.TriggersObserved).IsEqualTo(1ul);
+        await DisposeEnumeratorAsync(updates);
+    }
+
+    /// <summary>A host body beyond the decode bound is a typed refusal, never an unbounded parse.</summary>
+    [Test]
+    public async Task OversizeHostBodiesAreRefusedTyped()
+    {
+        using var host = await LoopbackSyncV2Host.StartAsync();
+        host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, TerraScaleSyncV2Checkpoint.Initial, TerraScaleSyncV2Checkpoint.Initial);
+        host.Script.SnapshotBody = new byte[(32 * 1024 * 1024) + 1];
+        using var http = CreateClient(host);
+        await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
+        _ = await session.SetupAsync();
+        _ = await host.NextRequestAsync();
+
+        var failure = await Assert.ThrowsAsync<TerraScaleSyncV2HostException>(() => session.PullSnapshotAsync());
+        _ = await host.NextRequestAsync();
+        await Assert.That(failure!.Code).IsEqualTo("host-failure");
+        await Assert.That(failure.Retryable).IsFalse();
+    }
+
+    /// <summary>A resync-required pull carries the floor the host stated in its 409 body.</summary>
+    [Test]
+    public async Task ResyncRequiredCarriesTheHostStatedFloor()
+    {
+        using var host = await LoopbackSyncV2Host.StartAsync();
+        var floor = TerraScaleSyncV2Checkpoint.Create([(1ul, 30)], 20);
+        host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, TerraScaleSyncV2Checkpoint.Initial, TerraScaleSyncV2Checkpoint.Initial);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(
+            TerraScaleSyncV2DeltaPullKind.ResyncRequired,
+            TerraScaleSyncV2PayloadCodec.LoroDelta1,
+            [],
+            null!,
+            0,
+            false,
+            floor));
+        using var http = CreateClient(host);
+        await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
+        _ = await session.SetupAsync();
+        _ = await host.NextRequestAsync();
+
+        var answer = await session.PullDeltaAsync();
+        _ = await host.NextRequestAsync();
+
+        await Assert.That(answer.Kind).IsEqualTo(TerraScaleSyncV2DeltaPullKind.ResyncRequired);
+        await Assert.That(answer.Floor).IsEqualTo(floor);
+    }
+
+    /// <summary>A host that ends every re-opened session is given up on after bounded, backed-off re-opens.</summary>
+    [Test]
+    public async Task AnEndlesslyEndedSessionGivesUpAfterBoundedReopens()
+    {
+        using var host = await LoopbackSyncV2Host.StartAsync();
+        var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
+        host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
+        host.Script.EndEverySession = true;
+        using var http = CreateClient(host);
+        await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders")
+        {
+            Resume = start,
+            ReconnectDelay = TimeSpan.FromMilliseconds(20),
+        });
+        var updates = session.UpdatesAsync().GetAsyncEnumerator();
+
+        // The give-up is the typed host failure, not an unbounded re-open loop.
+        var failure = await Assert.ThrowsAsync<TerraScaleSyncV2HostException>(
+            () => updates.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        await Assert.That(failure!.StatusCode).IsEqualTo(HttpStatusCode.Gone);
+
+        // One initial setup plus at most the bounded re-opens.
+        var requests = await host.DrainRequestsAsync();
+        var setups = requests.Count(request => request.Path == "/v1/sync/sessions" && request.Method == "POST");
+        await Assert.That(setups).IsLessThanOrEqualTo(4);
         await DisposeEnumeratorAsync(updates);
     }
 
@@ -536,6 +762,21 @@ public sealed class TerraScaleSyncV2Script
 
     /// <summary>Answer with the engine-unavailable status.</summary>
     public bool Unavailable { get; set; }
+
+    /// <summary>
+    /// Refuse this many stream opens with <see cref="StreamRefusalStatus"/>
+    /// (an engine blip) before serving the event stream.
+    /// </summary>
+    public int StreamRefusalsRemaining { get; set; }
+
+    /// <summary>The status a refused stream open answers with. The default is 503.</summary>
+    public string StreamRefusalStatus { get; set; } = "503 Service Unavailable";
+
+    /// <summary>Answer every session-lifecycle request (below the setup path) with the ended-session status.</summary>
+    public bool EndEverySession { get; set; }
+
+    /// <summary>Serve these raw bytes as the snapshot answer body (a scripted oversize host body).</summary>
+    public byte[]? SnapshotBody { get; set; }
 }
 
 /// <summary>A real loopback HTTP host serving the C# API host's documented sync endpoints from a test script.</summary>
@@ -654,6 +895,19 @@ public sealed class LoopbackSyncV2Host : IDisposable
                 await this.requests.Writer.WriteAsync(request);
                 if (request.Path == "/v1/streams")
                 {
+                    if (this.Script.StreamRefusalsRemaining > 0)
+                    {
+                        // An engine blip: the stream open is refused with a
+                        // retryable status (the SE-08 host answers 503 when
+                        // the engine generation is down).
+                        this.Script.StreamRefusalsRemaining--;
+                        await WriteJsonAsync(
+                            stream,
+                            this.Script.StreamRefusalStatus,
+                            new { code = "engine-unavailable", detail = "the engine is not serving" });
+                        return;
+                    }
+
                     // The stream connection stays open: its lifetime is
                     // the test's (it writes events and closes it). The
                     // response head carries no content length: the body
@@ -703,6 +957,13 @@ public sealed class LoopbackSyncV2Host : IDisposable
             return;
         }
 
+        if (this.Script.EndEverySession && request.Path.StartsWith("/v1/sync/sessions/", StringComparison.Ordinal))
+        {
+            // A host whose generation ends every session the client opens.
+            await WriteJsonAsync(stream, "410 Gone", new { code = "session-ended", detail = "session is not live on this host; open a new session" });
+            return;
+        }
+
         if (request.Path == "/v1/sync/sessions" && request.Method == "POST")
         {
             var accepted = this.Script.SetupAnswer ?? new TerraScaleSyncV2SessionAccepted(
@@ -747,7 +1008,13 @@ public sealed class LoopbackSyncV2Host : IDisposable
 
             if (answer.Kind == TerraScaleSyncV2DeltaPullKind.ResyncRequired)
             {
-                await WriteJsonAsync(stream, "409 Conflict", new { code = "checkpoint-refused", detail = "behind-retained-floor", resyncRequired = true });
+                await WriteJsonAsync(stream, "409 Conflict", new
+                {
+                    code = "checkpoint-refused",
+                    detail = "behind-retained-floor",
+                    resyncRequired = true,
+                    floor = answer.Floor is null ? null : Convert.ToBase64String(answer.Floor.ToBytes()),
+                });
                 return;
             }
 
@@ -765,6 +1032,16 @@ public sealed class LoopbackSyncV2Host : IDisposable
 
         if (request.Path.EndsWith("/snapshot", StringComparison.Ordinal))
         {
+            if (this.Script.SnapshotBody is { } rawBody)
+            {
+                await WriteResponseAsync(
+                    stream,
+                    "200 OK",
+                    new Dictionary<string, string> { ["Content-Type"] = "application/json; charset=utf-8" },
+                    rawBody);
+                return;
+            }
+
             var snapshot = this.Script.SnapshotAnswer ?? new TerraScaleSyncV2SnapshotPull(
                 TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [], TerraScaleSyncV2Checkpoint.Initial);
             await WriteJsonAsync(stream, "200 OK", new
@@ -950,6 +1227,19 @@ public sealed class LoopbackSyncV2Host : IDisposable
             }
 
             var text = $"id: {id}\nevent: {name}\ndata: {payload}\n\n";
+            var bytes = Encoding.UTF8.GetBytes(text);
+            await this.stream.WriteAsync(bytes, this.stopped);
+            await this.stream.FlushAsync(this.stopped);
+        }
+
+        /// <summary>Writes raw event-stream text (malformed or hand-shaped events).</summary>
+        public async Task WriteRawAsync(string text)
+        {
+            if (this.stopped.IsCancellationRequested)
+            {
+                return;
+            }
+
             var bytes = Encoding.UTF8.GetBytes(text);
             await this.stream.WriteAsync(bytes, this.stopped);
             await this.stream.FlushAsync(this.stopped);

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -336,6 +337,71 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
         var failure = Assert.Throws<TerraScaleSyncV2ProtocolException>(() => TerraScaleSyncV2Checkpoint.FromBytes([2]));
         await Assert.That(failure.Error).IsEqualTo(TerraScaleSyncV2ProtocolError.MalformedFrame);
         await Assert.That(failure.Reason).Contains("checkpoint");
+    }
+
+    /// <summary>
+    /// A checkpoint pair count that cannot fit the bytes that remain is a
+    /// typed refusal made before any allocation: neither an untyped
+    /// capacity failure (count at the u32 ceiling) nor a multi-gigabyte
+    /// truncation-check overflow (a mid-range count past 178,956,970).
+    /// </summary>
+    [Test]
+    public async Task CheckpointPairCountsAreBoundedBeforeAnyAllocation()
+    {
+        static byte[] Crafted(uint count, int length = 17)
+        {
+            var bytes = new byte[length];
+            bytes[0] = 1;
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(9, 4), count);
+            return bytes;
+        }
+
+        var allOnes = Assert.Throws<TerraScaleSyncV2ProtocolException>(
+            () => TerraScaleSyncV2Checkpoint.FromBytes(Crafted(0xFFFF_FFFF)));
+        await Assert.That(allOnes.Error).IsEqualTo(TerraScaleSyncV2ProtocolError.MalformedFrame);
+
+        var midRange = Assert.Throws<TerraScaleSyncV2ProtocolException>(
+            () => TerraScaleSyncV2Checkpoint.FromBytes(Crafted(0x0C00_0000)));
+        await Assert.That(midRange.Error).IsEqualTo(TerraScaleSyncV2ProtocolError.MalformedFrame);
+    }
+
+    /// <summary>A checkpoint length that overflows the reader's offset arithmetic is a typed truncation.</summary>
+    [Test]
+    public async Task ACheckpointLengthThatOverflowsTheReaderIsATypedTruncation()
+    {
+        var body = new byte[10];
+        BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(0, 2), (ushort)TerraScaleSyncV2FrameKind.CheckpointAck);
+        BinaryPrimitives.WriteUInt64LittleEndian(body.AsSpan(2, 8), (ulong)int.MaxValue);
+
+        var failure = Assert.Throws<TerraScaleSyncV2ProtocolException>(() => TerraScaleSyncV2Body.FromBodyBytes(body));
+        await Assert.That(failure.Error).IsEqualTo(TerraScaleSyncV2ProtocolError.MalformedFrame);
+    }
+
+    /// <summary>
+    /// A flipped body byte decodes — digest disagreement is not a decode
+    /// error — but fails <see cref="TerraScaleSyncV2Frame.Verify"/> with
+    /// the kind and idempotency key still readable.
+    /// </summary>
+    [Test]
+    public async Task AFlippedBodyByteDecodesButFailsDigestVerification()
+    {
+        var key = new TerraScaleSyncV2IdempotencyKey("op-digest");
+        var mutation = new TerraScaleSyncV2MutationRequestBody(
+            "orders",
+            "d-01",
+            new TerraScaleSyncV2DocumentWrite.Put(new Dictionary<string, TerraScaleSyncV2Value>
+            {
+                ["qty"] = TerraScaleSyncV2Value.Of(3L),
+            }));
+        var wire = TerraScaleSyncV2Frame.Seal(mutation, correlation: 41, causation: 40, key).ToByteArray();
+
+        // One byte inside the body's integer value: structurally valid, digest-breaking.
+        wire[^1] ^= 0x20;
+
+        var decoded = TerraScaleSyncV2Frame.Decode(wire);
+        await Assert.That(decoded.Kind).IsEqualTo(TerraScaleSyncV2FrameKind.MutationRequest);
+        await Assert.That(decoded.IdempotencyKey!.Value.Value).IsEqualTo("op-digest");
+        await Assert.That(decoded.Verify()).IsFalse();
     }
 
     private static IEnumerable<(string Category, string Path)> CorpusFiles()
