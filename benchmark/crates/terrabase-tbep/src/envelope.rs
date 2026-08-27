@@ -31,6 +31,7 @@
 
 use serde::Deserialize as _;
 
+use crate::generated::FIXED_ENVELOPE_BYTES;
 use crate::generated::FrameKind;
 use crate::generated::MAX_FRAME_BYTES;
 use crate::generated::STREAM_PREFIX_BYTES;
@@ -298,22 +299,41 @@ impl TbepFrame {
     }
 
     /// The stream encoding: a `u32` little-endian length prefix plus the
-    /// envelope bytes.
+    /// envelope bytes, carried by **one** buffer and one write call
+    /// (SE-07 budget E-14: the prefix and the envelope never ride two
+    /// syscalls).
     ///
     /// # Errors
     ///
     /// Returns [`EnvelopeError::Io`] on write failures.
     pub fn write_stream<W: std::io::Write>(&self, writer: &mut W) -> Result<(), EnvelopeError> {
-        let bytes = self.to_bytes();
-        let length =
-            u32::try_from(bytes.len()).map_err(|_| EnvelopeError::FrameTooLarge(usize::MAX))?;
-        if bytes.len() > MAX_FRAME_BYTES {
+        use serde::Serialize as _;
+        let body = WireBytes(self.body_bytes());
+        let wire: EnvelopeWire = (
+            WIRE_VERSION,
+            self.body.kind().code(),
+            self.correlation,
+            self.causation,
+            self.idempotency.as_ref().map(IdempotencyKey::as_str),
+            self.digest.value(),
+            &body,
+        );
+        // One buffer: a four-byte placeholder prefix, then the envelope
+        // serialized directly into it, then the real length patched into
+        // the placeholder.
+        let mut framed =
+            Vec::with_capacity(STREAM_PREFIX_BYTES + FIXED_ENVELOPE_BYTES + body.0.len());
+        framed.extend_from_slice(&[0; STREAM_PREFIX_BYTES]);
+        let mut serializer = rmp_serde::Serializer::new(&mut framed);
+        wire.serialize(&mut serializer)
+            .map_err(|_| EnvelopeError::Malformed("the envelope tuple always encodes"))?;
+        let length = u32::try_from(framed.len() - STREAM_PREFIX_BYTES)
+            .map_err(|_| EnvelopeError::FrameTooLarge(usize::MAX))?;
+        if length as usize > MAX_FRAME_BYTES {
             return Err(EnvelopeError::FrameTooLarge(MAX_FRAME_BYTES));
         }
-        writer
-            .write_all(&length.to_le_bytes())
-            .and_then(|()| writer.write_all(&bytes))
-            .map_err(|error| EnvelopeError::Io(error.to_string()))
+        framed[..STREAM_PREFIX_BYTES].copy_from_slice(&length.to_le_bytes());
+        writer.write_all(&framed).map_err(|error| EnvelopeError::Io(error.to_string()))
     }
 
     /// Reads one frame from the stream. `Ok(None)` is a clean end of

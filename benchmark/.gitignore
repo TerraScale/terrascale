@@ -10,8 +10,12 @@ __pycache__/
 # replication lane receipts under evidence/replication/ are tracked
 # (integrator action W4-CA-12); the reviewed BK-01 focused-run recovery
 # receipts under evidence/recovery/ are tracked (integrator action,
-# 2026-08-26); all other evidence output stays local.
+# 2026-08-26); the reviewed SE-07 benchmark receipts under
+# evidence/benchmarks/ are tracked (SE-07 ticket write scope names the
+# path; flagged for parent review); all other evidence output stays
+# local.
 /evidence/*
 !/evidence/replication/
 !/evidence/recovery/
+!/evidence/benchmarks/
 /benches/results/

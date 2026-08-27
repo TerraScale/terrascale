@@ -316,26 +316,66 @@ impl<T: MemberTransport> LaneHarness<T> {
         level: AcknowledgementLevel,
         ticks: u64,
     ) -> ReplicationOutcome {
+        let outcomes = self.wait_ack_batch(writer, tenant, &[operation], level, ticks);
+        outcomes
+            .into_iter()
+            .next()
+            .map(|(_, outcome)| outcome)
+            .expect("one operation yields one outcome")
+    }
+
+    /// # Panics
+    ///
+    /// Panics when a lane step fails its fixed expectation: the harness is
+    /// a deterministic qualification script, not a recovery surface — names
+    /// must be part of the fixed lane roster and every scripted step must
+    /// succeed.
+    /// Waits for every named operation's acknowledgement at `level`, with
+    /// every other live member as a peer and a deadline `ticks` pumps out
+    /// (SE-07 budgets E-3/E-4: each round pushes the whole outstanding set
+    /// to each peer in one frame, and each peer answers in one batched
+    /// report frame).
+    ///
+    /// The per-operation semantics are exactly [`LaneHarness::wait_ack`]'s;
+    /// only the frame economy changes. The returned outcomes pair each
+    /// named operation with its result.
+    #[allow(clippy::too_many_lines, reason = "one fixed wait loop over the D-2 semantics")]
+    pub fn wait_ack_batch(
+        &mut self,
+        writer: &str,
+        tenant: &str,
+        operations: &[&str],
+        level: AcknowledgementLevel,
+        ticks: u64,
+    ) -> Vec<(String, ReplicationOutcome)> {
         let tenant = TenantId::try_new(tenant).expect("valid tenant");
-        let operation = OperationId::try_new(operation).expect("valid operation");
+        let operations: Vec<OperationId> = operations
+            .iter()
+            .map(|operation| OperationId::try_new(operation).expect("valid operation"))
+            .collect();
         let writer_id = self.member_id(writer);
         let writer_index = self.index(writer);
         let deadline = self.transport.now().plus_ticks(ticks);
         let region_count = lane_topology().regions().count();
         let (canonical, normalization) = normalize_level(level, region_count);
+        let mut resolved: Vec<(String, ReplicationOutcome)> = Vec::new();
         loop {
             let now = self.transport.now();
+            let mut outstanding: Vec<OperationId> = Vec::new();
+            for operation in &operations {
+                if resolved.iter().any(|(name, _)| name == operation.as_str()) {
+                    continue;
+                }
+                outstanding.push(operation.clone());
+            }
+            if outstanding.is_empty() {
+                return resolved;
+            }
             {
                 let writer_member = &mut self.members[writer_index];
                 writer_member.observe_instant(now);
                 if !writer_member.is_open() {
-                    return ReplicationOutcome::Failed(ReplicationError::JournalClosed);
-                }
-                if !matches!(
-                    writer_member.journal().resolve(&operation),
-                    Ok(crate::journal::DurableResolution::Committed(_))
-                ) {
-                    return ReplicationOutcome::Failed(ReplicationError::NotReplicated);
+                    return Self::fail_all(resolved, outstanding, &ReplicationError::JournalClosed);
                 }
             }
             // Dispatch the writer first so late reports are collected.
@@ -343,17 +383,36 @@ impl<T: MemberTransport> LaneHarness<T> {
                 .dispatch_under(&mut self.transport, &tenant)
                 .expect("writer drains");
             self.deliveries += dispatch_report_deliveries(&writer_report);
-            let contributing = self.members[writer_index].ack_contributors(&operation);
             let topology = lane_topology();
-            if level_satisfied(canonical, &topology, &writer_id, &contributing) {
-                let report = self.members[writer_index].build_ack_report(
-                    level,
-                    canonical,
-                    normalization,
-                    &contributing,
-                    self.transport.now(),
-                );
-                return ReplicationOutcome::Acknowledged(report);
+            let mut next_outstanding = Vec::new();
+            for operation in &outstanding {
+                if !matches!(
+                    self.members[writer_index].journal().resolve(operation),
+                    Ok(crate::journal::DurableResolution::Committed(_))
+                ) {
+                    let name = operation.as_str().to_owned();
+                    resolved
+                        .push((name, ReplicationOutcome::Failed(ReplicationError::NotReplicated)));
+                    continue;
+                }
+                let contributing = self.members[writer_index].ack_contributors(operation);
+                if level_satisfied(canonical, &topology, &writer_id, &contributing) {
+                    let report = self.members[writer_index].build_ack_report(
+                        level,
+                        canonical,
+                        normalization,
+                        &contributing,
+                        self.transport.now(),
+                    );
+                    let name = operation.as_str().to_owned();
+                    resolved.push((name, ReplicationOutcome::Acknowledged(report)));
+                    continue;
+                }
+                next_outstanding.push(operation.clone());
+            }
+            let outstanding = next_outstanding;
+            if outstanding.is_empty() {
+                continue;
             }
             // Reachability: could the level ever be met by the Members that
             // are still alive? If not, the wait fails with the typed
@@ -370,34 +429,43 @@ impl<T: MemberTransport> LaneHarness<T> {
                 } else {
                     ReplicationError::QuorumUnreachable
                 };
-                return ReplicationOutcome::Failed(error);
+                return Self::fail_all(resolved, outstanding, &error);
             }
             if self.transport.now() >= deadline {
-                let strongest = strongest_satisfied_level(&topology, &writer_id, &contributing);
-                let (partial, _) = normalize_level(strongest, region_count);
-                let observed = self.members[writer_index].build_ack_report(
-                    strongest,
-                    partial,
-                    None,
-                    &contributing,
-                    self.transport.now(),
-                );
-                return ReplicationOutcome::Timeout {
-                    operation_id: operation,
-                    requested: level,
-                    observed,
-                };
+                for operation in outstanding {
+                    let contributing = self.members[writer_index].ack_contributors(&operation);
+                    let strongest = strongest_satisfied_level(&topology, &writer_id, &contributing);
+                    let (partial, _) = normalize_level(strongest, region_count);
+                    let observed = self.members[writer_index].build_ack_report(
+                        strongest,
+                        partial,
+                        None,
+                        &contributing,
+                        self.transport.now(),
+                    );
+                    let name = operation.as_str().to_owned();
+                    resolved.push((
+                        name,
+                        ReplicationOutcome::Timeout {
+                            operation_id: operation,
+                            requested: level,
+                            observed,
+                        },
+                    ));
+                }
+                return resolved;
             }
-            // One deterministic round: push, pump, peers apply and answer,
-            // pump, writer collects.
+            // One deterministic round: one batched push per peer, pump,
+            // peers apply and answer, pump, writer collects.
             for (index, (member, _)) in LANE_MEMBERS.iter().enumerate() {
                 if *member == writer || !self.members[index].is_open() {
                     continue;
                 }
                 let peer_id = self.member_id(member);
-                self.members[writer_index]
-                    .send_push(&mut self.transport, &peer_id, &tenant, &operation)
+                let pushed = self.members[writer_index]
+                    .send_push_batch(&mut self.transport, &peer_id, &tenant, &outstanding)
                     .expect("push sends");
+                assert!(pushed == outstanding.len(), "every outstanding operation is pushed");
             }
             self.transport.pump();
             for (index, (member, _)) in LANE_MEMBERS.iter().enumerate() {
@@ -411,6 +479,19 @@ impl<T: MemberTransport> LaneHarness<T> {
             }
             self.transport.pump();
         }
+    }
+
+    /// Fails every outstanding operation with the typed error.
+    fn fail_all(
+        mut resolved: Vec<(String, ReplicationOutcome)>,
+        outstanding: Vec<OperationId>,
+        error: &ReplicationError,
+    ) -> Vec<(String, ReplicationOutcome)> {
+        for operation in outstanding {
+            resolved
+                .push((operation.as_str().to_owned(), ReplicationOutcome::Failed(error.clone())));
+        }
+        resolved
     }
 
     /// # Panics

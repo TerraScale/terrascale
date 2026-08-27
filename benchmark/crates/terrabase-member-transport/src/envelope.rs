@@ -28,8 +28,10 @@ pub const ENVELOPE_SCHEMA: &str = "terrabase.member.lane";
 pub const ENVELOPE_VERSION_MAJOR: u16 = 1;
 
 /// The supported envelope minor version. Additive changes bump it; a minor
-/// above the supported one fails closed rather than guessing.
-pub const ENVELOPE_VERSION_MINOR: u16 = 0;
+/// above the supported one fails closed rather than guessing. Minor 1
+/// (SE-07) adds the batched acknowledgement report
+/// ([`FrameKind::AckBatch`]); minor-0 frames decode unchanged.
+pub const ENVELOPE_VERSION_MINOR: u16 = 1;
 
 /// The digest length the codec writes and verifies.
 pub const DIGEST_BYTES: usize = 32;
@@ -72,6 +74,11 @@ pub enum FrameKind {
     /// writer cannot read a peer's durable state in-process, so the
     /// observation crosses the wire.
     AckReport,
+    /// One Member reports its durable holding of every operation one pushed
+    /// batch carried, in one frame (SE-07 budgets E-3/E-4: the
+    /// acknowledgement of a K-operation push is one frame per peer, not K).
+    /// Additive in envelope minor version 1.
+    AckBatch,
 }
 
 impl FrameKind {
@@ -83,6 +90,7 @@ impl FrameKind {
             Self::CatchUpBatch => 2,
             Self::Push => 3,
             Self::AckReport => 4,
+            Self::AckBatch => 5,
         }
     }
 
@@ -97,6 +105,7 @@ impl FrameKind {
             2 => Ok(Self::CatchUpBatch),
             3 => Ok(Self::Push),
             4 => Ok(Self::AckReport),
+            5 => Ok(Self::AckBatch),
             _ => Err(EnvelopeError::UnsupportedKind),
         }
     }
@@ -109,6 +118,7 @@ impl FrameKind {
             Self::CatchUpBatch => "catch-up-batch",
             Self::Push => "push",
             Self::AckReport => "ack-report",
+            Self::AckBatch => "ack-batch",
         }
     }
 }
@@ -211,6 +221,16 @@ pub enum Payload {
         /// Whether the Member's own publication of the operation is committed
         /// at the durable level.
         held_synced: bool,
+    },
+    /// Reports one Member's durable holding of every operation one pushed
+    /// batch carried: the batched acknowledgement of a multi-operation push
+    /// (envelope minor 1, SE-07 budgets E-3/E-4).
+    AckBatch {
+        /// The tenant the observations name.
+        tenant: TenantId,
+        /// The observed operations with their durable holding, in the
+        /// pushed batch's order.
+        reports: Vec<(OperationId, bool)>,
     },
 }
 
@@ -675,6 +695,14 @@ fn encode_payload(out: &mut Vec<u8>, payload: &Payload) -> Result<(), EnvelopeEr
             put_str(out, operation.as_str())?;
             put_u8(out, u8::from(*held_synced));
         }
+        Payload::AckBatch { tenant, reports } => {
+            put_str(out, tenant.as_str())?;
+            put_u32(out, u32::try_from(reports.len()).map_err(|_| EnvelopeError::Oversized)?);
+            for (operation, held_synced) in reports {
+                put_str(out, operation.as_str())?;
+                put_u8(out, u8::from(*held_synced));
+            }
+        }
     }
     Ok(())
 }
@@ -754,6 +782,26 @@ fn decode_payload(cursor: &mut Cursor<'_>, kind: FrameKind) -> Result<Payload, E
                 _ => return Err(EnvelopeError::MalformedLength),
             };
             Ok(Payload::AckReport { tenant, operation, held_synced })
+        }
+        FrameKind::AckBatch => {
+            let tenant =
+                TenantId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
+            let count = cursor.take_u32()? as usize;
+            if count > MAX_PAYLOAD_BYTES {
+                return Err(EnvelopeError::MalformedLength);
+            }
+            let mut reports = Vec::with_capacity(count);
+            for _ in 0..count {
+                let operation = OperationId::try_new(&take_str(cursor)?)
+                    .map_err(|_| EnvelopeError::FieldTooLarge)?;
+                let held_synced = match cursor.take_u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(EnvelopeError::MalformedLength),
+                };
+                reports.push((operation, held_synced));
+            }
+            Ok(Payload::AckBatch { tenant, reports })
         }
     }
 }

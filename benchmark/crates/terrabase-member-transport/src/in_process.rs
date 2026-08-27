@@ -201,10 +201,16 @@ impl MemberTransport for InProcessLane {
     }
 
     fn class_bytes(&self) -> Vec<(FrameKind, FrameClassBytes)> {
-        [FrameKind::CatchUpRequest, FrameKind::CatchUpBatch, FrameKind::Push, FrameKind::AckReport]
-            .into_iter()
-            .filter_map(|kind| self.class_bytes.get(&kind).map(|bytes| (kind, *bytes)))
-            .collect()
+        [
+            FrameKind::CatchUpRequest,
+            FrameKind::CatchUpBatch,
+            FrameKind::Push,
+            FrameKind::AckReport,
+            FrameKind::AckBatch,
+        ]
+        .into_iter()
+        .filter_map(|kind| self.class_bytes.get(&kind).map(|bytes| (kind, *bytes)))
+        .collect()
     }
 
     fn heal(&mut self) {

@@ -45,7 +45,7 @@ impl FrameSelector {
             (Self::All, _)
                 | (Self::Requests, FrameKind::CatchUpRequest)
                 | (Self::Deliveries, FrameKind::CatchUpBatch | FrameKind::Push)
-                | (Self::Reports, FrameKind::AckReport)
+                | (Self::Reports, FrameKind::AckReport | FrameKind::AckBatch)
         )
     }
 }

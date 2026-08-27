@@ -112,7 +112,9 @@ fn an_unsupported_version_fails_closed() {
 fn an_unknown_frame_kind_fails_closed() {
     let mut bytes = frame_of(&base_envelope()).bytes;
     let kind_at = 1 + ENVELOPE_SCHEMA.len() + 4;
-    bytes[kind_at] = 5;
+    // Kind 5 is the batched acknowledgement report since envelope minor
+    // 1 (SE-07); the first unknown kind byte is 6.
+    bytes[kind_at] = 6;
     assert_eq!(decode(&bytes), Err(EnvelopeError::UnsupportedKind));
 }
 

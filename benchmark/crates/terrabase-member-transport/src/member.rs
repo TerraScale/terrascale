@@ -423,8 +423,14 @@ pub struct DispatchReport {
     pub duplicates_resolved: usize,
     /// Incoming writes this pass resolved as conflicts under the D-3 policy.
     pub conflicts_recorded: usize,
-    /// Acknowledgement reports this pass sent for received pushes.
+    /// Acknowledgement reports this pass sent for received pushes
+    /// (counted per acknowledged operation; a batched report frame counts
+    /// once per operation it carries).
     pub ack_reports_sent: usize,
+    /// Sends this pass deferred because the addressed peer's bounded link
+    /// sat at capacity (SE-07 budget E-5: a slow consumer is deferred and
+    /// observable, never allowed to abort the pass).
+    pub slow_consumer_deferrals: usize,
     /// Acknowledgement reports this pass collected.
     pub ack_reports: usize,
     /// Frames this pass rejected at the envelope discipline.
@@ -573,6 +579,7 @@ pub struct LaneMember {
     fenced: Vec<FencedBatch>,
     depositions: Vec<Deposition>,
     envelope_rejections: Vec<EnvelopeRejection>,
+    slow_consumers: Vec<MemberId>,
     last_rejection: Option<RejoinRejection>,
     activated: bool,
     answered: bool,
@@ -615,6 +622,7 @@ impl LaneMember {
             fenced: Vec::new(),
             depositions: Vec::new(),
             envelope_rejections: Vec::new(),
+            slow_consumers: Vec::new(),
             last_rejection: None,
             activated: false,
             answered: false,
@@ -902,9 +910,17 @@ impl LaneMember {
                     self.ack_states.insert((operation, envelope.source.clone()), held_synced);
                     report.ack_reports += 1;
                 }
+                Payload::AckBatch { tenant: _, reports: batch } => {
+                    for (operation, held_synced) in batch {
+                        self.ack_states.insert((operation, envelope.source.clone()), held_synced);
+                        report.ack_reports += 1;
+                    }
+                }
             }
         }
-        // Serve the admitted catch-up requests.
+        // Serve the admitted catch-up requests. A peer whose bounded link
+        // sits at capacity is deferred observably (SE-07 budget E-5): the
+        // pass continues and serves every healthy peer's request.
         for (requester, correlation, after, limit) in requests {
             let batch = self.build_catch_up_batch(scope_tenant, after, limit)?;
             let reply = self.build_envelope(
@@ -917,18 +933,46 @@ impl LaneMember {
                 None,
                 batch,
             );
-            self.send(transport, &requester, &reply)?;
-            report.served += 1;
-            self.answered = true;
+            if self.send_or_defer(transport, &requester, &reply, &mut report)? {
+                report.served += 1;
+                self.answered = true;
+            }
         }
         // Apply the deliveries, then answer every received push with the
         // durable post-apply acknowledgement: the report crosses the wire,
         // and its held flag reflects the ledger after this pass's applies.
+        // A multi-operation push is answered by one batched report frame
+        // (SE-07 budgets E-3/E-4); a single-operation push keeps the
+        // single-report frame shape.
         self.apply_deliveries(&mut report, scope_tenant, deliveries)?;
         for (peer, correlation, operations) in push_answers {
-            for operation in operations {
-                let held =
-                    matches!(self.journal.resolve(&operation), Ok(DurableResolution::Committed(_)));
+            let reports: Vec<(OperationId, bool)> = operations
+                .iter()
+                .map(|operation| {
+                    let held = matches!(
+                        self.journal.resolve(operation),
+                        Ok(DurableResolution::Committed(_))
+                    );
+                    (operation.clone(), held)
+                })
+                .collect();
+            if reports.len() > 1 {
+                let report_envelope = self.build_envelope(
+                    FrameKind::AckBatch,
+                    peer.clone(),
+                    Some(correlation),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Payload::AckBatch { tenant: scope_tenant.clone(), reports },
+                );
+                if self.send_or_defer(transport, &peer, &report_envelope, &mut report)? {
+                    report.ack_reports_sent += operations.len();
+                }
+                continue;
+            }
+            for (operation, held_synced) in reports {
                 let report_envelope = self.build_envelope(
                     FrameKind::AckReport,
                     peer.clone(),
@@ -937,14 +981,11 @@ impl LaneMember {
                     Some(operation.clone()),
                     None,
                     None,
-                    Payload::AckReport {
-                        tenant: scope_tenant.clone(),
-                        operation: operation.clone(),
-                        held_synced: held,
-                    },
+                    Payload::AckReport { tenant: scope_tenant.clone(), operation, held_synced },
                 );
-                self.send(transport, &peer, &report_envelope)?;
-                report.ack_reports_sent += 1;
+                if self.send_or_defer(transport, &peer, &report_envelope, &mut report)? {
+                    report.ack_reports_sent += 1;
+                }
             }
         }
         Ok(report)
@@ -1153,12 +1194,15 @@ impl LaneMember {
     ) -> Result<ApplyStep, MemberError> {
         // The delete-collection replay check: a key that currently lives in
         // a different collection than the source deleted from is a typed
-        // mismatch, never a silent removal of another key.
-        let documents = self.journal.documents_at(tenant).map_err(MemberError::from)?;
+        // mismatch, never a silent removal of another key. The check uses
+        // point lookups and only for recorded deletes, so applying one
+        // commit costs journal work proportional to its own write set,
+        // never to the tenant's derived document count (SE-07 budget E-6).
         for write in &commit.writes {
             if let LaneWrite::Delete { collection: Some(recorded), id, .. } = write
-                && let Some(existing) = documents.iter().find(|document| &document.id == id)
-                && existing.collection.as_str() != recorded.as_str()
+                && let Some(existing) =
+                    self.journal.document_collection(tenant, id).map_err(MemberError::from)?
+                && existing.as_str() != recorded.as_str()
             {
                 return Err(MemberError::ApplyFailed {
                     operation: commit.operation.clone(),
@@ -1226,6 +1270,56 @@ impl LaneMember {
             Payload::Push { tenant: tenant.clone(), range, epoch, commits: vec![commit] },
         );
         self.send(transport, peer, &envelope)
+    }
+
+    /// Sends one push of every named committed operation to a peer in a
+    /// single frame (SE-07 budgets E-3/E-4: acknowledging K operations
+    /// costs one push frame and one batched answer per peer, not K of
+    /// each). Operations the member cannot serve from its journal are
+    /// skipped; the returned count is the number of commits the frame
+    /// carried.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::NotOwner`] when none of the operations are
+    /// this member's committed writes, and the transport's typed failure.
+    pub fn send_push_batch(
+        &mut self,
+        transport: &mut dyn MemberTransport,
+        peer: &MemberId,
+        tenant: &TenantId,
+        operations: &[OperationId],
+    ) -> Result<usize, MemberError> {
+        let mut commits = Vec::with_capacity(operations.len());
+        let mut range: Option<String> = None;
+        let mut epoch = 1;
+        for operation in operations {
+            let Some(operation_range) = self.operation_ranges.get(operation).cloned() else {
+                continue;
+            };
+            let Some(found) = self.find_commit(tenant, operation) else {
+                continue;
+            };
+            epoch = self.config.topology.owner_epoch_of(&operation_range).unwrap_or(1);
+            range = Some(operation_range);
+            commits.push(found);
+        }
+        let Some(range) = range else {
+            return Err(MemberError::NotOwner { range: String::new() });
+        };
+        let pushed = commits.len();
+        let envelope = self.build_envelope(
+            FrameKind::Push,
+            peer.clone(),
+            None,
+            None,
+            None,
+            Some(range.clone()),
+            Some(epoch),
+            Payload::Push { tenant: tenant.clone(), range, epoch, commits },
+        );
+        self.send(transport, peer, &envelope)?;
+        Ok(pushed)
     }
 
     /// Returns the members whose latest acknowledgement reports confirm they
@@ -1514,9 +1608,22 @@ impl LaneMember {
     }
 
     /// Finds one committed operation in this member's journal with its
-    /// stamp, paging the journal forward.
+    /// stamp. The recorded operation sequence positions the read at one
+    /// journal page (SE-07 budget E-7); the forward paging scan remains
+    /// only as the fallback for a member whose in-memory sequences were
+    /// cleared by a restart.
     fn find_commit(&self, tenant: &TenantId, operation: &OperationId) -> Option<LaneCommit> {
         let stamp = self.operation_stamps.get(operation).copied()?;
+        if let Some(sequence) = self.operation_sequences.get(operation).copied() {
+            let page = self.journal.tenant_commits(tenant, sequence.saturating_sub(1), 1).ok()?;
+            if let Some(mut commit) = page.into_iter().next()
+                && commit.operation == *operation
+            {
+                commit.stamp = stamp;
+                return Some(commit);
+            }
+            return None;
+        }
         let mut after = 0;
         loop {
             let page = self.journal.tenant_commits(tenant, after, DEFAULT_CATCH_UP_BATCH).ok()?;
@@ -1577,6 +1684,40 @@ impl LaneMember {
     ) -> Result<(), MemberError> {
         let frame = encode(envelope).map_err(MemberError::Envelope)?;
         transport.send(&self.id, to, frame).map_err(MemberError::from)
+    }
+
+    /// Sends one reply envelope, deferring a slow consumer instead of
+    /// failing the dispatch pass: when the addressed peer's bounded link
+    /// sits at capacity the deferral is recorded observably and `false`
+    /// is returned — every other peer's work in the pass continues
+    /// (SE-07 budget E-5). Any other failure propagates.
+    fn send_or_defer(
+        &mut self,
+        transport: &mut dyn MemberTransport,
+        to: &MemberId,
+        envelope: &Envelope,
+        report: &mut DispatchReport,
+    ) -> Result<bool, MemberError> {
+        match self.send(transport, to, envelope) {
+            Ok(()) => Ok(true),
+            Err(MemberError::TransportFull) => {
+                self.record_slow_consumer(to);
+                report.slow_consumer_deferrals += 1;
+                Ok(false)
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Records one deferred slow consumer, bounded and deduplicated.
+    fn record_slow_consumer(&mut self, member: &MemberId) {
+        if self.slow_consumers.contains(member) {
+            return;
+        }
+        if self.slow_consumers.len() >= MAX_OBSERVATION_LOGS {
+            self.slow_consumers.remove(0);
+        }
+        self.slow_consumers.push(member.clone());
     }
 
     /// Raises the highest epoch seen for one range.

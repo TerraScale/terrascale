@@ -66,6 +66,27 @@ const DOCS_ROOT: &str = "docs";
 /// the constant overhead of one range export.
 const BATCH_HEADROOM_BYTES: usize = 64;
 
+/// The packing-utilization target, in parts per thousand of the
+/// configured batch byte budget, that triggers measured re-export
+/// feedback when a first estimate-based acceptance under-fills the batch
+/// (SE-07 budget E-8).
+const PACKING_UTILIZATION_TARGET_PER_MILLE: u64 = 700;
+
+/// The bound on additional range exports one `delta_since` call may
+/// perform while tightening batch packing with measured feedback. The
+/// first estimate-based export plus at most this many probes keeps the
+/// serving cost bounded while closing the amortization gap the
+/// sum-of-parts estimate leaves (SE-07 budget E-8).
+const MAX_PACKING_PROBES: usize = 3;
+
+/// The transient assembly bound during packing probes: a probe export may
+/// measure at most this multiple of the configured byte budget before the
+/// probe is rejected and the acceptance binary-refines downward. The
+/// delivered batch never exceeds the budget (a multi-commit batch), so
+/// the guarantee stays: assembly memory is bounded by the probe bound and
+/// the budget, never by a consumer's backlog.
+const PACKING_PROBE_BOUND_MULTIPLIER: usize = 2;
+
 /// The error type of the sync-core seam.
 #[derive(Debug, PartialEq)]
 pub enum SyncCoreError {
@@ -224,6 +245,19 @@ fn le_u32(bytes: &[u8]) -> Result<u32, SyncCoreError> {
         .try_into()
         .map(u32::from_le_bytes)
         .map_err(|_| SyncCoreError::InvalidFrame("byte run too short"))
+}
+
+/// The commit count of the next packing probe (SE-07 budget E-8): a
+/// linear extrapolation from the measured bytes of the current acceptance
+/// toward the byte budget with a safety margin, always at least one more
+/// commit and never past the retained window.
+fn packing_probe_count(current: u64, measured: usize, budget: usize, total: u64) -> u64 {
+    if measured == 0 || budget == 0 {
+        return total.min(current + 1);
+    }
+    let scaled = (u128::from(current) * budget as u128 / measured as u128) * 9 / 10;
+    let target = u64::try_from(scaled).unwrap_or(u64::MAX);
+    target.clamp(current + 1, total)
 }
 
 /// The durable resumption identity of one Sync Session over this scope:
@@ -504,6 +538,13 @@ impl SyncCore {
     ///
     /// Returns the typed checkpoint errors (foreign peer, ahead of
     /// server) and [`SyncCoreError::BaseEngine`] when an export fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a retained-window length or a packing-probe commit
+    /// count exceeds the platform's `usize`; the window is bounded by
+    /// [`SyncCoreConfig::checkpoint_window`], so this cannot occur on a
+    /// supported platform.
     pub fn delta_since(&self, from: &SyncCheckpoint) -> Result<SyncBatch, SyncCoreError> {
         let from_end = self.validate_checkpoint(from)?;
         let current_end = self.current_end();
@@ -520,24 +561,78 @@ impl SyncCore {
         // accepting while the measured sizes fit the budget. The first
         // commit is always accepted so an oversized single commit is
         // delivered alone and flagged.
+        let candidates: Vec<CommitBoundary> =
+            self.boundaries.iter().filter(|b| b.end > from_end).copied().collect();
         let mut accepted: Option<CommitBoundary> = None;
         let mut commits = 0u64;
         let mut estimated = BATCH_HEADROOM_BYTES;
-        for boundary in self.boundaries.iter().filter(|b| b.end > from_end) {
+        for boundary in &candidates {
             if accepted.is_some()
                 && estimated.saturating_add(boundary.delta_bytes) > self.config.batch_byte_budget
             {
                 break;
             }
-            estimated += boundary.delta_bytes;
+            estimated = estimated.saturating_add(boundary.delta_bytes);
             accepted = Some(*boundary);
             commits += 1;
         }
-        let Some(accepted) = accepted else {
+        let Some(mut accepted) = accepted else {
             return Ok(SyncBatch::BehindRetainedFloor { floor });
         };
 
-        let bytes = self.export_range(from_end, accepted.end)?;
+        let mut bytes = self.export_range(from_end, accepted.end)?;
+        // Packing feedback (SE-07 budget E-8): the sum-of-parts estimate
+        // over-counts what one range export carries — per-commit encodings
+        // amortize inside a combined span — so an under-filled batch is
+        // re-accepted against the measured export, probing forward with a
+        // bounded number of exports. A probe is accepted only when the
+        // measured bytes still fit the budget, so a delivered multi-commit
+        // batch never exceeds it; a probe past the transient bound keeps
+        // the safe estimate-based acceptance.
+        let budget = self.config.batch_byte_budget;
+        let underfilled = |served: &usize| {
+            served.saturating_mul(1000)
+                < usize::try_from(
+                    PACKING_UTILIZATION_TARGET_PER_MILLE.saturating_mul(budget as u64),
+                )
+                .expect("budget target fits the platform")
+        };
+        let mut probes = 0;
+        while commits < u64::try_from(candidates.len()).expect("retained window fits")
+            && probes < MAX_PACKING_PROBES
+            && underfilled(&bytes.len())
+        {
+            probes += 1;
+            let target = packing_probe_count(
+                commits,
+                bytes.len(),
+                budget,
+                u64::try_from(candidates.len()).expect("retained window fits"),
+            );
+            let probe = candidates[usize::try_from(target).expect("retained window fits") - 1];
+            let probe_bytes = self.export_range(from_end, probe.end)?;
+            if probe_bytes.len() <= budget {
+                accepted = probe;
+                commits = target;
+                bytes = probe_bytes;
+                continue;
+            }
+            if probe_bytes.len() <= budget * PACKING_PROBE_BOUND_MULTIPLIER {
+                let mid = u64::midpoint(commits, target);
+                if mid > commits {
+                    let refined =
+                        candidates[usize::try_from(mid).expect("retained window fits") - 1];
+                    let refined_bytes = self.export_range(from_end, refined.end)?;
+                    if refined_bytes.len() <= budget {
+                        accepted = refined;
+                        commits = mid;
+                        bytes = refined_bytes;
+                    }
+                }
+            }
+            break;
+        }
+
         Ok(SyncBatch::Delta {
             within_budget: bytes.len() <= self.config.batch_byte_budget,
             single_commit_oversize: commits == 1 && bytes.len() > self.config.batch_byte_budget,
@@ -747,47 +842,82 @@ pub enum FrameBody {
 }
 
 impl FrameBody {
-    /// The body's canonical digest input: a kind tag, then the payload
-    /// and checkpoint encodings.
-    fn digest_input(&self) -> Vec<u8> {
-        let mut input = Vec::new();
+    /// The body's canonical digest input emitted chunk by chunk: a kind
+    /// tag, then the payload and checkpoint encodings. The emitter form
+    /// is what keeps both digesting and wire encoding allocation-light
+    /// (SE-07 budget E-10): a consumer hashes the chunks directly or
+    /// writes them into one pre-sized buffer, and neither path builds an
+    /// intermediate byte vector per field.
+    fn emit_digest_input<E: FnMut(&[u8])>(&self, mut emit: E) {
+        let emit_checkpoint = |emit: &mut E, checkpoint: &SyncCheckpoint| {
+            emit(&((13 + checkpoint.ends().len() * 12) as u64).to_le_bytes());
+            emit(&[1]);
+            emit(&checkpoint.storage_sequence.to_le_bytes());
+            emit(&u32::try_from(checkpoint.ends().len()).unwrap_or(u32::MAX).to_le_bytes());
+            for (peer, end) in checkpoint.ends() {
+                emit(&peer.to_le_bytes());
+                emit(&end.to_le_bytes());
+            }
+        };
         match self {
             FrameBody::Delta { bytes, next } => {
-                input.push(1);
-                input.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-                input.extend_from_slice(bytes);
-                let checkpoint = next.to_bytes();
-                input.extend_from_slice(&(checkpoint.len() as u64).to_le_bytes());
-                input.extend_from_slice(&checkpoint);
+                emit(&[1]);
+                emit(&(bytes.len() as u64).to_le_bytes());
+                emit(bytes);
+                emit_checkpoint(&mut emit, next);
             }
             FrameBody::Snapshot { bytes, checkpoint } => {
-                input.push(2);
-                input.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-                input.extend_from_slice(bytes);
-                let checkpoint = checkpoint.to_bytes();
-                input.extend_from_slice(&(checkpoint.len() as u64).to_le_bytes());
-                input.extend_from_slice(&checkpoint);
+                emit(&[2]);
+                emit(&(bytes.len() as u64).to_le_bytes());
+                emit(bytes);
+                emit_checkpoint(&mut emit, checkpoint);
             }
             FrameBody::Checkpoint(checkpoint) => {
-                input.push(3);
-                let checkpoint = checkpoint.to_bytes();
-                input.extend_from_slice(&(checkpoint.len() as u64).to_le_bytes());
-                input.extend_from_slice(&checkpoint);
+                emit(&[3]);
+                emit_checkpoint(&mut emit, checkpoint);
             }
             FrameBody::BehindRetainedFloor { floor } => {
-                input.push(4);
-                let floor = floor.to_bytes();
-                input.extend_from_slice(&(floor.len() as u64).to_le_bytes());
-                input.extend_from_slice(&floor);
+                emit(&[4]);
+                emit_checkpoint(&mut emit, floor);
             }
         }
+    }
+
+    /// The body's canonical digest input as one vector (tests and
+    /// canonical-form checks).
+    #[cfg(test)]
+    fn digest_input(&self) -> Vec<u8> {
+        let mut input = Vec::new();
+        self.emit_digest_input(|chunk| input.extend_from_slice(chunk));
         input
     }
 
-    /// The correlation-integrity digest of this body.
+    /// The exact encoded length of the canonical digest input, so callers
+    /// can pre-size one buffer instead of growing it.
+    fn encoded_len(&self) -> usize {
+        match self {
+            FrameBody::Delta { bytes, next } | FrameBody::Snapshot { bytes, checkpoint: next } => {
+                1 + 8 + bytes.len() + 8 + 13 + next.ends().len() * 12
+            }
+            FrameBody::Checkpoint(checkpoint)
+            | FrameBody::BehindRetainedFloor { floor: checkpoint } => {
+                1 + 8 + 13 + checkpoint.ends().len() * 12
+            }
+        }
+    }
+
+    /// The correlation-integrity digest of this body, computed
+    /// incrementally over the emitted chunks (no intermediate buffer).
     #[must_use]
     pub fn digest(&self) -> FrameDigest {
-        FrameDigest::of(&self.digest_input())
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        self.emit_digest_input(|chunk| {
+            for byte in chunk {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        });
+        FrameDigest(hash)
     }
 }
 
@@ -852,17 +982,19 @@ impl SyncFrame {
     /// The versioned byte encoding of the frame: contract tag byte,
     /// correlation, causation, digest, body-length, then the body's
     /// canonical digest input (which begins with the body-kind tag).
-    /// Unknown contract versions fail closed on decode.
+    /// Unknown contract versions fail closed on decode. The body is
+    /// emitted once into one exactly-sized buffer (SE-07 budget E-10).
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let body = self.body.digest_input();
-        let mut bytes = Vec::with_capacity(body.len() + 34);
+        let body_len = self.body.encoded_len();
+        let mut bytes = Vec::with_capacity(body_len + 34);
         bytes.push(1);
         bytes.extend_from_slice(&self.correlation.value().to_le_bytes());
         bytes.extend_from_slice(&self.causation.value().to_le_bytes());
         bytes.extend_from_slice(&self.digest.0.to_le_bytes());
-        bytes.extend_from_slice(&(body.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(&body);
+        bytes.extend_from_slice(&(body_len as u64).to_le_bytes());
+        self.body.emit_digest_input(|chunk| bytes.extend_from_slice(chunk));
+        debug_assert_eq!(bytes.len(), body_len + 34, "the emitted body matches its length");
         bytes
     }
 
