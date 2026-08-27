@@ -120,6 +120,13 @@ pub(crate) enum LaneError {
     },
 }
 
+/// The owner accountable for closing the sync-path workload slots
+/// (PD-2026-08-26-05 D4, PD-2026-08-26-13 D1): the lane owner with the
+/// SE-07 lane adapters that already measure the class's deterministic
+/// quantities in the sibling crates.
+const SYNC_PATH_OWNER: &str = "SE-15 follow-up owner: the benchmark lane owner, with the SE-07 \
+                               sync-core and member-transport lane owners";
+
 /// One comparable workload of the objective, mapped on both sides.
 ///
 /// The mapping lives here as data so the mapping document
@@ -138,16 +145,54 @@ pub(crate) enum Workload {
     Mixed,
     /// Connection and session churn.
     SessionCycle,
+    /// Commit-to-delivery latency on the client and member links
+    /// (PD-2026-08-26-05 D4).
+    SyncCommitToDeliveryLatency,
+    /// Delivery throughput under load on the client and member links
+    /// (PD-2026-08-26-05 D4).
+    SyncDeliveryThroughput,
+    /// Bytes-on-wire per delivered change on the client and member links
+    /// (PD-2026-08-26-13 D1).
+    SyncBytesOnWirePerChange,
+    /// Encoded trigger-notification size (PD-2026-08-26-13 D1/D3).
+    SyncTriggerNotificationSize,
 }
 
 impl Workload {
-    /// Every workload of the objective.
-    pub(crate) const ALL: [Self; 5] = [
+    /// Every workload of the objective: the five CRUD-class workloads and
+    /// the four sync-path workloads the charter mandates beside them.
+    pub(crate) const ALL: [Self; 9] = [
         Self::DocumentRead,
         Self::DocumentWrite,
         Self::IndexedQuery,
         Self::Mixed,
         Self::SessionCycle,
+        Self::SyncCommitToDeliveryLatency,
+        Self::SyncDeliveryThroughput,
+        Self::SyncBytesOnWirePerChange,
+        Self::SyncTriggerNotificationSize,
+    ];
+
+    /// The sync-path workload class (PD-2026-08-26-05 D4,
+    /// PD-2026-08-26-13 D1): commit-to-delivery latency, delivery
+    /// throughput under load, and bandwidth — bytes-on-wire per delivered
+    /// change and trigger-notification size — on the client and member
+    /// links, documented and run alongside the PostgreSQL and V1 baselines.
+    ///
+    /// Every workload in this class is an **open adapter slot** here: the
+    /// sync plane lives in the sibling crates (`terrabase-sync-core`,
+    /// `terrabase-member-transport`, the TBEP host) that the
+    /// zero-dependency engine crate cannot call, and the wall-clock
+    /// quantities additionally need both reference baselines to have run.
+    /// Each slot is declared through [`Self::driver_status`] with a reason
+    /// and a named owner — the same pattern the `session` workload uses —
+    /// and appears in the receipts as an owed measurement, never as a
+    /// silent skip.
+    pub(crate) const SYNC_PATH: [Self; 4] = [
+        Self::SyncCommitToDeliveryLatency,
+        Self::SyncDeliveryThroughput,
+        Self::SyncBytesOnWirePerChange,
+        Self::SyncTriggerNotificationSize,
     ];
 
     /// The receipt token, matching V1's workload names.
@@ -158,6 +203,10 @@ impl Workload {
             Self::IndexedQuery => "query",
             Self::Mixed => "mixed",
             Self::SessionCycle => "session",
+            Self::SyncCommitToDeliveryLatency => "sync-commit-to-delivery-latency",
+            Self::SyncDeliveryThroughput => "sync-delivery-throughput",
+            Self::SyncBytesOnWirePerChange => "sync-bytes-on-wire",
+            Self::SyncTriggerNotificationSize => "sync-trigger-notification-size",
         }
     }
 
@@ -170,6 +219,10 @@ impl Workload {
             Self::IndexedQuery => 2,
             Self::Mixed => 3,
             Self::SessionCycle => 4,
+            Self::SyncCommitToDeliveryLatency => 5,
+            Self::SyncDeliveryThroughput => 6,
+            Self::SyncBytesOnWirePerChange => 7,
+            Self::SyncTriggerNotificationSize => 8,
         }
     }
 
@@ -224,6 +277,35 @@ impl Workload {
                 "TBEP UDS host session open/use/close over the engine — the SE-14/SE-08 \
                  host session surface"
             }
+            Self::SyncCommitToDeliveryLatency => {
+                "the interval from a commit's acknowledgement to the consumer's delivery \
+                 observation, per link: client link — commit publication, the content-free \
+                 trigger, and the checkpoint-bounded delta the triggered client pulls \
+                 (sync-core apply/serve through the C# host); member link — commit to the \
+                 pushed or catch-up-delivered batch a member applies (member-transport \
+                 push/catch-up and apply)"
+            }
+            Self::SyncDeliveryThroughput => {
+                "the same two delivery paths under sustained load: changes delivered per \
+                 round while a backlog drains on the member link (bounded by the validated \
+                 catch-up batch) and delta batches served per budget window on the client \
+                 link"
+            }
+            Self::SyncBytesOnWirePerChange => {
+                "encoded frame bytes at each link's delivery boundary divided by changes \
+                 delivered: client link — delta-batch and snapshot wire bytes per delivered \
+                 change (the E-11 counter in the sync-core delta-efficiency adapter); member \
+                 link — the per-direction envelope byte counters over push, catch-up, and \
+                 acknowledgement frames (the SE-06 bytes-on-wire definition)"
+            }
+            Self::SyncTriggerNotificationSize => {
+                "the encoded, content-free trigger notification: the terrascale.sync.v2 \
+                 trigger frame on the client link (collection scope, storage sequence, \
+                 operation id — nothing else), from the same wire shapes the SE-04 golden \
+                 corpus records; the member link carries no trigger-notification frame \
+                 class by design — members are pushed the data envelopes themselves, whose \
+                 size the sync-bytes-on-wire workload covers"
+            }
         }
     }
 
@@ -255,6 +337,31 @@ impl Workload {
                  the un-pooled session churn cost, matching TerraBaseV2's per-session \
                  engine binding"
             }
+            Self::SyncCommitToDeliveryLatency => {
+                "-- no PostgreSQL equivalent: PostgreSQL has no push-based client delivery \
+                 path, and its nearest surface (LISTEN/NOTIFY) is a payload-carrying channel \
+                 notification with no checkpointed delta pull, so it is not a comparable \
+                 contract; this workload compares TerraBaseV2 against its own written \
+                 budgets and the TerraBase V1 baseline"
+            }
+            Self::SyncDeliveryThroughput => {
+                "-- no PostgreSQL equivalent: PostgreSQL replication (WAL streaming, logical \
+                 decoding) is a different wire contract with no shared budget or delivery \
+                 acknowledgement level; this workload compares TerraBaseV2 against its own \
+                 written budgets and the TerraBase V1 baseline"
+            }
+            Self::SyncBytesOnWirePerChange => {
+                "-- no PostgreSQL equivalent: PostgreSQL's replication byte counts measure a \
+                 different wire contract (WAL frames, not budgeted delta envelopes), so no \
+                 shared budget exists; this workload compares TerraBaseV2 against the \
+                 PD-2026-08-26-13 D1 written budgets and the TerraBase V1 baseline"
+            }
+            Self::SyncTriggerNotificationSize => {
+                "-- no PostgreSQL equivalent: the nearest surface, LISTEN/NOTIFY, carries a \
+                 payload string and no delta path, so it is not comparable; the trigger \
+                 frame is held against its own written budget (256 bytes) and the TerraBase \
+                 V1 baseline"
+            }
         }
     }
 
@@ -272,6 +379,34 @@ impl Workload {
                  core only, so the session workload waits for the host-mode lane run",
                 "SE-15 follow-up owner: the benchmark lane owner, with the SE-08 host \
                  surface",
+            )),
+            Self::SyncCommitToDeliveryLatency | Self::SyncDeliveryThroughput => Some((
+                "a wall-clock sync-path quantity needs the SE-15 statistical gate with both \
+                 reference baselines run and the served sync plane beside the engine — the \
+                 C# host/TBEP client link and the member-transport lane; this in-process \
+                 lane drives the engine core only, and the sync plane lives in the sibling \
+                 crates the zero-dependency engine crate cannot call, so the workload waits \
+                 for the served-lane run beside the references",
+                SYNC_PATH_OWNER,
+            )),
+            Self::SyncBytesOnWirePerChange => Some((
+                "the deterministic TerraBaseV2-side counters already exist and are pinned \
+                 (client link: the sync-core delta-efficiency adapter's per-change byte \
+                 counts; member link: the SE-06 lane bytes-on-wire counters); the owed run \
+                 is the receipted comparison alongside the PostgreSQL and TerraBase V1 \
+                 baselines under the SE-15 gate, whose lane adapters live in those sibling \
+                 crates — re-deriving the counters inside the zero-dependency engine crate \
+                 would duplicate them, not measure them, so the slot stays open",
+                SYNC_PATH_OWNER,
+            )),
+            Self::SyncTriggerNotificationSize => Some((
+                "the deterministic measurement already exists and is pinned: the \
+                 content-free trigger frame is recorded in the SE-04 golden corpus and \
+                 bounded by its written budget in the sync-core delta-efficiency adapter; \
+                 the owed run is the receipted comparison alongside the baselines under the \
+                 SE-15 gate, whose lane adapter lives in the sync-core crate the engine \
+                 crate cannot call",
+                SYNC_PATH_OWNER,
             )),
             _ => None,
         }

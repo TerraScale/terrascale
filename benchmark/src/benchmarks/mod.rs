@@ -23,7 +23,10 @@
 //! - the **workload mapping as data**: each comparable workload's
 //!   TerraBaseV2 operation and PostgreSQL equivalent, so the mapping
 //!   document is generated from the same source the driver uses
-//!   ([`lane::Workload`]);
+//!   ([`lane::Workload`]) — including the sync-path workload class
+//!   (PD-2026-08-26-05 D4, PD-2026-08-26-13 D1:
+//!   [`lane::Workload::SYNC_PATH`]), whose four workloads are declared
+//!   open slots with named owners rather than silently absent;
 //! - the **V2-side driver** that really runs the engine workloads and
 //!   returns exact, deterministic counters ([`driver`]);
 //! - the **receipt renderer** that emits the canonical objective-status
@@ -37,6 +40,14 @@
 //! reference that did not execute is recorded as `Unrun` with the concrete
 //! environment gap and a named owner — never as a number, never as a silent
 //! skip, and never as a hidden weakening of the gate.
+//!
+//! For the same reason it does not drive the sync-path workload class: that
+//! plane lives in the sibling crates (`terrabase-sync-core`,
+//! `terrabase-member-transport`, the TBEP host) the zero-dependency engine
+//! crate cannot call, and the wall-clock quantities additionally need both
+//! reference baselines to have run. The class is therefore declared as
+//! open slots in [`lane::Workload::driver_status`] with a named owner, the
+//! same pattern the `session` workload uses — never skipped silently.
 //!
 //! The fail-closed rule is structural: [`gates::reference_comparison_status`]
 //! returns `inconclusive` for *any* comparison while either reference is

@@ -209,13 +209,14 @@ fn run_order_alternates_within_a_workload() {
     );
 }
 
-/// The five comparable workloads exist, each carries its PostgreSQL and
-/// TerraBaseV2 equivalents as data (the mapping document is generated from
-/// these, not hand-copied beside them), and the mixed workload keeps V1's
-/// 50/30/20 read/write/query ratio.
+/// The nine declared workloads exist — the five CRUD-class workloads and
+/// the four sync-path workloads the charter mandates beside them — each
+/// carries its PostgreSQL and TerraBaseV2 equivalents as data (the mapping
+/// document is generated from these, not hand-copied beside them), and the
+/// mixed workload keeps V1's 50/30/20 read/write/query ratio.
 #[test]
 fn every_workload_names_both_sides_of_its_mapping() {
-    assert_eq!(Workload::ALL.len(), 5);
+    assert_eq!(Workload::ALL.len(), 9);
     for workload in Workload::ALL {
         assert!(!workload.terrabase_v2_operation().is_empty());
         assert!(workload.postgres_equivalent().starts_with("-- "), "{workload:?}");
@@ -227,6 +228,64 @@ fn every_workload_names_both_sides_of_its_mapping() {
             .map(Workload::as_str),
         ["read", "write", "query", "mixed"]
     );
+}
+
+/// The sync-path workload class (PD-2026-08-26-05 D4, PD-2026-08-26-13 D1)
+/// is declared, not skipped: four workloads, each naming the links it
+/// measures, each carrying the honest no-PostgreSQL-equivalent comparand
+/// statement, and each an open adapter slot with a named owner — the same
+/// treatment the session workload receives. None of them is silently
+/// absent from the declared set.
+#[test]
+fn the_sync_path_class_declares_its_open_adapter_slots() {
+    assert_eq!(
+        Workload::SYNC_PATH.map(Workload::as_str),
+        [
+            "sync-commit-to-delivery-latency",
+            "sync-delivery-throughput",
+            "sync-bytes-on-wire",
+            "sync-trigger-notification-size",
+        ]
+    );
+    for workload in Workload::SYNC_PATH {
+        assert!(
+            Workload::ALL.contains(&workload),
+            "{workload:?} must be part of the declared workload set"
+        );
+        assert_eq!(workload.mixed_ratios(), None);
+        assert!(
+            workload.postgres_equivalent().contains("no PostgreSQL equivalent"),
+            "the fairness statement must say there is no comparand: {workload:?}"
+        );
+        assert!(
+            workload.terrabase_v2_operation().contains("client link"),
+            "the mapping must name the client link: {workload:?}"
+        );
+        let (reason, owner) = workload.driver_status().expect("the open slot is named");
+        assert!(!reason.is_empty(), "{workload:?}");
+        assert!(!owner.is_empty(), "{workload:?}");
+    }
+
+    // The three quantities that exist on the member link must name it; the
+    // trigger notification is a client-facing frame class, and its mapping
+    // says so explicitly instead of implying a member-link measurement.
+    for workload in [
+        Workload::SyncCommitToDeliveryLatency,
+        Workload::SyncDeliveryThroughput,
+        Workload::SyncBytesOnWirePerChange,
+    ] {
+        assert!(
+            workload.terrabase_v2_operation().contains("member link"),
+            "the mapping must name the member link: {workload:?}"
+        );
+    }
+    assert!(Workload::SyncTriggerNotificationSize.terrabase_v2_operation().contains("member link"));
+
+    // The CRUD-class workloads the lane drives keep no open slot, exactly as
+    // before the sync-path class was declared.
+    for workload in [Workload::DocumentRead, Workload::DocumentWrite, Workload::IndexedQuery] {
+        assert_eq!(workload.driver_status(), None);
+    }
 }
 
 /// The mixed workload selects V1's 50/30/20 read/write/query split by
