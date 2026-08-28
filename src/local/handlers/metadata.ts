@@ -13,6 +13,7 @@ import type { TerraScaleSqliteStore } from "../store.js";
 
 type NotificationRecord = Models.Notification & { readonly userId?: string };
 
+const DEFAULT_LOCAL_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const LOCAL_SCOPE = "local";
 
 export const handleLocalMetadata: LocalHandler = async (context) => {
@@ -81,10 +82,6 @@ export const handleLocalMetadata: LocalHandler = async (context) => {
     match = matchLocalRoute(context, "GET", "/api/v1/projects/{projectId}/audit/{auditEventId}");
     if (match !== undefined && match.projectId! === projectId) return getAuditEvent(store, projectId, match.auditEventId!);
 
-    match = matchLocalRoute(context, "GET", "/api/v1/projects/{projectId}/security/settings");
-    if (match !== undefined && match.projectId! === projectId) return getSecuritySettings(store, projectId, context.now);
-    match = matchLocalRoute(context, "PUT", "/api/v1/projects/{projectId}/security/settings");
-    if (match !== undefined && match.projectId! === projectId) return updateSecuritySettings(store, context, projectId);
   }
 
   match = matchLocalRoute(context, "GET", "/api/v1/users/me/notifications");
@@ -202,38 +199,12 @@ async function getAuditEvent(store: TerraScaleSqliteStore, projectId: string, id
   return item === undefined ? notFound("audit event") : jsonResponse(item);
 }
 
-async function getSecuritySettings(store: TerraScaleSqliteStore, projectId: string, now: string): Promise<Response> {
-  const existing = await get<Models.SecuritySettings>(store, "security-settings", projectId);
-  if (existing !== undefined) return jsonResponse(existing);
-  const defaults: Models.SecuritySettings = { projectId: projectId as ProjectId, mfaPolicy: "optional", ipAllowlist: "", allowedEmailDomains: "", dataResidency: "global", encryption: "managed", authenticationEnabled: true, updatedAt: now };
-  await put(store, "security-settings", projectId, defaults);
-  return jsonResponse(defaults);
-}
-
-async function updateSecuritySettings(store: TerraScaleSqliteStore, context: LocalRequestContext, projectId: string): Promise<Response> {
-  const currentResponse = await getSecuritySettings(store, projectId, context.now);
-  const current = (await currentResponse.json()) as Models.SecuritySettings;
-  const body = objectBody(context);
-  if (body.authenticationEnabled === false && body.confirmDisableAuthentication !== true) return problemResponse(400, "confirmation_required", "confirmDisableAuthentication must be true when disabling authentication.");
-  const updated: Models.SecuritySettings = {
-    ...current,
-    ...(text(body.mfaPolicy) === undefined ? {} : { mfaPolicy: text(body.mfaPolicy)! }),
-    ...(typeof body.ipAllowlist === "string" ? { ipAllowlist: body.ipAllowlist } : {}),
-    ...(typeof body.allowedEmailDomains === "string" ? { allowedEmailDomains: body.allowedEmailDomains } : {}),
-    ...(text(body.dataResidency) === undefined ? {} : { dataResidency: text(body.dataResidency)! }),
-    ...(typeof body.authenticationEnabled === "boolean" ? { authenticationEnabled: body.authenticationEnabled } : {}),
-    updatedAt: context.now,
-  };
-  await put(store, "security-settings", projectId, updated);
-  return jsonResponse(updated);
-}
-
 async function listNotifications(store: TerraScaleSqliteStore, context: LocalRequestContext): Promise<Response> {
   const params = context.url.searchParams;
   const projectId = text(params.get("projectId")) ?? undefined;
   const organizationId = text(params.get("organizationId")) ?? undefined;
   const unreadOnly = params.get("unreadOnly") === "true";
-  const userId = await currentLocalUserId(store, context);
+  const userId = await currentLocalUserId(store);
   const items = (await records<NotificationRecord>(store, "notifications")).filter((item) =>
     item.userId === userId && (!projectId || item.projectId === projectId) && (!organizationId || item.organizationId === organizationId) && (!unreadOnly || item.readAt === undefined));
   return jsonResponse(items.map(publicNotification));
@@ -241,7 +212,7 @@ async function listNotifications(store: TerraScaleSqliteStore, context: LocalReq
 
 async function markNotificationRead(store: TerraScaleSqliteStore, context: LocalRequestContext, id: string): Promise<Response> {
   const item = await get<NotificationRecord>(store, "notifications", id);
-  if (item === undefined || item.userId !== await currentLocalUserId(store, context)) return notFound("notification");
+  if (item === undefined || item.userId !== await currentLocalUserId(store)) return notFound("notification");
   const updated = { ...item, readAt: item.readAt ?? context.now };
   await put(store, "notifications", id, updated);
   return jsonResponse(publicNotification(updated));
@@ -249,7 +220,7 @@ async function markNotificationRead(store: TerraScaleSqliteStore, context: Local
 
 async function markAllNotificationsRead(store: TerraScaleSqliteStore, context: LocalRequestContext): Promise<Response> {
   const organizationId = context.url.searchParams.get("organizationId");
-  const userId = await currentLocalUserId(store, context);
+  const userId = await currentLocalUserId(store);
   const items = await records<NotificationRecord>(store, "notifications");
   let markedRead = 0;
   for (const item of items) {
@@ -277,21 +248,10 @@ function text(value: unknown): string | undefined { return typeof value === "str
 function countryFor(code: string): string { return code === "gru" ? "BR" : code === "sfo" ? "US" : "DE"; }
 function notFound(resource: string): Response { return problemResponse(404, "not_found", `${resource} was not found.`); }
 
-async function currentLocalUserId(store: TerraScaleSqliteStore, context: LocalRequestContext): Promise<string> {
-  const authorization = context.request.headers.get("authorization")?.replace(/^Bearer\s+/iu, "").trim();
-  if (authorization !== undefined && authorization.length > 0) {
-    const sessions = store.list<{ readonly accessToken?: string; readonly revoked?: boolean; readonly userId?: string }>("auth:sessions", "global");
-    const session = sessions.find((item) => item.accessToken === authorization && item.revoked !== true);
-    if (session?.userId !== undefined) {
-      const user = await store.get("auth:users", "global", session.userId) as { readonly userId?: string } | undefined;
-      if (user?.userId !== undefined) return user.userId;
-    }
-  }
+async function currentLocalUserId(store: TerraScaleSqliteStore): Promise<string> {
   const stored = await store.getMeta("local.defaultUserId");
   const defaultId = typeof stored === "string" ? stored : undefined;
-  if (defaultId === undefined) return "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-  const user = await store.get("auth:users", "global", defaultId) as { readonly userId?: string } | undefined;
-  return user?.userId ?? defaultId;
+  return defaultId ?? DEFAULT_LOCAL_USER_ID;
 }
 
 async function nextId(store: TerraScaleSqliteStore): Promise<string> {

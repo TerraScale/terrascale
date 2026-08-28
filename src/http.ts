@@ -14,30 +14,23 @@ import {
 export type TerraScaleRouteName =
   | `access.${string}`
   | `admin.${string}`
-  | `apiKeys.${string}`
   | `audit.${string}`
-  | `auth.${string}`
   | `backups.${string}`
-  | `billing.${string}`
   | `databaseBranches.${string}`
   | `databases.${string}`
   | `documents.${string}`
-  | `m2m.${string}`
   | `notifications.${string}`
   | `onboarding.${string}`
   | `organizations.${string}`
-  | `pricing.${string}`
   | `query.${string}`
-  | `queues.${string}`
   | `regions.${string}`
   | `repositories.${string}`
   | `savedQueries.${string}`
   | `schema.${string}`
-  | `security.${string}`
   | `settings.${string}`
   | `usage.${string}`;
 
-export type TerraScaleBase = "api" | "auth";
+export type TerraScaleBase = "api";
 export type TerraScaleHttpMethod = "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
 export type QueryScalar = boolean | Date | number | string;
 export type QueryValue = QueryScalar | readonly QueryScalar[] | null | undefined;
@@ -52,7 +45,6 @@ export type TerraScaleRequestOptions<TBody = unknown> = {
   readonly body?: TBody | undefined;
   readonly headers?: HeadersInit | undefined;
   readonly signal?: AbortSignal | undefined;
-  readonly headerPolicy?: "authenticated" | "anonymous" | undefined;
   readonly idempotencyKey?: string | false | undefined;
   readonly consistency?: "read" | "write" | undefined;
 };
@@ -77,7 +69,7 @@ export class TerraScaleHttp {
   async request<TResponse, TBody = unknown>(
     options: TerraScaleRequestOptions<TBody>,
   ): Promise<TerraScaleResult<TResponse>> {
-    const base = options.base ?? "api";
+    const base: TerraScaleBase = "api";
     const startedAt = performance.now();
     let idempotencyKey: string | undefined;
 
@@ -88,8 +80,8 @@ export class TerraScaleHttp {
         let responseReceived = false;
         let fetchStarted = false;
         try {
-          const url = buildUrl(this.baseUrl(base), options.path, options.query);
-          const headers = await this.buildHeaders(options, base, idempotencyKey);
+          const url = buildUrl(this.baseUrl(), options.path, options.query);
+          const headers = await this.buildHeaders(options, idempotencyKey);
           const requestInit: RequestInit = {
             method: options.method,
             headers,
@@ -172,59 +164,49 @@ export class TerraScaleHttp {
     }
   }
 
-  private baseUrl(base: TerraScaleBase): string {
-    return base === "auth" ? this.config.authBaseUrl : this.config.apiBaseUrl;
+  private baseUrl(): string {
+    return this.config.apiBaseUrl;
   }
 
   private async buildHeaders<TBody>(
     options: TerraScaleRequestOptions<TBody>,
-    base: TerraScaleBase,
     idempotencyKey: string | undefined,
   ): Promise<Headers> {
-    const anonymous = options.headerPolicy === "anonymous";
-    const headers = new Headers(anonymous ? undefined : this.config.defaultHeaders);
+    const headers = new Headers(this.config.defaultHeaders);
 
     headers.set("accept", headers.get("accept") ?? "application/json");
-    if (!anonymous) {
-      if (this.config.projectId !== undefined) {
-        headers.set("x-terrascale-project-id", this.config.projectId);
-      }
+    if (this.config.projectId !== undefined) {
+      headers.set("x-terrascale-project-id", this.config.projectId);
+    }
 
-      if (
-        base === "api" &&
-        this.config.regionAffinity === "failover" &&
-        this.config.preferredRegion !== undefined
-      ) {
-        headers.set("x-terrascale-preferred-region", this.config.preferredRegion);
-      }
+    if (
+      this.config.regionAffinity === "failover" &&
+      this.config.preferredRegion !== undefined
+    ) {
+      headers.set("x-terrascale-preferred-region", this.config.preferredRegion);
+    }
 
-      if (
-        options.consistency === "read" &&
-        this.config.sessionConsistency === "automatic" &&
-        this.#sessionConsistencyTokens.has(options.path)
-      ) {
-        headers.set(
-          "x-terrascale-session-consistency-token",
-          this.#sessionConsistencyTokens.get(options.path)!,
-        );
-      }
+    if (
+      options.consistency === "read" &&
+      this.config.sessionConsistency === "automatic" &&
+      this.#sessionConsistencyTokens.has(options.path)
+    ) {
+      headers.set(
+        "x-terrascale-session-consistency-token",
+        this.#sessionConsistencyTokens.get(options.path)!,
+      );
+    }
 
-      const token = await resolveAccessToken(this.config.accessToken);
+    const token = await resolveAccessToken(this.config.accessToken);
 
-      if (token !== undefined && token.length > 0) {
-        headers.set("authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
-      }
+    if (token !== undefined && token.length > 0) {
+      headers.set("authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
     }
 
     if (options.headers !== undefined) {
       for (const [key, value] of new Headers(options.headers).entries()) {
         headers.set(key, value);
       }
-    }
-
-    if (anonymous) {
-      headers.delete("authorization");
-      headers.delete("x-terrascale-project-id");
     }
 
     if (idempotencyKey !== undefined) {

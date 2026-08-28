@@ -31,7 +31,7 @@ Options:
   --host <host>      Listen host. Default: 127.0.0.1
   --port <port>      Listen port. Default: 0 (choose an available port)
   --seed             Create one local organization, project, database, repository,
-                     queue, and document before accepting requests
+                     and document before accepting requests
   --reset            Clear the selected database before optional seeding
   --require-auth     Require a normal bearer token or session cookie on protected routes
   --allow-remote     Allow a non-loopback listen host
@@ -78,9 +78,8 @@ try {
   process.stdout.write([
     "TerraScale SQLite development runtime is running.",
     `Database: ${databasePath}`,
-    `API and auth URL: ${address.origin}`,
+    `API URL: ${address.origin}`,
     `export TERRASCALE_API_BASE_URL=${address.apiBaseUrl}`,
-    `export TERRASCALE_AUTH_API_BASE_URL=${address.authBaseUrl}`,
     ...(seed === undefined ? [] : [`Seed project: ${seed.projectId}`, `Seed repository: ${seed.repositoryId}`]),
     "Press Ctrl-C to stop.",
     "",

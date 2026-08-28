@@ -12,7 +12,6 @@ import type {
   CreateDatabaseBranchRequest,
   DeletedProjectDatabaseEnvironmentResponse,
   JsonValue,
-  PricingPlan,
   ProjectSavedQueryResponse,
   ProjectSavedQuerySnapshotPageResponse,
   ProjectSavedQueryV2Response,
@@ -23,8 +22,6 @@ const databaseId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAW");
 const environmentId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAX");
 const repositoryId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAY");
 const documentId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAZ");
-const keyId = toUlid("01BRZ3NDEKTSV4RRFFQ69G5FAV");
-const clientId = toUlid("01CRZ3NDEKTSV4RRFFQ69G5FAV");
 const notificationId = toUlid("01DRZ3NDEKTSV4RRFFQ69G5FAV");
 const organizationId = toUlid("01ERZ3NDEKTSV4RRFFQ69G5FAV");
 const backupPolicyId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAW");
@@ -33,29 +30,6 @@ const restoreId = toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV");
 const restoredDatabaseId = toUlid("01QRZ3NDEKTSV4RRFFQ69G5FAV");
 const savedQueryId = toUlid("01SRZ3NDEKTSV4RRFFQ69G5FAV");
 const otherProjectId = toUlid("01TRZ3NDEKTSV4RRFFQ69G5FAV");
-
-const pricingPlan = {
-  planId: toUlid("01HRZ3NDEKTSV4RRFFQ69G5FAV"),
-  name: "Developer",
-  currency: "USD",
-  monthlyBaseCents: 1000,
-  annualBaseCents: 10000,
-  includedUsage: [],
-  key: "developer",
-  provider: "polar",
-  monthlyPriceId: null,
-  annualPriceId: null,
-  monthlyPolarProductId: null,
-  annualPolarProductId: null,
-  monthlyStripePriceId: null,
-  annualStripePriceId: null,
-  monthlyTrialDays: 14,
-  annualTrialDays: 14,
-  visible: true,
-  maxRegions: 3,
-  operationOverageCentsPerMillion: 100,
-  storageOverageCentsPerGbRegion: 25,
-} satisfies PricingPlan;
 
 const deletingEnvironment = {
   environmentId,
@@ -98,7 +72,7 @@ describe("TerraScaleClient route contracts", () => {
       manifest.routes.map(routeManifestCore),
       capturedRoutes.map(routeManifestCore),
     );
-    assert.equal(manifest.routeCount, 159);
+    assert.equal(manifest.routeCount, 82);
     assert.equal(manifest.routeCount, capturedRoutes.length);
     assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
     assert.deepEqual(
@@ -136,140 +110,6 @@ describe("TerraScaleClient route contracts", () => {
 
     await client.regions.list();
     assertRequest(requests[0], "GET", "/api/v1/regions");
-  });
-
-  test("routes account identity to Auth and organization billing to the product API", async () => {
-    const { client, requests } = createCapturingClientWithResponses([{}, {}, {}]);
-
-    await client.auth.getSession();
-    await client.auth.getCurrentBilling();
-    await client.auth.evaluateBillingGuard({ requireActiveSubscription: true });
-
-    assert.equal(requests[0]?.url.origin, "https://auth.terrascale.test");
-    assertRequest(requests[0], "GET", "/api/v1/auth/me");
-    assert.equal(requests[1]?.url.origin, "https://api.terrascale.test");
-    assertRequest(requests[1], "GET", "/api/v1/auth/me/billing");
-    assert.equal(requests[2]?.url.origin, "https://api.terrascale.test");
-    assertRequest(requests[2], "POST", "/api/v1/auth/me/billing/guard");
-  });
-
-  test("omits ignored legacy checkout fields while preserving their source compatibility", async () => {
-    const { client, requests } = createCapturingClient({});
-
-    await client.billing.createCheckoutSession(organizationId, {
-      priceId: "legacy-price",
-      planId: pricingPlan.planId,
-      billingInterval: "annual",
-      provider: "stripe",
-      quantity: 2,
-      successUrl: "https://app.example.test/success",
-      cancelUrl: "https://app.example.test/cancel",
-      customerEmail: "billing@example.test",
-    });
-
-    assertRequest(
-      requests[0],
-      "POST",
-      `/api/v1/organizations/${organizationId}/billing/checkout-sessions`,
-    );
-    assert.deepEqual(requests[0]?.body, {
-      priceId: "legacy-price",
-      planId: pricingPlan.planId,
-      billingInterval: "annual",
-      provider: "stripe",
-      quantity: 2,
-    });
-  });
-
-  test("preserves required pricing key and visibility from the public wire response", async () => {
-    const { client, requests } = createCapturingClient([pricingPlan]);
-
-    const result = await client.pricing.listPlans();
-
-    assert.equal(result.ok, true);
-    if (result.ok) {
-      assert.deepEqual(result.value, [pricingPlan]);
-    }
-    assertRequest(requests[0], "GET", "/api/v1/pricing/plans");
-  });
-
-  test("sends the selected onboarding plan to the public product API", async () => {
-    const { client, requests } = createCapturingClient({});
-
-    await client.onboarding.createPaymentSession({
-      successUrl: "https://app.example.test/onboarding?payment=success",
-      cancelUrl: "https://app.example.test/onboarding?payment=cancelled",
-      plan: "starter",
-      planId: pricingPlan.planId,
-      billingInterval: "monthly",
-    });
-
-    assert.equal(requests[0]?.url.origin, "https://api.terrascale.test");
-    assertRequest(requests[0], "POST", "/api/v1/onboarding/payment-method/checkout-session");
-    assert.deepEqual(requests[0]?.body, {
-      successUrl: "https://app.example.test/onboarding?payment=success",
-      cancelUrl: "https://app.example.test/onboarding?payment=cancelled",
-      plan: "starter",
-      planId: pricingPlan.planId,
-      billingInterval: "monthly",
-    });
-  });
-
-  test("registers the onboarding payment method with the checkout session id", async () => {
-    const { client, requests } = createCapturingClient({});
-
-    await client.onboarding.registerOnboardingPaymentMethod({
-      sessionId: "cs_test_onboarding",
-    });
-
-    assert.equal(requests[0]?.url.origin, "https://api.terrascale.test");
-    assertRequest(requests[0], "POST", "/api/v1/onboarding/payment-method/register");
-    assert.deepEqual(requests[0]?.body, { sessionId: "cs_test_onboarding" });
-  });
-
-  test("separates platform email identity from project authentication", async () => {
-    const { client, requests } = createCapturingClient({});
-
-    await client.auth.requestEmailSignIn({
-      email: "ada@example.test",
-      redirectUrl: "https://app.example.test/login",
-      deliveryMethod: "code",
-    });
-    await client.auth.completeEmailSignIn({ email: "ada@example.test", code: "123456" });
-    await client.auth.project.listProviders(projectId, { cursor: "next", limit: 25 });
-    await client.auth.initiateEmailChange({
-      newEmail: "augusta@example.test",
-      password: "correct horse battery staple",
-    });
-    await client.auth.verifyEmailChange({
-      newEmail: "augusta@example.test",
-      otpCode: "123456",
-    });
-
-    for (const request of requests) {
-      assert.equal(request.url.origin, "https://auth.terrascale.test");
-    }
-    assertRequest(requests[0], "POST", "/api/v1/auth/passwordless/magic-link");
-    assert.deepEqual(requests[0]?.body, {
-      email: "ada@example.test",
-      loginUrl: "https://app.example.test/login",
-      deliveryMethod: "code",
-    });
-    assertRequest(requests[1], "POST", "/api/v1/auth/passwordless/magic-link/complete");
-    assert.deepEqual(requests[1]?.body, { email: "ada@example.test", code: "123456" });
-    assertRequest(requests[2], "GET", `/api/v1/projects/${projectId}/auth/providers`);
-    assert.equal(requests[2]?.url.searchParams.get("cursor"), "next");
-    assert.equal(requests[2]?.url.searchParams.get("limit"), "25");
-    assertRequest(requests[3], "POST", "/api/v1/users/me/email/change");
-    assert.deepEqual(requests[3]?.body, {
-      newEmail: "augusta@example.test",
-      password: "correct horse battery staple",
-    });
-    assertRequest(requests[4], "POST", "/api/v1/users/me/email/verify");
-    assert.deepEqual(requests[4]?.body, {
-      newEmail: "augusta@example.test",
-      otpCode: "123456",
-    });
   });
 
   test("uses root repository routes without environment scope", async () => {
@@ -1034,129 +874,6 @@ describe("TerraScaleClient route contracts", () => {
     assert.equal(requests[8]?.headers.has("x-terrascale-delete-confirmation"), false);
   });
 
-  test("uses project auth API key wrappers and rotate/delete routes", async () => {
-    const created = {
-      apiKey: {
-        keyId,
-        projectId,
-        name: "ci",
-        prefix: "ts",
-        lastFour: "1234",
-        scopes: ["repositories:read"],
-        createdByEmail: "owner@terrascale.tech",
-        createdAt: "2026-07-05T00:00:00Z",
-        isActive: true,
-      },
-      secret: "ts_secret",
-    };
-    const { client, requests } = createCapturingClient(created);
-
-    await client.apiKeys.list(undefined, { cursor: "next", limit: 25 });
-    assert.equal(requests[0]?.url.origin, "https://auth.terrascale.test");
-    assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/auth/api-keys`);
-    assert.equal(requests[0]?.url.searchParams.get("cursor"), "next");
-    assert.equal(requests[0]?.url.searchParams.get("limit"), "25");
-
-    const createResult = await client.apiKeys.create({
-      name: "ci",
-      scopes: ["repositories:read"],
-      databaseId,
-      environmentId,
-    });
-    assert.equal(createResult.ok, true);
-    if (createResult.ok) {
-      assert.equal(createResult.value.apiKey.keyId, keyId);
-      assert.equal(createResult.value.secret, "ts_secret");
-      assert.equal("apiKeyId" in createResult.value.apiKey, false);
-    }
-    assertRequest(requests[1], "POST", `/api/v1/projects/${projectId}/auth/api-keys`);
-    assert.deepEqual(requests[1]?.body, {
-      name: "ci",
-      scopes: ["repositories:read"],
-      databaseId,
-      environmentId,
-    });
-
-    await client.apiKeys.rotate(keyId);
-    assertRequest(requests[2], "POST", `/api/v1/projects/${projectId}/auth/api-keys/${keyId}/rotate`);
-
-    await client.apiKeys.revoke(keyId);
-    assertRequest(requests[3], "DELETE", `/api/v1/projects/${projectId}/auth/api-keys/${keyId}`);
-  });
-
-  test("uses project auth M2M wrappers, token body, rotate, and delete routes", async () => {
-    const created = {
-      application: {
-        clientId,
-        projectId,
-        name: "worker",
-        prefix: "m2m",
-        lastFour: "9876",
-        scopes: ["documents:write"],
-        createdByEmail: "owner@terrascale.tech",
-        createdAt: "2026-07-05T00:00:00Z",
-        isActive: true,
-      },
-      clientSecret: "client_secret",
-    };
-    const { client, requests } = createCapturingClient(created);
-
-    await client.m2m.list(undefined, { cursor: "next", limit: 25 });
-    assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/auth/m2m-applications`);
-    assert.equal(requests[0]?.url.searchParams.get("cursor"), "next");
-    assert.equal(requests[0]?.url.searchParams.get("limit"), "25");
-
-    const createResult = await client.m2m.create({
-      name: "worker",
-      scopes: ["documents:write"],
-      databaseId,
-      environmentId,
-    });
-    assert.equal(createResult.ok, true);
-    if (createResult.ok) {
-      assert.equal(createResult.value.application.clientId, clientId);
-      assert.equal(createResult.value.clientSecret, "client_secret");
-    }
-    assertRequest(requests[1], "POST", `/api/v1/projects/${projectId}/auth/m2m-applications`);
-    for (const request of requests) {
-      assert.equal(request.url.origin, "https://auth.terrascale.test");
-    }
-    assert.deepEqual(requests[1]?.body, {
-      name: "worker",
-      scopes: ["documents:write"],
-      databaseId,
-      environmentId,
-    });
-
-    await client.m2m.rotate(clientId);
-    assertRequest(
-      requests[2],
-      "POST",
-      `/api/v1/projects/${projectId}/auth/m2m-applications/${clientId}/rotate`,
-    );
-
-    await client.m2m.revoke(clientId);
-    assertRequest(
-      requests[3],
-      "DELETE",
-      `/api/v1/projects/${projectId}/auth/m2m-applications/${clientId}`,
-    );
-
-    await client.m2m.createToken(projectId, {
-      clientId,
-      clientSecret: "client_secret",
-      scope: "documents:write",
-    });
-    assertRequest(requests[4], "POST", `/api/v1/projects/${projectId}/auth/m2m/token`);
-    assert.equal(requests[4]?.url.origin, "https://auth.terrascale.test");
-    assert.deepEqual(requests[4]?.body, {
-      grant_type: "client_credentials",
-      client_id: clientId,
-      client_secret: "client_secret",
-      scope: "documents:write",
-    });
-  });
-
   test("captures notification route shapes", async () => {
     const notification = {
       notificationId,
@@ -1208,26 +925,6 @@ describe("TerraScaleClient route contracts", () => {
     assert.equal(requests[2]?.url.searchParams.get("organizationId"), organizationId);
   });
 
-  test("uses the backed security settings routes", async () => {
-    const { client, requests } = createCapturingClient({});
-
-    await client.security.getSettings();
-    await client.security.updateSettings({
-      mfaPolicy: "Required",
-      ipAllowlist: "10.0.0.0/8",
-      allowedEmailDomains: "terrascale.tech",
-      dataResidency: "gru",
-    });
-
-    assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/security/settings`);
-    assertRequest(requests[1], "PUT", `/api/v1/projects/${projectId}/security/settings`);
-    assert.deepEqual(requests[1]?.body, {
-      mfaPolicy: "Required",
-      ipAllowlist: "10.0.0.0/8",
-      allowedEmailDomains: "terrascale.tech",
-      dataResidency: "gru",
-    });
-  });
 });
 
 function createCapturingClient(responseBody: JsonValue): {
@@ -1249,7 +946,6 @@ function createCapturingClientWithResponses(
 
   const client = createTerraScaleClient({
     apiBaseUrl: "https://api.terrascale.test",
-    authBaseUrl: "https://auth.terrascale.test",
     projectId,
     ...options,
     fetch: async (input) => {

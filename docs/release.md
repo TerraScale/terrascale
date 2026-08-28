@@ -25,13 +25,13 @@ results separately when the protected browser lane runs them. Missing evidence
 does not become a passing result.
 
 The release E2E profile fails before tests run unless real
-`TERRASCALE_API_BASE_URL`, `TERRASCALE_AUTH_API_BASE_URL`,
-`TERRASCALE_E2E_ACCESS_TOKEN`, `TERRASCALE_E2E_PROJECT_ID`,
+`TERRASCALE_API_BASE_URL`, `TERRASCALE_E2E_ACCESS_TOKEN`,
+`TERRASCALE_E2E_PROJECT_ID`,
 `TERRASCALE_E2E_ORGANIZATION_ID`, and
 `TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID` are all configured. These values are
 scoped only to the protected post-merge `main` release E2E job; no pull-request
-job, including a same-repository `develop` to `main` PR, receives them. Both
-endpoints must be `http` or `https` URLs, and each resource identifier must be
+job, including a same-repository `develop` to `main` PR, receives them. The API
+endpoint must be an `http` or `https` URL, and each resource identifier must be
 a valid ULID.
 
 Each release-candidate test and package job performs its own clean install and
@@ -39,8 +39,8 @@ build before testing or packing; do not rely on artifacts from another job.
 
 Release admission runs strict OpenAPI drift validation. The normal-CI debt
 baseline does not permit promotion: unresolved entries stop production release
-until the full-stack Vinext `TerraScale.Dashboard` application or Authentication
-publishes the matching typed schemas.
+until the full-stack Vinext `TerraScale.Dashboard` application publishes the
+matching typed schemas.
 It also regenerates and compares the committed comprehensive OpenAPI descriptor;
 operation IDs, parameters, request contracts, and every 2xx response shape must
 match the reviewed pin before the trusted candidate can be created.
@@ -73,10 +73,11 @@ Forgejo Release.
 
 Use the next patch version only for backward-compatible changes. Before `1.0`,
 a source-breaking exported TypeScript type change requires the next minor
-version. This release is `0.2.0`: `PricingPlan.key`, `PricingPlan.visible`, and
-all provider price/product identifier fields are now required (nullable where
-the public API permits `null`); `PricingPlan.provider` is the public string
-value. Callers that construct a `PricingPlan` must provide every required field.
+version. This release is `0.3.0`. It removes the dedicated Auth, project
+credential, queue, payment, billing, pricing, and project authentication-settings
+clients, models, routes, and local-emulator implementations. Consumers must stop
+calling those removed namespaces before upgrading from `0.2.x`. Generic bearer
+authorization for the remaining public APIs and Sync authentication remain.
 
 The trusted main-promotion job executes `npm publish <verified-tarball> --access public
 --ignore-scripts --registry=https://registry.npmjs.org/` with a job-local `NPM_TOKEN`.

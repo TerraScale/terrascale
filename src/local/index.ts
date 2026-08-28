@@ -10,7 +10,6 @@ import type {
   DocumentId,
   OrganizationId,
   ProjectId,
-  QueueId,
   RepositoryId,
 } from "../ids.js";
 import {
@@ -50,7 +49,7 @@ export type TerraScaleLocalListenOptions = {
 
 export type TerraScaleLocalClientOptions = Omit<
   TerraScaleRuntimeConfig,
-  "apiBaseUrl" | "authBaseUrl" | "fetch" | "sqlite"
+  "apiBaseUrl" | "fetch" | "sqlite"
 >;
 
 export type TerraScaleLocalSeed = {
@@ -58,7 +57,6 @@ export type TerraScaleLocalSeed = {
   readonly documentId: DocumentId;
   readonly organizationId: OrganizationId;
   readonly projectId: ProjectId;
-  readonly queueId: QueueId;
   readonly repositoryId: RepositoryId;
 };
 
@@ -128,7 +126,6 @@ export class TerraScaleSqliteRuntime {
     return createTerraScaleClient({
       ...options,
       apiBaseUrl: inProcessOrigin,
-      authBaseUrl: inProcessOrigin,
       sqlite: this.#sqlite,
       fetch: this.#fetch,
     });
@@ -139,7 +136,6 @@ export class TerraScaleSqliteRuntime {
     return createTerraScaleAdminClient({
       ...options,
       apiBaseUrl: inProcessOrigin,
-      authBaseUrl: inProcessOrigin,
       sqlite: this.#sqlite,
       fetch: this.#fetch,
     });
@@ -195,7 +191,7 @@ export class TerraScaleSqliteRuntime {
       idempotencyKeyFactory: () => `local-seed-${this.#store.nextUlid()}`,
     });
     const organization = requireValue(
-      await client.organizations.create({ name: "Local development", plan: "developer" }),
+      await client.organizations.create({ name: "Local development" }),
     );
     const project = requireValue(
       await client.organizations.createProject(organization.organizationId, {
@@ -216,9 +212,6 @@ export class TerraScaleSqliteRuntime {
         collection: "documents",
       }),
     );
-    const queue = requireValue(
-      await scoped.queues.create({ name: "local-events", kind: "queue" }),
-    );
     const document = requireValue(
       await scoped.documents.create(
         { repositoryId: repository.repositoryId },
@@ -230,7 +223,6 @@ export class TerraScaleSqliteRuntime {
       projectId: project.projectId,
       databaseId: database.databaseId,
       repositoryId: repository.repositoryId,
-      queueId: queue.queueId,
       documentId: document.id,
     };
   }

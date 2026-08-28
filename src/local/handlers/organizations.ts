@@ -39,12 +39,7 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
       name,
       ownerUserIds: [LOCAL_USER_ID],
       createdByUserId: LOCAL_USER_ID,
-      billingAccountId: `local-${organizationId}`,
       status: "Active",
-      activePlan: plan(body.plan),
-      pendingPlan: null,
-      billingActivityAt: null,
-      billingWarningSentAt: null,
       deletionRequestedAt: null,
       deletionRequestedByUserId: null,
       createdAt: context.now,
@@ -243,7 +238,6 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
       name: project.name,
       deleted: true,
       databasesDeleted: counts.databases,
-      queuesDeleted: counts.queues,
       physicalStorageDeleted: counts.databases > 0 || counts.repositories > 0 || counts.documents > 0,
     };
     return jsonResponse(deleted);
@@ -293,17 +287,15 @@ function ownerMember(joinedAt: string, role: Models.OrganizationMemberRole = "Or
 
 function memberKey(organizationId: string, userId: string): string { return `${organizationId}:${userId}`; }
 function invitationKey(organizationId: string, invitationId: string): string { return `${organizationId}:${invitationId}`; }
-function plan(value: unknown): Models.OnboardingPlan { return value === "starter" || value === "pro" ? value : "developer"; }
 function nonBlank(value: unknown): string | undefined { return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined; }
 function stringArray(value: unknown): string[] | undefined { return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined; }
 function notFound(resource: string): Response { return problemResponse(404, "not_found", `${resource} was not found.`); }
 
-type CascadeCounts = { readonly databases: number; readonly queues: number; readonly repositories: number; readonly documents: number };
+type CascadeCounts = { readonly databases: number; readonly repositories: number; readonly documents: number };
 
 /** Remove project-owned records emitted by the other local public handlers. */
 async function cascadeProject(store: TerraScaleSqliteStore, projectId: string): Promise<CascadeCounts> {
   let databases = 0;
-  let queues = 0;
   let repositories = 0;
   let documents = 0;
   const ownedResourceIds = new Set<string>();
@@ -338,13 +330,11 @@ async function cascadeProject(store: TerraScaleSqliteStore, projectId: string): 
     await store.delete("sdk-local-document-index", documentScope, "index");
   }
 
-  // Queue/backup/platform handlers keep all records in local scope and carry
+  // Backup/platform handlers keep all records in local scope and carry
   // projectId in their public DTO (or an internal equivalent).
   for (const namespace of [
-    "queues", "queue-messages", "queue-leases", "queue-publishes", "queue-consumers",
     "backups", "backup-policies", "backup-confirmations", "backup-idempotency",
-    "restore-points", "restores", "restore-idempotency", "api-keys",
-    "m2m-applications", "invoices", "billing-access", "billing-accounts",
+    "restore-points", "restores", "restore-idempotency",
     "notifications",
   ]) {
     const values = await rawList(store, namespace, LOCAL_SCOPE);
@@ -354,7 +344,6 @@ async function cascadeProject(store: TerraScaleSqliteStore, projectId: string): 
       if (id === undefined) continue;
       await store.delete(namespace, LOCAL_SCOPE, id);
       ownedResourceIds.add(id);
-      if (namespace === "queues") queues += 1;
     }
   }
 
@@ -366,8 +355,7 @@ async function cascadeProject(store: TerraScaleSqliteStore, projectId: string): 
       if (id !== undefined) await store.delete(namespace, projectId, id);
     }
   }
-  await store.delete("security-settings", LOCAL_SCOPE, projectId);
-  return { databases, queues, repositories, documents };
+  return { databases, repositories, documents };
 }
 
 async function rawList(store: TerraScaleSqliteStore, namespace: string, scope: string): Promise<unknown[]> {
@@ -381,19 +369,14 @@ function belongsToProject(value: unknown, projectId: string, ownedResourceIds: R
 function recordId(value: unknown, namespace: string): string | undefined {
   if (value === null || typeof value !== "object") return undefined;
   const item = value as Record<string, unknown>;
-  const fields = namespace === "sdk-local-database" ? ["databaseId", "id"] : namespace === "sdk-local-repository" ? ["repositoryId", "id"] : namespace === "sdk-local-environment" ? ["environmentId", "id"] : namespace === "sdk-local-document" ? ["id", "documentId"] : namespace === "sdk-local-schema" ? ["repositoryId", "id"] : ["queueId", "messageId", "leaseId", "publishId", "consumerName", "backupId", "backupPolicyId", "confirmationToken", "storageId", "restorePointId", "restoreId", "keyId", "clientId", "invoiceId", "notificationId", "savedQueryId", "userId", "auditEventId"];
+  const fields = namespace === "sdk-local-database" ? ["databaseId", "id"] : namespace === "sdk-local-repository" ? ["repositoryId", "id"] : namespace === "sdk-local-environment" ? ["environmentId", "id"] : namespace === "sdk-local-document" ? ["id", "documentId"] : namespace === "sdk-local-schema" ? ["repositoryId", "id"] : ["backupId", "backupPolicyId", "confirmationToken", "storageId", "restorePointId", "restoreId", "keyId", "clientId", "notificationId", "savedQueryId", "userId", "auditEventId"];
   const field = fields.find((candidate) => typeof item[candidate] === "string");
   return field === undefined ? undefined : item[field] as string;
 }
 function recordStorageId(value: unknown, namespace: string, projectId: string, repositoryId?: string): string | undefined {
   if (value === null || typeof value !== "object") return undefined;
   const item = value as Record<string, unknown>;
-  if (namespace === "queues" && typeof item.queueId === "string") return `${projectId}:${item.queueId}`;
   if (namespace === "backup-policies" && typeof item.databaseId === "string") return `${projectId}:${item.databaseId}`;
-  if (namespace === "queue-messages" && typeof item.queueId === "string" && typeof item.messageId === "string") return `${projectId}:${item.queueId}:${item.messageId}`;
-  if (namespace === "queue-leases" && typeof item.receipt === "string") return item.receipt;
-  if (namespace === "queue-publishes" && typeof item.queueId === "string" && typeof item.idempotencyKey === "string") return `${projectId}:${item.queueId}:${item.idempotencyKey}`;
-  if (namespace === "queue-consumers" && typeof item.queueId === "string" && typeof item.consumerName === "string") return `${projectId}:${item.queueId}:${item.consumerName}`;
   if (namespace === "sdk-local-document" && repositoryId !== undefined && typeof item.id === "string") return item.id;
   return recordId(value, namespace);
 }

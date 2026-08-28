@@ -4,11 +4,9 @@ import { describe, test } from "node:test";
 
 import type {
   AccessRole,
-  CreateCheckoutSessionRequest,
   CreateDatabaseBranchRequest,
   DatabaseBranchCapabilityResponse,
   DeleteProjectDatabaseOptions,
-  PricingPlan,
   ProjectSavedQueryResponse,
   ProjectSavedQuerySnapshotPageRequest,
   ProjectSavedQuerySnapshotPageResponse,
@@ -16,7 +14,6 @@ import type {
   TeamMember,
   Timestamp,
   UpdateProjectSavedQueryV2Request,
-  UsageMetric,
 } from "./models.js";
 import type {
   BackupsClient,
@@ -43,29 +40,6 @@ type MissingKey<Container, Key extends PropertyKey> = Extract<keyof Container, K
   : false;
 type PublicSdk = typeof import("./index.js");
 
-type ExpectedPricingPlan = {
-  readonly planId: Ulid;
-  readonly name: string;
-  readonly currency: string;
-  readonly monthlyBaseCents: number;
-  readonly annualBaseCents: number;
-  readonly includedUsage: readonly UsageMetric[];
-  readonly key: string;
-  readonly provider: string;
-  readonly monthlyPriceId: string | null;
-  readonly annualPriceId: string | null;
-  readonly monthlyPolarProductId: string | null;
-  readonly annualPolarProductId: string | null;
-  readonly monthlyStripePriceId: string | null;
-  readonly annualStripePriceId: string | null;
-  readonly monthlyTrialDays: number;
-  readonly annualTrialDays: number;
-  readonly visible: boolean;
-  readonly maxRegions: number;
-  readonly operationOverageCentsPerMillion: number;
-  readonly storageOverageCentsPerGbRegion: number;
-};
-
 type ExpectedSnapshotRequest = {
   readonly cursor?: string;
   readonly take?: number;
@@ -79,17 +53,6 @@ type ExpectedSavedQueryResponse = {
   readonly repositoryId: Ulid | null;
   readonly createdAt: Timestamp;
   readonly updatedAt: Timestamp;
-};
-
-type ExpectedCheckoutRequest = {
-  readonly priceId?: string;
-  readonly planId?: Ulid;
-  readonly billingInterval?: "monthly" | "annual";
-  readonly provider?: "polar" | "stripe";
-  readonly successUrl?: string;
-  readonly cancelUrl?: string;
-  readonly customerEmail?: string;
-  readonly quantity?: number;
 };
 
 type ExpectedSnapshotPage = {
@@ -124,8 +87,6 @@ type ExpectedSnapshotList = (
 ) => Promise<TerraScaleResult<ExpectedSnapshotPage>>;
 
 const staticSdkParity: readonly [
-  Assert<Equal<PricingPlan, ExpectedPricingPlan>>,
-  Assert<Equal<CreateCheckoutSessionRequest, ExpectedCheckoutRequest>>,
   Assert<Equal<ProjectSavedQuerySnapshotPageRequest, ExpectedSnapshotRequest>>,
   Assert<Equal<ProjectSavedQuerySnapshotPageResponse, ExpectedSnapshotPage>>,
   Assert<Equal<SavedQueriesV3Client["list"], ExpectedSnapshotList>>,
@@ -161,25 +122,10 @@ const staticSdkParity: readonly [
   true,
   true,
   true,
-  true,
-  true,
 ];
 void staticSdkParity;
 
 type PublicContractFixture = {
-  readonly pricingPlan: {
-    readonly required: readonly string[];
-    readonly providerType: readonly string[];
-    readonly nullableStringFields: readonly string[];
-    readonly checkout: Readonly<Record<string, {
-      readonly types?: readonly string[];
-      readonly nullableUlid: boolean;
-      readonly deprecated: boolean;
-      readonly minimum?: number;
-      readonly maximum?: number;
-      readonly default?: number;
-    }>>;
-  };
   readonly savedQueriesV3: {
     readonly method: string;
     readonly operationId: string;
@@ -221,29 +167,6 @@ type PublicContractFixture = {
 };
 
 describe("public contract fixture parity", () => {
-  test("keeps pricing response requiredness/nullability and checkout input fields pinned", async () => {
-    const contract = await readContract();
-
-    assert.deepEqual(contract.pricingPlan.required, [
-      "planId", "name", "currency", "monthlyBaseCents", "annualBaseCents", "includedUsage", "key",
-      "provider", "monthlyPriceId", "annualPriceId", "monthlyPolarProductId", "annualPolarProductId",
-      "monthlyStripePriceId", "annualStripePriceId", "monthlyTrialDays", "annualTrialDays", "visible",
-      "maxRegions", "operationOverageCentsPerMillion", "storageOverageCentsPerGbRegion",
-    ]);
-    assert.deepEqual(contract.pricingPlan.providerType, ["string"]);
-    assert.deepEqual(contract.pricingPlan.nullableStringFields, [
-      "monthlyPriceId", "annualPriceId", "monthlyPolarProductId", "annualPolarProductId",
-      "monthlyStripePriceId", "annualStripePriceId",
-    ]);
-    assert.deepEqual(contract.pricingPlan.checkout, {
-      priceId: { types: ["string", "null"], nullableUlid: false, deprecated: true },
-      quantity: { types: ["integer", "null"], nullableUlid: false, deprecated: false, minimum: 1, maximum: 1000, default: 1 },
-      planId: { nullableUlid: true, deprecated: false },
-      billingInterval: { types: ["string", "null"], nullableUlid: false, deprecated: false },
-      provider: { types: ["string", "null"], nullableUlid: false, deprecated: false },
-    });
-  });
-
   test("keeps the v3 snapshot route, cursor constraints, page, and error statuses pinned", async () => {
     const contract = await readContract();
     const v3 = contract.savedQueriesV3;
@@ -319,6 +242,9 @@ describe("public contract fixture parity", () => {
 });
 
 async function readContract(): Promise<PublicContractFixture> {
-  const fixtureUrl = new URL("../test/fixtures/public-contracts/v3-billing.json", import.meta.url);
+  const fixtureUrl = new URL(
+    "../test/fixtures/public-contracts/saved-queries-and-branches.json",
+    import.meta.url,
+  );
   return JSON.parse(await readFile(fixtureUrl, "utf8")) as PublicContractFixture;
 }

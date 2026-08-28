@@ -83,6 +83,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - run: npm run check:forbidden-surface
       - run: npm run check:route-manifest
       - run: npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json
       - run: npm run check:openapi-drift -- --strict Dashboard/docs/product/openapi/server.openapi.json
@@ -187,7 +188,6 @@ jobs:
         with: { name: deploy-cli, path: .tools }
       - env:
           TERRASCALE_API_BASE_URL: ${{ vars.TERRASCALE_API_BASE_URL }}
-          TERRASCALE_AUTH_API_BASE_URL: ${{ vars.TERRASCALE_AUTH_API_BASE_URL }}
           TERRASCALE_E2E_ACCESS_TOKEN: ${{ secrets.TERRASCALE_E2E_ACCESS_TOKEN }}
           TERRASCALE_E2E_PROJECT_ID: ${{ vars.TERRASCALE_E2E_PROJECT_ID }}
           TERRASCALE_E2E_ORGANIZATION_ID: ${{ vars.TERRASCALE_E2E_ORGANIZATION_ID }}
@@ -236,7 +236,7 @@ jobs:
           ref: develop
           path: Dashboard
       - run: node scripts/check-public-contract-fixture.mjs Dashboard/docs/product/openapi/server.openapi.json
-      - run: npm ci && npm run build && npm run check:route-manifest && npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json
+      - run: npm ci && npm run build && npm run check:forbidden-surface && npm run check:route-manifest && npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json
       - run: npm run check:openapi-drift -- --strict Dashboard/docs/product/openapi/server.openapi.json
 
   release-version-availability:

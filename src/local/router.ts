@@ -1,18 +1,16 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 
 import type { LocalHandler, LocalRequestContext } from "./context.js";
 import { emptyResponse, problemResponse } from "./context.js";
 import { handleLocalAdmin } from "./handlers/admin.js";
-import { handleLocalAuth } from "./handlers/auth.js";
 import { handleLocalBackups } from "./handlers/backups.js";
 import { handleLocalData } from "./handlers/data.js";
 import { handleLocalMetadata } from "./handlers/metadata.js";
 import { handleLocalOnboarding } from "./handlers/onboarding.js";
 import { handleLocalOrganizations } from "./handlers/organizations.js";
 import { handleLocalPlatform } from "./handlers/platform.js";
-import { handleLocalQueues } from "./handlers/queues.js";
 import { handleLocalSyncV2 } from "./handlers/sync-v2.js";
+import { localManifestRoutes } from "./route-manifest.generated.js";
 import type { TerraScaleSqliteStore } from "./store.js";
 
 export type LocalAuthenticationMode = "permissive" | "required";
@@ -24,7 +22,6 @@ export type TerraScaleLocalRouterOptions = {
 type ManifestRoute = {
   readonly method: string;
   readonly pathTemplate: string;
-  readonly responseType?: string;
   readonly routeName: string;
 };
 
@@ -41,24 +38,15 @@ type StoredIdempotencyResponse = {
 };
 
 const localHandlers: readonly LocalHandler[] = [
-  handleLocalAuth,
   handleLocalOnboarding,
   handleLocalOrganizations,
   handleLocalMetadata,
   handleLocalData,
-  handleLocalQueues,
   handleLocalBackups,
   handleLocalPlatform,
   handleLocalAdmin,
   handleLocalSyncV2,
 ];
-
-const publicAnonymousPrefixes = [
-  "/api/v1/auth/",
-  "/api/v1/onboarding",
-  "/api/v1/pricing/",
-  "/api/v1/regions",
-] as const;
 
 export class TerraScaleLocalRouter {
   readonly #authentication: LocalAuthenticationMode;
@@ -88,7 +76,7 @@ export class TerraScaleLocalRouter {
       return withCors(request, Response.json({ status: "ready", storage: "sqlite" }));
     }
 
-    if (this.#authentication === "required" && !isAuthorized(request, url.pathname)) {
+    if (this.#authentication === "required" && !isAuthorized(request, method, url.pathname)) {
       return withCors(
         request,
         problemResponse(401, "authentication_required", "Supply a bearer token or session cookie."),
@@ -161,7 +149,11 @@ export class TerraScaleLocalRouter {
     if (key === undefined) {
       return undefined;
     }
-    const stored = this.#store.get<StoredIdempotencyResponse>("__idempotency", "global", key);
+    const stored = this.#store.get<StoredIdempotencyResponse>(
+      "__idempotency",
+      idempotencyScope(context),
+      key,
+    );
     if (stored === undefined) {
       return undefined;
     }
@@ -191,25 +183,23 @@ export class TerraScaleLocalRouter {
     }
     const clone = response.clone();
     const body = await clone.text();
-    this.#store.put<StoredIdempotencyResponse>("__idempotency", "global", key, {
-      body,
-      fingerprint: requestFingerprint(context),
-      headers: [...clone.headers],
-      status: clone.status,
-    });
+    this.#store.put<StoredIdempotencyResponse>(
+      "__idempotency",
+      idempotencyScope(context),
+      key,
+      {
+        body,
+        fingerprint: requestFingerprint(context),
+        headers: [...clone.headers],
+        status: clone.status,
+      },
+    );
     return response;
   }
 }
 
 function loadManifestRoutes(): readonly CompiledManifestRoute[] {
-  const manifestUrl = new URL("../../sdk-route-manifest.json", import.meta.url);
-  const manifest = JSON.parse(readFileSync(manifestUrl, "utf8")) as {
-    readonly routes?: readonly ManifestRoute[];
-  };
-  if (!Array.isArray(manifest.routes)) {
-    throw new TypeError("The packaged SDK route manifest is invalid.");
-  }
-  return manifest.routes.map((route) => {
+  return localManifestRoutes.map((route) => {
     const names: string[] = [];
     const source = route.pathTemplate.replace(/\{([A-Za-z][A-Za-z0-9]*)\}/gu, (_match: string, name: string) => {
       names.push(name);
@@ -275,8 +265,8 @@ async function readBody(request: Request): Promise<unknown> {
   }
 }
 
-function isAuthorized(request: Request, pathname: string): boolean {
-  if (publicAnonymousPrefixes.some((prefix) => pathname.startsWith(prefix))) {
+function isAuthorized(request: Request, method: string, pathname: string): boolean {
+  if (isAnonymousRoute(method, pathname)) {
     return true;
   }
   if (pathname.startsWith("/v1/sync/") || pathname === "/v1/streams") {
@@ -287,6 +277,11 @@ function isAuthorized(request: Request, pathname: string): boolean {
   const cookie = request.headers.get("cookie")?.trim();
   return (authorization !== undefined && authorization.length > 0)
     || (cookie !== undefined && cookie.length > 0);
+}
+
+function isAnonymousRoute(method: string, pathname: string): boolean {
+  return method === "GET"
+    && (pathname === "/api/v1/regions" || pathname.startsWith("/api/v1/regions/"));
 }
 
 function hasHeaderValue(request: Request, name: string): boolean {
@@ -303,6 +298,19 @@ function idempotencyKey(context: LocalRequestContext): string | undefined {
   }
   const value = context.request.headers.get("idempotency-key")?.trim();
   return value === undefined || value.length === 0 ? undefined : value;
+}
+
+function idempotencyScope(context: LocalRequestContext): string {
+  const authorization = context.request.headers.get("authorization")?.trim() ?? "";
+  const cookie = context.request.headers.get("cookie")?.trim() ?? "";
+  const projectId = context.request.headers.get("x-terrascale-project-id")?.trim() ?? "";
+  return createHash("sha256")
+    .update(authorization)
+    .update("\n")
+    .update(cookie)
+    .update("\n")
+    .update(projectId)
+    .digest("hex");
 }
 
 function requestFingerprint(context: LocalRequestContext): string {

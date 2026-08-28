@@ -27,7 +27,19 @@ test("built package keeps all public clients on typed operations without a runti
   assert.equal(typeof client.savedQueries.v3.list, "function");
   assert.equal(typeof client.databaseBranches.getCapability, "function");
   assert.equal(typeof client.databaseBranches.requestClone, "function");
-  assert.equal(Object.values(client).length, 22);
+  assert.equal(Object.values(client).length, 15);
+  for (const removedClient of ["auth", "apiKeys", "m2m", "queues", "billing", "pricing", "security"]) {
+    assert.equal(removedClient in client, false);
+  }
+  for (const removedOnboardingMethod of [
+    "updateAccountInformation",
+    "createPaymentSession",
+    "validatePaymentMethod",
+    "registerOnboardingPaymentMethod",
+    "updateMfaDecision",
+  ]) {
+    assert.equal(removedOnboardingMethod in client.onboarding, false);
+  }
   const savedQueries: sdk.SavedQueriesClient = client.savedQueries;
   const savedQueriesV2: sdk.SavedQueriesV2Client = client.savedQueries.v2;
   const savedQueriesV3: sdk.SavedQueriesV3Client = client.savedQueries.v3;

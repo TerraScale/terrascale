@@ -46,13 +46,13 @@ await local.close();
 the runtime's router and SQLite store. Use
 `createSyncV1Session` or `createSyncV2Session` to run the public Sync clients
 against the same SQLite store. `seed` creates one starter organization,
-project, database, repository, queue, and document. `reset` clears the store
+project, database, repository, and document. `reset` clears the store
 and can seed it again. `close` releases the listener and database. Omit
 `databasePath`, or use `:memory:`, for an in-memory store.
 
 `start` opens an optional real HTTP listener on `127.0.0.1` and an available
-port. Another process can then use the returned `apiBaseUrl` and `authBaseUrl`.
-Call `stop` to close the listener without closing SQLite.
+port. Another process can then use the returned `apiBaseUrl`. Call `stop` to
+close the listener without closing SQLite.
 
 You can opt in through the CLI instead:
 
@@ -60,11 +60,11 @@ You can opt in through the CLI instead:
 npx --package @terrascale/sdk terrascale-local --database /absolute/path/to/local.sqlite --seed
 ```
 
-The CLI prints `TERRASCALE_API_BASE_URL` and `TERRASCALE_AUTH_API_BASE_URL`
-values for the running runtime. Stop it and unset those URLs to return to the
-normal endpoints. Importing the local subpath or running the CLI is the full
-opt-in. Root and `admin` clients never enable SQLite on their own. Unsupported
-local operations return an explicit not-implemented response.
+The CLI prints a `TERRASCALE_API_BASE_URL` value for the running runtime. Stop
+it and unset that URL to return to the normal endpoint. Importing the local
+subpath or running the CLI is the full opt-in. Root and `admin` clients never
+enable SQLite on their own. Unsupported local operations return an explicit
+not-implemented response.
 
 The emulator supports public contract behavior for development. It does not
 prove production replication, failover, latency, metering, or external
@@ -194,9 +194,8 @@ its digests, and how to re-vendor.
 ## Public API Surface
 
 The public client follows the versioned REST surface hosted by the single
-full-stack Vinext `TerraScale.Dashboard` application, plus the public
-Authentication service. Dashboard TypeScript backend modules own the
-database/TerraBase endpoint families below:
+full-stack Vinext `TerraScale.Dashboard` application. Dashboard TypeScript
+backend modules own the database/TerraBase endpoint families below:
 
 - Project databases: list/create/get/delete under
   `/api/v1/projects/{projectId}/databases`, with environment list/get/create/delete
@@ -206,11 +205,6 @@ database/TerraBase endpoint families below:
   `requestClone` sends the typed clone request to `/api/v1/projects/{projectId}/database-branches`.
   The currently admitted state is fail-closed (`"unavailable"`): clone has no success response and returns
   the typed `503` failure until the database service reports otherwise.
-- Project queues and topics: create/list/get/delete, publish/peek/purge, and
-  at-least-once receive/complete/abandon/dead-letter/renew-lock under
-  `/api/v1/projects/{projectId}/queues`. Received messages carry an opaque,
-  time-limited regional receipt; pass `{ receipt, region }` back to the
-  acknowledgement methods so the SDK preserves regional affinity.
 - Repositories: list/create/get/delete under `/api/v1/repositories`.
 - Documents: list/create/get/put/patch/delete/batch under
   `/api/v1/repositories/{repositoryId}/documents`; document write bodies are
@@ -222,13 +216,6 @@ database/TerraBase endpoint families below:
 - TQL and schema: `/api/v1/repositories/{repositoryId}/tql`,
   `/api/v1/repositories/{repositoryId}/schema`, and
   `/api/v1/repositories/{repositoryId}/schema/validate`.
-- Project auth API keys: `/api/v1/projects/{projectId}/auth/api-keys`,
-  including create/list/rotate/revoke wrappers.
-- Project auth providers: typed listing under
-  `/api/v1/projects/{projectId}/auth/providers`.
-- Project auth M2M applications:
-  `/api/v1/projects/{projectId}/auth/m2m-applications`, including
-  create/list/rotate/revoke and OAuth token creation.
 - Backups and restores:
   `/api/v1/projects/{projectId}/databases/{databaseId}/backups/policy`,
   `/api/v1/projects/{projectId}/databases/{databaseId}/backups`,
@@ -241,55 +228,30 @@ database/TerraBase endpoint families below:
   Responses
   use logical ULID fields such as `backupId`, `restoreId`, and
   `restoredDatabaseId`.
-- Account identity: typed external login and email-change initiation/verification
-  through the public Auth API.
-- Onboarding: state, account information, MFA choice, checkout creation with
-  explicit success/cancel URLs, payment validation, and initial
-  organization/project creation under `/api/v1/onboarding`.
+- Onboarding: initial organization/project creation under
+  `/api/v1/onboarding`.
 - Organizations and projects: organization create/list/get/update/deletion,
   membership and invitation lifecycle, plus project create/list/get/update/delete
   and region placement.
-- Billing and pricing: organization checkout sessions accept `planId`,
-  `billingInterval`, `provider`, optional `quantity`, or deprecated `priceId`.
-  Deprecated `successUrl`, `cancelUrl`, and `customerEmail` properties remain
-  source-compatible but are ignored and never sent; organization checkout
-  redirects and customer identity are deployment/authentication configured.
 - Usage: project totals, workload, latency, and history plus organization totals.
 - Notifications: `/api/v1/users/me/notifications` returns a bare
   `Notification[]`; `/api/v1/users/me/notifications/{notificationId}:mark-read`
   returns a `Notification`; and
   `/api/v1/users/me/notifications:mark-all-read` returns `{ markedRead }`.
-- Security settings: backed get and upsert routes at
-  `/api/v1/projects/{projectId}/security/settings`.
 - Saved queries: `client.savedQueries.list/create/update/delete` provides typed
   v1 CRUD under `/api/v1/projects/{projectId}/saved-queries`, with revision-aware v2
   `client.savedQueries.v2.list/get/update`, and mutation-safe snapshot pagination with
   `client.savedQueries.v3.list` under `/api/v3/projects/{projectId}/saved-queries`.
   V2 revisions and v3 cursors are opaque; reload a v3 collection after a cursor conflict.
 
-### Onboarding target contract
-
-The onboarding entry above describes the currently released typed surface. The
-target self-registration contract will begin with identity and email verification
-already counted as one completed step, then cover the first Organization, Project,
-and logical Database plus card verification for signup abuse control. It will let
-the User explicitly continue with no paid plan and no automatic renewal, retaining
-the Developer allowance, or select Starter or Pro with monthly automatic renewal
-and an eligible first 30 days at no charge. Invited-user onboarding remains
-separate and requires neither signup card verification nor a plan choice. The
-missing typed operations remain unreleased until the corresponding public
-Dashboard/Auth contracts ship. Do not invent routes or present this target flow
-as released.
-
 Unbacked public SDK methods are intentionally omitted until matching versioned
-OpenAPI request and response schemas are published. This currently excludes account-security
-extensions, repository update, database
-update/region switching/environment switching, query history, project settings,
-security webhooks, SSO/SCIM settings, and public project switching.
+OpenAPI request and response schemas are published. This currently excludes
+repository update, database update/region switching/environment switching, query
+history, project settings, and public project switching.
 
 The OpenAPI drift check carries a reviewed typed-contract debt baseline. It prevents
 new or changed untyped SDK contracts, while the listed debt still blocks production
-qualification until the full-stack Vinext Dashboard or Authentication publishes the missing schemas
+qualification until the full-stack Vinext Dashboard publishes the missing schemas
 and removes the baseline.
 
 ## Development
@@ -344,11 +306,10 @@ snapshot failure as an SDK defect; the Documentation site consumes that same
 snapshot.
 
 Integration tests are expected to run against a real TerraScale DevHost stack
-and its emitted Dashboard/Auth URLs:
+and its emitted API URL:
 
 ```bash
 TERRASCALE_API_BASE_URL=http://127.0.0.1:... \
-TERRASCALE_AUTH_API_BASE_URL=http://127.0.0.1:... \
 npm run test:integration
 ```
 

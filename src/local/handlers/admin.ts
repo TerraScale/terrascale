@@ -17,7 +17,7 @@ export async function handleLocalAdmin(context: LocalRequestContext): Promise<Re
   // A request-local hydration makes reset() and mutations from sibling
   // handlers immediately visible and avoids stale cross-request snapshots.
   clearLocalAdminState(context.store);
-  await Promise.all(["users", "organizations", "projects", "databases", "support-notes", "pricing-plans", "audit", "notifications", "billing-attempts"].map((name) => hydrate(context, name)));
+  await Promise.all(["users", "organizations", "projects", "databases", "support-notes", "audit", "notifications"].map((name) => hydrate(context, name)));
   await hydrateDatabases(context);
   const overview = matchLocalRoute(context, "GET", "/api/v1/admin");
   if (overview !== undefined) return jsonResponse(adminUsage(context));
@@ -47,9 +47,7 @@ export async function handleLocalAdmin(context: LocalRequestContext): Promise<Re
   const deleteUser = matchLocalRoute(context, "DELETE", "/api/v1/admin/users/{userId}");
   if (deleteUser !== undefined) {
     const userId = deleteUser.userId ?? "";
-    const user = map(context, "users").get(userId);
-    if (user === undefined) return problemResponse(404, "not_found", "The user was not found.");
-    await deleteOwnedUserState(context, userId, user);
+    if (!map(context, "users").has(userId)) return problemResponse(404, "not_found", "The user was not found.");
     map(context, "users").delete(userId);
     await persist(context, "users");
     return emptyResponse();
@@ -80,56 +78,11 @@ export async function handleLocalAdmin(context: LocalRequestContext): Promise<Re
   const usage = matchLocalRoute(context, "GET", "/api/v1/admin/usage");
   if (usage !== undefined) return jsonResponse(adminUsage(context));
 
-  const plans = matchLocalRoute(context, "GET", "/api/v1/admin/plans");
-  if (plans !== undefined) return jsonResponse(values(context, "pricing-plans"));
-  const createPlan = matchLocalRoute(context, "POST", "/api/v1/admin/plans");
-  if (createPlan !== undefined) {
-    const body = objectBody(context);
-    const plan: Models.PricingPlan = await makePlan(context, body);
-    map(context, "pricing-plans").set(plan.planId, plan);
-    await persist(context, "pricing-plans");
-    return jsonResponse(plan, 201);
-  }
-  const updatePlan = matchLocalRoute(context, "PATCH", "/api/v1/admin/plans/{planId}");
-  if (updatePlan !== undefined) {
-    const current = map(context, "pricing-plans").get(updatePlan.planId ?? "") as Models.PricingPlan | undefined;
-    if (current === undefined) return problemResponse(404, "not_found", "The pricing plan was not found.");
-    const body = objectBody(context);
-    const updated = { ...current, ...pickPlan(body) } as Models.PricingPlan;
-    map(context, "pricing-plans").set(updatePlan.planId ?? "", updated);
-    await persist(context, "pricing-plans");
-    return jsonResponse(updated);
-  }
-  const deletePlan = matchLocalRoute(context, "DELETE", "/api/v1/admin/plans/{planId}");
-  if (deletePlan !== undefined) {
-    if (!map(context, "pricing-plans").has(deletePlan.planId ?? "")) return jsonResponse(false);
-    map(context, "pricing-plans").delete(deletePlan.planId ?? "");
-    await persist(context, "pricing-plans");
-    return jsonResponse(true);
-  }
-
   const audit = matchLocalRoute(context, "GET", "/api/v1/admin/audit");
   if (audit !== undefined) return jsonResponse(localPage(values(context, "audit")));
   const notifications = matchLocalRoute(context, "GET", "/api/v1/admin/notifications");
   if (notifications !== undefined) return jsonResponse(localPage(values(context, "notifications")));
 
-  const trigger = matchLocalRoute(context, "POST", "/api/v1/admin/billing/reconciliation/{organizationId}:trigger");
-  if (trigger !== undefined) {
-    const attempt: Models.BillingReconciliationAttempt = {
-      attemptId: (await context.store.nextUlid()) as Ulid, organizationId: asUlid(trigger.organizationId), provider: "local", state: "queued", requestedAt: context.now,
-      enqueuedAt: context.now, startedAt: null, finishedAt: null, reconciledAt: null, errorCode: null,
-    };
-    map(context, "billing-attempts").set(attempt.attemptId, attempt);
-    await persist(context, "billing-attempts");
-    return jsonResponse(attempt, 202);
-  }
-  const getAttempt = matchLocalRoute(context, "GET", "/api/v1/admin/billing/reconciliation/{organizationId}/{attemptId}");
-  if (getAttempt !== undefined) {
-    const attemptId = getAttempt.attemptId ?? "";
-    const attempt = (map(context, "billing-attempts").get(attemptId)
-      ?? await context.store.get<Models.BillingReconciliationAttempt>("billing-attempts", "local", attemptId)) as Models.BillingReconciliationAttempt | undefined;
-    return attempt === undefined || attempt.organizationId !== asUlid(getAttempt.organizationId) ? problemResponse(404, "not_found", "The reconciliation attempt was not found.") : jsonResponse(attempt);
-  }
   return undefined;
 }
 
@@ -173,8 +126,8 @@ async function persist(context: LocalRequestContext, name: string): Promise<void
   for (const [id, value] of map(context, name)) await context.store.put(namespace, scope, id, value);
   byName?.set(name, new Set(map(context, name).keys()));
 }
-function recordId(value: unknown): string | undefined { if (value === null || typeof value !== "object") return undefined; const item = value as Record<string, unknown>; for (const key of ["userId", "organizationId", "projectId", "databaseId", "supportNoteId", "planId", "auditEventId", "notificationId", "attemptId"]) if (typeof item[key] === "string") return item[key]; return undefined; }
-function storageName(name: string): string { return name === "users" ? "auth:users" : name; }
+function recordId(value: unknown): string | undefined { if (value === null || typeof value !== "object") return undefined; const item = value as Record<string, unknown>; for (const key of ["userId", "organizationId", "projectId", "databaseId", "supportNoteId", "auditEventId", "notificationId"]) if (typeof item[key] === "string") return item[key]; return undefined; }
+function storageName(name: string): string { return name; }
 async function hydrateDatabases(context: LocalRequestContext): Promise<void> {
   const projects = values(context, "projects");
   for (const project of projects) {
@@ -200,35 +153,4 @@ function adminUser(value: unknown): Models.AdminUser {
 }
 function adminUsage(context: LocalRequestContext): Models.AdminPlatformUsage {
   return { organizations: map(context, "organizations").size, projects: map(context, "projects").size, databases: map(context, "databases").size, regions: [], usage: [{ name: "operations", quantity: 0, unit: "operations" }] };
-}
-async function makePlan(context: LocalRequestContext, body: Record<string, unknown>): Promise<Models.PricingPlan> { return { planId: (await context.store.nextUlid()) as Ulid, name: typeof body.name === "string" ? body.name : "Local plan", key: typeof body.key === "string" ? body.key : "local", currency: typeof body.currency === "string" ? body.currency : "USD", monthlyBaseCents: numberValue(body.monthlyBaseCents), annualBaseCents: numberValue(body.annualBaseCents), includedUsage: Array.isArray(body.includedUsage) ? body.includedUsage as Models.UsageMetric[] : [], provider: "local", monthlyPriceId: null, annualPriceId: null, monthlyPolarProductId: null, annualPolarProductId: null, monthlyStripePriceId: null, annualStripePriceId: null, monthlyTrialDays: numberValue(body.monthlyTrialDays), annualTrialDays: numberValue(body.annualTrialDays), visible: body.visible !== false, maxRegions: numberValue(body.maxRegions, 1), operationOverageCentsPerMillion: numberValue(body.operationOverageCentsPerMillion), storageOverageCentsPerGbRegion: numberValue(body.storageOverageCentsPerGbRegion) }; }
-function pickPlan(body: Record<string, unknown>): Partial<Models.PricingPlan> { const fields = ["key", "name", "currency", "monthlyBaseCents", "annualBaseCents", "monthlyPolarProductId", "annualPolarProductId", "monthlyStripePriceId", "annualStripePriceId", "monthlyTrialDays", "annualTrialDays", "visible", "maxRegions", "operationOverageCentsPerMillion", "storageOverageCentsPerGbRegion", "includedUsage"] as const; return Object.fromEntries(fields.filter((field) => body[field] !== undefined).map((field) => [field, body[field]])) as Partial<Models.PricingPlan>; }
-function numberValue(value: unknown, fallback = 0): number { return typeof value === "number" && Number.isFinite(value) ? value : fallback; }
-
-/** Remove the user's complete local identity footprint, including records
- * whose durable key is not the user id (email-index, sessions, and factors).
- * Pending tokens are deterministic in the local auth adapter; deleting the
- * known token forms also covers pending signup/reset/magic-link records. */
-async function deleteOwnedUserState(context: LocalRequestContext, userId: string, rawUser: unknown): Promise<void> {
-  const user = asRecord(rawUser);
-  const email = typeof user.email === "string" ? user.email : "";
-  await deleteMatching(context, "auth:usersByEmail", (value) => asRecord(value).userId === userId, (value) => asRecord(value).email ?? email);
-  await deleteMatching(context, "auth:sessions", (value) => asRecord(value).userId === userId, (value) => asRecord(value).sessionId);
-  await deleteMatching(context, "auth:factors", (value) => asRecord(value).userId === userId, (value) => asRecord(value).id);
-  const pending = await context.store.list<unknown>("auth:pending", "global");
-  if (pending.length > 0 && pending.every((value) => asRecord(value).userId === userId)) context.store.clearNamespace("auth:pending");
-  await context.store.delete("auth:recovery", "global", userId);
-  await deleteMatching(context, "onboarding", (value) => asRecord(value).userId === userId, () => userId);
-  // auth:users is deleted by the caller after the cache has been updated.
-  // The pending adapter keys are deterministic hashes of e-mail and kind.
-  for (const kind of ["signup", "reset", "magic", "email-change"]) await context.store.delete("auth:pending", "global", localToken(kind, email));
-}
-async function deleteMatching(context: LocalRequestContext, namespace: string, matches: (value: unknown) => boolean, id: (value: unknown) => unknown): Promise<void> {
-  const records = await context.store.list<unknown>(namespace, "global");
-  for (const value of records) { if (!matches(value)) continue; const key = id(value); if (typeof key === "string" && key.length > 0) await context.store.delete(namespace, "global", key); }
-}
-function localToken(kind: string, value: string): string {
-  let hash = 2166136261;
-  for (const character of value) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
-  return `local-${kind}-${(hash >>> 0).toString(36)}`;
 }

@@ -1,5 +1,4 @@
 import type {
-  ApiKeyId,
   AuditEventId,
   BackupId,
   BackupPolicyId,
@@ -7,11 +6,9 @@ import type {
   DocumentId,
   EnvironmentId,
   InvitationId,
-  M2MClientId,
   NotificationId,
   OrganizationId,
   ProjectId,
-  QueueId,
   RepositoryId,
   RestoreId,
   Ulid,
@@ -67,377 +64,12 @@ export type EnvironmentScoped = DatabaseScoped & {
   readonly environmentId: EnvironmentId;
 };
 
-export type AuthMePreferences = {
-  readonly theme: "dark" | "light" | "system" | string;
-  readonly timezone: string;
-  readonly emailNotifications: boolean;
-  readonly language: string;
-  readonly defaultRegion?: string;
-  readonly notificationsEnabled?: boolean;
-};
-
-export type AuthMeResponse = {
-  readonly userId: UserId;
-  readonly email: string;
-  readonly name: string;
-  readonly phoneNumber: string;
-  readonly avatarUrl: string;
-  readonly personalOrgId: OrganizationId;
-  readonly activeOrgId: OrganizationId;
-  readonly currentOrgId?: OrganizationId;
-  readonly permissions: readonly string[];
-  readonly roles: readonly string[];
-  readonly preferences?: AuthMePreferences;
-};
-
-export type AccountSession = {
-  readonly sessionId: Ulid;
-  readonly deviceType: string;
-  readonly browser: string;
-  readonly os: string;
-  readonly ipAddress: string;
-  readonly location: string;
-  readonly createdAt?: Timestamp | null;
-  readonly lastActiveAt?: Timestamp | null;
-  readonly isCurrent: boolean;
-};
-
-export type ListAccountSessionsResponse = {
-  readonly sessions: readonly AccountSession[];
-  readonly nextCursor?: string;
-};
-
-export type UpdateProfileRequest = {
-  readonly displayName: string;
-  readonly phoneNumber: string;
-};
-
-export type UpdateProfileResponse = {
-  readonly success: boolean;
-  readonly name: string;
-  readonly phoneNumber: string;
-  readonly updatedAt?: Timestamp;
-};
-
-export type ChangePasswordRequest = {
-  readonly currentPassword: string;
-  readonly newPassword: string;
-};
-
-export type ChangePasswordResponse = {
-  readonly success: boolean;
-  readonly error?: string;
-};
-
-export type MfaFactor = {
-  readonly id: Ulid;
-  readonly type: string;
-  readonly createdAt?: Timestamp | null;
-};
-
-export type ListMfaFactorsResponse = {
-  readonly factors: readonly MfaFactor[];
-};
-
-export type EnrollTotpResponse = {
-  readonly factorId: Ulid;
-  readonly type: string;
-  readonly qrCode: string;
-  readonly secret: string;
-  readonly challengeId: Ulid;
-};
-
-export type VerifyTotpEnrollmentRequest = {
-  readonly challengeId: Ulid;
-  readonly code: string;
-};
-
-export type VerifyTotpEnrollmentResponse = {
-  readonly success: boolean;
-  readonly error?: string;
-  readonly accessToken?: string;
-  readonly expiresIn?: number;
-  readonly verifiedAt?: Timestamp;
-};
-
-export type DeleteMfaFactorRequest = {
-  readonly currentPassword?: string;
-  readonly code?: string;
-};
-
-export type GenerateRecoveryCodesResponse = {
-  readonly codes: readonly string[];
-  readonly generatedAt?: Timestamp;
-};
-
-export type RecoveryCodeCountResponse = {
-  readonly count: number;
-};
-
-export type VerifyRecoveryCodeRequest = {
-  readonly email: string;
-  readonly code: string;
-};
-
-export type VerifyRecoveryCodeResponse = {
-  readonly success: boolean;
-  readonly accessToken: string;
-  readonly refreshToken: string;
-  readonly expiresIn: number;
-};
-
-export type EmailSignInRequest = {
-  readonly email: string;
-  readonly displayName?: string;
-  readonly redirectUrl?: string;
-  readonly firstName?: string;
-  readonly lastName?: string;
-  readonly verifyUrl?: string;
-  readonly fullName?: string;
-  readonly acceptedTerms?: boolean;
-  readonly termsVersion?: string;
-  readonly deliveryMethod?: "link" | "code";
-};
-
-export type CompleteEmailSignInRequest = {
-  readonly token?: string;
-  readonly code?: string;
-  readonly email?: string;
-};
-
-export type EmailSignInResponse = {
-  readonly success: boolean;
-  readonly message: string;
-  readonly expiresAt?: Timestamp | null;
-};
-
-export type CompleteEmailSignInResponse = {
-  readonly success: boolean;
-  readonly authResponse?: AuthTokenResponse;
-  readonly error?: string;
-};
-
-/** Request body for the platform password signup endpoint. */
-export type RegisterRequest = {
-  readonly email: string;
-  readonly password: string;
-  readonly displayName?: string;
-  readonly redirectUrl?: string;
-  readonly firstName?: string;
-  readonly lastName?: string;
-  readonly fullName?: string;
-  /** Accepted for source compatibility; the public endpoint derives usernames. */
-  readonly username?: string;
-  readonly acceptedTerms?: boolean;
-  readonly termsVersion?: string;
-  readonly verifyUrl?: string;
-};
-
-/** Alias matching the public API's SignupRequest DTO name. */
-export type SignupRequest = RegisterRequest;
-
-/** Request body for the platform password login endpoint. */
-export type SignInRequest = {
-  readonly email: string;
-  readonly password: string;
-  readonly deviceFingerprint?: string;
-};
-
-/** Alias matching the public API's PasswordLoginRequest DTO name. */
-export type PasswordLoginRequest = SignInRequest;
-
-export type ProjectRegisterRequest = {
-  readonly email: string;
-  readonly password: string;
-  readonly displayName?: string;
-  readonly redirectUrl?: string;
-  readonly firstName?: string;
-  readonly lastName?: string;
-  readonly verifyUrl?: string;
-  readonly fullName?: string;
-  readonly acceptedTerms?: boolean;
-  readonly termsVersion?: string;
-};
-
-export type ProjectSignInRequest = {
-  readonly email: string;
-  readonly password: string;
-  readonly deviceFingerprint?: string;
-};
-
-export type PasswordMfaVerifyRequest = {
-  readonly pendingAuthenticationToken: string;
-  readonly challengeId: Ulid;
-  readonly code: string;
-};
-
-export type AuthTokenResponse = {
-  readonly accessToken: string;
-  readonly refreshToken: string;
-  readonly tokenType: string;
-  readonly expiresIn: number;
-  readonly userId: UserId;
-  readonly email: string;
-  readonly name: string;
-  readonly phoneNumber?: string;
-  readonly avatarUrl: string;
-  readonly personalOrgId: OrganizationId;
-  readonly activeOrgId: OrganizationId;
-  readonly permissions: readonly string[];
-  readonly roles: readonly string[];
-  readonly shouldPromptMfa: boolean;
-  readonly mfaEnabled: boolean;
-  readonly requiresOrganizationSelection: boolean;
-};
-
-export type SwitchOrganizationRequest = {
-  readonly organizationId: OrganizationId;
-};
-
-export type ExternalLoginBeginRequest = {
-  readonly provider: "apple" | "github" | "google";
-  readonly redirectUri: string;
-  readonly state: string;
-};
-
-export type ExternalLoginBeginResponse = {
-  readonly authorizeUrl: string;
-};
-
-export type ExternalLoginCompleteRequest = {
-  readonly provider: "apple" | "github" | "google";
-  readonly code: string;
-  readonly idToken?: string;
-  readonly redirectUri: string;
-};
-
-export type VerifyEmailRequest = {
-  readonly pendingAuthenticationToken: string;
-  readonly code: string;
-};
-
-export type InitiateEmailChangeRequest = {
-  readonly newEmail: string;
-  readonly password: string;
-};
-
-export type InitiateEmailChangeResponse = {
-  readonly success: boolean;
-  readonly message: string;
-  readonly expiresAt?: Timestamp | null;
-};
-
-export type VerifyEmailChangeRequest = {
-  readonly newEmail: string;
-  readonly otpCode: string;
-};
-
-export type VerifyEmailChangeResponse = {
-  readonly success: boolean;
-  readonly error: string;
-};
-
-export type PasswordResetRequest = {
-  readonly email: string;
-  readonly redirectUrl?: string;
-  readonly resetUrl?: string;
-};
-
-/** Request body for the platform forgot-password endpoint. */
-export type ForgotPasswordRequest = {
-  readonly email: string;
-  readonly resetUrl?: string;
-  /** Source-compatible alias; only `resetUrl` is sent on the wire. */
-  readonly redirectUrl?: string;
-};
-
-export type CompletePasswordResetRequest = {
-  readonly token: string;
-  readonly password: string;
-  readonly newPassword?: string;
-};
-
-/** Request body for the platform reset-password endpoint. */
-export type ResetPasswordRequest = {
-  readonly token: string;
-  readonly newPassword?: string;
-  /** Source-compatible alias; only `newPassword` is sent on the wire. */
-  readonly password?: string;
-};
-
-export type EnrollTotpRequest = {
-  readonly type?: string;
-};
-
-export type ProjectMagicLinkRequest = {
-  readonly email: string;
-  readonly redirectUrl: string;
-  readonly loginUrl?: string;
-};
-
-export type CompleteProjectMagicLinkRequest = {
-  readonly token: string;
-};
-
-export type SignupResponse = {
-  readonly success: boolean;
-  readonly requiresEmailVerification: boolean;
-  readonly pendingAuthenticationToken: string;
-  readonly userId: UserId;
-  readonly email: string;
-  readonly error?: string;
-};
-
-export type PasswordLoginStatus =
-  | "AccountLocked"
-  | "EmailVerificationRequired"
-  | "Error"
-  | "InvalidCredentials"
-  | "MfaRequired"
-  | "SsoRequired"
-  | "Success"
-  | "Unspecified";
-
-export type PendingAuthInfo = {
-  readonly pendingAuthenticationToken: string;
-  readonly email: string;
-  readonly availableFactors?: readonly {
-    readonly id: Ulid;
-    readonly type: string;
-  }[];
-  readonly challenge?: {
-    readonly id: Ulid;
-    readonly factorId: Ulid;
-    readonly expiresAt?: Timestamp;
-  };
-};
-
-export type PasswordLoginResponse = {
-  readonly status: PasswordLoginStatus;
-  readonly authResponse?: AuthTokenResponse;
-  readonly pendingInfo?: PendingAuthInfo;
-  readonly error?: string;
-  readonly organizationName?: string;
-  readonly lockoutInfo?: {
-    readonly isLocked: boolean;
-    readonly failedAttempts: number;
-    readonly maxAttempts: number;
-    readonly lockoutEndsAt?: Timestamp;
-    readonly remainingAttempts: number;
-  };
-};
-
 export type Organization = {
   readonly organizationId: OrganizationId;
   readonly name: string;
   readonly ownerUserIds: readonly UserId[];
   readonly createdByUserId?: UserId | null;
-  readonly billingAccountId: string;
   readonly status: OrganizationStatus;
-  readonly activePlan: OnboardingPlan;
-  readonly pendingPlan?: OnboardingPlan | null;
-  readonly billingActivityAt?: Timestamp | null;
-  readonly billingWarningSentAt?: Timestamp | null;
   readonly deletionRequestedAt?: Timestamp | null;
   readonly deletionRequestedByUserId?: UserId | null;
   readonly createdAt: Timestamp;
@@ -445,8 +77,6 @@ export type Organization = {
 
 export type OrganizationStatus =
   | "Active"
-  | "BillingPending"
-  | "BillingCleanupClaimed"
   | "DeletionPending";
 
 export type OrganizationMemberRole = "Member" | "OrganizationOwner";
@@ -461,7 +91,6 @@ export type OrganizationMember = {
 
 export type CreateOrganizationRequest = {
   readonly name: string;
-  readonly plan?: OnboardingPlan;
 };
 
 export type UpdateOrganizationRequest = {
@@ -523,36 +152,16 @@ export type CreateProjectRequest = {
 };
 
 export type OnboardingStep =
-  | "account-information"
-  | "mfa"
   | "organization"
-  | "payment-method"
-  | "payment-validation"
   | "project"
   | "invitation"
   | "complete";
 
-export type OnboardingJourneyType = "developer" | "paid" | "invitation";
-
-export type OnboardingPlan = "developer" | "starter" | "pro";
-
-export type OnboardingMfaDecision = "pending" | "configured" | "later";
-
-export type OnboardingRetryState = "none" | "pending" | "retryable" | "unavailable" | "expired";
-
-export type OnboardingPaymentValidationStatus =
-  | "not-started"
-  | "pending"
-  | "approved"
-  | "rejected";
+export type OnboardingJourneyType = "developer" | "invitation";
 
 export type OnboardingStatus =
   | "not-started"
   | "in-progress"
-  | "awaiting-validation"
-  | "blocked"
-  | "unavailable"
-  | "expired"
   | "ready-for-project"
   | "completed";
 
@@ -564,25 +173,14 @@ export type OnboardingStepState = {
 export type OnboardingState = {
   readonly userId: UserId;
   readonly email: string;
-  readonly displayName: string;
-  readonly phoneNumber: string;
   readonly journeyType: OnboardingJourneyType;
-  readonly selectedPlan: OnboardingPlan;
   readonly locale: string;
   readonly invitationId?: Ulid | null;
   readonly invitationOrganizationId?: OrganizationId | null;
   readonly invitationProjectId?: ProjectId | null;
   readonly invitationAccepted: boolean;
-  readonly retryState: OnboardingRetryState;
-  readonly accountInformationCompleted: boolean;
-  readonly mfaDecision: OnboardingMfaDecision;
-  readonly paymentMethodRegistered: boolean;
-  readonly paymentMethodValidated: boolean;
-  readonly paymentValidationStatus: OnboardingPaymentValidationStatus;
   readonly organizationId?: OrganizationId | null;
   readonly organizationOwnerAssigned: boolean;
-  readonly paymentMethodLinkedToOrganization: boolean;
-  readonly subscriptionOrTrialActive: boolean;
   readonly projectId?: ProjectId | null;
   readonly projectOwnerAssigned: boolean;
   readonly projectPrimaryRegions: readonly TerraScaleRegionCode[];
@@ -594,40 +192,8 @@ export type OnboardingState = {
   readonly updatedAt: Timestamp;
 };
 
-export type UpdateOnboardingAccountRequest = {
-  readonly displayName: string;
-  readonly phoneNumber: string;
-};
-
-export type CreateOnboardingPaymentSessionRequest = {
-  readonly successUrl: string;
-  readonly cancelUrl: string;
-  readonly plan?: OnboardingPlan;
-  readonly planId?: Ulid;
-  readonly billingInterval?: "monthly";
-};
-
-export type OnboardingPaymentSession = {
-  readonly checkoutUrl: string;
-  readonly sessionId: string;
-};
-
-export type ValidateOnboardingPaymentRequest = {
-  readonly sessionId?: string;
-  readonly developmentBypass?: boolean;
-};
-
-export type RegisterOnboardingPaymentMethodRequest = {
-  readonly sessionId: string;
-};
-
-export type UpdateOnboardingMfaRequest = {
-  readonly configureLater: boolean;
-};
-
 export type CreateOnboardingOrganizationRequest = {
   readonly name: string;
-  readonly plan?: OnboardingPlan;
 };
 
 export type CreateOnboardingProjectRequest = {
@@ -651,7 +217,6 @@ export type DeletedProject = {
   readonly name: string;
   readonly deleted: boolean;
   readonly databasesDeleted: number;
-  readonly queuesDeleted: number;
   readonly physicalStorageDeleted: boolean;
 };
 
@@ -742,24 +307,23 @@ export type ProjectSavedQueryResponse = {
   readonly repositoryId: RepositoryId | null;
   readonly createdAt: Timestamp;
   readonly updatedAt: Timestamp;
-};
-
-export type ProjectSavedQueryV2Response = ProjectSavedQueryResponse & {
+  /** Opaque resource-bound revision used for conditional updates. */
   readonly revision: string;
 };
 
-export type UpdateProjectSavedQueryV2Request = ProjectSavedQueryRequest & {
+export type UpdateProjectSavedQueryRequest = ProjectSavedQueryRequest & {
   readonly revision: string;
 };
 
-export type ProjectSavedQuerySnapshotPageRequest = {
+export type ProjectSavedQueryPageRequest = {
   readonly cursor?: string;
+  readonly skip?: number;
   readonly take?: number;
 };
 
-export type ProjectSavedQuerySnapshotPageResponse = {
-  readonly items: readonly ProjectSavedQueryV2Response[];
-  readonly nextCursor?: string | null;
+export type ProjectSavedQueryPageResponse = {
+  readonly items: readonly ProjectSavedQueryResponse[];
+  readonly nextCursor: string | null;
 };
 
 export type DeletedProjectSavedQueryResponse = {
@@ -776,98 +340,6 @@ export type DeletedProjectDatabaseResponse = {
   readonly environmentsDeleted: number;
   readonly physicalDatabasesDeleted: number;
   readonly repositoriesDeleted: number;
-};
-
-export type ProjectQueue = {
-  readonly queueId: QueueId;
-  readonly projectId: ProjectId;
-  readonly name: string;
-  readonly kind: "Queue" | "Topic";
-  readonly messages: number;
-  readonly storageBytes: number;
-  readonly consumerCount: number;
-  readonly replicas: number;
-  readonly fifo: boolean;
-  readonly partitionCount: number;
-  readonly retentionSeconds?: number;
-  readonly createdAt: Timestamp;
-};
-
-export type CreateProjectQueueRequest = {
-  readonly name: string;
-  readonly kind: "queue" | "topic";
-  readonly description?: string;
-  readonly retentionSeconds?: number;
-  readonly maxMessageSizeBytes?: number;
-  readonly fifo?: boolean;
-  readonly partitionCount?: number;
-  readonly duplicateDetectionSeconds?: number;
-};
-
-export type PublishProjectQueueMessageRequest = {
-  readonly data: JsonValue;
-  readonly idempotencyKey?: string;
-  readonly partitionKey?: string;
-  readonly delaySeconds?: number;
-  readonly timeToLiveSeconds?: number;
-};
-
-export type ProjectQueuePublishResult = {
-  readonly messageId: string;
-  readonly sequence: number;
-  readonly publishedAt: Timestamp;
-  readonly duplicate: boolean;
-};
-
-export type ProjectQueuePeekMessage = {
-  readonly messageId: string;
-  readonly data: JsonValue;
-  readonly contentType: string;
-  readonly headers: Readonly<Record<string, string>>;
-  readonly sequence: number;
-  readonly createdAt?: Timestamp;
-};
-
-export type ProjectQueueDeliveryGuarantee = "at-least-once";
-
-export type ReceiveProjectQueueMessagesRequest = {
-  readonly consumerName: string;
-  readonly maxMessages?: number;
-  readonly waitSeconds?: number;
-  readonly lockSeconds?: number;
-};
-
-export type ProjectQueueReceipt = {
-  readonly receipt: string;
-  readonly region: TerraScaleRegionCode;
-};
-
-export type ProjectQueueReceivedMessage = ProjectQueueReceipt & {
-  readonly messageId: string;
-  readonly data: JsonValue;
-  readonly contentType: string;
-  readonly headers: Readonly<Record<string, string>>;
-  readonly streamSequence: number;
-  readonly consumerSequence: number;
-  readonly deliveryAttempt: number;
-  readonly receivedAt: Timestamp;
-  readonly lockedUntil: Timestamp;
-  readonly deliveryGuarantee: ProjectQueueDeliveryGuarantee;
-};
-
-export type ProjectQueueReceiptActionResult = {
-  readonly messageId: string;
-  readonly operation: "abandon" | "complete" | "dead-letter";
-  readonly accepted: boolean;
-  readonly safeToRetry: boolean;
-  readonly region: TerraScaleRegionCode;
-  readonly deliveryGuarantee: ProjectQueueDeliveryGuarantee;
-};
-
-export type ProjectQueueRenewLockResult = ProjectQueueReceipt & {
-  readonly messageId: string;
-  readonly lockedUntil: Timestamp;
-  readonly deliveryGuarantee: ProjectQueueDeliveryGuarantee;
 };
 
 export type CreateDatabaseEnvironmentRequest = {
@@ -1109,161 +581,6 @@ export type RepositorySchemaValidationResponse = {
   readonly operationId: Ulid;
 };
 
-export type ApiKey = {
-  readonly keyId: ApiKeyId;
-  readonly projectId: ProjectId;
-  readonly name: string;
-  readonly prefix: string;
-  readonly lastFour: string;
-  readonly scopes: readonly string[];
-  readonly databaseId?: DatabaseId | null;
-  readonly environmentId?: EnvironmentId | null;
-  readonly createdByUserId?: UserId | null;
-  readonly createdByEmail: string;
-  readonly createdAt: Timestamp;
-  readonly expiresAt?: Timestamp | null;
-  readonly lastUsedAt?: Timestamp | null;
-  readonly revokedAt?: Timestamp | null;
-  readonly isActive: boolean;
-};
-
-export type CreateApiKeyRequest = {
-  readonly name: string;
-  readonly scopes: readonly string[];
-  readonly databaseId?: DatabaseId;
-  readonly environmentId?: EnvironmentId;
-  readonly expiresAt?: Timestamp | null;
-};
-
-export type ListApiKeysRequest = {
-  readonly cursor?: string;
-  readonly limit?: number;
-};
-
-export type ListApiKeysResponse = {
-  readonly apiKeys: readonly ApiKey[];
-  readonly nextCursor?: string;
-};
-
-export type ProjectAuthProvider = {
-  readonly projectId: ProjectId;
-  readonly provider: string;
-  readonly protocol: string;
-  readonly displayName: string;
-  readonly enabled: boolean;
-  readonly builtIn: boolean;
-  readonly clientId: string;
-  readonly hasClientSecret: boolean;
-  readonly authorizationEndpoint: string;
-  readonly tokenEndpoint: string;
-  readonly userInfoEndpoint: string;
-  readonly redirectUri: string;
-  readonly scopes: readonly string[];
-  readonly samlServiceProviderEntityId: string;
-  readonly samlIdentityProviderEntityId: string;
-  readonly samlSingleSignOnUrl: string;
-  readonly hasSamlSigningCertificate: boolean;
-  readonly samlAssertionConsumerServiceUrl: string;
-  readonly createdAt: Timestamp;
-  readonly updatedAt: Timestamp;
-};
-
-export type ListProjectAuthProvidersRequest = {
-  readonly cursor?: string;
-  readonly limit?: number;
-};
-
-export type ListProjectAuthProvidersResponse = {
-  readonly providers: readonly ProjectAuthProvider[];
-  readonly nextCursor: string;
-};
-
-export type CreatedApiKey = {
-  readonly apiKey: ApiKey;
-  readonly secret: string;
-};
-
-export type RotatedApiKey = {
-  readonly apiKey: ApiKey;
-  readonly secret: string;
-  readonly rotated: boolean;
-};
-
-export type RevokedApiKey = {
-  readonly keyId: ApiKeyId;
-  readonly revoked: boolean;
-};
-
-export type M2MApplication = {
-  readonly clientId: M2MClientId;
-  readonly projectId: ProjectId;
-  readonly name: string;
-  readonly prefix: string;
-  readonly lastFour: string;
-  readonly scopes: readonly string[];
-  readonly databaseId?: DatabaseId | null;
-  readonly environmentId?: EnvironmentId | null;
-  readonly createdByUserId?: UserId | null;
-  readonly createdByEmail: string;
-  readonly createdAt: Timestamp;
-  readonly expiresAt?: Timestamp | null;
-  readonly lastUsedAt?: Timestamp | null;
-  readonly revokedAt?: Timestamp | null;
-  readonly isActive: boolean;
-};
-
-export type CreateM2MApplicationRequest = {
-  readonly name: string;
-  readonly scopes: readonly string[];
-  readonly databaseId?: DatabaseId;
-  readonly environmentId?: EnvironmentId;
-  readonly expiresAt?: Timestamp | null;
-};
-
-export type ListM2MApplicationsRequest = {
-  readonly cursor?: string;
-  readonly limit?: number;
-};
-
-export type ListM2MApplicationsResponse = {
-  readonly applications: readonly M2MApplication[];
-  readonly nextCursor?: string;
-};
-
-export type CreatedM2MApplication = {
-  readonly application: M2MApplication;
-  readonly clientSecret: string;
-};
-
-export type RotatedM2MApplicationSecret = {
-  readonly application: M2MApplication;
-  readonly clientSecret: string;
-  readonly rotated: boolean;
-};
-
-export type RevokedM2MApplication = {
-  readonly clientId: M2MClientId;
-  readonly revoked: boolean;
-};
-
-export type M2MTokenRequest = {
-  readonly grantType?: "client_credentials" | string;
-  readonly clientId: string;
-  readonly clientSecret: string;
-  readonly scope?: string;
-};
-
-export type M2MTokenResponse = {
-  readonly access_token: string;
-  readonly token_type: string;
-  readonly expires_in: number;
-  readonly scope: string;
-  readonly project_id: ProjectId;
-  readonly client_id: M2MClientId;
-  readonly database_id?: DatabaseId | null;
-  readonly environment_id?: EnvironmentId | null;
-};
-
 export type AccessRole = "member" | "owner" | "viewer";
 
 export type TeamMember = {
@@ -1334,8 +651,6 @@ export type OrganizationProjectUsage = {
 
 export type OrganizationUsage = {
   readonly organizationId: OrganizationId;
-  readonly planId: string;
-  readonly planName: string;
   readonly periodStart: Timestamp;
   readonly periodEnd: Timestamp;
   readonly updatedAt: Timestamp;
@@ -1441,183 +756,6 @@ export type ProjectUsageHistory = {
   readonly points: readonly ProjectUsageHistoryPoint[];
 };
 
-export type BillingAccount = {
-  readonly billingAccountId: Ulid;
-  readonly organizationId: OrganizationId;
-  readonly planId: Ulid;
-  readonly provider: "polar" | "stripe";
-  readonly status: "active" | "canceled" | "past_due" | "trialing";
-  readonly billingInterval: "monthly" | "annual" | string | null;
-};
-
-export type CurrentOrganizationFeatureEntitlement = {
-  readonly key: string;
-  readonly enabled: boolean;
-  readonly limit?: number;
-  readonly used?: number;
-};
-
-export type CurrentOrganizationLimits = {
-  readonly maxRegions?: number;
-  readonly maxProjects?: number;
-  readonly maxDatabases?: number;
-  readonly maxTeamMembers?: number;
-  readonly maxRequestsPerMonth?: number;
-  readonly maxStorageGb?: number;
-  readonly maxRepositories?: number;
-  readonly maxApiKeys?: number;
-};
-
-export type CurrentOrganizationBilling = {
-  readonly organizationId: OrganizationId;
-  readonly status: string;
-  readonly isActive: boolean;
-  readonly isTrialing: boolean;
-  readonly provider?: string | null;
-  readonly customerId?: string | null;
-  readonly subscriptionId?: string | null;
-  readonly planId?: string | null;
-  readonly planName?: string | null;
-  readonly planType?: string | null;
-  readonly amount: number;
-  readonly currency?: string | null;
-  readonly currentPeriodStart?: Timestamp | null;
-  readonly currentPeriodEnd?: Timestamp | null;
-  readonly billingInterval?: "monthly" | "annual" | string | null;
-  readonly features: readonly CurrentOrganizationFeatureEntitlement[];
-  readonly limits?: CurrentOrganizationLimits;
-  readonly billingRoles: readonly string[];
-};
-
-export type BillingGuardRequest = {
-  readonly requireActiveSubscription?: boolean;
-  readonly allowTrialing?: boolean;
-  readonly requireNoBillingAction?: boolean;
-  readonly allowedPlanIds?: readonly string[];
-  readonly allowedPlanTypes?: readonly string[];
-  readonly requiredRoles?: readonly string[];
-  readonly requiredFeatures?: readonly string[];
-  readonly currentSeats?: number;
-  readonly requestedSeats?: number;
-  readonly currentRequests?: number;
-  readonly requestedRequests?: number;
-  readonly currentStorageGb?: number;
-  readonly requestedStorageGb?: number;
-};
-
-export type BillingGuardResponse = {
-  readonly allowed: boolean;
-  readonly reason?: string;
-  readonly reasons: readonly string[];
-  readonly missingRoles: readonly string[];
-  readonly missingFeatures: readonly string[];
-  readonly billingActionRequired: boolean;
-  readonly status: string;
-  readonly planId?: string;
-  readonly planType?: string;
-};
-
-export type CreateCheckoutSessionRequest = {
-  /** @deprecated Prefer planId and billingInterval. */
-  readonly priceId?: string;
-  readonly planId?: Ulid;
-  readonly billingInterval?: "monthly" | "annual";
-  readonly provider?: "polar" | "stripe";
-  /** @deprecated Retained for source compatibility; ignored and never serialized. Checkout redirects are deployment-configured. */
-  readonly successUrl?: string;
-  /** @deprecated Retained for source compatibility; ignored and never serialized. Checkout redirects are deployment-configured. */
-  readonly cancelUrl?: string;
-  /** @deprecated Retained for source compatibility; ignored and never serialized. The authenticated TerraScale user's email is used. */
-  readonly customerEmail?: string;
-  readonly quantity?: number;
-};
-
-export type CheckoutSession = {
-  readonly sessionId: string;
-  readonly url: string;
-};
-
-export type BillingAccessMember = {
-  readonly userId: Ulid;
-  readonly email: string;
-  readonly displayName: string;
-  readonly role: "billing_manager";
-  readonly enabled: boolean;
-  readonly grantedAt: Timestamp;
-  readonly grantedByUserId: Ulid;
-};
-
-export type Invoice = {
-  readonly invoiceId: Ulid;
-  readonly billingAccountId: Ulid;
-  readonly amountCents: number;
-  readonly refundedAmountCents: number;
-  readonly currency: string;
-  readonly status:
-    | "draft"
-    | "open"
-    | "paid"
-    | "void"
-    | "uncollectible"
-    | "partially_refunded"
-    | "refunded";
-  readonly issuedAt: Timestamp;
-  readonly periodStart?: Timestamp | null;
-  readonly periodEnd?: Timestamp | null;
-  readonly hostedInvoiceUrl?: string | null;
-  readonly invoicePdf?: string | null;
-};
-
-export type PricingPlan = {
-  readonly planId: Ulid;
-  readonly name: string;
-  readonly currency: string;
-  readonly monthlyBaseCents: number;
-  readonly annualBaseCents: number;
-  readonly includedUsage: readonly UsageMetric[];
-  readonly key: string;
-  readonly provider: string;
-  readonly monthlyPriceId: string | null;
-  readonly annualPriceId: string | null;
-  readonly monthlyPolarProductId: string | null;
-  readonly annualPolarProductId: string | null;
-  readonly monthlyStripePriceId: string | null;
-  readonly annualStripePriceId: string | null;
-  readonly monthlyTrialDays: number;
-  readonly annualTrialDays: number;
-  readonly visible: boolean;
-  readonly maxRegions: number;
-  readonly operationOverageCentsPerMillion: number;
-  readonly storageOverageCentsPerGbRegion: number;
-};
-
-export type AdminPricingPlanRequest = {
-  readonly key?: string;
-  readonly name?: string;
-  readonly currency?: string;
-  readonly monthlyBaseCents?: number;
-  readonly annualBaseCents?: number;
-  readonly monthlyPolarProductId?: string;
-  readonly annualPolarProductId?: string;
-  readonly monthlyStripePriceId?: string;
-  readonly annualStripePriceId?: string;
-  readonly monthlyTrialDays?: number;
-  readonly annualTrialDays?: number;
-  readonly visible?: boolean;
-  readonly defaultCheckout?: boolean;
-  readonly displayOrder?: number;
-  readonly maxDatabases?: number;
-  readonly maxRegions?: number;
-  readonly maxStorageGb?: number;
-  readonly maxRequestsPerMonth?: number;
-  readonly maxTeamMembers?: number;
-  readonly maxRepositories?: number;
-  readonly maxApiKeys?: number;
-  readonly operationOverageCentsPerMillion?: number;
-  readonly storageOverageCentsPerGbRegion?: number;
-  readonly includedUsage?: readonly UsageMetric[];
-};
-
 export type AuditEvent = {
   readonly auditEventId: AuditEventId;
   readonly projectId?: ProjectId;
@@ -1645,26 +783,6 @@ export type MarkAllNotificationsReadResponse = {
   readonly markedRead: number;
 };
 
-export type SecuritySettings = {
-  readonly projectId: ProjectId;
-  readonly mfaPolicy: string;
-  readonly ipAllowlist: string;
-  readonly allowedEmailDomains: string;
-  readonly dataResidency: string;
-  readonly encryption: string;
-  readonly authenticationEnabled: boolean;
-  readonly updatedAt: Timestamp;
-};
-
-export type UpdateSecuritySettingsRequest = {
-  readonly mfaPolicy?: string;
-  readonly ipAllowlist?: string;
-  readonly allowedEmailDomains?: string;
-  readonly dataResidency?: string;
-  readonly authenticationEnabled?: boolean;
-  readonly confirmDisableAuthentication?: boolean;
-};
-
 export type AdminUser = {
   readonly userId: UserId;
   readonly email: string;
@@ -1685,19 +803,6 @@ export type AdminSupportNote = {
 };
 
 export type AdminCreateSupportNoteRequest = Omit<AdminSupportNote, "createdAt" | "supportNoteId">;
-
-export type BillingReconciliationAttempt = {
-  readonly attemptId: Ulid;
-  readonly organizationId: OrganizationId;
-  readonly provider: string;
-  readonly state: string;
-  readonly requestedAt: Timestamp;
-  readonly enqueuedAt: Timestamp | null;
-  readonly startedAt: Timestamp | null;
-  readonly finishedAt: Timestamp | null;
-  readonly reconciledAt: Timestamp | null;
-  readonly errorCode: string | null;
-};
 
 export type AdminPlatformUsage = {
   readonly organizations: number;

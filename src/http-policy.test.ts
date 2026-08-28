@@ -43,46 +43,38 @@ describe("TerraScaleHttp request policy", () => {
   test("normalizes explicit base URLs when a custom fetch is configured", () => {
     const http = new TerraScaleHttp({
       apiBaseUrl: " https://api.terrascale.test/// ",
-      authBaseUrl: " https://auth.terrascale.test//// ",
       fetch: async () => Response.json({}),
     });
 
     assert.equal(http.config.apiBaseUrl, "https://api.terrascale.test");
-    assert.equal(http.config.authBaseUrl, "https://auth.terrascale.test");
   });
 
-  test("strips every identity header from anonymous token exchange", async () => {
+  test("attaches bearer and project identity headers to API requests", async () => {
     let captured: Request | undefined;
     const http = new TerraScaleHttp({
       apiBaseUrl: "https://api.terrascale.test",
       projectId: "project" as never,
-      accessToken: () => {
-        throw new Error("anonymous requests must not resolve an access token");
-      },
+      accessToken: "configured",
       defaultHeaders: { authorization: "Bearer configured" },
       fetch: async input => {
         captured = input instanceof Request ? input : new Request(input);
-        return Response.json({ accessToken: "issued" });
+        return Response.json({});
       },
     });
 
     const result = await http.request({
-      method: "POST",
-      path: "/api/v1/auth/password/login",
-      routeName: "auth.signIn",
-      headerPolicy: "anonymous",
+      method: "GET",
+      path: "/api/v1/regions",
+      routeName: "regions.list",
       headers: {
-        authorization: "Bearer request",
         "x-terrascale-project-id": "request-project",
       },
-      body: { email: "user@example.test", password: "secret" },
     });
 
     assert.equal(result.ok, true);
     assert.ok(captured);
-    for (const name of ["authorization", "x-terrascale-project-id"]) {
-      assert.equal(captured.headers.has(name), false, name);
-    }
+    assert.equal(captured.headers.get("authorization"), "Bearer configured");
+    assert.equal(captured.headers.get("x-terrascale-project-id"), "request-project");
   });
 
   test("returns preparation failures and isolates per-client metric recorders", async () => {

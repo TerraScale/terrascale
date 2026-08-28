@@ -13,7 +13,6 @@ import {
 } from "./fixture-lease.js";
 
 const apiBaseUrl = process.env.TERRASCALE_API_BASE_URL;
-const authBaseUrl = process.env.TERRASCALE_AUTH_API_BASE_URL;
 const accessToken = process.env.TERRASCALE_E2E_ACCESS_TOKEN;
 const tenantId = tryUlid(process.env.TERRASCALE_E2E_TENANT_ID ?? "");
 const projectId = tryUlid(process.env.TERRASCALE_E2E_PROJECT_ID ?? "");
@@ -63,7 +62,6 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
   test("round-trips a leased document through the real public API", async () => {
     const client = createTerraScaleClient({
       apiBaseUrl: apiBaseUrl!,
-      authBaseUrl: authBaseUrl!,
       accessToken: accessToken!,
       projectId: projectId!,
       sessionConsistency: "automatic",
@@ -107,7 +105,6 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
   test("classifies a real stale document write as a conflict without a simulated response", async () => {
     const client = createTerraScaleClient({
       apiBaseUrl: apiBaseUrl!,
-      authBaseUrl: authBaseUrl!,
       accessToken: accessToken!,
       projectId: projectId!,
     });
@@ -148,7 +145,6 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
   test("uses the configured preferred region on the real failover endpoint", async () => {
     const client = createTerraScaleClient({
       apiBaseUrl: apiBaseUrl!,
-      authBaseUrl: authBaseUrl!,
       accessToken: accessToken!,
       projectId: projectId!,
       preferredRegion: routingRegion!,
@@ -176,7 +172,6 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
   test("uses the configured strict regional endpoint on the real API", async () => {
     const resolved = resolveRuntimeConfig({
       apiBaseUrl: strictApiBaseUrl!,
-      authBaseUrl: authBaseUrl!,
       preferredRegion: strictRegion!,
       regionAffinity: "strict",
       fetch: globalThis.fetch,
@@ -185,7 +180,6 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
 
     const client = createTerraScaleClient({
       apiBaseUrl: strictApiBaseUrl!,
-      authBaseUrl: authBaseUrl!,
       accessToken: accessToken!,
       projectId: projectId!,
       preferredRegion: strictRegion!,
@@ -212,7 +206,6 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
     const statuses: number[] = [];
     const resolved = resolveRuntimeConfig({
       apiBaseUrl: unavailableApiBaseUrl!,
-      authBaseUrl: authBaseUrl!,
       preferredRegion: unavailableRegion!,
       regionAffinity: "strict",
       fetch: globalThis.fetch,
@@ -221,7 +214,6 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
 
     const client = createTerraScaleClient({
       apiBaseUrl: unavailableApiBaseUrl!,
-      authBaseUrl: authBaseUrl!,
       accessToken: accessToken!,
       projectId: projectId!,
       preferredRegion: unavailableRegion!,
@@ -253,7 +245,6 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
 function missingFixtureConfiguration(): string | false {
   const missing = [
     ["TERRASCALE_API_BASE_URL", apiBaseUrl],
-    ["TERRASCALE_AUTH_API_BASE_URL", authBaseUrl],
     ["TERRASCALE_E2E_ACCESS_TOKEN", accessToken],
     ["TERRASCALE_E2E_TENANT_ID", tenantId],
     ["TERRASCALE_E2E_PROJECT_ID", projectId],
@@ -287,7 +278,6 @@ function fixtureScope(
     repositoryId,
     documentId,
     apiBaseUrl: apiBaseUrl ?? "test://api",
-    authBaseUrl: authBaseUrl ?? "test://auth",
     credentialFingerprint: fixtureCredentialFingerprint(accessToken ?? "test-token"),
   };
 }

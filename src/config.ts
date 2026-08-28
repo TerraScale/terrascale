@@ -13,7 +13,6 @@ import type { TerraScaleRequestMetricRecorder } from "./http.js";
 
 export type TerraScaleRuntimeConfig = {
   readonly apiBaseUrl?: string;
-  readonly authBaseUrl?: string;
   readonly projectId?: ProjectId;
   readonly accessToken?: AccessTokenProvider;
   readonly defaultHeaders?: HeadersInit;
@@ -30,7 +29,6 @@ export type TerraScaleRuntimeConfig = {
 
 export type ResolvedTerraScaleRuntimeConfig = {
   readonly apiBaseUrl: string;
-  readonly authBaseUrl: string;
   readonly projectId?: ProjectId;
   readonly accessToken?: AccessTokenProvider;
   readonly defaultHeaders?: HeadersInit;
@@ -89,7 +87,6 @@ export function resolveRuntimeConfig(
   return {
     ...config,
     apiBaseUrl,
-    authBaseUrl: normalizeBaseUrl(config.authBaseUrl ?? globalApiBaseUrl),
     fetch: fetchHandler,
     preferredRegion,
     regionAffinity,

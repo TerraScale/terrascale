@@ -10,7 +10,6 @@ export type FixtureLeaseScope = {
   readonly repositoryId: string;
   readonly documentId: string;
   readonly apiBaseUrl: string;
-  readonly authBaseUrl: string;
   readonly credentialFingerprint: string;
 };
 

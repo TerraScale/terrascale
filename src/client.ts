@@ -10,114 +10,47 @@ const apiRoot = "/api/v1";
 export const sdkRouteManifest = {
   onboarding: {
     state: `${apiRoot}/onboarding`,
-    accountInformation: `${apiRoot}/onboarding/account-information`,
-    paymentSession: `${apiRoot}/onboarding/payment-method/checkout-session`,
-    paymentValidation: `${apiRoot}/onboarding/payment-method/validate`,
-    paymentMethodRegistration: `${apiRoot}/onboarding/payment-method/register`,
-    mfaDecision: `${apiRoot}/onboarding/mfa-decision`,
     organization: `${apiRoot}/onboarding/organization`,
     project: `${apiRoot}/onboarding/project`,
-  },
-  auth: {
-    me: `${apiRoot}/auth/me`,
-    signIn: `${apiRoot}/auth/password/login`,
-    register: `${apiRoot}/auth/password/signup`,
-    verifyEmail: `${apiRoot}/auth/password/verify-email`,
-    forgotPassword: `${apiRoot}/auth/password/forgot-password`,
-    resetPassword: `${apiRoot}/auth/password/reset-password`,
-    verifyPasswordMfa: `${apiRoot}/auth/password/mfa/verify`,
-    changePassword: `${apiRoot}/auth/password/change-password`,
-    externalLoginBegin: `${apiRoot}/auth/external-login/begin`,
-    externalLoginComplete: `${apiRoot}/auth/external-login/complete`,
-    mfaFactors: `${apiRoot}/auth/mfa/factors`,
-    mfaFactor: (factorId: Ulid) => `${apiRoot}/auth/mfa/factors/${ulidPathSegment(factorId)}`,
-    enrollTotp: `${apiRoot}/auth/mfa/totp/enroll`,
-    verifyTotpEnrollment: `${apiRoot}/auth/mfa/totp/enroll/verify`,
-    generateRecoveryCodes: `${apiRoot}/auth/mfa/recovery-codes/generate`,
-    billing: `${apiRoot}/auth/me/billing`,
-    billingGuard: `${apiRoot}/auth/me/billing/guard`,
-    emailSignInRequest: `${apiRoot}/auth/passwordless/magic-link`,
-    emailSignInComplete: `${apiRoot}/auth/passwordless/magic-link/complete`,
-    refresh: `${apiRoot}/auth/refresh`,
-    signOut: `${apiRoot}/auth/logout`,
-    switchOrganization: `${apiRoot}/auth/switch-organization`,
-    initiateEmailChange: `${apiRoot}/users/me/email/change`,
-    verifyEmailChange: `${apiRoot}/users/me/email/verify`,
-    accountSessions: `${apiRoot}/account/sessions`,
-    accountSession: (sessionId: Ulid) =>
-      `${apiRoot}/account/sessions/${ulidPathSegment(sessionId)}`,
-    updateProfile: `${apiRoot}/users/me/profile`,
-    project: {
-      register: (projectId: Ulid) => `${projectAuthRoot(projectId)}/signup`,
-      verifyEmail: (projectId: Ulid) => `${projectAuthRoot(projectId)}/verify-email`,
-      resendVerification: (projectId: Ulid) => `${projectAuthRoot(projectId)}/resend-verification`,
-      signIn: (projectId: Ulid) => `${projectAuthRoot(projectId)}/login`,
-      verifyPasswordMfa: (projectId: Ulid) => `${projectAuthRoot(projectId)}/password/mfa/verify`,
-      verifyRecoveryCode: (projectId: Ulid) =>
-        `${projectAuthRoot(projectId)}/mfa/recovery-codes/verify`,
-      forgotPassword: (projectId: Ulid) => `${projectAuthRoot(projectId)}/forgot-password`,
-      resetPassword: (projectId: Ulid) => `${projectAuthRoot(projectId)}/reset-password`,
-      magicLinkRequest: (projectId: Ulid) =>
-        `${projectAuthRoot(projectId)}/passwordless/magic-link`,
-      magicLinkComplete: (projectId: Ulid) =>
-        `${projectAuthRoot(projectId)}/passwordless/magic-link/complete`,
-      refresh: (projectId: Ulid) => `${projectAuthRoot(projectId)}/refresh`,
-      signOut: (projectId: Ulid) => `${projectAuthRoot(projectId)}/logout`,
-      providers: (projectId: Ulid) => `${projectAuthRoot(projectId)}/providers`,
-    },
   },
 } as const;
 
 export class TerraScaleClient {
   readonly #http: TerraScaleHttp;
 
-  readonly auth: AuthClient;
   readonly onboarding: OnboardingClient;
   readonly organizations: OrganizationsClient;
   readonly regions: RegionsClient;
   readonly savedQueries: SavedQueriesClient;
   readonly databases: DatabasesClient;
   readonly databaseBranches: DatabaseBranchesClient;
-  readonly queues: QueuesClient;
   readonly repositories: RepositoriesClient;
   readonly backups: BackupsClient;
   readonly documents: DocumentsClient;
   readonly query: QueryClient;
   readonly schema: SchemaClient;
-  readonly apiKeys: ApiKeysClient;
-  readonly m2m: M2MApplicationsClient;
   readonly access: AccessClient;
   readonly usage: UsageClient;
-  readonly billing: BillingClient;
-  readonly pricing: PricingClient;
   readonly audit: AuditClient;
   readonly notifications: NotificationsClient;
-  readonly security: SecurityClient;
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.#http = new TerraScaleHttp(config);
-    this.auth = new AuthClient(this.#http);
     this.onboarding = new OnboardingClient(this.#http);
     this.organizations = new OrganizationsClient(this.#http);
     this.regions = new RegionsClient(this.#http);
     this.savedQueries = new SavedQueriesClient(this.#http);
     this.databases = new DatabasesClient(this.#http);
     this.databaseBranches = new DatabaseBranchesClient(this.#http);
-    this.queues = new QueuesClient(this.#http);
     this.repositories = new RepositoriesClient(this.#http);
     this.backups = new BackupsClient(this.#http);
     this.documents = new DocumentsClient(this.#http);
     this.query = new QueryClient(this.#http);
     this.schema = new SchemaClient(this.#http);
-    this.apiKeys = new ApiKeysClient(this.#http);
-    this.m2m = new M2MApplicationsClient(this.#http);
     this.access = new AccessClient(this.#http);
     this.usage = new UsageClient(this.#http);
-    this.billing = new BillingClient(this.#http);
-    this.pricing = new PricingClient(this.#http);
     this.audit = new AuditClient(this.#http);
     this.notifications = new NotificationsClient(this.#http);
-    this.security = new SecurityClient(this.#http);
   }
 
   get config(): ResolvedTerraScaleRuntimeConfig {
@@ -138,61 +71,6 @@ export class OnboardingClient {
       method: "GET",
       path: sdkRouteManifest.onboarding.state,
       routeName: "onboarding.getState",
-    });
-  }
-
-  updateAccountInformation(
-    request: Models.UpdateOnboardingAccountRequest,
-  ): Promise<TerraScaleResult<Models.OnboardingState>> {
-    return this.#http.request({
-      method: "PATCH",
-      path: sdkRouteManifest.onboarding.accountInformation,
-      routeName: "onboarding.accountInformation.update",
-      body: request,
-    });
-  }
-
-  createPaymentSession(
-    request: Models.CreateOnboardingPaymentSessionRequest,
-  ): Promise<TerraScaleResult<Models.OnboardingPaymentSession>> {
-    return this.#http.request({
-      method: "POST",
-      path: sdkRouteManifest.onboarding.paymentSession,
-      routeName: "onboarding.paymentMethod.createSession",
-      body: request,
-    });
-  }
-
-  validatePaymentMethod(
-    request: Models.ValidateOnboardingPaymentRequest,
-  ): Promise<TerraScaleResult<Models.OnboardingState>> {
-    return this.#http.request({
-      method: "POST",
-      path: sdkRouteManifest.onboarding.paymentValidation,
-      routeName: "onboarding.paymentMethod.validate",
-      body: request,
-    });
-  }
-
-  registerOnboardingPaymentMethod(
-    request: Models.RegisterOnboardingPaymentMethodRequest,
-  ): Promise<TerraScaleResult<Models.OnboardingState>> {
-    return this.#http.request({
-      method: "POST",
-      path: sdkRouteManifest.onboarding.paymentMethodRegistration,
-      routeName: "onboarding.paymentMethod.register",
-      body: request,
-    });
-  }
-
-  updateMfaDecision(
-    request: Models.UpdateOnboardingMfaRequest,
-  ): Promise<TerraScaleResult<Models.OnboardingState>> {
-    return this.#http.request({
-      method: "PUT",
-      path: sdkRouteManifest.onboarding.mfaDecision,
-      routeName: "onboarding.mfaDecision.update",
-      body: request,
     });
   }
 
@@ -245,547 +123,6 @@ export class RegionsClient {
       routeName: "regions.get",
     });
   }
-}
-
-export class AuthClient {
-  readonly #http: TerraScaleHttp;
-  readonly project: ProjectAuthClient;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-    this.project = new ProjectAuthClient(http);
-  }
-
-  getSession(): Promise<TerraScaleResult<Models.AuthMeResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "GET",
-      path: sdkRouteManifest.auth.me,
-      routeName: "auth.session.get",
-    });
-  }
-
-  getCurrentBilling(): Promise<TerraScaleResult<Models.CurrentOrganizationBilling>> {
-    return this.#http.request({
-      base: "api",
-      method: "GET",
-      path: sdkRouteManifest.auth.billing,
-      routeName: "auth.billing.get",
-    });
-  }
-
-  evaluateBillingGuard(
-    request: Models.BillingGuardRequest,
-  ): Promise<TerraScaleResult<Models.BillingGuardResponse>> {
-    return this.#http.request({
-      base: "api",
-      method: "POST",
-      path: sdkRouteManifest.auth.billingGuard,
-      routeName: "auth.billing.guard",
-      body: request,
-    });
-  }
-
-  signIn(
-    request: Models.SignInRequest,
-  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.signIn,
-      routeName: "auth.signIn",
-      headerPolicy: "anonymous",
-      body: {
-        email: request.email,
-        password: request.password,
-        deviceFingerprint: request.deviceFingerprint ?? "",
-      },
-    });
-  }
-
-  register(
-    request: Models.RegisterRequest,
-  ): Promise<TerraScaleResult<Models.SignupResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.register,
-      routeName: "auth.register",
-      headerPolicy: "anonymous",
-      body: toSignupRequest(request),
-    });
-  }
-
-  verifyEmail(
-    request: Models.VerifyEmailRequest,
-  ): Promise<TerraScaleResult<Models.SignupResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.verifyEmail,
-      routeName: "auth.verifyEmail",
-      headerPolicy: "anonymous",
-      body: request,
-    });
-  }
-
-  forgotPassword(
-    request: Models.ForgotPasswordRequest,
-  ): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.forgotPassword,
-      routeName: "auth.forgotPassword",
-      headerPolicy: "anonymous",
-      body: {
-        email: request.email,
-        resetUrl: request.resetUrl ?? request.redirectUrl ?? "",
-      },
-    });
-  }
-
-  resetPassword(
-    request: Models.ResetPasswordRequest,
-  ): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.resetPassword,
-      routeName: "auth.resetPassword",
-      headerPolicy: "anonymous",
-      body: { token: request.token, newPassword: request.newPassword ?? request.password },
-    });
-  }
-
-  verifyPasswordMfa(
-    request: Models.PasswordMfaVerifyRequest,
-  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.verifyPasswordMfa,
-      routeName: "auth.passwordMfa.verify",
-      headerPolicy: "anonymous",
-      body: request,
-    });
-  }
-
-  beginExternalLogin(
-    request: Models.ExternalLoginBeginRequest,
-  ): Promise<TerraScaleResult<Models.ExternalLoginBeginResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.externalLoginBegin,
-      routeName: "auth.externalLogin.begin",
-      headerPolicy: "anonymous",
-      body: request,
-    });
-  }
-
-  completeExternalLogin(
-    request: Models.ExternalLoginCompleteRequest,
-  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.externalLoginComplete,
-      routeName: "auth.externalLogin.complete",
-      headerPolicy: "anonymous",
-      body: request,
-    });
-  }
-
-  enrollTotp(
-    request: Models.EnrollTotpRequest = { type: "totp" },
-  ): Promise<TerraScaleResult<Models.EnrollTotpResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.enrollTotp,
-      routeName: "auth.mfa.totp.enroll",
-      body: request,
-    });
-  }
-
-  verifyTotpEnrollment(
-    request: Models.VerifyTotpEnrollmentRequest,
-  ): Promise<TerraScaleResult<Models.VerifyTotpEnrollmentResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.verifyTotpEnrollment,
-      routeName: "auth.mfa.totp.verifyEnrollment",
-      body: request,
-    });
-  }
-
-  listMfaFactors(): Promise<TerraScaleResult<Models.ListMfaFactorsResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "GET",
-      path: sdkRouteManifest.auth.mfaFactors,
-      routeName: "auth.mfa.factors.list",
-    });
-  }
-
-  generateRecoveryCodes(): Promise<TerraScaleResult<Models.GenerateRecoveryCodesResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.generateRecoveryCodes,
-      routeName: "auth.mfa.recoveryCodes.generate",
-    });
-  }
-
-  deleteMfaFactor(
-    factorId: Ulid,
-    request: Models.DeleteMfaFactorRequest,
-  ): Promise<TerraScaleResult<Models.VerifyTotpEnrollmentResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "DELETE",
-      path: sdkRouteManifest.auth.mfaFactor(factorId),
-      routeName: "auth.mfa.factors.delete",
-      body: request,
-    });
-  }
-
-  changePassword(
-    request: Models.ChangePasswordRequest,
-  ): Promise<TerraScaleResult<Models.ChangePasswordResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.changePassword,
-      routeName: "auth.password.change",
-      body: request,
-    });
-  }
-
-  requestEmailSignIn(
-    request: Models.EmailSignInRequest,
-  ): Promise<TerraScaleResult<Models.EmailSignInResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.emailSignInRequest,
-      routeName: "auth.emailSignIn.request",
-      headerPolicy: "anonymous",
-      body: {
-        email: request.email,
-        loginUrl: request.redirectUrl ?? "",
-        deliveryMethod: request.deliveryMethod ?? "link",
-        displayName: request.displayName,
-        firstName: request.firstName,
-        lastName: request.lastName,
-        fullName: request.fullName,
-        acceptedTerms: request.acceptedTerms,
-        termsVersion: request.termsVersion,
-      },
-    });
-  }
-
-  completeEmailSignIn(
-    request: Models.CompleteEmailSignInRequest,
-  ): Promise<TerraScaleResult<Models.CompleteEmailSignInResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.emailSignInComplete,
-      routeName: "auth.emailSignIn.complete",
-      headerPolicy: "anonymous",
-      body: request,
-    });
-  }
-
-  refresh(refreshToken: string): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.refresh,
-      routeName: "auth.token.refresh",
-      headerPolicy: "anonymous",
-      body: { refreshToken },
-    });
-  }
-
-  signOut(): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.signOut,
-      routeName: "auth.signOut",
-      body: { revokeAll: true },
-    });
-  }
-
-  listSessions(query?: {
-    readonly cursor?: string;
-    readonly limit?: number;
-  }): Promise<TerraScaleResult<Models.ListAccountSessionsResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "GET",
-      path: sdkRouteManifest.auth.accountSessions,
-      routeName: "auth.sessions.list",
-      query,
-    });
-  }
-
-  revokeSession(sessionId: Ulid): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "DELETE",
-      path: sdkRouteManifest.auth.accountSession(sessionId),
-      routeName: "auth.sessions.revoke",
-    });
-  }
-
-  revokeOtherSessions(): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "DELETE",
-      path: sdkRouteManifest.auth.accountSessions,
-      routeName: "auth.sessions.revokeOther",
-    });
-  }
-
-  updateProfile(
-    request: Models.UpdateProfileRequest,
-  ): Promise<TerraScaleResult<Models.UpdateProfileResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "PATCH",
-      path: sdkRouteManifest.auth.updateProfile,
-      routeName: "auth.profile.update",
-      body: request,
-    });
-  }
-
-  switchOrganization(
-    request: Models.SwitchOrganizationRequest,
-  ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.switchOrganization,
-      routeName: "auth.organization.switch",
-      body: request,
-    });
-  }
-
-  initiateEmailChange(
-    request: Models.InitiateEmailChangeRequest,
-  ): Promise<TerraScaleResult<Models.InitiateEmailChangeResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.initiateEmailChange,
-      routeName: "auth.emailChange.initiate",
-      body: request,
-    });
-  }
-
-  verifyEmailChange(
-    request: Models.VerifyEmailChangeRequest,
-  ): Promise<TerraScaleResult<Models.VerifyEmailChangeResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.verifyEmailChange,
-      routeName: "auth.emailChange.verify",
-      body: request,
-    });
-  }
-}
-
-export class ProjectAuthClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  register(
-    projectId: Ulid,
-    request: Models.ProjectRegisterRequest,
-  ): Promise<TerraScaleResult<Models.SignupResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.project.register(projectId),
-      routeName: "auth.project.register",
-      headerPolicy: "anonymous",
-      body: toSignupRequest(request),
-    });
-  }
-
-  verifyEmail(
-    projectId: Ulid,
-    request: Models.VerifyEmailRequest,
-  ): Promise<TerraScaleResult<Models.SignupResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.project.verifyEmail(projectId),
-      routeName: "auth.project.verifyEmail",
-      headerPolicy: "anonymous",
-      body: request,
-    });
-  }
-
-  resendVerification(
-    projectId: Ulid,
-    pendingAuthenticationToken: string,
-    verifyUrl = "",
-  ): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.project.resendVerification(projectId),
-      routeName: "auth.project.resendVerification",
-      headerPolicy: "anonymous",
-      body: { pendingAuthenticationToken, verifyUrl },
-    });
-  }
-
-  signIn(
-    projectId: Ulid,
-    request: Models.ProjectSignInRequest,
-  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.project.signIn(projectId),
-      routeName: "auth.project.signIn",
-      headerPolicy: "anonymous",
-      body: { ...request, deviceFingerprint: request.deviceFingerprint ?? "" },
-    });
-  }
-
-  verifyPasswordMfa(
-    projectId: Ulid,
-    request: Models.PasswordMfaVerifyRequest,
-  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.project.verifyPasswordMfa(projectId),
-      routeName: "auth.project.passwordMfa.verify",
-      headerPolicy: "anonymous",
-      body: request,
-    });
-  }
-
-  forgotPassword(
-    projectId: Ulid,
-    request: Models.PasswordResetRequest,
-  ): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.project.forgotPassword(projectId),
-      routeName: "auth.project.forgotPassword",
-      headerPolicy: "anonymous",
-      body: { email: request.email, resetUrl: request.resetUrl ?? request.redirectUrl ?? "" },
-    });
-  }
-
-  resetPassword(
-    projectId: Ulid,
-    request: Models.CompletePasswordResetRequest,
-  ): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.project.resetPassword(projectId),
-      routeName: "auth.project.resetPassword",
-      headerPolicy: "anonymous",
-      body: { token: request.token, newPassword: request.newPassword ?? request.password },
-    });
-  }
-
-  requestMagicLink(
-    projectId: Ulid,
-    request: Models.ProjectMagicLinkRequest,
-  ): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.project.magicLinkRequest(projectId),
-      routeName: "auth.project.magicLink.request",
-      headerPolicy: "anonymous",
-      body: { email: request.email, loginUrl: request.loginUrl ?? request.redirectUrl },
-    });
-  }
-
-  completeMagicLink(
-    projectId: Ulid,
-    request: Models.CompleteProjectMagicLinkRequest,
-  ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.project.magicLinkComplete(projectId),
-      routeName: "auth.project.magicLink.complete",
-      headerPolicy: "anonymous",
-      body: request,
-    });
-  }
-
-  refresh(
-    projectId: Ulid,
-    refreshToken: string,
-  ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.project.refresh(projectId),
-      routeName: "auth.project.token.refresh",
-      headerPolicy: "anonymous",
-      body: { refreshToken },
-    });
-  }
-
-  signOut(projectId: Ulid): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.project.signOut(projectId),
-      routeName: "auth.project.signOut",
-      body: { revokeAll: true },
-    });
-  }
-
-  listProviders(
-    projectId: Ulid,
-    query?: Models.ListProjectAuthProvidersRequest,
-  ): Promise<TerraScaleResult<Models.ListProjectAuthProvidersResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "GET",
-      path: sdkRouteManifest.auth.project.providers(projectId),
-      routeName: "auth.project.providers.list",
-      query,
-    });
-  }
-
-  verifyRecoveryCode(
-    projectId: Ulid,
-    request: Models.VerifyRecoveryCodeRequest,
-  ): Promise<TerraScaleResult<Models.VerifyRecoveryCodeResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.project.verifyRecoveryCode(projectId),
-      routeName: "auth.project.mfa.recoveryCodes.verify",
-      headerPolicy: "anonymous",
-      body: request,
-    });
-  }
-
 }
 
 export class OrganizationsClient {
@@ -1039,178 +376,37 @@ export class OrganizationsClient {
   }
 }
 
-export class QueuesClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  list(projectId?: Ulid): Promise<TerraScaleResult<readonly Models.ProjectQueue[]>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${projectRoot(this.#http, projectId)}/queues`,
-      routeName: "queues.list",
-    });
-  }
-
-  create(
-    request: Models.CreateProjectQueueRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.ProjectQueue>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${projectRoot(this.#http, projectId)}/queues`,
-      routeName: "queues.create",
-      body: request,
-    });
-  }
-
-  get(queueId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.ProjectQueue>> {
-    return this.#http.request({
-      method: "GET",
-      path: queueRoot(this.#http, queueId, projectId),
-      routeName: "queues.get",
-    });
-  }
-
-  delete(queueId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<boolean>> {
-    return this.#http.request({
-      method: "DELETE",
-      path: queueRoot(this.#http, queueId, projectId),
-      routeName: "queues.delete",
-    });
-  }
-
-  purge(
-    queueId: Ulid,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<{ readonly queueName: string; readonly purgedMessages: number }>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${queueRoot(this.#http, queueId, projectId)}:purge`,
-      routeName: "queues.purge",
-    });
-  }
-
-  publish(
-    queueId: Ulid,
-    request: Models.PublishProjectQueueMessageRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.ProjectQueuePublishResult>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${queueRoot(this.#http, queueId, projectId)}:publish`,
-      routeName: "queues.publish",
-      body: request,
-    });
-  }
-
-  peek(
-    queueId: Ulid,
-    maxMessages = 10,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<readonly Models.ProjectQueuePeekMessage[]>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${queueRoot(this.#http, queueId, projectId)}:peek`,
-      routeName: "queues.peek",
-      query: { maxMessages },
-    });
-  }
-
-  receive(
-    queueId: Ulid,
-    request: Models.ReceiveProjectQueueMessagesRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<readonly Models.ProjectQueueReceivedMessage[]>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${queueRoot(this.#http, queueId, projectId)}:receive`,
-      routeName: "queues.receive",
-      body: request,
-    });
-  }
-
-  complete(
-    queueId: Ulid,
-    receipt: Models.ProjectQueueReceipt,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.ProjectQueueReceiptActionResult>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${queueRoot(this.#http, queueId, projectId)}:complete`,
-      routeName: "queues.complete",
-      body: { receipt: receipt.receipt },
-      headers: preferredRegionHeaders(receipt.region),
-    });
-  }
-
-  abandon(
-    queueId: Ulid,
-    receipt: Models.ProjectQueueReceipt,
-    delaySeconds?: number,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.ProjectQueueReceiptActionResult>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${queueRoot(this.#http, queueId, projectId)}:abandon`,
-      routeName: "queues.abandon",
-      body: { receipt: receipt.receipt, delaySeconds },
-      headers: preferredRegionHeaders(receipt.region),
-    });
-  }
-
-  deadLetter(
-    queueId: Ulid,
-    receipt: Models.ProjectQueueReceipt,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.ProjectQueueReceiptActionResult>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${queueRoot(this.#http, queueId, projectId)}:dead-letter`,
-      routeName: "queues.deadLetter",
-      body: { receipt: receipt.receipt },
-      headers: preferredRegionHeaders(receipt.region),
-    });
-  }
-
-  renewLock(
-    queueId: Ulid,
-    receipt: Models.ProjectQueueReceipt,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.ProjectQueueRenewLockResult>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${queueRoot(this.#http, queueId, projectId)}:renew-lock`,
-      routeName: "queues.renewLock",
-      body: { receipt: receipt.receipt },
-      headers: preferredRegionHeaders(receipt.region),
-    });
-  }
-
-}
-
 export class SavedQueriesClient {
   readonly #http: TerraScaleHttp;
-  readonly v2: SavedQueriesV2Client;
-  readonly v3: SavedQueriesV3Client;
 
   constructor(http: TerraScaleHttp) {
     this.#http = http;
-    this.v2 = new SavedQueriesV2Client(http);
-    this.v3 = new SavedQueriesV3Client(http);
   }
 
   list(
     projectId?: Ulid,
-    query?: Models.PageRequest,
-  ): Promise<TerraScaleResult<readonly Models.ProjectSavedQueryResponse[]>> {
+    query?: Models.ProjectSavedQueryPageRequest,
+  ): Promise<TerraScaleResult<Models.ProjectSavedQueryPageResponse>> {
     return this.#http.request({
       method: "GET",
       path: `${projectRoot(this.#http, projectId)}/saved-queries`,
       routeName: "savedQueries.list",
-      query: { skip: query?.skip ?? 0, take: query?.take ?? 100 },
+      query: {
+        ...(query?.cursor === undefined ? {} : { cursor: query.cursor }),
+        skip: query?.skip ?? 0,
+        take: query?.take ?? 100,
+      },
+    });
+  }
+
+  get(
+    savedQueryId: Ulid,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectSavedQueryResponse>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${projectRoot(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
+      routeName: "savedQueries.get",
     });
   }
 
@@ -1228,7 +424,7 @@ export class SavedQueriesClient {
 
   update(
     savedQueryId: Ulid,
-    request: Models.ProjectSavedQueryRequest,
+    request: Models.UpdateProjectSavedQueryRequest,
     projectId?: Ulid,
   ): Promise<TerraScaleResult<Models.ProjectSavedQueryResponse>> {
     return this.#http.request({
@@ -1247,70 +443,6 @@ export class SavedQueriesClient {
       method: "DELETE",
       path: `${projectRoot(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
       routeName: "savedQueries.delete",
-    });
-  }
-}
-
-export class SavedQueriesV2Client {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  list(
-    projectId?: Ulid,
-    query?: Models.PageRequest,
-  ): Promise<TerraScaleResult<readonly Models.ProjectSavedQueryV2Response[]>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${projectV2Root(this.#http, projectId)}/saved-queries`,
-      routeName: "savedQueries.v2.list",
-      query: { skip: query?.skip ?? 0, take: query?.take ?? 100 },
-    });
-  }
-
-  get(
-    savedQueryId: Ulid,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.ProjectSavedQueryV2Response>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${projectV2Root(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
-      routeName: "savedQueries.v2.get",
-    });
-  }
-
-  update(
-    savedQueryId: Ulid,
-    request: Models.UpdateProjectSavedQueryV2Request,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.ProjectSavedQueryV2Response>> {
-    return this.#http.request({
-      method: "PUT",
-      path: `${projectV2Root(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
-      routeName: "savedQueries.v2.update",
-      body: request,
-    });
-  }
-}
-
-export class SavedQueriesV3Client {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  list(
-    projectId?: Ulid,
-    query?: Models.ProjectSavedQuerySnapshotPageRequest,
-  ): Promise<TerraScaleResult<Models.ProjectSavedQuerySnapshotPageResponse>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${projectV3Root(this.#http, projectId)}/saved-queries`,
-      routeName: "savedQueries.v3.list",
-      query: { cursor: query?.cursor, take: query?.take ?? 100 },
     });
   }
 }
@@ -1799,132 +931,6 @@ export class SchemaClient {
   }
 }
 
-export class ApiKeysClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  list(
-    projectId?: Ulid,
-    query?: Models.ListApiKeysRequest,
-  ): Promise<TerraScaleResult<Models.ListApiKeysResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "GET",
-      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/api-keys`,
-      routeName: "apiKeys.list",
-      query,
-    });
-  }
-
-  create(
-    request: Models.CreateApiKeyRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.CreatedApiKey>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/api-keys`,
-      routeName: "apiKeys.create",
-      body: request,
-    });
-  }
-
-  rotate(apiKeyId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.RotatedApiKey>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/api-keys/${ulidPathSegment(apiKeyId)}/rotate`,
-      routeName: "apiKeys.rotate",
-    });
-  }
-
-  revoke(apiKeyId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.RevokedApiKey>> {
-    return this.#http.request({
-      base: "auth",
-      method: "DELETE",
-      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/api-keys/${ulidPathSegment(apiKeyId)}`,
-      routeName: "apiKeys.revoke",
-    });
-  }
-}
-
-export class M2MApplicationsClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  list(
-    projectId?: Ulid,
-    query?: Models.ListM2MApplicationsRequest,
-  ): Promise<TerraScaleResult<Models.ListM2MApplicationsResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "GET",
-      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/m2m-applications`,
-      routeName: "m2m.list",
-      query,
-    });
-  }
-
-  create(
-    request: Models.CreateM2MApplicationRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.CreatedM2MApplication>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/m2m-applications`,
-      routeName: "m2m.create",
-      body: request,
-    });
-  }
-
-  rotate(
-    clientId: Ulid,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.RotatedM2MApplicationSecret>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/m2m-applications/${ulidPathSegment(clientId)}/rotate`,
-      routeName: "m2m.rotate",
-    });
-  }
-
-  revoke(clientId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.RevokedM2MApplication>> {
-    return this.#http.request({
-      base: "auth",
-      method: "DELETE",
-      path: `${projectAuthRoot(projectRootId(this.#http, projectId))}/m2m-applications/${ulidPathSegment(clientId)}`,
-      routeName: "m2m.revoke",
-    });
-  }
-
-  createToken(
-    projectId: Ulid,
-    request: Models.M2MTokenRequest,
-  ): Promise<TerraScaleResult<Models.M2MTokenResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: `${projectAuthRoot(projectId)}/m2m/token`,
-      routeName: "m2m.token.create",
-      headerPolicy: "anonymous",
-      body: {
-        grant_type: request.grantType ?? "client_credentials",
-        client_id: request.clientId,
-        client_secret: request.clientSecret,
-        scope: request.scope ?? "",
-      },
-    });
-  }
-}
-
 export class AccessClient {
   readonly #http: TerraScaleHttp;
 
@@ -2040,103 +1046,6 @@ export class UsageClient {
   }
 }
 
-export class BillingClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  getAccount(organizationId: Ulid): Promise<TerraScaleResult<Models.BillingAccount>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing`,
-      routeName: "billing.account.get",
-    });
-  }
-
-  listInvoices(
-    organizationId: Ulid,
-    query?: Models.PageRequest,
-  ): Promise<TerraScaleResult<Models.Page<Models.Invoice>>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/invoices`,
-      routeName: "billing.invoices.list",
-      query,
-    });
-  }
-
-  listAccess(
-    organizationId: Ulid,
-  ): Promise<TerraScaleResult<readonly Models.BillingAccessMember[]>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/access`,
-      routeName: "billing.access.list",
-    });
-  }
-
-  setAccess(
-    organizationId: Ulid,
-    userId: Ulid,
-    enabled: boolean,
-  ): Promise<TerraScaleResult<Models.BillingAccessMember>> {
-    return this.#http.request({
-      method: "PUT",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/access/${ulidPathSegment(userId)}`,
-      routeName: "billing.access.set",
-      body: { enabled },
-    });
-  }
-
-  createCheckoutSession(
-    organizationId: Ulid,
-    request: Models.CreateCheckoutSessionRequest,
-  ): Promise<TerraScaleResult<Models.CheckoutSession>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/checkout-sessions`,
-      routeName: "billing.checkoutSessions.create",
-      body: {
-        priceId: request.priceId,
-        planId: request.planId,
-        billingInterval: request.billingInterval,
-        provider: request.provider,
-        quantity: request.quantity,
-      },
-    });
-  }
-
-  createPortalSession(
-    organizationId: Ulid,
-    returnUrl: string,
-  ): Promise<TerraScaleResult<{ readonly url: string }>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/billing/portal-sessions`,
-      routeName: "billing.portalSessions.create",
-      body: { returnUrl },
-    });
-  }
-}
-
-export class PricingClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  listPlans(): Promise<TerraScaleResult<readonly Models.PricingPlan[]>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${apiRoot}/pricing/plans`,
-      routeName: "pricing.plans.list",
-    });
-  }
-}
-
 export class AuditClient {
   readonly #http: TerraScaleHttp;
 
@@ -2204,34 +1113,6 @@ export class NotificationsClient {
       path: `${apiRoot}/users/me/notifications:mark-all-read`,
       routeName: "notifications.markAllRead",
       query,
-    });
-  }
-}
-
-export class SecurityClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  getSettings(projectId?: Ulid): Promise<TerraScaleResult<Models.SecuritySettings>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${projectRoot(this.#http, projectId)}/security/settings`,
-      routeName: "security.settings.get",
-    });
-  }
-
-  updateSettings(
-    request: Models.UpdateSecuritySettingsRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.SecuritySettings>> {
-    return this.#http.request({
-      method: "PUT",
-      path: `${projectRoot(this.#http, projectId)}/security/settings`,
-      routeName: "security.settings.update",
-      body: request,
     });
   }
 }
@@ -2336,45 +1217,6 @@ export class AdminClient {
     });
   }
 
-  listPricingPlans(): Promise<TerraScaleResult<readonly Models.PricingPlan[]>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${apiRoot}/admin/plans`,
-      routeName: "admin.pricing.list",
-    });
-  }
-
-  createPricingPlan(
-    request: Models.AdminPricingPlanRequest,
-  ): Promise<TerraScaleResult<Models.PricingPlan>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${apiRoot}/admin/plans`,
-      routeName: "admin.pricing.create",
-      body: request,
-    });
-  }
-
-  updatePricingPlan(
-    planId: Ulid,
-    request: Models.AdminPricingPlanRequest,
-  ): Promise<TerraScaleResult<Models.PricingPlan>> {
-    return this.#http.request({
-      method: "PATCH",
-      path: `${apiRoot}/admin/plans/${ulidPathSegment(planId)}`,
-      routeName: "admin.pricing.update",
-      body: request,
-    });
-  }
-
-  deletePricingPlan(planId: Ulid): Promise<TerraScaleResult<boolean>> {
-    return this.#http.request({
-      method: "DELETE",
-      path: `${apiRoot}/admin/plans/${ulidPathSegment(planId)}`,
-      routeName: "admin.pricing.delete",
-    });
-  }
-
   listAudit(query?: Models.PageRequest): Promise<TerraScaleResult<Models.Page<Models.AuditEvent>>> {
     return this.#http.request({
       method: "GET",
@@ -2394,48 +1236,6 @@ export class AdminClient {
       query,
     });
   }
-
-  triggerBillingReconciliation(
-    organizationId: Ulid,
-    idempotencyKey: string,
-  ): Promise<TerraScaleResult<Models.BillingReconciliationAttempt>> {
-    validateBackupConfirmationValue(idempotencyKey, "idempotencyKey", 128);
-
-    return this.#http.request({
-      method: "POST",
-      path: `${apiRoot}/admin/billing/reconciliation/${ulidPathSegment(organizationId)}:trigger`,
-      routeName: "admin.billingReconciliation.trigger",
-      idempotencyKey,
-    });
-  }
-
-  getBillingReconciliation(
-    organizationId: Ulid,
-    attemptId: Ulid,
-  ): Promise<TerraScaleResult<Models.BillingReconciliationAttempt>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${apiRoot}/admin/billing/reconciliation/${ulidPathSegment(organizationId)}/${ulidPathSegment(attemptId)}`,
-      routeName: "admin.billingReconciliation.get",
-    });
-  }
-}
-
-function toSignupRequest(request: Models.ProjectRegisterRequest) {
-  const displayNameParts = (request.displayName ?? "").trim().split(/\s+/u).filter(Boolean);
-  const firstName = request.firstName ?? displayNameParts[0] ?? "";
-  const lastName = request.lastName ?? displayNameParts.slice(1).join(" ");
-
-  return {
-    email: request.email,
-    password: request.password,
-    firstName,
-    lastName,
-    fullName: (request.fullName ?? request.displayName ?? "").trim(),
-    acceptedTerms: request.acceptedTerms ?? false,
-    termsVersion: request.termsVersion ?? "",
-    verifyUrl: request.verifyUrl ?? request.redirectUrl ?? "",
-  };
 }
 
 function validateBackupConfirmationValue(
@@ -2464,28 +1264,8 @@ function projectRoot(http: TerraScaleHttp, projectId: Ulid | undefined): string 
   return `${apiRoot}/projects/${ulidPathSegment(projectRootId(http, projectId))}`;
 }
 
-function projectV2Root(http: TerraScaleHttp, projectId: Ulid | undefined): string {
-  return `/api/v2/projects/${ulidPathSegment(projectRootId(http, projectId))}`;
-}
-
-function projectV3Root(http: TerraScaleHttp, projectId: Ulid | undefined): string {
-  return `/api/v3/projects/${ulidPathSegment(projectRootId(http, projectId))}`;
-}
-
-function projectAuthRoot(projectId: Ulid): string {
-  return `${apiRoot}/projects/${ulidPathSegment(projectId)}/auth`;
-}
-
 function databaseRoot(http: TerraScaleHttp, scope: Models.DatabaseScoped): string {
   return `${projectRoot(http, scope.projectId)}/databases/${ulidPathSegment(scope.databaseId)}`;
-}
-
-function queueRoot(http: TerraScaleHttp, queueId: Ulid, projectId?: Ulid): string {
-  return `${projectRoot(http, projectId)}/queues/${ulidPathSegment(queueId)}`;
-}
-
-function preferredRegionHeaders(region: string): HeadersInit {
-  return { "x-terrascale-preferred-region": region.trim().toLowerCase() };
 }
 
 function documentReadHeaders(options: Models.DocumentReadOptions | undefined): HeadersInit | undefined {

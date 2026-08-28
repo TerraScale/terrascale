@@ -1,6 +1,6 @@
 {
   "name": "@terrascale/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "TypeScript SDK for TerraScale public REST APIs.",
   "type": "module",
   "license": "Apache-2.0",
@@ -45,6 +45,7 @@
     "check:openapi-drift": "node scripts/check-openapi-drift.mjs",
     "check:openapi-contract-descriptor": "node scripts/check-openapi-contract-descriptor.mjs",
     "check:public-contract-fixture": "node scripts/check-public-contract-fixture.mjs",
+    "check:forbidden-surface": "node scripts/check-forbidden-surface.mjs",
     "check:route-manifest": "node scripts/generate-client-route-manifest.mjs --check",
     "generate:route-manifest": "npm run build && node scripts/generate-client-route-manifest.mjs",
     "generate:openapi-contract-descriptor": "npm run build && node scripts/generate-openapi-contract-descriptor.mjs",

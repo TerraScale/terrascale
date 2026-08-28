@@ -10,6 +10,17 @@ import { test } from "node:test";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const run = promisify(execFile);
+const forbiddenRoutePattern = /(?:\/api\/v\d+\/(?:auth|account|billing|pricing|queues|onboarding\/payment)(?:[\/"'`: ]|$)|\/api\/v\d+\/projects\/\{[^}]+\}\/(?:auth|security|queues)(?:[\/"'`: ]|$)|\b(?:auth|apiKeys|m2m|queues|billing|pricing|payment|security)\.[a-z])/iu;
+const forbiddenSymbolPattern = /\b(?:AuthClient|ProjectAuth\w*|authBaseUrl|ApiKey\w*|M2M\w*|QueuesClient|OnboardingPayment\w*|CreateOnboardingPayment\w*|ValidateOnboardingPayment\w*|RegisterOnboardingPayment\w*|PaymentMethod|Billing\w*|Pricing\w*|Security(?:Client|Settings\w*))\b/u;
+
+type PackedRouteManifest = {
+  readonly routes?: readonly {
+    readonly client?: string;
+    readonly operation?: string;
+    readonly routeName?: string;
+    readonly pathTemplate?: string;
+  }[];
+};
 
 test("release paths clean-install, build, test, and pack the SDK independently", async () => {
   const [deploymentJson, workflow] = await Promise.all([
@@ -29,7 +40,7 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   }
   assert.deepEqual(
     deployment.buildTargets[0]?.commands.map((command) => command.description),
-    ["Clean install", "Build SDK", "Unit and contract regression", "Pack npm candidate"],
+    ["Clean install", "Build SDK", "Forbidden SDK surface", "Unit and contract regression", "Pack npm candidate"],
   );
   assert.deepEqual(
     deployment.releaseProfiles.find((profile) => profile.name === "release-e2e")?.commands.map((command) => command.description),
@@ -87,7 +98,13 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "browser-matrix"), /runs-on: terrascale-untrusted/u);
   assert.match(jobDefinition(workflow, "browser-matrix"), /playwright:v1\.62\.1-noble/u);
   assert.match(jobDefinition(workflow, "browser-matrix"), /npm run test:browser/u);
-  assert.match(jobDefinition(workflow, "release-contract-fixture"), /check-public-contract-fixture\.mjs Dashboard\/docs\/product\/openapi\/server\.openapi\.json/u);
+  for (const job of ["pr-static", "release-contract-fixture"]) {
+    assert.match(
+      jobDefinition(workflow, job),
+      /(?:node scripts\/check-public-contract-fixture\.mjs|npm run check:public-contract-fixture(?: --)?)[ \t]+Dashboard\/docs\/product\/openapi\/server\.openapi\.json/u,
+    );
+    assert.match(jobDefinition(workflow, job), /npm run check:forbidden-surface/u);
+  }
   assert.match(jobDefinition(workflow, "release-contract-fixture"), /check:openapi-contract-descriptor -- Dashboard\/docs\/product\/openapi\/server\.openapi\.json/u);
   assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("npm run build") < jobDefinition(workflow, "release-contract-fixture").indexOf("npm run check:route-manifest"));
   assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("npm run check:route-manifest") < jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-contract-descriptor"));
@@ -100,7 +117,6 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "release-tests"), /--profile regression/u);
   for (const name of [
     "TERRASCALE_API_BASE_URL",
-    "TERRASCALE_AUTH_API_BASE_URL",
     "TERRASCALE_E2E_PROJECT_ID",
     "TERRASCALE_E2E_ORGANIZATION_ID",
     "TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID",
@@ -137,7 +153,6 @@ test("release E2E configuration guard fails closed before skip-capable tests", a
   const environment = {
     PATH: process.env.PATH ?? "",
     TERRASCALE_API_BASE_URL: "https://api.example.test",
-    TERRASCALE_AUTH_API_BASE_URL: "https://auth.example.test",
     TERRASCALE_E2E_ACCESS_TOKEN: "test-token",
     TERRASCALE_E2E_PROJECT_ID: "01J00000000000000000000000",
     TERRASCALE_E2E_ORGANIZATION_ID: "01J00000000000000000000001",
@@ -183,6 +198,48 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       listing.stdout,
       /^package\/(?:Documentation\/|node_modules\/|test\/|dist\/.*(?:\.map$|\.test\.|capture|internal))/mu,
     );
+
+    const packedManifest = JSON.parse(
+      await readPackedEntry(tarball, "package/sdk-route-manifest.json"),
+    ) as PackedRouteManifest;
+    assert.ok(Array.isArray(packedManifest.routes));
+    for (const route of packedManifest.routes) {
+      const routeDescription = [route.client, route.operation, route.routeName, route.pathTemplate]
+        .filter((value): value is string => value !== undefined)
+        .join(" ");
+      assert.doesNotMatch(routeDescription, forbiddenRoutePattern);
+    }
+
+    const packedSources = await Promise.all([
+      ["dist/index.d.ts", "package/dist/index.d.ts"] as const,
+      ["dist/index.js", "package/dist/index.js"] as const,
+      ["dist/client.d.ts", "package/dist/client.d.ts"] as const,
+      ["dist/client.js", "package/dist/client.js"] as const,
+      ["dist/local/index.d.ts", "package/dist/local/index.d.ts"] as const,
+      ["dist/local/index.js", "package/dist/local/index.js"] as const,
+    ].map(async ([name, entry]) => [name, await readPackedEntry(tarball, entry)] as const));
+    for (const [name, source] of packedSources) {
+      assert.doesNotMatch(source, forbiddenSymbolPattern, `${name} contains a removed SDK symbol`);
+      assert.doesNotMatch(source, forbiddenRoutePattern, `${name} contains a removed SDK route`);
+    }
+    assert.doesNotMatch(packedSources.find(([name]) => name === "dist/client.d.ts")?.[1] ?? "", /readonly (?:auth|apiKeys|m2m|queues|billing|pricing|security)\??:/u);
+    assert.doesNotMatch(packedSources.find(([name]) => name === "dist/client.js")?.[1] ?? "", /this\.(?:auth|apiKeys|m2m|queues|billing|pricing|security)\s*=/u);
+    for (const method of [
+      "updateAccountInformation",
+      "createPaymentSession",
+      "validatePaymentMethod",
+      "registerOnboardingPaymentMethod",
+      "updateMfaDecision",
+    ]) {
+      assert.doesNotMatch(
+        packedSources.find(([name]) => name === "dist/client.d.ts")?.[1] ?? "",
+        new RegExp(`\\b${method}\\b`, "u"),
+      );
+      assert.doesNotMatch(
+        packedSources.find(([name]) => name === "dist/client.js")?.[1] ?? "",
+        new RegExp(`\\b${method}\\b`, "u"),
+      );
+    }
     const packageJson = JSON.parse(await readFile(path.join(checkout, "package.json"), "utf8")) as {
       readonly name: string;
       readonly version: string;
@@ -221,7 +278,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       [
         "--input-type=module",
         "--eval",
-        "import { createTerraScaleClient } from '@terrascale/sdk'; import { createTerraScaleAdminClient } from '@terrascale/sdk/admin'; createTerraScaleClient({ apiBaseUrl: 'https://api.example.test' }); createTerraScaleAdminClient({ apiBaseUrl: 'https://api.example.test' });",
+        "import { createTerraScaleClient } from '@terrascale/sdk'; import { createTerraScaleAdminClient } from '@terrascale/sdk/admin'; const client = createTerraScaleClient({ apiBaseUrl: 'https://api.example.test' }); for (const name of ['auth', 'apiKeys', 'm2m', 'queues', 'billing', 'pricing', 'security']) { if (name in client) throw new Error(`Removed root client property remains: ${name}`); } for (const name of ['updateAccountInformation', 'createPaymentSession', 'validatePaymentMethod', 'registerOnboardingPaymentMethod', 'updateMfaDecision']) { if (name in client.onboarding) throw new Error(`Removed onboarding method remains: ${name}`); } createTerraScaleAdminClient({ apiBaseUrl: 'https://api.example.test' });",
       ],
       { cwd: consumer },
     );
@@ -258,7 +315,6 @@ import { createTerraScaleClient, toUlid } from "@terrascale/sdk";
 
 const required = [
   "TERRASCALE_API_BASE_URL",
-  "TERRASCALE_AUTH_API_BASE_URL",
   "TERRASCALE_E2E_ACCESS_TOKEN",
   "TERRASCALE_E2E_TENANT_ID",
   "TERRASCALE_E2E_PROJECT_ID",
@@ -284,7 +340,6 @@ if (!path.isAbsolute(leasePath) || path.dirname(leasePath) === leasePath) {
 }
 const client = createTerraScaleClient({
   apiBaseUrl: process.env.TERRASCALE_API_BASE_URL,
-  authBaseUrl: process.env.TERRASCALE_AUTH_API_BASE_URL,
   accessToken: process.env.TERRASCALE_E2E_ACCESS_TOKEN,
   projectId,
   sessionConsistency: "automatic",
@@ -297,7 +352,6 @@ const leaseScope = {
   repositoryId,
   documentId,
   apiBaseUrl: process.env.TERRASCALE_API_BASE_URL,
-  authBaseUrl: process.env.TERRASCALE_AUTH_API_BASE_URL,
   credentialFingerprint: createHash("sha256").update(process.env.TERRASCALE_E2E_ACCESS_TOKEN).digest("hex"),
 };
 
@@ -524,6 +578,11 @@ function assertCredentialStepIsFinal(workflow: string, job: string, credential: 
   assert.notEqual(runIndex, -1);
   assert.doesNotMatch(credentialStep.slice(runIndex + 1), /^      - run:/mu, `${credential} must be on the final shell step.`);
   assert.doesNotMatch(steps.slice(0, stepStart), /secrets\./u, `${credential} must not be present before its scoped step.`);
+}
+
+async function readPackedEntry(tarball: string, entry: string): Promise<string> {
+  const result = await run("tar", ["-xOf", tarball, entry]);
+  return result.stdout;
 }
 
 async function sha256(filePath: string): Promise<string> {

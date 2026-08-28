@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { canonicalDashboardOpenApiSpec } from "./openapi-contract-paths.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const fixturePath = path.join(repositoryRoot, "test", "fixtures", "public-contracts", "v3-billing.json");
+const fixturePath = path.join(repositoryRoot, "test", "fixtures", "public-contracts", "saved-queries-and-branches.json");
 const [specReference = canonicalDashboardOpenApiSpec] = process.argv.slice(2).filter((argument) => argument !== "--write");
 
 const spec = JSON.parse(await readFile(path.resolve(process.cwd(), specReference), "utf8"));
@@ -28,8 +28,6 @@ if (process.argv.includes("--write")) {
 
 function normalizeContract(spec) {
   const schemas = spec.components.schemas;
-  const pricing = schemas.PricingPlanResponse;
-  const checkout = schemas.CreateCheckoutSessionRequest;
   const v3 = spec.paths["/api/v3/projects/{projectId}/saved-queries"].get;
   const page = schemas.ProjectSavedQuerySnapshotPageResponse;
   const capabilityPath = "/api/v1/projects/{projectId}/database-branches/capability";
@@ -41,26 +39,6 @@ function normalizeContract(spec) {
 
   return {
     contractVersion: 1,
-    pricingPlan: {
-      required: pricing.required,
-      providerType: types(pricing.properties.provider),
-      nullableStringFields: Object.entries(pricing.properties)
-        .filter(([, field]) => JSON.stringify(types(field)) === JSON.stringify(["null", "string"]))
-        .map(([name]) => name),
-      checkout: Object.fromEntries(
-        Object.entries(checkout.properties).map(([name, field]) => [
-          name,
-          {
-            types: field.type === undefined ? undefined : types(field),
-            nullableUlid: field.oneOf?.some((option) => option.$ref === "#/components/schemas/Ulid") === true,
-            deprecated: field.deprecated === true,
-            minimum: field.minimum,
-            maximum: field.maximum,
-            default: field.default,
-          },
-        ]),
-      ),
-    },
     savedQueriesV3: {
       method: "get",
       operationId: v3.operationId,

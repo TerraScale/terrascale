@@ -14,6 +14,7 @@ import {
   type LocalServerAddress,
   type TerraScaleLocalSeed,
 } from "./local/index.js";
+import { localManifestRoutes } from "./local/route-manifest.generated.js";
 import { TerraScaleSqliteStore } from "./local/store.js";
 import type { TerraScaleResult } from "./result.js";
 
@@ -57,12 +58,12 @@ test("the runtime requires explicit SQLite enablement and offers typed clients",
   return runtime.close();
 });
 
-test("all 159 captured public client routes execute through the real loopback server", async () => {
+test("all captured public client routes execute through the real loopback server", async () => {
   await withTempRuntime(async (runtime) => {
     const address = await started(runtime);
     try {
       const routes = await exercisePublicClientRoutes(localHttpFetch(address.origin));
-      assert.equal(routes.length, 159);
+      assert.equal(routes.length, localManifestRoutes.length);
     } finally {
       await runtime.stop();
     }
@@ -73,45 +74,34 @@ test("configured root and AdminClient instances share the SQLite runtime", async
   await withTempRuntime(async (runtime) => {
     const admin = runtime.createAdminClient({ accessToken: "local-test-token" });
     const client = runtime.createClient({ accessToken: "local-test-token", projectId: knownUserId });
-    try {
-      const signup = expectOk(await client.auth.register({ email: `admin-${Date.now()}@example.test`, password: "password-123", displayName: "Admin Test" }));
-      const userId = signup.userId;
-      const organization = expectOk(await client.organizations.create({ name: "Admin organization", plan: "developer" }));
-      const project = expectOk(await client.organizations.createProject(organization.organizationId, { name: "Admin project", regions: ["local" as TerraScaleRegionCode], backupRegion: "local" as TerraScaleRegionCode }));
-      expectOk(await client.databases.create({ name: "Admin database" }));
-      const checks: readonly Promise<unknown>[] = [
-        admin.overview(), admin.listUsers(), admin.getUser(userId), admin.setUserEnabled(userId, true), admin.setUserEnabled(userId, false),
-        admin.createSupportNote({ note: "local admin test", organizationId: organization.organizationId, projectId: project.projectId, userId }),
-        admin.listOrganizations(), admin.listProjects(), admin.listDatabases(), admin.getUsage(), admin.listPricingPlans(),
-      ];
-      for (const check of checks) expectOk(await check as TerraScaleResult<unknown>);
-      const plan = expectOk(await admin.createPricingPlan({ key: `local-${Date.now()}`, name: "Local plan", currency: "USD" }));
-      expectOk(await admin.updatePricingPlan(plan.planId, { name: "Updated local plan" }));
-      expectOk(await admin.deletePricingPlan(plan.planId));
-      expectOk(await admin.listAudit());
-      expectOk(await admin.listNotifications());
-      const attempt = expectOk(await admin.triggerBillingReconciliation(organization.organizationId, `reconcile-${Date.now()}`));
-      expectOk(await admin.getBillingReconciliation(organization.organizationId, attempt.attemptId));
-      expectOk(await admin.deleteUser(userId));
-    } finally {
-    }
+    const organization = expectOk(await client.organizations.create({ name: "Admin organization" }));
+    const project = expectOk(await client.organizations.createProject(organization.organizationId, { name: "Admin project", regions: ["local" as TerraScaleRegionCode], backupRegion: "local" as TerraScaleRegionCode }));
+    expectOk(await client.databases.create({ name: "Admin database" }));
+    const checks: readonly Promise<unknown>[] = [
+      admin.overview(),
+      admin.createSupportNote({ note: "local admin test", organizationId: organization.organizationId, projectId: project.projectId }),
+      admin.listOrganizations(), admin.listProjects(), admin.listDatabases(), admin.getUsage(),
+    ];
+    for (const check of checks) expectOk(await check as TerraScaleResult<unknown>);
+    expectOk(await admin.listAudit());
+    expectOk(await admin.listNotifications());
   });
 });
 
 test("typed data survives SQLite close/reopen and enforces document concurrency, schema, and TQL", async () => {
   await withTempRuntime(async (first, databasePath) => {
     const firstAddress = await started(first);
-    const rootClient = createTerraScaleClient({ apiBaseUrl: firstAddress.apiBaseUrl, authBaseUrl: firstAddress.authBaseUrl, accessToken: "local-test-token" });
+    const rootClient = createTerraScaleClient({ apiBaseUrl: firstAddress.apiBaseUrl, accessToken: "local-test-token" });
     let seed: TerraScaleLocalSeed;
     try {
-      const organization = expectOk(await rootClient.organizations.create({ name: "HTTP seeded organization", plan: "developer" }));
+      const organization = expectOk(await rootClient.organizations.create({ name: "HTTP seeded organization" }));
       const project = expectOk(await rootClient.organizations.createProject(organization.organizationId, { name: "HTTP seeded project", regions: ["local" as TerraScaleRegionCode], backupRegion: "local" as TerraScaleRegionCode }));
-      const scopedRoot = createTerraScaleClient({ apiBaseUrl: firstAddress.apiBaseUrl, authBaseUrl: firstAddress.authBaseUrl, projectId: project.projectId, accessToken: "local-test-token" });
+      const scopedRoot = createTerraScaleClient({ apiBaseUrl: firstAddress.apiBaseUrl, projectId: project.projectId, accessToken: "local-test-token" });
       const database = expectOk(await scopedRoot.databases.create({ name: "HTTP seeded database" }));
       const repository = expectOk(await scopedRoot.repositories.create({ name: "HTTP seeded repository", databaseId: database.databaseId, collection: "documents" }));
       const seededDocument = expectOk(await scopedRoot.documents.create({ repositoryId: repository.repositoryId }, { title: "SQLite development runtime", status: "ready" }));
-      seed = { organizationId: organization.organizationId, projectId: project.projectId, databaseId: database.databaseId, repositoryId: repository.repositoryId, queueId: expectOk(await scopedRoot.queues.create({ name: "HTTP seeded queue", kind: "queue" })).queueId, documentId: seededDocument.id };
-      const client = createTerraScaleClient({ apiBaseUrl: firstAddress.apiBaseUrl, authBaseUrl: firstAddress.authBaseUrl, projectId: seed.projectId, accessToken: "local-test-token" });
+      seed = { organizationId: organization.organizationId, projectId: project.projectId, databaseId: database.databaseId, repositoryId: repository.repositoryId, documentId: seededDocument.id };
+      const client = createTerraScaleClient({ apiBaseUrl: firstAddress.apiBaseUrl, projectId: seed.projectId, accessToken: "local-test-token" });
       const scope = { repositoryId: seed.repositoryId };
       const created = expectOk(await client.documents.create(scope, { title: "persisted", count: 1 }));
       const read = expectOk(await client.documents.get(scope, created.id));
@@ -135,7 +125,7 @@ test("typed data survives SQLite close/reopen and enforces document concurrency,
     const reopened = createTerraScaleSqliteRuntime({ sqlite: { enabled: true, databasePath } });
     const reopenedAddress = await started(reopened);
     try {
-      const client = createTerraScaleClient({ apiBaseUrl: reopenedAddress.apiBaseUrl, authBaseUrl: reopenedAddress.authBaseUrl, projectId: seed!.projectId, accessToken: "local-test-token" });
+      const client = createTerraScaleClient({ apiBaseUrl: reopenedAddress.apiBaseUrl, projectId: seed!.projectId, accessToken: "local-test-token" });
       assert.equal(expectOk(await client.organizations.get(seed!.organizationId)).organizationId, seed!.organizationId);
       assert.equal(expectOk(await client.databases.get(seed!.databaseId)).databaseId, seed!.databaseId);
       assert.equal(expectOk(await client.repositories.get({ repositoryId: seed!.repositoryId })).repositoryId, seed!.repositoryId);
@@ -148,19 +138,12 @@ test("typed data survives SQLite close/reopen and enforces document concurrency,
   });
 });
 
-test("queues and backup plan/execute/replay use typed clients over the real server", async () => {
+test("backup plan/execute/replay uses typed clients over the real server", async () => {
   await withTempRuntime(async (runtime) => {
     const address = await started(runtime);
     try {
       const seed = await runtime.seed();
-      const client = createTerraScaleClient({ apiBaseUrl: address.apiBaseUrl, authBaseUrl: address.authBaseUrl, projectId: seed.projectId, accessToken: "local-test-token" });
-      const queue = expectOk(await client.queues.create({ name: "test-queue", kind: "queue" }));
-      const published = expectOk(await client.queues.publish(queue.queueId, { data: { event: "hello" }, idempotencyKey: "publish-once" }));
-      const replay = expectOk(await client.queues.publish(queue.queueId, { data: { event: "hello" }, idempotencyKey: "publish-once" }));
-      assert.equal(replay.duplicate, true);
-      const received = expectOk(await client.queues.receive(queue.queueId, { consumerName: "test-consumer" }));
-      assert.equal(received[0]?.messageId, published.messageId);
-      assert.equal(received[0] === undefined ? false : expectOk(await client.queues.complete(queue.queueId, received[0])).accepted, true);
+      const client = createTerraScaleClient({ apiBaseUrl: address.apiBaseUrl, projectId: seed.projectId, accessToken: "local-test-token" });
       expectOk(await client.backups.configurePolicy(seed.databaseId, { fullBackupCron: "0 0 * * *" }));
       const operationSessionId = "backup-session";
       const plan = expectOk(await client.backups.planBackup(seed.databaseId, { operationSessionId }));
@@ -174,7 +157,7 @@ test("queues and backup plan/execute/replay use typed clients over the real serv
   });
 });
 
-test("authentication, health, unknown routes, reset/seed, binding, and remote rejection are real boundary behavior", async () => {
+test("required bearer gate, health, unknown routes, reset/seed, binding, and remote rejection are real boundary behavior", async () => {
   const seedRuntime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
   try {
     const seeded = await seedRuntime.reset({ seed: true });
@@ -323,17 +306,14 @@ test("project deletion cascades every project-scoped core resource", async () =>
     const database = expectOk(await scoped.databases.create({ name: "Cascade database" }));
     const repository = expectOk(await scoped.repositories.create({ name: "Cascade repository", databaseId: database.databaseId }));
     expectOk(await scoped.documents.create({ repositoryId: repository.repositoryId }, { retained: false }));
-    const queue = expectOk(await scoped.queues.create({ name: "cascade-queue", kind: "queue" }));
     expectOk(await scoped.backups.planBackup(database.databaseId, { operationSessionId: "cascade-plan" }));
     const deleted = expectOk(await root.organizations.deleteProject(project.projectId, { confirm: true, projectName: project.name }));
     assert.equal(deleted.databasesDeleted, 1);
-    assert.equal(deleted.queuesDeleted, 1);
     assert.equal(deleted.physicalStorageDeleted, true);
     for (const result of [
       await root.organizations.getProject(project.projectId),
       await scoped.databases.get(database.databaseId),
       await scoped.repositories.get({ repositoryId: repository.repositoryId }),
-      await scoped.queues.get(queue.queueId),
     ]) {
       assert.equal(result.ok, false);
       if (!result.ok) assert.equal(result.error.status, 404);
@@ -342,42 +322,6 @@ test("project deletion cascades every project-scoped core resource", async () =>
     const store = new TerraScaleSqliteStore(databasePath);
     assert.equal(store.list("backup-confirmations", "local").length, 0);
     store.close();
-  });
-});
-
-test("persisted notifications are resolved from the bearer session and never leak across users", async () => {
-  await withTempRuntime(async (runtime, databasePath) => {
-    const root = runtime.createClient();
-    const emailA = "notification-a@example.test";
-    const emailB = "notification-b@example.test";
-    const registeredA = expectOk(await root.auth.register({ email: emailA, password: "password-123", displayName: "User A" }));
-    const registeredB = expectOk(await root.auth.register({ email: emailB, password: "password-123", displayName: "User B" }));
-    const loginA = expectOk(await root.auth.signIn({ email: emailA, password: "password-123" })).authResponse!;
-    const loginB = expectOk(await root.auth.signIn({ email: emailB, password: "password-123" })).authResponse!;
-    await runtime.close();
-
-    const notificationA = toUlid("01DRZ3NDEKTSV4RRFFQ69G5FAA");
-    const notificationB = toUlid("01DRZ3NDEKTSV4RRFFQ69G5FAB");
-    const store = new TerraScaleSqliteStore(databasePath);
-    store.put("notifications", "local", notificationA, { notificationId: notificationA, userId: registeredA.userId, title: "For A", severity: "info", createdAt: new Date().toISOString(), category: "test" });
-    store.put("notifications", "local", notificationB, { notificationId: notificationB, userId: registeredB.userId, title: "For B", severity: "info", createdAt: new Date().toISOString(), category: "test" });
-    store.close();
-
-    const reopened = createTerraScaleSqliteRuntime({ sqlite: { enabled: true, databasePath } });
-    try {
-      const clientA = reopened.createClient({ accessToken: loginA.accessToken });
-      const clientB = reopened.createClient({ accessToken: loginB.accessToken });
-      const listedA = expectOk(await clientA.notifications.list());
-      const listedB = expectOk(await clientB.notifications.list());
-      assert.deepEqual(listedA.map((item) => item.notificationId), [notificationA]);
-      assert.deepEqual(listedB.map((item) => item.notificationId), [notificationB]);
-      assert.equal("userId" in listedA[0]!, false);
-      const crossUser = await clientA.notifications.markRead(notificationB);
-      assert.equal(crossUser.ok, false);
-      if (!crossUser.ok) assert.equal(crossUser.error.status, 404);
-    } finally {
-      await reopened.close();
-    }
   });
 });
 
@@ -417,9 +361,14 @@ test("runtime clients enforce project isolation and idempotency fingerprints", a
     assert.equal(crossProject.ok, false);
     if (!crossProject.ok) assert.equal(crossProject.error.status, 404);
 
-    const idempotent = runtime.createClient({ projectId: projectA.projectId, idempotencyKeyFactory: () => "database-once" });
-    expectOk(await idempotent.databases.create({ name: "first" }));
-    const reused = await idempotent.databases.create({ name: "different" });
+    const idempotentA = runtime.createClient({ projectId: projectA.projectId, idempotencyKeyFactory: () => "database-once" });
+    const first = expectOk(await idempotentA.databases.create({ name: "shared request" }));
+    const replay = expectOk(await idempotentA.databases.create({ name: "shared request" }));
+    assert.equal(replay.databaseId, first.databaseId);
+    const idempotentB = runtime.createClient({ projectId: projectB.projectId, idempotencyKeyFactory: () => "database-once" });
+    const isolated = expectOk(await idempotentB.databases.create({ name: "shared request" }));
+    assert.notEqual(isolated.databaseId, first.databaseId);
+    const reused = await idempotentA.databases.create({ name: "different" });
     assert.equal(reused.ok, false);
     if (!reused.ok) assert.equal(reused.error.code, "idempotency_key_reused");
   });

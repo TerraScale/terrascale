@@ -9,7 +9,6 @@ const DEFAULT_PORT = 0;
 export type LocalServerAddress = Readonly<{
   readonly origin: string;
   readonly apiBaseUrl: string;
-  readonly authBaseUrl: string;
   readonly host: string;
   readonly port: number;
 }>;
@@ -206,7 +205,7 @@ function isLoopbackHost(host: string): boolean {
 function makeAddress(host: string, port: number): LocalServerAddress {
   const urlHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
   const origin = `http://${urlHost}:${port}`;
-  return { origin, apiBaseUrl: origin, authBaseUrl: origin, host, port };
+  return { origin, apiBaseUrl: origin, host, port };
 }
 
 async function handleRequest(

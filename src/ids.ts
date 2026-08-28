@@ -14,12 +14,9 @@ export type RepositoryId = Ulid;
 export type DocumentId = Ulid;
 export type UserId = Ulid;
 export type InvitationId = Ulid;
-export type ApiKeyId = Ulid;
 export type BackupId = Ulid;
 export type BackupPolicyId = Ulid;
-export type M2MClientId = Ulid;
 export type NotificationId = Ulid;
-export type QueueId = Ulid;
 export type AuditEventId = Ulid;
 export type RestoreId = Ulid;
 
