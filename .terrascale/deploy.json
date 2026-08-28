@@ -1,8 +1,8 @@
 {
   "repository": "TerraScale.TypeScript",
-  "dependencies": [{ "source": "src/", "target": "internals-dashboard", "reason": "SDK changes require Dashboard build and browser E2E" }],
+  "dependencies": [{ "source": "src/", "target": "dashboard", "reason": "SDK changes require Dashboard build and browser E2E" }],
   "prProfiles": [
-    { "name": "static", "resourceWeight": "light", "commands": [{ "description": "Clean install", "command": "npm", "arguments": ["ci"] }, { "description": "Typecheck", "command": "npm", "arguments": ["run", "typecheck"] }, { "description": "OpenAPI drift", "command": "npm", "arguments": ["run", "check:openapi-drift", "--", "Documentation/public/openapi/server.openapi.json"] }, { "description": "Route drift", "command": "npm", "arguments": ["run", "check:route-manifest"] }] },
+    { "name": "static", "resourceWeight": "light", "commands": [{ "description": "Clean install", "command": "npm", "arguments": ["ci"] }, { "description": "Typecheck", "command": "npm", "arguments": ["run", "typecheck"] }, { "description": "OpenAPI drift", "command": "npm", "arguments": ["run", "check:openapi-drift"] }, { "description": "Route drift", "command": "npm", "arguments": ["run", "check:route-manifest"] }] },
     { "name": "build", "resourceWeight": "medium", "commands": [{ "description": "Build SDK", "command": "npm", "arguments": ["run", "build"] }] }
   ],
   "releaseProfiles": [

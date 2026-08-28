@@ -17,7 +17,7 @@ APIs. Role-protected owner/admin APIs use a separate explicit public entrypoint.
   Dashboard business flows use the same root clients as customer applications.
 
 The SDK has no Dashboard-specific entrypoint, DTO, method, or route. Dashboard
-Next composes these typed public product clients inside its own full-stack route
+composes these typed public product clients inside its own full-stack route
 handlers as an ordinary external user and never receives special headers,
 authorization, tenant access, direct database access, or private API access.
 
@@ -144,7 +144,10 @@ its digests, and how to re-vendor.
 
 ## Public API Surface
 
-The public client follows the backed `TerraScale.Platform` REST surface:
+The public client follows the versioned REST surface hosted by the
+`TerraScale.Dashboard.Api` application and its `TerraScale.Database` module,
+plus the public Authentication service. `TerraScale.Database` owns the
+database/TerraBase endpoint families below:
 
 - Project databases: list/create/get/delete under
   `/api/v1/projects/{projectId}/databases`, with environment list/get/create/delete
@@ -153,7 +156,7 @@ The public client follows the backed `TerraScale.Platform` REST surface:
   `/api/v1/projects/{projectId}/database-branches/capability` and
   `requestClone` sends the typed clone request to `/api/v1/projects/{projectId}/database-branches`.
   The currently admitted state is fail-closed (`"unavailable"`): clone has no success response and returns
-  the typed `503` failure until Platform reports otherwise.
+  the typed `503` failure until the database service reports otherwise.
 - Project queues and topics: create/list/get/delete, publish/peek/purge, and
   at-least-once receive/complete/abandon/dead-letter/renew-lock under
   `/api/v1/projects/{projectId}/queues`. Received messages carry an opaque,
@@ -225,12 +228,9 @@ the User explicitly continue with no paid plan and no automatic renewal, retaini
 the Developer allowance, or select Starter or Pro with monthly automatic renewal
 and an eligible first 30 days at no charge. Invited-user onboarding remains
 separate and requires neither signup card verification nor a plan choice. The
-missing typed operations are tracked in
-[issue 6](https://git.terrascale.tech/TerraScale/TerraScale.TypeScript/issues/6),
-with the product implementation tracked in
-[TerraScale.Internals issue 30](https://git.terrascale.tech/TerraScale/TerraScale.Internals/issues/30).
-Do not invent routes or present this target flow as released until both contracts
-ship.
+missing typed operations remain unreleased until the corresponding public
+Dashboard/Auth contracts ship. Do not invent routes or present this target flow
+as released.
 
 Unbacked public SDK methods are intentionally omitted until matching versioned
 OpenAPI request and response schemas are published. This currently excludes account-security
@@ -240,7 +240,8 @@ security webhooks, SSO/SCIM settings, and public project switching.
 
 The OpenAPI drift check carries a reviewed typed-contract debt baseline. It prevents
 new or changed untyped SDK contracts, while the listed debt still blocks production
-qualification until Platform publishes the missing schemas and removes the baseline.
+qualification until Dashboard.Api or Authentication publishes the missing schemas
+and removes the baseline.
 
 ## Development
 
@@ -267,9 +268,9 @@ The SDK route manifest is generated from the route-capture tests:
 
 ```bash
 npm run generate:route-manifest
-npm run check:openapi-drift -- ../Terrascale.Documentation/public/openapi/server.openapi.json
-npm run generate:openapi-contract-descriptor -- ../Terrascale.Documentation/public/openapi/server.openapi.json
-npm run check:openapi-contract-descriptor -- ../Terrascale.Documentation/public/openapi/server.openapi.json
+npm run check:openapi-drift
+npm run generate:openapi-contract-descriptor
+npm run check:openapi-contract-descriptor
 ```
 
 `sdk-openapi-contract-descriptor.json` is the reviewable, deterministic pin for
@@ -288,12 +289,13 @@ per lowercase name; repeated SDK header values are intentionally coalesced by
 that boundary and are not represented as distinct wire fields.
 
 The drift checker accepts any OpenAPI JSON file path or live spec URL, including
-a DevHost-served `/openapi/v1.json`. Refresh the Documentation snapshot from
-the current Internals OpenAPI artifact before treating a snapshot failure as an
-SDK defect.
+a DevHost-served `/openapi/v1.json`. Refresh the Dashboard canonical snapshot
+from the current Dashboard.Api/database OpenAPI artifact before treating a
+snapshot failure as an SDK defect; the Documentation site consumes that same
+snapshot.
 
 Integration tests are expected to run against a real TerraScale DevHost stack
-and its emitted Platform/Auth URLs:
+and its emitted Dashboard/Auth URLs:
 
 ```bash
 TERRASCALE_API_BASE_URL=http://127.0.0.1:... \

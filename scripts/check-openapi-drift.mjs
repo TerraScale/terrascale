@@ -5,10 +5,11 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { canonicalDashboardOpenApiSpec, repositoryRoot } from "./openapi-contract-paths.mjs";
 
 const httpMethods = new Set(["delete", "get", "head", "options", "patch", "post", "put", "trace"]);
 const uncoveredDisplayLimit = 25;
-const defaultBaseline = "typed-contract-debt-baseline.json";
+const defaultBaseline = path.join(repositoryRoot, "typed-contract-debt-baseline.json");
 const execFileAsync = promisify(execFile);
 
 if (isMainModule()) {
@@ -17,16 +18,9 @@ if (isMainModule()) {
 
 export async function runOpenApiDriftCli(args, output = console) {
   const strict = args.includes("--strict");
-  const [specReference, manifestReference = "sdk-route-manifest.json"] = args.filter(
+  const [specReference = canonicalDashboardOpenApiSpec, manifestReference = path.join(repositoryRoot, "sdk-route-manifest.json")] = args.filter(
     (argument) => !argument.startsWith("--"),
   );
-
-  if (specReference === undefined) {
-    output.error(
-      "Usage: node scripts/check-openapi-drift.mjs <openapi-spec-path-or-url> [manifest-path]",
-    );
-    return 2;
-  }
 
   try {
     const result = await checkOpenApiDrift(specReference, manifestReference, defaultBaseline, strict);
@@ -42,7 +36,7 @@ export async function runOpenApiDriftCli(args, output = console) {
 
 export async function checkOpenApiDrift(
   specReference,
-  manifestReference = "sdk-route-manifest.json",
+  manifestReference = path.join(repositoryRoot, "sdk-route-manifest.json"),
   baselineReference = defaultBaseline,
   strict = false,
 ) {
@@ -188,7 +182,7 @@ export function formatOpenApiDriftResult(result, specReference, manifestReferenc
 
     stderr.push("");
     stderr.push(
-      "Triage: SDK route not in spec - either the SDK is wrong OR the snapshot lags the API; refresh via Documentation openapi-sync and re-run.",
+      "Triage: SDK route not in spec - either the SDK is wrong OR the snapshot lags the API; refresh the Dashboard canonical snapshot via Documentation openapi-sync and re-run.",
     );
   }
 
@@ -201,7 +195,7 @@ export function formatOpenApiDriftResult(result, specReference, manifestReferenc
   }
 
   if (result.unexpectedTypedContractViolations.length > 0 || result.staleTypedContractBaseline.length > 0) {
-    stderr.push("\nTyped-contract debt baseline changed; production qualification remains blocked until Platform publishes schemas and the reviewed baseline is reduced.");
+    stderr.push("\nTyped-contract debt baseline changed; production qualification remains blocked until Dashboard.Api or Authentication publishes schemas and the reviewed baseline is reduced.");
   }
 
   if (result.missingSdkRoutes.length === 0 && specSnapshotLines.length > 0) {
@@ -404,9 +398,12 @@ function formatSpecSnapshotLines(snapshot) {
   ];
 
   if (snapshot.checkout !== undefined) {
-    const label = path.basename(snapshot.checkout.root) === "Documentation"
-      ? "Documentation checkout"
-      : "Spec checkout";
+    const checkoutName = path.basename(snapshot.checkout.root);
+    const label = checkoutName === "TerraScale.Dashboard" || checkoutName === "Dashboard"
+      ? "Dashboard checkout"
+      : checkoutName === "Documentation"
+        ? "Documentation checkout"
+        : "Spec checkout";
     lines.push(
       `${label}: ${snapshot.checkout.root} (ref ${snapshot.checkout.ref}, sha ${snapshot.checkout.sha})`,
     );

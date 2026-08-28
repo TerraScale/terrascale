@@ -3,30 +3,26 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { canonicalDashboardOpenApiSpec } from "./openapi-contract-paths.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixturePath = path.join(repositoryRoot, "test", "fixtures", "public-contracts", "v3-billing.json");
-const [specReference] = process.argv.slice(2).filter((argument) => argument !== "--write");
+const [specReference = canonicalDashboardOpenApiSpec] = process.argv.slice(2).filter((argument) => argument !== "--write");
 
-if (specReference === undefined) {
-  console.error("Usage: node scripts/check-public-contract-fixture.mjs <openapi-spec-path> [--write]");
-  process.exitCode = 2;
+const spec = JSON.parse(await readFile(path.resolve(process.cwd(), specReference), "utf8"));
+const actual = normalizeContract(spec);
+const formatted = `${JSON.stringify(actual, null, 2)}\n`;
+
+if (process.argv.includes("--write")) {
+  await writeFile(fixturePath, formatted);
+  console.log(`Wrote ${path.relative(repositoryRoot, fixturePath)}.`);
 } else {
-  const spec = JSON.parse(await readFile(path.resolve(process.cwd(), specReference), "utf8"));
-  const actual = normalizeContract(spec);
-  const formatted = `${JSON.stringify(actual, null, 2)}\n`;
-
-  if (process.argv.includes("--write")) {
-    await writeFile(fixturePath, formatted);
-    console.log(`Wrote ${path.relative(repositoryRoot, fixturePath)}.`);
+  const expected = await readFile(fixturePath, "utf8");
+  if (expected !== formatted) {
+    console.error("Public contract fixture drifted. Run check-public-contract-fixture.mjs <spec> --write.");
+    process.exitCode = 1;
   } else {
-    const expected = await readFile(fixturePath, "utf8");
-    if (expected !== formatted) {
-      console.error("Public contract fixture drifted. Run check-public-contract-fixture.mjs <spec> --write.");
-      process.exitCode = 1;
-    } else {
-      console.log("Public contract fixture matches the supplied OpenAPI snapshot.");
-    }
+    console.log("Public contract fixture matches the supplied OpenAPI snapshot.");
   }
 }
 

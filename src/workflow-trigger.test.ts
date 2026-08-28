@@ -9,6 +9,6 @@ test("develop pushes do not trigger automation", async () => {
   );
 
   assert.match(workflow, /  push:\r?\n    branches: \[main\]/);
-  assert.match(workflow, /release-contract-fixture:[\s\S]*--strict Documentation\/public\/openapi\/server\.openapi\.json/);
+  assert.match(workflow, /release-contract-fixture:[\s\S]*--strict Dashboard\/docs\/product\/openapi\/server\.openapi\.json/);
   assert.match(workflow, /candidate:[\s\S]*release-contract-fixture/);
 });

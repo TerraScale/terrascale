@@ -20,6 +20,20 @@ export const sdkRouteManifest = {
   },
   auth: {
     me: `${apiRoot}/auth/me`,
+    signIn: `${apiRoot}/auth/password/login`,
+    register: `${apiRoot}/auth/password/signup`,
+    verifyEmail: `${apiRoot}/auth/password/verify-email`,
+    forgotPassword: `${apiRoot}/auth/password/forgot-password`,
+    resetPassword: `${apiRoot}/auth/password/reset-password`,
+    verifyPasswordMfa: `${apiRoot}/auth/password/mfa/verify`,
+    changePassword: `${apiRoot}/auth/password/change-password`,
+    externalLoginBegin: `${apiRoot}/auth/external-login/begin`,
+    externalLoginComplete: `${apiRoot}/auth/external-login/complete`,
+    mfaFactors: `${apiRoot}/auth/mfa/factors`,
+    mfaFactor: (factorId: Ulid) => `${apiRoot}/auth/mfa/factors/${ulidPathSegment(factorId)}`,
+    enrollTotp: `${apiRoot}/auth/mfa/totp/enroll`,
+    verifyTotpEnrollment: `${apiRoot}/auth/mfa/totp/enroll/verify`,
+    generateRecoveryCodes: `${apiRoot}/auth/mfa/recovery-codes/generate`,
     billing: `${apiRoot}/auth/me/billing`,
     billingGuard: `${apiRoot}/auth/me/billing/guard`,
     emailSignInRequest: `${apiRoot}/auth/passwordless/magic-link`,
@@ -268,6 +282,184 @@ export class AuthClient {
       method: "POST",
       path: sdkRouteManifest.auth.billingGuard,
       routeName: "auth.billing.guard",
+      body: request,
+    });
+  }
+
+  signIn(
+    request: Models.SignInRequest,
+  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.signIn,
+      routeName: "auth.signIn",
+      headerPolicy: "anonymous",
+      body: {
+        email: request.email,
+        password: request.password,
+        deviceFingerprint: request.deviceFingerprint ?? "",
+      },
+    });
+  }
+
+  register(
+    request: Models.RegisterRequest,
+  ): Promise<TerraScaleResult<Models.SignupResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.register,
+      routeName: "auth.register",
+      headerPolicy: "anonymous",
+      body: toSignupRequest(request),
+    });
+  }
+
+  verifyEmail(
+    request: Models.VerifyEmailRequest,
+  ): Promise<TerraScaleResult<Models.SignupResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.verifyEmail,
+      routeName: "auth.verifyEmail",
+      headerPolicy: "anonymous",
+      body: request,
+    });
+  }
+
+  forgotPassword(
+    request: Models.ForgotPasswordRequest,
+  ): Promise<TerraScaleResult<void>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.forgotPassword,
+      routeName: "auth.forgotPassword",
+      headerPolicy: "anonymous",
+      body: {
+        email: request.email,
+        resetUrl: request.resetUrl ?? request.redirectUrl ?? "",
+      },
+    });
+  }
+
+  resetPassword(
+    request: Models.ResetPasswordRequest,
+  ): Promise<TerraScaleResult<void>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.resetPassword,
+      routeName: "auth.resetPassword",
+      headerPolicy: "anonymous",
+      body: { token: request.token, newPassword: request.newPassword ?? request.password },
+    });
+  }
+
+  verifyPasswordMfa(
+    request: Models.PasswordMfaVerifyRequest,
+  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.verifyPasswordMfa,
+      routeName: "auth.passwordMfa.verify",
+      headerPolicy: "anonymous",
+      body: request,
+    });
+  }
+
+  beginExternalLogin(
+    request: Models.ExternalLoginBeginRequest,
+  ): Promise<TerraScaleResult<Models.ExternalLoginBeginResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.externalLoginBegin,
+      routeName: "auth.externalLogin.begin",
+      headerPolicy: "anonymous",
+      body: request,
+    });
+  }
+
+  completeExternalLogin(
+    request: Models.ExternalLoginCompleteRequest,
+  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.externalLoginComplete,
+      routeName: "auth.externalLogin.complete",
+      headerPolicy: "anonymous",
+      body: request,
+    });
+  }
+
+  enrollTotp(
+    request: Models.EnrollTotpRequest = { type: "totp" },
+  ): Promise<TerraScaleResult<Models.EnrollTotpResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.enrollTotp,
+      routeName: "auth.mfa.totp.enroll",
+      body: request,
+    });
+  }
+
+  verifyTotpEnrollment(
+    request: Models.VerifyTotpEnrollmentRequest,
+  ): Promise<TerraScaleResult<Models.VerifyTotpEnrollmentResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.verifyTotpEnrollment,
+      routeName: "auth.mfa.totp.verifyEnrollment",
+      body: request,
+    });
+  }
+
+  listMfaFactors(): Promise<TerraScaleResult<Models.ListMfaFactorsResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "GET",
+      path: sdkRouteManifest.auth.mfaFactors,
+      routeName: "auth.mfa.factors.list",
+    });
+  }
+
+  generateRecoveryCodes(): Promise<TerraScaleResult<Models.GenerateRecoveryCodesResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.generateRecoveryCodes,
+      routeName: "auth.mfa.recoveryCodes.generate",
+    });
+  }
+
+  deleteMfaFactor(
+    factorId: Ulid,
+    request: Models.DeleteMfaFactorRequest,
+  ): Promise<TerraScaleResult<Models.VerifyTotpEnrollmentResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "DELETE",
+      path: sdkRouteManifest.auth.mfaFactor(factorId),
+      routeName: "auth.mfa.factors.delete",
+      body: request,
+    });
+  }
+
+  changePassword(
+    request: Models.ChangePasswordRequest,
+  ): Promise<TerraScaleResult<Models.ChangePasswordResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.changePassword,
+      routeName: "auth.password.change",
       body: request,
     });
   }

@@ -4,11 +4,12 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateOpenApiContractDescriptor, writeOpenApiContractDescriptor } from "./openapi-contract-descriptor.mjs";
+import { canonicalDashboardOpenApiSpec } from "./openapi-contract-paths.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputPath = path.join(root, "sdk-openapi-contract-descriptor.json");
 const manifestPath = path.join(root, "sdk-route-manifest.json");
-const specPath = process.argv.slice(2).find((argument) => !argument.startsWith("-")) ?? path.resolve(root, "../Terrascale.Documentation/public/openapi/server.openapi.json");
+const specPath = process.argv.slice(2).find((argument) => !argument.startsWith("-")) ?? canonicalDashboardOpenApiSpec;
 const check = process.argv.includes("--check");
 const descriptor = await generateOpenApiContractDescriptor({ manifestPath, specPath });
 const json = `${JSON.stringify(descriptor, null, 2)}\n`;

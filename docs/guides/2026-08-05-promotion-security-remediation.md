@@ -23,7 +23,7 @@ available; it never promotes a candidate uploaded by a pull request based only
 on a matching tree.
 
 Fork-reachable SDK checkouts disable persisted action credentials. The public
-Documentation fixture is cloned without a credential helper rather than using
+Dashboard contract snapshot is cloned without a credential helper rather than using
 an action credential.
 
 Release E2E runs only after the protected `main` push. A preflight rejects

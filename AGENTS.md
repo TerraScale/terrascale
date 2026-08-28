@@ -31,8 +31,10 @@
 - DevHost integration work requires an exclusive fixture lease covering its
   tenant, project, database, and credentials; record only redacted fixture
   identifiers in coordination and handoff notes.
-- Implement public capabilities contract-first. For REST, land the Platform
-  public versioned REST contract, route manifest, and OpenAPI surface first;
+- Implement public capabilities contract-first. For REST, land the
+  Dashboard.Api/TerraScale.Database public versioned REST contract, route
+  manifest, and OpenAPI surface first (and the separate Authentication
+  contract for identity routes);
   for contracted public realtime APIs, land the versioned WebSocket or SSE
   protocol and schema contract first. Then add the matching typed SDK DTOs and
   operation, followed
@@ -77,7 +79,7 @@
   default, keep serialized field names and optionality stable, and avoid
   changing exported behavior, error semantics, or defaults without a versioned
   public API and release plan. Coordinate any removal, rename, or narrowing
-  with the Platform contract owner before implementation.
+  with the Dashboard backend contract owner before implementation.
 
 ## Testing
 

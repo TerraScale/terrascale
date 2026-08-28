@@ -217,6 +217,35 @@ export type CompleteEmailSignInResponse = {
   readonly error?: string;
 };
 
+/** Request body for the platform password signup endpoint. */
+export type RegisterRequest = {
+  readonly email: string;
+  readonly password: string;
+  readonly displayName?: string;
+  readonly redirectUrl?: string;
+  readonly firstName?: string;
+  readonly lastName?: string;
+  readonly fullName?: string;
+  /** Accepted for source compatibility; the public endpoint derives usernames. */
+  readonly username?: string;
+  readonly acceptedTerms?: boolean;
+  readonly termsVersion?: string;
+  readonly verifyUrl?: string;
+};
+
+/** Alias matching the public API's SignupRequest DTO name. */
+export type SignupRequest = RegisterRequest;
+
+/** Request body for the platform password login endpoint. */
+export type SignInRequest = {
+  readonly email: string;
+  readonly password: string;
+  readonly deviceFingerprint?: string;
+};
+
+/** Alias matching the public API's PasswordLoginRequest DTO name. */
+export type PasswordLoginRequest = SignInRequest;
+
 export type ProjectRegisterRequest = {
   readonly email: string;
   readonly password: string;
@@ -289,6 +318,7 @@ export type VerifyEmailRequest = {
 
 export type InitiateEmailChangeRequest = {
   readonly newEmail: string;
+  readonly password: string;
 };
 
 export type InitiateEmailChangeResponse = {
@@ -313,10 +343,30 @@ export type PasswordResetRequest = {
   readonly resetUrl?: string;
 };
 
+/** Request body for the platform forgot-password endpoint. */
+export type ForgotPasswordRequest = {
+  readonly email: string;
+  readonly resetUrl?: string;
+  /** Source-compatible alias; only `resetUrl` is sent on the wire. */
+  readonly redirectUrl?: string;
+};
+
 export type CompletePasswordResetRequest = {
   readonly token: string;
   readonly password: string;
   readonly newPassword?: string;
+};
+
+/** Request body for the platform reset-password endpoint. */
+export type ResetPasswordRequest = {
+  readonly token: string;
+  readonly newPassword?: string;
+  /** Source-compatible alias; only `newPassword` is sent on the wire. */
+  readonly password?: string;
+};
+
+export type EnrollTotpRequest = {
+  readonly type?: string;
 };
 
 export type ProjectMagicLinkRequest = {

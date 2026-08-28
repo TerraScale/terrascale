@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 145,
+  "routeCount": 159,
   "routes": [
     {
       "base": "api",
@@ -295,6 +295,416 @@
           "kind": "json",
           "shape": {
             "requireActiveSubscription": true
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "signIn",
+      "routeName": "auth.signIn",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/login",
+      "requestType": "SignInRequest",
+      "responseType": "PasswordLoginResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "password": "correct horse battery staple",
+            "deviceFingerprint": "browser-fingerprint"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "register",
+      "routeName": "auth.register",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/signup",
+      "requestType": "RegisterRequest",
+      "responseType": "SignupResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "password": "correct horse battery staple",
+            "firstName": "Ada",
+            "lastName": "Lovelace",
+            "fullName": "",
+            "acceptedTerms": false,
+            "termsVersion": "",
+            "verifyUrl": "https://app.example.test/verify"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "verifyEmail",
+      "routeName": "auth.verifyEmail",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/verify-email",
+      "requestType": "VerifyEmailRequest",
+      "responseType": "SignupResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "pendingAuthenticationToken": "pending-token",
+            "code": "123456"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "forgotPassword",
+      "routeName": "auth.forgotPassword",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/forgot-password",
+      "requestType": "ForgotPasswordRequest",
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "email": "ada@example.test",
+            "resetUrl": "https://app.example.test/reset"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "resetPassword",
+      "routeName": "auth.resetPassword",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/reset-password",
+      "requestType": "ResetPasswordRequest",
+      "responseType": "void",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "token": "reset-token",
+            "newPassword": "correct horse battery staple"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "verifyPasswordMfa",
+      "routeName": "auth.passwordMfa.verify",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/mfa/verify",
+      "requestType": "PasswordMfaVerifyRequest",
+      "responseType": "PasswordLoginResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "pendingAuthenticationToken": "pending-token",
+            "challengeId": "01JRZ3NDEKTSV4RRFFQ69G5FAV",
+            "code": "123456"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "beginExternalLogin",
+      "routeName": "auth.externalLogin.begin",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/external-login/begin",
+      "requestType": "ExternalLoginBeginRequest",
+      "responseType": "ExternalLoginBeginResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "provider": "google",
+            "redirectUri": "https://app.example.test/auth/callback",
+            "state": "state-token"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "completeExternalLogin",
+      "routeName": "auth.externalLogin.complete",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/external-login/complete",
+      "requestType": "ExternalLoginCompleteRequest",
+      "responseType": "PasswordLoginResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "provider": "google",
+            "code": "authorization-code",
+            "redirectUri": "https://app.example.test/auth/callback"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "enrollTotp",
+      "routeName": "auth.mfa.totp.enroll",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/mfa/totp/enroll",
+      "requestType": "EnrollTotpRequest",
+      "responseType": "EnrollTotpResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "type": "totp"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "verifyTotpEnrollment",
+      "routeName": "auth.mfa.totp.verifyEnrollment",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/mfa/totp/enroll/verify",
+      "requestType": "VerifyTotpEnrollmentRequest",
+      "responseType": "VerifyTotpEnrollmentResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "challengeId": "01JRZ3NDEKTSV4RRFFQ69G5FAV",
+            "code": "123456"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "listMfaFactors",
+      "routeName": "auth.mfa.factors.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/auth/mfa/factors",
+      "responseType": "ListMfaFactorsResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "generateRecoveryCodes",
+      "routeName": "auth.mfa.recoveryCodes.generate",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/mfa/recovery-codes/generate",
+      "responseType": "GenerateRecoveryCodesResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "deleteMfaFactor",
+      "routeName": "auth.mfa.factors.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/auth/mfa/factors/{factorId}",
+      "requestType": "DeleteMfaFactorRequest",
+      "responseType": "VerifyTotpEnrollmentResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "currentPassword": "correct horse battery staple"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "auth",
+      "client": "auth",
+      "operation": "changePassword",
+      "routeName": "auth.password.change",
+      "method": "POST",
+      "pathTemplate": "/api/v1/auth/password/change-password",
+      "requestType": "ChangePasswordRequest",
+      "responseType": "ChangePasswordResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "currentPassword": "old password",
+            "newPassword": "new password"
           }
         },
         "headers": [
@@ -1006,7 +1416,8 @@
         "body": {
           "kind": "json",
           "shape": {
-            "newEmail": "augusta@example.test"
+            "newEmail": "augusta@example.test",
+            "password": "correct horse battery staple"
           }
         },
         "headers": [

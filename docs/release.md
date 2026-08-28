@@ -39,7 +39,8 @@ build before testing or packing; do not rely on artifacts from another job.
 
 Release admission runs strict OpenAPI drift validation. The normal-CI debt
 baseline does not permit promotion: unresolved entries stop production release
-until Platform publishes the matching typed schemas.
+until `TerraScale.Dashboard.Api`, `TerraScale.Database`, or Authentication
+publishes the matching typed schemas.
 It also regenerates and compares the committed comprehensive OpenAPI descriptor;
 operation IDs, parameters, request contracts, and every 2xx response shape must
 match the reviewed pin before the trusted candidate can be created.
@@ -47,7 +48,7 @@ match the reviewed pin before the trusted candidate can be created.
 ## Publish
 
 Normal releases merge the protected `develop` to `main` promotion PR. Only the
-protected post-merge `main` workflow validates the Documentation contract fixture,
+protected post-merge `main` workflow validates the Dashboard OpenAPI contract fixture,
 confirms the committed SDK version is not yet present on the public npm registry,
 packages the candidate, and uploads it to the candidate store. This is an
 availability preflight, not a reservation. The promotion job depends on that

@@ -91,7 +91,7 @@ describe("OpenAPI drift checker", () => {
     assert.match(formatted.stderr, /Snapshot last commit: (unavailable|[0-9a-f]{40} )/u);
     assert.match(
       formatted.stderr,
-      /Triage: SDK route not in spec - either the SDK is wrong OR the snapshot lags the API; refresh via Documentation openapi-sync and re-run\./u,
+      /Triage: SDK route not in spec - either the SDK is wrong OR the snapshot lags the API; refresh the Dashboard canonical snapshot via Documentation openapi-sync and re-run\./u,
     );
     assert.match(formatted.stdout, /Spec routes not covered by SDK \(informational\): 1/u);
     assert.match(formatted.stdout, /GET \/api\/v1\/gadgets/u);

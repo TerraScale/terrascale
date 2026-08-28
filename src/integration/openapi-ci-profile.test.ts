@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const run = promisify(execFile);
 
-test("configured OpenAPI drift profile runs against the checked-out Documentation snapshot", async () => {
+test("configured OpenAPI drift profile runs against the checked-out Dashboard snapshot", async () => {
   const workspace = await mkdtemp(path.join(tmpdir(), "terrascale-sdk-openapi-profile-"));
 
   try {
@@ -23,15 +23,19 @@ test("configured OpenAPI drift profile runs against the checked-out Documentatio
       .find((profile) => profile.name === "static")
       ?.commands.find((candidate) => candidate.description === "OpenAPI drift");
     assert.ok(command);
-    assert.match(workflow, /repository: TerraScale\/TerraScale\.Documentation/u);
-    assert.match(workflow, /path: Documentation/u);
+    assert.match(workflow, /repository: TerraScale\/TerraScale\.Dashboard/u);
+    assert.match(workflow, /path: Dashboard/u);
 
     await mkdir(path.join(workspace, "scripts"), { recursive: true });
-    await mkdir(path.join(workspace, "Documentation", "public", "openapi"), { recursive: true });
+    await mkdir(path.join(workspace, "Dashboard", "docs", "product", "openapi"), { recursive: true });
     await cp(path.join(repositoryRoot, "package.json"), path.join(workspace, "package.json"));
     await cp(
       path.join(repositoryRoot, "scripts", "check-openapi-drift.mjs"),
       path.join(workspace, "scripts", "check-openapi-drift.mjs"),
+    );
+    await cp(
+      path.join(repositoryRoot, "scripts", "openapi-contract-paths.mjs"),
+      path.join(workspace, "scripts", "openapi-contract-paths.mjs"),
     );
     await cp(
       path.join(repositoryRoot, "test", "fixtures", "openapi-drift", "sdk-route-manifest.json"),
@@ -48,7 +52,7 @@ test("configured OpenAPI drift profile runs against the checked-out Documentatio
         "openapi-drift",
         "openapi-covered-with-extra.json",
       ),
-      path.join(workspace, "Documentation", "public", "openapi", "server.openapi.json"),
+      path.join(workspace, "Dashboard", "docs", "product", "openapi", "server.openapi.json"),
     );
 
     await rm(baselinePath);

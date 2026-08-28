@@ -78,14 +78,14 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           persist-credentials: false
-      - run: git -c credential.helper= clone --depth 1 --branch develop https://git.terrascale.tech/TerraScale/TerraScale.Documentation.git Documentation
-      - run: node scripts/check-public-contract-fixture.mjs Documentation/public/openapi/server.openapi.json
+      - run: git -c credential.helper= clone --depth 1 --branch develop https://git.terrascale.tech/TerraScale/TerraScale.Dashboard.git Dashboard
+      - run: node scripts/check-public-contract-fixture.mjs Dashboard/docs/product/openapi/server.openapi.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
       - run: npm run check:route-manifest
-      - run: npm run check:openapi-contract-descriptor -- Documentation/public/openapi/server.openapi.json
-      - run: npm run check:openapi-drift -- --strict Documentation/public/openapi/server.openapi.json
+      - run: npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json
+      - run: npm run check:openapi-drift -- --strict Dashboard/docs/product/openapi/server.openapi.json
 
   pr-build:
     name: pr/build
@@ -232,12 +232,12 @@ jobs:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           github-server-url: "https://git.terrascale.tech"
-          repository: TerraScale/TerraScale.Documentation
+          repository: TerraScale/TerraScale.Dashboard
           ref: develop
-          path: Documentation
-      - run: node scripts/check-public-contract-fixture.mjs Documentation/public/openapi/server.openapi.json
-      - run: npm ci && npm run build && npm run check:route-manifest && npm run check:openapi-contract-descriptor -- Documentation/public/openapi/server.openapi.json
-      - run: npm run check:openapi-drift -- --strict Documentation/public/openapi/server.openapi.json
+          path: Dashboard
+      - run: node scripts/check-public-contract-fixture.mjs Dashboard/docs/product/openapi/server.openapi.json
+      - run: npm ci && npm run build && npm run check:route-manifest && npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json
+      - run: npm run check:openapi-drift -- --strict Dashboard/docs/product/openapi/server.openapi.json
 
   release-version-availability:
     name: release/version-availability

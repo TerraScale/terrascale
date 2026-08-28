@@ -15,6 +15,7 @@ const sampleIds = {
   databaseId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
   documentId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
   environmentId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
+  factorId: toUlid("01JRZ3NDEKTSV4RRFFQ69G5FAW"),
   invitationId: toUlid("01GRZ3NDEKTSV4RRFFQ69G5FAV"),
   notificationId: toUlid("01DRZ3NDEKTSV4RRFFQ69G5FAV"),
   organizationId: toUlid("01ERZ3NDEKTSV4RRFFQ69G5FAV"),
@@ -296,6 +297,109 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "auth",
+    operation: "signIn",
+    invoke: (client) => client.auth.signIn({
+      email: "ada@example.test",
+      password: "correct horse battery staple",
+      deviceFingerprint: "browser-fingerprint",
+    }),
+  },
+  {
+    client: "auth",
+    operation: "register",
+    invoke: (client) => client.auth.register(projectRegisterRequest),
+  },
+  {
+    client: "auth",
+    operation: "verifyEmail",
+    invoke: (client) => client.auth.verifyEmail({
+      pendingAuthenticationToken: "pending-token",
+      code: "123456",
+    }),
+  },
+  {
+    client: "auth",
+    operation: "forgotPassword",
+    invoke: (client) => client.auth.forgotPassword({
+      email: "ada@example.test",
+      resetUrl: "https://app.example.test/reset",
+    }),
+  },
+  {
+    client: "auth",
+    operation: "resetPassword",
+    invoke: (client) => client.auth.resetPassword({
+      token: "reset-token",
+      newPassword: "correct horse battery staple",
+    }),
+  },
+  {
+    client: "auth",
+    operation: "verifyPasswordMfa",
+    invoke: (client) => client.auth.verifyPasswordMfa({
+      pendingAuthenticationToken: "pending-token",
+      challengeId: sampleIds.sessionId,
+      code: "123456",
+    }),
+  },
+  {
+    client: "auth",
+    operation: "beginExternalLogin",
+    invoke: (client) => client.auth.beginExternalLogin({
+      provider: "google",
+      redirectUri: "https://app.example.test/auth/callback",
+      state: "state-token",
+    }),
+  },
+  {
+    client: "auth",
+    operation: "completeExternalLogin",
+    invoke: (client) => client.auth.completeExternalLogin({
+      provider: "google",
+      code: "authorization-code",
+      redirectUri: "https://app.example.test/auth/callback",
+    }),
+  },
+  {
+    client: "auth",
+    operation: "enrollTotp",
+    invoke: (client) => client.auth.enrollTotp(),
+  },
+  {
+    client: "auth",
+    operation: "verifyTotpEnrollment",
+    invoke: (client) => client.auth.verifyTotpEnrollment({
+      challengeId: sampleIds.sessionId,
+      code: "123456",
+    }),
+  },
+  {
+    client: "auth",
+    operation: "listMfaFactors",
+    invoke: (client) => client.auth.listMfaFactors(),
+  },
+  {
+    client: "auth",
+    operation: "generateRecoveryCodes",
+    invoke: (client) => client.auth.generateRecoveryCodes(),
+  },
+  {
+    client: "auth",
+    operation: "deleteMfaFactor",
+    invoke: (client) => client.auth.deleteMfaFactor(sampleIds.factorId, {
+      currentPassword: "correct horse battery staple",
+    }),
+  },
+  {
+    client: "auth",
+    operation: "changePassword",
+    invoke: (client) => client.auth.changePassword({
+      currentPassword: "old password",
+      newPassword: "new password",
+    }),
+  },
+  {
+    client: "auth",
     operation: "requestEmailSignIn",
     invoke: (client) => client.auth.requestEmailSignIn({
       email: "ada@example.test",
@@ -469,6 +573,7 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.auth.initiateEmailChange({
         newEmail: "augusta@example.test",
+        password: "correct horse battery staple",
       }),
   },
   {

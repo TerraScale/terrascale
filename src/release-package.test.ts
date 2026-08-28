@@ -74,7 +74,7 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.event\.pull_request\.head\.repo\.full_name \}\}" = "\$\{\{ forgejo\.repository \}\}"/u);
   assert.doesNotMatch(jobSteps(workflow, "promotion-admission"), /secrets\./u);
   assert.doesNotMatch(jobDefinition(workflow, "promotion-admission"), /(?:candidate-store|upload-artifact|download-artifact|terrascale-deploy)/u);
-  assert.match(jobDefinition(workflow, "pr-static"), /git -c credential\.helper= clone --depth 1 --branch develop https:\/\/git\.terrascale\.tech\/TerraScale\/TerraScale\.Documentation\.git Documentation/u);
+  assert.match(jobDefinition(workflow, "pr-static"), /git -c credential\.helper= clone --depth 1 --branch develop https:\/\/git\.terrascale\.tech\/TerraScale\/TerraScale\.Dashboard\.git Dashboard/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm ci/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm run typecheck/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm run build/u);
@@ -87,8 +87,8 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "browser-matrix"), /runs-on: terrascale-untrusted/u);
   assert.match(jobDefinition(workflow, "browser-matrix"), /playwright:v1\.62\.1-noble/u);
   assert.match(jobDefinition(workflow, "browser-matrix"), /npm run test:browser/u);
-  assert.match(jobDefinition(workflow, "release-contract-fixture"), /check-public-contract-fixture\.mjs Documentation\/public\/openapi\/server\.openapi\.json/u);
-  assert.match(jobDefinition(workflow, "release-contract-fixture"), /check:openapi-contract-descriptor -- Documentation\/public\/openapi\/server\.openapi\.json/u);
+  assert.match(jobDefinition(workflow, "release-contract-fixture"), /check-public-contract-fixture\.mjs Dashboard\/docs\/product\/openapi\/server\.openapi\.json/u);
+  assert.match(jobDefinition(workflow, "release-contract-fixture"), /check:openapi-contract-descriptor -- Dashboard\/docs\/product\/openapi\/server\.openapi\.json/u);
   assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("npm run build") < jobDefinition(workflow, "release-contract-fixture").indexOf("npm run check:route-manifest"));
   assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("npm run check:route-manifest") < jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-contract-descriptor"));
   assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-contract-descriptor") < jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-drift -- --strict"));

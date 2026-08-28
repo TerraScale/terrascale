@@ -98,7 +98,7 @@ describe("TerraScaleClient route contracts", () => {
       manifest.routes.map(routeManifestCore),
       capturedRoutes.map(routeManifestCore),
     );
-    assert.equal(manifest.routeCount, 154);
+    assert.equal(manifest.routeCount, 159);
     assert.equal(manifest.routeCount, capturedRoutes.length);
     assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
     assert.deepEqual(
@@ -239,6 +239,7 @@ describe("TerraScaleClient route contracts", () => {
     await client.auth.project.listProviders(projectId, { cursor: "next", limit: 25 });
     await client.auth.initiateEmailChange({
       newEmail: "augusta@example.test",
+      password: "correct horse battery staple",
     });
     await client.auth.verifyEmailChange({
       newEmail: "augusta@example.test",
@@ -260,7 +261,10 @@ describe("TerraScaleClient route contracts", () => {
     assert.equal(requests[2]?.url.searchParams.get("cursor"), "next");
     assert.equal(requests[2]?.url.searchParams.get("limit"), "25");
     assertRequest(requests[3], "POST", "/api/v1/users/me/email/change");
-    assert.deepEqual(requests[3]?.body, { newEmail: "augusta@example.test" });
+    assert.deepEqual(requests[3]?.body, {
+      newEmail: "augusta@example.test",
+      password: "correct horse battery staple",
+    });
     assertRequest(requests[4], "POST", "/api/v1/users/me/email/verify");
     assert.deepEqual(requests[4]?.body, {
       newEmail: "augusta@example.test",
