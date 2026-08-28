@@ -98,7 +98,7 @@ describe("TerraScaleClient route contracts", () => {
       manifest.routes.map(routeManifestCore),
       capturedRoutes.map(routeManifestCore),
     );
-    assert.equal(manifest.routeCount, 161);
+    assert.equal(manifest.routeCount, 154);
     assert.equal(manifest.routeCount, capturedRoutes.length);
     assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
     assert.deepEqual(
@@ -227,43 +227,44 @@ describe("TerraScaleClient route contracts", () => {
     assert.deepEqual(requests[0]?.body, { sessionId: "cs_test_onboarding" });
   });
 
-  test("uses typed public Auth routes for providers, email, and password changes", async () => {
+  test("separates platform email identity from project authentication", async () => {
     const { client, requests } = createCapturingClient({});
 
-    await client.auth.listProjectProviders(undefined, { cursor: "next", limit: 25 });
+    await client.auth.requestEmailSignIn({
+      email: "ada@example.test",
+      redirectUrl: "https://app.example.test/login",
+      deliveryMethod: "code",
+    });
+    await client.auth.completeEmailSignIn({ email: "ada@example.test", code: "123456" });
+    await client.auth.project.listProviders(projectId, { cursor: "next", limit: 25 });
     await client.auth.initiateEmailChange({
       newEmail: "augusta@example.test",
-      password: "current-password",
     });
     await client.auth.verifyEmailChange({
       newEmail: "augusta@example.test",
       otpCode: "123456",
     });
-    await client.auth.changePassword({
-      currentPassword: "current-password",
-      newPassword: "new-password",
-    });
 
     for (const request of requests) {
       assert.equal(request.url.origin, "https://auth.terrascale.test");
     }
-    assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/auth/providers`);
-    assert.equal(requests[0]?.url.searchParams.get("cursor"), "next");
-    assert.equal(requests[0]?.url.searchParams.get("limit"), "25");
-    assertRequest(requests[1], "POST", "/api/v1/users/me/email/change");
-    assert.deepEqual(requests[1]?.body, {
-      newEmail: "augusta@example.test",
-      password: "current-password",
+    assertRequest(requests[0], "POST", "/api/v1/auth/passwordless/magic-link");
+    assert.deepEqual(requests[0]?.body, {
+      email: "ada@example.test",
+      loginUrl: "https://app.example.test/login",
+      deliveryMethod: "code",
     });
-    assertRequest(requests[2], "POST", "/api/v1/users/me/email/verify");
-    assert.deepEqual(requests[2]?.body, {
+    assertRequest(requests[1], "POST", "/api/v1/auth/passwordless/magic-link/complete");
+    assert.deepEqual(requests[1]?.body, { email: "ada@example.test", code: "123456" });
+    assertRequest(requests[2], "GET", `/api/v1/projects/${projectId}/auth/providers`);
+    assert.equal(requests[2]?.url.searchParams.get("cursor"), "next");
+    assert.equal(requests[2]?.url.searchParams.get("limit"), "25");
+    assertRequest(requests[3], "POST", "/api/v1/users/me/email/change");
+    assert.deepEqual(requests[3]?.body, { newEmail: "augusta@example.test" });
+    assertRequest(requests[4], "POST", "/api/v1/users/me/email/verify");
+    assert.deepEqual(requests[4]?.body, {
       newEmail: "augusta@example.test",
       otpCode: "123456",
-    });
-    assertRequest(requests[3], "POST", "/api/v1/auth/password/change-password");
-    assert.deepEqual(requests[3]?.body, {
-      currentPassword: "current-password",
-      newPassword: "new-password",
     });
   });
 

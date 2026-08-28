@@ -186,7 +186,38 @@ export type VerifyRecoveryCodeResponse = {
   readonly expiresIn: number;
 };
 
-export type RegisterRequest = {
+export type EmailSignInRequest = {
+  readonly email: string;
+  readonly displayName?: string;
+  readonly redirectUrl?: string;
+  readonly firstName?: string;
+  readonly lastName?: string;
+  readonly verifyUrl?: string;
+  readonly fullName?: string;
+  readonly acceptedTerms?: boolean;
+  readonly termsVersion?: string;
+  readonly deliveryMethod?: "link" | "code";
+};
+
+export type CompleteEmailSignInRequest = {
+  readonly token?: string;
+  readonly code?: string;
+  readonly email?: string;
+};
+
+export type EmailSignInResponse = {
+  readonly success: boolean;
+  readonly message: string;
+  readonly expiresAt?: Timestamp | null;
+};
+
+export type CompleteEmailSignInResponse = {
+  readonly success: boolean;
+  readonly authResponse?: AuthTokenResponse;
+  readonly error?: string;
+};
+
+export type ProjectRegisterRequest = {
   readonly email: string;
   readonly password: string;
   readonly displayName?: string;
@@ -199,7 +230,7 @@ export type RegisterRequest = {
   readonly termsVersion?: string;
 };
 
-export type SignInRequest = {
+export type ProjectSignInRequest = {
   readonly email: string;
   readonly password: string;
   readonly deviceFingerprint?: string;
@@ -258,7 +289,6 @@ export type VerifyEmailRequest = {
 
 export type InitiateEmailChangeRequest = {
   readonly newEmail: string;
-  readonly password: string;
 };
 
 export type InitiateEmailChangeResponse = {
@@ -289,13 +319,13 @@ export type CompletePasswordResetRequest = {
   readonly newPassword?: string;
 };
 
-export type MagicLinkRequest = {
+export type ProjectMagicLinkRequest = {
   readonly email: string;
   readonly redirectUrl: string;
   readonly loginUrl?: string;
 };
 
-export type CompleteMagicLinkRequest = {
+export type CompleteProjectMagicLinkRequest = {
   readonly token: string;
 };
 

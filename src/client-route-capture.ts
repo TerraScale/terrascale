@@ -210,7 +210,7 @@ function pathToTemplate(pathname: string): string {
   return pathname;
 }
 
-const registerRequest = {
+const projectRegisterRequest = {
   email: "ada@example.test",
   password: "correct horse battery staple",
   firstName: "Ada",
@@ -296,178 +296,27 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "auth",
-    operation: "register",
-    variant: "global",
-    invoke: (client) => client.auth.register(registerRequest),
+    operation: "requestEmailSignIn",
+    invoke: (client) => client.auth.requestEmailSignIn({
+      email: "ada@example.test",
+      redirectUrl: "https://app.example.test/login",
+      deliveryMethod: "link",
+    }),
   },
   {
     client: "auth",
-    operation: "register",
-    variant: "project",
-    defaultProject: true,
-    invoke: (client) => client.auth.register(registerRequest),
+    operation: "completeEmailSignIn",
+    invoke: (client) => client.auth.completeEmailSignIn({ token: "magic-token" }),
   },
   {
     client: "auth",
-    operation: "verifyEmail",
-    variant: "global",
-    invoke: (client) =>
-      client.auth.verifyEmail({
-        pendingAuthenticationToken: "pending-token",
-        code: "123456",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "verifyEmail",
-    variant: "project",
-    defaultProject: true,
-    invoke: (client) =>
-      client.auth.verifyEmail({
-        pendingAuthenticationToken: "pending-token",
-        code: "123456",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "resendVerification",
-    variant: "global",
-    invoke: (client) =>
-      client.auth.resendVerification(
-        "pending-token",
-        "https://app.example.test/verify",
-      ),
-  },
-  {
-    client: "auth",
-    operation: "resendVerification",
-    variant: "project",
-    defaultProject: true,
-    invoke: (client) =>
-      client.auth.resendVerification(
-        "pending-token",
-        "https://app.example.test/verify",
-      ),
-  },
-  {
-    client: "auth",
-    operation: "signIn",
-    variant: "global",
-    invoke: (client) =>
-      client.auth.signIn({
-        email: "ada@example.test",
-        password: "correct horse battery staple",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "verifyPasswordMfa",
-    variant: "global",
-    invoke: (client) =>
-      client.auth.verifyPasswordMfa({
-        pendingAuthenticationToken: "pending-token",
-        challengeId: sampleIds.sessionId,
-        code: "123456",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "verifyPasswordMfa",
-    variant: "project",
-    defaultProject: true,
-    invoke: (client) =>
-      client.auth.verifyPasswordMfa({
-        pendingAuthenticationToken: "pending-token",
-        challengeId: sampleIds.sessionId,
-        code: "123456",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "signIn",
-    variant: "project",
-    defaultProject: true,
-    invoke: (client) =>
-      client.auth.signIn({
-        email: "ada@example.test",
-        password: "correct horse battery staple",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "forgotPassword",
-    variant: "global",
-    invoke: (client) =>
-      client.auth.forgotPassword({
-        email: "ada@example.test",
-        resetUrl: "https://app.example.test/reset",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "forgotPassword",
-    variant: "project",
-    defaultProject: true,
-    invoke: (client) =>
-      client.auth.forgotPassword({
-        email: "ada@example.test",
-        resetUrl: "https://app.example.test/reset",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "resetPassword",
-    variant: "global",
-    invoke: (client) =>
-      client.auth.resetPassword({
-        token: "reset-token",
-        password: "correct horse battery staple",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "resetPassword",
-    variant: "project",
-    defaultProject: true,
-    invoke: (client) =>
-      client.auth.resetPassword({
-        token: "reset-token",
-        password: "correct horse battery staple",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "requestMagicLink",
-    variant: "global",
-    invoke: (client) =>
-      client.auth.requestMagicLink({
-        email: "ada@example.test",
-        redirectUrl: "https://app.example.test/login",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "requestMagicLink",
-    variant: "project",
-    defaultProject: true,
-    invoke: (client) =>
-      client.auth.requestMagicLink({
-        email: "ada@example.test",
-        redirectUrl: "https://app.example.test/login",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "completeMagicLink",
-    variant: "global",
-    invoke: (client) => client.auth.completeMagicLink({ token: "magic-token" }),
-  },
-  {
-    client: "auth",
-    operation: "completeMagicLink",
-    variant: "project",
-    defaultProject: true,
-    invoke: (client) => client.auth.completeMagicLink({ token: "magic-token" }),
+    operation: "requestEmailSignIn",
+    variant: "code",
+    invoke: (client) => client.auth.requestEmailSignIn({
+      email: "ada@example.test",
+      redirectUrl: "https://app.example.test/login",
+      deliveryMethod: "code",
+    }),
   },
   {
     client: "auth",
@@ -477,22 +326,8 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "auth",
-    operation: "refresh",
-    variant: "project",
-    defaultProject: true,
-    invoke: (client) => client.auth.refresh("refresh-token"),
-  },
-  {
-    client: "auth",
     operation: "signOut",
     variant: "global",
-    invoke: (client) => client.auth.signOut(),
-  },
-  {
-    client: "auth",
-    operation: "signOut",
-    variant: "project",
-    defaultProject: true,
     invoke: (client) => client.auth.signOut(),
   },
   {
@@ -517,56 +352,110 @@ const captureOperations: readonly CaptureOperation[] = [
       client.auth.updateProfile({ displayName: "Ada Lovelace", phoneNumber: "+14155552671" }),
   },
   {
-    client: "auth",
-    operation: "changePassword",
-    invoke: (client) =>
-      client.auth.changePassword({ currentPassword: "old-secret", newPassword: "new-secret" }),
+    client: "auth.project",
+    operation: "register",
+    defaultProject: true,
+    invoke: (client) => client.auth.project.register(sampleIds.projectId, projectRegisterRequest),
   },
   {
-    client: "auth",
-    operation: "listMfaFactors",
-    invoke: (client) => client.auth.listMfaFactors(),
+    client: "auth.project",
+    operation: "verifyEmail",
+    defaultProject: true,
+    invoke: (client) => client.auth.project.verifyEmail(sampleIds.projectId, {
+      pendingAuthenticationToken: "pending-token",
+      code: "123456",
+    }),
   },
   {
-    client: "auth",
-    operation: "enrollTotp",
-    invoke: (client) => client.auth.enrollTotp(),
+    client: "auth.project",
+    operation: "resendVerification",
+    defaultProject: true,
+    invoke: (client) => client.auth.project.resendVerification(
+      sampleIds.projectId,
+      "pending-token",
+      "https://app.example.test/verify",
+    ),
   },
   {
-    client: "auth",
-    operation: "verifyTotpEnrollment",
-    invoke: (client) =>
-      client.auth.verifyTotpEnrollment({ challengeId: sampleIds.sessionId, code: "123456" }),
+    client: "auth.project",
+    operation: "signIn",
+    defaultProject: true,
+    invoke: (client) => client.auth.project.signIn(sampleIds.projectId, {
+      email: "ada@example.test",
+      password: "correct horse battery staple",
+    }),
   },
   {
-    client: "auth",
-    operation: "deleteMfaFactor",
-    invoke: (client) => client.auth.deleteMfaFactor(sampleIds.sessionId, { code: "123456" }),
+    client: "auth.project",
+    operation: "verifyPasswordMfa",
+    defaultProject: true,
+    invoke: (client) => client.auth.project.verifyPasswordMfa(sampleIds.projectId, {
+      pendingAuthenticationToken: "pending-token",
+      challengeId: sampleIds.sessionId,
+      code: "123456",
+    }),
   },
   {
-    client: "auth",
-    operation: "generateRecoveryCodes",
-    invoke: (client) => client.auth.generateRecoveryCodes(),
+    client: "auth.project",
+    operation: "forgotPassword",
+    defaultProject: true,
+    invoke: (client) => client.auth.project.forgotPassword(sampleIds.projectId, {
+      email: "ada@example.test",
+      resetUrl: "https://app.example.test/reset",
+    }),
   },
   {
-    client: "auth",
-    operation: "getRecoveryCodeCount",
-    invoke: (client) => client.auth.getRecoveryCodeCount(),
+    client: "auth.project",
+    operation: "resetPassword",
+    defaultProject: true,
+    invoke: (client) => client.auth.project.resetPassword(sampleIds.projectId, {
+      token: "reset-token",
+      password: "correct horse battery staple",
+    }),
   },
   {
-    client: "auth",
-    operation: "verifyRecoveryCode",
-    variant: "global",
-    invoke: (client) =>
-      client.auth.verifyRecoveryCode({ email: "ada@example.test", code: "abcd-1234" }),
+    client: "auth.project",
+    operation: "requestMagicLink",
+    defaultProject: true,
+    invoke: (client) => client.auth.project.requestMagicLink(sampleIds.projectId, {
+      email: "ada@example.test",
+      redirectUrl: "https://app.example.test/login",
+    }),
   },
   {
-    client: "auth",
-    operation: "verifyRecoveryCode",
+    client: "auth.project",
+    operation: "completeMagicLink",
+    defaultProject: true,
+    invoke: (client) => client.auth.project.completeMagicLink(sampleIds.projectId, { token: "magic-token" }),
+  },
+  {
+    client: "auth.project",
+    operation: "refresh",
     variant: "project",
     defaultProject: true,
-    invoke: (client) =>
-      client.auth.verifyRecoveryCode({ email: "ada@example.test", code: "abcd-1234" }),
+    invoke: (client) => client.auth.project.refresh(sampleIds.projectId, "refresh-token"),
+  },
+  {
+    client: "auth.project",
+    operation: "signOut",
+    variant: "project",
+    defaultProject: true,
+    invoke: (client) => client.auth.project.signOut(sampleIds.projectId),
+  },
+  {
+    client: "auth.project",
+    operation: "listProviders",
+    defaultProject: true,
+    invoke: (client) => client.auth.project.listProviders(sampleIds.projectId, { cursor: "next", limit: 25 }),
+  },
+  {
+    client: "auth.project",
+    operation: "verifyRecoveryCode",
+    defaultProject: true,
+    invoke: (client) => client.auth.project.verifyRecoveryCode(sampleIds.projectId, {
+      email: "ada@example.test",
+      code: "abcd-1234",
+    }),
   },
   {
     client: "auth",
@@ -576,37 +465,10 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "auth",
-    operation: "beginExternalLogin",
-    invoke: (client) =>
-      client.auth.beginExternalLogin({
-        provider: "google",
-        redirectUri: "https://app.example.test/api/auth/external-callback",
-        state: "oauth-state",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "completeExternalLogin",
-    invoke: (client) =>
-      client.auth.completeExternalLogin({
-        provider: "github",
-        code: "oauth-code",
-        redirectUri: "https://app.example.test/api/auth/external-callback",
-      }),
-  },
-  {
-    client: "auth",
-    operation: "listProjectProviders",
-    defaultProject: true,
-    invoke: (client) => client.auth.listProjectProviders(undefined, { cursor: "next", limit: 25 }),
-  },
-  {
-    client: "auth",
     operation: "initiateEmailChange",
     invoke: (client) =>
       client.auth.initiateEmailChange({
         newEmail: "augusta@example.test",
-        password: "correct horse battery staple",
       }),
   },
   {

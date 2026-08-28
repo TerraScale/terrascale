@@ -22,34 +22,17 @@ export const sdkRouteManifest = {
     me: `${apiRoot}/auth/me`,
     billing: `${apiRoot}/auth/me/billing`,
     billingGuard: `${apiRoot}/auth/me/billing/guard`,
-    register: `${apiRoot}/auth/password/signup`,
-    verifyEmail: `${apiRoot}/auth/password/verify-email`,
-    resendVerification: `${apiRoot}/auth/password/resend-verification`,
-    signIn: `${apiRoot}/auth/password/login`,
-    verifyPasswordMfa: `${apiRoot}/auth/password/mfa/verify`,
-    forgotPassword: `${apiRoot}/auth/password/forgot-password`,
-    resetPassword: `${apiRoot}/auth/password/reset-password`,
-    magicLinkRequest: `${apiRoot}/auth/passwordless/magic-link`,
-    magicLinkComplete: `${apiRoot}/auth/passwordless/magic-link/complete`,
+    emailSignInRequest: `${apiRoot}/auth/passwordless/magic-link`,
+    emailSignInComplete: `${apiRoot}/auth/passwordless/magic-link/complete`,
     refresh: `${apiRoot}/auth/refresh`,
     signOut: `${apiRoot}/auth/logout`,
     switchOrganization: `${apiRoot}/auth/switch-organization`,
-    externalLoginBegin: `${apiRoot}/auth/external-login/begin`,
-    externalLoginComplete: `${apiRoot}/auth/external-login/complete`,
     initiateEmailChange: `${apiRoot}/users/me/email/change`,
     verifyEmailChange: `${apiRoot}/users/me/email/verify`,
     accountSessions: `${apiRoot}/account/sessions`,
     accountSession: (sessionId: Ulid) =>
       `${apiRoot}/account/sessions/${ulidPathSegment(sessionId)}`,
     updateProfile: `${apiRoot}/users/me/profile`,
-    changePassword: `${apiRoot}/auth/password/change-password`,
-    mfaFactors: `${apiRoot}/auth/mfa/factors`,
-    mfaFactor: (factorId: Ulid) => `${apiRoot}/auth/mfa/factors/${ulidPathSegment(factorId)}`,
-    enrollTotp: `${apiRoot}/auth/mfa/totp/enroll`,
-    verifyTotpEnrollment: `${apiRoot}/auth/mfa/totp/enroll/verify`,
-    generateRecoveryCodes: `${apiRoot}/auth/mfa/recovery-codes/generate`,
-    recoveryCodeCount: `${apiRoot}/auth/mfa/recovery-codes/count`,
-    verifyRecoveryCode: `${apiRoot}/auth/mfa/recovery-codes/verify`,
     project: {
       register: (projectId: Ulid) => `${projectAuthRoot(projectId)}/signup`,
       verifyEmail: (projectId: Ulid) => `${projectAuthRoot(projectId)}/verify-email`,
@@ -252,9 +235,11 @@ export class RegionsClient {
 
 export class AuthClient {
   readonly #http: TerraScaleHttp;
+  readonly project: ProjectAuthClient;
 
   constructor(http: TerraScaleHttp) {
     this.#http = http;
+    this.project = new ProjectAuthClient(http);
   }
 
   getSession(): Promise<TerraScaleResult<Models.AuthMeResponse>> {
@@ -287,211 +272,58 @@ export class AuthClient {
     });
   }
 
-  register(
-    request: Models.RegisterRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.SignupResponse>> {
+  requestEmailSignIn(
+    request: Models.EmailSignInRequest,
+  ): Promise<TerraScaleResult<Models.EmailSignInResponse>> {
     return this.#http.request({
       base: "auth",
       method: "POST",
-      path: authRoute(
-        this.#http,
-        projectId,
-        sdkRouteManifest.auth.register,
-        sdkRouteManifest.auth.project.register,
-      ),
-      routeName: "auth.register",
-      headerPolicy: "anonymous",
-      body: toSignupRequest(request),
-    });
-  }
-
-  verifyEmail(
-    request: Models.VerifyEmailRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.SignupResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: authRoute(
-        this.#http,
-        projectId,
-        sdkRouteManifest.auth.verifyEmail,
-        sdkRouteManifest.auth.project.verifyEmail,
-      ),
-      routeName: "auth.verifyEmail",
-      headerPolicy: "anonymous",
-      body: request,
-    });
-  }
-
-  resendVerification(
-    pendingAuthenticationToken: string,
-    verifyUrl = "",
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: authRoute(
-        this.#http,
-        projectId,
-        sdkRouteManifest.auth.resendVerification,
-        sdkRouteManifest.auth.project.resendVerification,
-      ),
-      routeName: "auth.resendVerification",
-      headerPolicy: "anonymous",
-      body: { pendingAuthenticationToken, verifyUrl },
-    });
-  }
-
-  signIn(
-    request: Models.SignInRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: authRoute(
-        this.#http,
-        projectId,
-        sdkRouteManifest.auth.signIn,
-        sdkRouteManifest.auth.project.signIn,
-      ),
-      routeName: "auth.signIn",
+      path: sdkRouteManifest.auth.emailSignInRequest,
+      routeName: "auth.emailSignIn.request",
       headerPolicy: "anonymous",
       body: {
         email: request.email,
-        password: request.password,
-        deviceFingerprint: request.deviceFingerprint ?? "",
+        loginUrl: request.redirectUrl ?? "",
+        deliveryMethod: request.deliveryMethod ?? "link",
+        displayName: request.displayName,
+        firstName: request.firstName,
+        lastName: request.lastName,
+        fullName: request.fullName,
+        acceptedTerms: request.acceptedTerms,
+        termsVersion: request.termsVersion,
       },
     });
   }
 
-  verifyPasswordMfa(
-    request: Models.PasswordMfaVerifyRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
+  completeEmailSignIn(
+    request: Models.CompleteEmailSignInRequest,
+  ): Promise<TerraScaleResult<Models.CompleteEmailSignInResponse>> {
     return this.#http.request({
       base: "auth",
       method: "POST",
-      path: authRoute(
-        this.#http,
-        projectId,
-        sdkRouteManifest.auth.verifyPasswordMfa,
-        sdkRouteManifest.auth.project.verifyPasswordMfa,
-      ),
-      routeName: "auth.passwordMfa.verify",
+      path: sdkRouteManifest.auth.emailSignInComplete,
+      routeName: "auth.emailSignIn.complete",
       headerPolicy: "anonymous",
       body: request,
     });
   }
 
-  forgotPassword(
-    request: Models.PasswordResetRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<void>> {
+  refresh(refreshToken: string): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
     return this.#http.request({
       base: "auth",
       method: "POST",
-      path: authRoute(
-        this.#http,
-        projectId,
-        sdkRouteManifest.auth.forgotPassword,
-        sdkRouteManifest.auth.project.forgotPassword,
-      ),
-      routeName: "auth.forgotPassword",
-      headerPolicy: "anonymous",
-      body: { email: request.email, resetUrl: request.resetUrl ?? request.redirectUrl ?? "" },
-    });
-  }
-
-  resetPassword(
-    request: Models.CompletePasswordResetRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: authRoute(
-        this.#http,
-        projectId,
-        sdkRouteManifest.auth.resetPassword,
-        sdkRouteManifest.auth.project.resetPassword,
-      ),
-      routeName: "auth.resetPassword",
-      headerPolicy: "anonymous",
-      body: { token: request.token, newPassword: request.newPassword ?? request.password },
-    });
-  }
-
-  requestMagicLink(
-    request: Models.MagicLinkRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<void>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: authRoute(
-        this.#http,
-        projectId,
-        sdkRouteManifest.auth.magicLinkRequest,
-        sdkRouteManifest.auth.project.magicLinkRequest,
-      ),
-      routeName: "auth.magicLink.request",
-      headerPolicy: "anonymous",
-      body: { email: request.email, loginUrl: request.loginUrl ?? request.redirectUrl },
-    });
-  }
-
-  completeMagicLink(
-    request: Models.CompleteMagicLinkRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: authRoute(
-        this.#http,
-        projectId,
-        sdkRouteManifest.auth.magicLinkComplete,
-        sdkRouteManifest.auth.project.magicLinkComplete,
-      ),
-      routeName: "auth.magicLink.complete",
-      headerPolicy: "anonymous",
-      body: request,
-    });
-  }
-
-  refresh(
-    refreshToken: string,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: authRoute(
-        this.#http,
-        projectId,
-        sdkRouteManifest.auth.refresh,
-        sdkRouteManifest.auth.project.refresh,
-      ),
+      path: sdkRouteManifest.auth.refresh,
       routeName: "auth.token.refresh",
       headerPolicy: "anonymous",
       body: { refreshToken },
     });
   }
 
-  signOut(projectId?: Ulid): Promise<TerraScaleResult<void>> {
+  signOut(): Promise<TerraScaleResult<void>> {
     return this.#http.request({
       base: "auth",
       method: "POST",
-      path: authRoute(
-        this.#http,
-        projectId,
-        sdkRouteManifest.auth.signOut,
-        sdkRouteManifest.auth.project.signOut,
-      ),
+      path: sdkRouteManifest.auth.signOut,
       routeName: "auth.signOut",
       body: { revokeAll: true },
     });
@@ -540,99 +372,6 @@ export class AuthClient {
     });
   }
 
-  changePassword(
-    request: Models.ChangePasswordRequest,
-  ): Promise<TerraScaleResult<Models.ChangePasswordResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.changePassword,
-      routeName: "auth.password.change",
-      body: request,
-    });
-  }
-
-  listMfaFactors(): Promise<TerraScaleResult<Models.ListMfaFactorsResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "GET",
-      path: sdkRouteManifest.auth.mfaFactors,
-      routeName: "auth.mfa.factors.list",
-    });
-  }
-
-  enrollTotp(): Promise<TerraScaleResult<Models.EnrollTotpResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.enrollTotp,
-      routeName: "auth.mfa.totp.enroll",
-      body: { type: "totp" },
-    });
-  }
-
-  verifyTotpEnrollment(
-    request: Models.VerifyTotpEnrollmentRequest,
-  ): Promise<TerraScaleResult<Models.VerifyTotpEnrollmentResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.verifyTotpEnrollment,
-      routeName: "auth.mfa.totp.verifyEnrollment",
-      body: request,
-    });
-  }
-
-  deleteMfaFactor(
-    factorId: Ulid,
-    request: Models.DeleteMfaFactorRequest,
-  ): Promise<TerraScaleResult<Models.VerifyTotpEnrollmentResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "DELETE",
-      path: sdkRouteManifest.auth.mfaFactor(factorId),
-      routeName: "auth.mfa.factors.delete",
-      body: request,
-    });
-  }
-
-  generateRecoveryCodes(): Promise<TerraScaleResult<Models.GenerateRecoveryCodesResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.generateRecoveryCodes,
-      routeName: "auth.mfa.recoveryCodes.generate",
-    });
-  }
-
-  getRecoveryCodeCount(): Promise<TerraScaleResult<Models.RecoveryCodeCountResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "GET",
-      path: sdkRouteManifest.auth.recoveryCodeCount,
-      routeName: "auth.mfa.recoveryCodes.count",
-    });
-  }
-
-  verifyRecoveryCode(
-    request: Models.VerifyRecoveryCodeRequest,
-    projectId?: Ulid,
-  ): Promise<TerraScaleResult<Models.VerifyRecoveryCodeResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: authRoute(
-        this.#http,
-        projectId,
-        sdkRouteManifest.auth.verifyRecoveryCode,
-        sdkRouteManifest.auth.project.verifyRecoveryCode,
-      ),
-      routeName: "auth.mfa.recoveryCodes.verify",
-      headerPolicy: "anonymous",
-      body: request,
-    });
-  }
-
   switchOrganization(
     request: Models.SwitchOrganizationRequest,
   ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
@@ -642,45 +381,6 @@ export class AuthClient {
       path: sdkRouteManifest.auth.switchOrganization,
       routeName: "auth.organization.switch",
       body: request,
-    });
-  }
-
-  beginExternalLogin(
-    request: Models.ExternalLoginBeginRequest,
-  ): Promise<TerraScaleResult<Models.ExternalLoginBeginResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.externalLoginBegin,
-      routeName: "auth.externalLogin.begin",
-      body: request,
-      headerPolicy: "anonymous",
-    });
-  }
-
-  completeExternalLogin(
-    request: Models.ExternalLoginCompleteRequest,
-  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "POST",
-      path: sdkRouteManifest.auth.externalLoginComplete,
-      routeName: "auth.externalLogin.complete",
-      body: request,
-      headerPolicy: "anonymous",
-    });
-  }
-
-  listProjectProviders(
-    projectId?: Ulid,
-    query?: Models.ListProjectAuthProvidersRequest,
-  ): Promise<TerraScaleResult<Models.ListProjectAuthProvidersResponse>> {
-    return this.#http.request({
-      base: "auth",
-      method: "GET",
-      path: sdkRouteManifest.auth.project.providers(projectRootId(this.#http, projectId)),
-      routeName: "auth.project.providers.list",
-      query,
     });
   }
 
@@ -707,6 +407,193 @@ export class AuthClient {
       body: request,
     });
   }
+}
+
+export class ProjectAuthClient {
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
+
+  register(
+    projectId: Ulid,
+    request: Models.ProjectRegisterRequest,
+  ): Promise<TerraScaleResult<Models.SignupResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.project.register(projectId),
+      routeName: "auth.project.register",
+      headerPolicy: "anonymous",
+      body: toSignupRequest(request),
+    });
+  }
+
+  verifyEmail(
+    projectId: Ulid,
+    request: Models.VerifyEmailRequest,
+  ): Promise<TerraScaleResult<Models.SignupResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.project.verifyEmail(projectId),
+      routeName: "auth.project.verifyEmail",
+      headerPolicy: "anonymous",
+      body: request,
+    });
+  }
+
+  resendVerification(
+    projectId: Ulid,
+    pendingAuthenticationToken: string,
+    verifyUrl = "",
+  ): Promise<TerraScaleResult<void>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.project.resendVerification(projectId),
+      routeName: "auth.project.resendVerification",
+      headerPolicy: "anonymous",
+      body: { pendingAuthenticationToken, verifyUrl },
+    });
+  }
+
+  signIn(
+    projectId: Ulid,
+    request: Models.ProjectSignInRequest,
+  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.project.signIn(projectId),
+      routeName: "auth.project.signIn",
+      headerPolicy: "anonymous",
+      body: { ...request, deviceFingerprint: request.deviceFingerprint ?? "" },
+    });
+  }
+
+  verifyPasswordMfa(
+    projectId: Ulid,
+    request: Models.PasswordMfaVerifyRequest,
+  ): Promise<TerraScaleResult<Models.PasswordLoginResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.project.verifyPasswordMfa(projectId),
+      routeName: "auth.project.passwordMfa.verify",
+      headerPolicy: "anonymous",
+      body: request,
+    });
+  }
+
+  forgotPassword(
+    projectId: Ulid,
+    request: Models.PasswordResetRequest,
+  ): Promise<TerraScaleResult<void>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.project.forgotPassword(projectId),
+      routeName: "auth.project.forgotPassword",
+      headerPolicy: "anonymous",
+      body: { email: request.email, resetUrl: request.resetUrl ?? request.redirectUrl ?? "" },
+    });
+  }
+
+  resetPassword(
+    projectId: Ulid,
+    request: Models.CompletePasswordResetRequest,
+  ): Promise<TerraScaleResult<void>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.project.resetPassword(projectId),
+      routeName: "auth.project.resetPassword",
+      headerPolicy: "anonymous",
+      body: { token: request.token, newPassword: request.newPassword ?? request.password },
+    });
+  }
+
+  requestMagicLink(
+    projectId: Ulid,
+    request: Models.ProjectMagicLinkRequest,
+  ): Promise<TerraScaleResult<void>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.project.magicLinkRequest(projectId),
+      routeName: "auth.project.magicLink.request",
+      headerPolicy: "anonymous",
+      body: { email: request.email, loginUrl: request.loginUrl ?? request.redirectUrl },
+    });
+  }
+
+  completeMagicLink(
+    projectId: Ulid,
+    request: Models.CompleteProjectMagicLinkRequest,
+  ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.project.magicLinkComplete(projectId),
+      routeName: "auth.project.magicLink.complete",
+      headerPolicy: "anonymous",
+      body: request,
+    });
+  }
+
+  refresh(
+    projectId: Ulid,
+    refreshToken: string,
+  ): Promise<TerraScaleResult<Models.AuthTokenResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.project.refresh(projectId),
+      routeName: "auth.project.token.refresh",
+      headerPolicy: "anonymous",
+      body: { refreshToken },
+    });
+  }
+
+  signOut(projectId: Ulid): Promise<TerraScaleResult<void>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.project.signOut(projectId),
+      routeName: "auth.project.signOut",
+      body: { revokeAll: true },
+    });
+  }
+
+  listProviders(
+    projectId: Ulid,
+    query?: Models.ListProjectAuthProvidersRequest,
+  ): Promise<TerraScaleResult<Models.ListProjectAuthProvidersResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "GET",
+      path: sdkRouteManifest.auth.project.providers(projectId),
+      routeName: "auth.project.providers.list",
+      query,
+    });
+  }
+
+  verifyRecoveryCode(
+    projectId: Ulid,
+    request: Models.VerifyRecoveryCodeRequest,
+  ): Promise<TerraScaleResult<Models.VerifyRecoveryCodeResponse>> {
+    return this.#http.request({
+      base: "auth",
+      method: "POST",
+      path: sdkRouteManifest.auth.project.verifyRecoveryCode(projectId),
+      routeName: "auth.project.mfa.recoveryCodes.verify",
+      headerPolicy: "anonymous",
+      body: request,
+    });
+  }
+
 }
 
 export class OrganizationsClient {
@@ -2342,7 +2229,7 @@ export class AdminClient {
   }
 }
 
-function toSignupRequest(request: Models.RegisterRequest) {
+function toSignupRequest(request: Models.ProjectRegisterRequest) {
   const displayNameParts = (request.displayName ?? "").trim().split(/\s+/u).filter(Boolean);
   const firstName = request.firstName ?? displayNameParts[0] ?? "";
   const lastName = request.lastName ?? displayNameParts.slice(1).join(" ");
@@ -2395,16 +2282,6 @@ function projectV3Root(http: TerraScaleHttp, projectId: Ulid | undefined): strin
 
 function projectAuthRoot(projectId: Ulid): string {
   return `${apiRoot}/projects/${ulidPathSegment(projectId)}/auth`;
-}
-
-function authRoute(
-  http: TerraScaleHttp,
-  projectId: Ulid | undefined,
-  globalPath: string,
-  projectPath: (projectId: Ulid) => string,
-): string {
-  const selectedProjectId = projectId ?? http.config.projectId;
-  return selectedProjectId === undefined ? globalPath : projectPath(selectedProjectId);
 }
 
 function databaseRoot(http: TerraScaleHttp, scope: Models.DatabaseScoped): string {

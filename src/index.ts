@@ -26,6 +26,7 @@ export type {
   OnboardingClient,
   OrganizationsClient,
   PricingClient,
+  ProjectAuthClient,
   QueryClient,
   QueuesClient,
   RegionsClient,
