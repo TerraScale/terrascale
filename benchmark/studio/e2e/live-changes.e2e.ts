@@ -22,7 +22,7 @@ function allocatePort(): Promise<number> {
         server.close(() => rejectListen(new Error("no port allocated")));
         return;
       }
-      const { port } = server.address();
+      const { port } = address;
       server.close(() => resolveListen(port));
     });
   });
