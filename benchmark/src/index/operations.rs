@@ -1065,8 +1065,9 @@ impl<'engine> IndexStore<'engine> {
     /// # Errors
     ///
     /// Returns [`IndexOperationError::NamespaceUnknown`] for an
-    /// unregistered namespace and
-    /// [`IndexOperationError::NotExplicitIndex`] for an automatic index.
+    /// unregistered namespace (automatic and explicit indexes both serve
+    /// staleness; [`IndexOperationError::NotExplicitIndex`] is reserved
+    /// for the operations that require an explicit index).
     pub fn staleness(
         &self,
         namespace: &IndexNamespace,

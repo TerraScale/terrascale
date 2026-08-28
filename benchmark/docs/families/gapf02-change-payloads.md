@@ -156,9 +156,9 @@ The change plane is a notification plane. The restrictions:
 Worst-case byte bound of one payload, stated arithmetically:
 
 - Counter payload: 64 entries × (255-byte name + 8-byte `i64` total)
-  + scalars ≈ **16.9 KiB**.
+  + scalars ≈ **16.4 KiB** [integrator rider: 64 × 263 B = 16,832 B — gate NOTE corrected the decimal-kB mislabel].
 - Attachment payload: 64 entries × (255 name + 255 content type + 8 size
-  + 64 digest) + scalars ≈ **37.3 KiB**.
+  + 64 digest) + scalars ≈ **36.4 KiB** [integrator rider: 64 × 582 B = 37,248 B — gate NOTE corrected the decimal-kB mislabel].
 - Time-series payload: fixed ≈ **0.6 KiB** (no per-entry data).
 
 So one event's payload is bounded below **40 KiB**, and a maximal
@@ -297,14 +297,19 @@ runnable:
   missing accessor.
 
 **GREEN** — after the implementation: `test result: ok. 51 passed; 0
-failed` (41 pre-existing streaming tests plus the ten GAP-F02 tests):
+failed` at the recorded run (41 pre-existing streaming tests plus the
+then-ten GAP-F02 tests; the clippy-repair pass later split the
+constructor pair into two rows, so the merged suite carries eleven
+GAP-F02 tests and the warden's dev-profile filtered run reads 58 passed
+— 41 base + 11 GAP-F02 + 3 sharding + 3 sha256 streaming):
 
 - `counter_change_payloads_round_trip_totals_through_replay_and_live`
 - `time_series_change_payloads_round_trip_segment_summaries`
 - `attachment_change_payloads_round_trip_content_addressed_metadata`
 - `change_payloads_refuse_document_bodies`
 - `attachment_content_records_never_mint_change_payloads`
-- `change_payload_constructors_refuse_oversize_and_malformed_fields`
+- `change_payload_constructors_refuse_oversize_entry_lists`
+- `change_payload_constructors_refuse_malformed_fields`
 - `wide_counter_records_truncate_the_payload_with_a_reported_omitted_count`
 - `change_payloads_carry_strictly_increasing_record_versions_and_delete_shapes`
 - `malformed_reserved_records_deliver_payload_less_events`
@@ -335,3 +340,12 @@ key (test 8); fail-open delivery of malformed reserved records (test
 [`ChangeEvent`]: ../../src/streaming/mod.rs
 [`IncludeSet`]: ../../src/query/includes.rs
 [`MAX_CHANGE_PAYLOAD_ENTRIES`]: ../../src/streaming/payloads.rs
+
+## Integrator receipts (post-merge, develop)
+
+- Focused gate receipts reproduced green by both gates (the warden's
+  filtered run: 58 passed / 0 failed, plus full-crate lib 819 passed and
+  workspace `check` green).
+- Full `scripts/check.sh` on merged develop: recorded in the merge wave's
+  integrator receipt at push time (the packet worktree ran it green at
+  `7d53a52`; the merged-tree run covers the AC-3 obligation).

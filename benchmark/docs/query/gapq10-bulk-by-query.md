@@ -15,7 +15,7 @@ surface, and the interactive confirm step — is deliberately not built here
 write scope.
 
 V1 evidence identity: `fa99b9257776dbe625e6a2388c74c9ce916637ee` under
-`.worktrees/terrabase-v1-fa99b925-readonly` (read-only). Every V1 file
+`/home/mariogk/Projects/TerraScale/.worktrees/terrabase-v1-fa99b925-readonly` (read-only) [integrator rider: path corrected — gate NOTE]. Every V1 file
 reference below is inside that pinned tree, cited by exact file and line.
 
 Test evidence: `src/query/bulk_tests.rs` (the in-crate contract proofs:
@@ -112,7 +112,7 @@ a reused identifier to whichever collection storage reaches first.
 Both halves share one accounting model, one receipt shape, and one audit
 journal. Nothing in the bridge is proportional to the selected set except
 the identity list itself — V1's own shape (`Queue<string> resultIds`,
-`:169`) with V1's own projection discipline (ids only, `:225`).
+`:170`) [integrator rider: cite nudged — gate NOTE] with V1's own projection discipline (ids only, `:225`).
 
 ### D2.1 Options mapping
 
@@ -125,7 +125,7 @@ the identity list itself — V1's own shape (`Queue<string> resultIds`,
 | `operationId` (`PatchByQueryOperation.cs:95-99`) | `DeleteByQueryRequest::with_operation_id` / `PatchByQueryRequest::with_operation_id`: the caller's stable run identity, carried on the audit entries; each page derives its own commit identity under it (D3) | **closed-here** |
 | `IgnoreMaxStepsForScript` (`QueryOperationOptions.cs:20`) | structurally absent: no script executes, so no step budget exists to ignore | **accepted-difference** |
 | `IndexPatchOptions` wait-for-indexes (`:53-56`) | not mapped: post-write index waiting is the index seam's staleness contract (GAP-Q18 owns the readiness/wait vocabulary) | **defer** (named gate: GAP-Q18) |
-| `PageSize` on the query (`ConvertToOperationQuery` `:223`) | the spec's [`QueryPaging`] limit: a bounded selection caps the total documents the operation may touch; `Start` maps to the paging offset exactly as V1 carries it (`:222`) | **closed-here** |
+| `PageSize` on the query (`ConvertToOperationQuery` `:223`) | the spec's [`QueryPaging`] limit: a bounded selection caps the total documents the operation may touch; `Start` maps to the paging offset exactly as V1 carries it (`:221`) [integrator rider: cite nudged] | **closed-here** |
 | batch bound 4096 (`:153`) | `MAX_BULK_PAGE_DOCUMENTS = 4096`, selectable down to 1 through `BulkByQueryOptions::try_with_page_documents` | **closed-here** |
 | id-only projection (`:225`) | the selection materializes identities only: rows are consumed for `(collection, id)` and the write pages stage by identity; patch-by-query reads each document once inside its page transaction through the GAP-D07 seam | **closed-here** |
 | map-reduce refusal (`:148-149`) | structurally unreachable: the V2 selection is a typed document query over a collection, and no map-reduce form exists at this seam to refuse | **pinned-compatible** |
@@ -279,7 +279,7 @@ change, no new write path.
   selection): rejected — deleting page N changes the match set, so offset
   paging over fresh snapshots skips or repeats documents unless the
   selection restarts from offset zero every page, which re-scans the whole
-  matched prefix per page. V1 selects once (`resultIds`, `:169`); the
+  matched prefix per page. V1 selects once (`resultIds`, `:170`) [integrator rider: cite nudged]; the
   bridge follows, and the ids-only bound is V1's own projection rule.
 - **A script body per document** (V1's actual patch-by-query): banned by
   charter `PD-2026-08-26-08` D2; GAP-D07 D6.C records the rejection and
@@ -394,3 +394,13 @@ GREEN evidence: the same two commands pass — 12/12 in-crate
 - No durability or recovery claim beyond what the engine commit seam
   already proves: the bridge adds no storage behavior; per-page atomicity
   inherits `Transaction::commit`.
+
+## Integrator receipts (post-merge, develop)
+
+- Focused gate receipts (clippy, fmt, both suites) reproduced green by the
+  inspector and warden independently of the builder.
+- Full `scripts/check.sh` on merged develop: recorded in the merge wave's
+  integrator receipt at push time (the packet worktree ran it green at
+  `8e58a33`; the merged-tree run covers the AC-3 obligation).
+- `MAX_BULK_AUDIT_ENTRIES` added to the root re-export block by the
+  integrator rider (warden NOTE: it was the only bound constant omitted).

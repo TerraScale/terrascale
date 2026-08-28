@@ -370,3 +370,26 @@ still-stored entries; two were arithmetic mistakes in the expected windows:
 the `[10,15)` window includes the raw points 10 and 11, and the original
 series `0..10` spans ten points). The full receipts are in the packet
 report; the dev-profile workspace suite is green (exit 0).
+
+## Integrator rider (post-gate recorded limits)
+
+Two warden observations are promoted from code comments into the recorded
+limits so D3 carries them (gate findings):
+
+- **Sequence-zero evidence is invisible to the retention skip.** The
+  watermark read is strictly-greater (`deletion_evidence_above(tenant,
+  StorageSequence::default())`); a hand-minted fact at sequence 0 would
+  not bind. Engine-minted journal sequences are 1-based
+  (`servable_history_start() == Some(StorageSequence::new(1))`), so no
+  engine path can produce the exposed shape; the same strictly-greater
+  bound is the watermark seam's own serving-query shape
+  (`src/backup/smuggler/mod.rs`).
+- **A regressed caller clock retracts complete rollup windows.** A
+  `rollup_series` run with an earlier `now_ms` than a previous run
+  recomputes and replaces sections to the earlier horizon
+  (recompute-and-replace design; the caller-supplied-clock limit already
+  applies — this names clock regression specifically).
+
+Integrator receipts: both gates' focused suites green; full
+`scripts/check.sh` on merged develop recorded at push time (the packet
+worktree ran it green at `7509b1c`).

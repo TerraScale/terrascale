@@ -219,7 +219,7 @@ Locking and priority (PB-4057):
   A re-`create` (definition change) under `LockedIgnore` succeeds as a
   recorded no-op (`Ignored`); under `LockedError` it fails closed with
   `IndexOperationError::DefinitionLocked`.
-- `IndexPriority { Low, Normal, High }` — V1: `IndexPriority.cs:29-33`.
+- `IndexPriority { Low, Normal, High }` — V1: `IndexPriority.cs:22-27` [integrator rider: cite corrected — the pinned file ends at line 28].
   Priority is deployment metadata, observable in statistics. It has no
   scheduling effect in the in-memory catalog (there is no indexing
   thread pool to order); the IX wave owns any scheduling semantics.
@@ -251,7 +251,7 @@ contract); reduce-side counters (map-reduce output) wait for PB-4042;
 `Collections` breakdown, `Type`, `SearchEngineType` have no V2
 counterpart yet (PB-4052/GAP-Q17, PB-4058).
 
-`Engine::index_statistics()` (D18 residual, engine-owned aggregate):
+`Engine::indexes().engine_statistics()` (D18 residual, engine-owned aggregate):
 per-tenant counts of explicit indexes by operational state, plus totals
 (build attempts/successes/failures summed, saturating) and the bounded
 recorded-error total. Shape: tenants in name order, one row per tenant,
@@ -346,3 +346,10 @@ dev profile): 20 passed, 0 failed — the exhaustive matrix test
 (`lifecycle_transition_matrix_is_exhaustive_and_typed`) covers all 24
 (op-state × operation) cells. Full crate suite after implementation:
 828 passed, 0 failed, 1 ignored.
+
+## Integrator receipts (post-merge, develop)
+
+- Focused gate receipts reproduced green by both gates; the full
+  `scripts/check.sh` obligation is discharged by the integrator's
+  merged-develop run recorded at push time (the packet worktree ran it
+  green at `e79688e`).
