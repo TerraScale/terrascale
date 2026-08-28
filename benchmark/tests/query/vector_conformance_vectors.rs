@@ -47,8 +47,12 @@ enum Scenario {
     },
     /// `VectorSearchRequest::try_new` over one synthesized query vector.
     Request { dimensions: usize, limit: u32 },
+    /// `VectorSearchRequest::try_new` over one field name (the field rule).
+    RequestField { field: &'static str },
     /// `with_minimum_similarity` over one threshold.
     Threshold { value: f64 },
+    /// `TqlVectorPredicate::try_new` over one name pair (the identifier rule).
+    PredicateName { field: &'static str, parameter: &'static str },
     /// `TqlVectorPredicate` rendering over one predicate shape.
     Render {
         field: &'static str,
@@ -283,6 +287,16 @@ fn vectors() -> Vec<Vector> {
             expected: Expected::RefusedRequest(VectorSearchError::NonFiniteQueryVector),
         },
         Vector {
+            name: "request/field-empty",
+            scenario: Scenario::RequestField { field: "" },
+            expected: Expected::RefusedRequest(VectorSearchError::InvalidField),
+        },
+        Vector {
+            name: "request/field-whitespace-padding",
+            scenario: Scenario::RequestField { field: " embedding" },
+            expected: Expected::RefusedRequest(VectorSearchError::InvalidField),
+        },
+        Vector {
             name: "request/threshold-inside-range",
             scenario: Scenario::Threshold { value: 0.62 },
             expected: Expected::Accepted,
@@ -328,6 +342,19 @@ fn vectors() -> Vec<Vector> {
                 limit: None,
             },
             expected: Expected::Rendered("where vector.search(embedding, $queryVector, -0.5)"),
+        },
+        Vector {
+            name: "tql/name-field-metacharacters",
+            scenario: Scenario::PredicateName { field: "a, 0.9) or true(", parameter: "p" },
+            expected: Expected::RefusedRequest(VectorSearchError::InvalidField),
+        },
+        Vector {
+            name: "tql/name-parameter-metacharacters",
+            scenario: Scenario::PredicateName {
+                field: "embedding",
+                parameter: "p, 0.5) limit 999",
+            },
+            expected: Expected::RefusedRequest(VectorSearchError::InvalidField),
         },
         Vector {
             name: "tql/lower-bound-array",
@@ -392,6 +419,19 @@ fn run(vector: &Vector) {
         Scenario::Threshold { value } => {
             VectorSearchRequest::try_new(source(), "embedding", synthesized(4), 4)
                 .and_then(|request| request.with_minimum_similarity(*value).map(|_| ()))
+                .map_err(Outcomes::Request)
+        }
+        Scenario::RequestField { field } => VectorSearchRequest::try_new(
+            source(),
+            field,
+            synthesized(4),
+            4,
+        )
+        .map(|_| ())
+        .map_err(Outcomes::Request),
+        Scenario::PredicateName { field, parameter } => {
+            TqlVectorPredicate::try_new(field, parameter, None, None)
+                .map(|_| ())
                 .map_err(Outcomes::Request)
         }
         Scenario::Render { field, parameter, threshold, limit } => {
@@ -462,12 +502,20 @@ fn vector_conformance_corpus_is_complete_and_exact() {
     );
     assert_eq!(corpus.iter().filter(|v| matches!(v.scenario, Scenario::Request { .. })).count(), 8);
     assert_eq!(
+        corpus.iter().filter(|v| matches!(v.scenario, Scenario::RequestField { .. })).count(),
+        2
+    );
+    assert_eq!(
         corpus.iter().filter(|v| matches!(v.scenario, Scenario::Threshold { .. })).count(),
+        2
+    );
+    assert_eq!(
+        corpus.iter().filter(|v| matches!(v.scenario, Scenario::PredicateName { .. })).count(),
         2
     );
     assert_eq!(corpus.iter().filter(|v| matches!(v.scenario, Scenario::Render { .. })).count(), 3);
     assert_eq!(corpus.iter().filter(|v| matches!(v.scenario, Scenario::Lower { .. })).count(), 3);
-    assert_eq!(corpus.len(), 32, "the corpus carries exactly thirty-two named vectors");
+    assert_eq!(corpus.len(), 36, "the corpus carries exactly thirty-six named vectors");
     for vector in &corpus {
         run(vector);
     }
@@ -507,7 +555,11 @@ fn every_construction_refusal_variant_of_the_request_is_reached() {
         .into_iter()
         .filter_map(|vector| match (vector.scenario, vector.expected) {
             (
-                Scenario::Request { .. } | Scenario::Threshold { .. } | Scenario::Lower { .. },
+                Scenario::Request { .. }
+                | Scenario::RequestField { .. }
+                | Scenario::Threshold { .. }
+                | Scenario::PredicateName { .. }
+                | Scenario::Lower { .. },
                 Expected::RefusedRequest(error),
             ) => Some(error),
             _ => None,
@@ -521,6 +573,7 @@ fn every_construction_refusal_variant_of_the_request_is_reached() {
         VectorSearchError::NonFiniteQueryVector,
         VectorSearchError::InvalidSimilarityThreshold { requested: 1.5 },
         VectorSearchError::InvalidQueryVector,
+        VectorSearchError::InvalidField,
     ] {
         assert!(
             produced.contains(&variant),

@@ -12,9 +12,11 @@
 //! `tests/query/vector_conformance_vectors.rs`.
 
 use std::{
+    cmp::Ordering as StdOrdering,
     collections::BTreeMap,
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
 };
 
 use super::{
@@ -24,8 +26,8 @@ use super::{
 use crate::{
     engine::{CommitOutcome, Engine, EngineConfig},
     types::{
-        Cancellation, CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion,
-        LocalDurability, OperationId, TenantScope,
+        Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
+        ExpectedVersion, LocalDurability, OperationId, TenantScope,
     },
 };
 
@@ -390,6 +392,65 @@ fn a_snapshot_of_another_engine_refuses_typed() {
     assert_eq!(
         engine_one.queries().vector_search(&request(&[1.0, 0.0], 5), &foreign).unwrap_err(),
         VectorSearchError::SnapshotEngineMismatch
+    );
+}
+
+#[test]
+fn an_unbounded_request_executes_inside_the_default_window() {
+    // The D6 execution-bound pin: a request that binds no deadline
+    // executes inside the default one-minute window, never unbounded.
+    // The const window cannot be expired on a wall clock inside a test,
+    // so the window is injected through the crate seam: with a one-
+    // nanosecond window, an unbound request must refuse at a checkpoint
+    // instead of scanning to completion.
+    let (_dir, engine) = open_engine("default-window");
+    commit(&engine, &scope(&engine), "window", vec![vector_document("a", &[1.0, 0.0], &[])]);
+    let tenant_scope = scope(&engine);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    assert_eq!(
+        engine
+            .queries()
+            .vector_search_within(&request(&[1.0, 0.0], 5), &snapshot, Duration::from_nanos(1))
+            .unwrap_err(),
+        VectorSearchError::Deadline
+    );
+}
+
+#[test]
+fn an_expired_bound_deadline_refuses_before_any_data_access() {
+    // The bound is materialized and checked at entry — before the
+    // snapshot view is materialized — so an already-dead request refuses
+    // Deadline even when the snapshot itself would refuse too (here: a
+    // foreign Engine's snapshot).
+    let (_dir_one, engine_one) = open_engine("expired-one");
+    let (_dir_two, engine_two) = open_engine("expired-two");
+    let scope_two = TenantScope::from_parts(
+        crate::types::TenantId::try_new("tenant-a").expect("valid tenant"),
+        engine_two.identity(),
+    );
+    let foreign = engine_two.read_snapshot(&scope_two).expect("snapshot");
+    let expired = request(&[1.0, 0.0], 5)
+        .with_deadline(Deadline::after(Duration::from_millis(1)).expect("positive deadline"));
+    std::thread::sleep(Duration::from_millis(5));
+    assert_eq!(
+        engine_one.queries().vector_search(&expired, &foreign).unwrap_err(),
+        VectorSearchError::Deadline
+    );
+}
+
+#[test]
+fn the_reported_score_stays_inside_the_documented_cosine_range() {
+    // f64 rounding of an exact match can overshoot 1.0 by one ulp
+    // (3 / (sqrt(3) * sqrt(3)) is 1.0000000000000002); the reported score
+    // belongs to the mathematical range [-1, 1] the contract documents,
+    // so the execution must enforce it, not assume it.
+    let (_dir, engine) = open_engine("range");
+    commit(&engine, &scope(&engine), "range", vec![vector_document("same", &[1.0, 1.0, 1.0], &[])]);
+    let result = search(&engine, &request(&[1.0, 1.0, 1.0], 1)).expect("scores");
+    let score = result.matches()[0].score();
+    assert!(
+        (-1.0..=1.0).contains(&score),
+        "score {score} left the documented cosine range"
     );
 }
 

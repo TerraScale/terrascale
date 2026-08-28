@@ -182,6 +182,25 @@ fn declaration_names_follow_the_seam_identifier_rules_and_refuse_the_auto_namesp
 }
 
 #[test]
+fn declaration_names_reuse_the_static_index_name_rule_whole_string() {
+    // D3: the vector name rule IS the static-index name rule. The
+    // implementation delegates to StaticIndexName::try_new so the two
+    // cannot drift; this pin holds the rule's whole-string reading — a
+    // non-ASCII name refuses typed as InvalidName, before any prefix or
+    // namespace comparison.
+    assert_eq!(
+        VectorIndexDeclaration::try_new("abcdé", collection("docs"), "embedding", options(3))
+            .unwrap_err(),
+        VectorIndexError::InvalidName
+    );
+    assert_eq!(
+        VectorIndexDeclaration::try_new("Autoé", collection("docs"), "embedding", options(3))
+            .unwrap_err(),
+        VectorIndexError::InvalidName
+    );
+}
+
+#[test]
 fn family_collection_and_invalid_fields_refuse_typed() {
     // Vector indexes live on ORDINARY collections: the reserved family
     // collection is not a vector source, exactly as it is not a query source.
@@ -465,6 +484,49 @@ fn tql_predicate_validates_limit_and_threshold_like_the_request() {
     );
     assert_eq!(
         TqlVectorPredicate::try_new("", "queryVector", None, None).unwrap_err(),
+        VectorSearchError::InvalidField
+    );
+}
+
+#[test]
+fn tql_predicate_names_are_bare_identifiers_refusing_grammar_metacharacters() {
+    // The field and parameter names land verbatim in grammar text. The
+    // field-name rule admits commas, parentheses, and spaces, so a name
+    // outside the grammar's bare-identifier alphabet could inject grammar
+    // through the render — "a, 0.9) or true(" would render a second
+    // predicate, "p, 0.5) limit 999" a threshold and a limit line. Both
+    // operands refuse typed instead.
+    assert_eq!(
+        TqlVectorPredicate::try_new("a, 0.9) or true(", "p", None, None).unwrap_err(),
+        VectorSearchError::InvalidField
+    );
+    assert_eq!(
+        TqlVectorPredicate::try_new("embedding", "p, 0.5) limit 999", None, None).unwrap_err(),
+        VectorSearchError::InvalidField
+    );
+    assert_eq!(
+        TqlVectorPredicate::try_new("embed ding", "p", None, None).unwrap_err(),
+        VectorSearchError::InvalidField
+    );
+    assert_eq!(
+        TqlVectorPredicate::try_new("embedding", "0query", None, None).unwrap_err(),
+        VectorSearchError::InvalidField
+    );
+    // The identifier shapes the grammar's own examples use still bind.
+    assert!(TqlVectorPredicate::try_new("_embedding", "query_vector_2", None, None).is_ok());
+}
+
+#[test]
+fn an_invalid_request_field_refuses_typed() {
+    // The request-side InvalidField class: the field-name rule refuses an
+    // empty and a whitespace-padded field at construction. (Repair-loop 1:
+    // this class had no test and no conformance vector.)
+    assert_eq!(
+        VectorSearchRequest::try_new(source("docs"), "", vector(3), 5).unwrap_err(),
+        VectorSearchError::InvalidField
+    );
+    assert_eq!(
+        VectorSearchRequest::try_new(source("docs"), " embedding", vector(3), 5).unwrap_err(),
         VectorSearchError::InvalidField
     );
 }
