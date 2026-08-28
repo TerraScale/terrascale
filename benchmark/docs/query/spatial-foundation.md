@@ -26,11 +26,15 @@ values, each with one validated construction path:
   ÷ Earth mean radius 6371.0087714, × 180/π).
 - **Shape encoding**: `SpatialShape` over the bounded WKT subset V1
   accepts — `POINT`, `LINESTRING`, `POLYGON` (holes included), V1's
-  `Circle(x y d=r)` form, and V1's rectangle forms (bare `x1 y1 x2 y2`
-  and `BOX(2D)(...)`, corner order normalized). Z/M dimension flags and
-  extra ordinates are discarded the way V1's `WktSanitizer` discards
-  them. Bounds: `MAX_WKT_BYTES` 65 536, `MAX_SHAPE_POINTS` 256 per
+  `Circle(x y d=r)` form, and V1's rectangle forms (bare `x1 y1 x2 y2`,
+  `BOX(x1 y1, x2 y2)`, and `BOX2D(x1 y1, x2 y2)` — the optional `2D` is a
+  tag suffix in V1's pattern, and V1 lowers every match to the bare
+  rectangle — corner order normalized). Z/M dimension flags and extra
+  ordinates are discarded the way V1's `WktSanitizer` discards them.
+  Bounds: `MAX_WKT_BYTES` 65 536, `MAX_SHAPE_POINTS` 256 per
   ring/linestring, `MAX_POLYGON_RINGS` 8; every bound refusal is typed.
+  The enum is public, so `SpatialShape::validate` re-checks the parser's
+  invariants for hand-assembled variants.
 - **Document field encoding**: `SpatialFieldEncoding` — two numeric
   fields (latitude, longitude) or one WKT field — rendered to V1's exact
   dynamic-field tokens `spatial.point(lat, lng)` / `spatial.wkt(field)`.
@@ -39,16 +43,20 @@ values, each with one validated construction path:
   distance-error percentage), validated to V1's domain ([0, 0.5], default
   0.025) with bounded point-document evaluation
   (`SpatialPredicate::matches_point`): worst case one pass over at most
-  8 rings × 256 positions; every accepted shape was bounded at parse.
+  8 rings × 256 positions. Parsed shapes were bounded at parse, and the
+  seam re-validates hand-assembled shapes through
+  `SpatialShape::validate`, so every accepted predicate is bounded
+  however its shape was built.
 - **Precision/discretization**: `SpatialPrecision` (0–9 decimals of a
   degree, default 6) and `QuantizedCell` — a monotone, idempotent,
   floor-aligned per-axis integer grid over the WGS84 domain.
 
-Tests: 33 inline unit tests in `src/query/spatial.rs` (red-then-green:
-the suite was written first and failed to compile for the right reason —
-the vocabulary did not exist — before the implementation landed) and 5
-public-seam tests in `tests/query/spatial_foundation.rs`. Evidence of
-the red run is in the receipts section.
+Tests: 38 inline unit tests in `src/query/spatial.rs` and 7 public-seam
+tests in `tests/query/spatial_foundation.rs`. The original 33 + 5 were
+written red-then-green (the suite failed to compile for the right reason
+— the vocabulary did not exist — before the implementation landed); the
+7 added in repair loop 1 were each proven against the defect they close,
+in the repair-loop section below.
 
 ## Decision records
 
@@ -88,10 +96,16 @@ geometry crate. Cargo.toml and Cargo.lock are untouched by this packet.
   (`Cargo.toml` `license_gate = "pending-before-release"`), is the wrong
   trade for a foundation packet.
 - **Adopt `wkt` (georust) alone for parsing.** Rejected for the same
-  reason at smaller scale: the accepted grammar is V1's decimal-only,
-  reducer-shaped subset, and V1's own non-standard forms (`Circle(x y
-  d=r)`, bare rectangle, BOX2D) are outside WKT proper, so a conformant
-  parser would still leave V1-shaped pre-processing internal.
+  reason at smaller scale: the accepted grammar is the decimal-only,
+  reducer-shaped subset V1's own pre-processing enforces (its rectangle,
+  BOX, circle, and 2D-reducer patterns are all decimal-only), and V1's
+  own non-standard forms (`Circle(x y d=r)`, bare rectangle, BOX/BOX2D)
+  are outside WKT proper, so a conformant parser would still leave
+  V1-shaped pre-processing internal. One nuance this packet first got
+  wrong and the repair loop corrected: V1's *readers* (spatial4n for
+  `POINT`, the NetTopologySuite `WKTReader` for `LINESTRING`/`POLYGON`)
+  do accept exponent notation even though its pre-processing patterns do
+  not — see the non-claims and finding R4.
 - **Adopt a full geospatial stack (proj, GDAL bindings).** Rejected
   without an audit: no parity row names a projection requirement, and
   V1/Raven spatial is WGS84-degrees-only at the query surface.
@@ -163,7 +177,7 @@ What V1 ships at `fa99b925`, with pinned citations:
 | Distance-error pct, default 0.025, domain [0, 0.5] | v1:src/TerraBase.Client/Constants.cs:650 (default); v1:src/TerraBase.Corax/Utils/Spatial/SpatialUtils.cs:28-38 (domain) | implemented (carried + validated; no approximation applied — see non-claims) |
 | Distance ordering asc/desc, point or WKT center, round factor, null placement | v1:src/TerraBase.Client/Documents/Session/AbstractDocumentQuery.Spatial.cs:82-248 | **not implemented**; the arithmetic (distance + rounding) is typed and tested, the ordering integration is deferred to PB-4023 (owner engine/query) |
 | WKT reduced to 2D (Z/M discarded) | v1:src/TerraBase.Client/Documents/Queries/Spatial/WktSanitizer.cs:10-37 | implemented (flags and extra ordinates discarded) |
-| Rectangle forms: bare `x1 y1 x2 y2`, `BOX(2D)(...)` | v1:src/TerraBase.Server/Documents/Indexes/Static/Spatial/ShapeStringConverter.cs:23-61; v1:src/TerraBase.Client/Documents/Queries/Spatial/WktSanitizer.cs:16-17 | implemented (normalized envelopes) |
+| Rectangle forms: bare `x1 y1 x2 y2`, `BOX(x1 y1, x2 y2)`, `BOX2D(x1 y1, x2 y2)` | v1:src/TerraBase.Server/Documents/Indexes/Static/Spatial/ShapeStringConverter.cs:21-22 (pattern `^BOX(?:2D)?\s*\(...\)$`, `2D` a tag suffix), :49-61 (a match is lowered to the bare `x1 y1 x2 y2` string); v1:src/TerraBase.Client/Documents/Queries/Spatial/WktSanitizer.cs:16-17 (bare-rectangle pattern) | implemented (normalized envelopes) |
 | `geo:` URI input (lat-first, with `u=` meters uncertainty) | v1:src/TerraBase.Server/Documents/Indexes/Static/Spatial/ShapeStringConverter.cs:63-107 | **not implemented** (recorded follow-up; input-form convenience, not predicate semantics) |
 | Dynamic spatial fields: `spatial.point(lat, lng)` / `spatial.wkt(field)`, round factor | v1:src/TerraBase.Client/Documents/Queries/Spatial/DynamicSpatialField.cs:5-48 | implemented as `SpatialFieldEncoding` + `to_v1_field_token` |
 | Spatial index options: geography/cartesian, geohash/quad-prefix/bounding-box, tree level, bounds, units | v1:src/TerraBase.Client/Documents/Indexes/Spatial/SpatialOptions.cs:65-197 | **out of this packet** (index-side; see D4) |
@@ -254,6 +268,190 @@ minimal shared-file edits, for integrator ratification at merge:
 
 No Cargo.toml, Cargo.lock, CI, parity/**, or other src/** edits.
 
+## Repair loop 1 (gate findings)
+
+Inspector verdict GO; warden verdict FAIL on one MAJOR plus four MINORs
+and four NOTEs. Loop 1 closed the MAJOR and all four MINORs. The two
+NOTEs that named code-level quality items (`MAX_WKT_BYTES`' doc claim
+holding only for realistic coordinate widths; `apply_rounding` being an
+associated function rather than a method) are recorded below as accepted,
+not changed. Everything here is red-then-green: each behavior fix shows
+the failing run before it and the passing run after.
+
+### R1 (MAJOR): hand-built shapes reached evaluation unvalidated
+
+**Finding.** `SpatialPredicate::try_new` validated only the
+distance-error percentage. `SpatialShape` is a public enum, so
+`LineString { points: vec![] }`, `Circle { radius: NaN | <= 0.0 }`, a
+linestring over [`MAX_SHAPE_POINTS`], and an envelope with `south > north`
+could all be assembled by hand with contents `SpatialShape::parse`
+refuses, and nothing re-checked them at the seam where they reach
+evaluation. The consequence was profile-dependent, exactly as the warden
+probed: in debug an empty linestring panicked in the segment loop
+(`points.len() - 1` underflow), and in release the same predicate under
+`Disjoint` matched every document — fail-open. NaN and non-positive circle
+radii behaved identically. This contradicted the module's own contract
+("typed values with one validated construction path each") on the exact
+primitive handed to engine/query.
+
+**Fix** (`c476dd1`). `SpatialShape::validate` is public (the enum is
+public, so callers need the check too) and re-establishes exactly the
+parser's invariants: 2 to `MAX_SHAPE_POINTS` linestring positions, a
+finite strictly-positive circle radius, and `south` never above `north`
+(`west > east` stays valid — that is the antimeridian wrap). Point and
+polygon variants hold types validated at their own constructors and
+always pass. `SpatialPredicate::try_new` — and therefore
+`with_default_error_pct` — now calls it. `contains_point` additionally
+stays total on an empty hand-built linestring rather than underflowing,
+so evaluation no longer depends on the build profile even before
+validation runs.
+
+**Tests.** `the_predicate_seam_validates_hand_built_shapes` (inline:
+seven invalid shapes refuse, four valid hand-built ones construct,
+including a full-cap linestring and an antimeridian envelope) and
+`a_spatial_predicate_refuses_an_unvalidated_hand_built_shape` (public
+seam), plus `a_hand_built_empty_linestring_does_not_panic_evaluation` for
+totality.
+
+**Red before / green after.** Red on the pre-fix tree:
+`cargo test --lib query::spatial` 3 failed / 35 passed — the
+shape-validation test, and the totality test panicking with
+`attempt to subtract with overflow` at the exact site the warden named —
+and `cargo test --test query spatial_foundation` 2 failed / 5 passed
+(`unwrap_err()` on an `Ok` predicate carrying `LineString { points: [] }`).
+Green after: 38/38 and 7/7.
+
+### R2 (MINOR): three contracts no test could detect losing
+
+**Finding.** The warden's mutations M2 (circle boundary `<=` → `<`), M4
+(deleting the linestring point cap), and M8 (deleting the identical-point
+short-circuit) each left the 33-test suite green. Those three contracts
+were therefore unpinned: the documented boundary-inclusive circle
+comparison, the `MAX_SHAPE_POINTS`-per-linestring bound behind the
+"worst case 8 rings × 256 positions" evaluation claim, and V1's
+identical-coordinate exact zero.
+
+**Fix/tests** (`51a7586`). Three additions. (a)
+`the_circle_boundary_is_inclusive_at_the_translated_radius` derives the
+radius as the exact inverse of the boundary point's own angular distance
+and asserts the bitwise equality of the two compared doubles *first*, so
+the input provably sits on the boundary and the test cannot silently
+degrade into a near-boundary one. (b)
+`wkt_inputs_beyond_the_bounds_fail_with_typed_errors` gained a 257-position
+linestring, the over-cap input for its own arm of the bound. (c)
+`identical_points_are_exactly_zero_even_where_the_unguarded_formula_is_not`
+pins latitude 10.0, where the unguarded law of cosines yields
+`sin² + cos²` one ulp below one and `acos` returns 8.5e-7 degrees instead
+of zero — unlike the latitude the original test happened to use.
+
+**Red/green.** These are coverage defects, not behavior defects: the code
+under test was already correct, so the honest red proof is the mutation
+itself. In a throwaway `/tmp` copy of this worktree with M2, M4, and M8
+re-applied verbatim, `cargo test --lib query::spatial` fails exactly
+three tests — the three above:
+`the_circle_boundary_is_inclusive_at_the_translated_radius` (boundary
+point no longer contained), `wkt_inputs_beyond_the_bounds_fail_with_typed_errors`
+(the 257-position linestring parses `Ok`), and
+`identical_points_are_exactly_zero_even_where_the_unguarded_formula_is_not`
+(`8.537736462515939e-7 != 0.0`, the magnitude the warden's sampling
+predicted). The pre-existing `identical_points_are_exactly_zero_distance`
+still passes under M8 — that is precisely the gap the new test closes.
+Unmutated tree: 38/38. The scratch copy was deleted after the run.
+
+### R3 (MINOR): the record and the module docs named a BOX form V1 never accepted
+
+**Finding.** The packet documented and cited a `BOX(2D)(x1 y1, x2 y2)`
+rectangle form. V1's pattern is `^BOX(?:2D)?\s*\(...\)$`
+(v1:src/TerraBase.Server/Documents/Indexes/Static/Spatial/ShapeStringConverter.cs:21-22)
+— the optional `2D` is a *suffix on the tag*, so V1's forms are
+`BOX2D(0 0, 10 10)` and `BOX(0 0, 10 10)`, and V1 lowers both to the
+bare `x1 y1 x2 y2` rectangle string
+(v1:...ShapeStringConverter.cs:49-61). V2's behavior was already correct
+(both real forms parse to the normalized envelope; `BOX(2D)(...)` refuses
+as Malformed); the *statements* were wrong, in the module doc, the
+`SpatialShape` and `parse` documentation, one test comment, and this
+record.
+
+**Fix** (`34f5cc6`). All five statements corrected to the real grammar,
+with the pattern cited. `parses_the_v1_rectangle_shorthand_as_an_envelope`
+now also pins the untagged `BOX(...)`, whitespace-padded `BOX (...)`, and
+lowercased `box2d(...)` forms, so the accepted surface is pinned rather
+than described.
+
+**Red/green.** Record-accuracy defect with no behavior change to make
+red: the corrected tests pass on both the old and new statements (they
+assert behavior that already held), and the correction is verified by the
+cited pattern above. `cargo test --lib query::spatial` 38/38 before and
+after.
+
+### R4 (MINOR): the exponent-grammar premise was false
+
+**Finding.** The parser refuses exponent notation and the record asserted
+V1's grammar is decimal-only. V1's *pre-processing* patterns are
+decimal-only, but its readers are not: spatial4n reads `POINT (1.5E2 2)`
+as x=150, and the NetTopologySuite `WKTReader` V1 uses for
+`LINESTRING`/`POLYGON`
+(v1:src/TerraBase.Server/Documents/Indexes/Static/Spatial/ShapeStringReadWriter.cs:29-43,94-103)
+parses exponent ordinates. So V1 accepts scientific notation on its
+tagged-WKT path and V2 refuses it — a real, undisclosed, fail-closed
+divergence.
+
+**Fix** (`34f5cc6`, record side). Disclosed rather than silently
+implemented, for two reasons: blanket exponent acceptance would *create*
+a new divergence on the forms V1's decimal-only gates really do cover
+(BOX, bare rectangle, `Circle` — their patterns are decimal-only, so V1
+rejects exponents there), and the choice between "accept for tagged forms
+only" and "refuse everywhere, fail-closed" is a grammar-scope decision
+this decision-first packet should put to the parent rather than take. The
+divergence is now in the non-claims with the corrected premise and pinned
+citations, `SpatialShape::parse`'s documentation states it, and the
+refusal is pinned by test across all three tagged forms (`POINT`,
+`LINESTRING`, `POLYGON`), not just `POINT`.
+
+**Red/green.** Same shape as R3: the behavior is deliberately unchanged,
+so the new assertions pass on both trees (they pin existing behavior);
+38/38. The parent ratification item is in the deferred table.
+
+### R5 (MINOR): field names containing the token's delimiters rendered ambiguous tokens
+
+**Finding.** `validate_field_name` (src/query/spec.rs) rejects only
+empty, oversized, control-character, and whitespace-padded names, so
+`try_new_point("a, b", "c")` and `try_new_point("a", "b, c")` were both
+accepted and rendered the identical token `spatial.point(a, b, c)`;
+`"x)"` rendered a structurally broken one. V1 avoids this by passing each
+name through `EnsureValidFieldName` before interpolation
+(v1:src/TerraBase.Client/Documents/Queries/Spatial/DynamicSpatialField.cs:16-18,31-33
+through v1:src/TerraBase.Client/Documents/Session/AbstractDocumentQuery.cs:1946-1962
+into v1:src/TerraBase.Client/Documents/Queries/QueryFieldUtil.cs:11-67,
+which quotes names outside the plain identifier set). The accessor's doc
+claimed cross-read, which held only for delimiter-free names. Nothing in
+V2 consumes the token yet, so this was a latent contract defect.
+
+**Fix** (`c476dd1`). The constructors refuse the three token delimiters
+`,` `(` `)` after the existing `validate_field_name` check — fail-closed,
+matching how this packet treats the other unreproduced V1 behaviors. The
+escaping itself is not reproduced and is recorded as a divergence for
+ratification, because V2's query grammar has no quoted-field-name notion
+yet and inventing one is engine/query's call, not this packet's.
+
+**Tests.** `spatial_field_encodings_refuse_token_delimiter_field_names`
+(inline, both constructors and both point fields, plus a plain-name
+positive that renders unambiguously) and
+`spatial_encodings_refuse_field_names_that_break_the_token` (public seam).
+
+**Red before / green after.** Red: inline 1 of the 3 failing tests
+(accepted `Point { latitude_field: "a, b", ... }`), seam 1 of the 2
+failing (same, `unwrap_err()` on `Ok`). Green: 38/38 and 7/7.
+
+### Notes accepted, not changed
+
+- `MAX_WKT_BYTES`' doc claim that the largest accepted polygon always
+  fits holds for realistic coordinate widths; the decimal grammar permits
+  arbitrarily long literals, so a pathological 256-position ring can
+  still refuse as `TooLarge`. A bounds interaction, disclosed here.
+- `Wgs84Point::apply_rounding` takes its point-independent arguments as
+  an associated function. Quality call, left to the warden's lane.
+
 ## Receipts
 
 All commands run in the packet worktree
@@ -274,6 +472,21 @@ concurrent fleet builds; every cargo step below ran to completion under
 | `TERRABASE_V1_ROOT=... ./scripts/check.sh` (run 1) | 1 | every gate inside it passed (fmt, check, dev + release workspace tests, clippy, cargo doc, parity tooling, secret scans — zero failures in the log); the exit 1 is the script's own final workspace-root resolution, which tries only `../..` and so cannot find the TerraScale root from a worktree nested under `TerraBaseV2/.worktrees/`; fix candidate for the integrator: one more `../..` candidate or require `TERRASCALE_WORKSPACE_ROOT` in worktrees |
 | `TERRASCALE_WORKSPACE_ROOT=... TERRABASE_V1_ROOT=... ./scripts/check.sh` (run 2) | 101 | one failure in the release-profile test phase: `benchmarks::tests::a_self_comparison_reads_as_parity`, `left: Better, right: Stable` — a wall-clock throughput self-comparison that reads Better when the host's concurrent fleet load shifts between its two sampled lanes; 840 passed / 1 failed, dev phase fully green |
 | `TERRASCALE_WORKSPACE_ROOT=... TERRABASE_V1_ROOT=... ./scripts/check.sh` (run 3, the flake re-run) | 0 | full strict gate green, zero failures across dev + release tests, clippy, cargo doc, parity tooling, strict V1 citation audit, secret scans; cargo-deny recorded as unrun by the script (tool not installed on this host) — the license audit in D1 is therefore a recorded manual audit, not a cargo-deny run |
+
+### Repair loop 1 receipts
+
+Red runs on the pre-fix tree (commit `51a7586`, tests only), green runs on
+the final tree; all in the packet worktree after `unset RUSTUP_TOOLCHAIN`.
+
+| Command | Exit | Notes |
+| --- | --- | --- |
+| `cargo test --lib query::spatial` (red, pre-fix) | 101 | 3 failed / 35 passed: `the_predicate_seam_validates_hand_built_shapes`, `spatial_field_encodings_refuse_token_delimiter_field_names`, and `a_hand_built_empty_linestring_does_not_panic_evaluation`, the last panicking `attempt to subtract with overflow` at the segment loop the warden named |
+| `cargo test --test query spatial_foundation` (red, pre-fix) | 101 | 2 failed / 5 passed: `a_spatial_predicate_refuses_an_unvalidated_hand_built_shape` and `spatial_encodings_refuse_field_names_that_break_the_token`, both `unwrap_err()` on `Ok` values |
+| `cargo test --lib query::spatial` (mutation red, R2) | 101 | in a `/tmp` copy of the worktree with the warden's M2/M4/M8 re-applied: 3 failed / 35 passed — the three discrimination tests of R2 and no others; copy deleted after the run |
+| `cargo test --lib query::spatial` (green, final tree) | 0 | 38 passed, 0 failed |
+| `cargo test --test query spatial_foundation` (green, final tree) | 0 | 7 passed, 0 failed |
+| `cargo fmt --all -- --check` / `cargo check --workspace --locked` / `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` / `cargo test --workspace --locked` (final tree) | 0 | standard receipts, final tree — see the check.sh rows below |
+| `TERRASCALE_WORKSPACE_ROOT=... TERRABASE_V1_ROOT=... ./scripts/check.sh` (repair run) | 0 | full strict gate green on the repaired tree (2 520 tests ok, cargo-deny still recorded unrun by the script) |
 
 Dependency-audit artifacts (scratch project `/tmp/geo-audit`, not part of
 the repo): `cargo add geo` resolved geo 0.33.1 with a 46-package closure;
@@ -298,6 +511,22 @@ analysis in D1.
 - **No `geo:` URI input form**, no WKT output, no multipoint/multiline/
   multipolygon/geodesic edges, no projection. Polygon edges are straight
   in degree space and do not wrap the antimeridian; envelopes do.
+- **Exponent notation is refused (disclosed divergence, finding R4).**
+  V1's shape *pre-processing* patterns are decimal-only — the bare
+  rectangle (v1:src/TerraBase.Client/Documents/Queries/Spatial/WktSanitizer.cs:16-17),
+  BOX (v1:src/TerraBase.Server/Documents/Indexes/Static/Spatial/ShapeStringConverter.cs:21-22),
+  and circle (v1:src/TerraBase.Server/Documents/Indexes/Static/Spatial/ShapeStringReadWriter.cs:113)
+  patterns all accept `[+-]?(?:\d+\.?\d*|\d*\.?\d+)` with no exponent —
+  but the readers V1 hands off to after that pre-processing do accept
+  scientific notation: spatial4n reads `POINT (1.5E2 2)` as x=150, and
+  the NetTopologySuite `WKTReader` V1 uses for `LINESTRING`/`POLYGON`
+  (v1:src/TerraBase.Server/Documents/Indexes/Static/Spatial/ShapeStringReadWriter.cs:29-43,94-103)
+  parses exponent ordinates. V2's parser is decimal-only across all
+  forms, so an exponent literal in a tagged WKT shape refuses here where
+  V1 would read it — fail-closed, pinned by test, and left for the parent
+  to ratify or reverse (accepting exponents for the tagged forms only
+  would be the faithful shape of the fix, since V1's BOX/rectangle/circle
+  gates stay decimal-only either way).
 - **No distance-ordering integration** (PB-4023 arithmetic only).
 - The internal-geometry decision (D1) and the units contract (D2) are
   labeled PROPOSED for parent ratification; the license audit is recorded
@@ -313,3 +542,17 @@ analysis in D1.
 | Shape-document evaluation (V1 Lucene parity) | engine/query |
 | `geo:` URI input form | engine/query (convenience; lowest priority) |
 | Ratify D1/D2 and the D3 divergence note 2 (Contains semantics) | parent (WS-PARITY + integrator) |
+| Ratify R4: exponent notation refused for tagged WKT (V1's readers accept it; its pre-processing gates do not) — accept-for-tagged-forms-only is the faithful fix shape | parent (WS-PARITY) + engine/query |
+| Ratify R5: spatial field names carrying `,` `(` `)` refuse construction instead of V1's quoting escape | parent (WS-PARITY) + engine/query |
+| Ratify R1's contract: the predicate seam validates shapes, so `SpatialShape::validate` is the admission point for hand-assembled shapes | parent (integrator) |
+
+## Repair-loop scope note
+
+Repair loop 1 touched only files already in this packet's write scope
+(`src/query/spatial.rs`, `tests/query/spatial_foundation.rs`, and this
+record). No new shared-file need arose: the field-name delimiter check
+lives beside the spatial constructors rather than in
+`src/query/spec.rs`'s `validate_field_name`, deliberately — the
+restriction exists to protect the *spatial token's* structure, not query
+field names in general, so widening the shared validator would have been
+the wrong altitude. No collision actions were added.
