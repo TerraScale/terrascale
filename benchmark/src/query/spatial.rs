@@ -1748,7 +1748,8 @@ mod tests {
         }
         // Names free of the delimiters still construct and render tokens
         // that name exactly these fields.
-        let plain = SpatialFieldEncoding::try_new_point("lat_1", "lng-2").expect("plain names pass");
+        let plain =
+            SpatialFieldEncoding::try_new_point("lat_1", "lng-2").expect("plain names pass");
         assert_eq!(plain.to_v1_field_token(), "spatial.point(lat_1, lng-2)");
     }
 

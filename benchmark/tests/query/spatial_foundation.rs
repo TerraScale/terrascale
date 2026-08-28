@@ -103,12 +103,8 @@ fn a_spatial_predicate_refuses_an_unvalidated_hand_built_shape() {
     // point-document evaluation would depend on the build profile.
     let empty_line = SpatialShape::LineString { points: Vec::new() };
     assert_eq!(
-        SpatialPredicate::with_default_error_pct(
-            encoding(),
-            SpatialRelation::Disjoint,
-            empty_line
-        )
-        .unwrap_err(),
+        SpatialPredicate::with_default_error_pct(encoding(), SpatialRelation::Disjoint, empty_line)
+            .unwrap_err(),
         RequestValidationError::InvalidQuery
     );
     let non_positive_circle = SpatialShape::Circle {
