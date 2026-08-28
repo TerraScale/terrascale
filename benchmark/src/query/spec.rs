@@ -803,6 +803,17 @@ impl QuerySpec {
         &self.projection
     }
 
+    /// Replaces the page request.
+    ///
+    /// Crate-only: the bulk-by-query bridge (GAP-Q10) pages the selection
+    /// through the same immutable snapshot, so it re-pages a compiled
+    /// specification's bounded window without touching any other clause. No
+    /// public caller mutates a frozen specification's page.
+    pub(crate) fn with_paging(mut self, paging: QueryPaging) -> Self {
+        self.paging = paging;
+        self
+    }
+
     /// Returns the typed page request.
     #[must_use]
     pub fn paging(&self) -> QueryPaging {

@@ -64,10 +64,13 @@ pub use operations::{
     RequestValidationError, V1QueryText,
 };
 pub use query::{
-    CounterInclude, DocumentInclude, IncludeClause, IncludePath, IncludeSet, IncludedCounters,
-    IncludedTimeSeries, QueryError, QueryOrdering, QueryPaging, QueryPlan, QueryPredicate,
-    QueryProjection, QueryResult, QuerySource, QuerySpec, QueryStore, StalenessPolicy,
-    TimeSeriesInclude,
+    BulkAuditEntry, BulkAuditStage, BulkByQueryOptions, BulkByQueryReceipt, BulkDetail,
+    BulkDetailOutcome, BulkOperationKind, BulkPageReceipt, BulkRefusal, BulkTermination,
+    CounterInclude, DeleteByQueryRequest, DeletionConfirmation, DocumentInclude, IncludeClause,
+    IncludePath, IncludeSet, IncludedCounters, IncludedTimeSeries, MAX_BULK_DETAILS,
+    MAX_BULK_PAGE_DOCUMENTS, PatchByQueryRequest, QueryError, QueryOrdering, QueryPaging,
+    QueryPlan, QueryPredicate, QueryProjection, QueryResult, QuerySource, QuerySpec, QueryStore,
+    StalenessPolicy, TimeSeriesInclude,
 };
 pub use replication::{
     AcknowledgementLevel, AcknowledgementReport, ConflictRecord, Convergence, MemberId, RegionId,
