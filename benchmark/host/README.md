@@ -59,7 +59,9 @@ Every operation is a typed TBEP operation; JSON surfaces use
   resume checkpoint, listing), `.../{id}/delta|snapshot|ack|mutations|close`.
   Checkpoints and payloads are opaque codec bytes; refusals behind the
   engine's retained floor answer 409 `checkpoint-refused` with
-  `resyncRequired: true` (pull a snapshot to resync).
+  `resyncRequired: true` (pull a snapshot to resync). Every plain typed
+  refusal (410/409/500/503 that demands no resync) omits the member —
+  it is serialized only when demanded, never as a null marker.
 - Engine reads and supervision: `/v1/engine/health|status|topology`,
   `POST /v1/engine/shutdown`; `/health` (composite, never optimistic),
   `/v1/metrics`, `/v1/audit`.
