@@ -2,7 +2,8 @@
 
 Ticket: TerraScale/TerraBaseV2#21 (DB-04, milestone M3 Live). Worktree
 `.worktrees/terrabasev2-db04`, branch `fleet/db04-2`, base `da0df43`.
-Status: implemented; receipts below.
+Status: implemented; repair loop 1 closed the warden's drop-marker
+findings (section at the end); receipts below.
 
 ## What landed
 
@@ -167,16 +168,16 @@ The parity anchor is the backbone's selector vocabulary, not V1's
 Studio UI. The V1 Changes client API selector surface
 (`src/TerraBase.Client/Documents/Changes/` in the pinned clone):
 
-- `IDocumentChanges.cs:6` `ForDocument`, `:13` `ForAllDocuments`,
-  `:20` `ForDocumentsStartingWith`, `:27` `ForDocumentsInCollection` —
+- `IDocumentChanges.cs:10` `ForDocument`, `:20` `ForAllDocuments`,
+  `:25` `ForDocumentsStartingWith`, `:30` `ForDocumentsInCollection` —
   the feed's Documents selector group + collection filter.
-- `IIndexChanges.cs:6` `ForIndex`, `:12` `ForAllIndexes` — the Indexes
+- `IIndexChanges.cs:8` `ForIndex`, `:13` `ForAllIndexes` — the Indexes
   group.
-- `ICounterChanges.cs:6` `ForAllCounters`, `:11` `ForCounter` — the
+- `ICounterChanges.cs:10` `ForAllCounters`, `:15` `ForCounter` — the
   Counters group.
-- `ITimeSeriesChanges.cs:6` `ForAllTimeSeries`, `:11` `ForTimeSeries` —
+- `ITimeSeriesChanges.cs:10` `ForAllTimeSeries`, `:15` `ForTimeSeries` —
   the Time series group.
-- `IOperationChanges.cs:8` `ForOperationId`, `:15` `ForAllOperations` —
+- `IOperationChanges.cs:9` `ForOperationId`, `:15` `ForAllOperations` —
   the Operations group.
 - `IDatabaseChanges.cs:5-20` — the composed surface (document, index,
   counter, time-series, operation selectors), mirrored by the feed's
@@ -301,7 +302,10 @@ All commands run in the packet worktree; exit codes recorded exactly.
 - The changes client's staleness watchdog is DISABLED by default: the
   `/v1/streams` surface has no heartbeat, so an idle stream is
   indistinguishable in-band from a dead one; only transport errors (or
-  the opt-in `staleMs`) drive reconnects.
+  the opt-in `staleMs`) drive reconnects. Repair loop 1 closed the
+  connect half of this gap: `connectTimeoutMs` (default 15 000 ms)
+  aborts a hung connect into the reconnect path — mid-stream silence
+  without `staleMs` remains by design.
 - The feed's rendered list is bounded (newest 200 identities); the
   counters are the full accounting.
 
@@ -323,3 +327,151 @@ All commands run in the packet worktree; exit codes recorded exactly.
 - Builders did not touch `parity/**` or flip any parity row; the
   overlays' disposition of PB-6002 (the adapter carriage named above)
   stays with WS-PARITY.
+
+## Repair loop 1 (warden FAIL: drop-marker recovery)
+
+The warden FAILED the packet on quality, not honesty: every receipt
+reproduced, but the ticket's central guarantee — after a host-shed drop
+the resume path re-delivers the missed range — was nullified by the
+dedup watermark. Findings → fixes → tests → receipts below.
+
+### Findings → fixes
+
+- **MAJOR (silent event loss, three variants).** The drop marker rewound
+  the checkpoint but not the dedup watermark: (a) *checkpoint-ahead-of
+  gap* — batches 1,2 and 5,6 delivered while 3,4 were shed; the
+  reconnect from boundary 3 re-delivered 3,4,5,6 and the watermark
+  (already 6) swallowed ALL of them as "duplicates"; (b) *surviving
+  trigger* — the host's per-commit batch-then-trigger ordering lets a
+  trigger survive its own shed batch, and the client let the trigger's
+  sequence advance the watermark; (c) *post-marker cursor* — any batch
+  cursor at or past the rewound checkpoint erased the rewind,
+  contradicting the host's own marker discipline
+  (host/TerraBase.Api/BackboneHub.cs `Dropped`: "a checkpoint at or
+  past it cannot be trusted for the gap"). Fix: dedup after a marker
+  runs on a **bounded, merged identity ledger** (surfaced-sequence
+  ranges, capped at 128 with oldest-first shedding — an overflow may
+  re-surface an ancient duplicate, never lose an event) instead of the
+  rewound watermark; the watermark re-anchors at `resumeFrom - 1` and
+  the ledger answers which re-delivered identities were genuinely
+  accepted; **triggers never advance the watermark** (a push hint is
+  not an accepted identity); the rewind is **sticky** — post-marker
+  cursors are ignored while the gap is open, and the checkpoint
+  unfreezes only when the gap is covered (the pre-marker high water is
+  reached, or the resumed connection's replay batch — the host's
+  single re-delivery — is consumed). `engine-generation-lost` follows
+  the same discipline. All in the generator template
+  (`studio/scripts/generate-client.mjs`), re-emitted into
+  `studio/src/api/generated/client.ts`.
+- **MAJOR (non-discriminating tests).** The drop-rewind test held one
+  queued event that was also the newest, so disabling the rewind left
+  8/8 green (warden mutation 1); the client's per-event batch
+  validation was equally unpinned (mutation 4). Fix: seven hostile-SSE
+  regression rows (below) drive the REAL generated client against
+  scripted shed shapes the fixture cannot produce; both mutations now
+  fail the suite (13/1 and 14/1 recorded below).
+- **MINOR (generated client did not typecheck).** The generator emitted
+  `StreamChangeKind` twice (contract types section + changes-stream
+  section → TS2300), the `StreamChangeEvent` cast needed an `unknown`
+  bridge (TS2352 at client.ts:841), and the e2e port destructure
+  re-called `server.address()` after the null/string guard (TS2339 at
+  live-changes.e2e.ts:25). Fix: the type is emitted from the contract
+  types section only; the cast bridges through `unknown`; the e2e
+  reuses the narrowed `address`. `tsc --noEmit -p tsconfig.json` now
+  reports zero errors in this packet's files; the remaining errors are
+  the pre-existing DB-03/05/06 rows (`topology-client.ts`,
+  `documents/vocabulary.ts`, `families/vocabulary.ts`) — not this
+  packet's write scope (disclosed, not fixed).
+- **MINOR (non-finite batch cursor).** `1e999` parses as `Infinity`;
+  the cursor guard checked `typeof === "number" && > 0` only, poisoning
+  the checkpoint so every reconnect asked `from=Infinity` in an
+  unbounded fixed-delay loop. Fix: `Number.isFinite(batch.nextSequence)`
+  in the guard.
+- **MINOR (CRLF never parsed).** The SSE block parser split on `\n\n`
+  only; spec-legal CRLF frames never dispatched (zero events, zero
+  rejections, no lastError — a silent stall). Fix: the parser
+  normalizes `\r\n` and lone `\r` to `\n`, holding back a trailing CR
+  that may be the first half of a CRLF torn across chunks.
+- **NOTE (hung connect).** The subscribe fetch had no connect timeout
+  and the watchdog is off by default, so a hung TCP connect sat in
+  connecting-limbo forever. Fix: `connectTimeoutMs` (default 15 000 ms)
+  aborts the attempt into the normal reconnect path with a surfaced
+  "connect timed out" error; the timer stops when the response opens,
+  so live streams are unaffected. (The watchdog-off-by-default limit
+  below stands — it is a design choice, now disclosed next to the
+  connect timeout.)
+- **Inspector MINOR (citation drift).** The V1 selector anchors above
+  drifted by 1-10 lines (files and symbols were all correct);
+  re-verified at pin fa99b925 and corrected (including two the
+  inspector did not list: `ForAllIndexes` `:13`, `ForCounter`/
+  `ForTimeSeries` `:15`).
+
+### Tests (red → green)
+
+Seven new rows in `tests/changes-subscription.test.mjs`, each driving
+the real generated client against a scripted `/v1/streams` SSE server
+(`startHostileStream`) that records every connection's `from` resume
+parameter:
+
+1. *checkpoint-ahead-of-gap* — batches 1,2 and 5,6 delivered, 3,4 shed,
+   marker `resumeFrom=3`: reconnect asks `from=3`, 3,4 surface as the
+   replayed backlog, 5,6 count as exactly 2 at-least-once duplicates.
+2. *surviving trigger* — trigger(seq 4) survives its shed batch(3,4):
+   3,4 surface on resume, `duplicateCount` 0.
+3. *sticky rewind* — a post-marker batch(7,8) cursor (8) must not move
+   the checkpoint off the boundary (asserted mid-test as 2); the
+   reconnect asks `from=3` and the whole shed range 3..6 surfaces.
+4. *CRLF* — spec-legal CRLF frames (including one torn across writes so
+   the CR lands at a chunk boundary) parse: events surface, state goes
+   live, nothing is rejected.
+5. *non-finite cursor* — a hand-written `nextSequence: 1e999` frame:
+   the event surfaces, the checkpoint stays finite, and the reconnect
+   never sends `from=Infinity`.
+6. *hung connect* — a server that accepts and never responds: the
+   connect aborts within `connectTimeoutMs`, surfaces "timed out", and
+   retries.
+7. *per-event fail-closed validation* — a batch mixing a `1e999`
+   sequence and an unknown kind with one valid event: exactly the valid
+   event surfaces, both invalid ones are counted rejections.
+
+- **Red (pre-fix client):** `node --test tests/changes-subscription.test.mjs`
+  → exit 1, **8 pass / 6 fail** — every failing row is a new one, each
+  for the documented reason (rows 1-3: lost/suppressed gap or checkpoint
+  8 ≠ 2; row 4: silent stall; row 5: `checkpoint Infinity`; row 6:
+  never surfaces; row 7 did not exist yet).
+- **Green (post-fix):** exit 0, **15/15** (rows 7 added with the fix,
+  red-proven via mutation below).
+- **Mutation discrimination (warden's own two surviving mutations,
+  re-applied to the fixed client, then restored by regeneration):**
+  - drop-marker checkpoint rewind disabled → exit 1, **13 pass / 1
+    fail** (row 1 fails: reconnect asked `from=7`, gap lost) — the
+    warden's mutation 1 no longer survives.
+  - client per-event batch validation disabled (`if (false)`) → exit 1,
+    **14 pass / 1 fail** (row 7 fails) — the warden's mutation 4 no
+    longer survives.
+  - after each mutation the client was regenerated and the suite re-run
+    green (exit 0).
+
+### Repair receipts
+
+All commands run in the packet worktree; exit codes recorded exactly.
+
+| Command | Exit | Note |
+| --- | --- | --- |
+| `node --test tests/changes-subscription.test.mjs` (pre-fix, new rows only) | 1 | RED: 8 pass / 6 fail — all six new rows fail for the documented reasons |
+| `node --test tests/changes-subscription.test.mjs` (post-fix) | 0 | 15/15 pass (8 fixture rows + 7 hostile rows) |
+| `node --test tests/changes-subscription.test.mjs` (mutation: rewind disabled) | 1 | 13 pass / 1 fail — the warden's mutation 1 is now caught |
+| `node --test tests/changes-subscription.test.mjs` (mutation: validation disabled) | 1 | 14 pass / 1 fail — the warden's mutation 4 is now caught |
+| `node --test tests/changes-model.test.mjs` | 0 | 16/16 pass (unchanged) |
+| `node scripts/generate-client.mjs --check` | 0 | client.ts in sync with the contract |
+| `./node_modules/.bin/tsc --noEmit -p tsconfig.json` | 2 | all 3 packet-owned errors fixed (duplicate `StreamChangeKind`, the cast, the port destructure); the remaining errors are pre-existing DB-03/05/06 rows outside this packet's scope — zero errors in this packet's files (verified by filtering the output) |
+| `vp check --fix` then `vp check` | 0 | 112 files formatted, 104 linted clean |
+| `vp run unit:test` | 0 | 119 pass / 0 fail (112 + 7 new) |
+| `vp run playwright:e2e` | 0 | 46 passed |
+| `node scripts/real-host-probe.mjs` | 0 | `"pass": true` — live-delivery, slow-consumer (31,181 frames shed, 24,000 flood writes accepted, 128 recovered, health held), checkpoint-resume (checkpoint 24,008, 3 redelivered, exact backlog, no duplicates) |
+| `cargo fmt --all -- --check` | 0 | no Rust changes; gate green |
+| `cargo check --workspace --locked` | 0 | no Rust changes |
+| `cargo test --workspace --locked` (run 1) | 101 | 807 passed / 1 failed under concurrent fleet-build load: `streaming::tests::publication_sink_never_blocks_a_commit_behind_a_wedged_poll` panicked "the commit blocked 1.499s behind a wedged subscriber poll" (src/streaming/tests.rs:1673) — a wall-clock liveness bound; this packet touched zero Rust files |
+| `cargo test --workspace --locked publication_sink_never_blocks_a_commit_behind_a_wedged_poll` (run 2, the flake re-run) | 0 | 1 passed / 0 failed in 0.43s on the idle moment — both runs recorded honestly |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | 0 | no Rust changes |
+| `TERRABASE_V1_ROOT=… TERRASCALE_WORKSPACE_ROOT=… ./scripts/check.sh` | 0 | "TerraBaseV2 foundation checks passed" (the workspace-root variable is required from a nested worktree, as disclosed above); `cargo-deny` recorded unrun by the script's own fallback (unavailable on this host) |
