@@ -354,8 +354,7 @@ function corsHeaders() {
   return {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers":
-      "content-type, last-event-id, x-tb-principal, x-tb-tenant",
+    "access-control-allow-headers": "content-type, last-event-id, x-tb-principal, x-tb-tenant",
   };
 }
 
@@ -733,11 +732,13 @@ function handleChangesStream(req, res, url, state) {
   state.stream.subscribers.add(subscriber);
 
   subscriber.write(
-    `id: ${Math.max(0, (from ?? state.stream.nextSequence) - 1)}\nevent: opened\ndata: ${JSON.stringify({
-      subscriptionId,
-      startSequence: from ?? state.stream.nextSequence,
-      collections,
-    })}\n\n`,
+    `id: ${Math.max(0, (from ?? state.stream.nextSequence) - 1)}\nevent: opened\ndata: ${JSON.stringify(
+      {
+        subscriptionId,
+        startSequence: from ?? state.stream.nextSequence,
+        collections,
+      },
+    )}\n\n`,
   );
 
   // The replayed backlog: ONE batch from the journal, exactly the host's

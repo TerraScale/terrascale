@@ -304,7 +304,11 @@
         { "name": "operations", "type": "array", "items": "string" },
         { "name": "members", "type": "array", "items": "string" },
         { "name": "clocks", "type": "array", "items": "string" },
-        { "name": "outcome", "type": "string", "doc": "Recorded policy outcome (winner/deposed-owner-retained/untrusted-clock) naming the converged Member." }
+        {
+          "name": "outcome",
+          "type": "string",
+          "doc": "Recorded policy outcome (winner/deposed-owner-retained/untrusted-clock) naming the converged Member."
+        }
       ]
     },
     "StreamChangeEvent": {
@@ -314,8 +318,18 @@
         { "name": "sequence", "type": "integer" },
         { "name": "operationId", "type": "string" },
         { "name": "kind", "type": "StreamChangeKind" },
-        { "name": "collection", "type": "string", "optional": true, "doc": "Absent (null) for conflict events: a conflict observation carries no collection identity (src/streaming/mod.rs ChangeEvent::collection)." },
-        { "name": "document", "type": "string", "optional": true, "doc": "Absent (null) for conflict events." },
+        {
+          "name": "collection",
+          "type": "string",
+          "optional": true,
+          "doc": "Absent (null) for conflict events: a conflict observation carries no collection identity (src/streaming/mod.rs ChangeEvent::collection)."
+        },
+        {
+          "name": "document",
+          "type": "string",
+          "optional": true,
+          "doc": "Absent (null) for conflict events."
+        },
         {
           "name": "conflict",
           "type": "StreamConflictRecord",
@@ -328,7 +342,11 @@
       "kind": "object",
       "fields": [
         { "name": "subscriptionId", "type": "integer" },
-        { "name": "startSequence", "type": "integer", "doc": "The sequence the engine started serving from (this stream's resume point)." },
+        {
+          "name": "startSequence",
+          "type": "integer",
+          "doc": "The sequence the engine started serving from (this stream's resume point)."
+        },
         {
           "name": "collections",
           "type": "array",
@@ -361,8 +379,16 @@
       "kind": "object",
       "fields": [
         { "name": "subscriptionId", "type": "integer" },
-        { "name": "reason", "type": "string", "doc": "Machine-readable close reason (snake_case)." },
-        { "name": "dropped", "type": "integer", "doc": "The stream's dropped-frame count at close." },
+        {
+          "name": "reason",
+          "type": "string",
+          "doc": "Machine-readable close reason (snake_case)."
+        },
+        {
+          "name": "dropped",
+          "type": "integer",
+          "doc": "The stream's dropped-frame count at close."
+        },
         {
           "name": "resumeFrom",
           "type": "integer",
@@ -377,7 +403,11 @@
       "fields": [
         { "name": "subscriptionId", "type": "integer" },
         { "name": "resumeFrom", "type": "integer" },
-        { "name": "dropped", "type": "integer", "doc": "Cumulative dropped count this subscription (the accounting of record)." }
+        {
+          "name": "dropped",
+          "type": "integer",
+          "doc": "Cumulative dropped count this subscription (the accounting of record)."
+        }
       ]
     },
     "SessionOpenedPayload": {

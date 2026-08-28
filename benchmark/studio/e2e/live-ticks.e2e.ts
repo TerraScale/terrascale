@@ -18,7 +18,7 @@ test.describe("studio live view", () => {
     await expect(state).toHaveAttribute("data-connection-state", "live", { timeout: 15_000 });
     await expect(page.getByTestId("tick-list").locator("li").first()).toBeVisible();
 
-    const ticksBefore = await readCounter(page, "Ticks");
+    const ticksBefore = await readCounter(page, "Ticks", { testId: "tick-counters" });
     expect(ticksBefore).toBeGreaterThan(0);
 
     // The fixture drops the connection after every 8 delivered deltas. The
@@ -27,14 +27,14 @@ test.describe("studio live view", () => {
     // asserted: the loss is observed and counted, delivery returns to live,
     // the missed identities are replayed, and ticks keep flowing.
     await expect
-      .poll(async () => readCounter(page, "Reconnects"), { timeout: 20_000 })
+      .poll(async () => readCounter(page, "Reconnects", { testId: "tick-counters" }), { timeout: 20_000 })
       .toBeGreaterThanOrEqual(1);
     await expect(state).toHaveAttribute("data-connection-state", "live", { timeout: 20_000 });
     await expect
-      .poll(async () => readCounter(page, "Replayed"), { timeout: 20_000 })
+      .poll(async () => readCounter(page, "Replayed", { testId: "tick-counters" }), { timeout: 20_000 })
       .toBeGreaterThanOrEqual(1);
     await expect
-      .poll(async () => readCounter(page, "Ticks"), { timeout: 20_000 })
+      .poll(async () => readCounter(page, "Ticks", { testId: "tick-counters" }), { timeout: 20_000 })
       .toBeGreaterThan(ticksBefore);
   });
 
@@ -45,18 +45,18 @@ test.describe("studio live view", () => {
 
     const state = page.getByTestId("tick-connection-state");
     await expect(state).toHaveAttribute("data-connection-state", "live", { timeout: 15_000 });
-    const ticksBefore = await readCounter(page, "Ticks");
+    const ticksBefore = await readCounter(page, "Ticks", { testId: "tick-counters" });
 
     await control({ framePoison: true });
     await expect
-      .poll(async () => readCounter(page, "Rejected"), { timeout: 20_000 })
+      .poll(async () => readCounter(page, "Rejected", { testId: "tick-counters" }), { timeout: 20_000 })
       .toBeGreaterThanOrEqual(1);
     await expect(page.getByTestId("tick-last-error")).toContainText("unknown frame type");
 
     // Fail-closed rejection is counted, not fatal: the connection stays live.
     await expect(state).toHaveAttribute("data-connection-state", "live");
     await expect
-      .poll(async () => readCounter(page, "Ticks"), { timeout: 20_000 })
+      .poll(async () => readCounter(page, "Ticks", { testId: "tick-counters" }), { timeout: 20_000 })
       .toBeGreaterThan(ticksBefore);
   });
 
@@ -73,15 +73,15 @@ test.describe("studio live view", () => {
     await expect(state).toHaveAttribute("data-connection-state", "live", { timeout: 15_000 });
 
     await expect
-      .poll(async () => readCounter(page, "Resyncs"), { timeout: 30_000 })
+      .poll(async () => readCounter(page, "Resyncs", { testId: "tick-counters" }), { timeout: 30_000 })
       .toBeGreaterThanOrEqual(1);
     await expect(page.getByTestId("tick-last-error")).toContainText("resync required");
 
     // The fresh session must resume live delivery.
     await expect(state).toHaveAttribute("data-connection-state", "live", { timeout: 15_000 });
-    const ticksBefore = await readCounter(page, "Ticks");
+    const ticksBefore = await readCounter(page, "Ticks", { testId: "tick-counters" });
     await expect
-      .poll(async () => readCounter(page, "Ticks"), { timeout: 20_000 })
+      .poll(async () => readCounter(page, "Ticks", { testId: "tick-counters" }), { timeout: 20_000 })
       .toBeGreaterThan(ticksBefore);
   });
 });

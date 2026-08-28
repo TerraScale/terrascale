@@ -23,6 +23,7 @@
 // (DOCUMENTS_FIXTURE_HOST / DOCUMENTS_FIXTURE_PORT, defaults 127.0.0.1:3033)
 
 import { createServer } from "node:http";
+import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 
 import { createFixtureServer } from "../../../scripts/fixture-server.mjs";
@@ -34,11 +35,14 @@ const OPERATIONS_PATH_PREFIX = "/api/v2/operations/";
 
 function corsHeaders() {
   // Dev fixture only (mirrors the core): the studio app and the fixture live
-  // on separate local ports during development.
+  // on separate local ports during development. The header allowlist
+  // includes the backend-context headers the DB-04 live stream's gate
+  // requires (mirroring the core fixture).
   return {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "content-type, last-event-id",
+    "access-control-allow-headers":
+      "content-type, last-event-id, x-tb-principal, x-tb-tenant",
   };
 }
 
@@ -175,6 +179,37 @@ export function createDocumentsFixtureServer(options = {}) {
 
       if (req.method === "GET" && path === "/api/v2/_fixture/documents-health") {
         sendJson(res, 200, { ok: true, fixture: "documents-query-listing" });
+        return;
+      }
+
+      // DB-04: the core owns the backbone changes stream; this fixture
+      // composes the core, so the studio's live-rows subscription proxies
+      // through verbatim — the SSE bytes, the id/event/data lines, and the
+      // backend-context gate are all the core's own.
+      if (req.method === "GET" && path === "/v1/streams") {
+        const forwarded = { accept: "text/event-stream" };
+        for (const header of ["x-tb-principal", "x-tb-tenant", "last-event-id"]) {
+          const value = req.headers[header];
+          if (typeof value === "string" && value.length > 0) {
+            forwarded[header] = value;
+          }
+        }
+        const upstream = await fetch(`${coreBaseUrl}/v1/streams${url.search ?? ""}`, {
+          headers: forwarded,
+        });
+        if (upstream.status !== 200 || upstream.body === null) {
+          const body = await upstream.text();
+          sendJson(res, upstream.status, body.length > 0 ? JSON.parse(body) : {});
+          return;
+        }
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache, no-transform",
+          connection: "keep-alive",
+          "x-accel-buffering": "no",
+          ...corsHeaders(),
+        });
+        Readable.fromWeb(upstream.body).pipe(res);
         return;
       }
 

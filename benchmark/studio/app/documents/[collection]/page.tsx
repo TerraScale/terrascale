@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { DocumentListView } from "@/components/documents/DocumentListView";
 import { DocumentsTypedError } from "@/components/documents/DocumentsTypedError";
 import { DOCUMENT_PAGE_SIZE, collectionHref } from "@/components/documents/vocabulary";
-import { createStudioClient } from "@/lib/server/studio-client";
+import { createStudioClient, studioBackendContext } from "@/lib/server/studio-client";
 
 import { documentsRouteFailure, loadDocumentPage } from "../data";
 
@@ -16,6 +16,10 @@ import { documentsRouteFailure, loadDocumentPage } from "../data";
 // core grows per-collection listing semantics (a shared-route change recorded
 // as a collision action), this route honestly renders its empty state against
 // the unmodified fixture; the documents fixture composes the core with them.
+//
+// DB-04: the list is live-enabled — the island subscribes to this
+// collection's backbone changes and refreshes the loaded windows on events
+// (no polling), surfacing the live state and any host-shed drops.
 //
 // The route is dynamic: the typed read and the API base URL resolve per
 // request.
@@ -51,6 +55,7 @@ export default async function CollectionDocumentsPage({
           matched={page.matched}
           malformed={page.malformed}
           apiBaseUrl={client.baseUrl}
+          live={{ apiBaseUrl: client.baseUrl, backendContext: studioBackendContext() }}
         />
       </div>
     );

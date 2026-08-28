@@ -52,7 +52,8 @@ export const FILTER_KINDS: readonly {
   {
     id: "document",
     label: "Documents",
-    v1Selector: "ForAllDocuments / ForDocument / ForDocumentsStartingWith / ForDocumentsInCollection",
+    v1Selector:
+      "ForAllDocuments / ForDocument / ForDocumentsStartingWith / ForDocumentsInCollection",
   },
   { id: "index", label: "Indexes", v1Selector: "ForAllIndexes / ForIndex" },
   { id: "counter", label: "Counters", v1Selector: "ForAllCounters / ForCounter" },
@@ -281,6 +282,9 @@ export function feedKindCounts(feed: readonly FeedEvent[]): Record<string, numbe
 }
 
 /** The honest in-band drop statement: the count and the resume boundary. */
-export function dropNotice(drop: { readonly dropped: number; readonly resumeFrom: number }): string {
+export function dropNotice(drop: {
+  readonly dropped: number;
+  readonly resumeFrom: number;
+}): string {
   return `${drop.dropped} notification${drop.dropped === 1 ? "" : "s"} dropped by the host's bounded queue — resuming from sequence ${drop.resumeFrom} re-delivers the missed range.`;
 }

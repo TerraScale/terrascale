@@ -49,10 +49,17 @@ test.describe("studio home", () => {
 
     // Exactly one server-side engine.status read for this page load (the
     // delta includes the probe read below), and the browser made no API call
-    // at all — the home route has no client-side fetching.
+    // beyond the DB-04 live status island's backbone subscription — the
+    // home route's only client-side fetch is the /v1/streams SSE stream.
     const readsAfter = await fixtureReadCount(fixtureUrl);
     expect(readsAfter - readsBefore, "one typed engine.status read per render").toBe(2);
-    expect(apiRequests, "no browser-originated API traffic on the home route").toEqual([]);
+    expect(
+      apiRequests.filter((entry) => entry !== "GET /v1/streams"),
+      "no browser-originated API traffic on the home route beyond the live subscription",
+    ).toEqual([]);
+    expect(apiRequests, "the live status island subscribes to the backbone stream").toContain(
+      "GET /v1/streams",
+    );
   });
 
   test("loading state is a real route shown while the typed read is in flight", async ({
