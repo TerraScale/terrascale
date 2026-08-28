@@ -18,8 +18,10 @@
 //!   V1 factors, so distance values match V1's Corax evaluator.
 //! - [`SpatialShape`] — point, circle, linestring, polygon, and envelope
 //!   shapes parsed from the bounded WKT subset V1 accepts (including its
-//!   `Circle(x y d=r)`, bare-rectangle, and `BOX(2D)` forms, with Z/M
-//!   ordinates discarded the way V1's `WktSanitizer` discards them).
+//!   `Circle(x y d=r)` form and its rectangle forms — the bare
+//!   `x1 y1 x2 y2` string and `BOX2D(...)`/`BOX(...)`, both of which V1
+//!   lowers to a bare rectangle — with Z/M ordinates discarded the way
+//!   V1's `WktSanitizer` discards them).
 //! - [`SpatialFieldEncoding`] — how one document exposes a spatial
 //!   value: two numeric fields (latitude, longitude) or one WKT field,
 //!   rendered to the V1 dynamic-field token.
@@ -461,8 +463,13 @@ fn point_on_segment(point: &Wgs84Point, a: &Wgs84Point, b: &Wgs84Point) -> bool 
 /// The variants mirror the shape kinds V1's query surface accepts: WKT
 /// points, linestrings, and polygons, plus V1's circle form (a center, a
 /// radius, and the units the radius is read in) and its rectangle forms
-/// (the bare `x1 y1 x2 y2` string and `BOX(2D)(...)`, both of which V1
-/// lowers to a rectangle).
+/// (`BOX2D(x1 y1, x2 y2)` and `BOX(x1 y1, x2 y2)`, both of which V1
+/// lowers to the bare `x1 y1 x2 y2` rectangle, plus that bare form
+/// itself).
+///
+/// The enum is public, so a caller can assemble a variant by hand with
+/// contents [`SpatialShape::parse`] would refuse; [`SpatialShape::validate`]
+/// re-checks those invariants, and the predicate seam invokes it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SpatialShape {
     /// A single point.
@@ -519,11 +526,21 @@ impl SpatialShape {
     ///
     /// Accepted: `POINT`, `LINESTRING`, `POLYGON`, V1's `Circle(x y d=r)`
     /// form, and V1's rectangle forms — the bare `x1 y1 x2 y2` string and
-    /// `BOX(2D)(x1 y1, x2 y2)`. Tags are case-insensitive; whitespace is
-    /// free; coordinates beyond the first two ordinates (Z/M values and
-    /// dimension flags) are discarded, as V1's sanitizer discards them;
-    /// polygon rings need not repeat their first position. Numbers use
-    /// V1's decimal grammar (no exponent notation).
+    /// `BOX2D(x1 y1, x2 y2)` / `BOX(x1 y1, x2 y2)`, the optional `2D`
+    /// being a tag suffix the way V1's own pattern reads it. Tags are
+    /// case-insensitive; whitespace is free; coordinates beyond the first
+    /// two ordinates (Z/M values and dimension flags) are discarded, as
+    /// V1's sanitizer discards them; polygon rings need not repeat their
+    /// first position.
+    ///
+    /// Numbers are decimal-only: no exponent notation. That is a
+    /// fail-closed divergence, disclosed in the decision record's
+    /// non-claims: V1's shape *pre-processing* patterns (the rectangle,
+    /// BOX, circle, and 2D-reducer regular expressions) are decimal-only,
+    /// but the readers V1 hands off to — spatial4n for `POINT`, the
+    /// NetTopologySuite `WKTReader` for `LINESTRING`/`POLYGON` — do accept
+    /// scientific notation. An exponent literal therefore refuses here
+    /// where V1's tagged-WKT path would read it.
     ///
     /// # Errors
     ///
@@ -652,7 +669,11 @@ impl SpatialShape {
         SpatialPolygon::try_from_rings(rings).map(Self::Polygon)
     }
 
-    /// Parses `BOX(2D)(x1 y1, x2 y2)`.
+    /// Parses `BOX2D(x1 y1, x2 y2)` and `BOX(x1 y1, x2 y2)`.
+    ///
+    /// V1's pattern is `^BOX(?:2D)?\s*\(...\)$` — the optional `2D` is a
+    /// suffix on the tag, not a parenthesized dimension — and V1 lowers a
+    /// match to the bare `x1 y1 x2 y2` rectangle string.
     fn parse_box(cursor: &mut WktCursor<'_>) -> Result<Self, SpatialShapeError> {
         cursor.eat_open()?;
         cursor.skip_ws();
@@ -1526,16 +1547,26 @@ mod tests {
 
     #[test]
     fn parses_the_v1_rectangle_shorthand_as_an_envelope() {
-        // V1 ShapeStringConverter.cs:47-55 lowers BOX(2D)(...) to the bare
-        // "x1 y1 x2 y2" rectangle form WktSanitizer recognizes.
+        // V1's rectangle pattern is ^BOX(?:2D)?\s*\(...\)$ — the optional
+        // 2D is a tag suffix (ShapeStringConverter.cs:21-22) — and a match
+        // is lowered to the bare "x1 y1 x2 y2" rectangle string its reader
+        // accepts (ShapeStringConverter.cs:45-55).
         let bare =
             SpatialShape::parse("0 0 10 10", SpatialUnits::Kilometers).expect("bare rectangle");
         let box2d = SpatialShape::parse("BOX2D(0 0, 10 10)", SpatialUnits::Kilometers)
             .expect("box form lowers to the same envelope");
+        let untagged = SpatialShape::parse("BOX(0 0, 10 10)", SpatialUnits::Kilometers)
+            .expect("the 2D suffix is optional in v1's pattern");
+        let spaced = SpatialShape::parse("BOX (0 0, 10 10)", SpatialUnits::Kilometers)
+            .expect("whitespace before the parenthesis is free");
+        let lowercased = SpatialShape::parse("box2d(0 0, 10 10)", SpatialUnits::Kilometers)
+            .expect("the tag is case-insensitive");
         let swapped = SpatialShape::parse("BOX(10 10, 0 0)", SpatialUnits::Kilometers)
             .expect("corner order never matters");
+        for form in [untagged, spaced, lowercased, swapped] {
+            assert_eq!(bare, form);
+        }
         assert_eq!(bare, box2d);
-        assert_eq!(bare, swapped);
         assert_eq!(
             bare,
             SpatialShape::Envelope {
@@ -1568,6 +1599,18 @@ mod tests {
         );
         assert_eq!(
             SpatialShape::parse("POINT (1e5 2)", SpatialUnits::Kilometers).unwrap_err(),
+            SpatialShapeError::Malformed
+        );
+        // The exponent refusal is the disclosed divergence, so it is pinned
+        // across the tagged forms it affects, not just POINT: V1's readers
+        // would accept these, its pre-processing patterns would not.
+        assert_eq!(
+            SpatialShape::parse("LINESTRING (1e5 2, 3 4)", SpatialUnits::Kilometers).unwrap_err(),
+            SpatialShapeError::Malformed
+        );
+        assert_eq!(
+            SpatialShape::parse("POLYGON ((1e5 2, 3 4, 5 6, 1e5 2))", SpatialUnits::Kilometers)
+                .unwrap_err(),
             SpatialShapeError::Malformed
         );
         assert_eq!(
