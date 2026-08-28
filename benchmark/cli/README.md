@@ -187,3 +187,11 @@ throwaway cargo project outside the repository (nothing in the Rust
 scope is touched; the harness home is shared with the SE-08 family's,
 so the engine is built once per worktree — `~1 minute` cold; set
 `TERRABASE_TEST_CARGO_ONLINE=1` to allow a networked fetch retry).
+
+## Schema commands (SM-04)
+
+`schema status [COLLECTION]`, `schema validate COLLECTION
+DOCUMENT_PATH`, `migration dry-run COLLECTION`, and `migration apply
+COLLECTION [--idempotency-key KEY] [--acknowledge-not-rollbackable]`
+(the apply guard is required; dry-run output is byte-stable JSON for
+scripting). See `docs/families/schema-surface.md`.

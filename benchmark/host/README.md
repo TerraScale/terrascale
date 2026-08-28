@@ -152,3 +152,13 @@ first run compiles it once per worktree (`~1 minute` cold); set
 - `SyncGoldenVectorTests` — the SE-04 golden vectors replayed through
   the host against the real engine (the corpus set is pinned; a new
   vector fails loudly).
+
+## Schema surface (SM-04)
+
+Six typed schema lifecycle endpoints ride the same gate/tenant/audit
+discipline as the rest of the typed API: `schema.status`,
+`schema.declare`, `schema.validate`, `migration.status`,
+`migration.dry-run`, `migration.apply` (mutations carry idempotency
+keys). Served answers are the scripted-registry shape until the
+engine-backed host wiring lands — the typed refusals (`operation_refused`)
+are the truthful interim state. See `docs/families/schema-surface.md`.
