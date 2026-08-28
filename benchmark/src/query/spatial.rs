@@ -538,9 +538,9 @@ impl SpatialShape {
     /// non-claims: V1's shape *pre-processing* patterns (the rectangle,
     /// BOX, circle, and 2D-reducer regular expressions) are decimal-only,
     /// but the readers V1 hands off to — spatial4n for `POINT`, the
-    /// NetTopologySuite `WKTReader` for `LINESTRING`/`POLYGON` — do accept
-    /// scientific notation. An exponent literal therefore refuses here
-    /// where V1's tagged-WKT path would read it.
+    /// `NetTopologySuite` `WKTReader` for `LINESTRING`/`POLYGON` — do
+    /// accept scientific notation. An exponent literal therefore refuses
+    /// here where V1's tagged-WKT path would read it.
     ///
     /// # Errors
     ///
