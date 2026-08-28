@@ -703,6 +703,33 @@ describe("TerraScaleSyncV2Session over the API host HTTP/SSE surface", () => {
     await session.disconnect();
   });
 
+  test("a stream dying on a slower-than-window cadence still exhausts the ladder", async () => {
+    const host = new FixtureApiHost();
+    host.commit("orders");
+    const session = createSession(host, { reconnectDelayMs: 1, maxReconnectAttempts: 3 });
+    await session.connect();
+    assert.equal(session.getStatus(), "live");
+
+    // Kill the stream every 1.1 s: each stream stays open just past the 1 s
+    // stability window while the delta endpoint stays healthy — the regime
+    // a window-long ladder reset misreads as "a fresh outage every cycle".
+    const killer = setInterval(() => host.closeStreams(), 1_100);
+    try {
+      await waitFor(() => session.getStatus() === "failed", 30_000);
+    } finally {
+      clearInterval(killer);
+    }
+    assert.match(
+      session.getStoreSnapshot().LastError ?? "",
+      /reconnect_exhausted/u,
+      "the slow-cadence dying stream reaches MaxReconnectAttempts",
+    );
+    const streams = () =>
+      host.requests.filter((request) => request.method === "GET" && request.path === "/v1/streams").length;
+    assert.ok(streams() <= 6, `the reconnect count is bounded (stream attempts: ${streams()})`);
+    await session.disconnect();
+  });
+
   test("a pathological event-stream line aborts the subscription with a typed stream error", async () => {
     const host = new FixtureApiHost();
     host.commit("orders");
