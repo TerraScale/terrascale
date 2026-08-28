@@ -159,7 +159,8 @@ RECOMMENDED (PROPOSED).** The engine process reads its key-encryption key
 startup configuration (the same channel that supplies the location
 today — `EngineConfig::durable` builds from a caller-supplied path,
 `src/engine/mod.rs:227`; the supervised engine process already receives
-its socket path as a process argument, `host/` engine harness), default
+its socket path as a process argument, the SE-08 harness at
+`cli/TerraBase.Cli.Tests/EngineHarness.cs`), default
 0600 creation on first use with fsync of file and directory, and
 fail-closed open when the file exists but cannot be parsed. This is
 V1's `MasterKeyPath` + default-`secret.key` shape
@@ -179,7 +180,7 @@ user, inherited by every child process, and routinely captured into
 crash dumps, incident reports, and service-manager unit files. V2 also
 has no environment secret channel today — the only key V2 handles
 arrives through a typed operation field, not the environment
-(`EncryptionKey::from_material`, `src/backup/schedule/codec.rs:393`).
+(`EncryptionKey::from_material`, `src/backup/schedule/codec.rs:395`).
 Nothing in the local backend-only surface needs it.
 
 **C. Platform/backend-supplied per-tenant DEKs wrapped by a local KEK —
@@ -273,7 +274,7 @@ or parity data (PROPOSED, and already the standing rule for the one key
 V2 handles).** BK-04's record is the in-repo precedent to extend: key
 material is caller-supplied per operation, never stored, zeroed on drop,
 redacted in Debug, and never enters artifact bytes or status
-(`src/backup/schedule/codec.rs:383-431`, the `# Secrets` section of
+(`src/backup/schedule/codec.rs:383-435`, the `# Secrets` section of
 `src/backup/schedule/mod.rs:33-42`). V1's audit serialization omits the
 key while the operational one carries it
 ([v1:src/TerraBase.Client/Documents/Operations/Backups/BackupEncryptionSettings.cs::ToAuditJson])
@@ -452,7 +453,7 @@ ADR-0005 D-5 amendment): `chacha20poly1305` 0.11.0 (XChaCha20-Poly1305).**
 extend the in-crate composition.** Generalize BK-04's
 HKDF-SHA256/HMAC-SHA256/counter-mode encrypt-then-MAC construction
 (algorithm id `hkdf-sha256-hmac/sha256-ctr-v1`,
-`src/backup/schedule/codec.rs:61`, key handling at 383-431) into the
+`src/backup/schedule/codec.rs:61`, key handling at 383-435) into the
 storage framing with per-epoch domain separation and a nonce-uniqueness
 discipline. Zero new dependencies and no protected-file edits — but it
 is a non-standard composition with no third-party review, it is **not**
@@ -520,9 +521,10 @@ gate the worktree, not an implementation):
 | --- | --- |
 | `unset RUSTUP_TOOLCHAIN; cargo fmt --all -- --check` | 0 |
 | `cargo check --workspace --locked` | 0 |
-| `cargo test --workspace --locked` | 0 |
+| `cargo test --workspace --locked` | 0 (45 suites, no failures) |
 | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | 0 |
-| `TERRABASE_V1_ROOT=…/.worktrees/terrabase-v1-fa99b925-readonly ./scripts/check.sh` | 0 (includes `cargo doc --workspace --no-deps --locked`, the parity/citation/secret/license gates; `cargo-deny` still unavailable in this environment and recorded unrun by the script, per the standing SE-02 disposition) |
+| `TERRABASE_V1_ROOT=…/.worktrees/terrabase-v1-fa99b925-readonly ./scripts/check.sh` | 1 — **every step green until the final one**: the script's workspace-root auto-location cannot resolve `specs/` from a `.worktrees/*` checkout and stops with "V1 citation audit UNRUN: unable to resolve the TerraScale workspace root". This is the scripts-owner residual the ledger already records ("scripts/check.sh .worktrees/* root auto-location → scripts owner"); not a defect in this packet's content |
+| `TERRABASE_V1_ROOT=… TERRASCALE_WORKSPACE_ROOT=/home/mariogk/Projects/TerraScale ./scripts/check.sh` | 0 — "TerraBaseV2 foundation checks passed": fmt, check, dev tests (45 suites) and release tests (45 suites), clippy, `cargo doc --workspace --no-deps --locked`, the parity validators, the secret scan, and the strict V1 citation audit all green (1 V1 test gap reported as adjudicated under PD-2026-08-24-02, a pre-existing row disposition, not this packet's). `cargo-deny` remains unavailable in this environment and is recorded unrun by the script itself, per the standing SE-02 disposition |
 
 ## Limits and non-claims
 
@@ -575,7 +577,8 @@ gate the worktree, not an implementation):
 
 None executed — this packet's write scope was exactly one new document
 and nothing outside it was modified. The following are PROPOSED for the
-parent/integrator, all consequences of D5 Option 1 if ratified:
+parent/integrator (1-3 are consequences of D5 Option 1 if ratified; 4 is
+a standing residual this packet hit):
 
 1. `docs/adr/0005-workspace-stack-policy-and-engine-protocol.md` — a D-5
    amendment carving out vetted cryptographic dependencies for the
@@ -587,6 +590,11 @@ parent/integrator, all consequences of D5 Option 1 if ratified:
    `collision: engine storage encryption dependency + lockstep version resolution`).
 3. `deny.toml` — record the `r-efi` LGPL-option disposition the SE-02
    audit already flagged (title: `collision: deny.toml r-efi license disposition`).
+4. `scripts/check.sh` — make the workspace-root probe walk above
+   `.worktrees/*` (or document `TERRASCALE_WORKSPACE_ROOT` as required
+   for worktree checkouts). Already a recorded scripts-owner residual
+   this packet hit and worked around (see receipts); owner: scripts
+   owner.
 
 No collision with parity data, `src/lib.rs`, `src/types.rs`,
 `src/operations.rs`, or CI files arises from this packet.
