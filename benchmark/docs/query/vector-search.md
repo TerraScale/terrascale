@@ -505,4 +505,10 @@ unrecorded env var made the "did not execute" statement wrong). The
 corrected invocation above exports the workspace root explicitly; the
 audit then executes and passes in strict mode at pin
 `fa99b9257776dbe625e6a2388c74c9ce916637ee`. Any nested-worktree re-run
-of check.sh needs `TERRASCALE_WORKSPACE_ROOT` set.
+of check.sh needs `TERRASCALE_WORKSPACE_ROOT` set. Two stage-level
+availability disclosures remain inside that exit-0 run (the tooling
+prints them itself; they are not gate failures and are identical on
+develop): the parity validator's optional Draft 2020-12 direct
+jsonschema validation (optional package absent) and `cargo-deny`
+(binary absent) report themselves unrun; every other stage — including
+the strict citation audit — executed and passed.
