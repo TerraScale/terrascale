@@ -1264,7 +1264,16 @@ impl QueryStore<'_> {
             if position % CHECKPOINT_INTERVAL == 0 {
                 check_bounds(Some(deadline), Some(&cancellation)).map_err(map_bound_error)?;
             }
-            if document.collection() != request.source.collection() {
+            // GAP-Q19 collision action: the query source's collection is
+            // optional now (family and all-documents sources name none);
+            // a source without a collection does not filter by
+            // collection. Family sources route around this executor
+            // path, so the None arm is unreachable defense.
+            if request
+                .source()
+                .collection()
+                .is_none_or(|collection| document.collection() != collection)
+            {
                 continue;
             }
             scanned = scanned.saturating_add(1);
