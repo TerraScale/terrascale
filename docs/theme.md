@@ -50,7 +50,7 @@ The brand tone is "developer infrastructure": polished, sharp-edged, slightly fu
 
 This repo previously contained stale metadata from an older React-based version. The implemented app uses SvelteKit with a local SVG icon pipeline and does not use React, Radix, ShadCN components, or runtime icon packages in the current UI.
 
-`THEME.md` should reflect the implementation, not the stale metadata.
+`docs/theme.md` should reflect the implementation, not the stale metadata.
 
 ## Typography
 
