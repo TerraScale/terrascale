@@ -1,0 +1,313 @@
+# GAP-Q14: Spatial foundation (decision-first)
+
+- Ticket: TerraBaseV2#68 — Spatial foundation (decision-first)
+- Packet: GAP-Q14, branch `fleet/gapq14-2`, base `da0df43`
+- V1 source identity (all citations): TerraBase pin
+  `fa99b9257776dbe625e6a2388c74c9ce916637ee`
+  (`../.worktrees/terrabase-v1-fa99b925-readonly`, read-only)
+- Status language: implemented / unrun / failed / inconclusive, exactly.
+
+## What landed
+
+`src/query/spatial.rs` (module root wired by the integrator at `da0df43`;
+contents owned by this packet) implements the spatial foundation as typed
+values, each with one validated construction path:
+
+- **Coordinate contract**: `Longitude` ([-180, 180] degrees), `Latitude`
+  ([-90, 90] degrees), `Wgs84Point` — x = longitude, y = latitude, the
+  axis order and domain of V1's geography context. Non-finite and
+  out-of-domain coordinates refuse with typed errors.
+- **Units and distance arithmetic**: `SpatialUnits {Kilometers, Miles}`.
+  `Wgs84Point::distance` reproduces V1's haversine chain exactly
+  (nautical miles per degree, then 1.852 / 1.1515 factors);
+  `Wgs84Point::apply_rounding` reproduces V1's ordering-distance rounding
+  (`distance - distance % round`); `SpatialShape::circle_radius_degrees`
+  reproduces V1's circle-radius-to-degrees translation (miles→km,
+  ÷ Earth mean radius 6371.0087714, × 180/π).
+- **Shape encoding**: `SpatialShape` over the bounded WKT subset V1
+  accepts — `POINT`, `LINESTRING`, `POLYGON` (holes included), V1's
+  `Circle(x y d=r)` form, and V1's rectangle forms (bare `x1 y1 x2 y2`
+  and `BOX(2D)(...)`, corner order normalized). Z/M dimension flags and
+  extra ordinates are discarded the way V1's `WktSanitizer` discards
+  them. Bounds: `MAX_WKT_BYTES` 65 536, `MAX_SHAPE_POINTS` 256 per
+  ring/linestring, `MAX_POLYGON_RINGS` 8; every bound refusal is typed.
+- **Document field encoding**: `SpatialFieldEncoding` — two numeric
+  fields (latitude, longitude) or one WKT field — rendered to V1's exact
+  dynamic-field tokens `spatial.point(lat, lng)` / `spatial.wkt(field)`.
+- **Predicate vocabulary**: `SpatialRelation {Within, Contains, Disjoint,
+  Intersects}` and `SpatialPredicate` (encoding + relation + shape +
+  distance-error percentage), validated to V1's domain ([0, 0.5], default
+  0.025) with bounded point-document evaluation
+  (`SpatialPredicate::matches_point`): worst case one pass over at most
+  8 rings × 256 positions; every accepted shape was bounded at parse.
+- **Precision/discretization**: `SpatialPrecision` (0–9 decimals of a
+  degree, default 6) and `QuantizedCell` — a monotone, idempotent,
+  floor-aligned per-axis integer grid over the WGS84 domain.
+
+Tests: 33 inline unit tests in `src/query/spatial.rs` (red-then-green:
+the suite was written first and failed to compile for the right reason —
+the vocabulary did not exist — before the implementation landed) and 5
+public-seam tests in `tests/query/spatial_foundation.rs`. Evidence of
+the red run is in the receipts section.
+
+## Decision records
+
+### D1 (PROPOSED): the geometry base is V2-internal
+
+**Decision**: the foundation implements its own minimal geometry — typed
+coordinates, the V1 distance formulas, a bounded WKT-subset parser, and
+planar even-odd containment with exact boundary tests — and adopts **no**
+geometry crate. Cargo.toml and Cargo.lock are untouched by this packet.
+
+**Alternatives and evidence**:
+
+- **Adopt `geo` (georust) 0.33.1.** Audited on this host (network cargo
+  fetch): a 46-package transitive closure (geo 0.33.1, geo-types 0.7.20,
+  plus earcut, i_overlay/i_shape/i_float/i_tree, rstar, spade,
+  geographiclib-rs, robust, rayon, crossbeam, foldhash, heapless, ...).
+  License closure: 32 × MIT OR Apache-2.0, 7 × MIT, 2 × Apache-2.0 OR
+  MIT, 1 × Apache-2.0, 1 × ISC, 1 × Zlib, 1 × Unlicense OR MIT, 1 ×
+  (MIT OR Apache-2.0) AND Unicode-3.0 — every expression's components
+  are on `deny.toml`'s allowlist (the compound Unicode-3.0 AND expression
+  would still need cargo-deny confidence evaluation, which remains unrun
+  on this program). No duplicate versions within the closure, and the
+  shared crates (serde, smallvec, hashbrown, syn, thiserror, log,
+  num-traits, either) resolve to the exact versions already in the
+  repo's 191-package lockfile — so adopting `geo` would add roughly 43
+  new packages without duplicating any existing one. Maintenance surface:
+  georust is an active, well-governed organization; geo 0.33.1 is current.
+  **Not adopted** because the parity-required surface at the pin is
+  point-vs-shape relate plus two exact V1 distance conversions (see the
+  inventory): `geo`'s strengths (polygon–polygon Boolean ops, robust
+  predicates, projections, geodesy) are not needed by any open spatial
+  parity row's required semantics, while its haversine (Earth-radius
+  parameterization, 6371.0 km default) does **not** reproduce V1's
+  nautical-mile chain — so V1-exact distance arithmetic had to be
+  internal regardless of the decision. Adopting a 43-package closure for
+  capability no open row requires, under a pending license gate
+  (`Cargo.toml` `license_gate = "pending-before-release"`), is the wrong
+  trade for a foundation packet.
+- **Adopt `wkt` (georust) alone for parsing.** Rejected for the same
+  reason at smaller scale: the accepted grammar is V1's decimal-only,
+  reducer-shaped subset, and V1's own non-standard forms (`Circle(x y
+  d=r)`, bare rectangle, BOX2D) are outside WKT proper, so a conformant
+  parser would still leave V1-shaped pre-processing internal.
+- **Adopt a full geospatial stack (proj, GDAL bindings).** Rejected
+  without an audit: no parity row names a projection requirement, and
+  V1/Raven spatial is WGS84-degrees-only at the query surface.
+
+**Rejected-alternative caveat, recorded honestly**: when the index-side
+spatial packet lands (geohash/quad-prefix trees, see D4), the georust
+ecosystem (`geohash`, `rstar`, `geo`) is the natural first candidate and
+this decision should be revisited there with this audit as its starting
+evidence. The typed vocabulary in this module is the swap seam: nothing
+outside `spatial.rs` evaluates geometry.
+
+### D2 (PROPOSED): units and coordinate-system contract
+
+WGS84 **degrees**, x = longitude, y = latitude — V1/Raven-compatible:
+
+- V1's geography default bounds are exactly the WGS84 domains
+  (`SpatialOptions` defaults `MinX=-180, MaxX=180, MinY=-90, MaxY=90`,
+  v1:src/TerraBase.Client/Documents/Indexes/Spatial/SpatialOptions.cs:75-97).
+- WKT coordinates are x-first (longitude, latitude);
+  V1's `geo:` URI reader is latitude-first and explicitly swaps to x/y on
+  read (v1:src/TerraBase.Server/Documents/Indexes/Static/Spatial/ShapeStringConverter.cs:101-107),
+  which is the axis-order trap the typed `Longitude`/`Latitude` newtypes
+  make unrepresentable — positional swaps cannot compile.
+- Units are kilometers/miles exactly as V1 defines them
+  (v1:src/TerraBase.Client/Documents/Indexes/Spatial/SpatialOptions.cs:207-211),
+  with V1's two distance conversions kept in their V1 roles:
+
+  1. **Distance values** (ordering, projection): haversine in
+     international nautical miles (60 per degree) scaled by 1.852 (km) or
+     1.1515 (mi) —
+     v1:src/TerraBase.Corax/Utils/Spatial/SpatialUtils.cs:50-95.
+  2. **Circle radii for matching**: miles → km (×1.60934), then ÷ Earth
+     mean radius 6371.0087714, then × 180/π into degrees —
+     v1:src/TerraBase.Server/Documents/Indexes/Static/Spatial/ShapeStringReadWriter.cs:56-62
+     and v1:src/TerraBase.Client/Constants.cs:649-659.
+
+  **Disclosed V1-internal inconsistency**: conversion 1 gives 111.12 km
+  per equator degree and conversion 2 gives 111.195 km per degree —
+  about 0.07% apart. V1 uses each in its own role; this foundation
+  reproduces each in its role rather than unifying them, because
+  unifying would drift distance values from V1's. The divergence is
+  pinned by test (`one_equator_degree_is_sixty_nautical_miles_in_v1_units`
+  pins conversion 1; `circle_radius_translates_to_degrees_through_the_earth_mean_radius`
+  pins conversion 2).
+- **Precision/discretization rule**: coordinates are never re-rounded
+  for comparison; discretization exists only for key derivation.
+  `SpatialPrecision` keeps 0–9 decimals of a degree (default 6 ≈ 0.11 m
+  at the equator), strictly finer than V1's coarsest query-visible
+  default discretization (geohash level 9 ≈ 4.78 m,
+  v1:src/TerraBase.Client/Documents/Indexes/Spatial/SpatialOptions.cs:65-71),
+  so quantization can never coarsen a comparison V1 would make. The
+  quantizer is monotone (east/north never maps to a smaller cell),
+  idempotent within a cell, and floor-aligned to the domain origin.
+- **Antimeridian**: `west > east` on an envelope expresses an
+  antimeridian-wrapping extent (union of both spans). This is a V2 rule:
+  V1 delegates envelope semantics to spatial4n's rectangle, whose
+  wraparound representation this record does not claim to reproduce
+  bit-for-bit.
+
+### D3: spatial predicate parity inventory against V1 at the pin
+
+What V1 ships at `fa99b925`, with pinned citations:
+
+| V1 capability | Pinned cite | V2 status after this packet |
+| --- | --- | --- |
+| Four relations: Within, Contains, Disjoint, Intersects | v1:src/TerraBase.Client/Documents/Indexes/Spatial/SpatialOptions.cs:199-205 | implemented as `SpatialRelation` |
+| Circle predicate: radius/lat/lng + units + error pct | v1:src/TerraBase.Client/Documents/Queries/Spatial/SpatialCriteriaFactory.cs:63-66, v1:src/TerraBase.Client/Documents/Session/AbstractDocumentQuery.Spatial.cs:10-23 (`WithinRadiusOf`) | implemented as `SpatialShape::Circle` + predicate |
+| WKT predicate: `RelatesToShape` + per-relation helpers | v1:src/TerraBase.Client/Documents/Queries/Spatial/SpatialCriteriaFactory.cs:13-61 | implemented for the bounded WKT subset (see non-claims) |
+| Distance-error pct, default 0.025, domain [0, 0.5] | v1:src/TerraBase.Client/Constants.cs:650 (default); v1:src/TerraBase.Corax/Utils/Spatial/SpatialUtils.cs:28-38 (domain) | implemented (carried + validated; no approximation applied — see non-claims) |
+| Distance ordering asc/desc, point or WKT center, round factor, null placement | v1:src/TerraBase.Client/Documents/Session/AbstractDocumentQuery.Spatial.cs:82-248 | **not implemented**; the arithmetic (distance + rounding) is typed and tested, the ordering integration is deferred to PB-4023 (owner engine/query) |
+| WKT reduced to 2D (Z/M discarded) | v1:src/TerraBase.Client/Documents/Queries/Spatial/WktSanitizer.cs:10-37 | implemented (flags and extra ordinates discarded) |
+| Rectangle forms: bare `x1 y1 x2 y2`, `BOX(2D)(...)` | v1:src/TerraBase.Server/Documents/Indexes/Static/Spatial/ShapeStringConverter.cs:23-61; v1:src/TerraBase.Client/Documents/Queries/Spatial/WktSanitizer.cs:16-17 | implemented (normalized envelopes) |
+| `geo:` URI input (lat-first, with `u=` meters uncertainty) | v1:src/TerraBase.Server/Documents/Indexes/Static/Spatial/ShapeStringConverter.cs:63-107 | **not implemented** (recorded follow-up; input-form convenience, not predicate semantics) |
+| Dynamic spatial fields: `spatial.point(lat, lng)` / `spatial.wkt(field)`, round factor | v1:src/TerraBase.Client/Documents/Queries/Spatial/DynamicSpatialField.cs:5-48 | implemented as `SpatialFieldEncoding` + `to_v1_field_token` |
+| Spatial index options: geography/cartesian, geohash/quad-prefix/bounding-box, tree level, bounds, units | v1:src/TerraBase.Client/Documents/Indexes/Spatial/SpatialOptions.cs:65-197 | **out of this packet** (index-side; see D4) |
+| Corax execution: recursive geohash decomposition, fully-covered cells short-circuit, boundary cells relate point-by-point | v1:src/TerraBase.Corax/Utils/Spatial/SpatialUtils.cs:98-244, v1:src/TerraBase.Corax/Querying/Matches/SpatialMatch/SpatialMatch.cs:39-171 | **out of this packet** (index-side); V2 evaluation is exact per-point |
+| Lucene execution: spatial4n `SpatialOperation` per relation | v1:src/TerraBase.Server/Documents/Queries/LuceneQueryBuilder.cs:1166-1180; v1:src/TerraBase.Server/Documents/Indexes/Persistence/Corax/CoraxQueryBuilder.cs:1248-1251 | **out of this packet** (engine selection is PB-4052) |
+| Spatial boosting score | v1:src/TerraBase.Corax/Querying/Matches/SpatialMatch/SpatialMatch.cs:145-148,189 | **not implemented**, and see the V1 defect note below |
+
+**V1 fidelity notes found during the inventory** (recorded for
+ratification, not reproduced):
+
+1. **V1's Corax evaluator indexes points only.** Document spatial
+   entries are `CoraxSpatialPointEntry` values and matching resets a
+   point for relate (v1:src/TerraBase.Corax/Indexing/IndexWriter.IndexEntryBuilder.cs:374,
+   v1:src/TerraBase.Corax/Querying/Matches/SpatialMatch/SpatialMatch.cs:135-145).
+   V1's Lucene side does index full WKT document shapes. V2's foundation
+   defines point-document evaluation only — matching its Corax, not its
+   Lucene, engine.
+2. **V1's Corax collapses Contains onto Within for point documents.** A
+   relate answer of Within or Contains satisfies a query of either
+   relation (v1:src/TerraBase.Corax/Querying/Matches/SpatialMatch/SpatialMatch.cs:159-171),
+   so `Contains(circle)` matches any point inside the circle in Corax,
+   while Lucene's `SpatialOperation.Contains` would not. V2's typed
+   `Contains` is honest instead: it holds only when the query shape is
+   the very same point. **This is a deliberate, disclosed divergence for
+   the parent to ratify or override.**
+3. **V1's spatial boosting score path passes longitude and latitude
+   swapped** into its haversine relative to the filter path
+   (v1:src/TerraBase.Corax/Querying/Matches/SpatialMatch/SpatialMatch.cs:145-148:
+   `HaverstineDistance(_yShapeCenter, _xShapeCenter, termsReader.Longitude, termsReader.Latitude)`),
+   so score distances and filter distances disagree for the same entry.
+   Not mirrored; recorded as a V1 defect for the parity adjudication.
+4. **V1's two degree→distance conversions disagree** (D2 above).
+
+### D4: index-side spatial structures are out of this packet
+
+Geohash/quad-prefix trees, spatial index field options (PB-4050), the
+Corax-style covering-cell short-circuit, and spatial index selection are
+**deferred**, owner `engine/index` (per parity inventory PB-4050's owner)
+in coordination with `engine/query`. Nothing in this packet composes
+trivially from the existing index definitions seam: spatial keys are not
+terms and the current catalog has no cell-encoded fields, so a
+non-trivial design is required (which `SpatialPrecision`/
+`QuantizedCell` exist to serve). This is a scoping decision, not a
+non-claim of feasibility.
+
+## WS-PARITY proposals (spatial rows)
+
+Builders do not flip parity rows; the following are PROPOSED
+dispositions for the parent to ratify through WS-PARITY.
+
+- **PB-4022 spatial-predicates** — PROPOSED: keep `unresolved`, with the
+  foundation recorded: the typed predicate vocabulary (relations, units,
+  coordinate contract, shape encoding, bounded point-document
+  evaluation) is implemented and tested (inline + public seam), but
+  execution against the query seam (spatial clauses inside `QuerySpec`,
+  evaluation over `ReadSnapshot` documents, extraction from document
+  fields per `SpatialFieldEncoding`) is not wired, and shape-document
+  evaluation (V1 Lucene parity) is not implemented. Row should move to
+  `partial` (or stay `unresolved` with this packet as Proof ID) only
+  after the parent accepts the D3 divergence note 2 (Contains) and the
+  point-document-only scope.
+- **PB-4023 spatial-distance-ordering** — PROPOSED: keep `unresolved`,
+  with the arithmetic landed: V1's distance values and rounding rule are
+  typed and pinned by tests (`Wgs84Point::distance`,
+  `apply_rounding`); ordering integration (asc/desc, WKT centers, null
+  placement, mixed orderings) is deferred to engine/query once the
+  query seam's ordering vocabulary grows a spatial key. Recommend the
+  follow-up also adjudicate V1 fidelity note 3 (score-path axis swap).
+- **PB-4050 spatial-index-options** — PROPOSED: keep `unresolved`,
+  owner `engine/index`; this packet contributes the coordinate/precision
+  contract (`SpatialPrecision`, `QuantizedCell`) any spatial index
+  structure must quantize with, and D4's deferral. The
+  geography-vs-cartesian and strategy options remain wholly open.
+- PB-4032 (LINQ translation), PB-4045 (auto-map), PB-4047, PB-4052,
+  PB-4060 mention spatial only adjacently; no proposal from this packet.
+
+## Proposed collision actions
+
+One collision commit (`collision: expose the GAP-Q14 spatial vocabulary
+at the query module root and wire its integration test`, `fb00f8b`), two
+minimal shared-file edits, for integrator ratification at merge:
+
+1. `src/query/mod.rs`: `pub use spatial::{...}` — the module itself is
+   private by the integrator's own wiring (`mod spatial;` at `da0df43`),
+   so this re-export is the only way the vocabulary becomes the seam's
+   public surface. 22 names, no behavior.
+2. `tests/query/main.rs`: one `mod spatial_foundation;` declaration.
+
+No Cargo.toml, Cargo.lock, CI, parity/**, or other src/** edits.
+
+## Receipts
+
+All commands run in the packet worktree
+(`/home/mariogk/Projects/TerraScale/TerraBaseV2/.worktrees/terrabasev2-gapq14`)
+after `unset RUSTUP_TOOLCHAIN`, on branch `fleet/gapq14-2`. The host runs
+concurrent fleet builds; every cargo step below ran to completion under
+`timeout` guards.
+
+| Command | Exit | Notes |
+| --- | --- | --- |
+| `cargo test --lib query::spatial` (red run, test suite written before the implementation) | 101 (compile failure: `no DEFAULT_DISTANCE_ERROR_PCT in query::spatial` etc.) | the tests failed for the right reason: the vocabulary did not exist |
+| `cargo test --lib query::spatial` (green run, final tree) | 0 | 33 passed, 0 failed |
+| `cargo test --test query spatial_foundation` | 0 | 5 passed, 0 failed |
+| `cargo fmt --all -- --check` | 0 | after one intermediate fmt fix committed separately |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | 0 | clean |
+| `cargo check --workspace --locked` | 0 | see check.sh below (runs it) |
+| `cargo test --workspace --locked` | 0 | via check.sh (dev profile) |
+| `TERRABASE_V1_ROOT=/home/mariogk/Projects/TerraScale/.worktrees/terrabase-v1-fa99b925-readonly ./scripts/check.sh` | 0 | full strict gate incl. release tests, cargo doc, parity tooling, V1 citation audit, secret scans |
+
+Dependency-audit artifacts (scratch project `/tmp/geo-audit`, not part of
+the repo): `cargo add geo` resolved geo 0.33.1 with a 46-package closure;
+`cargo metadata --format-version 1` exit 0; license and duplicate-version
+analysis in D1.
+
+## Non-claims (explicit)
+
+- **No spatial query execution.** Nothing in this packet runs a spatial
+  clause against a `ReadSnapshot`; `SpatialPredicate::matches_point` is
+  the evaluation primitive, not a wired query path. PB-4022 stays
+  unresolved.
+- **Point documents only.** Evaluation is defined for point documents;
+  polygon/linestring *document* geometry (V1 Lucene parity) is not
+  evaluated. Query shapes, not document shapes, may be polygons.
+- **`distanceErrorPct` is carried, not applied.** Exact evaluation has
+  no error budget; V1's parameter (an index-approximation tolerance) has
+  no effect to mirror until index-side structures exist.
+- **No spatial index structures, strategies, or options** (D4): geohash
+  and quad-prefix trees, geography/cartesian typing, bounding-box
+  strategy, spatial boosting are all unimplemented.
+- **No `geo:` URI input form**, no WKT output, no multipoint/multiline/
+  multipolygon/geodesic edges, no projection. Polygon edges are straight
+  in degree space and do not wrap the antimeridian; envelopes do.
+- **No distance-ordering integration** (PB-4023 arithmetic only).
+- The internal-geometry decision (D1) and the units contract (D2) are
+  labeled PROPOSED for parent ratification; the license audit is recorded
+  even though no dependency was adopted.
+
+## Deferred items (with owners)
+
+| Item | Owner |
+| --- | --- |
+| Spatial index structures/options (PB-4050), covering-cell evaluation, spatial strategies | engine/index (D4) |
+| Spatial clauses in `QuerySpec` + execution over snapshots + field extraction per encoding | engine/query |
+| Distance-ordering integration (PB-4023) + V1 score-path defect adjudication | engine/query |
+| Shape-document evaluation (V1 Lucene parity) | engine/query |
+| `geo:` URI input form | engine/query (convenience; lowest priority) |
+| Ratify D1/D2 and the D3 divergence note 2 (Contains semantics) | parent (WS-PARITY + integrator) |
