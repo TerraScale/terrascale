@@ -712,6 +712,57 @@ impl SpatialShape {
         matches!(self, Self::Point(_))
     }
 
+    /// Re-validates this shape's contents.
+    ///
+    /// The enum is public, so a caller can assemble a variant by hand that
+    /// [`SpatialShape::parse`] would refuse. This method re-checks exactly
+    /// the invariants the parser establishes, so a hand-built shape can be
+    /// held to the same contract a parsed one already satisfies:
+    ///
+    /// - a linestring carries 2 to [`MAX_SHAPE_POINTS`] positions;
+    /// - a circle radius is finite and strictly positive;
+    /// - an envelope's `south` is not greater than its `north` (`west`
+    ///   greater than `east` stays valid: that is the antimeridian wrap).
+    ///
+    /// The point and polygon variants hold types that were validated when
+    /// they were built, so they always pass.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpatialShapeError::Malformed`] for a short linestring, a
+    /// non-finite or non-positive circle radius, or an inverted envelope,
+    /// and [`SpatialShapeError::TooManyPoints`] for an over-long
+    /// linestring — the same typed refusals the parser returns for the
+    /// same contents.
+    pub fn validate(&self) -> Result<(), SpatialShapeError> {
+        match self {
+            Self::Point(_) | Self::Polygon(_) => Ok(()),
+            Self::Circle { radius, .. } => {
+                if radius.is_finite() && *radius > 0.0 {
+                    Ok(())
+                } else {
+                    Err(SpatialShapeError::Malformed)
+                }
+            }
+            Self::LineString { points } => {
+                if points.len() < 2 {
+                    return Err(SpatialShapeError::Malformed);
+                }
+                if points.len() > MAX_SHAPE_POINTS {
+                    return Err(SpatialShapeError::TooManyPoints);
+                }
+                Ok(())
+            }
+            Self::Envelope { south, north, .. } => {
+                if south.degrees() <= north.degrees() {
+                    Ok(())
+                } else {
+                    Err(SpatialShapeError::Malformed)
+                }
+            }
+        }
+    }
+
     /// Returns the circle parameters when this shape is a circle.
     #[must_use]
     pub fn as_circle(&self) -> Option<(&Wgs84Point, f64, SpatialUnits)> {
@@ -745,6 +796,13 @@ impl SpatialShape {
                     <= Self::circle_radius_degrees(*radius, *units)
             }
             Self::LineString { points } => {
+                if points.is_empty() {
+                    // A hand-built empty linestring cannot be validated
+                    // (the predicate seam refuses it), but evaluation stays
+                    // total rather than underflowing its segment loop: no
+                    // position means no segment can contain the point.
+                    return false;
+                }
                 let mut previous = points.len() - 1;
                 for current in 0..points.len() {
                     if point_on_segment(point, &points[previous], &points[current]) {
@@ -965,19 +1023,44 @@ pub enum SpatialFieldEncoding {
     },
 }
 
+/// The characters that delimit a V1 dynamic-field token's argument list.
+///
+/// A field name containing one of them would interpolate into a token
+/// whose structure names different fields than the encoding holds
+/// (`"a, b"` with `"c"` renders the same token as `"a"` with `"b, c"`).
+/// V1 escapes such names before interpolating them
+/// (`DynamicSpatialField.ToField` passes each name through
+/// `EnsureValidFieldName`, which quotes names outside the plain
+/// identifier set); this module does not reproduce that escaping, so its
+/// constructors refuse the delimiters instead — fail-closed, and a
+/// recorded divergence rather than an ambiguous token.
+const FIELD_TOKEN_DELIMITERS: [char; 3] = [',', '(', ')'];
+
+/// Refuses one field name that would break the token it renders into.
+fn validate_field_token_name(field: &str) -> Result<(), RequestValidationError> {
+    if field.contains(FIELD_TOKEN_DELIMITERS) {
+        return Err(RequestValidationError::InvalidQuery);
+    }
+    Ok(())
+}
+
 impl SpatialFieldEncoding {
     /// Creates one two-field point encoding from validated field names.
     ///
     /// # Errors
     ///
     /// Returns [`RequestValidationError::InvalidQuery`] when either field
-    /// name is not a valid query field name.
+    /// name is not a valid query field name, or when either contains a
+    /// token delimiter (`,` `(` `)`) that would render the dynamic-field
+    /// token ambiguous.
     pub fn try_new_point(
         latitude_field: &str,
         longitude_field: &str,
     ) -> Result<Self, RequestValidationError> {
         validate_field_name(latitude_field)?;
         validate_field_name(longitude_field)?;
+        validate_field_token_name(latitude_field)?;
+        validate_field_token_name(longitude_field)?;
         Ok(Self::Point {
             latitude_field: latitude_field.to_string(),
             longitude_field: longitude_field.to_string(),
@@ -989,15 +1072,22 @@ impl SpatialFieldEncoding {
     /// # Errors
     ///
     /// Returns [`RequestValidationError::InvalidQuery`] when the field
-    /// name is not a valid query field name.
+    /// name is not a valid query field name, or when it contains a token
+    /// delimiter (`,` `(` `)`) that would render the dynamic-field token
+    /// ambiguous.
     pub fn try_new_wkt(field: &str) -> Result<Self, RequestValidationError> {
         validate_field_name(field)?;
+        validate_field_token_name(field)?;
         Ok(Self::Wkt { field: field.to_string() })
     }
 
     /// Renders this encoding to the exact dynamic-field token string V1
     /// derives from the same encoding, so stored queries and index
-    /// definitions cross-read.
+    /// definitions cross-read — for field names free of
+    /// [`FIELD_TOKEN_DELIMITERS`], which the constructors enforce. V1
+    /// escapes the rest before interpolation; this renderer does not, so
+    /// those names refuse construction instead of rendering a token V1
+    /// would parse back into different fields.
     #[must_use]
     pub fn to_v1_field_token(&self) -> String {
         match self {
@@ -1021,8 +1111,11 @@ impl SpatialFieldEncoding {
 ///
 /// Evaluation against a point document is bounded: the worst accepted
 /// shape costs one pass over at most [`MAX_POLYGON_RINGS`] rings of
-/// [`MAX_SHAPE_POINTS`] positions, and every accepted shape was bounded
-/// at parse. The distance-error percentage is carried and validated — a
+/// [`MAX_SHAPE_POINTS`] positions. Parsed shapes were bounded at parse,
+/// and a shape assembled by hand is re-validated at this seam
+/// ([`SpatialPredicate::try_new`] calls [`SpatialShape::validate`]), so no
+/// accepted predicate can carry an out-of-bounds or degenerate shape into
+/// evaluation. The distance-error percentage is carried and validated — a
 /// value in `[0, 0.5]` as V1 requires — but exact evaluation applies no
 /// approximation, so the parameter does not change any answer.
 #[derive(Clone, Debug, PartialEq)]
@@ -1040,7 +1133,10 @@ impl SpatialPredicate {
     ///
     /// Returns [`RequestValidationError::InvalidQuery`] when the
     /// percentage is not finite or lies outside
-    /// `[0, MAX_DISTANCE_ERROR_PCT]`.
+    /// `[0, MAX_DISTANCE_ERROR_PCT]`, and when the shape does not
+    /// validate: a shape assembled by hand with contents the parser
+    /// refuses is rejected here, at the seam where it would otherwise
+    /// reach evaluation.
     pub fn try_new(
         encoding: SpatialFieldEncoding,
         relation: SpatialRelation,
@@ -1052,6 +1148,7 @@ impl SpatialPredicate {
         {
             return Err(RequestValidationError::InvalidQuery);
         }
+        shape.validate().map_err(|_| RequestValidationError::InvalidQuery)?;
         Ok(Self { encoding, relation, shape, distance_error_pct })
     }
 
@@ -1060,8 +1157,8 @@ impl SpatialPredicate {
     ///
     /// # Errors
     ///
-    /// Returns [`RequestValidationError::InvalidQuery`] only through the
-    /// encoding's own construction.
+    /// Returns [`RequestValidationError::InvalidQuery`] when the shape
+    /// does not validate, exactly as [`SpatialPredicate::try_new`] does.
     pub fn with_default_error_pct(
         encoding: SpatialFieldEncoding,
         relation: SpatialRelation,
