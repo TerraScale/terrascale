@@ -484,12 +484,22 @@ fn the_commissioning_sampler_reports_inconclusive_without_references() {
 
 /// Sanity on the gate math through real samples: a workload measured against
 /// itself is stable, so the objective reading of a self-comparison is parity.
+///
+/// Deterministic by construction: the SAME lane's samples feed both sides of
+/// the comparison. The original shape ran two independent real lanes and
+/// asserted the classifier called statistically-equal wall-clock runs
+/// `Stable` — true on a quiet host, flaky by construction under fleet load
+/// (observed failing the release gate once under load-average ~25 on
+/// 2026-08-27; green solo 3/3 and in the dev profile). Comparing two
+/// independent real lanes belongs to the ignored lane characterization,
+/// not to a deterministic gate test.
 #[test]
 fn a_self_comparison_reads_as_parity() {
-    let first = V2Lane::open("self-a").commission(Workload::DocumentRead, 5, 8);
-    let second = V2Lane::open("self-b").commission(Workload::DocumentRead, 5, 8);
-    let comparison = throughput(first.samples(), second.samples());
+    let lane = V2Lane::open("self-a").commission(Workload::DocumentRead, 5, 8);
+    let samples = lane.samples();
+    let comparison = throughput(samples, samples);
     assert_eq!(comparison.throughput, Trend::Stable);
+    assert_eq!(comparison.p95, Trend::Stable);
 }
 
 /// The V2-side counter characterization, run for real and transcribed into
