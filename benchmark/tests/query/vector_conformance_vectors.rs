@@ -35,11 +35,7 @@ struct Vector {
 
 enum Scenario {
     /// `VectorOptions::try_new` over one embedding-type pair.
-    Options {
-        dimensions: u16,
-        source: VectorEmbeddingType,
-        destination: VectorEmbeddingType,
-    },
+    Options { dimensions: u16, source: VectorEmbeddingType, destination: VectorEmbeddingType },
     /// `VectorOptions` construction counts.
     Counts { candidates: u32, edges: u32 },
     /// `VectorIndexDeclaration::try_new` over one name/collection/field.
@@ -264,22 +260,22 @@ fn vectors() -> Vec<Vector> {
         },
         Vector {
             name: "request/vector-empty",
-            scenario: Scenario::Request { dimensions: 4, limit: 4 },
+            scenario: Scenario::Request { dimensions: 0, limit: 4 },
             expected: Expected::RefusedRequest(VectorSearchError::EmptyQueryVector),
         },
         Vector {
             name: "request/vector-below-minimum",
             scenario: Scenario::Request { dimensions: 1, limit: 4 },
-            expected: Expected::RefusedRequest(
-                VectorSearchError::DimensionsBelowMinimum { dimensions: 1 },
-            ),
+            expected: Expected::RefusedRequest(VectorSearchError::DimensionsBelowMinimum {
+                dimensions: 1,
+            }),
         },
         Vector {
             name: "request/vector-above-maximum",
             scenario: Scenario::Request { dimensions: 4097, limit: 4 },
-            expected: Expected::RefusedRequest(
-                VectorSearchError::DimensionsAboveMaximum { dimensions: 4097 },
-            ),
+            expected: Expected::RefusedRequest(VectorSearchError::DimensionsAboveMaximum {
+                dimensions: 4097,
+            }),
         },
         Vector {
             name: "request/vector-non-finite",
@@ -309,7 +305,9 @@ fn vectors() -> Vec<Vector> {
                 threshold: Some(0.62),
                 limit: Some(25),
             },
-            expected: Expected::Rendered("where vector.search(embedding, $queryVector, 0.62)\nlimit 25"),
+            expected: Expected::Rendered(
+                "where vector.search(embedding, $queryVector, 0.62)\nlimit 25",
+            ),
         },
         Vector {
             name: "tql/render-bare-form",
@@ -343,9 +341,7 @@ fn vectors() -> Vec<Vector> {
         },
         Vector {
             name: "tql/lower-non-vector-parameter",
-            scenario: Scenario::Lower {
-                parameter: DocumentValue::String("0.1,0.2".to_owned()),
-            },
+            scenario: Scenario::Lower { parameter: DocumentValue::String("0.1,0.2".to_owned()) },
             expected: Expected::RefusedRequest(VectorSearchError::InvalidQueryVector),
         },
         Vector {
@@ -353,9 +349,9 @@ fn vectors() -> Vec<Vector> {
             scenario: Scenario::Lower {
                 parameter: DocumentValue::Array(vec![DocumentValue::Number(0.5)]),
             },
-            expected: Expected::RefusedRequest(
-                VectorSearchError::DimensionsBelowMinimum { dimensions: 1 },
-            ),
+            expected: Expected::RefusedRequest(VectorSearchError::DimensionsBelowMinimum {
+                dimensions: 1,
+            }),
         },
     ]
 }
@@ -393,30 +389,29 @@ fn run(vector: &Vector) {
                 .map(|_| ())
                 .map_err(Outcomes::Request),
         },
-        Scenario::Threshold { value } => VectorSearchRequest::try_new(
-            source(),
-            "embedding",
-            synthesized(4),
-            4,
-        )
-        .and_then(|request| request.with_minimum_similarity(*value).map(|_| ()))
-        .map_err(Outcomes::Request),
+        Scenario::Threshold { value } => {
+            VectorSearchRequest::try_new(source(), "embedding", synthesized(4), 4)
+                .and_then(|request| request.with_minimum_similarity(*value).map(|_| ()))
+                .map_err(Outcomes::Request)
+        }
         Scenario::Render { field, parameter, threshold, limit } => {
             let predicate = TqlVectorPredicate::try_new(field, parameter, *threshold, *limit)
                 .expect("the render vectors are well-formed predicates");
-            assert_eq!(predicate.render(), vector.expected.expected_text(), "vector {}", vector.name);
+            assert_eq!(
+                predicate.render(),
+                vector.expected.expected_text(),
+                "vector {}",
+                vector.name
+            );
             return;
         }
-        Scenario::Lower { parameter } => TqlVectorPredicate::try_new(
-            "embedding",
-            "queryVector",
-            None,
-            Some(4),
-        )
-        .expect("the lower vectors are well-formed predicates")
-        .lower(source(), parameter)
-        .map(|_| ())
-        .map_err(Outcomes::Request),
+        Scenario::Lower { parameter } => {
+            TqlVectorPredicate::try_new("embedding", "queryVector", None, Some(4))
+                .expect("the lower vectors are well-formed predicates")
+                .lower(source(), parameter)
+                .map(|_| ())
+                .map_err(Outcomes::Request)
+        }
     };
     match (&vector.expected, outcome) {
         (Expected::Accepted, Ok(())) => {}
@@ -462,11 +457,8 @@ fn vector_conformance_corpus_is_complete_and_exact() {
     assert_eq!(corpus.iter().filter(|v| matches!(v.scenario, Scenario::Options { .. })).count(), 8);
     assert_eq!(corpus.iter().filter(|v| matches!(v.scenario, Scenario::Counts { .. })).count(), 3);
     assert_eq!(
-        corpus
-            .iter()
-            .filter(|v| matches!(v.scenario, Scenario::Declaration { .. }))
-            .count(),
-        4
+        corpus.iter().filter(|v| matches!(v.scenario, Scenario::Declaration { .. })).count(),
+        5
     );
     assert_eq!(corpus.iter().filter(|v| matches!(v.scenario, Scenario::Request { .. })).count(), 8);
     assert_eq!(
@@ -475,7 +467,7 @@ fn vector_conformance_corpus_is_complete_and_exact() {
     );
     assert_eq!(corpus.iter().filter(|v| matches!(v.scenario, Scenario::Render { .. })).count(), 3);
     assert_eq!(corpus.iter().filter(|v| matches!(v.scenario, Scenario::Lower { .. })).count(), 3);
-    assert_eq!(corpus.len(), 31, "the corpus carries exactly thirty-one named vectors");
+    assert_eq!(corpus.len(), 32, "the corpus carries exactly thirty-two named vectors");
     for vector in &corpus {
         run(vector);
     }
@@ -486,9 +478,10 @@ fn every_options_refusal_variant_is_reached_by_the_corpus() {
     let produced: Vec<VectorOptionsError> = vectors()
         .into_iter()
         .filter_map(|vector| match (vector.scenario, vector.expected) {
-            (Scenario::Options { .. } | Scenario::Counts { .. }, Expected::RefusedOptions(error)) => {
-                Some(error)
-            }
+            (
+                Scenario::Options { .. } | Scenario::Counts { .. },
+                Expected::RefusedOptions(error),
+            ) => Some(error),
             _ => None,
         })
         .collect();
