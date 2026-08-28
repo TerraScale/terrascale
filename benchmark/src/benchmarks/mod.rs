@@ -67,9 +67,13 @@
 mod driver;
 mod gates;
 mod lane;
+mod optimizer;
 mod record;
 mod reference;
 mod vocabulary;
+
+#[cfg(test)]
+mod optimizer_tests;
 
 #[cfg(test)]
 mod tests;
