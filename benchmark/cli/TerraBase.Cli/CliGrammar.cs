@@ -121,6 +121,34 @@ public static class CliGrammar
     /// <returns>The flags by long name; boolean flags map to an empty value.</returns>
     public static Dictionary<string, string> ParseFlags(string[] args) => Tokenize(args).Flags;
 
+    /// <summary>
+    /// Names the command the plain tokens address: the longest matching
+    /// table prefix — the same longest-prefix walk <see cref="ParseCommand"/>
+    /// uses — so every multi-word command (<c>document read</c>,
+    /// <c>query cancel</c>, <c>engine shutdown</c>, ...) is named by its
+    /// full path, never by its first word alone.
+    /// </summary>
+    /// <param name="plain">The plain tokens, in order (an option's value never among them).</param>
+    /// <returns>The matched table name, or the first token when nothing matches; the empty string for no tokens.</returns>
+    public static string CommandLabel(IReadOnlyList<string> plain)
+    {
+        if (plain.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        for (var words = Math.Min(2, plain.Count); words >= 1; words--)
+        {
+            var candidate = string.Join(' ', plain.Take(words));
+            if (Commands.ContainsKey(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return plain[0];
+    }
+
     /// <summary>Parses the command: the longest matching table prefix of the plain tokens.</summary>
     /// <param name="args">The command-line arguments.</param>
     /// <returns>The parsed command.</returns>
