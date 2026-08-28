@@ -54,6 +54,13 @@ pub use families::{
     FamilyError, FamilyKind, FamilyReadContext, FamilyReadRequest, FamilyReadResult, FamilyStore,
     FamilyWriteRequest,
 };
+pub use index::operations::{
+    INDEX_ERROR_STATE_THRESHOLD, IndexCreationOutcome, IndexDeployment, IndexErrorAction,
+    IndexErrorCategory, IndexErrorListing, IndexErrorRecord, IndexLockMode, IndexOperationError,
+    IndexOperationalState, IndexPriority, IndexResetMode, IndexStatistics, IndexStore,
+    LifecycleTransition, MAX_INDEX_ERRORS_PER_INDEX, NonStaleWaitOutcome, RebuildStepOutcome,
+    StalenessReason, TenantIndexStatistics, WaitForNonStale,
+};
 pub use migration::{
     MigrationError, MigrationLossMatrix, MigrationManifest, MigrationOptions, MigrationRecord,
     MigrationReport,
