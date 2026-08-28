@@ -99,6 +99,20 @@ function createFixtureState(options) {
   const receipts = new Map(); // operationId -> CommitReceipt (idempotency)
   const familyStates = new Map(); // "<kind>:<scope>" -> { state, version }
   const sessions = new Map(); // sessionId -> session (LRU insertion order)
+  // The backbone changes journal (DB-04): every change event the fixture's
+  // /v1/streams surface serves — appended by typed writes and by fixture
+  // control, replayed by sequence, mirrored on the real host's SSE
+  // vocabulary (opened/batch/trigger/closed/drop).
+  const streamJournal = [];
+  const streamSubscribers = new Set();
+  const stream = {
+    nextSequence: 1,
+    nextSubscriptionId: 0,
+    hold: false,
+    poisonNext: false,
+    subscribers: streamSubscribers,
+    journal: streamJournal,
+  };
   const state = {
     startedAt: isoNow(),
     statusBehavior: "status-ok", // "status-ok" | "status-slow" | "status-fail"
@@ -109,6 +123,7 @@ function createFixtureState(options) {
     receipts,
     familyStates,
     sessions,
+    stream,
   };
 
   const seed = new Map();
@@ -124,6 +139,7 @@ function createFixtureState(options) {
     state.statusBehavior = "status-ok";
     state.sessionGate = false;
     state.framePoison = false;
+    state.stream.hold = false;
   };
 
   state.storageStats = () => {
@@ -183,6 +199,12 @@ function createFixtureState(options) {
     }
     const version = (existing?.version ?? 0) + 1;
     docs.set(document.id, { value: document.value, version });
+    // The write publishes on the backbone (DB-04): the fixture's changes
+    // stream carries the same content-free put event the wire carries.
+    state.emitStreamEvent(
+      { kind: "put", collection: document.collection, document: document.id },
+      request.operationId,
+    );
     const receipt = {
       operationId: request.operationId,
       collection: document.collection,
@@ -192,6 +214,26 @@ function createFixtureState(options) {
     };
     receipts.set(request.operationId, receipt);
     return { receipt };
+  };
+
+  // Appends one change event to the backbone journal and fans it out to
+  // every matching stream subscriber (the DB-04 live surface). Content-free
+  // by construction: identities only, never a body.
+  state.emitStreamEvent = (partial, operationId = `fixture-${stream.nextSequence}`) => {
+    const event = {
+      sequence: stream.nextSequence,
+      operationId,
+      kind: partial.kind,
+      collection: partial.collection ?? null,
+      document: partial.document ?? null,
+      conflict: partial.conflict ?? null,
+    };
+    stream.nextSequence += 1;
+    streamJournal.push(event);
+    for (const subscriber of streamSubscribers) {
+      subscriber.deliver(event);
+    }
+    return event;
   };
 
   state.readFamily = (request) => {
@@ -210,6 +252,17 @@ function createFixtureState(options) {
     entry.version += 1;
     entry.state = { ...entry.state, ...request.operation, updatedAt: isoNow() };
     familyStates.set(key, entry);
+    // Family writes publish their backbone kinds (SE-03's parity mapping:
+    // counter watch ← family counter writes, time-series watch ← family
+    // time-series writes).
+    if (request.kind === "counters") {
+      state.emitStreamEvent({ kind: "counter", collection: request.scope }, request.operationId);
+    } else if (request.kind === "time-series") {
+      state.emitStreamEvent(
+        { kind: "time-series", collection: request.scope },
+        request.operationId,
+      );
+    }
     const receipt = {
       operationId: request.operationId,
       collection: `family:${request.kind}`,
@@ -274,6 +327,11 @@ function createFixtureState(options) {
       session.connections.clear();
     }
     sessions.clear();
+    for (const subscriber of streamSubscribers) {
+      subscriber.close();
+    }
+    streamSubscribers.clear();
+    streamJournal.length = 0;
   };
 
   return state;
@@ -296,7 +354,8 @@ function corsHeaders() {
   return {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "content-type, last-event-id",
+    "access-control-allow-headers":
+      "content-type, last-event-id, x-tb-principal, x-tb-tenant",
   };
 }
 
@@ -540,6 +599,160 @@ function fixtureLoginPage() {
 `;
 }
 
+// The DB-04 backbone changes stream: the fixture's mirror of the real C#
+// API host's GET /v1/streams SSE surface (host/TerraBase.Api
+// TypedApi.StreamSseAsync over BackboneHub) — same named events (opened,
+// batch, trigger, closed, drop), same SSE id semantics (the last served
+// sequence; a drop marker's id is resumeFrom - 1), same resume rules
+// (from query inclusive, Last-Event-ID exclusive), same backend-context
+// gate, same content-free events. The fixture adds the controlled
+// behaviors the tests drive deterministically: emitting every selector
+// kind, holding delivery, shedding a held queue oldest-first with an
+// in-band drop marker, re-delivering served identities (at-least-once),
+// an unknown event name, and connection drops.
+function handleChangesStream(req, res, url, state) {
+  // The local gate, mirroring the real host exactly: no backend-supplied
+  // context, no engine frame (PD-2026-08-26-11 D1).
+  const principal = req.headers["x-tb-principal"];
+  const tenant = req.headers["x-tb-tenant"];
+  if (
+    typeof principal !== "string" ||
+    principal.length === 0 ||
+    typeof tenant !== "string" ||
+    tenant.length === 0
+  ) {
+    sendJson(res, 401, {
+      code: "unauthorized",
+      detail: "backend-supplied context (X-TB-Principal, X-TB-Tenant) is required",
+    });
+    return;
+  }
+
+  const collectionsParam = url.searchParams.get("collections");
+  const collections =
+    collectionsParam !== null && collectionsParam.length > 0
+      ? collectionsParam
+          .split(",")
+          .map((name) => name.trim())
+          .filter((name) => name.length > 0)
+      : null;
+  // Resume: the from query is an inclusive replay start; Last-Event-ID
+  // names the last event seen, so the resume point is strictly after it.
+  const fromQuery = url.searchParams.get("from");
+  const lastEventId = req.headers["last-event-id"];
+  let from = null;
+  if (fromQuery !== null && fromQuery.length > 0 && Number.isFinite(Number(fromQuery))) {
+    from = Math.max(1, Math.trunc(Number(fromQuery)));
+  } else if (typeof lastEventId === "string" && lastEventId.length > 0) {
+    const parsed = Number.parseInt(lastEventId, 10);
+    if (Number.isFinite(parsed)) {
+      from = parsed + 1;
+    }
+  }
+
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+    ...corsHeaders(),
+  });
+  res.write("retry: 1000\n\n");
+
+  const subscriptionId = ++state.stream.nextSubscriptionId;
+  const matches = (event) => {
+    if (collections === null) {
+      return true;
+    }
+    // SE-03's recorded limit, mirrored: conflict events carry no
+    // collection identity, so a collection-refined filter does not
+    // observe them.
+    if (event.kind === "conflict") {
+      return false;
+    }
+    return event.collection !== null && collections.includes(event.collection);
+  };
+
+  const subscriber = {
+    res,
+    subscriptionId,
+    queued: [],
+    deliveredBatches: [],
+    dropped: 0,
+    write(frame) {
+      if (!res.destroyed) {
+        res.write(frame);
+      }
+    },
+    batch(events, { replay = false } = {}) {
+      if (events.length === 0) {
+        return;
+      }
+      const payload = {
+        subscriptionId,
+        fromSequence: events[0].sequence,
+        events,
+        nextSequence: events[events.length - 1].sequence + 1,
+      };
+      const frame = `id: ${payload.nextSequence - 1}\nevent: batch\ndata: ${JSON.stringify(payload)}\n\n`;
+      if (!replay) {
+        this.deliveredBatches.push(frame);
+        if (this.deliveredBatches.length > 16) {
+          this.deliveredBatches.shift();
+        }
+      }
+      if (state.stream.hold) {
+        this.queued.push({ frame, events });
+        return;
+      }
+      this.write(frame);
+      if (replay) {
+        return;
+      }
+      // The content-free trigger rides after the live batch (the push-hint
+      // contract, PD-2026-08-26-13 D3).
+      this.write(
+        `id: ${payload.nextSequence - 1}\nevent: trigger\ndata: ${JSON.stringify({
+          subscriptionId,
+          collection: events[0].collection ?? "",
+          sequence: events[events.length - 1].sequence,
+          operationId: events[events.length - 1].operationId,
+        })}\n\n`,
+      );
+    },
+    deliver(event) {
+      if (!matches(event)) {
+        return;
+      }
+      this.batch([event]);
+    },
+    close() {
+      this.res.destroy();
+    },
+  };
+  state.stream.subscribers.add(subscriber);
+
+  subscriber.write(
+    `id: ${Math.max(0, (from ?? state.stream.nextSequence) - 1)}\nevent: opened\ndata: ${JSON.stringify({
+      subscriptionId,
+      startSequence: from ?? state.stream.nextSequence,
+      collections,
+    })}\n\n`,
+  );
+
+  // The replayed backlog: ONE batch from the journal, exactly the host's
+  // single replay batch at subscribe (the client classifies a resumed
+  // connection's first batch as the backlog).
+  if (from !== null) {
+    const replay = state.stream.journal.filter((event) => event.sequence >= from && matches(event));
+    subscriber.batch(replay, { replay: true });
+  }
+
+  req.on("close", () => {
+    state.stream.subscribers.delete(subscriber);
+  });
+}
+
 export function createFixtureServer(options = {}) {
   const resolved = { ...DEFAULTS, ...options };
   const state = createFixtureState(resolved);
@@ -571,6 +784,13 @@ export function createFixtureServer(options = {}) {
 
       if (req.method === "GET" && path === "/api/v2/subscriptions/ticks") {
         handleTicksSubscription(req, res, url, state, resolved);
+        return;
+      }
+
+      // The real-host backbone stream surface (DB-04): same route, same
+      // vocabulary, same gate as the C# host's /v1/streams.
+      if (req.method === "GET" && path === "/v1/streams") {
+        handleChangesStream(req, res, url, state);
         return;
       }
 
@@ -828,6 +1048,59 @@ export function createFixtureServer(options = {}) {
         if (body.framePoison === true) {
           state.framePoison = true;
         }
+        // The DB-04 changes-stream controls (deterministic test drivers
+        // for the live surface's behaviors; see handleChangesStream).
+        if (Array.isArray(body.streamEmit)) {
+          for (const partial of body.streamEmit) {
+            state.emitStreamEvent(partial);
+          }
+        }
+        if (body.streamHold === true) {
+          state.stream.hold = true;
+        }
+        if (body.streamShed === true) {
+          state.stream.hold = false;
+          for (const subscriber of state.stream.subscribers) {
+            if (subscriber.queued.length === 0) {
+              continue;
+            }
+            const shed = subscriber.queued;
+            subscriber.queued = [];
+            subscriber.dropped += shed.length;
+            const resumeFrom = shed[0].events[0].sequence;
+            // The in-band drop marker, exactly the host's policy: the
+            // marker's id is the boundary minus one, so a consumer that
+            // rewinds there re-delivers the missed range.
+            subscriber.write(
+              `id: ${resumeFrom - 1}\nevent: drop\ndata: ${JSON.stringify({
+                subscriptionId: subscriber.subscriptionId,
+                resumeFrom,
+                dropped: subscriber.dropped,
+              })}\n\n`,
+            );
+          }
+        }
+        if (body.streamRedeliver === true) {
+          // At-least-once in action: the served identities return with
+          // their original sequences.
+          for (const subscriber of state.stream.subscribers) {
+            const last = subscriber.deliveredBatches.at(-1);
+            if (last !== undefined) {
+              subscriber.write(last);
+            }
+          }
+        }
+        if (body.streamDropConnections === true) {
+          for (const subscriber of state.stream.subscribers) {
+            subscriber.close();
+          }
+          state.stream.subscribers.clear();
+        }
+        if (body.streamPoisonEvent === true) {
+          for (const subscriber of state.stream.subscribers) {
+            subscriber.write(`event: surprise\ndata: {}\n\n`);
+          }
+        }
         if (body.reset === true) {
           state.reset();
         }
@@ -836,6 +1109,8 @@ export function createFixtureServer(options = {}) {
           statusBehavior: state.statusBehavior,
           sessionGate: state.sessionGate,
           framePoison: state.framePoison,
+          streamSubscribers: state.stream.subscribers.size,
+          streamSequence: state.stream.nextSequence - 1,
         });
         return;
       }

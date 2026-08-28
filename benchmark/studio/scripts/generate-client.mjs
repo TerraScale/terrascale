@@ -146,6 +146,19 @@ const operations = contract.operations
 
 const subscription = contract.subscriptions[0];
 const subscribeMethod = camel(`subscribe-${subscription.name}`);
+
+// The DB-04 changes stream: the real C# API host's backbone subscription
+// surface (/v1/streams), mirrored by the fixture. Keyed off the contract's
+// streams[] entry so the path stays contract-owned; the implementation is
+// a fetch-stream SSE reader because the host's local gate requires
+// backend-context headers EventSource cannot send.
+const changesStream = contract.streams.find((entry) => entry.name === "changes");
+if (changesStream === undefined) {
+  throw new Error("contract.streams carries no 'changes' stream");
+}
+const changesPath = changesStream.path;
+const changeKinds = contract.types.StreamChangeKind.values;
+const changesEvents = changesStream.events;
 const subscriptionSection = `export interface ${pascal(subscription.name)}SubscriptionHandlers {
   onState?: (state: ${pascal(subscription.name)}ConnectionState, snapshot: ${pascal(subscription.name)}SubscriptionSnapshot) => void;
   onTick: (tick: TickDeltaPayload) => void;
@@ -183,6 +196,492 @@ export interface ${pascal(subscription.name)}Subscription {
 }
 `;
 
+const changesSection = `export interface BackendContext {
+  principal: string;
+  tenant: string;
+}
+
+const KNOWN_CHANGE_KINDS = [
+${changeKinds.map((kind) => `  ${JSON.stringify(kind)},`).join("\n")}
+] as const;
+
+export type StreamChangeKind = (typeof KNOWN_CHANGE_KINDS)[number];
+
+const KNOWN_STREAM_EVENTS = [
+${changesEvents.map((name) => `  ${JSON.stringify(name)},`).join("\n")}
+] as const;
+
+export type StreamEventName = (typeof KNOWN_STREAM_EVENTS)[number];
+
+export interface ChangesSubscriptionHandlers {
+  onState?: (state: ChangesConnectionState, snapshot: ChangesSubscriptionSnapshot) => void;
+  onOpened?: (opened: StreamOpenedPayload) => void;
+  onEvent?: (event: StreamChangeEvent, meta: { readonly replayed: boolean }) => void;
+  onTrigger?: (trigger: StreamTriggerPayload) => void;
+  onDrop?: (drop: StreamDropPayload) => void;
+  onClosed?: (closed: StreamClosedPayload) => void;
+  onRejected?: (rejectedCount: number, reason: string) => void;
+  onFatal?: (error: TerrabaseApiError) => void;
+}
+
+export interface ChangesSubscriptionOptions {
+  /**
+   * The collection filter (engine-side): absent subscribes to every collection.
+   */
+  collections?: readonly string[];
+  /**
+   * An explicit inclusive replay start (checkpoint resume). Absent opens live-only.
+   */
+  fromSequence?: number;
+  /**
+   * Backend-supplied context for the host's local gate. Falls back to the
+   * client options; when neither is set the request carries no context and
+   * the host's gate answers unauthorized (surfaced as a fatal error).
+   */
+  backendContext?: BackendContext;
+  /**
+   * Force a reconnect when no event arrives within this window. DISABLED by
+   * default: the /v1/streams surface carries no heartbeat, so an idle stream
+   * is indistinguishable from a quiet one in-band — only transport errors
+   * (or this opt-in watchdog) drive reconnects.
+   */
+  staleMs?: number;
+  /**
+   * The delay before a reconnect attempt. Defaults to 500ms.
+   */
+  reconnectDelayMs?: number;
+}
+
+export type ChangesConnectionState = "connecting" | "live" | "reconnecting" | "failed";
+
+export interface ChangesSubscriptionSnapshot {
+  state: ChangesConnectionState;
+  eventCount: number;
+  replayedCount: number;
+  duplicateCount: number;
+  rejectedCount: number;
+  reconnectCount: number;
+  dropCount: number;
+  droppedTotal: number | null;
+  lastSeq: number | null;
+  checkpoint: number | null;
+  lastError: string | null;
+}
+
+export interface ChangesSubscription {
+  snapshot(): ChangesSubscriptionSnapshot;
+  /**
+   * The deliberately-slow-consumer control (the DB-04 probe): stops reading
+   * the response body — the connection stays open, the host's bounded queue
+   * absorbs the backlog, and a full queue sheds counted frames.
+   */
+  pause(): void;
+  resume(): void;
+  close(): void;
+}
+
+class ChangesSubscriptionImpl implements ChangesSubscription {
+  readonly #clientOptions: StudioClientOptions;
+  readonly #handlers: ChangesSubscriptionHandlers;
+  readonly #options: ChangesSubscriptionOptions;
+  readonly #staleMs: number | null;
+  readonly #reconnectDelayMs: number;
+
+  #controller: AbortController | null = null;
+  #reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  #decoder: TextDecoder | null = null;
+  #watchdog: ReturnType<typeof setInterval> | null = null;
+  #state: ChangesConnectionState = "connecting";
+  #openCount = 0;
+  #eventCount = 0;
+  #replayedCount = 0;
+  #duplicateCount = 0;
+  #rejectedCount = 0;
+  #dropMarkers = 0;
+  #droppedTotal: number | null = null;
+  #lastSeq: number | null = null;
+  #lastError: string | null = null;
+  #closed = false;
+  #paused = false;
+  #pending: Uint8Array | null = null;
+
+  // The resume cursor: the last sequence this consumer accepted, minus the
+  // rewind a drop marker imposes. Reconnects ask from = checkpoint + 1.
+  #checkpoint: number | null = null;
+  // The from value this connection opened with: null when live-only, and
+  // the marker that classifies the first batch of a resumed connection as
+  // the replayed backlog (the host replays from exactly this point).
+  #openedFrom: number | null = null;
+  #firstBatchOnConnection = false;
+  #lastFrameAt = Date.now();
+  #carry = "";
+
+  constructor(
+    clientOptions: StudioClientOptions,
+    handlers: ChangesSubscriptionHandlers,
+    options: ChangesSubscriptionOptions,
+  ) {
+    this.#clientOptions = clientOptions;
+    this.#handlers = handlers;
+    this.#options = options;
+    this.#staleMs = options.staleMs ?? null;
+    this.#reconnectDelayMs = options.reconnectDelayMs ?? 500;
+    this.#open();
+    if (this.#staleMs !== null) {
+      this.#watchdog = setInterval(() => this.#checkStale(), 1_000);
+    }
+  }
+
+  snapshot(): ChangesSubscriptionSnapshot {
+    return {
+      state: this.#state,
+      eventCount: this.#eventCount,
+      replayedCount: this.#replayedCount,
+      duplicateCount: this.#duplicateCount,
+      rejectedCount: this.#rejectedCount,
+      reconnectCount: Math.max(0, this.#openCount - 1),
+      dropCount: this.#dropMarkers,
+      droppedTotal: this.#droppedTotal,
+      lastSeq: this.#lastSeq,
+      checkpoint: this.#checkpoint,
+      lastError: this.#lastError,
+    };
+  }
+
+  pause(): void {
+    this.#paused = true;
+  }
+
+  resume(): void {
+    if (!this.#paused) {
+      return;
+    }
+    this.#paused = false;
+    if (this.#pending !== null) {
+      const value = this.#pending;
+      this.#pending = null;
+      this.#lastFrameAt = Date.now();
+      this.#ingest((this.#decoder as TextDecoder).decode(value, { stream: true }));
+    }
+    this.#pump();
+  }
+
+  close(): void {
+    this.#closed = true;
+    if (this.#watchdog !== null) {
+      clearInterval(this.#watchdog);
+      this.#watchdog = null;
+    }
+    this.#detach();
+  }
+
+  #backendContext(): BackendContext | null {
+    return this.#options.backendContext ?? this.#clientOptions.backendContext ?? null;
+  }
+
+  async #open(): Promise<void> {
+    if (this.#closed) {
+      return;
+    }
+    this.#openCount += 1;
+    this.#firstBatchOnConnection = true;
+    const from = this.#checkpoint === null ? this.#options.fromSequence ?? null : this.#checkpoint + 1;
+    this.#openedFrom = from;
+    const query = new URLSearchParams();
+    if (this.#options.collections !== undefined && this.#options.collections.length > 0) {
+      query.set("collections", this.#options.collections.join(","));
+    }
+    if (from !== null && from !== undefined) {
+      query.set("from", String(from));
+    }
+    const base = this.#clientOptions.baseUrl.replace(/\\/$/, "");
+    const qs = query.toString();
+    const url = qs.length === 0 ? base + ${JSON.stringify(changesPath)} : base + ${JSON.stringify(changesPath)} + "?" + qs;
+    const headers: Record<string, string> = { accept: "text/event-stream" };
+    const context = this.#backendContext();
+    if (context !== null) {
+      headers["x-tb-principal"] = context.principal;
+      headers["x-tb-tenant"] = context.tenant;
+    }
+    const controller = new AbortController();
+    this.#controller = controller;
+    try {
+      const doFetch = this.#clientOptions.fetchImpl ?? fetch;
+      const response = await doFetch(url, {
+        method: "GET",
+        headers,
+        signal: controller.signal,
+        credentials: "omit",
+        cache: "no-store",
+      });
+      if (!response.ok || response.body === null) {
+        const code = response.status;
+        let message = "the stream was refused before it opened";
+        try {
+          const body = (await response.json()) as {
+            detail?: unknown;
+            error?: { message?: unknown };
+          };
+          if (typeof body.detail === "string") {
+            // The real host's ErrorDto (System.Text.Json Web defaults).
+            message = body.detail;
+          } else if (typeof body.error?.message === "string") {
+            message = body.error.message;
+          }
+        } catch {
+          // A non-JSON refusal keeps the generic message.
+        }
+        if (code === 401 || code === 403) {
+          // The gate's refusals are not retryable in-band: surface them.
+          this.#lastError = message;
+          this.close();
+          this.#setState("failed");
+          this.#handlers.onFatal?.(new TerrabaseApiError("stream.refused", message, { status: code }));
+          return;
+        }
+        this.#scheduleReconnect("the stream was refused (HTTP " + code + "): " + message);
+        return;
+      }
+      this.#read(response.body);
+    } catch (cause) {
+      if (this.#closed) {
+        return;
+      }
+      this.#scheduleReconnect("the stream connection failed: " + String(cause));
+    }
+  }
+
+  #read(body: ReadableStream<Uint8Array>): void {
+    this.#reader = body.getReader();
+    this.#decoder ??= new TextDecoder();
+    this.#pump();
+  }
+
+  #pump(): void {
+    const reader = this.#reader;
+    if (reader === null || this.#closed) {
+      return;
+    }
+    void reader
+      .read()
+      .then(({ done, value }) => {
+        if (done) {
+          if (!this.#closed) {
+            this.#scheduleReconnect("the stream ended");
+          }
+          return;
+        }
+        if (this.#paused) {
+          // A read that resolved while paused is stashed undelivered: the
+          // deliberately-slow consumer processes nothing until resume().
+          this.#pending = value;
+          return;
+        }
+        this.#lastFrameAt = Date.now();
+        this.#ingest((this.#decoder as TextDecoder).decode(value, { stream: true }));
+        if (!this.#paused && !this.#closed) {
+          this.#pump();
+        }
+      })
+      .catch((cause: unknown) => {
+        if (!this.#closed) {
+          this.#scheduleReconnect("the stream read failed: " + String(cause));
+        }
+      });
+  }
+
+  #ingest(chunk: string): void {
+    const text = this.#carry + chunk;
+    const parts = text.split("\\n\\n");
+    this.#carry = parts.pop() ?? "";
+    for (const block of parts) {
+      if (block.trim().length === 0) {
+        continue;
+      }
+      let id: number | null = null;
+      let name: string | null = null;
+      let data = "";
+      for (const line of block.split("\\n")) {
+        if (line.startsWith("id:")) {
+          const parsed = Number.parseInt(line.slice(3).trim(), 10);
+          id = Number.isFinite(parsed) ? parsed : null;
+        } else if (line.startsWith("event:")) {
+          name = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          data += line.slice(5).trim();
+        }
+      }
+      if (name === null) {
+        continue;
+      }
+      this.#dispatch(name, data);
+      void id;
+    }
+  }
+
+  #dispatch(name: string, data: string): void {
+    if (!(KNOWN_STREAM_EVENTS as readonly string[]).includes(name)) {
+      this.#reject("unknown event " + JSON.stringify(name));
+      return;
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(data);
+    } catch {
+      this.#reject("event " + name + " carries invalid JSON");
+      return;
+    }
+    if (typeof payload !== "object" || payload === null) {
+      this.#reject("event " + name + " is not an object");
+      return;
+    }
+    switch (name as StreamEventName) {
+      case "opened": {
+        this.#setState("live");
+        this.#handlers.onOpened?.(payload as unknown as StreamOpenedPayload);
+        return;
+      }
+      case "batch": {
+        this.#handleBatch(payload as unknown as StreamBatchPayload);
+        return;
+      }
+      case "trigger": {
+        const trigger = payload as unknown as StreamTriggerPayload;
+        if (typeof trigger.sequence === "number" && trigger.sequence > (this.#lastSeq ?? 0)) {
+          this.#lastSeq = trigger.sequence;
+        }
+        this.#handlers.onTrigger?.(trigger);
+        return;
+      }
+      case "drop": {
+        const drop = payload as unknown as StreamDropPayload;
+        if (typeof drop.resumeFrom !== "number" || !Number.isFinite(drop.resumeFrom)) {
+          this.#reject("drop event carries no finite resume boundary");
+          return;
+        }
+        this.#dropMarkers += 1;
+        if (typeof drop.dropped === "number") {
+          this.#droppedTotal = drop.dropped;
+        }
+        this.#lastError = null;
+        // Rewind the resume cursor to the dropped region's boundary: the
+        // next reconnect re-delivers the missed range, never skips it.
+        if (this.#checkpoint === null || drop.resumeFrom - 1 < this.#checkpoint) {
+          this.#checkpoint = drop.resumeFrom - 1;
+        }
+        this.#handlers.onDrop?.(drop);
+        return;
+      }
+      case "closed": {
+        const closed = payload as unknown as StreamClosedPayload;
+        this.#handlers.onClosed?.(closed);
+        if (closed.reason === "engine-generation-lost") {
+          if (typeof closed.resumeFrom === "number") {
+            this.#checkpoint = closed.resumeFrom - 1;
+          }
+          this.#scheduleReconnect("the engine generation was lost");
+          return;
+        }
+        this.#lastError = "the stream closed: " + String(closed.reason);
+        this.close();
+        this.#setState("failed");
+        return;
+      }
+      default: {
+        this.#reject("unhandled event " + JSON.stringify(name));
+      }
+    }
+  }
+
+  #handleBatch(batch: StreamBatchPayload): void {
+    if (!Array.isArray(batch.events)) {
+      this.#reject("batch carries no events array");
+      return;
+    }
+    const replayedBatch = this.#firstBatchOnConnection && this.#openedFrom !== null;
+    this.#firstBatchOnConnection = false;
+    for (const raw of batch.events) {
+      const record = raw as Record<string, unknown>;
+      if (
+        typeof record.sequence !== "number" ||
+        !Number.isFinite(record.sequence) ||
+        typeof record.operationId !== "string" ||
+        typeof record.kind !== "string" ||
+        !(KNOWN_CHANGE_KINDS as readonly string[]).includes(record.kind)
+      ) {
+        this.#reject("batch carries an invalid event (sequence, operationId, or closed kind)");
+        continue;
+      }
+      if (this.#lastSeq !== null && record.sequence <= this.#lastSeq) {
+        // At-least-once identity: a re-delivered sequence is counted, never
+        // re-surfaced as a fresh change.
+        this.#duplicateCount += 1;
+        continue;
+      }
+      this.#lastSeq = record.sequence;
+      this.#eventCount += 1;
+      if (replayedBatch) {
+        this.#replayedCount += 1;
+      }
+      this.#handlers.onEvent?.(raw, { replayed: replayedBatch });
+    }
+    if (typeof batch.nextSequence === "number" && batch.nextSequence > 0) {
+      // The batch cursor is the authoritative checkpoint (not the SSE id
+      // line, which a drop marker deliberately rewinds).
+      const cursor = batch.nextSequence - 1;
+      if (this.#checkpoint === null || cursor >= this.#checkpoint) {
+        this.#checkpoint = cursor;
+      }
+    }
+  }
+
+  #setState(state: ChangesConnectionState): void {
+    if (this.#state === state) {
+      return;
+    }
+    this.#state = state;
+    this.#handlers.onState?.(state, this.snapshot());
+  }
+
+  #reject(reason: string): void {
+    this.#rejectedCount += 1;
+    this.#lastError = reason;
+    this.#handlers.onRejected?.(this.#rejectedCount, reason);
+  }
+
+  #scheduleReconnect(reason: string): void {
+    if (this.#closed || this.#state === "failed") {
+      return;
+    }
+    this.#setState("reconnecting");
+    this.#lastError = reason;
+    this.#detach();
+    setTimeout(() => {
+      void this.#open();
+    }, this.#reconnectDelayMs);
+  }
+
+  #detach(): void {
+    if (this.#controller !== null) {
+      this.#controller.abort();
+      this.#controller = null;
+    }
+    this.#reader = null;
+    this.#carry = "";
+  }
+
+  #checkStale(): void {
+    if (this.#closed || this.#state === "failed" || this.#staleMs === null) {
+      return;
+    }
+    if (Date.now() - this.#lastFrameAt > this.#staleMs) {
+      this.#lastFrameAt = Date.now();
+      this.#scheduleReconnect("no events within the staleness window; forcing reconnect");
+    }
+  }
+}
+`;
+
 const file = `// GENERATED FILE — DO NOT EDIT BY HAND.
 //
 // Source of truth: contract/terrabase-api.contract.json
@@ -207,6 +706,7 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
 ${typesSection}
 ${frameTypeSection}
 ${subscriptionSection}
+${changesSection}
 export class TerrabaseApiError extends Error {
   readonly code: string;
   readonly retryable: boolean;
@@ -251,6 +751,7 @@ export interface StudioClientOptions {
   baseUrl: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  backendContext?: BackendContext;
 }
 
 export interface OperationOptions {
@@ -652,6 +1153,20 @@ ${operations}
     options: ${pascal(subscription.name)}SubscriptionOptions = {},
   ): ${pascal(subscription.name)}Subscription {
     return new ${pascal(subscription.name)}SubscriptionImpl(this.#options, handlers, options);
+  }
+
+  /**
+   * The backbone changes stream (DB-04): the C# API host's /v1/streams SSE
+   * surface over the SE-03 event backbone — named events (opened, batch,
+   * trigger, closed, drop), checkpoint-resumed reconnect, at-least-once
+   * sequence identities deduplicated client-side, host-shed drops surfaced
+   * in-band, and every kind of the closed selector vocabulary rendered.
+   */
+  subscribeChanges(
+    handlers: ChangesSubscriptionHandlers,
+    options: ChangesSubscriptionOptions = {},
+  ): ChangesSubscription {
+    return new ChangesSubscriptionImpl(this.#options, handlers, options);
   }
 }
 `;
