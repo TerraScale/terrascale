@@ -4,6 +4,11 @@ export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promis
 
 export type AccessTokenProvider = string | (() => Promise<string | undefined> | string | undefined);
 
+export type TerraScaleSqliteRuntimeConfig = {
+  readonly enabled: true;
+  readonly databasePath?: string | undefined;
+};
+
 import type { TerraScaleRequestMetricRecorder } from "./http.js";
 
 export type TerraScaleRuntimeConfig = {
@@ -20,6 +25,7 @@ export type TerraScaleRuntimeConfig = {
   readonly sessionConsistency?: "automatic" | "none" | undefined;
   readonly maxRetryAttempts?: number | undefined;
   readonly retryDelayMs?: number | undefined;
+  readonly sqlite?: TerraScaleSqliteRuntimeConfig | undefined;
 };
 
 export type ResolvedTerraScaleRuntimeConfig = {
@@ -36,11 +42,15 @@ export type ResolvedTerraScaleRuntimeConfig = {
   readonly sessionConsistency: "automatic" | "none";
   readonly maxRetryAttempts: number;
   readonly retryDelayMs: number;
+  readonly sqlite?: TerraScaleSqliteRuntimeConfig | undefined;
 };
 
 export function resolveRuntimeConfig(
   config: TerraScaleRuntimeConfig,
 ): ResolvedTerraScaleRuntimeConfig {
+  if (config.sqlite !== undefined && config.fetch === undefined) {
+    throw new TypeError("SQLite mode is Node-only; use the @terrascale/sdk/local entrypoint.");
+  }
   const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);
 
   if (fetchHandler === undefined) {

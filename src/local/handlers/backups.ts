@@ -16,9 +16,11 @@ type Store = {
   put(namespace: string, key: string, value: unknown): unknown | PromiseLike<unknown>;
   delete(namespace: string, key: string): unknown | PromiseLike<unknown>;
   nextUlid(): string | PromiseLike<string>;
+  getScoped(namespace: string, scope: string, key: string): unknown | PromiseLike<unknown>;
+  listScoped(namespace: string, scope: string): unknown | PromiseLike<unknown>;
 };
-type Confirmation = { readonly projectId: string; readonly databaseId: string; readonly operationSessionId: string; readonly requestDigest: string; readonly expiresAt: string };
-type Idempotency = { readonly fingerprint: string; readonly resourceId: string };
+type Confirmation = { readonly confirmationToken: string; readonly projectId: string; readonly databaseId: string; readonly operationSessionId: string; readonly requestDigest: string; readonly expiresAt: string };
+type Idempotency = { readonly fingerprint: string; readonly resourceId: string; readonly projectId?: string; readonly databaseId?: string; readonly storageId?: string };
 
 const POLICIES = "backup-policies";
 const CONFIRMATIONS = "backup-confirmations";
@@ -38,6 +40,8 @@ export const handleLocalBackups: LocalHandler = async (context) => {
     put: (namespace, key, value) => raw.put(namespace, STORE_SCOPE, key, value),
     delete: (namespace, key) => raw.delete(namespace, STORE_SCOPE, key),
     nextUlid: () => raw.nextUlid(),
+    getScoped: (namespace, scope, key) => raw.get(namespace, scope, key),
+    listScoped: (namespace, scope) => raw.list(namespace, scope),
   };
   const body = objectBody(context);
   let match = matchLocalRoute(context, "PUT", "/api/v1/projects/{projectId}/databases/{databaseId}/backups/policy");
@@ -49,7 +53,7 @@ export const handleLocalBackups: LocalHandler = async (context) => {
       backupPolicyId: previous?.backupPolicyId ?? (await store.nextUlid()) as BackupPolicyId,
       projectId: match!.projectId as ProjectId,
       databaseId: match!.databaseId as DatabaseId,
-      databaseName: await databaseName(store, required(match!.databaseId)),
+      databaseName: await databaseName(store, required(match!.projectId), required(match!.databaseId)),
       fullBackupCron,
       incrementalBackupCron: text(body.incrementalBackupCron) ?? null,
       retentionDays: positiveInt(body.retentionDays, 30),
@@ -70,8 +74,8 @@ export const handleLocalBackups: LocalHandler = async (context) => {
     const requestDigest = digest(required(match!.projectId), required(match!.databaseId), operationSessionId);
     const confirmationToken = randomUUID();
     const expiresAt = new Date(Date.parse(context.now) + 5 * 60_000).toISOString();
-    await store.put(CONFIRMATIONS, confirmationToken, { projectId: required(match!.projectId), databaseId: required(match!.databaseId), operationSessionId, requestDigest, expiresAt } satisfies Confirmation);
-    return jsonResponse({ action: "backup.trigger", projectId: required(match!.projectId) as ProjectId, databaseId: required(match!.databaseId) as DatabaseId, databaseName: await databaseName(store, required(match!.databaseId)), requestDigest, confirmationToken, expiresAt } satisfies Models.DatabaseBackupConfirmationPlanResponse);
+    await store.put(CONFIRMATIONS, confirmationToken, { confirmationToken, projectId: required(match!.projectId), databaseId: required(match!.databaseId), operationSessionId, requestDigest, expiresAt } satisfies Confirmation);
+    return jsonResponse({ action: "backup.trigger", projectId: required(match!.projectId) as ProjectId, databaseId: required(match!.databaseId) as DatabaseId, databaseName: await databaseName(store, required(match!.projectId), required(match!.databaseId)), requestDigest, confirmationToken, expiresAt } satisfies Models.DatabaseBackupConfirmationPlanResponse);
   }
 
   match = matchLocalRoute(context, "POST", "/api/v1/projects/{projectId}/databases/{databaseId}/backups:execute");
@@ -96,12 +100,12 @@ export const handleLocalBackups: LocalHandler = async (context) => {
     const now = context.now;
     const backupId = (await store.nextUlid()) as import("../../ids.js").BackupId;
     const backup: Models.BackupJobResponse = {
-      backupId, projectId: match!.projectId as ProjectId, databaseId: match!.databaseId as DatabaseId, databaseName: await databaseName(store, match!.databaseId),
+      backupId, projectId: match!.projectId as ProjectId, databaseId: match!.databaseId as DatabaseId, databaseName: await databaseName(store, required(match!.projectId), required(match!.databaseId)),
       policy: policy?.fullBackupCron ?? "manual", retention: `${policy?.retentionDays ?? 30} days`, status: "Completed", destinationType: policy?.destinationType ?? "LocalFolder", hasRestorePoint: true, requestedBy: ACTOR, requestedAt: now, updatedAt: now, completedAt: now, errorMessage: null,
     };
     await store.put(BACKUPS, backupId, backup);
     await store.put(RESTORE_POINTS, backupId, { name: `backup-${backupId}`, backupId, createdAt: now, isSnapshotRestore: true, isEncrypted: true, isIncremental: false, filesToRestore: 1 } satisfies Models.RestorePointResponse);
-    await store.put(IDEMPOTENCY, idempotencyScope, { fingerprint, resourceId: backupId });
+    await store.put(IDEMPOTENCY, idempotencyScope, { fingerprint, resourceId: backupId, projectId: match!.projectId, databaseId: match!.databaseId, storageId: idempotencyScope } satisfies Idempotency);
     await store.delete(CONFIRMATIONS, confirmationToken);
     return jsonResponse(backup, 201);
   }
@@ -143,7 +147,7 @@ export const handleLocalBackups: LocalHandler = async (context) => {
     const now = context.now;
     const restore: Models.RestoreJobResponse = { restoreId, projectId: match!.projectId as ProjectId, databaseId: match!.databaseId as DatabaseId, backupId: backup.backupId, restoredDatabaseId: await store.nextUlid() as DatabaseId, restoredDatabaseName: `${backup.databaseName} restored`, status: "Completed", requestedBy: ACTOR, requestedAt: now, updatedAt: now, completedAt: now, errorMessage: null };
     await store.put(RESTORES, restoreId, restore);
-    if (scope !== undefined) await store.put(RESTORE_IDEMPOTENCY, scope, { fingerprint, resourceId: restoreId });
+    if (scope !== undefined) await store.put(RESTORE_IDEMPOTENCY, scope, { fingerprint, resourceId: restoreId, projectId: match!.projectId, databaseId: match!.databaseId, storageId: scope } satisfies Idempotency);
     return jsonResponse(restore, 201);
   }
   match = matchLocalRoute(context, "GET", "/api/v1/projects/{projectId}/databases/{databaseId}/restores/{restoreId}");
@@ -159,10 +163,10 @@ export const handleLocalBackups: LocalHandler = async (context) => {
   return undefined;
 };
 
-async function databaseName(store: Store, databaseId: string): Promise<string> {
-  const direct = await get<{ readonly name?: string }>(store, "databases", databaseId);
+async function databaseName(store: Store, projectId: string, databaseId: string): Promise<string> {
+  const direct = await store.getScoped("sdk-local-database", projectId, databaseId) as { readonly name?: string } | undefined;
   if (direct?.name !== undefined) return direct.name;
-  const all = await records<{ readonly databaseId?: string; readonly name?: string }>(store, "databases");
+  const all = await store.listScoped("sdk-local-database", projectId) as { readonly databaseId?: string; readonly name?: string }[];
   return all.find((item) => item.databaseId === databaseId)?.name ?? `database-${databaseId}`;
 }
 async function get<T>(store: Store, namespace: string, key: string): Promise<T | undefined> { return await store.get(namespace, key) as T | undefined; }

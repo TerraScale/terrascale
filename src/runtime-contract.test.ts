@@ -10,7 +10,11 @@ test("package metadata declares the supported Node and browser matrix", async ()
   const packageJson = JSON.parse(await readFile(path.join(repositoryRoot, "package.json"), "utf8")) as {
     readonly engines?: { readonly node?: string; readonly npm?: string };
     readonly browserslist?: { readonly production?: readonly string[] };
-    readonly exports?: Record<string, { readonly types?: string; readonly import?: string }>;
+    readonly exports?: Record<string, {
+      readonly types?: string;
+      readonly import?: string;
+      readonly node?: string;
+    }>;
   };
 
   assert.deepEqual(packageJson.engines, { node: "22.x || 24.x", npm: ">=11.0.0" });
@@ -28,15 +32,20 @@ test("package metadata declares the supported Node and browser matrix", async ()
     types: "./dist/admin.d.ts",
     import: "./dist/admin.js",
   });
+  assert.deepEqual(packageJson.exports?.["./local"], {
+    types: "./dist/local/index.d.ts",
+    node: "./dist/local/index.js",
+  });
 });
 
-test("shipped browser paths do not import Node-only modules", async () => {
+test("shipped browser paths do not import Node-only modules or the local emulator", async () => {
   const sources = await productionSources(path.join(repositoryRoot, "src"));
   assert.notEqual(sources.length, 0);
 
   for (const sourcePath of sources) {
     const source = await readFile(sourcePath, "utf8");
     assert.doesNotMatch(source, /(?:from\s+|import\s*\(|require\s*\()\s*["']node:/u, sourcePath);
+    assert.doesNotMatch(source, /(?:from\s+|import\s*\()\s*["'][^"']*\/local(?:\/|["'])/u, sourcePath);
   }
 });
 
@@ -60,7 +69,7 @@ async function productionSources(directory: string): Promise<string[]> {
   const paths = await Promise.all(entries.map(async (entry) => {
     const entryPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      return entry.name === "integration" ? [] : productionSources(entryPath);
+      return entry.name === "integration" || entry.name === "local" ? [] : productionSources(entryPath);
     }
     if (!entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts") || entry.name.includes("capture")) {
       return [];

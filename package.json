@@ -20,7 +20,14 @@
     "./admin": {
       "types": "./dist/admin.d.ts",
       "import": "./dist/admin.js"
+    },
+    "./local": {
+      "types": "./dist/local/index.d.ts",
+      "node": "./dist/local/index.js"
     }
+  },
+  "bin": {
+    "terrascale-local": "./dist/local/cli.js"
   },
   "files": [
     "dist",
@@ -29,6 +36,7 @@
     "!dist/**/*.test.*",
     "!dist/**/*capture*",
     "!dist/**/*.map",
+    "sdk-route-manifest.json",
     "README.md",
     "LICENSE"
   ],
@@ -40,6 +48,7 @@
     "check:route-manifest": "node scripts/generate-client-route-manifest.mjs --check",
     "generate:route-manifest": "npm run build && node scripts/generate-client-route-manifest.mjs",
     "generate:openapi-contract-descriptor": "npm run build && node scripts/generate-openapi-contract-descriptor.mjs",
+    "local": "node dist/local/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/*.test.js dist/integration/*.test.js",
     "test:integration": "node --test dist/integration/*.test.js",

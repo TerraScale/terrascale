@@ -58,20 +58,38 @@ type CaptureOperation = {
 
 export async function capturePublicClientRoutes(): Promise<readonly CapturedSdkRoute[]> {
   assertCaptureOperationCoverage();
-  return Promise.all(captureOperations.map(captureRoute));
+  return Promise.all(captureOperations.map((operation) => captureRoute(operation)));
 }
 
-async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRoute> {
+export async function exercisePublicClientRoutes(
+  fetch: FetchLike,
+): Promise<readonly CapturedSdkRoute[]> {
+  assertCaptureOperationCoverage();
+  const routes: CapturedSdkRoute[] = [];
+  for (const operation of captureOperations) {
+    routes.push(await captureRoute(operation, fetch, true));
+  }
+  return routes;
+}
+
+async function captureRoute(
+  operation: CaptureOperation,
+  routeFetch?: FetchLike,
+  assertRouted = false,
+): Promise<CapturedSdkRoute> {
   let capturedRequest: Request | undefined;
   let capturedMetric: TerraScaleRequestMetric | undefined;
 
   const captureFetch: FetchLike = async (input) => {
-    capturedRequest = input instanceof Request ? input : new Request(input);
+    const request = input instanceof Request ? input : new Request(input);
+    capturedRequest = request.clone();
 
-    return new Response("{}", {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    return routeFetch === undefined
+      ? new Response("{}", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      : routeFetch(request);
   };
 
   const baseConfig = {
@@ -88,7 +106,17 @@ async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRou
       : baseConfig,
   );
 
-  await operation.invoke(client);
+  const result = await operation.invoke(client);
+
+  if (
+    assertRouted
+    && isRoutingFailure(result)
+    && !(operation.client === "databaseBranches" && operation.operation === "requestClone")
+  ) {
+    throw new Error(
+      `Local route exercise failed for ${operation.client}.${operation.operation}: ${result.error.code} (${result.error.kind}).`,
+    );
+  }
 
   if (capturedRequest === undefined) {
     throw new Error(`Route capture for ${operation.client}.${operation.operation} made no request.`);
@@ -112,6 +140,24 @@ async function captureRoute(operation: CaptureOperation): Promise<CapturedSdkRou
     routeName: capturedMetric.routeName,
     sourceContract: await capturedSourceContract(capturedRequest),
   };
+}
+
+function isRoutingFailure(value: unknown): value is {
+  readonly error: { readonly code: string; readonly kind: string };
+  readonly ok: false;
+} {
+  if (typeof value !== "object" || value === null || !("ok" in value) || value.ok !== false) {
+    return false;
+  }
+  if (!("error" in value) || typeof value.error !== "object" || value.error === null) {
+    return true;
+  }
+  const error = value.error as { readonly code?: unknown; readonly kind?: unknown };
+  return error.code === "route_not_found"
+    || error.code === "local_emulator_error"
+    || error.kind === "invalid-response"
+    || error.kind === "server"
+    || error.kind === "transport";
 }
 
 async function capturedSourceContract(request: Request): Promise<CapturedSdkRoute["sourceContract"]> {

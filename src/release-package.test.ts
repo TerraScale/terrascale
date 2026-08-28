@@ -175,6 +175,10 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
 
     assert.match(listing.stdout, /^package\/dist\/index\.js$/mu);
     assert.match(listing.stdout, /^package\/dist\/index\.d\.ts$/mu);
+    assert.match(listing.stdout, /^package\/dist\/local\/index\.js$/mu);
+    assert.match(listing.stdout, /^package\/dist\/local\/index\.d\.ts$/mu);
+    assert.match(listing.stdout, /^package\/dist\/local\/cli\.js$/mu);
+    assert.match(listing.stdout, /^package\/sdk-route-manifest\.json$/mu);
     assert.doesNotMatch(
       listing.stdout,
       /^package\/(?:Documentation\/|node_modules\/|test\/|dist\/.*(?:\.map$|\.test\.|capture|internal))/mu,
@@ -221,6 +225,25 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       ],
       { cwd: consumer },
     );
+    await run(
+      "node",
+      [
+        "--input-type=module",
+        "--eval",
+        "import { createTerraScaleSqliteRuntime } from '@terrascale/sdk/local'; const local = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } }); await local.close();",
+      ],
+      { cwd: consumer },
+    );
+    const cli = await run(
+      path.join(consumer, "node_modules", ".bin", "terrascale-local"),
+      ["--help"],
+      { cwd: consumer },
+    );
+    assert.match(cli.stdout, /Usage: terrascale-local/u);
+    for (const declaration of ["dist/index.d.ts", "dist/admin.d.ts"]) {
+      const source = await readFile(path.join(checkout, declaration), "utf8");
+      assert.doesNotMatch(source, /(?:node:sqlite|\.\/local\/)/u);
+    }
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }

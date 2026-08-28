@@ -43,7 +43,8 @@ type QueueLease = {
   readonly consumerSequence: number;
   readonly lockedUntil: string;
 };
-type PublishResult = Models.ProjectQueuePublishResult & { readonly dataFingerprint?: string };
+type PublishResult = Models.ProjectQueuePublishResult & { readonly dataFingerprint?: string; readonly projectId?: string; readonly queueId?: string; readonly idempotencyKey?: string };
+type ConsumerRecord = { readonly projectId: string; readonly queueId: string; readonly consumerName: string; readonly sequence: number };
 type RouteParams = { readonly projectId: string; readonly queueId: string };
 
 const QUEUES = "queues";
@@ -114,8 +115,12 @@ export const handleLocalQueues: LocalHandler = async (context) => {
     if (queue === undefined) return notFound("queue");
     const messages = await records<QueueMessage>(store, MESSAGES);
     const leases = await records<QueueLease>(store, LEASES);
+    const publishes = await records<PublishResult>(store, PUBLISHES);
+    const consumers = await records<ConsumerRecord>(store, CONSUMERS);
     for (const item of messages.filter((m) => sameQueue(m, match!))) await store.delete(MESSAGES, messageKey(item.projectId, item.queueId, item.messageId));
     for (const item of leases.filter((l) => sameQueue(l, match!))) await store.delete(LEASES, item.receipt);
+    for (const item of publishes.filter((p) => p.projectId === match!.projectId && p.queueId === match!.queueId)) await store.delete(PUBLISHES, `${item.projectId}:${item.queueId}:${item.idempotencyKey ?? ""}`);
+    for (const item of consumers.filter((c) => sameQueue(c, match!))) await store.delete(CONSUMERS, `${item.projectId}:${item.queueId}:${item.consumerName}`);
     await store.delete(QUEUES, queueKey(required(match.projectId), required(match.queueId)));
     return jsonResponse(true);
   }
@@ -147,7 +152,7 @@ export const handleLocalQueues: LocalHandler = async (context) => {
       const old = await get<PublishResult>(store, PUBLISHES, publishKey);
       if (old !== undefined) {
         if (old.dataFingerprint !== undefined && old.dataFingerprint !== dataFingerprint) return problemResponse(409, "idempotency_key_reused", "The idempotency key was already used with a different message.");
-        const { dataFingerprint: _fingerprint, ...replayed } = old;
+        const { dataFingerprint: _fingerprint, projectId: _projectId, queueId: _queueId, idempotencyKey: _idempotencyKey, ...replayed } = old;
         return jsonResponse({ ...replayed, duplicate: true });
       }
     }
@@ -171,9 +176,9 @@ export const handleLocalQueues: LocalHandler = async (context) => {
       state: "available",
     };
     await store.put(MESSAGES, messageKey(required(match.projectId), required(match.queueId), messageId), message);
-    const result: PublishResult = { messageId, sequence, publishedAt: context.now, duplicate: false, dataFingerprint };
+    const result: PublishResult = { messageId, sequence, publishedAt: context.now, duplicate: false, dataFingerprint, projectId: required(match.projectId), queueId: required(match.queueId), ...(idempotencyKey === undefined ? {} : { idempotencyKey }) };
     if (publishKey !== undefined) await store.put(PUBLISHES, publishKey, result);
-    const { dataFingerprint: _fingerprint, ...publicResult } = result;
+    const { dataFingerprint: _fingerprint, projectId: _projectId, queueId: _queueId, idempotencyKey: _idempotencyKey, ...publicResult } = result;
     return jsonResponse(publicResult);
   }
 
@@ -197,7 +202,8 @@ export const handleLocalQueues: LocalHandler = async (context) => {
     const lockSeconds = Math.min(86_400, Math.max(1, positiveInt(body.lockSeconds, 30)));
     const messages = await availableMessages(store, match, context.now);
     const consumerKey = `${required(match.projectId)}:${required(match.queueId)}:${consumerName}`;
-    const consumerSequence = await get<number>(store, CONSUMERS, consumerKey) ?? 0;
+    const consumerRecord = await get<number | ConsumerRecord>(store, CONSUMERS, consumerKey);
+    const consumerSequence = typeof consumerRecord === "number" ? consumerRecord : consumerRecord?.sequence ?? 0;
     const received: Models.ProjectQueueReceivedMessage[] = [];
     for (const message of messages.slice(0, max)) {
       const receipt = opaqueReceipt();
@@ -210,7 +216,7 @@ export const handleLocalQueues: LocalHandler = async (context) => {
       await store.put(MESSAGES, messageKey(message.projectId, message.queueId, message.messageId), { ...message, state: "leased", deliveryAttempt: message.deliveryAttempt + 1 });
       received.push({ receipt, region: REGION, messageId: message.messageId, data: message.data, contentType: message.contentType, headers: message.headers, streamSequence: message.sequence, consumerSequence: lease.consumerSequence, deliveryAttempt: message.deliveryAttempt + 1, receivedAt: context.now, lockedUntil: lease.lockedUntil, deliveryGuarantee: "at-least-once" });
     }
-    if (received.length > 0) await store.put(CONSUMERS, consumerKey, consumerSequence + received.length);
+    if (received.length > 0) await store.put(CONSUMERS, consumerKey, { projectId: required(match.projectId), queueId: required(match.queueId), consumerName, sequence: consumerSequence + received.length } satisfies ConsumerRecord);
     return jsonResponse(received);
   }
 

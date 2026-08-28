@@ -21,6 +21,55 @@ composes these typed public product clients inside its own full-stack route
 handlers as an ordinary external user and never receives special headers,
 authorization, tenant access, direct database access, or private API access.
 
+## SQLite local development runtime
+
+Node development and tests can explicitly import the SQLite-backed local
+runtime. The root and `admin` entrypoints keep their normal defaults:
+
+```ts
+import { createTerraScaleSqliteRuntime } from "@terrascale/sdk/local";
+
+const local = createTerraScaleSqliteRuntime({
+  sqlite: { enabled: true, databasePath: "/absolute/path/to/local.sqlite" },
+});
+const seed = await local.seed();
+const client = local.createClient({ projectId: seed.projectId });
+const admin = local.createAdminClient();
+
+await local.start(); // Optional loopback HTTP endpoint.
+await local.stop();
+await local.reset({ seed: true });
+await local.close();
+```
+
+`createClient` and `createAdminClient` return typed in-process clients sharing
+the runtime's router and SQLite store. Use
+`createSyncV1Session` or `createSyncV2Session` to run the public Sync clients
+against the same SQLite store. `seed` creates one starter organization,
+project, database, repository, queue, and document. `reset` clears the store
+and can seed it again. `close` releases the listener and database. Omit
+`databasePath`, or use `:memory:`, for an in-memory store.
+
+`start` opens an optional real HTTP listener on `127.0.0.1` and an available
+port. Another process can then use the returned `apiBaseUrl` and `authBaseUrl`.
+Call `stop` to close the listener without closing SQLite.
+
+You can opt in through the CLI instead:
+
+```bash
+npx --package @terrascale/sdk terrascale-local --database /absolute/path/to/local.sqlite --seed
+```
+
+The CLI prints `TERRASCALE_API_BASE_URL` and `TERRASCALE_AUTH_API_BASE_URL`
+values for the running runtime. Stop it and unset those URLs to return to the
+normal endpoints. Importing the local subpath or running the CLI is the full
+opt-in. Root and `admin` clients never enable SQLite on their own. Unsupported
+local operations return an explicit not-implemented response.
+
+The emulator supports public contract behavior for development. It does not
+prove production replication, failover, latency, metering, or external
+provider behavior, and it does not replace live DevHost evidence.
+
 ## Regional and session consistency
 
 The default client targets `https://api.terrascale.tech`. A preferred region on
