@@ -12,7 +12,7 @@
 //! observe today, mirroring the SH-04 public-surface finding.
 //!
 //! No claim here extends beyond observable behavior; the tracked lane
-//! receipts under `evidence/sharding/` record the qualification runs.
+//! receipts under `docs/evidence/sharding/` record the qualification runs.
 
 use terrabase_v2::Engine;
 use terrabase_v2::EngineConfig;

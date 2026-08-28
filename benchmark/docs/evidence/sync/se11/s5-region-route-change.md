@@ -12,7 +12,7 @@ under the run's temp directory.
   TerraScale.TypeScript @ `cde691866e04882998a29e6ecd2c661802d48459`, TerraScale.DotNet @ `21d21aa9a5f3d9231f005a4b4eb5fb6bd986abe7`
 - Reproduce: `python3 scripts/se11/run.py --scenario s5-region-route-change` from the
   TerraBaseV2 worktree root (the fresh-checkout sequence is in
-  `evidence/sync/se11-live-update-tracer.md`).
+  `docs/evidence/sync/se11-live-update-tracer.md`).
 
 Outcome: **PASS** (5/5 checks).
 

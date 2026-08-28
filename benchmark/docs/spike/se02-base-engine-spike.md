@@ -31,7 +31,7 @@ baseline.
 | Spike prototype | `spike/sync-core/` (standalone workspace crate) | Journal-to-Loro materialization, delta delivery with byte budgets, checkpoint resume, burst behavior, determinism; a bin prints the measured outcomes; 4 unit + 10 contract tests. |
 | Seam crate (the GO deliverable) | `crates/terrabase-sync-core/` (standalone workspace crate) | `SyncCore` (apply/delta_since/resync_snapshot/compact_history), `SyncCheckpoint` (versioned, fails closed), `SyncFrame` (correlation/causation/content digest, wire encoding); red tests first, then implementation; `deny(unsafe_code)`, `deny(missing_docs)`; 2 unit + 11 contract tests. |
 | V1 conflict mapping | `docs/spike/se02-v1-conflict-mapping.md` | Draft mapping citing the pinned V1 commit. |
-| Evidence receipt | `docs/spike/se02-prototype-evidence.md` | Exact commands, outcomes, measurements, unrun items. A copy sits at `evidence/spike/se02-prototype-evidence.md`, which the repository's evidence policy keeps untracked until the integrator publishes reviewed receipts (the W4-CA-12 precedent). |
+| Evidence receipt | `docs/spike/se02-prototype-evidence.md` | Exact commands, outcomes, measurements, unrun items. A copy sits at `docs/evidence/spike/se02-prototype-evidence.md`, which the repository's evidence policy keeps untracked until the integrator publishes reviewed receipts (the W4-CA-12 precedent). |
 
 Neither crate is a member of the engine workspace: both manifests carry
 their own empty `[workspace]` table, so the engine build (zero external
@@ -123,7 +123,7 @@ Honest costs of the Loro path, recorded with the GO:
 - The estimate-based batch acceptance under-fills batches in the burst
   observation (max 24_696 B of a 65_536 B budget); SE-07 can tighten
   packing with measured re-export feedback. (SE-07 resolution, recorded
-  in `evidence/benchmarks/se07-sync-core-delta-receipt.md`: measured
+  in `docs/evidence/benchmarks/se07-sync-core-delta-receipt.md`: measured
   re-export feedback now packs to 0.743 utilization against the written
   0.70 budget, delivered batches never exceed the budget, and the
   per-apply measurement export stays the bounded-memory guarantee's

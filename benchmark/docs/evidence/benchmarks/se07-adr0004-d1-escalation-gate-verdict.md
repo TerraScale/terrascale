@@ -36,7 +36,7 @@ spawned by this verdict.
 2. Efficiency budgets on the same plane (this packet's receipts, all
    deterministic counters):
 
-   - Member lane (`evidence/benchmarks/se07-member-lane-efficiency-receipt.md`):
+   - Member lane (`docs/evidence/benchmarks/se07-member-lane-efficiency-receipt.md`):
      catch-up throughput within the batch bound (E-1), flow-control
      bounds enforced (E-2), batched acknowledgement frames 5 vs 40 for
      an 8-operation `AllRegions` wait (E-3/E-4), slow-consumer isolation
@@ -47,12 +47,12 @@ spawned by this verdict.
      (PD-2026-08-26-13 D1) stayed within their written bounds on both
      lanes, and the E-3/E-4 batching cut the acknowledgement fan-out's
      per-change frame cost 8×.
-   - Sync core (`evidence/benchmarks/se07-sync-core-delta-receipt.md`):
+   - Sync core (`docs/evidence/benchmarks/se07-sync-core-delta-receipt.md`):
      delta-batch utilization 0.743 against the written 0.70 budget
      (E-8), frame seal+encode at 1 allocation (E-10), client-link byte
      budgets measured and met (E-11), compression decision rejected on
      measured margins (E-12).
-   - TBEP (`evidence/benchmarks/se07-tbep-overhead-receipt.md`): every
+   - TBEP (`docs/evidence/benchmarks/se07-tbep-overhead-receipt.md`): every
      budget class within the fixed envelope bound (E-13), one-write
      stream framing (E-14).
 

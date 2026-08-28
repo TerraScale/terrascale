@@ -118,8 +118,8 @@ only, no `TenantScope` fixture):
 - `BackupError::DestinationUnavailable` extends the W4 category table
   for destination I/O failure (documented on the variant).
 - This receipt is not tracked by git (`.gitignore` admits only
-  `evidence/replication/`); integrator action required to track
-  `evidence/recovery/` (same mechanism as W4-CA-12).
+  `docs/evidence/replication/`); integrator action required to track
+  `docs/evidence/recovery/` (same mechanism as W4-CA-12).
 
 ## Repair loop 1: warden findings fixed (base `5cba015`)
 

@@ -116,8 +116,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--receipts-root",
-        default=str(Path(__file__).resolve().parents[1] / "evidence" / "benchmarks"),
-        help="directory holding the benchmark receipts (default: evidence/benchmarks)",
+        default=str(Path(__file__).resolve().parents[1] / "docs" / "evidence" / "benchmarks"),
+        help="directory holding the benchmark receipts (default: docs/evidence/benchmarks)",
     )
     arguments = parser.parse_args(argv)
 

@@ -270,8 +270,8 @@ packet proves about it:
   link over the deletion boundary carries them (manifest `deletes`), and
   restoring the chain applies them — GAP-R02 D4's restore rule, exercised
   here through the public `run_backup` / `RestorePlan::restore_latest`
-  seam (BK-01 `evidence/recovery/bk01-focused-runs.md`, BK-02
-  `evidence/recovery/bk02-restore-recovery-receipt.md` own the backup and
+  seam (BK-01 `docs/evidence/recovery/bk01-focused-runs.md`, BK-02
+  `docs/evidence/recovery/bk02-restore-recovery-receipt.md` own the backup and
   restore lanes; this packet's two tests are focused interaction tests,
   not recovery-lane drills).
 

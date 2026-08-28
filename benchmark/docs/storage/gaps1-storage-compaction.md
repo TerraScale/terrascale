@@ -355,7 +355,7 @@ run.
   `Engine::compact_with_retention`, and composition with the public
   backup/restore seam. The data-bearing shapes live in the in-crate
   tests above (`TenantScope` has no public constructor by design).
-- Recovery Receipt (exclusive lane): `evidence/recovery/
+- Recovery Receipt (exclusive lane): `docs/evidence/recovery/
   gaps1-compaction-recovery-receipt.md`, including its per-drill-class
   mutation-kill record.
 

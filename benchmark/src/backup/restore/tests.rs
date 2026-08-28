@@ -11,7 +11,7 @@
 //!
 //! These drills run in the exclusive recovery lane (BK-02 owns the lane for
 //! this wave). They make no performance claim and no claim beyond the
-//! observed scenarios; the tracked receipts under `evidence/recovery/`
+//! observed scenarios; the tracked receipts under `docs/evidence/recovery/`
 //! record what ran.
 
 use std::path::{Path, PathBuf};

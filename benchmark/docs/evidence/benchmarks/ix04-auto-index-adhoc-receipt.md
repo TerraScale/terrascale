@@ -31,7 +31,7 @@ because neither reference baseline ran (both statuses below).
 - Exclusive lane check before the run: `ps aux | grep bench` matched no
   benchmark process (one sibling worktree's `rustc` build of `rustls` was
   the only hit and is a compile, not a run), and no file under any
-  worktree's `evidence/benchmarks/` had been written in the preceding ten
+  worktree's `docs/evidence/benchmarks/` had been written in the preceding ten
   minutes (the newest was 20:39, hours earlier). Recorded at
   2026-08-27T23:5x UTC.
 - Environment: the shared build host, otherwise loaded by sibling builder

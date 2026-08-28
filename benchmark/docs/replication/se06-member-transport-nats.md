@@ -8,7 +8,7 @@ replication plane (`docs/replication/w4-replication-r1..r3.md`,
 ADR 0004 D-1..D-4). Worktree `terrabasev2-se06`, branch `fleet/se06-2`,
 based on `develop @ ef72eca`. This record resolves no parity row and makes
 no capability claim: every measurement quoted below is a lane-scoped fact
-from the receipts under `evidence/replication/`.
+from the receipts under `docs/evidence/replication/`.
 
 ## What was built
 
@@ -160,12 +160,12 @@ transitions go through compare-and-swap with epoch fencing; config
 versions are monotonic; discovery heartbeats carry a lease-bounded
 healthy/stale/missing observation; and `audit()` walks the store proving
 every subject, every value kind, every field, and the account separation —
-rendered as the artifact in `evidence/replication/se06-nats-usage-audit.md`.
+rendered as the artifact in `docs/evidence/replication/se06-nats-usage-audit.md`.
 Cluster separation is proven in the fixture: two accounts, disjoint
 generated credentials, and typed `CrossAccountSubject` / `BadCredentials`
 rejections in both directions.
 
-## Receipt inventory (new, under `evidence/replication/`)
+## Receipt inventory (new, under `docs/evidence/replication/`)
 
 1. `se06-lane-three-region-composite-in-process.md` — the composite over
    the in-process lane, with the bytes-on-wire accounting and both PD-13
@@ -222,7 +222,7 @@ loop as soon as a poll came back quiet, and read streams only from
 connections accepted inside the same pass — so under host load the same
 script delivered different frames (five of 22 contract scenarios failed in
 one loaded run, two in another; the receipt under
-`evidence/replication/se06-quic-lane-determinism.md` records both). The
+`docs/evidence/replication/se06-quic-lane-determinism.md` records both). The
 fix removes the wall-clock dependence rather than widening it:
 
 1. A pump ends on a causal completion condition, never a duration: the
@@ -268,7 +268,7 @@ property in this suite is inherently wall-clock.
   engine-socket contract suite passed 5 consecutive runs idle and 5
   consecutive runs under full-CPU host load, and the determinism suite
   passed the same 5+5 — receipts in
-  `evidence/replication/se06-quic-lane-determinism.md`.
+  `docs/evidence/replication/se06-quic-lane-determinism.md`.
 - The engine workspace at the repository root is untouched by this packet
   (the crate is a standalone workspace root), so `scripts/check.sh`'s
   repository gates are unaffected until the integrator wiring above.

@@ -1,7 +1,7 @@
 # SE-02 spike evidence: Loro prototype receipts
 
-An identical copy sits at `evidence/spike/se02-prototype-evidence.md`;
-the repository's evidence policy keeps `evidence/*` untracked until the
+An identical copy sits at `docs/evidence/spike/se02-prototype-evidence.md`;
+the repository's evidence policy keeps `docs/evidence/*` untracked until the
 integrator publishes reviewed receipts, so this tracked copy is the
 packet's canonical record.
 

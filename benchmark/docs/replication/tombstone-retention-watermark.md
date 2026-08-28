@@ -276,5 +276,5 @@ member catch-up below the bound, fail-closed put-missed case, the D2.4
 over-range refusals and the black-hole regression), `src/backup/tests.rs`
 (chain below the bound, the D2.4 run gate), and
 `tests/recovery/tombstone_retention_public.rs` (public backup/restore
-seam). Lane receipts: `evidence/replication/gapr02-tombstone-retention-lane-receipt.md`.
+seam). Lane receipts: `docs/evidence/replication/gapr02-tombstone-retention-lane-receipt.md`.
 WS-PARITY proposals: `docs/parity/gapr02-ws-parity-proposals.md`.

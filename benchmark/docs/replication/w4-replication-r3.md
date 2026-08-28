@@ -109,7 +109,7 @@ R-3 — `lane_composite_scenario_is_deterministic`,
 
 ## Lane scenario list and receipt inventory
 
-Five receipt artifacts under `evidence/replication/` (see the deviation note
+Five receipt artifacts under `docs/evidence/replication/` (see the deviation note
 below on their git status):
 
 1. `w4-lane-three-region-composite.md` — the composite scenario covering
@@ -133,14 +133,14 @@ repository regardless of the evidence directory's git status.
 ## Deviation: the evidence directory is gitignored
 
 The charter's WS-REPLICATION lane-receipt scope names
-`evidence/replication/**`, and this phase wrote the artifacts there — but
+`docs/evidence/replication/**`, and this phase wrote the artifacts there — but
 the repository's `.gitignore` (integrator-owned, frozen to this packet)
-ignores `evidence/`. The artifacts therefore exist in the worktree as
+ignores `docs/evidence/`. The artifacts therefore exist in the worktree as
 ignored, untracked files: they were written within the lease, and they were
 not force-added, because overriding an integrator-set ignore rule from a
 builder packet would be worse than leaving them untracked. Proposed
 collision action W4-CA-12 records the integrator decision needed (un-ignore
-`evidence/replication/`, or designate a tracked evidence path). Until then,
+`docs/evidence/replication/`, or designate a tracked evidence path). Until then,
 the tracked mirror below is the durable copy of the composite receipt, and
 the other four artifacts are reproducible from their named tests at the
 named commit.
@@ -205,9 +205,9 @@ neither citable outside the lane.
 - W4-CA-10 (R-2): persisted HLC stamps for cross-restart D-3 ordering.
 - W4-CA-11 (R-2): write-set digest verification for acknowledgement
   contribution (merge with W4-CA-8).
-- W4-CA-12 (R-3, new): the `.gitignore` treatment of `evidence/` — the
+- W4-CA-12 (R-3, new): the `.gitignore` treatment of `docs/evidence/` — the
   lane receipts are written within the lease but untracked until the
-  integrator un-ignores `evidence/replication/` or designates a tracked
+  integrator un-ignores `docs/evidence/replication/` or designates a tracked
   evidence path.
 - W4-CA-13 (repair loop 1): persist the per-range fencing state
   (`highest_epoch_seen`) so a cold process restart preserves apply-time

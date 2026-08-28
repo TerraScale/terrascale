@@ -31,7 +31,7 @@ baseline did not run.
 
   Exit code 0. Runtime 144.91 s, dev profile, concurrency 1.
 - Exclusive lane check before the run: `ps aux | grep bench` matched no
-  benchmark process; no `evidence/benchmarks/` file in any worktree had
+  benchmark process; no `docs/evidence/benchmarks/` file in any worktree had
   been written in the preceding ten minutes.
 - Environment: the shared build host, otherwise loaded by sibling builder
   worktrees. The measured quantity is a deterministic byte counter, so

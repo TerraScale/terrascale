@@ -361,7 +361,7 @@ fn rpo_of(lane: &ShardedLane, acknowledged: &[&str]) -> usize {
 }
 
 /// Prefixes one rendered lane receipt with its fault line, drawn from the
-/// accepted W4 fault vocabulary (`evidence/replication/`
+/// accepted W4 fault vocabulary (`docs/evidence/replication/`
 /// `w4-lane-three-region-composite.md`): `leader-loss`, `healing`,
 /// `region-loss-after-acknowledged-write`, `member-restart`,
 /// `member-rejoin`. Every SH-05 receipt names exactly the faults its

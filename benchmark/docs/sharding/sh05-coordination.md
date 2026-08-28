@@ -6,7 +6,7 @@ Authority: charter PD-2026-08-26-10 D3, ADR 0004 (D-1/D-2), ADR 0011
 PB-5040/5041/5048 and the PB-5016..PB-5020 final proofs in SH-05). The
 implementation lives in `src/sharding/coordination/`; the qualification
 scenarios in its crate-private lane; the receipts under
-`evidence/sharding/`.
+`docs/evidence/sharding/`.
 
 ## What SH-05 builds (and does not)
 
@@ -114,12 +114,12 @@ faults its scenarios inject and invents no fault names.
 
 | Scenario (matrix row) | Required result | Producing test | Receipt |
 | --- | --- | --- | --- |
-| sharded topology, healthy | per-shard writes commit shard-locally; a shard-local receipt never reads as database success | `lane_shard_owner_loss_failover_is_truthful_and_deterministic` (healthy prefix) | `evidence/sharding/sh05-failover-lane.md` |
+| sharded topology, healthy | per-shard writes commit shard-locally; a shard-local receipt never reads as database success | `lane_shard_owner_loss_failover_is_truthful_and_deterministic` (healthy prefix) | `docs/evidence/sharding/sh05-failover-lane.md` |
 | shard-owner loss before acknowledgement | write to the lost shard refuses before commit and lands nowhere; surviving shard keeps serving | `lane_shard_owner_loss_failover_is_truthful_and_deterministic` | same |
 | failover after shard-owner loss | transfer at a raised epoch; deposed owner's placements fenced; the refused write re-drives and commits after the transfer | same | same |
-| Region loss after acknowledged sharded write | per-shard RPO measured as acknowledged-then-absent operations; double transfer to the surviving Region | `lane_region_loss_after_acknowledged_sharded_writes_measures_per_shard_rpo` | `evidence/sharding/sh05-region-loss-lane.md` |
-| cross-shard cluster transaction under shard loss | partial commit recorded, no rollback claimed, idempotent completion after failover | `lane_cross_shard_transaction_refuses_partially_and_completes_after_failover` | `evidence/sharding/sh05-failover-lane.md` |
-| member lost beyond backup boundary, restored, rejoined | restored Member holds exactly the backup; the window above it is reported per shard | `lane_backup_restore_rejoin_reports_the_recovery_window_per_shard` | `evidence/sharding/sh05-backup-rejoin-lane.md` |
+| Region loss after acknowledged sharded write | per-shard RPO measured as acknowledged-then-absent operations; double transfer to the surviving Region | `lane_region_loss_after_acknowledged_sharded_writes_measures_per_shard_rpo` | `docs/evidence/sharding/sh05-region-loss-lane.md` |
+| cross-shard cluster transaction under shard loss | partial commit recorded, no rollback claimed, idempotent completion after failover | `lane_cross_shard_transaction_refuses_partially_and_completes_after_failover` | `docs/evidence/sharding/sh05-failover-lane.md` |
+| member lost beyond backup boundary, restored, rejoined | restored Member holds exactly the backup; the window above it is reported per shard | `lane_backup_restore_rejoin_reports_the_recovery_window_per_shard` | `docs/evidence/sharding/sh05-backup-rejoin-lane.md` |
 
 ### PB-5016..PB-5020 proof status under this lane
 

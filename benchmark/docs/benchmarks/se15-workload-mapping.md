@@ -5,7 +5,7 @@ PD-2026-08-26-03 D2 (PostgreSQL reference baseline) for ticket
 TerraScale/TerraBaseV2#23. Every workload's two sides, both sides'
 configurations, the fairness assumptions, and the limits are stated here;
 nothing here is a measured result or a performance claim. Measured values
-live only in the Benchmark Receipts under `evidence/benchmarks/` and use the
+live only in the Benchmark Receipts under `docs/evidence/benchmarks/` and use the
 charter's exact verdict vocabulary (`v2-faster`, `no-improvement`,
 `v2-regression`, `inconclusive`) and objective status (`met`, `not met`,
 `inconclusive`).
@@ -145,7 +145,7 @@ host) that the zero-dependency engine crate cannot call, and the two
 wall-clock quantities additionally need the SE-15 statistical gate with
 both reference baselines run. Each is a declared open slot in
 `Workload::driver_status` with a named owner and a row in
-`evidence/benchmarks/se15-sync-path-workload-slots-receipt.md`. None is
+`docs/evidence/benchmarks/se15-sync-path-workload-slots-receipt.md`. None is
 silently skipped, and none is re-derived inside the engine crate where
 re-deriving it would duplicate a measurement rather than take one.
 
@@ -330,7 +330,7 @@ run; the pin's configuration table is in `src/benchmarks/reference.rs`.
   SE-07/SE-06, and what is owed is the comparison run alongside the V1
   baseline under the SE-15 gate. Each slot's reason and owner are in
   `Workload::driver_status` and in
-  `evidence/benchmarks/se15-sync-path-workload-slots-receipt.md`; none is
+  `docs/evidence/benchmarks/se15-sync-path-workload-slots-receipt.md`; none is
   silently skipped.
 - **No wall-clock sync-path number exists anywhere in this repository.**
   The deterministic neighbors that do exist are labelled as what they are:

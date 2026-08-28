@@ -68,7 +68,7 @@ Compile-fail proofs in `src/replication/observation.rs` (doctests): no
 
 ## Deviation note
 
-`evidence/` is gitignored (W4-CA-12, integrator-owned): this receipt is
+`docs/evidence/` is gitignored (W4-CA-12, integrator-owned): this receipt is
 written within the lease and left untracked, exactly as the GAP-R02
 receipt was. The durable copies of the claims are the decision record,
 the proposals doc, and the committed tests.

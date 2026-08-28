@@ -7,7 +7,7 @@ verdict: inconclusive
 Status: the standing practice mandated by charter PD-2026-08-26-03 D3,
 delivered by SE-15 (TerraScale/TerraBaseV2#23). This document is the rule;
 `scripts/check_benchmark_receipts.py` is its enforcement; the receipts under
-`evidence/benchmarks/` are what it governs. The status line at the top of
+`docs/evidence/benchmarks/` are what it governs. The status line at the top of
 this document is itself subject to the rule — this record states no
 measurement, so its own objective status is `inconclusive`.
 
@@ -81,7 +81,7 @@ python3 scripts/test_benchmark_receipt_discipline.py
 **Scope note, stated rather than worked around:** `scripts/check.sh` does
 not invoke either script. Wiring them in is a one-line edit to
 `scripts/check.sh`, which is outside SE-15's declared write scope
-(benchmark adapter paths, `evidence/benchmarks/`, `docs/benchmarks/`), so
+(benchmark adapter paths, `docs/evidence/benchmarks/`, `docs/benchmarks/`), so
 this packet adds the checker and its tests and leaves the wiring to the
 integrator. Until it is wired, the checker is run explicitly by anyone
 producing a performance receipt, and the adapter's renderer makes the
@@ -96,7 +96,7 @@ Two independent encodings of the same closed sets, so neither can drift:
   `objective_status_line`, which renders the canonical line a receipt must
   carry. Tests pin every token and the exact shape of the line.
 - `scripts/check_benchmark_receipts.py` — the same two sets, checked
-  against whatever is actually written in `evidence/benchmarks/`.
+  against whatever is actually written in `docs/evidence/benchmarks/`.
 
 ## Retroactive application to the existing corpus
 

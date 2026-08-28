@@ -5,7 +5,7 @@ dispositions below are for WS-PARITY (SE-12 close-out, #14) to record from
 this packet's evidence. No overlay was mutated; the parity tree is untouched
 by this packet.
 
-Evidence base: `evidence/replication/gapr02-tombstone-retention-lane-receipt.md`,
+Evidence base: `docs/evidence/replication/gapr02-tombstone-retention-lane-receipt.md`,
 decision record `docs/replication/tombstone-retention-watermark.md`, and the
 focused suites it cites.
 

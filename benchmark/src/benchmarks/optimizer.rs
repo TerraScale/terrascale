@@ -708,7 +708,7 @@ impl OptimizerRunRecord {
     }
 
     /// Renders the receipt block a performance statement cites: the same
-    /// canonical lines every receipt under `evidence/benchmarks/` carries.
+    /// canonical lines every receipt under `docs/evidence/benchmarks/` carries.
     pub(crate) fn render(&self) -> String {
         let mut text = String::new();
         let _unused = writeln!(text, "run label: {}", self.label);

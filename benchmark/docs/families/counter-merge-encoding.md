@@ -193,4 +193,4 @@ codec), the recovery machinery, or the durability contract: the same
 document, transaction, journal, and ledger machinery carries the new
 value shape, and the W3-F form still decodes. Recovery-lane behavior is
 unchanged by construction; the lane receipts for this packet live under
-`evidence/replication/`.
+`docs/evidence/replication/`.

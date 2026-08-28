@@ -266,10 +266,10 @@ budget table's `unrun` markers are resolved here, one row per budget.
 
 ### Receipts
 
-- `evidence/benchmarks/ix04-auto-index-adhoc-receipt.md` — the ad-hoc
+- `docs/evidence/benchmarks/ix04-auto-index-adhoc-receipt.md` — the ad-hoc
   class counters. Objective status `inconclusive`, verdict `inconclusive`
   (no comparand exists).
-- `evidence/benchmarks/ix04-write-path-overhead-receipt.md` — the
+- `docs/evidence/benchmarks/ix04-write-path-overhead-receipt.md` — the
   write-path comparison, the one comparison that exists. Verdict
   `no-improvement`, objective status `inconclusive`.
 - Both receipts pass `scripts/check_benchmark_receipts.py` (11 receipts

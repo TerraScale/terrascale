@@ -10,7 +10,7 @@ checkout, read-only) — against the real Rust engine process (a TBEP
 repository, exactly the SE-08 `EngineHarness` pattern) and the real C#
 API host (`host/TerraBase.Api`).
 
-Scenarios (one receipt each, under evidence/sync/se11/):
+Scenarios (one receipt each, under docs/evidence/sync/se11/):
 
   s1-golden-path        commit -> backbone -> Loro delivery -> host ->
                         both SDKs apply; sequences asserted against the
@@ -59,7 +59,7 @@ TS_REPO = pathlib.Path(os.environ.get("TERRASCALE_TS_SDK", str(WORKSPACE_ROOT / 
 # reference and the HEAD this record names.
 DOTNET_REPO = pathlib.Path(os.environ.get("TERRASCALE_DOTNET_SDK", str(WORKSPACE_ROOT / "TerraScale.DotNet")))
 VECTORS = REPO_ROOT / "crates/terrabase-sync-core/vectors/terrascale.sync.v2"
-EVIDENCE = REPO_ROOT / "evidence/sync/se11"
+EVIDENCE = REPO_ROOT / "docs/evidence/sync/se11"
 TRACER_TS = REPO_ROOT / "tracer/ts/tracer.mjs"
 TRACER_DOTNET_DLL = REPO_ROOT / "tracer/dotnet/TerraScale.Tracer/bin/Debug/net10.0/TerraScale.Tracer.dll"
 HOST_CWD = REPO_ROOT / "host/TerraBase.Api/bin/Debug/net10.0"
@@ -1646,7 +1646,7 @@ under the run's temp directory.
   TerraScale.TypeScript @ `{ts}`, TerraScale.DotNet @ `{dotnet}`
 - Reproduce: `python3 scripts/se11/run.py --scenario {name}` from the
   TerraBaseV2 worktree root (the fresh-checkout sequence is in
-  `evidence/sync/se11-live-update-tracer.md`).
+  `docs/evidence/sync/se11-live-update-tracer.md`).
 """
 
 
@@ -1671,7 +1671,7 @@ def write_receipt(facts: Facts) -> None:
     for name, passed, detail in facts.checks:
         lines.append(f"| `{name}` | {'pass' if passed else 'FAIL'} | {detail} |")
     (EVIDENCE / f"{facts.name}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    log(f"receipt written: evidence/sync/se11/{facts.name}.md ({facts.summary()})")
+    log(f"receipt written: docs/evidence/sync/se11/{facts.name}.md ({facts.summary()})")
 
 
 # ---------------------------------------------------------------------------

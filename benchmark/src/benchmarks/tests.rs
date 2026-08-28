@@ -508,7 +508,7 @@ fn a_self_comparison_reads_as_parity() {
 }
 
 /// The V2-side counter characterization, run for real and transcribed into
-/// `evidence/benchmarks/se15-v2-lane-commissioning-receipt.md`.
+/// `docs/evidence/benchmarks/se15-v2-lane-commissioning-receipt.md`.
 ///
 /// Ignored by default, exactly like the SE-07 UDS characterization: it is a
 /// lane characterization, not a gate, and it writes enough durable data that

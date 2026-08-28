@@ -192,7 +192,7 @@ class BenchmarkReceiptDisciplineTests(unittest.TestCase):
             self.assertIn("no receipts", result.stderr)
 
     def test_the_repository_receipts_pass(self) -> None:
-        root = REPO / "evidence" / "benchmarks"
+        root = REPO / "docs" / "evidence" / "benchmarks"
         if not root.is_dir() or not list(root.glob("*.md")):
             self.skipTest("no receipts in this checkout")
         result = self.run_cli(root)

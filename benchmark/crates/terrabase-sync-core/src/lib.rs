@@ -33,7 +33,7 @@
 //! - No claim of performance is made or implied; the spike's
 //!   bytes-on-wire observations are recorded under
 //!   `docs/spike/se02-prototype-evidence.md` (the tracked copy; the
-//!   untracked mirror `evidence/spike/` stays local until the integrator
+//!   untracked mirror `docs/evidence/spike/` stays local until the integrator
 //!   publishes reviewed receipts).
 //!
 //! The [`protocol`] module is the `terrascale.sync.v2` client-channel

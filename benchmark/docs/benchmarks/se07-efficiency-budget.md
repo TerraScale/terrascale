@@ -6,7 +6,7 @@ benchmark-mandatory, PD-2026-08-26-05 D4 native sync-path budgets,
 PD-2026-08-26-13 D1 bandwidth budgets). Every item below names the test
 or benchmark measurement that reports against it. No number in this
 document is a measured result or a performance claim; measured values
-live only in the Benchmark Receipts under `evidence/benchmarks/` and
+live only in the Benchmark Receipts under `docs/evidence/benchmarks/` and
 use the charter's exact verdict vocabulary (`v2-faster`,
 `no-improvement`, `v2-regression`, `inconclusive`).
 
@@ -76,13 +76,13 @@ The gate fires only if `old_owner_is_fenced_after_leader_transition`
 and its fault variants cannot pass on the accepted single-leader plane,
 or if the efficiency budgets above cannot be met by that plane. The
 verdict is recorded with measurements in
-`evidence/benchmarks/se07-adr0004-d1-escalation-gate-verdict.md`; a
+`docs/evidence/benchmarks/se07-adr0004-d1-escalation-gate-verdict.md`; a
 fired gate spawns a named follow-up ticket proposal in the build
 report, never a widened SE-07.
 
 ## Receipt plan
 
-Three receipts land under `evidence/benchmarks/`:
+Three receipts land under `docs/evidence/benchmarks/`:
 `se07-member-lane-efficiency-receipt.md`, `se07-sync-core-delta-receipt.md`
 (including the E-12 compression decision), and
 `se07-tbep-overhead-receipt.md` (including the E-15 characterization

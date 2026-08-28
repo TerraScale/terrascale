@@ -92,7 +92,7 @@ connection string, or credential belongs in this repository). The adapter's
 PostgreSQL 18 endpoint, capturing its `SELECT version()` output and artifact
 digest, filling the observation slot in
 `src/benchmarks/reference.rs`, and running the reference side of the
-baseline. Until that happens, every receipt in `evidence/benchmarks/`
+baseline. Until that happens, every receipt in `docs/evidence/benchmarks/`
 records the PostgreSQL reference as unrun-with-reason, and no comparison
 verdict or objective status other than `inconclusive` is reachable — the
 adapter's fail-closed rule returns exactly that while either reference is

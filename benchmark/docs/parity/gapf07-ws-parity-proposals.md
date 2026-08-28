@@ -13,7 +13,7 @@ lane receipt as proof of the implemented scope.
   proposed for parent ratification.
 - Encoding: per-counter PN-counter buckets keyed by the never-reused
   engine identity, per-writer monotone `seq`, delete-wins tombstones.
-- Evidence: `evidence/replication/gapf07-family-merge-lane-receipt.md`
+- Evidence: `docs/evidence/replication/gapf07-family-merge-lane-receipt.md`
   (concurrent increments from two members converge to the merged total on
   every member; identity-scoped delta dedup under duplicate delivery and
   replay; rejoin preserves family totals). Producing tests live in

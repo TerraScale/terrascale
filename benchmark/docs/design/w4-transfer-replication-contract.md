@@ -951,7 +951,7 @@ W4-STREAM     W4-BACKUP        (parallel; disjoint paths)
 | W4-0 preparation | `terrabasev2-w4-type-prep`, based on the integrated W4 design tip | `src/streaming/mod.rs`, `src/replication/mod.rs`, `src/backup/mod.rs`, `src/migration/mod.rs`, `tests/public_exports_w4.rs`, plus the parent-assigned `src/lib.rs` edit (W4-CA-1) | Owns the declaration-only tree through its preparation commit; after that, integrator |
 | W4-STREAM | `terrabasev2-w4-streaming`, based on the recorded W4-0 commit | `src/streaming/**`, `tests/streaming/**`, explicitly named `docs/streaming/**` | Streaming only; no engine, storage, families, replication, backup, adapter, or shared-root edits |
 | W4-BACKUP | `terrabasev2-w4-backup`, based on the recorded W4-0 commit | `src/backup/**`, `src/migration/**`, `tests/recovery/**`, explicitly named `docs/backup/**` and `docs/migration/**` | Backup, restore, and Logical Migration only; no replication, streaming, adapter, or shared-root edits |
-| W4-REPLICATION | `terrabasev2-w4-replication`, based on both accepted W4-STREAM and W4-BACKUP commits (the serialized choice above; the parent may instead base non-lane work on the W4-STREAM handoff) | `src/replication/**`, `tests/replication/**`, explicitly named `docs/replication/**` and lane receipts under `evidence/replication/**` | Replication behavior and receipts only; no backup, migration, adapters, or shared roots |
+| W4-REPLICATION | `terrabasev2-w4-replication`, based on both accepted W4-STREAM and W4-BACKUP commits (the serialized choice above; the parent may instead base non-lane work on the W4-STREAM handoff) | `src/replication/**`, `tests/replication/**`, explicitly named `docs/replication/**` and lane receipts under `docs/evidence/replication/**` | Replication behavior and receipts only; no backup, migration, adapters, or shared roots |
 
 Collision ownership during W4:
 
@@ -962,8 +962,8 @@ Collision ownership during W4:
 | `Cargo.toml`, `Cargo.lock`, toolchain, CI, root manifests | integrator | No dependency edits in W4 packets without a named action |
 | `parity/inventory.json`, `parity/overlays/**`, `parity/contracts/**` | integrator and WS-PARITY | W4 adds no Proof IDs and changes no status |
 | `src/streaming/**`, `tests/streaming/**`, `docs/streaming/**` | W4-STREAM | Streaming only |
-| `src/replication/**`, `tests/replication/**`, `docs/replication/**`, `evidence/replication/**` | W4-REPLICATION | Replication and its receipts only |
-| `src/backup/**`, `src/migration/**`, `tests/recovery/**`, `docs/backup/**`, `docs/migration/**`, `evidence/recovery/**` | W4-BACKUP | Backup, restore, migration, and recovery receipts only |
+| `src/replication/**`, `tests/replication/**`, `docs/replication/**`, `docs/evidence/replication/**` | W4-REPLICATION | Replication and its receipts only |
+| `src/backup/**`, `src/migration/**`, `tests/recovery/**`, `docs/backup/**`, `docs/migration/**`, `docs/evidence/recovery/**` | W4-BACKUP | Backup, restore, migration, and recovery receipts only |
 | `docs/design/w4-transfer-replication-contract.md` | this packet | The durable W4 design record; behavior builders do not rewrite it |
 
 The exclusive recovery lane rule: W4-BACKUP's fault/restore scenarios and

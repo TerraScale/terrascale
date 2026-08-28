@@ -12,7 +12,7 @@
 //! corruption, and target refusal.
 //!
 //! No claim here extends beyond observable behavior; the tracked Recovery
-//! Receipts under `evidence/recovery/` record what the lane ran.
+//! Receipts under `docs/evidence/recovery/` record what the lane ran.
 
 use std::path::PathBuf;
 

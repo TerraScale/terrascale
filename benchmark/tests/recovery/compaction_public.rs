@@ -16,7 +16,7 @@
 //! composition with the public backup/restore seam.
 //!
 //! No claim here extends beyond observable behavior; the tracked Recovery
-//! Receipt under `evidence/recovery/` records what the exclusive lane ran.
+//! Receipt under `docs/evidence/recovery/` records what the exclusive lane ran.
 
 use std::{
     path::PathBuf,

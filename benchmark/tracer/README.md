@@ -12,9 +12,9 @@ engine process from `crates/terrabase-tbep` through a throwaway cargo
 project under the run's temp directory — the SE-08 `EngineHarness`
 pattern — plus the real `host/TerraBase.Api` over loopback) and drives
 both tracers through the scenario family. The evidence receipts land
-under `evidence/sync/se11/`; the packet record with the
+under `docs/evidence/sync/se11/`; the packet record with the
 acceptance-criteria dispositions, the reproduction sequence, and the
-recorded findings is `evidence/sync/se11-live-update-tracer.md`.
+recorded findings is `docs/evidence/sync/se11-live-update-tracer.md`.
 
 | Path | What it is |
 | --- | --- |

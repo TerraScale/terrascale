@@ -89,7 +89,7 @@
 //! them under the same structural limits the codec enforces. Formal
 //! Recovery Receipts for drills beyond these focused runs belong to the
 //! exclusive recovery lane, which BK-02 owns for this wave; the tracked
-//! receipts live under `evidence/recovery/`.
+//! receipts live under `docs/evidence/recovery/`.
 
 #![allow(dead_code)]
 
@@ -300,7 +300,7 @@ impl RestoredTenant {
 /// durability disclosures replayed, the verification the run performed, and
 /// the limits that remain. [`RecoveryReceipt::render`] emits the same facts
 /// as secret-safe text for the tracked lane receipts under
-/// `evidence/recovery/`.
+/// `docs/evidence/recovery/`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecoveryReceipt {
     storage_format: &'static str,

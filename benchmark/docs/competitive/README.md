@@ -13,9 +13,9 @@ Files:
   disposition, owner, required proof, better-than measure, and
   agent-readiness. Includes the PD-06 D4 first-row verification table
   and the status summary.
-- `evidence/instantdb-survey-2026-08-26.md` — InstantDB 2026 public
+- `docs/evidence/instantdb-survey-2026-08-26.md` — InstantDB 2026 public
   feature survey (EV-I*), URLs and access date per entry.
-- `evidence/convex-survey-2026-08-26.md` — Convex 2026 public feature
+- `docs/evidence/convex-survey-2026-08-26.md` — Convex 2026 public feature
   survey (EV-C*), URLs and access date per entry.
 - `gap-ticket-proposals.md` — GAP-C1..C4 proposals (titles, bodies,
   dependency edges) for the parent to file; indexes are recorded back

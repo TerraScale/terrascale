@@ -42,7 +42,7 @@
 //! stays out of the engine); the engine validates, executes, and reports.
 //! The qualification scenarios that prove this seam run in the
 //! crate-private lane under `lane.rs` and their receipts are recorded under
-//! `evidence/sharding/`. No timing, production-topology, or performance
+//! `docs/evidence/sharding/`. No timing, production-topology, or performance
 //! claim is made anywhere in this family.
 
 pub(crate) mod failover;
