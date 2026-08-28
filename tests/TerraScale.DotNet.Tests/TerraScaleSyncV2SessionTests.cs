@@ -565,6 +565,120 @@ public sealed class TerraScaleSyncV2SessionTests
         await DisposeEnumeratorAsync(updates);
     }
 
+    /// <summary>
+    /// A stream that persistently delivers events past the bound is given
+    /// up on after bounded, backed-off reconnects: the typed failure
+    /// surfaces instead of an unbounded abort/reconnect cycle.
+    /// </summary>
+    [Test]
+    public async Task APersistentlyOversizeStreamIsGivenUpOnTyped()
+    {
+        using var host = await LoopbackSyncV2Host.StartAsync();
+        var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
+        host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
+        host.Script.OversizeEveryStream = true;
+        using var http = CreateClient(host);
+        await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders")
+        {
+            ReconnectDelay = TimeSpan.FromMilliseconds(20),
+            MaxStreamEventBytes = 2048,
+        });
+        var updates = session.UpdatesAsync().GetAsyncEnumerator();
+        await Assert.That(await updates.MoveNextAsync()).IsTrue();
+        await Assert.That(updates.Current.Kind).IsEqualTo(TerraScaleSyncV2SyncUpdateKind.SnapshotAdopted);
+
+        // Every reconnection re-delivers the same oversize event: the
+        // give-up is the typed failure, never an unbounded cycle.
+        var failure = await Assert.ThrowsAsync<TerraScaleSyncV2HostException>(
+            () => updates.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)));
+        await Assert.That(failure!.Code).IsEqualTo("stream-event-oversize");
+        await Assert.That(failure.Retryable).IsFalse();
+        await Assert.That(session.State.TriggersObserved).IsEqualTo(0ul);
+
+        // The initial stream plus at most the bounded oversize reconnects.
+        var requests = await host.DrainRequestsAsync();
+        var streams = requests.Count(request => request.Path == "/v1/streams");
+        await Assert.That(streams).IsLessThanOrEqualTo(4);
+        await DisposeEnumeratorAsync(updates);
+    }
+
+    /// <summary>
+    /// The stream-event bound is a byte bound: a multi-byte payload past
+    /// the configured byte budget is refused even when its character
+    /// count fits under the same number.
+    /// </summary>
+    [Test]
+    public async Task TheStreamEventBoundIsMeasuredInUtf8Bytes()
+    {
+        using var host = await LoopbackSyncV2Host.StartAsync();
+        var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
+        var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 8)], 4);
+        host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
+        using var http = CreateClient(host);
+        await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders")
+        {
+            ReconnectDelay = TimeSpan.FromMilliseconds(20),
+            MaxStreamEventBytes = 200,
+        });
+        var updates = session.UpdatesAsync().GetAsyncEnumerator();
+        await Assert.That(await updates.MoveNextAsync()).IsTrue();
+        await Assert.That(updates.Current.Kind).IsEqualTo(TerraScaleSyncV2SyncUpdateKind.SnapshotAdopted);
+
+        var deltaUpdate = updates.MoveNextAsync().AsTask();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        _ = await host.NextRequestAsync();
+        var first = await host.NextStreamConnectionAsync();
+
+        // 120 two-byte characters: 240 UTF-8 bytes past the 200-byte
+        // budget, roughly 130 characters under it — oversize in bytes
+        // only. The refused stream reconnects (never dispatches, never
+        // pulls); the pull below proves no dispatch happened first.
+        await first.WriteRawAsync(
+            "id: 9\nevent: trigger\ndata: {\"k\":\"" + new string('é', 120) + "\"}\n\n");
+        var reconnect = await host.NextRequestAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(reconnect.Path).IsEqualTo("/v1/streams");
+        await Assert.That(session.State.TriggersObserved).IsEqualTo(0ul);
+
+        // The reconnected stream still serves a well-formed trigger.
+        var second = await host.NextStreamConnectionAsync();
+        await second.TriggerAsync(5, "orders", 4, "op-4");
+        await Assert.That(await deltaUpdate).IsTrue();
+        await Assert.That(updates.Current.Kind).IsEqualTo(TerraScaleSyncV2SyncUpdateKind.DeltaApplied);
+        await Assert.That(session.State.TriggersObserved).IsEqualTo(1ul);
+        await DisposeEnumeratorAsync(updates);
+    }
+
+    /// <summary>
+    /// A refusal body carrying a literal <c>resyncRequired: null</c>
+    /// surfaces the typed host failure (a null marker is a plain
+    /// refusal), never a decoder crash on the marker.
+    /// </summary>
+    [Test]
+    public async Task ANullResyncMarkerSurfacesTheTypedRefusal()
+    {
+        using var host = await LoopbackSyncV2Host.StartAsync();
+        host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, TerraScaleSyncV2Checkpoint.Initial, TerraScaleSyncV2Checkpoint.Initial);
+        host.Script.DeltaClosedWithNullResync = true;
+        using var http = CreateClient(host);
+        await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
+        _ = await session.SetupAsync();
+        _ = await host.NextRequestAsync();
+
+        var failure = await Assert.ThrowsAsync<TerraScaleSyncV2HostException>(() => session.PullDeltaAsync());
+        _ = await host.NextRequestAsync();
+        await Assert.That(failure!.StatusCode).IsEqualTo(HttpStatusCode.Gone);
+        await Assert.That(failure.Code).IsEqualTo("session-closed");
+        await Assert.That(failure.Detail).IsEqualTo("the session was closed by the host");
+        await Assert.That(failure.ResyncRequired).IsFalse();
+        await Assert.That(failure.Retryable).IsFalse();
+    }
+
     /// <summary>A host body beyond the decode bound is a typed refusal, never an unbounded parse.</summary>
     [Test]
     public async Task OversizeHostBodiesAreRefusedTyped()
@@ -802,6 +916,12 @@ public sealed class TerraScaleSyncV2Script
     /// <summary>Answer every session-lifecycle request (below the setup path) with the ended-session status.</summary>
     public bool EndEverySession { get; set; }
 
+    /// <summary>Deliver one event past a small configured event bound on every opened stream connection (a persistently-oversize host).</summary>
+    public bool OversizeEveryStream { get; set; }
+
+    /// <summary>Answer the delta pull with the session-closed status and a literal <c>resyncRequired: null</c> marker (the #93 host shape).</summary>
+    public bool DeltaClosedWithNullResync { get; set; }
+
     /// <summary>Serve these raw bytes as the snapshot answer body (a scripted oversize host body).</summary>
     public byte[]? SnapshotBody { get; set; }
 }
@@ -944,6 +1064,15 @@ public sealed class LoopbackSyncV2Host : IDisposable
                     await stream.WriteAsync(Encoding.ASCII.GetBytes(head));
                     await stream.FlushAsync();
                     await this.streams.Writer.WriteAsync(connection);
+                    if (this.Script.OversizeEveryStream)
+                    {
+                        // A persistently-oversize host: every connection
+                        // re-delivers an event past a small configured
+                        // bound (8 KiB of one-byte characters).
+                        await connection.WriteRawAsync(
+                            "id: 9\nevent: trigger\ndata: {\"padding\":\"" + new string('x', 8 * 1024) + "\"}\n\n");
+                    }
+
                     await Task.Delay(Timeout.Infinite, this.stopping.Token);
                     return;
                 }
@@ -1008,6 +1137,19 @@ public sealed class LoopbackSyncV2Host : IDisposable
 
         if (request.Path.EndsWith("/delta", StringComparison.Ordinal))
         {
+            if (this.Script.DeltaClosedWithNullResync)
+            {
+                // The #93 host shape: a session-closed refusal whose
+                // resync marker is an explicit JSON null.
+                await WriteJsonAsync(stream, "410 Gone", new
+                {
+                    code = "session-closed",
+                    detail = "the session was closed by the host",
+                    resyncRequired = (bool?)null,
+                });
+                return;
+            }
+
             if (this.Script.DeltaRefused)
             {
                 await WriteJsonAsync(stream, "409 Conflict", new { code = "checkpoint-refused", detail = "the checkpoint does not decode" });
