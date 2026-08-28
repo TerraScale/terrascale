@@ -5,5 +5,6 @@
 
 mod attachments_content_public;
 mod families_public_construction;
+mod lifecycle_execution_public;
 mod migrations_public;
 mod schemas_public;
