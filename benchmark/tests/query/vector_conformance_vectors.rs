@@ -421,14 +421,11 @@ fn run(vector: &Vector) {
                 .and_then(|request| request.with_minimum_similarity(*value).map(|_| ()))
                 .map_err(Outcomes::Request)
         }
-        Scenario::RequestField { field } => VectorSearchRequest::try_new(
-            source(),
-            field,
-            synthesized(4),
-            4,
-        )
-        .map(|_| ())
-        .map_err(Outcomes::Request),
+        Scenario::RequestField { field } => {
+            VectorSearchRequest::try_new(source(), field, synthesized(4), 4)
+                .map(|_| ())
+                .map_err(Outcomes::Request)
+        }
         Scenario::PredicateName { field, parameter } => {
             TqlVectorPredicate::try_new(field, parameter, None, None)
                 .map(|_| ())
