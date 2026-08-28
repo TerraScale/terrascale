@@ -42,20 +42,8 @@ use crate::engine::Transaction;
 use crate::operations::RequestValidationError;
 use crate::types::{Cancellation, Deadline, DocumentId, ExpectedVersion, TenantScope};
 
-use super::state::{
-    ArchivalRecord, LifecycleRecord, RESERVED_COLLECTION, Records, family_key, kind_of_record,
-    now_millis, record_id,
-};
+use super::state::{ArchivalRecord, LifecycleRecord, Records, family_key, now_millis, record_id};
 use super::{FamilyError, FamilyKind, FamilyReadContext, FamilyStore, map_begin_error, store};
-
-/// How many documents one maintenance pass page reads at a time.
-///
-/// The plan pages the tenant's documents through the bounded snapshot
-/// window ([`Engine::snapshot_documents_from`]) instead of materializing
-/// the whole tenant, mirroring the streaming seam's bound. Only lifecycle
-/// and archival records are retained across pages; owner presence and
-/// version are point reads inside one read transaction.
-const PASS_PAGE_LIMIT: u32 = 1024;
 
 // ---------------------------------------------------------------------------
 // Pass vocabulary
@@ -365,6 +353,26 @@ fn map_snapshot_error(error: &crate::engine::EngineError) -> FamilyError {
     }
 }
 
+/// Decodes one lifecycle record value, failing closed when the value is
+/// not an object.
+///
+/// The shared [`LifecycleRecord::decode`](super::state::LifecycleRecord::decode)
+/// reads every field off a non-object value as absent, so a squatter's
+/// string, number, or `null` at a reserved lifecycle identifier would
+/// decode as "no lifecycle state" and read as benign. Repair loop 1 made
+/// the pass fail closed on that shape instead — the same contract
+/// [`ArchivalRecord::decode`] already gives (its required `archived`
+/// boolean rejects every non-object value). An object still decodes
+/// through the shared decoder, so absent fields mean absent state.
+fn decode_lifecycle_record(
+    value: &crate::types::DocumentValue,
+) -> Result<LifecycleRecord, FamilyError> {
+    if !matches!(value, crate::types::DocumentValue::Object(_)) {
+        return Err(FamilyError::ReservedStateInvalid);
+    }
+    LifecycleRecord::decode(value)
+}
+
 // ---------------------------------------------------------------------------
 // Execution
 // ---------------------------------------------------------------------------
@@ -372,17 +380,19 @@ fn map_snapshot_error(error: &crate::engine::EngineError) -> FamilyError {
 impl<'engine> FamilyStore<'engine> {
     /// Plans one lifecycle maintenance pass for one tenant scope.
     ///
-    /// The plan observes one immutable snapshot and one pass time, pages
-    /// the tenant's documents through the bounded snapshot window, and
-    /// keeps only lifecycle and archival records; owner presence and
-    /// version are point reads. An elapsed expiry plans a deletion, a due
-    /// refresh marker plans its consumption, an archival policy without a
-    /// schedule plans the schedule's materialization, a due archival
-    /// schedule plans the archival mark, and a record whose owner document
-    /// is gone plans the record's cleanup. Expiry outranks refresh and
-    /// archival on the same document: the document is going away, so the
-    /// other actions would operate on a corpse (V1's deletion makes the
-    /// queued work moot the same way).
+    /// The plan observes one immutable snapshot and one pass time,
+    /// enumerates the tenant's family records through the landed
+    /// [`FamilyStore::snapshot_family_records`] materialization (the same
+    /// W3-F seam backup consumes), and keeps only lifecycle and archival
+    /// records; owner presence and version are point reads. An elapsed
+    /// expiry plans a deletion, a due refresh marker plans its
+    /// consumption, an archival policy without a schedule plans the
+    /// schedule's materialization, a due archival schedule plans the
+    /// archival mark, and a record whose owner document is gone plans the
+    /// record's cleanup. Expiry outranks refresh and archival on the same
+    /// document: the document is going away, so the other actions would
+    /// operate on a corpse (V1's deletion makes the queued work moot the
+    /// same way).
     ///
     /// # Errors
     ///
@@ -391,9 +401,9 @@ impl<'engine> FamilyStore<'engine> {
     /// [`FamilyError::EngineClosed`], or [`FamilyError::StorageFailure`]
     /// for scope, snapshot, and storage failures, and
     /// [`FamilyError::ReservedStateInvalid`] when a reserved-collection
-    /// document does not parse as family state — the recorded W3-F
-    /// collision limit, which fails the pass closed rather than skipping
-    /// state it cannot name.
+    /// document does not parse as family state or holds a malformed value
+    /// — the recorded W3-F collision limit, which fails the pass closed
+    /// rather than skipping state it cannot name.
     pub fn plan_lifecycle_pass(&self, scope: &TenantScope) -> Result<LifecyclePass, FamilyError> {
         let snapshot =
             self.engine.read_snapshot(scope).map_err(|error| map_snapshot_error(&error))?;
@@ -406,32 +416,21 @@ impl<'engine> FamilyStore<'engine> {
         let mut pass = LifecyclePass::new(scope.clone());
         let now = now_millis();
 
-        // Page the tenant's documents, keeping only the lifecycle and
-        // archival records; presence and version are point reads below.
-        let mut after: Option<DocumentId> = None;
+        // Repair loop 1: enumerate the tenant's family records through the
+        // W3-F materialization seam instead of windowed paging. The
+        // storage seam's windowed read resumes strictly after the FIRST
+        // canonical key bearing the cursor identifier
+        // (src/storage/root.rs, `tenant_documents_from`), so a tenant that
+        // reuses one document identifier across collections cycled the
+        // old paging loop forever; the materialization pages nothing and
+        // observes every record exactly once.
         let mut found: Vec<(FamilyKind, DocumentId, crate::types::DocumentValue)> = Vec::new();
-        loop {
-            let window = self
-                .engine
-                .snapshot_documents_from(scope, &snapshot, after.clone(), PASS_PAGE_LIMIT)
-                .map_err(|error| map_snapshot_error(&error))?;
-            if window.is_empty() {
-                break;
-            }
-            let Some(last) = window.last() else { break };
-            after = Some(last.id().clone());
-            for document in window {
-                if document.collection().as_str() != RESERVED_COLLECTION {
-                    continue;
+        for record in self.snapshot_family_records(scope, &snapshot)? {
+            match record.kind() {
+                FamilyKind::ExpirationRefresh | FamilyKind::Archival => {
+                    found.push((record.kind(), record.id().clone(), record.value().clone()));
                 }
-                let kind =
-                    kind_of_record(document.id()).ok_or(FamilyError::ReservedStateInvalid)?;
-                match kind {
-                    FamilyKind::ExpirationRefresh | FamilyKind::Archival => {
-                        found.push((kind, document.id().clone(), document.value().clone()));
-                    }
-                    _ => {}
-                }
+                _ => {}
             }
         }
 
@@ -442,7 +441,7 @@ impl<'engine> FamilyStore<'engine> {
                     else {
                         return Err(FamilyError::ReservedStateInvalid);
                     };
-                    let record = LifecycleRecord::decode(&value)?;
+                    let record = decode_lifecycle_record(&value)?;
                     if records.user_document(&owner)?.is_none() {
                         // V1 drops queue entries whose document is gone
                         // (DocumentBackgroundWorkStorage.cs:13-24).
@@ -583,7 +582,7 @@ impl<'engine> FamilyStore<'engine> {
             } else {
                 let id = record_id("lifecycle", &[document.as_str()])?;
                 let expired = match records.read(&id)? {
-                    Some(value) => LifecycleRecord::decode(&value)?.is_expired(now),
+                    Some(value) => decode_lifecycle_record(&value)?.is_expired(now),
                     None => false,
                 };
                 if expired { VisibilityState::Expired } else { VisibilityState::Visible }
@@ -611,7 +610,7 @@ fn stage_expiry_deletions(
             skipped.push(document.clone());
             continue;
         };
-        let record = LifecycleRecord::decode(&record_value)?;
+        let record = decode_lifecycle_record(&record_value)?;
         let Some((_, version, _)) = Records::new(transaction).user_document(document)? else {
             skipped.push(document.clone());
             continue;
@@ -661,7 +660,7 @@ fn stage_refresh_consumption(
             skipped.push(document.clone());
             continue;
         };
-        let mut record = LifecycleRecord::decode(&record_value)?;
+        let mut record = decode_lifecycle_record(&record_value)?;
         if records.user_document(document)?.is_none() || record.refresh_at.is_none_or(|at| at > now)
         {
             skipped.push(document.clone());
@@ -782,12 +781,16 @@ fn write_record(
     if empty { records.clear(&id) } else { records.write(id, encode) }
 }
 
-/// Pushes one owner unless it is already the newest entry.
+/// Pushes one owner unless the list already carries it.
 ///
-/// The plan pages in canonical key order, so the bounded window's
-/// at-least-once resume can only produce adjacent duplicates.
+/// Canonical key order places every `family:archival/*` record before
+/// every `family:lifecycle/*` record, so one owner with both record kinds
+/// reaches a plan list through two non-adjacent visits, and the plan's
+/// record enumeration is exactly-once but not owner-grouped. The full
+/// membership check keeps every plan list a set of owners in first-visit
+/// order.
 fn push_unique(list: &mut Vec<DocumentId>, owner: DocumentId) {
-    if list.last() != Some(&owner) {
+    if !list.contains(&owner) {
         list.push(owner);
     }
 }
@@ -799,10 +802,11 @@ mod tests {
     //! filtering); every behavioral test below discriminates that baseline.
 
     use std::path::{Path, PathBuf};
+    use std::sync::mpsc;
     use std::time::Duration;
 
     use super::super::payloads::{ArchivalWrite, LifecycleWrite};
-    use super::super::state::{Records, now_millis, record_id};
+    use super::super::state::{RESERVED_COLLECTION, Records, now_millis, record_id};
     use super::super::{
         ArchivalCommand, ArchivalReadRequest, FamilyError, FamilyReadContext, FamilyReadRequest,
         FamilyReadResult, FamilyWriteRequest, LifecycleCommand, LifecycleRead,
@@ -1394,6 +1398,152 @@ mod tests {
         );
         run_pass(&engine, "tenant-b", "pass-b");
         assert!(!document_present(&engine, "tenant-b", "doc-b"));
+        engine.shutdown().expect("shuts down");
+    }
+
+    // ------------------------------------------------------------------
+    // Repair loop 1 (warden findings, TerraBaseV2#75)
+    // ------------------------------------------------------------------
+
+    /// Runs one closure that must terminate, failing the test when it
+    /// does not.
+    ///
+    /// The repair's red state cycled forever inside `plan_lifecycle_pass`
+    /// (a busy paging loop, not a blocking wait), so the regression guard
+    /// must bound the call itself instead of relying on the harness to
+    /// kill it. A timed-out worker thread is left to process exit: the
+    /// panic below already failed the test, and joining a spinning thread
+    /// would hang the harness.
+    fn must_terminate<T: Send + 'static>(tag: &str, run: impl FnOnce() -> T + Send + 'static) -> T {
+        let (sender, receiver) = mpsc::channel();
+        let worker = std::thread::Builder::new()
+            .name(format!("tbv2-gapf06-{tag}"))
+            .spawn(move || {
+                let value = run();
+                let _ = sender.send(value);
+            })
+            .expect("spawns the guarded worker");
+        match receiver.recv_timeout(Duration::from_secs(30)) {
+            Ok(value) => {
+                worker.join().expect("the guarded worker ends");
+                value
+            }
+            Err(_) => panic!("`{tag}` did not terminate within 30 s"),
+        }
+    }
+
+    #[test]
+    fn the_plan_terminates_and_covers_a_tenant_that_reuses_one_id_across_collections() {
+        // Warden MAJOR: the windowed paging resumed strictly after the
+        // FIRST canonical key bearing the cursor identifier, so a tenant
+        // with the same document id in two collections cycled the plan
+        // forever (src/storage/root.rs documents the shape; migrations and
+        // streaming bound the same seam). The plan must terminate — and
+        // still see the reused id's lifecycle state.
+        let (planned, shutdown) = must_terminate("dup-id", || {
+            let (_dir, engine) = open_engine("dup-id");
+            let put = |operation: &str, collection: &str| {
+                commit(&engine, "tenant-a", operation, |_, transaction, _, _| {
+                    transaction
+                        .put(
+                            Document::new(
+                                document_id("doc-x"),
+                                CollectionName::try_new(collection).expect("collection"),
+                                user_value(&[("n", "v")]),
+                            ),
+                            ExpectedVersion::Any,
+                        )
+                        .expect("puts");
+                });
+            };
+            put("put-users", "users");
+            put("put-zzz", "zzz");
+            let now = now_millis();
+            commit(&engine, "tenant-a", "expire", |store, transaction, ts, id| {
+                stage_expiration(store, transaction, ts, id, "doc-x", Some(now - 1));
+            });
+            let planned = engine.families().plan_lifecycle_pass(&scope(&engine, "tenant-a"));
+            (planned, engine.shutdown())
+        });
+        shutdown.expect("shuts down");
+        let pass = planned.expect("the plan over a reused identifier completes");
+        assert_eq!(
+            pass.expired_documents(),
+            [document_id("doc-x")],
+            "the reused id's elapsed expiry is still planned"
+        );
+        assert!(pass.refresh_due_documents().is_empty());
+        assert!(pass.scheduled_archival_documents().is_empty());
+        assert!(pass.archive_due_documents().is_empty());
+        assert!(pass.stale_records().is_empty());
+    }
+
+    #[test]
+    fn a_non_object_lifecycle_record_value_fails_the_pass_closed() {
+        // Warden MINOR: the shared decoder reads every field off a
+        // non-object value as absent, so a squatter string at the reserved
+        // lifecycle identifier decoded as "no lifecycle state" and the
+        // pass returned Ok. A malformed reserved value must fail the pass
+        // closed, like every other reserved-state collision.
+        let (_dir, engine) = open_engine("squatter");
+        let squatter_id = record_id("lifecycle", &["doc-1"]).expect("record id");
+        commit(&engine, "tenant-a", "squatter-put", |_, transaction, _, _| {
+            transaction
+                .put(
+                    Document::new(
+                        squatter_id.clone(),
+                        CollectionName::try_new(RESERVED_COLLECTION).expect("collection"),
+                        DocumentValue::String("not family state".to_owned()),
+                    ),
+                    ExpectedVersion::Any,
+                )
+                .expect("the engine accepts a squatter document");
+        });
+        let error = engine
+            .families()
+            .plan_lifecycle_pass(&scope(&engine, "tenant-a"))
+            .expect_err("a malformed reserved value fails the pass closed");
+        assert!(matches!(error, FamilyError::ReservedStateInvalid));
+        engine.shutdown().expect("shuts down");
+    }
+
+    #[test]
+    fn stale_owner_lists_stay_unique_when_owners_have_both_record_kinds() {
+        // Warden MINOR: canonical key order places every `family:archival/*`
+        // record before every `family:lifecycle/*` record, so one gone
+        // owner with both record kinds reached the stale list twice and
+        // the adjacent-duplicates guard could not see the repeat.
+        let (_dir, engine) = open_engine("stale-unique");
+        put_user_document(&engine, "tenant-a", "put-1", "doc-1", user_value(&[("n", "v")]));
+        put_user_document(&engine, "tenant-a", "put-2", "doc-2", user_value(&[("n", "v")]));
+        let now = now_millis();
+        commit(&engine, "tenant-a", "configure", |store, transaction, ts, id| {
+            stage_expiration(store, transaction, ts, id, "doc-1", Some(now + 3_600_000));
+            stage_expiration(store, transaction, ts, id, "doc-2", Some(now + 3_600_000));
+        });
+        commit(&engine, "tenant-a", "archival", |store, transaction, ts, id| {
+            stage_archival_policy(store, transaction, ts, id, "doc-1", 3_600_000);
+            stage_archival_policy(store, transaction, ts, id, "doc-2", 3_600_000);
+        });
+        commit(&engine, "tenant-a", "delete-owners", |_, transaction, _, _| {
+            transaction
+                .delete(document_id("doc-1"), ExpectedVersion::Any)
+                .expect("deletes the first owner");
+            transaction
+                .delete(document_id("doc-2"), ExpectedVersion::Any)
+                .expect("deletes the second owner");
+        });
+
+        let pass =
+            engine.families().plan_lifecycle_pass(&scope(&engine, "tenant-a")).expect("plans");
+        assert_eq!(pass.stale_records(), [document_id("doc-1"), document_id("doc-2")]);
+        assert!(pass.expired_documents().is_empty());
+        let staged = stage_pass(&engine, "tenant-a", "pass-1", &pass);
+        assert_eq!(staged.cleared_stale(), [document_id("doc-1"), document_id("doc-2")]);
+        assert!(!record_present(&engine, "lifecycle", "doc-1"));
+        assert!(!record_present(&engine, "lifecycle", "doc-2"));
+        assert!(!record_present(&engine, "archival", "doc-1"));
+        assert!(!record_present(&engine, "archival", "doc-2"));
         engine.shutdown().expect("shuts down");
     }
 
