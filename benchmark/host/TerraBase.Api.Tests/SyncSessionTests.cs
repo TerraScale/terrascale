@@ -185,6 +185,45 @@ public sealed class SyncSessionTests
         await Assert.That(badAckBody.RootElement.GetProperty("code").GetString()).IsEqualTo("checkpoint-refused");
     }
 
+    /// <summary>
+    /// Plain typed refusals omit the resync marker: the member is
+    /// serialized only when a resync is demanded. A null marker on
+    /// every plain refusal crashes null-unsafe refusal parsers (the
+    /// cross-repo #93 defect the SE-11 tracer recorded).
+    /// </summary>
+    [Test]
+    public async Task PlainRefusalsOmitTheResyncMarker()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+        var (sessionId, checkpoint) = await OpenSessionAsync(caller);
+
+        // The session closes; a lifecycle frame on it is a plain typed
+        // refusal: ended, demanding no resync — the marker is absent.
+        var (close, _) = await HostHarness.SendAsync(caller, $"/v1/sync/sessions/{sessionId}/close", method: "POST");
+        await Assert.That(close).IsEqualTo(200);
+        var (ended, endedBody) = await HostHarness.SendAsync(
+            caller,
+            $"/v1/sync/sessions/{sessionId}/delta",
+            new { from = Convert.ToBase64String(checkpoint) });
+        await Assert.That(ended).IsEqualTo(410);
+        await Assert.That(endedBody.RootElement.GetProperty("code").GetString()).IsEqualTo("session-ended");
+        await Assert.That(endedBody.RootElement.TryGetProperty("resyncRequired", out _)).IsFalse();
+
+        // The demanded case keeps the marker: a checkpoint behind the
+        // retained floor states its resync demand as a boolean true.
+        var (resyncId, _) = await OpenSessionAsync(caller);
+        var stale = new byte[] { 0xee, 0x6f, 0x70 };
+        var (refused, refusedBody) = await HostHarness.SendAsync(
+            caller,
+            $"/v1/sync/sessions/{resyncId}/delta",
+            new { from = Convert.ToBase64String(stale) });
+        await Assert.That(refused).IsEqualTo(409);
+        await Assert.That(refusedBody.RootElement.GetProperty("resyncRequired").GetBoolean()).IsTrue();
+    }
+
     /// <summary>A resume checkpoint that does not decode is refused fail-closed at setup.</summary>
     [Test]
     public async Task AMalformedResumeCheckpointIsRefusedFailClosed()
