@@ -15,9 +15,14 @@ use std::{
 };
 
 use crate::engine::{CommitOutcome, Engine, EngineConfig};
+use crate::families::attachments::{AttachmentContentWrite, AttachmentSegment};
 use crate::families::{
-    CounterBatchWrite, CounterOperation, CounterRead, FamilyReadContext, FamilyReadRequest,
-    FamilyWriteRequest, TimeSeriesAppend, TimeSeriesBatchWrite, TimeSeriesRange,
+    ArchivalCommand, ArchivalWrite, AttachmentMutation, AttachmentWrite, CompareExchangeCondition,
+    CompareExchangeWrite, CounterBatchWrite, CounterOperation, CounterRead, FamilyKind,
+    FamilyReadContext, FamilyReadRequest, FamilyWriteRequest, IdentityCommand, IdentityWrite,
+    LifecycleCommand, LifecycleWrite, RevisionCommand, RevisionWrite, SchemaDefinition, SchemaRule,
+    SchemaVersion, TimeSeriesAppend, TimeSeriesBatchWrite, TimeSeriesDelete, TimeSeriesRange,
+    TombstoneCommand, TombstoneWrite,
 };
 use crate::operations::QueryInput;
 use crate::query::{
@@ -25,10 +30,11 @@ use crate::query::{
     QueryPredicate, QueryProjection, QuerySource, QuerySpec, StalenessMode, StalenessPolicy,
 };
 use crate::streaming::{
-    self, ChangeEvent, ChangeFilter, ChangeKind, DocumentStreamSelector, FamilyStreamSelector,
-    StreamBatch, StreamCompletion, StreamCursor, StreamError, StreamItem, StreamSource,
-    StreamStore, SubscriptionAcknowledgement, SubscriptionSpec, SubscriptionStatus,
-    TimeSeriesStreamRange,
+    self, AttachmentChangeEntry, AttachmentChangePayload, ChangeEvent, ChangeFilter, ChangeKind,
+    CounterChangeEntry, CounterChangePayload, DocumentStreamSelector, FamilyChangePayload,
+    FamilyStreamSelector, MAX_CHANGE_PAYLOAD_ENTRIES, PayloadShape, StreamBatch, StreamCompletion,
+    StreamCursor, StreamError, StreamItem, StreamSource, StreamStore, SubscriptionAcknowledgement,
+    SubscriptionSpec, SubscriptionStatus, TimeSeriesChangePayload, TimeSeriesStreamRange,
 };
 use crate::types::{
     Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue, ExpectedVersion,
@@ -2637,6 +2643,817 @@ fn trigger_notifications_validate_capacity_and_sink_bounds() {
     );
     commit_document(&engine, "t1", "op-bound", "users", "doc-bound", "v");
     assert!(taps[0].try_pop().is_some(), "an attached tap below the bound keeps serving");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// GAP-F02: family change payloads
+// ---------------------------------------------------------------------------
+
+/// One digest-shaped constant: sixty-four lowercase hex characters.
+const PAYLOAD_TEST_DIGEST: &str =
+    "0f4b1e9d2c3a5f6e8d7c9b0a1f2e3d4c5b6a79880f1e2d3c4b5a69788796a5b4";
+
+/// Commits one owner user document so document-bound family writes stage.
+fn commit_owner_document(engine: &Engine, tenant_scope: &TenantScope, id: &str) {
+    let snapshot = engine.read_snapshot(tenant_scope).expect("snapshot");
+    let mut transaction =
+        engine.begin(tenant_scope, snapshot, operation("op-owner")).expect("begins");
+    transaction
+        .put(text_document("sales", id, "v1"), ExpectedVersion::Any)
+        .expect("stages the owner document");
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(_) => {}
+        other => panic!("owner document did not commit: {other:?}"),
+    }
+}
+
+/// Stages and commits one counter batch of named deltas on one document.
+fn commit_counter_batch(
+    engine: &Engine,
+    tenant_scope: &TenantScope,
+    operation_name: &str,
+    document: &str,
+    deltas: &[(&str, i64)],
+) {
+    let operations = deltas
+        .iter()
+        .map(|(name, delta)| CounterOperation::Increment {
+            name: (*name).to_owned(),
+            delta: *delta,
+        })
+        .collect();
+    let write = CounterBatchWrite::try_new(
+        tenant_scope.clone(),
+        document_id(document),
+        operations,
+        ExpectedVersion::Any,
+        operation(operation_name),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid counter batch");
+    commit_family_write(
+        engine,
+        tenant_scope,
+        operation_name,
+        FamilyWriteRequest::counter_batch(write),
+    );
+}
+
+/// Returns the events one kind filter accepts, replayed from the beginning.
+fn replay_kind(engine: &Engine, tenant_scope: &TenantScope, kind: ChangeKind) -> Vec<ChangeEvent> {
+    let filter = ChangeFilter::try_new(Some(vec![kind]), None).expect("filter");
+    replay_all(engine, tenant_scope, &filter, None, 16)
+}
+
+/// Drains one kind-filtered live subscription from the beginning.
+fn drain_live_kind(
+    store: &StreamStore<'_>,
+    tenant_scope: &TenantScope,
+    name: &str,
+    kind: ChangeKind,
+) -> Vec<ChangeEvent> {
+    let filter = ChangeFilter::try_new(Some(vec![kind]), None).expect("filter");
+    let spec = SubscriptionSpec::try_new(name, filter, 16).expect("valid spec").from_beginning();
+    store.subscribe(tenant_scope, &spec).expect("subscribes");
+    drain_live(store, tenant_scope, name)
+}
+
+#[test]
+fn counter_change_payloads_round_trip_totals_through_replay_and_live() {
+    let (dir, engine) = open_engine("payload-counter");
+    let tenant_scope = scope(&engine, "t1");
+    commit_owner_document(&engine, &tenant_scope, "orders/1");
+    commit_counter_batch(
+        &engine,
+        &tenant_scope,
+        "op-counters",
+        "orders/1",
+        &[("views", 5), ("hits", 2)],
+    );
+
+    let replayed = replay_kind(&engine, &tenant_scope, ChangeKind::Counter);
+    assert_eq!(replayed.len(), 1, "one counter record put, one event");
+    let event = &replayed[0];
+    let Some(FamilyChangePayload::Counters(counter)) = event.payload() else {
+        panic!("a counter record event carries a counters payload: {event:?}");
+    };
+    assert_eq!(counter.shape(), PayloadShape::Put);
+    assert_eq!(counter.record_version(), 1, "the first put of the record");
+    assert!(counter.complete(), "two entries is far inside the bound");
+    assert_eq!(counter.omitted_entries(), 0);
+    assert_eq!(counter.entries().len(), 2);
+    assert_eq!(counter.entries()[0].name(), "hits", "entries ascend by name");
+    assert_eq!(counter.entries()[0].total(), 2);
+    assert_eq!(counter.entries()[1].name(), "views");
+    assert_eq!(counter.entries()[1].total(), 5);
+
+    // The live subscription path and the journal replay path observe the
+    // identical payload for the same journal position.
+    let store = engine.streams();
+    let live = drain_live_kind(&store, &tenant_scope, "payload-counter-live", ChangeKind::Counter);
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].payload(), replayed[0].payload());
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn time_series_change_payloads_round_trip_segment_summaries() {
+    let (dir, engine) = open_engine("payload-series");
+    let tenant_scope = scope(&engine, "t1");
+    commit_owner_document(&engine, &tenant_scope, "orders/1");
+    let write = TimeSeriesBatchWrite::try_new(
+        tenant_scope.clone(),
+        document_id("orders/1"),
+        "cpu".to_owned(),
+        vec![
+            TimeSeriesAppend::new(100, vec![1.0, 2.0], Some("a".to_owned())),
+            TimeSeriesAppend::new(250, vec![3.0, 4.0], None),
+            TimeSeriesAppend::new(300, vec![5.0, 6.0], Some("b".to_owned())),
+        ],
+        vec![],
+        None,
+        ExpectedVersion::Any,
+        operation("op-series"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid series batch");
+    commit_family_write(
+        &engine,
+        &tenant_scope,
+        "op-series",
+        FamilyWriteRequest::time_series_batch(write),
+    );
+
+    let replayed = replay_kind(&engine, &tenant_scope, ChangeKind::TimeSeries);
+    assert_eq!(replayed.len(), 1);
+    let Some(FamilyChangePayload::TimeSeries(series)) = replayed[0].payload() else {
+        panic!("a series record event carries a series payload");
+    };
+    assert_eq!(series.shape(), PayloadShape::Put);
+    assert_eq!(series.record_version(), 1);
+    assert_eq!(series.name(), "cpu");
+    assert_eq!(series.arity(), Some(2));
+    assert_eq!(series.from(), Some(100), "the covered span starts at the first entry");
+    assert_eq!(series.to(), Some(300), "the covered span ends at the last entry");
+    assert_eq!(series.entry_count(), 3);
+
+    let store = engine.streams();
+    let live =
+        drain_live_kind(&store, &tenant_scope, "payload-series-live", ChangeKind::TimeSeries);
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].payload(), replayed[0].payload());
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn attachment_change_payloads_round_trip_content_addressed_metadata() {
+    let (dir, engine) = open_engine("payload-attachment");
+    let tenant_scope = scope(&engine, "t1");
+    commit_owner_document(&engine, &tenant_scope, "orders/1");
+    let mutation = AttachmentMutation::Store {
+        name: "report".to_owned(),
+        content_type: "application/pdf".to_owned(),
+        size: 2048,
+        hash: PAYLOAD_TEST_DIGEST.to_owned(),
+        replace: false,
+    };
+    let write = AttachmentWrite::try_new(
+        tenant_scope.clone(),
+        document_id("orders/1"),
+        mutation,
+        ExpectedVersion::Any,
+        operation("op-attachment"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid attachment write");
+    commit_family_write(
+        &engine,
+        &tenant_scope,
+        "op-attachment",
+        FamilyWriteRequest::attachment_mutation(write),
+    );
+
+    // Attachment metadata records ride Document-kind events (the closed V1
+    // change-kind set has no attachment case), so the payload is asserted on
+    // the event of the metadata record itself.
+    let filter = ChangeFilter::try_new(None, None).expect("filter");
+    let replayed = replay_all(&engine, &tenant_scope, &filter, None, 16);
+    let event = replayed
+        .iter()
+        .find(|event| {
+            event.document().is_some_and(|id| id.as_str() == "family:attachments/orders/1")
+        })
+        .expect("the attachment metadata record produced an event");
+    let Some(FamilyChangePayload::Attachments(attachments)) = event.payload() else {
+        panic!("an attachment metadata record event carries an attachment payload");
+    };
+    assert_eq!(attachments.shape(), PayloadShape::Put);
+    assert_eq!(attachments.record_version(), 1);
+    assert!(attachments.complete());
+    assert_eq!(attachments.entries().len(), 1);
+    let entry = &attachments.entries()[0];
+    assert_eq!(entry.name(), "report");
+    assert_eq!(entry.content_type(), "application/pdf");
+    assert_eq!(entry.size(), 2048);
+    assert_eq!(entry.hash(), PAYLOAD_TEST_DIGEST, "the content address rides the payload");
+
+    let store = engine.streams();
+    let spec = SubscriptionSpec::try_new("payload-attachment-live", filter.clone(), 16)
+        .expect("valid spec")
+        .from_beginning();
+    store.subscribe(&tenant_scope, &spec).expect("subscribes");
+    let live = drain_live(&store, &tenant_scope, "payload-attachment-live");
+    let live_event = live
+        .iter()
+        .find(|event| {
+            event.document().is_some_and(|id| id.as_str() == "family:attachments/orders/1")
+        })
+        .expect("the live path delivered the metadata event");
+    assert_eq!(live_event.payload(), event.payload());
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn change_payloads_refuse_document_bodies() {
+    let (dir, engine) = open_engine("payload-refuses-bodies");
+    let tenant_scope = scope(&engine, "t1");
+    commit_documents(
+        &engine,
+        "t1",
+        "op-users",
+        &[("users", "u/1", "value-one"), ("users", "u/2", "value-two")],
+    );
+
+    let filter = ChangeFilter::try_new(None, None).expect("filter");
+    let replayed = replay_all(&engine, &tenant_scope, &filter, None, 16);
+    assert_eq!(replayed.len(), 2);
+    for event in &replayed {
+        assert_eq!(event.kind(), ChangeKind::Document);
+        assert!(event.payload().is_none(), "a user-document event carries no payload: {event:?}");
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn attachment_content_records_never_mint_change_payloads() {
+    let (dir, engine) = open_engine("payload-content-plane");
+    let tenant_scope = scope(&engine, "t1");
+    commit_owner_document(&engine, &tenant_scope, "orders/1");
+
+    // Stage the content plane first, then the metadata that addresses it:
+    // the metadata hash is the digest the plane computed, so the payload's
+    // content address provably names the stored bytes.
+    let content = AttachmentContentWrite::try_new(
+        tenant_scope.clone(),
+        None,
+        vec![AttachmentSegment::try_new(b"attachment-bytes").expect("bounded segment")],
+        operation("op-content"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid content write");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let mut transaction =
+        engine.begin(&tenant_scope, snapshot, operation("op-content")).expect("begins");
+    let recorded = engine
+        .families()
+        .stage_attachment_content(&mut transaction, content)
+        .expect("stages content");
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(_) => {}
+        other => panic!("content did not commit: {other:?}"),
+    }
+
+    let mutation = AttachmentMutation::Store {
+        name: "report".to_owned(),
+        content_type: "application/pdf".to_owned(),
+        size: recorded.size(),
+        hash: recorded.digest().to_owned(),
+        replace: false,
+    };
+    let write = AttachmentWrite::try_new(
+        tenant_scope.clone(),
+        document_id("orders/1"),
+        mutation,
+        ExpectedVersion::Any,
+        operation("op-attachment"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid attachment write");
+    commit_family_write(
+        &engine,
+        &tenant_scope,
+        "op-attachment",
+        FamilyWriteRequest::attachment_mutation(write),
+    );
+
+    let filter = ChangeFilter::try_new(None, None).expect("filter");
+    let replayed = replay_all(&engine, &tenant_scope, &filter, None, 16);
+    let content_events: Vec<&ChangeEvent> = replayed
+        .iter()
+        .filter(|event| {
+            event.document().is_some_and(|id| id.as_str().starts_with("family:attachment-content/"))
+        })
+        .collect();
+    assert!(
+        !content_events.is_empty(),
+        "the content plane's manifest and segment records produced events"
+    );
+    for event in &content_events {
+        assert!(
+            event.payload().is_none(),
+            "content-plane bytes never ride a change payload: {event:?}"
+        );
+    }
+    let metadata_event = replayed
+        .iter()
+        .find(|event| {
+            event.document().is_some_and(|id| id.as_str() == "family:attachments/orders/1")
+        })
+        .expect("the metadata record produced an event");
+    let Some(FamilyChangePayload::Attachments(attachments)) = metadata_event.payload() else {
+        panic!("the metadata event carries its payload");
+    };
+    assert_eq!(
+        attachments.entries()[0].hash(),
+        recorded.digest(),
+        "the payload's content address is the digest the plane computed"
+    );
+    assert_eq!(attachments.entries()[0].size(), recorded.size());
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn change_payload_constructors_refuse_oversize_entry_lists() {
+    use crate::operations::RequestValidationError;
+
+    let oversize_counters: Vec<CounterChangeEntry> = (0..=MAX_CHANGE_PAYLOAD_ENTRIES)
+        .map(|index| {
+            CounterChangeEntry::try_new(&format!("n{index:03}"), i64::try_from(index).unwrap_or(0))
+                .expect("a valid entry alone")
+        })
+        .collect();
+    assert_eq!(
+        CounterChangePayload::try_new(PayloadShape::Put, 1, oversize_counters.clone()).unwrap_err(),
+        RequestValidationError::InvalidFamilyPayload,
+        "one entry over the bound is refused"
+    );
+    assert!(
+        CounterChangePayload::try_new(
+            PayloadShape::Put,
+            1,
+            oversize_counters[..MAX_CHANGE_PAYLOAD_ENTRIES].to_vec()
+        )
+        .is_ok(),
+        "exactly the bound is accepted"
+    );
+
+    let oversize_attachments: Vec<AttachmentChangeEntry> = (0..=MAX_CHANGE_PAYLOAD_ENTRIES)
+        .map(|index| {
+            AttachmentChangeEntry::try_new(
+                &format!("n{index:03}"),
+                "application/pdf",
+                16,
+                PAYLOAD_TEST_DIGEST,
+            )
+            .expect("a valid entry alone")
+        })
+        .collect();
+    assert_eq!(
+        AttachmentChangePayload::try_new(PayloadShape::Put, 1, oversize_attachments).unwrap_err(),
+        RequestValidationError::InvalidFamilyPayload
+    );
+}
+
+#[test]
+fn change_payload_constructors_refuse_malformed_fields() {
+    use crate::operations::RequestValidationError;
+
+    // Malformed fields are refused at entry construction.
+    let long_name = "n".repeat(256);
+    assert_eq!(
+        CounterChangeEntry::try_new(&long_name, 1).unwrap_err(),
+        RequestValidationError::InvalidFamilyPayload
+    );
+    assert_eq!(
+        CounterChangeEntry::try_new("", 1).unwrap_err(),
+        RequestValidationError::InvalidFamilyPayload
+    );
+    assert_eq!(
+        CounterChangeEntry::try_new("bad\nname", 1).unwrap_err(),
+        RequestValidationError::InvalidFamilyPayload
+    );
+    assert_eq!(
+        AttachmentChangeEntry::try_new("report", &long_name, 16, PAYLOAD_TEST_DIGEST).unwrap_err(),
+        RequestValidationError::InvalidFamilyPayload
+    );
+    assert_eq!(
+        AttachmentChangeEntry::try_new("report", "application/pdf", 16, "not-a-digest")
+            .unwrap_err(),
+        RequestValidationError::InvalidFamilyPayload
+    );
+    assert_eq!(
+        AttachmentChangeEntry::try_new("report", "application/pdf", 16, &"a".repeat(63))
+            .unwrap_err(),
+        RequestValidationError::InvalidFamilyPayload
+    );
+
+    // Series payload fields follow the series-name rules and the range order.
+    assert_eq!(
+        TimeSeriesChangePayload::try_new(
+            PayloadShape::Put,
+            1,
+            "bad/name",
+            Some(2),
+            Some(100),
+            Some(200),
+            3
+        )
+        .unwrap_err(),
+        RequestValidationError::InvalidFamilyPayload
+    );
+    assert_eq!(
+        TimeSeriesChangePayload::try_new(
+            PayloadShape::Put,
+            1,
+            &long_name,
+            Some(2),
+            Some(100),
+            Some(200),
+            3
+        )
+        .unwrap_err(),
+        RequestValidationError::InvalidFamilyPayload
+    );
+    assert_eq!(
+        TimeSeriesChangePayload::try_new(
+            PayloadShape::Put,
+            1,
+            "cpu",
+            Some(2),
+            Some(200),
+            Some(100),
+            3
+        )
+        .unwrap_err(),
+        RequestValidationError::InvalidFamilyPayload,
+        "an inverted range is refused"
+    );
+    assert!(
+        TimeSeriesChangePayload::try_new(PayloadShape::Put, 1, "cpu", Some(2), None, None, 0)
+            .is_ok(),
+        "an empty series carries no range"
+    );
+}
+
+#[test]
+fn wide_counter_records_truncate_the_payload_with_a_reported_omitted_count() {
+    let (dir, engine) = open_engine("payload-truncation");
+    let tenant_scope = scope(&engine, "t1");
+    commit_owner_document(&engine, &tenant_scope, "orders/1");
+    let names: Vec<(String, i64)> = (0..70).map(|index| (format!("n{index:03}"), 1)).collect();
+    let borrowed: Vec<(&str, i64)> =
+        names.iter().map(|(name, delta)| (name.as_str(), *delta)).collect();
+    commit_counter_batch(&engine, &tenant_scope, "op-wide", "orders/1", &borrowed);
+
+    let replayed = replay_kind(&engine, &tenant_scope, ChangeKind::Counter);
+    assert_eq!(replayed.len(), 1);
+    let Some(FamilyChangePayload::Counters(counter)) = replayed[0].payload() else {
+        panic!("the wide record still carries its payload");
+    };
+    assert!(!counter.complete(), "a record wider than the bound reports truncation");
+    assert_eq!(counter.omitted_entries(), 6);
+    assert_eq!(counter.entries().len(), MAX_CHANGE_PAYLOAD_ENTRIES);
+    assert_eq!(counter.entries().first().expect("bounded").name(), "n000");
+    assert_eq!(
+        counter.entries().last().expect("bounded").name(),
+        format!("n{:03}", MAX_CHANGE_PAYLOAD_ENTRIES - 1)
+    );
+    for entry in counter.entries() {
+        assert_eq!(entry.total(), 1);
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn change_payloads_carry_strictly_increasing_record_versions_and_delete_shapes() {
+    let (dir, engine) = open_engine("payload-versions");
+    let tenant_scope = scope(&engine, "t1");
+    commit_owner_document(&engine, &tenant_scope, "orders/1");
+    commit_counter_batch(&engine, &tenant_scope, "op-one", "orders/1", &[("views", 5)]);
+    commit_counter_batch(&engine, &tenant_scope, "op-two", "orders/1", &[("views", 1)]);
+    // The counter family's tombstone discipline keeps a cleared name's
+    // record present (delete wins and fences stale writers), so the
+    // record-level Delete shape is exercised through the engine's delete
+    // seam — the journal write a replication apply or restore path would
+    // produce.
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let mut transaction =
+        engine.begin(&tenant_scope, snapshot, operation("op-record-delete")).expect("begins");
+    transaction
+        .delete(document_id("family:counters/orders/1"), ExpectedVersion::Any)
+        .expect("stages the record delete");
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(_) => {}
+        other => panic!("the record delete did commit: {other:?}"),
+    }
+
+    let replayed = replay_kind(&engine, &tenant_scope, ChangeKind::Counter);
+    assert_eq!(replayed.len(), 3, "two puts and one record delete");
+    let Some(FamilyChangePayload::Counters(first)) = replayed[0].payload() else {
+        panic!("the first put carries its payload");
+    };
+    let Some(FamilyChangePayload::Counters(second)) = replayed[1].payload() else {
+        panic!("the second put carries its payload");
+    };
+    let Some(FamilyChangePayload::Counters(cleared)) = replayed[2].payload() else {
+        panic!("the record delete carries its payload");
+    };
+    assert_eq!(first.shape(), PayloadShape::Put);
+    assert_eq!(second.shape(), PayloadShape::Put);
+    assert!(
+        second.record_version() > first.record_version(),
+        "successive writes to one record observe increasing versions"
+    );
+    assert_eq!(first.entries()[0].total(), 5);
+    assert_eq!(second.entries()[0].total(), 6);
+    assert_eq!(cleared.shape(), PayloadShape::Delete);
+    assert_eq!(
+        cleared.record_version(),
+        second.record_version(),
+        "the delete carries the version that existed at the deleted key"
+    );
+    assert!(cleared.entries().is_empty(), "per-name entries are not recoverable from a delete");
+    assert!(cleared.complete());
+
+    // The time-series family clears its record when the last entry is
+    // deleted and no policy remains, so its family-native clear is the
+    // Delete shape through the family seam itself.
+    let append = TimeSeriesBatchWrite::try_new(
+        tenant_scope.clone(),
+        document_id("orders/1"),
+        "cpu".to_owned(),
+        vec![TimeSeriesAppend::new(100, vec![1.0], None)],
+        vec![],
+        None,
+        ExpectedVersion::Any,
+        operation("op-series-put"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid series batch");
+    commit_family_write(
+        &engine,
+        &tenant_scope,
+        "op-series-put",
+        FamilyWriteRequest::time_series_batch(append),
+    );
+    let clear = TimeSeriesBatchWrite::try_new(
+        tenant_scope.clone(),
+        document_id("orders/1"),
+        "cpu".to_owned(),
+        vec![],
+        vec![TimeSeriesDelete::Range { start: 0, end: 1_000 }],
+        None,
+        ExpectedVersion::Any,
+        operation("op-series-clear"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid series clear");
+    commit_family_write(
+        &engine,
+        &tenant_scope,
+        "op-series-clear",
+        FamilyWriteRequest::time_series_batch(clear),
+    );
+    let series = replay_kind(&engine, &tenant_scope, ChangeKind::TimeSeries);
+    assert_eq!(series.len(), 2, "one put and one family-native clear");
+    let Some(FamilyChangePayload::TimeSeries(series_clear)) = series[1].payload() else {
+        panic!("the series clear carries its payload");
+    };
+    assert_eq!(series_clear.shape(), PayloadShape::Delete);
+    assert_eq!(series_clear.name(), "cpu");
+    assert_eq!(series_clear.from(), None);
+    assert_eq!(series_clear.to(), None);
+    assert_eq!(series_clear.entry_count(), 0);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn malformed_reserved_records_deliver_payload_less_events() {
+    let (dir, engine) = open_engine("payload-malformed");
+    let tenant_scope = scope(&engine, "t1");
+    // A garbage value occupying a counter record identifier: the event still
+    // delivers (fail-open to the pre-payload behavior), payload-less.
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let mut transaction =
+        engine.begin(&tenant_scope, snapshot, operation("op-garbage")).expect("begins");
+    transaction
+        .put(
+            text_document("terrabase.families", "family:counters/bad", "garbage"),
+            ExpectedVersion::Any,
+        )
+        .expect("stages the malformed record");
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(_) => {}
+        other => panic!("the malformed record did commit: {other:?}"),
+    }
+
+    let replayed = replay_kind(&engine, &tenant_scope, ChangeKind::Counter);
+    assert_eq!(replayed.len(), 1);
+    assert_eq!(replayed[0].document().map(DocumentId::as_str), Some("family:counters/bad"));
+    assert!(
+        replayed[0].payload().is_none(),
+        "an undecodable record mints no payload, but the event still delivers"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The reserved record-key prefixes of the seven payload-less family
+/// kinds (decision record disposition table).
+const PAYLOAD_LESS_PREFIXES: [&str; 7] = [
+    "family:revisions/",
+    "family:compare-exchange/",
+    "family:identities/",
+    "family:lifecycle/",
+    "family:archival/",
+    "family:validation/",
+    "family:tombstones/",
+];
+
+/// Commits one minimal real write of each payload-less family kind under
+/// one tenant, against one owner document the document-bound kinds need.
+fn commit_payload_less_kind_writes(engine: &Engine, tenant_scope: &TenantScope) {
+    commit_revision_cmpx_identity_lifecycle_writes(engine, tenant_scope);
+    commit_archival_validation_tombstone_writes(engine, tenant_scope);
+}
+
+/// The revision, compare-exchange, identity, and lifecycle quarters of the
+/// payload-less kind fixture set.
+fn commit_revision_cmpx_identity_lifecycle_writes(engine: &Engine, tenant_scope: &TenantScope) {
+    let revision = RevisionWrite::try_new(
+        tenant_scope.clone(),
+        document_id("orders/1"),
+        RevisionCommand::ForceCreate { expected: ExpectedVersion::Any },
+        operation("op-revisions"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid revision write");
+    commit_family_write(
+        engine,
+        tenant_scope,
+        "op-revisions",
+        FamilyWriteRequest::revision_command(revision),
+    );
+
+    let compare_exchange = CompareExchangeWrite::try_new(
+        tenant_scope.clone(),
+        "k1".to_owned(),
+        CompareExchangeCondition::PutIfMissing {
+            value: DocumentValue::String("v".to_owned()),
+            expires_at: None,
+        },
+        operation("op-cmpx"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid compare-exchange write");
+    commit_family_write(
+        engine,
+        tenant_scope,
+        "op-cmpx",
+        FamilyWriteRequest::compare_exchange_condition(compare_exchange),
+    );
+
+    let identity = IdentityWrite::try_new(
+        tenant_scope.clone(),
+        "seq".to_owned(),
+        IdentityCommand::Seed { name: "seq".to_owned(), value: 100, force: false },
+        operation("op-identities"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid identity write");
+    commit_family_write(
+        engine,
+        tenant_scope,
+        "op-identities",
+        FamilyWriteRequest::identity_allocation(identity),
+    );
+
+    let lifecycle = LifecycleWrite::try_new(
+        tenant_scope.clone(),
+        document_id("orders/1"),
+        LifecycleCommand::SetExpiration { at: Some(1_000) },
+        ExpectedVersion::Any,
+        operation("op-lifecycle"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid lifecycle write");
+    commit_family_write(
+        engine,
+        tenant_scope,
+        "op-lifecycle",
+        FamilyWriteRequest::lifecycle_update(lifecycle),
+    );
+}
+
+/// The archival, validation, and tombstone quarters of the payload-less
+/// kind fixture set.
+fn commit_archival_validation_tombstone_writes(engine: &Engine, tenant_scope: &TenantScope) {
+    let archival = ArchivalWrite::try_new(
+        tenant_scope.clone(),
+        document_id("orders/1"),
+        ArchivalCommand::SetPolicy { after_ms: 60_000 },
+        operation("op-archival"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid archival write");
+    commit_family_write(
+        engine,
+        tenant_scope,
+        "op-archival",
+        FamilyWriteRequest::archival_update(archival),
+    );
+
+    let schema = SchemaDefinition::try_new(
+        SchemaVersion::try_new(1).expect("valid version"),
+        vec![SchemaRule::Required { field: "name".to_owned() }],
+    )
+    .expect("valid schema");
+    let validation = crate::families::ValidationWrite::try_new(
+        tenant_scope.clone(),
+        collection("sales"),
+        Some(schema),
+        operation("op-validation"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid validation write");
+    commit_family_write(
+        engine,
+        tenant_scope,
+        "op-validation",
+        FamilyWriteRequest::schema_validation_update(validation),
+    );
+
+    let tombstone = TombstoneWrite::try_new(
+        tenant_scope.clone(),
+        document_id("orders/1"),
+        TombstoneCommand::Record { family: FamilyKind::Counters, deletion_version: 1 },
+        operation("op-tombstones"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid tombstone write");
+    commit_family_write(
+        engine,
+        tenant_scope,
+        "op-tombstones",
+        FamilyWriteRequest::tombstone_operation(tombstone),
+    );
+}
+
+#[test]
+fn payload_less_family_kinds_never_mint_change_payloads() {
+    let (dir, engine) = open_engine("payload-kinds");
+    let tenant_scope = scope(&engine, "t1");
+    commit_owner_document(&engine, &tenant_scope, "orders/1");
+    commit_payload_less_kind_writes(&engine, &tenant_scope);
+
+    let filter = ChangeFilter::try_new(None, None).expect("filter");
+    let replayed = replay_all(&engine, &tenant_scope, &filter, None, 64);
+    for prefix in PAYLOAD_LESS_PREFIXES {
+        let events: Vec<&ChangeEvent> = replayed
+            .iter()
+            .filter(|event| event.document().is_some_and(|id| id.as_str().starts_with(prefix)))
+            .collect();
+        assert!(!events.is_empty(), "{prefix} produced at least one event");
+        for event in events {
+            assert!(
+                event.payload().is_none(),
+                "{prefix} events carry no change payload: {event:?}"
+            );
+        }
+    }
 
     std::fs::remove_dir_all(&dir).ok();
 }

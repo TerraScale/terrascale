@@ -773,14 +773,21 @@ pub(crate) fn expand_commit_for(scope: &TenantScope, commit: &PublishedCommit) -
             PublishedWrite::Delete { collection: None, .. } => continue,
         };
         let kind = change_kind_of(&collection, &document);
-        candidates.push(ChangeEvent::new(
+        let mut event = ChangeEvent::new(
             kind,
             scope.clone(),
             collection,
             document,
             commit.operation_id().clone(),
             commit.sequence(),
-        ));
+        );
+        // The family change payload is derived here — the one expansion the
+        // live scan and the journal replay share — so both paths carry the
+        // identical body for the same journal position (GAP-F02).
+        if let Some(payload) = super::payloads::derive(write) {
+            event = event.with_payload(payload);
+        }
+        candidates.push(event);
     }
     candidates
 }

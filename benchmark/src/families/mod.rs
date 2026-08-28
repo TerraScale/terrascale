@@ -75,6 +75,12 @@ pub use schemas::SchemaFormatError;
 pub(crate) use state::FamilyMergeError;
 pub(crate) use state::{RESERVED_COLLECTION, is_counter_record, merge_counter_values};
 
+// The family record decoders the streaming change-payload mint (GAP-F02)
+// reads: the mint derives bounded payloads from published record values
+// through the same decoders the family read path uses, never a private
+// re-derivation of the reserved layout.
+pub(crate) use state::{AttachmentRecord, CounterRecord, TimeSeriesRecord};
+
 use crate::{
     engine::{Engine, EngineError, Transaction},
     types::{Cancellation, Deadline, ReadSnapshot, TenantScope},
