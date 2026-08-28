@@ -84,7 +84,7 @@ export default defineConfig({
         // outside those packets' write scope and recorded as collision
         // actions; studio/ is this packet's scope, so they land here).
         command:
-          "node --test tests/changes-model.test.mjs tests/changes-subscription.test.mjs tests/client-fresh.test.mjs tests/contract.test.mjs tests/documents-page.test.mts tests/families-page.test.mts tests/fixture-server.test.mjs tests/queries.test.mjs tests/topology-fixture.test.mjs tests/topology-vocabulary.test.mjs",
+          "node --test tests/changes-model.test.mjs tests/changes-subscription.test.mjs tests/client-fresh.test.mjs tests/contract.test.mjs tests/documents-page.test.mts tests/families-page.test.mts tests/fixture-server.test.mjs tests/queries.test.mjs tests/schemas-page.test.mts tests/topology-fixture.test.mjs tests/topology-vocabulary.test.mjs",
         cache: false,
       },
       "probe:real-host": {

@@ -169,6 +169,85 @@ public sealed class TbepChannel : IAsyncDisposable
     public Task<FamilyWriteResponse> FamilyWriteAsync(FamilyWriteRequest request, string idempotencyKey, CancellationToken cancellationToken = default) =>
         this.CallAsync<FamilyWriteRequest, FamilyWriteResponse>("family.write", request, idempotency: idempotencyKey, cancellationToken);
 
+    /// <summary>Declares, replaces, or clears one collection's schema (SM-04, mutation).</summary>
+    /// <param name="collection">The collection.</param>
+    /// <param name="schema">The typed schema document of the documented JSON Schema subset, or <c>null</c> to clear the policy.</param>
+    /// <param name="operationId">The stable operation identity (the idempotency key).</param>
+    /// <param name="idempotencyKey">The retry identity.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The declared state.</returns>
+    /// <exception cref="TbepException">The operation failed.</exception>
+    public Task<SchemaDeclareResponse> SchemaDeclareAsync(string collection, TbepValue? schema, string operationId, string idempotencyKey, CancellationToken cancellationToken = default) =>
+        this.CallAsync<SchemaDeclareRequest, SchemaDeclareResponse>(
+            "schema.declare",
+            new SchemaDeclareRequest { Collection = collection, Schema = schema, OperationId = operationId },
+            idempotency: idempotencyKey,
+            cancellationToken);
+
+    /// <summary>Reads one collection's recorded schema state (SM-04).</summary>
+    /// <param name="collection">The collection.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The recorded schema state.</returns>
+    /// <exception cref="TbepException">The operation failed.</exception>
+    public Task<SchemaStatusResponse> SchemaStatusAsync(string collection, CancellationToken cancellationToken = default) =>
+        this.CallAsync<SchemaStatusRequest, SchemaStatusResponse>(
+            "schema.status",
+            new SchemaStatusRequest { Collection = collection },
+            idempotency: null,
+            cancellationToken);
+
+    /// <summary>Validates one document value against the recorded schema (SM-04).</summary>
+    /// <param name="collection">The collection.</param>
+    /// <param name="document">The document value.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The typed validation answer.</returns>
+    /// <exception cref="TbepException">The operation failed.</exception>
+    public Task<SchemaValidateResponse> SchemaValidateAsync(string collection, TbepValue document, CancellationToken cancellationToken = default) =>
+        this.CallAsync<SchemaValidateRequest, SchemaValidateResponse>(
+            "schema.validate",
+            new SchemaValidateRequest { Collection = collection, Document = document },
+            idempotency: null,
+            cancellationToken);
+
+    /// <summary>Reads one collection's Schema Migration state (SM-04).</summary>
+    /// <param name="collection">The collection.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The migration state.</returns>
+    /// <exception cref="TbepException">The operation failed.</exception>
+    public Task<MigrationStatusResponse> MigrationStatusAsync(string collection, CancellationToken cancellationToken = default) =>
+        this.CallAsync<MigrationStatusRequest, MigrationStatusResponse>(
+            "migration.status",
+            new MigrationStatusRequest { Collection = collection },
+            idempotency: null,
+            cancellationToken);
+
+    /// <summary>Computes one migration contract's dry run (SM-04; mutating nothing).</summary>
+    /// <param name="contract">The typed migration contract.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The plan with its evidence.</returns>
+    /// <exception cref="TbepException">The operation failed.</exception>
+    public Task<MigrationDryRunResponse> MigrationDryRunAsync(SchemaMigrationContract contract, CancellationToken cancellationToken = default) =>
+        this.CallAsync<MigrationDryRunRequest, MigrationDryRunResponse>(
+            "migration.dry_run",
+            new MigrationDryRunRequest { Contract = contract },
+            idempotency: null,
+            cancellationToken);
+
+    /// <summary>Applies one migration contract to completion (SM-04, mutation).</summary>
+    /// <param name="contract">The typed migration contract.</param>
+    /// <param name="acknowledgeNotRollbackable">The explicit not-rollbackable acknowledgment.</param>
+    /// <param name="operationId">The stable operation identity (the idempotency key).</param>
+    /// <param name="idempotencyKey">The retry identity.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The recorded receipt.</returns>
+    /// <exception cref="TbepException">The operation failed.</exception>
+    public Task<MigrationApplyResponse> MigrationApplyAsync(SchemaMigrationContract contract, bool acknowledgeNotRollbackable, string operationId, string idempotencyKey, CancellationToken cancellationToken = default) =>
+        this.CallAsync<MigrationApplyRequest, MigrationApplyResponse>(
+            "migration.apply",
+            new MigrationApplyRequest { Contract = contract, AcknowledgeNotRollbackable = acknowledgeNotRollbackable, OperationId = operationId },
+            idempotency: idempotencyKey,
+            cancellationToken);
+
     /// <summary>Subscribes one backbone stream and registers its notification sink.</summary>
     /// <param name="subscriptionId">The caller-assigned subscription identity.</param>
     /// <param name="collections">The collection filter, or <c>null</c> for every collection.</param>

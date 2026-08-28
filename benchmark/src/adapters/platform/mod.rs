@@ -23,6 +23,8 @@
 mod audit;
 mod engine_port;
 #[cfg(test)]
+mod schema_surface_tests;
+#[cfg(test)]
 mod tests;
 
 pub use audit::{AuditEvent, AuditOperation, AuditRefusal, AuditStage, MAX_AUDIT_EVENTS};
@@ -31,7 +33,8 @@ use crate::{
     adapters::protocol::CallerContext,
     engine::{EngineError, EnginePort},
     operations::{
-        EngineRequest, EngineResponse, FamilyOperation, PublicOperation, PublicResponse, QueryInput,
+        EngineRequest, EngineResponse, FamilyOperation, PublicOperation, PublicResponse,
+        QueryInput, SchemaOperation,
     },
     types::{Cancellation, Deadline, OperationId, TenantScope},
 };
@@ -183,6 +186,7 @@ impl<'engine> PlatformAdapter<'engine> {
             }
             PublicOperation::Query(request) => EngineRequest::Query { scope, request },
             PublicOperation::Family(request) => EngineRequest::Family { scope, request },
+            PublicOperation::Schema(request) => EngineRequest::Schema { scope, request },
         };
         self.engine
             .execute(request)
@@ -342,6 +346,28 @@ fn enforce_tenant_isolation(
         PublicOperation::Family(FamilyOperation::Write(request)) => {
             request.tenant_scope().tenant() != tenant
         }
+        // The schema surface carries a tenant claim on every operation,
+        // reads included: the claim names the collection's owner and the
+        // derived scope is the authorized truth, so a mismatch is refused
+        // before any schema state is read.
+        PublicOperation::Schema(SchemaOperation::Declare(request)) => {
+            request.tenant_claim() != tenant
+        }
+        PublicOperation::Schema(SchemaOperation::Status(request)) => {
+            request.tenant_claim() != tenant
+        }
+        PublicOperation::Schema(SchemaOperation::Validate(request)) => {
+            request.tenant_claim() != tenant
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationStatus(request)) => {
+            request.tenant_claim() != tenant
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationDryRun(request)) => {
+            request.tenant_claim() != tenant
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationApply(request)) => {
+            request.tenant_claim() != tenant
+        }
     };
     if mismatch {
         return Err(PlatformError::TenantDenied);
@@ -365,6 +391,24 @@ fn bounds(operation: &PublicOperation) -> (Deadline, Cancellation) {
         PublicOperation::Family(FamilyOperation::Write(request)) => {
             (request.deadline(), request.cancellation())
         }
+        PublicOperation::Schema(SchemaOperation::Declare(request)) => {
+            (request.deadline(), request.cancellation())
+        }
+        PublicOperation::Schema(SchemaOperation::Status(request)) => {
+            (request.deadline(), request.cancellation())
+        }
+        PublicOperation::Schema(SchemaOperation::Validate(request)) => {
+            (request.deadline(), request.cancellation())
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationStatus(request)) => {
+            (request.deadline(), request.cancellation())
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationDryRun(request)) => {
+            (request.deadline(), request.cancellation())
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationApply(request)) => {
+            (request.deadline(), request.cancellation())
+        }
     }
 }
 
@@ -383,6 +427,20 @@ fn mutating_identity(operation: &PublicOperation) -> Option<OperationId> {
         PublicOperation::Family(FamilyOperation::Write(request)) => {
             Some(request.operation_id().clone())
         }
+        // The schema surface's mutations are the schema declaration and the
+        // migration apply; its reads carry no retry identity.
+        PublicOperation::Schema(SchemaOperation::Declare(request)) => {
+            Some(request.operation_id().clone())
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationApply(request)) => {
+            Some(request.operation_id().clone())
+        }
+        PublicOperation::Schema(
+            SchemaOperation::Status(_)
+            | SchemaOperation::Validate(_)
+            | SchemaOperation::MigrationStatus(_)
+            | SchemaOperation::MigrationDryRun(_),
+        ) => None,
     }
 }
 
@@ -394,6 +452,18 @@ fn audit_operation(operation: &PublicOperation) -> AuditOperation {
         PublicOperation::Query(_) => AuditOperation::Query,
         PublicOperation::Family(FamilyOperation::Read(_)) => AuditOperation::FamilyRead,
         PublicOperation::Family(FamilyOperation::Write(_)) => AuditOperation::FamilyWrite,
+        PublicOperation::Schema(SchemaOperation::Declare(_)) => AuditOperation::SchemaDeclare,
+        PublicOperation::Schema(SchemaOperation::Status(_)) => AuditOperation::SchemaStatus,
+        PublicOperation::Schema(SchemaOperation::Validate(_)) => AuditOperation::SchemaValidate,
+        PublicOperation::Schema(SchemaOperation::MigrationStatus(_)) => {
+            AuditOperation::SchemaMigrationStatus
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationDryRun(_)) => {
+            AuditOperation::SchemaMigrationDryRun
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationApply(_)) => {
+            AuditOperation::SchemaMigrationApply
+        }
     }
 }
 
@@ -460,5 +530,6 @@ fn public_response(response: EngineResponse) -> PublicResponse {
         EngineResponse::Query(result) => PublicResponse::Query(result),
         EngineResponse::Family(result) => PublicResponse::Family(result),
         EngineResponse::Commit(outcome) => PublicResponse::Commit(outcome),
+        EngineResponse::Schema(answer) => PublicResponse::Schema(answer),
     }
 }

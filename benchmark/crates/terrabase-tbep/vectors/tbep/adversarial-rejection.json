@@ -53,6 +53,10 @@
     {
       "class": "observation",
       "wire_bytes": 65536
+    },
+    {
+      "class": "schema",
+      "wire_bytes": 65536
     }
   ],
   "category": "adversarial-rejection",

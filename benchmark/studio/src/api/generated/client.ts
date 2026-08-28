@@ -363,6 +363,60 @@ export interface FatalErrorPayload {
   message: string;
 }
 
+export interface SchemaStateRequest {
+  /**
+   * The collection whose schema state is read.
+   */
+  collection: string;
+}
+
+export interface SchemaStateResult {
+  /**
+   * The collection.
+   */
+  collection: string;
+  /**
+   * The enforced Schema Version, or null for a schema-free collection.
+   */
+  enforcedVersion?: number | null;
+  /**
+   * The recorded rule count of the enforced Document Schema.
+   */
+  ruleCount: number;
+  /**
+   * The validation status in the schema model's vocabulary: enforced or none.
+   */
+  validation: string;
+  /**
+   * The Schema Migration state: none, in_progress, rolling_back, or complete.
+   */
+  migrationKind: string;
+  /**
+   * The manifest digest of the recorded drive, when one exists.
+   */
+  migrationManifest?: string | null;
+  /**
+   * The drive's from-version, when one exists.
+   */
+  migrationFromVersion?: number | null;
+  /**
+   * The drive's to-version, when one exists.
+   */
+  migrationToVersion?: number | null;
+  /**
+   * The documents the drive scanned so far.
+   */
+  migrationDocuments?: number | null;
+  /**
+   * The documents the drive transformed so far.
+   */
+  migrationTransformed?: number | null;
+  /**
+   * The pages the drive committed so far.
+   */
+  migrationPages?: number | null;
+}
+
 const KNOWN_FRAME_TYPES = [
   "session.opened",
   "subscription.established",
@@ -1578,6 +1632,15 @@ export class TerrabaseStudioClient {
    */
   async familyWrite(request: FamilyWriteRequest, options: OperationOptions = {}): Promise<CommitReceipt> {
     return callOperation(this.#options, "family.write", request as unknown as Json, options) as Promise<CommitReceipt>;
+  }
+
+  /**
+   * PublicOperation::Schema(SchemaOperation::Status). One typed read of one collection's
+   * Document Schema state and Schema Migration state; the studio's schema page reads nothing
+   * else.
+   */
+  async schemaStatus(request: SchemaStateRequest, options: OperationOptions = {}): Promise<SchemaStateResult> {
+    return callOperation(this.#options, "schema.status", request as unknown as Json, options) as Promise<SchemaStateResult>;
   }
 
     /**

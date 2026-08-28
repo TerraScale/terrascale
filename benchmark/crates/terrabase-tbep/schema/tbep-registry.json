@@ -65,6 +65,11 @@
       "class": "observation",
       "wire_bytes": 65536,
       "frames": "replication.*"
+    },
+    {
+      "class": "schema",
+      "wire_bytes": 65536,
+      "frames": "schema.*, migration.*"
     }
   ],
   "errors": [
@@ -471,6 +476,148 @@
           "name": "unknown"
         }
       ]
+    },
+    {
+      "name": "violation_kind",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "document_not_object"
+        },
+        {
+          "name": "missing_required_field"
+        },
+        {
+          "name": "type_mismatch"
+        },
+        {
+          "name": "value_not_allowed"
+        },
+        {
+          "name": "number_out_of_range"
+        },
+        {
+          "name": "length_out_of_range"
+        }
+      ]
+    },
+    {
+      "name": "coercion",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "integer_to_text"
+        },
+        {
+          "name": "text_to_integer"
+        },
+        {
+          "name": "integer_to_number"
+        },
+        {
+          "name": "number_to_integer"
+        }
+      ]
+    },
+    {
+      "name": "transform_rejection",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "value_not_coercible"
+        },
+        {
+          "name": "target_field_occupied"
+        }
+      ]
+    },
+    {
+      "name": "rollback_limit_kind",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "reversible"
+        },
+        {
+          "name": "not_reversible"
+        }
+      ]
+    },
+    {
+      "name": "migration_state_kind",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "none"
+        },
+        {
+          "name": "in_progress"
+        },
+        {
+          "name": "rolling_back"
+        },
+        {
+          "name": "complete"
+        }
+      ]
+    },
+    {
+      "name": "plan_problem_kind",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "transform_rejected"
+        },
+        {
+          "name": "target_violations"
+        }
+      ]
+    },
+    {
+      "name": "transform_literal",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "boolean",
+          "field": {
+            "name": "value",
+            "type": "bool"
+          }
+        },
+        {
+          "name": "integer",
+          "field": {
+            "name": "value",
+            "type": "i64"
+          }
+        },
+        {
+          "name": "text",
+          "field": {
+            "name": "value",
+            "type": "str",
+            "bound": 256
+          }
+        }
+      ]
+    },
+    {
+      "name": "field_transform",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "add_field"
+        },
+        {
+          "name": "remove_field"
+        },
+        {
+          "name": "rename_field"
+        },
+        {
+          "name": "retype_field"
+        }
+      ]
     }
   ],
   "types": [
@@ -696,6 +843,273 @@
           "name": "counterparty",
           "type": "str",
           "bound": 128
+        }
+      ]
+    },
+    {
+      "name": "schema_violation",
+      "fields": [
+        {
+          "name": "field",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "kind",
+          "type": "violation_kind"
+        }
+      ]
+    },
+    {
+      "name": "plan_problem",
+      "fields": [
+        {
+          "name": "document",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "field",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "kind",
+          "type": "plan_problem_kind"
+        },
+        {
+          "name": "rejection",
+          "type": "transform_rejection",
+          "optional": true
+        },
+        {
+          "name": "violations",
+          "type": "[schema_violation]"
+        }
+      ]
+    },
+    {
+      "name": "transform_counts",
+      "fields": [
+        {
+          "name": "added",
+          "type": "u64"
+        },
+        {
+          "name": "removed",
+          "type": "u64"
+        },
+        {
+          "name": "renamed",
+          "type": "u64"
+        },
+        {
+          "name": "retyped",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "migration_state",
+      "fields": [
+        {
+          "name": "kind",
+          "type": "migration_state_kind"
+        },
+        {
+          "name": "manifest",
+          "type": "str",
+          "bound": 128
+        },
+        {
+          "name": "from_version",
+          "type": "u64"
+        },
+        {
+          "name": "to_version",
+          "type": "u64"
+        },
+        {
+          "name": "documents",
+          "type": "u64"
+        },
+        {
+          "name": "transformed",
+          "type": "u64"
+        },
+        {
+          "name": "pages",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "migration_plan",
+      "fields": [
+        {
+          "name": "manifest",
+          "type": "str",
+          "bound": 128
+        },
+        {
+          "name": "collection",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "from_version",
+          "type": "u64"
+        },
+        {
+          "name": "to_version",
+          "type": "u64"
+        },
+        {
+          "name": "ready",
+          "type": "bool"
+        },
+        {
+          "name": "documents",
+          "type": "u64"
+        },
+        {
+          "name": "source_digest",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "result_digest",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "transform_counts",
+          "type": "transform_counts"
+        },
+        {
+          "name": "problems",
+          "type": "[plan_problem]"
+        },
+        {
+          "name": "problems_truncated",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "migration_receipt",
+      "fields": [
+        {
+          "name": "collection",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "manifest",
+          "type": "str",
+          "bound": 128
+        },
+        {
+          "name": "from_version",
+          "type": "u64"
+        },
+        {
+          "name": "to_version",
+          "type": "u64"
+        },
+        {
+          "name": "source_digest",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "result_digest",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "documents",
+          "type": "u64"
+        },
+        {
+          "name": "transformed",
+          "type": "u64"
+        },
+        {
+          "name": "transform_counts",
+          "type": "transform_counts"
+        },
+        {
+          "name": "pages",
+          "type": "u64"
+        },
+        {
+          "name": "rollback_limit",
+          "type": "rollback_limit_kind"
+        },
+        {
+          "name": "acknowledged_not_rollbackable",
+          "type": "bool"
+        },
+        {
+          "name": "already_applied",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "schema_migration_contract",
+      "fields": [
+        {
+          "name": "collection",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "from_version",
+          "type": "u64"
+        },
+        {
+          "name": "to_version",
+          "type": "u64"
+        },
+        {
+          "name": "target",
+          "type": "value"
+        },
+        {
+          "name": "transforms",
+          "type": "[field_transform_step]"
+        }
+      ]
+    },
+    {
+      "name": "field_transform_step",
+      "fields": [
+        {
+          "name": "kind",
+          "type": "field_transform"
+        },
+        {
+          "name": "field",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "to",
+          "type": "str",
+          "bound": 64,
+          "optional": true
+        },
+        {
+          "name": "default",
+          "type": "transform_literal",
+          "optional": true
+        },
+        {
+          "name": "coercion",
+          "type": "coercion",
+          "optional": true
         }
       ]
     }
@@ -1763,6 +2177,229 @@
           {
             "name": "in_flight",
             "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "schema.declare",
+      "code": 336,
+      "family": "schemas",
+      "class": "schema",
+      "mutation": true,
+      "parity": [
+        "PB-3036",
+        "PB-3037"
+      ],
+      "request": {
+        "name": "schema_declare_request",
+        "fields": [
+          {
+            "name": "collection",
+            "type": "str",
+            "bound": 64
+          },
+          {
+            "name": "schema",
+            "type": "value",
+            "optional": true
+          },
+          {
+            "name": "operation_id",
+            "type": "str",
+            "bound": 128
+          }
+        ]
+      },
+      "response": {
+        "code": 592,
+        "name": "schema_declare_response",
+        "fields": [
+          {
+            "name": "enforced_version",
+            "type": "u64",
+            "optional": true
+          },
+          {
+            "name": "rule_count",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "schema.status",
+      "code": 337,
+      "family": "schemas",
+      "class": "schema",
+      "mutation": false,
+      "parity": [
+        "PB-3036",
+        "PB-3037"
+      ],
+      "request": {
+        "name": "schema_status_request",
+        "fields": [
+          {
+            "name": "collection",
+            "type": "str",
+            "bound": 64
+          }
+        ]
+      },
+      "response": {
+        "code": 593,
+        "name": "schema_status_response",
+        "fields": [
+          {
+            "name": "enforced_version",
+            "type": "u64",
+            "optional": true
+          },
+          {
+            "name": "rule_count",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "schema.validate",
+      "code": 338,
+      "family": "schemas",
+      "class": "schema",
+      "mutation": false,
+      "parity": [
+        "PB-3036",
+        "PB-3037"
+      ],
+      "request": {
+        "name": "schema_validate_request",
+        "fields": [
+          {
+            "name": "collection",
+            "type": "str",
+            "bound": 64
+          },
+          {
+            "name": "document",
+            "type": "value"
+          }
+        ]
+      },
+      "response": {
+        "code": 594,
+        "name": "schema_validate_response",
+        "fields": [
+          {
+            "name": "enforced_version",
+            "type": "u64",
+            "optional": true
+          },
+          {
+            "name": "valid",
+            "type": "bool"
+          },
+          {
+            "name": "violations",
+            "type": "[schema_violation]"
+          }
+        ]
+      }
+    },
+    {
+      "name": "migration.status",
+      "code": 339,
+      "family": "schemas",
+      "class": "schema",
+      "mutation": false,
+      "parity": [
+        "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)"
+      ],
+      "request": {
+        "name": "migration_status_request",
+        "fields": [
+          {
+            "name": "collection",
+            "type": "str",
+            "bound": 64
+          }
+        ]
+      },
+      "response": {
+        "code": 595,
+        "name": "migration_status_response",
+        "fields": [
+          {
+            "name": "state",
+            "type": "migration_state"
+          }
+        ]
+      }
+    },
+    {
+      "name": "migration.dry_run",
+      "code": 340,
+      "family": "schemas",
+      "class": "schema",
+      "mutation": false,
+      "parity": [
+        "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)"
+      ],
+      "request": {
+        "name": "migration_dry_run_request",
+        "fields": [
+          {
+            "name": "contract",
+            "type": "schema_migration_contract"
+          }
+        ]
+      },
+      "response": {
+        "code": 596,
+        "name": "migration_dry_run_response",
+        "fields": [
+          {
+            "name": "plan",
+            "type": "migration_plan"
+          }
+        ]
+      }
+    },
+    {
+      "name": "migration.apply",
+      "code": 341,
+      "family": "schemas",
+      "class": "schema",
+      "mutation": true,
+      "parity": [
+        "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)"
+      ],
+      "request": {
+        "name": "migration_apply_request",
+        "fields": [
+          {
+            "name": "contract",
+            "type": "schema_migration_contract"
+          },
+          {
+            "name": "acknowledge_not_rollbackable",
+            "type": "bool"
+          },
+          {
+            "name": "operation_id",
+            "type": "str",
+            "bound": 128
+          }
+        ]
+      },
+      "response": {
+        "code": 597,
+        "name": "migration_apply_response",
+        "fields": [
+          {
+            "name": "receipt",
+            "type": "migration_receipt"
           }
         ]
       }

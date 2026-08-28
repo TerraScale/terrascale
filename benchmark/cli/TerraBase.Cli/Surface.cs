@@ -82,12 +82,58 @@ public interface ITerraBaseSurface : IAsyncDisposable
     /// <returns>The metrics JSON.</returns>
     Task<JsonElement> ReadMetricsAsync(CancellationToken cancellationToken);
 
+    /// <summary>Reads one collection's recorded schema state (the <c>schema status</c> command).</summary>
+    /// <param name="collection">The collection.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The schema state report.</returns>
+    Task<SchemaStateReport> ReadSchemaStateAsync(string collection, CancellationToken cancellationToken);
+
+    /// <summary>Validates one document value against the recorded schema (the <c>schema validate</c> command).</summary>
+    /// <param name="collection">The collection.</param>
+    /// <param name="document">The document value.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The typed validation report.</returns>
+    Task<SchemaCheckReport> ValidateSchemaAsync(string collection, JsonElement document, CancellationToken cancellationToken);
+
+    /// <summary>Computes one migration contract's dry run (the <c>migration dry-run</c> command).</summary>
+    /// <param name="collection">The collection.</param>
+    /// <param name="contract">The typed migration contract.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The plan, with its evidence, in a stable machine-readable shape.</returns>
+    Task<JsonElement> MigrationDryRunAsync(string collection, JsonElement contract, CancellationToken cancellationToken);
+
+    /// <summary>Applies one migration contract to completion (the <c>migration apply</c> command).</summary>
+    /// <param name="collection">The collection.</param>
+    /// <param name="contract">The typed migration contract.</param>
+    /// <param name="acknowledgeNotRollbackable">The explicit not-rollbackable acknowledgment.</param>
+    /// <param name="idempotencyKey">The stable retry identity.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The recorded receipt, in a stable machine-readable shape.</returns>
+    Task<JsonElement> MigrationApplyAsync(string collection, JsonElement contract, bool acknowledgeNotRollbackable, string idempotencyKey, CancellationToken cancellationToken);
+
     /// <summary>Begins the engine's graceful shutdown.</summary>
     /// <param name="reason">The reason: <c>operator</c> or <c>supervisor</c>.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>The shutdown report.</returns>
     Task<ShutdownReport> ShutdownAsync(string reason, CancellationToken cancellationToken);
 }
+
+/// <summary>The recorded schema state of one collection: the enforced version and the rule count.</summary>
+/// <param name="EnforcedVersion">The enforced version, or <c>null</c> for a schema-free collection.</param>
+/// <param name="RuleCount">The recorded rule count.</param>
+/// <param name="MigrationKind">The migration state kind: none, in_progress, rolling_back, or complete.</param>
+public sealed record SchemaStateReport(ulong? EnforcedVersion, uint RuleCount, string MigrationKind);
+
+/// <summary>The typed validation answer of one document value.</summary>
+/// <param name="EnforcedVersion">The version the validation enforced.</param>
+/// <param name="Valid">Whether the value satisfies the recorded schema.</param>
+/// <param name="Violations">The typed violations, in canonical order.</param>
+public sealed record SchemaCheckReport(ulong? EnforcedVersion, bool Valid, IReadOnlyList<SchemaViolationRow> Violations);
+
+/// <summary>One typed policy violation: a field and a kind, never a field value.</summary>
+/// <param name="Field">The violated field name.</param>
+/// <param name="Kind">The snake_case violation kind.</param>
+public sealed record SchemaViolationRow(string Field, string Kind);
 
 /// <summary>One frame of the Change Event Backbone tail.</summary>
 /// <param name="Kind">The frame kind: <c>change-event</c>, <c>change-notification</c>, <c>drop</c>, or <c>closed</c>.</param>

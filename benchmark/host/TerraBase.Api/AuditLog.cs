@@ -131,6 +131,14 @@ public enum AuditKind
 
     /// <summary>A graceful engine shutdown began.</summary>
     EngineShutdown,
+
+    /// <summary>
+    /// A schema-lifecycle mutation was accepted (a schema declaration or a
+    /// migration apply). The record carries the operation name and the
+    /// collection identity only — never a schema document or a document
+    /// body, which the audit vocabulary cannot express by construction.
+    /// </summary>
+    SchemaLifecycle,
 }
 
 /// <summary>The enumerable outcomes of the host's audit record.</summary>

@@ -193,6 +193,139 @@ public sealed class HostSurface : ITerraBaseSurface
         (await this.GetJsonAsync("/v1/metrics", allowUnavailable: false, cancellationToken).ConfigureAwait(false)).Clone();
 
     /// <inheritdoc/>
+    public async Task<SchemaStateReport> ReadSchemaStateAsync(string collection, CancellationToken cancellationToken)
+    {
+        var schema = await this.GetJsonAsync($"/v1/schemas/{collection}", allowUnavailable: false, cancellationToken).ConfigureAwait(false);
+        var migration = await this.GetJsonAsync($"/v1/migrations/{collection}", allowUnavailable: false, cancellationToken).ConfigureAwait(false);
+        return new SchemaStateReport(
+            Number64Of(schema, "enforcedVersion"),
+            Number32Of(schema, "ruleCount") ?? 0,
+            migration.TryGetProperty("state", out var state) && state.TryGetProperty("kind", out var kind) ? kind.GetString() ?? "unknown" : "unknown");
+    }
+
+    /// <inheritdoc/>
+    public async Task<SchemaCheckReport> ValidateSchemaAsync(string collection, JsonElement document, CancellationToken cancellationToken)
+    {
+        using var content = new StringContent(JsonSerializer.Serialize(new { document }), Encoding.UTF8, "application/json");
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/schemas/{collection}/validate") { Content = content };
+        var answer = await this.SendJsonAsync(request, cancellationToken).ConfigureAwait(false);
+        var violations = new List<SchemaViolationRow>();
+        if (answer.TryGetProperty("violations", out var rows) && rows.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var row in rows.EnumerateArray())
+            {
+                violations.Add(new SchemaViolationRow(StringOf(row, "field") ?? string.Empty, StringOf(row, "kind") ?? "unknown"));
+            }
+        }
+        return new SchemaCheckReport(Number64Of(answer, "enforcedVersion"), BoolOf(answer, "valid") ?? false, violations);
+    }
+
+    /// <inheritdoc/>
+    public async Task<JsonElement> MigrationDryRunAsync(string collection, JsonElement contract, CancellationToken cancellationToken)
+    {
+        using var content = new StringContent(JsonSerializer.Serialize(new { contract }), Encoding.UTF8, "application/json");
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/migrations/{collection}/dry-run") { Content = content };
+        var answer = await this.SendJsonAsync(request, cancellationToken).ConfigureAwait(false);
+        return CanonicalPlan(answer.GetProperty("plan"));
+    }
+
+    /// <inheritdoc/>
+    public async Task<JsonElement> MigrationApplyAsync(string collection, JsonElement contract, bool acknowledgeNotRollbackable, string idempotencyKey, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/migrations/{collection}/apply")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { contract, acknowledgeNotRollbackable }), Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("Idempotency-Key", idempotencyKey);
+        var answer = await this.SendJsonAsync(request, cancellationToken).ConfigureAwait(false);
+        return CanonicalReceipt(answer.GetProperty("receipt"));
+    }
+
+    /// <summary>Renders one plan in the stable, machine-readable shape every caller can diff.</summary>
+    /// <param name="plan">The plan JSON element.</param>
+    /// <returns>The canonical plan element: the same fields, the same order, every run.</returns>
+    internal static JsonElement CanonicalPlan(JsonElement plan)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("manifest", StringOf(plan, "manifest"));
+            writer.WriteString("collection", StringOf(plan, "collection"));
+            WriteNumber(writer, "fromVersion", Number64Of(plan, "fromVersion"));
+            WriteNumber(writer, "toVersion", Number64Of(plan, "toVersion"));
+            writer.WriteBoolean("ready", BoolOf(plan, "ready") ?? false);
+            WriteNumber(writer, "documents", Number64Of(plan, "documents"));
+            writer.WriteString("sourceDigest", StringOf(plan, "sourceDigest"));
+            writer.WriteString("resultDigest", StringOf(plan, "resultDigest"));
+            if (plan.TryGetProperty("transformCounts", out var counts) && counts.ValueKind == JsonValueKind.Object)
+            {
+                writer.WriteStartObject("transformCounts");
+                foreach (var name in new[] { "added", "removed", "renamed", "retyped" })
+                {
+                    WriteNumber(writer, name, Number64Of(counts, name));
+                }
+
+                writer.WriteEndObject();
+            }
+
+            writer.WriteStartArray("problems");
+            if (plan.TryGetProperty("problems", out var problems) && problems.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var problem in problems.EnumerateArray())
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("document", StringOf(problem, "document"));
+                    writer.WriteString("field", StringOf(problem, "field"));
+                    writer.WriteString("kind", StringOf(problem, "kind"));
+                    writer.WriteEndObject();
+                }
+            }
+
+            writer.WriteEndArray();
+            writer.WriteBoolean("problemsTruncated", BoolOf(plan, "problemsTruncated") ?? false);
+            writer.WriteEndObject();
+        }
+
+        return JsonDocument.Parse(Encoding.UTF8.GetString(stream.ToArray())).RootElement.Clone();
+    }
+
+    /// <summary>Renders one receipt in the stable, machine-readable shape every caller can diff.</summary>
+    /// <param name="receipt">The receipt JSON element.</param>
+    /// <returns>The canonical receipt element: the same fields, the same order, every run.</returns>
+    internal static JsonElement CanonicalReceipt(JsonElement receipt)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("collection", StringOf(receipt, "collection"));
+            writer.WriteString("manifest", StringOf(receipt, "manifest"));
+            WriteNumber(writer, "fromVersion", Number64Of(receipt, "fromVersion"));
+            WriteNumber(writer, "toVersion", Number64Of(receipt, "toVersion"));
+            writer.WriteString("sourceDigest", StringOf(receipt, "sourceDigest"));
+            writer.WriteString("resultDigest", StringOf(receipt, "resultDigest"));
+            WriteNumber(writer, "documents", Number64Of(receipt, "documents"));
+            WriteNumber(writer, "transformed", Number64Of(receipt, "transformed"));
+            WriteNumber(writer, "pages", Number64Of(receipt, "pages"));
+            writer.WriteString("rollbackLimit", StringOf(receipt, "rollbackLimit"));
+            writer.WriteBoolean("acknowledgedNotRollbackable", BoolOf(receipt, "acknowledgedNotRollbackable") ?? false);
+            writer.WriteBoolean("alreadyApplied", BoolOf(receipt, "alreadyApplied") ?? false);
+            writer.WriteEndObject();
+        }
+
+        return JsonDocument.Parse(Encoding.UTF8.GetString(stream.ToArray())).RootElement.Clone();
+    }
+
+    private static void WriteNumber(Utf8JsonWriter writer, string name, ulong? value)
+    {
+        if (value is { } number)
+        {
+            writer.WriteNumber(name, number);
+        }
+    }
+
+    /// <inheritdoc/>
     public async Task<ShutdownReport> ShutdownAsync(string reason, CancellationToken cancellationToken)
     {
         using var content = new StringContent(JsonSerializer.Serialize(new { reason }), Encoding.UTF8, "application/json");

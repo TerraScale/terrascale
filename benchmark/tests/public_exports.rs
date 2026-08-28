@@ -137,6 +137,7 @@ fn public_operation_variants_are_closed(operation: PublicOperation) {
         PublicOperation::DocumentWrite(_) => {}
         PublicOperation::Query(_) => {}
         PublicOperation::Family(_) => {}
+        PublicOperation::Schema(_) => {}
     }
 }
 
@@ -146,6 +147,7 @@ fn public_response_variants_are_closed(response: PublicResponse) {
         PublicResponse::Query(_) => {}
         PublicResponse::Family(_) => {}
         PublicResponse::Commit(_) => {}
+        PublicResponse::Schema(_) => {}
     }
 }
 

@@ -18,7 +18,7 @@ use std::fmt;
 
 use crate::{
     adapters::platform::{PlatformAdapter, PlatformError, PlatformPort},
-    operations::{FamilyOperation, PublicOperation, PublicResponse},
+    operations::{FamilyOperation, PublicOperation, PublicResponse, SchemaOperation},
     types::{Cancellation, Deadline, OperationId, TenantId},
 };
 
@@ -369,6 +369,24 @@ fn bounds(operation: &PublicOperation) -> (Deadline, Cancellation) {
         PublicOperation::Family(FamilyOperation::Write(request)) => {
             (request.deadline(), request.cancellation())
         }
+        PublicOperation::Schema(SchemaOperation::Declare(request)) => {
+            (request.deadline(), request.cancellation())
+        }
+        PublicOperation::Schema(SchemaOperation::Status(request)) => {
+            (request.deadline(), request.cancellation())
+        }
+        PublicOperation::Schema(SchemaOperation::Validate(request)) => {
+            (request.deadline(), request.cancellation())
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationStatus(request)) => {
+            (request.deadline(), request.cancellation())
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationDryRun(request)) => {
+            (request.deadline(), request.cancellation())
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationApply(request)) => {
+            (request.deadline(), request.cancellation())
+        }
     }
 }
 
@@ -387,6 +405,18 @@ fn mutating_identity(operation: &PublicOperation) -> Option<OperationId> {
         PublicOperation::Family(FamilyOperation::Write(request)) => {
             Some(request.operation_id().clone())
         }
+        PublicOperation::Schema(SchemaOperation::Declare(request)) => {
+            Some(request.operation_id().clone())
+        }
+        PublicOperation::Schema(SchemaOperation::MigrationApply(request)) => {
+            Some(request.operation_id().clone())
+        }
+        PublicOperation::Schema(
+            SchemaOperation::Status(_)
+            | SchemaOperation::Validate(_)
+            | SchemaOperation::MigrationStatus(_)
+            | SchemaOperation::MigrationDryRun(_),
+        ) => None,
     }
 }
 

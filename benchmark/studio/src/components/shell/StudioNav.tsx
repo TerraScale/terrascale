@@ -9,6 +9,7 @@ const IMPLEMENTED = [
   { href: "/queries", label: "Queries" },
   { href: "/queries/indexes", label: "Indexes" },
   { href: "/families", label: "Families" },
+  { href: "/schemas", label: "Schemas" },
   { href: "/topology", label: "Topology" },
 ] as const;
 

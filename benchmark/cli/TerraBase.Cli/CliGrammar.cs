@@ -31,9 +31,14 @@ public static class CliGrammar
         ["engine status"] = (0, []),
         ["engine topology"] = (0, []),
         ["engine shutdown"] = (0, ["reason"]),
+        ["schema status"] = (1, []),
+        ["schema validate"] = (2, []),
+        ["migration dry-run"] = (2, []),
+        ["migration apply"] = (2, ["idempotency-key", "acknowledge-not-rollbackable"]),
     };
 
-    private static readonly HashSet<string> BooleanFlags = ["json", "follow"];
+    private static readonly HashSet<string> BooleanFlags =
+        ["json", "follow", "acknowledge-not-rollbackable"];
 
     private static readonly HashSet<string> GlobalFlags =
         ["mode", "url", "socket", "principal", "tenant", "output", "json"];

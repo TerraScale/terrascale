@@ -71,6 +71,12 @@ use crate::generated::FamilyReadResponse;
 use crate::generated::FamilyWriteRequest;
 use crate::generated::FamilyWriteResponse;
 use crate::generated::HealthState;
+use crate::generated::MigrationApplyRequest;
+use crate::generated::MigrationApplyResponse;
+use crate::generated::MigrationDryRunRequest;
+use crate::generated::MigrationDryRunResponse;
+use crate::generated::MigrationStatusRequest;
+use crate::generated::MigrationStatusResponse;
 use crate::generated::MutationOutcome;
 use crate::generated::MutationReason;
 use crate::generated::QueryCancelRequest;
@@ -78,6 +84,12 @@ use crate::generated::QueryCancelResponse;
 use crate::generated::QueryExecuteRequest;
 use crate::generated::QueryExecuteResponse;
 use crate::generated::REGISTRY_VERSION;
+use crate::generated::SchemaDeclareRequest;
+use crate::generated::SchemaDeclareResponse;
+use crate::generated::SchemaStatusRequest;
+use crate::generated::SchemaStatusResponse;
+use crate::generated::SchemaValidateRequest;
+use crate::generated::SchemaValidateResponse;
 use crate::generated::SubscriptionBatch;
 use crate::generated::SubscriptionCloseReason;
 use crate::generated::SubscriptionClosed;
@@ -275,6 +287,91 @@ pub trait TbepHost: Send + Sync {
         request: &FamilyWriteRequest,
         idempotency_key: &str,
     ) -> Result<FamilyWriteResponse, HostingError>;
+
+    /// Serves one typed schema declaration (SM-04, mutation).
+    ///
+    /// The default implementation refuses typed: the shipped hosts do not
+    /// serve the schema lifecycle, and serving it from a live engine
+    /// process is the engine-backed host integrator action the SM-04
+    /// record names.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves the seam.
+    fn schema_declare(
+        &self,
+        _tenant: &str,
+        _request: &SchemaDeclareRequest,
+        _idempotency_key: &str,
+    ) -> Result<SchemaDeclareResponse, HostingError> {
+        Err(HostingError::Refused("schema declarations are not served by this host".into()))
+    }
+
+    /// Serves one typed schema status read (SM-04).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves the seam.
+    fn schema_status(
+        &self,
+        _tenant: &str,
+        _request: &SchemaStatusRequest,
+    ) -> Result<SchemaStatusResponse, HostingError> {
+        Err(HostingError::Refused("schema status is not served by this host".into()))
+    }
+
+    /// Serves one typed on-demand document validation (SM-04).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves the seam.
+    fn schema_validate(
+        &self,
+        _tenant: &str,
+        _request: &SchemaValidateRequest,
+    ) -> Result<SchemaValidateResponse, HostingError> {
+        Err(HostingError::Refused("schema validation is not served by this host".into()))
+    }
+
+    /// Serves one typed Schema Migration status read (SM-04).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves the seam.
+    fn migration_status(
+        &self,
+        _tenant: &str,
+        _request: &MigrationStatusRequest,
+    ) -> Result<MigrationStatusResponse, HostingError> {
+        Err(HostingError::Refused("migration status is not served by this host".into()))
+    }
+
+    /// Serves one typed migration dry run (SM-04; mutating nothing).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves the seam.
+    fn migration_dry_run(
+        &self,
+        _tenant: &str,
+        _request: &MigrationDryRunRequest,
+    ) -> Result<MigrationDryRunResponse, HostingError> {
+        Err(HostingError::Refused("migration dry runs are not served by this host".into()))
+    }
+
+    /// Serves one typed migration apply (SM-04, mutation).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves the seam.
+    fn migration_apply(
+        &self,
+        _tenant: &str,
+        _request: &MigrationApplyRequest,
+        _idempotency_key: &str,
+    ) -> Result<MigrationApplyResponse, HostingError> {
+        Err(HostingError::Refused("migration applies are not served by this host".into()))
+    }
 
     /// Subscribes one backbone stream; the returned feed carries the
     /// ordered batches, the trigger notifications, and the close frame.

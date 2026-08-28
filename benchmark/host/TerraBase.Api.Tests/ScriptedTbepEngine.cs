@@ -64,6 +64,30 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
     public bool Draining { get; set; }
 
     /// <summary>
+    /// When set, the scripted engine owns the named collection for another
+    /// tenant, so a schema declaration for it is refused typed (the
+    /// engine-enforced tenant isolation of the schema surface).
+    /// </summary>
+    public (string Collection, string Tenant)? SchemaOwner { get; set; }
+
+    private readonly Dictionary<string, ulong> schemas = new();
+
+    private readonly HashSet<string> appliedMigrations = new();
+
+    private ulong NextSchemaVersion(string collection) => this.schemas.TryGetValue(collection, out var current) ? current + 1 : 1;
+
+    private async Task RefuseCrossTenantAsync(NetworkStream stream, SemaphoreSlim writeGate, ulong causation)
+    {
+        await this.ErrorAsync(
+            stream,
+            writeGate,
+            causation,
+            ErrorCode.OperationRefused(),
+            "bound to another channel")
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// The delay before the engine answers a channel binding: a window
     /// wide enough for two host callers to race the same first bind
     /// deterministically (default: none).
@@ -161,6 +185,174 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                         "channel.bind",
                         request.Correlation,
                         new ChannelBindResponse { Tenant = body.Tenant, ServingInstance = 1 }).ConfigureAwait(false);
+                    break;
+                }
+
+                case "SchemaDeclareRequest":
+                {
+                    // The SM-04 scripted schema surface: a deterministic
+                    // declaration that records the collection's version for
+                    // the bound tenant, or refuses typed when the scripted
+                    // engine owns the collection for another tenant.
+                    var body = MessagePackSerializer.Deserialize<SchemaDeclareRequest>(request.Body, TbepOptions.Strict);
+                    if (this.SchemaOwner is { } owner && owner.Collection == body.Collection && owner.Tenant != tenant)
+                    {
+                        await this.RefuseCrossTenantAsync(stream, writeGate, request.Correlation).ConfigureAwait(false);
+                        break;
+                    }
+
+                    this.Received.Enqueue($"{tenant}:schema.declare:{body.Collection}");
+                    var ruleCount = (uint)(body.Schema is null ? 0 : 3);
+                    var version = body.Schema is null ? (ulong?)null : this.NextSchemaVersion(body.Collection);
+                    if (version is { } declared)
+                    {
+                        this.schemas[$"{tenant}/{body.Collection}"] = declared;
+                    }
+
+                    await this.AnswerAsync(
+                        stream,
+                        writeGate,
+                        "schema.declare",
+                        request.Correlation,
+                        new SchemaDeclareResponse { EnforcedVersion = this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var recorded) ? recorded : null, RuleCount = ruleCount })
+                        .ConfigureAwait(false);
+                    break;
+                }
+
+                case "SchemaStatusRequest":
+                {
+                    var body = MessagePackSerializer.Deserialize<SchemaStatusRequest>(request.Body, TbepOptions.Strict);
+                    this.Received.Enqueue($"{tenant}:schema.status:{body.Collection}");
+                    await this.AnswerAsync(
+                        stream,
+                        writeGate,
+                        "schema.status",
+                        request.Correlation,
+                        new SchemaStatusResponse
+                        {
+                            EnforcedVersion = this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var version) ? version : null,
+                            RuleCount = this.schemas.ContainsKey($"{tenant}/{body.Collection}") ? 3u : 0u,
+                        })
+                        .ConfigureAwait(false);
+                    break;
+                }
+
+                case "SchemaValidateRequest":
+                {
+                    var body = MessagePackSerializer.Deserialize<SchemaValidateRequest>(request.Body, TbepOptions.Strict);
+                    this.Received.Enqueue($"{tenant}:schema.validate:{body.Collection}");
+                    var violations = new List<SchemaViolation>();
+                    if (this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var version)
+                        && body.Document is { Tag: 6 } document
+                        && document.Payload is ObjectField[] fields
+                        && fields.Any(field => field.Name == "email" && field.Value.Tag == 2))
+                    {
+                        violations.Add(new SchemaViolation { Field = "email", Kind = ViolationKind.TypeMismatch() });
+                    }
+
+                    await this.AnswerAsync(
+                        stream,
+                        writeGate,
+                        "schema.validate",
+                        request.Correlation,
+                        new SchemaValidateResponse
+                        {
+                            EnforcedVersion = this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var enforced) ? enforced : null,
+                            Valid = violations.Count == 0,
+                            Violations = [.. violations],
+                        })
+                        .ConfigureAwait(false);
+                    break;
+                }
+
+                case "MigrationStatusRequest":
+                {
+                    var body = MessagePackSerializer.Deserialize<MigrationStatusRequest>(request.Body, TbepOptions.Strict);
+                    this.Received.Enqueue($"{tenant}:migration.status:{body.Collection}");
+                    var applied = this.appliedMigrations.Contains($"{tenant}/{body.Collection}");
+                    await this.AnswerAsync(
+                        stream,
+                        writeGate,
+                        "migration.status",
+                        request.Correlation,
+                        new MigrationStatusResponse
+                        {
+                            State = new MigrationState
+                            {
+                                Kind = applied ? MigrationStateKind.Complete() : MigrationStateKind.None(),
+                                Manifest = "0123abcd",
+                                FromVersion = 1,
+                                ToVersion = 2,
+                                Documents = 0,
+                                Transformed = 0,
+                                Pages = 0,
+                            },
+                        })
+                        .ConfigureAwait(false);
+                    break;
+                }
+
+                case "MigrationDryRunRequest":
+                {
+                    var body = MessagePackSerializer.Deserialize<MigrationDryRunRequest>(request.Body, TbepOptions.Strict);
+                    this.Received.Enqueue($"{tenant}:migration.dry_run:{body.Contract.Collection}");
+                    await this.AnswerAsync(
+                        stream,
+                        writeGate,
+                        "migration.dry_run",
+                        request.Correlation,
+                        new MigrationDryRunResponse
+                        {
+                            Plan = new MigrationPlan
+                            {
+                                Manifest = "0123abcd",
+                                Collection = body.Contract.Collection,
+                                FromVersion = body.Contract.FromVersion,
+                                ToVersion = body.Contract.ToVersion,
+                                Ready = true,
+                                Documents = 1,
+                                SourceDigest = new string('a', 64),
+                                ResultDigest = new string('b', 64),
+                                TransformCounts = new TransformCounts { Added = 1, Removed = 1, Renamed = 0, Retyped = 0 },
+                                Problems = [],
+                                ProblemsTruncated = false,
+                            },
+                        })
+                        .ConfigureAwait(false);
+                    break;
+                }
+
+                case "MigrationApplyRequest":
+                {
+                    var body = MessagePackSerializer.Deserialize<MigrationApplyRequest>(request.Body, TbepOptions.Strict);
+                    this.Received.Enqueue($"{tenant}:migration.apply:{body.Contract.Collection}");
+                    this.schemas[$"{tenant}/{body.Contract.Collection}"] = body.Contract.ToVersion;
+                    this.appliedMigrations.Add($"{tenant}/{body.Contract.Collection}");
+                    await this.AnswerAsync(
+                        stream,
+                        writeGate,
+                        "migration.apply",
+                        request.Correlation,
+                        new MigrationApplyResponse
+                        {
+                            Receipt = new MigrationReceipt
+                            {
+                                Collection = body.Contract.Collection,
+                                Manifest = "0123abcd",
+                                FromVersion = body.Contract.FromVersion,
+                                ToVersion = body.Contract.ToVersion,
+                                SourceDigest = new string('a', 64),
+                                ResultDigest = new string('b', 64),
+                                Documents = 1,
+                                Transformed = 1,
+                                TransformCounts = new TransformCounts { Added = 1, Removed = 1, Renamed = 0, Retyped = 0 },
+                                Pages = 1,
+                                RollbackLimit = RollbackLimitKind.NotReversible(),
+                                AcknowledgedNotRollbackable = body.AcknowledgeNotRollbackable,
+                                AlreadyApplied = false,
+                            },
+                        })
+                        .ConfigureAwait(false);
                     break;
                 }
 

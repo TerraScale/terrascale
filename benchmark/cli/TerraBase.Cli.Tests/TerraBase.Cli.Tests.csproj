@@ -30,6 +30,11 @@
          (TerraBaseHost.Create + EngineOptions): the same served surface
          the production entry point runs. -->
     <ProjectReference Include="..\..\host\TerraBase.Api\TerraBase.Api.csproj" />
+    <!-- The SM-04 schema rows reuse the host test family's scripted TBEP
+         engine (the scripted engine is a fixture, not production code), so
+         the CLI drives the real host over the same scripted wire answers
+         the host's own rows drive. -->
+    <ProjectReference Include="..\..\host\TerraBase.Api.Tests\TerraBase.Api.Tests.csproj" />
   </ItemGroup>
 
 </Project>
