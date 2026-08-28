@@ -326,6 +326,11 @@ is not a recorded host shape and stays out of this ticket's scope.
 - Mutation run (D3 discrimination): exit 2 (1 failed:
   `EveryRecordedFrameEncodesByteExactAndDecodesBack`, "Expected to be
   33 but found 32"), then restored: exit 0 (156/112/0/44).
+- Final run at HEAD (`5a39235`): exit 0 (156/112/0/44), and
+  `dotnet build -m tests/TerraScale.EntityFrameworkCore.Tests/...csproj`
+  (the dependent project): exit 0, 0 errors.
+- Collision probe (see below): merge of `835f799` into this branch,
+  guard resolved to this side, full suite exit 0 (158/114/0/44).
 - Baseline comparison: the SE-10 merge recorded 110/0/48; this base
   (`21d21aa`) totals 153 with 44 environment-gated skips — the
   difference is landed develop history between the two measurements,
@@ -350,6 +355,27 @@ is not a recorded host shape and stays out of this ticket's scope.
   host interleaving good events with oversize ones therefore never
   exhausts the ladder (it still makes progress each cycle). The TS
   core's time-based stability window is the stricter alternative.
+
+### Collision disclosure (PROPOSED action: parent picks one #93 guard at merge)
+
+The #93 SDK half was double-dispatched: branch
+`fleet/tbv2-x93-dotnet` (worktree `tbv2-x93-dotnet`, commits
+`98eb1a3`/`835f799`) independently landed the same one-site repair
+while this packet was in flight. The guards are behaviorally
+identical for every JSON value kind — theirs accepts
+`ValueKind is True or False` then `GetBoolean()`, this packet accepts
+`ValueKind == True` then sets the marker — and their two test rows
+(a plain-refusal knob appending `resyncRequired: null` to every plain
+refusal body, plus a live-loop reopen row) complement this packet's
+exact-shape row (410 `session-closed` with the null marker). Merge
+evidence (throwaway probe worktree, discarded afterwards): merging
+`835f799` into this branch conflicts textually in
+`TerraScaleSyncV2Client.cs` and this record, and auto-merges the
+session tests; resolving the guard to this packet's side, the
+combined suite is fully green — 158 total, 114 passed, 0 failed,
+44 skipped (exit 0). Either guard satisfies both test sets; the
+parent should merge one packet and rebase the other's unique rows, or
+cherry-pick the complementary tests.
 
 ### Non-claims
 
