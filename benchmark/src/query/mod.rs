@@ -68,6 +68,17 @@ pub use spec::{
     OrderingKey, QueryCondition, QueryLoad, QueryOrdering, QueryPaging, QueryPredicate,
     QueryProjection, QuerySource, QuerySpec, StalenessMode, StalenessPolicy,
 };
+// GAP-Q14 collision action: the spatial foundation types are defined in
+// the private `spatial` module the integrator wired; this re-export is the
+// minimal module-root edit that makes them the query seam's public
+// vocabulary. Everything else in that module stays private.
+pub use spatial::{
+    DEFAULT_DISTANCE_ERROR_PCT, DEFAULT_PRECISION_DECIMALS, EARTH_MEAN_RADIUS_KM, Latitude,
+    Longitude, MAX_DISTANCE_ERROR_PCT, MAX_POLYGON_RINGS, MAX_PRECISION_DECIMALS, MAX_SHAPE_POINTS,
+    MAX_WKT_BYTES, MILES_TO_KM, QuantizedCell, SpatialFieldEncoding, SpatialPolygon,
+    SpatialPrecision, SpatialPredicate, SpatialRelation, SpatialShape, SpatialShapeError,
+    SpatialUnits, Wgs84Point,
+};
 pub use statistics::{DiagnosticDuration, QueryStatistics, ResultEtag};
 #[allow(
     unused_imports,

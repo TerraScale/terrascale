@@ -9,6 +9,7 @@ mod evaluator_parity;
 mod includes_contract;
 mod query_public_construction;
 mod result_statistics;
+mod spatial_foundation;
 mod tql_golden_vectors;
 mod tql_public;
 mod tql_rql_parity_vectors;
