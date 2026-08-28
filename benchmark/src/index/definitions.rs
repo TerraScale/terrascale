@@ -436,19 +436,21 @@ impl MapSource {
     }
 
     /// Returns the canonical identity of this source inside identity
-    /// renderings: all documents first, then collections in name order,
-    /// then the family sources in their V1 map-source spelling.
+    /// renderings: all documents and the family sources first (anchored
+    /// with the reserved NUL sentinel, which no collection name may
+    /// carry, so a family spelling can never collide with a same-named
+    /// user collection), then collections in name order.
     fn identity(&self) -> String {
         match self {
             Self::Collection(collection) => collection.as_str().to_owned(),
             Self::AllDocuments => "\u{0}all-documents".to_owned(),
             Self::Counters { name } => match name {
-                None => "counters".to_owned(),
-                Some(name) => format!("counters.{name}"),
+                None => "\u{0}counters".to_owned(),
+                Some(name) => format!("\u{0}counters.{name}"),
             },
             Self::TimeSeries { name } => match name {
-                None => "timeSeries".to_owned(),
-                Some(name) => format!("timeSeries.{name}"),
+                None => "\u{0}timeSeries".to_owned(),
+                Some(name) => format!("\u{0}timeSeries.{name}"),
             },
         }
     }
@@ -600,13 +602,24 @@ impl MapStage {
     /// [`IndexDefinitionError::TooManyOutputFields`] for an out-of-bound
     /// output shape, [`IndexDefinitionError::DuplicateOutputField`] for a
     /// repeated output name, [`IndexDefinitionError::InvalidFieldName`] for
-    /// a malformed name, and [`IndexDefinitionError::TooManyDynamicRules`]
-    /// for an out-of-bound rule list.
+    /// a malformed name, [`IndexDefinitionError::TooManyDynamicRules`] for
+    /// an out-of-bound rule list, and
+    /// [`IndexDefinitionError::InvalidSourceName`] for a family source name
+    /// the constructors would refuse (GAP-Q19 repair 1: the whole-value
+    /// path enforces the same rule).
     pub fn try_new(
         source: MapSource,
         fields: Vec<MapOutputField>,
         dynamic: Vec<DynamicFieldRule>,
     ) -> Result<Self, IndexDefinitionError> {
+        // The family variants carry raw names: validate before anything
+        // else so a bad name can never reach identity rendering, whichever
+        // constructor path built the value.
+        match &source {
+            MapSource::Counters { name: Some(name) } => validate_source_name(name, false)?,
+            MapSource::TimeSeries { name: Some(name) } => validate_source_name(name, true)?,
+            _ => {}
+        }
         if fields.is_empty() {
             return Err(IndexDefinitionError::NoOutputFields);
         }
@@ -1547,6 +1560,19 @@ fn validate_maps(maps: Vec<MapStage>) -> Result<Vec<MapStage>, IndexDefinitionEr
                 MapSource::Counters { .. } => MapSourceFamily::Counters,
                 _ => MapSourceFamily::TimeSeries,
             };
+            // The whole-value path validates here too (GAP-Q19 repair 1):
+            // the enum variants carry raw names, so the map validation
+            // enforces exactly the rule the constructors enforce — a bad
+            // name must never reach identity rendering.
+            match source {
+                MapSource::Counters { name: Some(name) } => {
+                    validate_source_name(name, false)?;
+                }
+                MapSource::TimeSeries { name: Some(name) } => {
+                    validate_source_name(name, true)?;
+                }
+                _ => {}
+            }
             if collections > 0 || all_documents {
                 return Err(IndexDefinitionError::SourceKindMismatch);
             }

@@ -355,3 +355,40 @@ Two implementation rules the GREEN run surfaced and the tests now pin:
    test citations, 1 adjudicated gap, 0 unresolved). `cargo-deny
    unavailable: dependency/license/advisory check recorded as unrun` —
    the script's own host note, not a packet failure.
+
+## Repair loop 1 (2026-08-28, integrator-executed)
+
+Warden FAIL (finding 1, MAJOR) + inspector MINORs, repaired with
+red-then-green rows; the repair landed as a second commit on this branch.
+
+- **Whole-value family-source name validation (MAJOR).** RED:
+  `family_map_source_names_validate_on_the_whole_value_path` —
+  `MapStage::try_new` accepted raw `MapSource::Counters/TimeSeries` names
+  the constructors refuse (empty, padded, control-carrying including the
+  identity separators, over-bound; `/` for series), and an injected
+  separator could forge a second definition's `identity_key()` (warden
+  probe P1c: `keys_equal=true, definitions_equal=false`). FIX: the name
+  rule now runs in `MapStage::try_new` (every constructor path crosses
+  it) and again in `validate_maps` (defense in depth).
+- **Family identity sentinel (inspector finding 1).** RED:
+  `family_source_identities_never_collide_with_collection_sources` — the
+  family spellings rendered identically to a same-named user collection
+  (`idx/1.0\u{1f}family/same-name\u{1e}counters\u{1f}...` for both a
+  Counters source and a `counters` collection). FIX: family identities
+  carry the reserved NUL sentinel (`\u{0}counters...`,
+  `\u{0}timeSeries...`), the established all-documents pattern; no
+  collection name may carry NUL.
+- **D5 refusal coverage (warden finding 2 / inspector findings 2-3).**
+  Both fail-closed rules the packet declared now have rows:
+  `a_family_source_query_refuses_sharded_execution_before_routing`
+  (in-crate sharding) and
+  `delete_by_query_refuses_a_family_source_with_a_typed_invalid_request`
+  (in-crate bulk, audited with zero processed).
+- **Recorded encoding choice (warden NOTE):** an absent series `tag` is
+  encoded `DocumentValue::Null` in the entry field map, so `exists(tag)`
+  matches untagged rows and `missing(tag)` matches nothing — the shared
+  evaluator's null semantics over a closed entry space; deliberate.
+- **D4 wording (warden NOTE):** the entry space carries the predicate
+  and ordering field vocabulary; field *projections* on a family source
+  are refused at compile time (the typed row shapes are the only
+  outputs), as the test table records.

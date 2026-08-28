@@ -18,9 +18,9 @@ use std::{
 };
 
 use super::bulk::{
-    BulkByQueryOptions, BulkDetailOutcome, BulkOperationKind, BulkRefusal, BulkTermination,
-    DeleteByQueryRequest, DeletionConfirmation, MAX_BULK_DETAILS, MAX_BULK_PAGE_DOCUMENTS,
-    PatchByQueryRequest,
+    BulkAuditStage, BulkByQueryOptions, BulkDetailOutcome, BulkOperationKind, BulkRefusal,
+    BulkTermination, DeleteByQueryRequest, DeletionConfirmation, MAX_BULK_DETAILS,
+    MAX_BULK_PAGE_DOCUMENTS, PatchByQueryRequest,
 };
 use super::{
     IndexNamespace, QueryCondition, QueryError, QueryOrdering, QueryPaging, QueryPredicate,
@@ -702,4 +702,46 @@ fn bulk_options_bounds_are_the_documented_constants() {
         MAX_BULK_PAGE_DOCUMENTS
     );
     assert!(BulkByQueryOptions::new().with_details(true).details());
+}
+
+#[test]
+fn delete_by_query_refuses_a_family_source_with_a_typed_invalid_request() {
+    // Gate 1b (GAP-Q19 D5): a family source names no documents, so a
+    // page-wise document mutation has nothing to select — the refusal is
+    // typed, audited, and fires before any data access.
+    let (_dir, engine) = open_engine("bulk-family-refuse");
+    let scope = scope(&engine, "tenant-a");
+    let spec = QuerySpec::try_new(
+        tenant("tenant-a"),
+        QuerySource::counters(),
+        QueryPredicate::all(Vec::new()).expect("valid conjunction"),
+        QueryOrdering::try_new(vec![
+            super::OrderingKey::try_new("name", super::OrderDirection::Ascending)
+                .expect("valid key"),
+        ])
+        .expect("valid ordering"),
+        QueryProjection::whole_document(),
+        QueryPaging::try_new(0, None).expect("valid paging"),
+        StalenessPolicy::try_new(StalenessMode::Strict, Vec::new()).expect("valid policy"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid family specification");
+    let request =
+        DeleteByQueryRequest::try_new(spec, BulkByQueryOptions::new(), LocalDurability::Synced)
+            .expect("valid request")
+            .with_confirmation(DeletionConfirmation::confirm_deletions());
+
+    let receipt = engine.queries().delete_by_query(&scope, request, &Cancellation::new());
+    assert_eq!(receipt.kind(), BulkOperationKind::DeleteByQuery);
+    assert!(matches!(receipt.termination(), BulkTermination::Refused(BulkRefusal::InvalidRequest)));
+    assert_eq!(receipt.processed(), 0, "no page ever dispatched");
+    let audit = engine.bulk_operations_audit();
+    assert!(
+        matches!(
+            audit.last().map(|entry| (entry.stage(), entry.processed())),
+            Some((BulkAuditStage::Refused(BulkRefusal::InvalidRequest), 0))
+        ),
+        "the family-source refusal is audited with zero processed"
+    );
 }

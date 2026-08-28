@@ -13,8 +13,8 @@ use std::time::Duration;
 use terrabase_v2::engine::{Engine, EngineConfig};
 use terrabase_v2::families::{TimeSeriesPaging, TimeSeriesRange};
 use terrabase_v2::index::definitions::{
-    IndexDefinitionError, IndexLanguageVersion, MapExpression, MapOutputField, MapSource, MapStage,
-    StaticIndexDefinition, StaticIndexName,
+    IndexDefinitionError, IndexLanguageVersion, MAX_NAME_BYTES, MapExpression, MapOutputField,
+    MapSource, MapStage, StaticIndexDefinition, StaticIndexName,
 };
 use terrabase_v2::operations::{QueryInput, RequestValidationError};
 use terrabase_v2::query::{
@@ -276,4 +276,94 @@ fn index_definitions_refuse_mixed_and_overlapping_family_sources() {
     )
     .err();
     assert_eq!(err, Some(IndexDefinitionError::DuplicateMapSource));
+}
+
+#[test]
+fn family_map_source_names_validate_on_the_whole_value_path() {
+    // The whole-value enum path must refuse exactly what the constructors
+    // refuse (GAP-Q19 repair 1, warden finding 1): a raw
+    // MapSource::Counters/TimeSeries carrying a bad name cannot reach
+    // identity rendering.
+    let bad_counter_names = [
+        "",
+        " pad ",
+        "a\u{1}b",
+        "a\0b",
+        "x\u{1f}extra:tag",
+        "x\u{1e}name",
+        &"x".repeat(MAX_NAME_BYTES + 1),
+    ];
+    for name in bad_counter_names {
+        let stage = MapStage::try_new(
+            MapSource::Counters { name: Some(name.to_owned()) },
+            entry_shape(),
+            Vec::new(),
+        );
+        assert_eq!(
+            stage.err(),
+            Some(IndexDefinitionError::InvalidSourceName),
+            "the whole-value counters path must refuse {name:?}"
+        );
+    }
+    let bad_series_names = [
+        "",
+        " pad ",
+        "a/b",
+        "a\u{1}b",
+        "a\0b",
+        "x\u{1f}extra:tag",
+        &"x".repeat(MAX_NAME_BYTES + 1),
+    ];
+    for name in bad_series_names {
+        let stage = MapStage::try_new(
+            MapSource::TimeSeries { name: Some(name.to_owned()) },
+            entry_shape(),
+            Vec::new(),
+        );
+        assert_eq!(
+            stage.err(),
+            Some(IndexDefinitionError::InvalidSourceName),
+            "the whole-value time-series path must refuse {name:?}"
+        );
+    }
+    // The separator probe the warden used: a name carrying the identity
+    // group separators must never render into an identity key.
+    let injected = MapStage::try_new(
+        MapSource::Counters { name: Some("x\u{1f}extra:tag".to_owned()) },
+        entry_shape(),
+        Vec::new(),
+    );
+    assert_eq!(injected.err(), Some(IndexDefinitionError::InvalidSourceName));
+}
+
+#[test]
+fn family_source_identities_never_collide_with_collection_sources() {
+    // GAP-Q19 repair 1 (inspector finding 1): the family map-source
+    // spellings are anchored with the reserved NUL sentinel, so a family
+    // source can never render the identity of a legal user collection of
+    // the very same name.
+    let family_stage = MapStage::try_new(MapSource::counters(), entry_shape(), Vec::new())
+        .expect("valid family stage");
+    let family = StaticIndexDefinition::try_map(
+        IndexLanguageVersion::CURRENT,
+        index_name("family/same-name"),
+        family_stage,
+    )
+    .expect("valid family definition");
+
+    let collection_stage =
+        MapStage::try_new(MapSource::Collection(collection("counters")), entry_shape(), Vec::new())
+            .expect("valid collection stage");
+    let over_collection = StaticIndexDefinition::try_map(
+        IndexLanguageVersion::CURRENT,
+        index_name("family/same-name"),
+        collection_stage,
+    )
+    .expect("valid collection definition");
+
+    assert_ne!(
+        family.identity_key(),
+        over_collection.identity_key(),
+        "a family source and a same-named user collection are different sources"
+    );
 }
