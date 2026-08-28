@@ -3,7 +3,7 @@
 Status: implementation record for ticket SE-06 (TerraBaseV2 issue #8),
 2026-08-26. Authority: charter PD-2026-08-26-13 D2 (parent record ADR
 0012), the Orchestrator NATS spec's separation rules
-(`specs/orchestrator-nats-native-control-plane.md`), and the accepted W4
+(`docs/specs/orchestrator-nats-native-control-plane.md`), and the accepted W4
 replication plane (`docs/replication/w4-replication-r1..r3.md`,
 ADR 0004 D-1..D-4). Worktree `terrabasev2-se06`, branch `fleet/se06-2`,
 based on `develop @ ef72eca`. This record resolves no parity row and makes

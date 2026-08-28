@@ -1,8 +1,8 @@
 # SE-03 change-event backbone design and evidence record
 
 Status: implementation record for the SE-03 packet (issue #5), 2026-08-26.
-Authority: `specs/GOAL.md` PD-2026-08-26-13 (D3 above all),
-`specs/2026-08-26-terrabase-v2-sync-engine-event-system-tickets.md`
+Authority: `docs/specs/GOAL.md` PD-2026-08-26-13 (D3 above all),
+`docs/specs/2026-08-26-terrabase-v2-sync-engine-event-system-tickets.md`
 (SE-03), and the accepted W4-STREAM record
 (`docs/streaming/w4-stream.md`). Worktree `terrabasev2-se03`, branch
 `fleet/se03`, based on `develop` @ `431841a`. Salvage:

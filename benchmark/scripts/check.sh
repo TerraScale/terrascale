@@ -57,7 +57,7 @@ fi
 workspace_root="${TERRASCALE_WORKSPACE_ROOT:-}"
 if [[ -z "$workspace_root" ]]; then
   for candidate in "$repo_root/.." "$repo_root/../.."; do
-    if [[ -d "$candidate/specs" && -d "$candidate/TerraBase" ]]; then
+    if [[ -d "$candidate/docs/specs" && -d "$candidate/TerraBase" ]]; then
       workspace_root="$candidate"
       break
     fi

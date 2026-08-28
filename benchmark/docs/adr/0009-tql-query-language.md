@@ -10,7 +10,7 @@ companion records.
 
 Owner: the TQL wave (specification `docs/tql/spec.md`, RQL mapping
 `docs/tql/rql-mapping.md`, wave
-`specs/2026-08-26-terrabase-v2-tql-tickets.md`).
+`docs/specs/2026-08-26-terrabase-v2-tql-tickets.md`).
 
 ## Context
 

@@ -13,7 +13,7 @@ re-resolved against that checkout. No parity row status changes here.
   is the engine core — storage, WAL, engine, families, query, index,
   streaming, replication and sync core, event backbone, interop ABIs. Public
   API hosts, CLIs, and adjacent tooling are C#/.NET under `host/` and `cli/`,
-  speaking TBEP to the engine process (`../specs/GOAL.md:1241-1249`).
+  speaking TBEP to the engine process (`../docs/specs/GOAL.md:1241-1249`).
 - Charter PD-2026-08-26-12 D1..D3 (native clients): SDK sync clients are
   native-language implementations of one wire contract; conformance, not
   compilation, is the compatibility guarantee; more languages implement the

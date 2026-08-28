@@ -1,7 +1,7 @@
 # PS-04 — Replication, streaming/transfer, and adapters parity sweep + exclusion records
 
 Status: sweep record for ticket TerraScale/TerraBaseV2#56 (PS-04, wave PS of
-`specs/2026-08-26-terrabase-v2-gap-closure-tickets.md`). Documentation only.
+`docs/specs/2026-08-26-terrabase-v2-gap-closure-tickets.md`). Documentation only.
 Row-by-row verification of 99 parity rows against the tree at `develop`
 commit `d8569bc` (2026-08-26), with disposition **proposals** handed to
 WS-PARITY. No parity overlay, contract, adjudication, inventory, CONTEXT.md,
@@ -326,9 +326,9 @@ and 1 (PB-5048) awaits the SH implementation wave.
 
 ## SE-wave cross-reference (tickets #4..#23)
 
-Issue numbers from `specs/2026-08-26-terrabase-v2-sync-engine-event-system-tickets.md`
+Issue numbers from `docs/specs/2026-08-26-terrabase-v2-sync-engine-event-system-tickets.md`
 (filed 2026-08-26). This sweep read no Forgejo state; numbers are the filed
-indexes in that spec and `specs/2026-08-26-terrabase-v2-gap-closure-tickets.md`.
+indexes in that spec and `docs/specs/2026-08-26-terrabase-v2-gap-closure-tickets.md`.
 
 | SE ticket | Issue | Rows it closes or carries |
 | --- | --- | --- |

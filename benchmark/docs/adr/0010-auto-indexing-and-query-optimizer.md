@@ -14,7 +14,7 @@ AX-11 is charter-mandated and accepted as recorded.
 Owner: the IX wave (extraction and dispositions
 `docs/indexing/v1-auto-index-extraction.md`,
 `docs/indexing/dispositions.md`; wave
-`specs/2026-08-26-terrabase-v2-auto-index-tickets.md`).
+`docs/specs/2026-08-26-terrabase-v2-auto-index-tickets.md`).
 
 Evidence base: V1 behavior extracted at pinned commit
 `fa99b9257776dbe625e6a2388c74c9ce916637ee`
