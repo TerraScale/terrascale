@@ -485,8 +485,13 @@ the final tree; all in the packet worktree after `unset RUSTUP_TOOLCHAIN`.
 | `cargo test --lib query::spatial` (mutation red, R2) | 101 | in a `/tmp` copy of the worktree with the warden's M2/M4/M8 re-applied: 3 failed / 35 passed — the three discrimination tests of R2 and no others; copy deleted after the run |
 | `cargo test --lib query::spatial` (green, final tree) | 0 | 38 passed, 0 failed |
 | `cargo test --test query spatial_foundation` (green, final tree) | 0 | 7 passed, 0 failed |
-| `cargo fmt --all -- --check` / `cargo check --workspace --locked` / `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` / `cargo test --workspace --locked` (final tree) | 0 | standard receipts, final tree — see the check.sh rows below |
-| `TERRASCALE_WORKSPACE_ROOT=... TERRABASE_V1_ROOT=... ./scripts/check.sh` (repair run) | 0 | full strict gate green on the repaired tree (2 520 tests ok, cargo-deny still recorded unrun by the script) |
+| `cargo fmt --all -- --check` (final tree) | 0 | after one `cargo fmt --all` pass over the repair edits |
+| `cargo check --workspace --locked` (final tree) | 0 | |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` (run 1) | 1 | `doc_markdown` on the un-backticked `NetTopologySuite` in the new `parse` documentation; fixed in `86d55de` |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` (run 2, final tree) | 0 | clean |
+| `cargo test --workspace --locked` (final tree, dev profile) | 0 | 1 248 passed / 0 failed across 46 test binaries |
+| `TERRASCALE_WORKSPACE_ROOT=... TERRABASE_V1_ROOT=... ./scripts/check.sh` (repair run 1) | 101 | one failure in the release-profile phase: `benchmarks::tests::a_self_comparison_reads_as_parity`, `left: Better, right: Stable` — the same wall-clock throughput self-comparison that flaked in this packet's original run 2 (recorded above), in `src/benchmarks/tests.rs`, which this packet does not touch; every other phase green |
+| `TERRASCALE_WORKSPACE_ROOT=... TERRABASE_V1_ROOT=... ./scripts/check.sh` (repair run 2, the flake re-run) | 0 | full strict gate green: 2 496 tests passed / 0 failed across 90 green test-result lines, dev + release phases, clippy, cargo doc, strict V1 qualification (258 citation rows), secret scans; cargo-deny still recorded unrun by the script (tool absent on this host) |
 
 Dependency-audit artifacts (scratch project `/tmp/geo-audit`, not part of
 the repo): `cargo add geo` resolved geo 0.33.1 with a 46-package closure;
