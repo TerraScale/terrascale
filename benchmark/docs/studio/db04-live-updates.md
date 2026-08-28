@@ -203,12 +203,15 @@ All commands run in the packet worktree; exit codes recorded exactly.
 | `vp check --fix` then `vp check` | 0 | formatting + lint clean (112 files formatted, 104 linted) |
 | `vp run playwright:e2e` (first full run) | 1 | 6 failed: the DB-02/DB-03 no-browser-traffic assertions met the designed live subscription, the tick counter locator turned strict-mode-ambiguous, and the DB-03 wrapper lacked the stream route + gate-header CORS |
 | `vp run playwright:e2e` (final) | 0 | 46/46 pass |
-| `node scripts/real-host-probe.mjs` (final) | 0 | `"pass": true` — see the scenario facts below |
+| `node scripts/real-host-probe.mjs` (run 1) | 0 | `"pass": true` — scenario facts below |
+| `node scripts/real-host-probe.mjs` (run 2) | 1 | failed during the concurrent full-cargo-gate run on this host (died after the host build; stderr unrecorded) — disclosed as a load-time failure, re-run on the idle host |
+| `node scripts/real-host-probe.mjs` (run 3) | 0 | `"pass": true` again — all scenarios (31,703 frames shed vs run 1's 31,893) |
 | `cargo fmt --all -- --check` | 0 | no Rust changes; gate green |
 | `cargo check --workspace --locked` | 0 | 39.8 s |
-| `cargo test --workspace --locked` | (recorded in the packet close-out below) | dev profile |
-| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | (recorded below) | |
-| `TERRABASE_V1_ROOT=… ./scripts/check.sh` | (recorded below) | |
+| `cargo test --workspace --locked` | 0 | dev profile; all workspace suites green |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | 0 | 34.5 s |
+| `TERRABASE_V1_ROOT=… ./scripts/check.sh` (run 1) | 1 | every cargo/parity/secret gate before the citation audit passed; the audit itself could not resolve the workspace root — the script's `../`-walk heuristic does not reach past a NESTED worktree (`.worktrees/<name>/..`) |
+| `TERRABASE_V1_ROOT=… TERRASCALE_WORKSPACE_ROOT=… ./scripts/check.sh` (run 2) | 0 | "TerraBaseV2 foundation checks passed"; `cargo-deny` recorded unrun by the script's own fallback (unavailable on this host) |
 
 ### Real-host probe facts (final run, receipt excerpt)
 
