@@ -462,6 +462,52 @@ Run from the worktree root with `RUSTUP_TOOLCHAIN` unset (the ambient
   secret scan; `cargo-deny` is unavailable on this host and is recorded
   by the script itself as unrun.
 
+### Repair loop 1 refreshed receipts
+
+All from this worktree at the repair commits, `RUSTUP_TOOLCHAIN` unset:
+
+- `cargo fmt --all -- --check` — exit 0.
+- `cargo check --workspace --locked` — exit 0.
+- `cargo test --locked --lib families::lifecycle` — red (unfixed code):
+  exit 101, FAILED, 10 passed / 3 failed, each failure on its
+  discriminating assertion (termination guard fired at 30 s; squatter
+  plan returned `Ok`; stale list `[doc-1, doc-2, doc-1, doc-2]`). Green
+  (at `657786c`): exit 0, 13 passed / 0 failed.
+- `cargo test --locked --test families` — exit 0, 23 passed / 0 failed.
+- `cargo test --workspace --locked` (dev profile, the required receipt) —
+  exit 0; 45 test-target summaries all `ok`, 1218 passed, 0 failed — the
+  original loop's 1215 plus this loop's three regression tests. Run in
+  the background: the host is carrying concurrent fleet builds.
+- `cargo clippy --workspace --all-targets --all-features --locked --
+  -D warnings` — exit 101 first (one `match_wild_err_arm` on the new
+  termination guard's `Err(_)` arm), exit 0 after splitting the
+  recv-timeout error arms.
+- `python3 scripts/validate_v1_citations.py --mode strict --v1-root
+  <pinned fa99b925 clone> --workspace-root /home/mariogk/Projects/TerraScale
+  --gap-report parity/v1-test-gaps.json` — exit 0, "STRICT V1
+  QUALIFICATION PASSED". Run standalone because check.sh did not reach
+  its citation stage in either run below; the two anchors this loop
+  corrected are covered by this pass.
+- `TERRABASE_V1_ROOT=<pinned clone>
+  TERRASCALE_WORKSPACE_ROOT=/home/mariogk/Projects/TerraScale
+  ./scripts/check.sh` — run 1: exit 101; the protocol re-run: exit 101.
+  Both runs aborted in the RELEASE test stage at the pre-existing SE-15
+  wall-clock test `benchmarks::tests::a_self_comparison_reads_as_parity`
+  (src/benchmarks/tests.rs:492, landed before this packet's base and
+  untouched by it) — release lib 820 passed / 1 failed / 1 ignored both
+  times, while the same test passed in each run's DEV stage (821 passed /
+  0 failed) and standalone under release (`cargo test --locked --release
+  --lib benchmarks::tests::a_self_comparison_reads_as_parity -- --exact`
+  → exit 0 in 0.29 s). This is the host-load sensitivity the warden's
+  note pre-attributed (their own rerun failed identically and passed
+  standalone); both runs here executed under several concurrent fleet
+  builds. Every stage check.sh completed before that abort was green in
+  both runs; the stages after it — the citation audit (covered standalone
+  above) and the cargo-deny stage (still unavailable on this host,
+  recorded by the script as unrun) — did not execute inside check.sh.
+  Recorded as **failed twice at a pre-existing load-sensitive test
+  outside this packet's write scope**, not as green.
+
 ## Deferred items (named owners)
 
 - **`Engine::maintain_lifecycle` wrapper** (D1's proposed collision
