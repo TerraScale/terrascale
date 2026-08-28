@@ -1502,7 +1502,6 @@ fn emit_rust_operation_table(out: &mut String, schema: &Schema) {
         let _ = writeln!(out, "    }},");
     }
     let _ = writeln!(out, "];");
-    let _ = writeln!(out);
 }
 
 // ---------------------------------------------------------------------------

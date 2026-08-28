@@ -72,6 +72,15 @@ fn the_generator_is_deterministic() {
 }
 
 #[test]
+fn generated_bindings_end_with_exactly_one_newline() {
+    let generated = codegen::generate(&schema_document()).expect("generates");
+    assert!(generated.rust.ends_with('\n'));
+    assert!(!generated.rust.ends_with("\n\n"));
+    assert!(generated.csharp.ends_with('\n'));
+    assert!(!generated.csharp.ends_with("\n\n"));
+}
+
+#[test]
 fn every_parity_reference_names_a_real_inventory_row() {
     let inventory_path = crate_root().join("../../parity/inventory.json");
     let inventory = fs::read_to_string(&inventory_path)

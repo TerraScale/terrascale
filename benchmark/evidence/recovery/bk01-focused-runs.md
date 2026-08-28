@@ -208,4 +208,3 @@ Residual limits introduced or carried by this repair:
   `ManifestInvalid`. Both are fail-closed; the distinction is recorded so
   the recovery lane can qualify it.
 - The state-archive memory bound of finding 3 remains open for BK-02.
-

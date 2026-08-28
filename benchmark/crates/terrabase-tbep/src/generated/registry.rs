@@ -7065,4 +7065,3 @@ pub const OPERATIONS: &[OperationRow] = &[
         ],
     },
 ];
-

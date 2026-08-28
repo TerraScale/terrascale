@@ -830,7 +830,7 @@ disposition request; no engine implementation gap.
 
 ### PB-3043 family-size-stream-range — core — cross-seam-partial
 
-What exists: bounded batches (`MAX_STREAM_BATCH_ITEMS`, 
+What exists: bounded batches (`MAX_STREAM_BATCH_ITEMS`,
 `src/streaming/mod.rs:55-57`), the family stream source wrapping one typed
 family read with cursor and completion rules (`src/streaming/mod.rs:533-571`;
 `src/streaming/sources.rs:55-67`), the time-series offset cursor
