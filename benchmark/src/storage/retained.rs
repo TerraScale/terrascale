@@ -18,7 +18,12 @@
 //! [`MAX_RETAINED_RECORD_BYTES`]: an interrupted append can only ever be a
 //! prefix of a record this store writes, so a length header declaring more
 //! than any legal record could carry is damage to the length field itself —
-//! integrity damage wherever it sits, never a silent truncation. Records
+//! integrity damage wherever it sits, never a silent truncation. That
+//! promise is enforced at the write side too: the bound writer refuses a
+//! window whose record would pass the ceiling (roughly 3,912 tenants at
+//! the identifier maximum) rather than append a frame its own reader must
+//! misclassify, so a window that large is a disclosed refusal, not a
+//! latent integrity failure (`docs/storage/followups-90-91.md`). Records
 //! never carry document content — a tombstone that kept the body would keep
 //! deleted data alive. D-3 clock stamps are process-local lane state and
 //! are not durable; evidence re-derived from this store carries the origin
@@ -59,6 +64,12 @@ const HEADER_BYTES: usize = 12;
 /// prefixes of legal frames — so it is integrity damage, and the open
 /// fails closed wherever it sits instead of silently truncating every
 /// record behind it.
+///
+/// The claim rests on the writer, not the reader: [`RetainedWriter`]
+/// refuses to append any record whose payload would pass this ceiling
+/// (fact records cannot reach it by construction), so no append this
+/// store starts can end in a frame its own reader would classify as a
+/// damaged length field.
 const MAX_RETAINED_RECORD_BYTES: usize = 1 << 20;
 
 /// One content-free retained deletion fact, as the store holds it.
@@ -146,6 +157,14 @@ impl RetainedWriter {
     /// history below `bound` has been given up with its evidence extracted,
     /// the journal head it was declared against, and the per-tenant
     /// non-deletion facts of the window.
+    ///
+    /// The record is refused, before one byte is written, when its payload
+    /// would exceed [`MAX_RETAINED_RECORD_BYTES`]: the reader classifies a
+    /// declared length past that ceiling as a damaged length field wherever
+    /// it sits, so a writer that could produce one would turn its own
+    /// interrupted append into spurious integrity damage. Fact records
+    /// carry four bounded identifiers and cannot reach the ceiling by
+    /// construction, so only the bound writer needs the check.
     #[allow(clippy::cast_possible_truncation)]
     pub(crate) fn append_bound(
         &mut self,
@@ -169,6 +188,18 @@ impl RetainedWriter {
                 }
                 None => codec::push_u8(&mut payload, 0),
             }
+        }
+        if payload.len() > MAX_RETAINED_RECORD_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "retained bound record payload of {} bytes over {} tenant rows exceeds the \
+                     {}-byte record ceiling",
+                    payload.len(),
+                    non_deletion.len(),
+                    MAX_RETAINED_RECORD_BYTES
+                ),
+            ));
         }
         let mut frame = Vec::with_capacity(HEADER_BYTES.saturating_add(payload.len()));
         codec::push_u32(&mut frame, payload.len() as u32);
@@ -391,5 +422,136 @@ fn read_retained_record(reader: &mut Reader<'_>) -> Option<RetainedRecord> {
             Some(RetainedRecord::Bound { bound, head, non_deletion })
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{HEADER_BYTES, MAX_RETAINED_RECORD_BYTES, RetainedIndex, RetainedWriter};
+    use crate::types::{StorageSequence, TenantId};
+
+    /// One temp location per test, never shared across the fleet's runs.
+    fn location(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("tbv2-fups-retained-{tag}-{}", std::process::id()))
+    }
+
+    /// One tenant whose encoded row is the maximum 268 bytes: a 255-byte
+    /// identifier with its length prefix, the flag byte, and a sequence.
+    fn wide_tenant(index: usize) -> (TenantId, Option<StorageSequence>) {
+        let stem = format!("t{index:05}");
+        let padding = 255 - stem.len();
+        let text = format!("{stem}{}", "p".repeat(padding));
+        let tenant = TenantId::try_new(&text).expect("a padded identifier is a valid tenant");
+        (tenant, Some(StorageSequence::new(index as u64 + 1)))
+    }
+
+    /// The largest window of maximum-size rows whose bound record still
+    /// fits the ceiling: 21 fixed bytes plus 268 bytes a row.
+    fn largest_legal_window() -> Vec<(TenantId, Option<StorageSequence>)> {
+        let rows = (MAX_RETAINED_RECORD_BYTES - 21) / 268;
+        (0..rows).map(wide_tenant).collect()
+    }
+
+    #[test]
+    fn append_bound_writes_the_largest_legal_window() {
+        let path = location("largest-legal");
+        let rows = largest_legal_window();
+        let mut writer = RetainedWriter::open(&path).expect("opens");
+        writer.append_bound(7, 7, &rows).expect("the largest legal window is written");
+        writer.sync().expect("syncs");
+        drop(writer);
+        let scan = RetainedIndex::scan(&path);
+        assert!(!scan.mid_file_damage, "an intact record at the ceiling is not damage");
+        assert_eq!(scan.index.declared_bound(), Some(7));
+        assert_eq!(scan.index.non_deletion().len(), rows.len());
+        assert_eq!(
+            scan.total_bytes,
+            (HEADER_BYTES + 21 + 268 * rows.len()) as u64,
+            "the payload is the fixed 21 bytes plus one 268-byte row per tenant"
+        );
+        std::fs::remove_dir_all(&path).ok();
+    }
+
+    #[test]
+    fn append_bound_refuses_a_window_past_the_record_ceiling() {
+        let path = location("past-ceiling");
+        let mut rows = largest_legal_window();
+        rows.push(wide_tenant(rows.len()));
+        let mut writer = RetainedWriter::open(&path).expect("opens");
+        let refusal = writer
+            .append_bound(7, 7, &rows)
+            .expect_err("a bound record past the ceiling would misclassify as damage when torn");
+        assert_eq!(
+            refusal.kind(),
+            std::io::ErrorKind::InvalidInput,
+            "the refusal is a typed input refusal, not a write failure"
+        );
+        assert_eq!(
+            std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0),
+            0,
+            "the refusal happens before one byte is written"
+        );
+        drop(writer);
+        let scan = RetainedIndex::scan(&path);
+        assert!(!scan.mid_file_damage);
+        assert_eq!(scan.index.declared_bound(), None, "no bound was declared");
+        std::fs::remove_dir_all(&path).ok();
+    }
+
+    #[test]
+    fn a_trailing_impossible_declared_length_is_damage_not_a_torn_tail() {
+        let path = location("trailing-impossible");
+        let mut writer = RetainedWriter::open(&path).expect("opens");
+        writer
+            .append_bound(4, 4, &[(TenantId::try_new("tenant-a").expect("valid"), None)])
+            .expect("writes");
+        writer.sync().expect("syncs");
+        drop(writer);
+
+        // A trailing frame whose length header declares more than any
+        // legal record could carry: not a prefix of any frame this store
+        // writes, so it cannot be an interrupted append — the open must
+        // fail closed instead of truncating it away as a torn tail.
+        let mut damaged = std::fs::read(&path).expect("store reads");
+        let verified = damaged.len() as u64;
+        damaged.extend_from_slice(&((MAX_RETAINED_RECORD_BYTES + 1) as u32).to_le_bytes());
+        damaged.extend_from_slice(&[0_u8; 8]);
+        damaged.extend_from_slice(&[0xa5, 0xa5]);
+        std::fs::write(&path, &damaged).expect("store rewrites");
+        let scan = RetainedIndex::scan(&path);
+        assert!(
+            scan.mid_file_damage,
+            "a declared length past the ceiling is a damaged length field wherever it sits"
+        );
+        assert_eq!(scan.good_bytes, verified, "nothing behind the damage is served");
+        std::fs::remove_dir_all(&path).ok();
+    }
+
+    #[test]
+    fn a_trailing_legal_length_with_a_torn_payload_truncates() {
+        let path = location("trailing-legal");
+        let mut writer = RetainedWriter::open(&path).expect("opens");
+        writer
+            .append_bound(4, 4, &[(TenantId::try_new("tenant-a").expect("valid"), None)])
+            .expect("writes");
+        writer.sync().expect("syncs");
+        drop(writer);
+
+        // The genuine torn tail keeps the gentler reading: a trailing
+        // frame declaring a legal length whose payload is cut off by the
+        // end of the file is an interrupted append, truncated away.
+        let mut torn = std::fs::read(&path).expect("store reads");
+        let verified = torn.len() as u64;
+        torn.extend_from_slice(&24_u32.to_le_bytes());
+        torn.extend_from_slice(&[0_u8; 8]);
+        torn.extend_from_slice(&[0xa5, 0xa5]);
+        std::fs::write(&path, &torn).expect("store rewrites");
+        let scan = RetainedIndex::scan(&path);
+        assert!(!scan.mid_file_damage, "a legal-length torn tail is an interrupted append");
+        assert_eq!(scan.good_bytes, verified);
+        assert_eq!(scan.index.declared_bound(), Some(4));
+        std::fs::remove_dir_all(&path).ok();
     }
 }
