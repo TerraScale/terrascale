@@ -24,6 +24,7 @@ mod spatial;
 mod spec;
 mod statistics;
 mod v1;
+mod vector;
 
 pub mod bulk;
 pub mod tql;
@@ -34,6 +35,8 @@ mod bulk_tests;
 mod includes_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod vector_tests;
 
 use std::sync::Arc;
 
@@ -64,6 +67,13 @@ pub use statistics::{DiagnosticDuration, QueryStatistics, ResultEtag};
     reason = "the public V1QueryText constructor delegates here once the integrator action lands"
 )]
 pub(crate) use v1::validate as validate_v1_text;
+pub use vector::{
+    DEFAULT_VECTOR_SEARCH_LIMIT, MAX_VECTOR_DIMENSIONS, MAX_VECTOR_SEARCH_LIMIT,
+    MIN_VECTOR_DIMENSIONS, TqlVectorPredicate, VECTOR_PREDICATE_VERSION, VECTOR_SEARCH_WINDOW,
+    VectorEmbeddingType, VectorIndexDeclaration, VectorIndexDrift, VectorIndexError, VectorMatch,
+    VectorOptions, VectorOptionsError, VectorSearchError, VectorSearchMode, VectorSearchRequest,
+    VectorSearchResult, VectorSearchStatistics, VectorSimilarity,
+};
 
 use crate::{
     engine::Engine,
