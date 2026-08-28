@@ -553,12 +553,21 @@ pub fn apply_document_patch(
 /// The create leg stages the if-missing document under
 /// [`ExpectedVersion::New`] — it is a create — and reports
 /// [`PatchOutcome::Created`]; the present leg is
-/// [`apply_document_patch`] under the caller's expectation.
+/// [`apply_document_patch`] under the caller's expectation. The create
+/// document must carry exactly the addressed collection and id: V1's
+/// create-if-missing path stores the create value under the command's
+/// addressed key (`PatchDocumentCommand.cs:186` puts `id` with the create
+/// body), never at an identity the value itself names, so a compound
+/// whose create document retargets the write is refused as malformed
+/// rather than silently writing to the unaddressed target.
 ///
 /// # Errors
 ///
-/// Returns the [`apply_document_patch`] refusal set, or the engine failure
-/// of staging the create.
+/// Returns the [`apply_document_patch`] refusal set,
+/// [`PatchError::Construction`] with
+/// [`RequestValidationError::InvalidPatch`] when the create document's
+/// collection or id differs from the addressed pair, or the engine
+/// failure of staging the create.
 pub fn apply_add_or_patch(
     transaction: &mut Transaction<'_>,
     collection: &CollectionName,
@@ -566,6 +575,10 @@ pub fn apply_add_or_patch(
     expected: ExpectedVersion,
     add_or_patch: &AddOrPatch,
 ) -> Result<PatchOutcome, PatchError> {
+    let create = add_or_patch.if_missing();
+    if create.collection() != collection || create.id() != id {
+        return Err(PatchError::Construction(RequestValidationError::InvalidPatch));
+    }
     let existing = transaction.read_in_collection(collection, id).map_err(PatchError::Engine)?;
     if existing.is_some() {
         return apply_document_patch(transaction, collection, id, expected, add_or_patch.patch());
