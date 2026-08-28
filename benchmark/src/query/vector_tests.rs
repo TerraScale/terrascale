@@ -214,6 +214,29 @@ fn score_ties_break_by_document_identity_deterministically() {
 }
 
 #[test]
+fn the_identity_tie_break_discriminates_tied_scores_from_any_order() {
+    // The execution corpus above cannot discriminate the tie-break: the
+    // snapshot view already iterates documents in canonical key order,
+    // so the stable sort's tie order equals identity order even with the
+    // tie-break deleted. This pin exercises the comparator itself, from
+    // an input order that is NOT identity order — deleting the
+    // `.then_with` identity clause leaves this test red.
+    let z = vector_document("doc-z", &[1.0, 0.0], &[]);
+    let m = vector_document("doc-m", &[1.0, 0.0], &[]);
+    let a = vector_document("doc-a", &[1.0, 0.0], &[]);
+    let mut tied: Vec<(f64, &Document)> = vec![(1.0, &z), (1.0, &m), (1.0, &a)];
+    tied.sort_by(super::vector::compare_candidates);
+    let ordered: Vec<&str> = tied.iter().map(|(_, document)| document.id().as_str()).collect();
+    assert_eq!(ordered, ["doc-a", "doc-m", "doc-z"]);
+    // Tied scores order by identity in both directions...
+    assert_eq!(super::vector::compare_candidates(&(1.0, &a), &(1.0, &z)), StdOrdering::Less);
+    assert_eq!(super::vector::compare_candidates(&(1.0, &z), &(1.0, &a)), StdOrdering::Greater);
+    // ...and a strict score difference still dominates identity.
+    assert_eq!(super::vector::compare_candidates(&(0.9, &a), &(1.0, &z)), StdOrdering::Greater);
+    assert_eq!(super::vector::compare_candidates(&(1.0, &z), &(0.9, &a)), StdOrdering::Less);
+}
+
+#[test]
 fn limit_truncates_to_the_k_nearest() {
     let (_dir, engine) = open_engine("limit");
     commit(
@@ -448,10 +471,7 @@ fn the_reported_score_stays_inside_the_documented_cosine_range() {
     commit(&engine, &scope(&engine), "range", vec![vector_document("same", &[1.0, 1.0, 1.0], &[])]);
     let result = search(&engine, &request(&[1.0, 1.0, 1.0], 1)).expect("scores");
     let score = result.matches()[0].score();
-    assert!(
-        (-1.0..=1.0).contains(&score),
-        "score {score} left the documented cosine range"
-    );
+    assert!((-1.0..=1.0).contains(&score), "score {score} left the documented cosine range");
 }
 
 #[test]

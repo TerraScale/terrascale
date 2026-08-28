@@ -56,11 +56,13 @@
 use std::cmp::Ordering as StdOrdering;
 
 use super::{
-    QueryPredicate, QuerySource, QueryStore, execute::check_bounds, model,
-    spec::validate_field_name,
+    QueryPredicate, QuerySource, QueryStore,
+    execute::check_bounds,
+    model,
+    spec::{MAX_FIELD_BYTES, validate_field_name},
 };
 use crate::{
-    index::definitions::MAX_NAME_BYTES,
+    index::definitions::{IndexDefinitionError, StaticIndexName},
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue, ReadSnapshot,
         TenantScope,
@@ -341,9 +343,11 @@ impl VectorIndexDrift {
 /// the static-index name rules, binds it to one user collection and one
 /// document field, and carries the typed [`VectorOptions`]. Names follow
 /// the GAP-Q06 D10 adaptation of V1's `IndexStore.IsValidIndexName`
-/// rules: the V1 name alphabet, no double slash, no misplaced dot, at
-/// most [`MAX_NAME_BYTES`] bytes, and no occupancy of the reserved auto
-/// namespace.
+/// rules, applied by the static index language's own validator
+/// (`StaticIndexName::try_new`): the V1 name alphabet, no double slash,
+/// no misplaced dot, at most
+/// [`MAX_NAME_BYTES`](crate::index::definitions::MAX_NAME_BYTES) bytes,
+/// and no occupancy of the reserved auto namespace.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VectorIndexDeclaration {
     name: String,
@@ -440,27 +444,18 @@ impl VectorIndexDeclaration {
 }
 
 /// Validates one vector index name under the static-index name rules.
+///
+/// The validation IS the static index language's own —
+/// [`StaticIndexName::try_new`] — rather than a re-statement of it, so
+/// the vector name rule and the static index name rule cannot drift
+/// apart. The behavior is unchanged by the delegation: the same V1 name
+/// alphabet (D3), the same auto-namespace refusal.
 fn validate_index_name(name: &str) -> Result<(), VectorIndexError> {
-    if name.is_empty()
-        || name.len() > MAX_NAME_BYTES
-        || name.chars().any(char::is_control)
-        || name.trim() != name
-    {
-        return Err(VectorIndexError::InvalidName);
+    match StaticIndexName::try_new(name) {
+        Ok(_) => Ok(()),
+        Err(IndexDefinitionError::ReservedAutoName) => Err(VectorIndexError::AutoNamespaceReserved),
+        Err(_) => Err(VectorIndexError::InvalidName),
     }
-    if name.contains("//")
-        || name.starts_with('.')
-        || name.ends_with('.')
-        || name.contains("..")
-        || !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
-    {
-        return Err(VectorIndexError::InvalidName);
-    }
-    let prefix = crate::query::optimizer::AUTO_NAMESPACE_PREFIX;
-    if name.len() >= prefix.len() && name[..prefix.len()].eq_ignore_ascii_case(prefix) {
-        return Err(VectorIndexError::AutoNamespaceReserved);
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -477,7 +472,10 @@ fn validate_index_name(name: &str) -> Result<(), VectorIndexError> {
 pub enum VectorSimilarity {
     /// Cosine similarity in [-1, 1]; the score is the similarity itself,
     /// exactly what V1 reports after `DistanceToScoreCosine` converts its
-    /// internal cosine distance (`1 - distance`).
+    /// internal cosine distance (`1 - distance`). The range is enforced,
+    /// not assumed: f64 rounding of an exact match can overshoot 1.0 by
+    /// one ulp, and the scorer clamps that back into the mathematical
+    /// range before the score is reported or ordered.
     Cosine,
 }
 
@@ -858,15 +856,18 @@ pub struct TqlVectorPredicate {
 impl TqlVectorPredicate {
     /// Creates one predicate after validating its parts.
     ///
-    /// The parameter name follows the field-name rule: it lands in
-    /// grammar text, so an invalid name refuses rather than risking
-    /// grammar injection through the render.
+    /// The field and parameter names are TQL identifiers — the grammar's
+    /// bare-identifier alphabet (ASCII letter or underscore first, then
+    /// ASCII letters, digits, or underscores) — because both land verbatim
+    /// in grammar text: a name carrying a comma, parenthesis, or space
+    /// refuses typed rather than injecting grammar through the render.
     ///
     /// # Errors
     ///
-    /// Returns [`VectorSearchError::InvalidField`] for an invalid field
-    /// or parameter name, [`VectorSearchError::InvalidLimit`] for a
-    /// limit outside 1..=[`MAX_VECTOR_SEARCH_LIMIT`], and
+    /// Returns [`VectorSearchError::InvalidField`] for a field or
+    /// parameter name outside the bare-identifier alphabet,
+    /// [`VectorSearchError::InvalidLimit`] for a limit outside
+    /// 1..=[`MAX_VECTOR_SEARCH_LIMIT`], and
     /// [`VectorSearchError::InvalidSimilarityThreshold`] for a threshold
     /// outside the inclusive cosine range or not a number.
     pub fn try_new(
@@ -875,8 +876,9 @@ impl TqlVectorPredicate {
         threshold: Option<f64>,
         limit: Option<u32>,
     ) -> Result<Self, VectorSearchError> {
-        validate_field_name(field).map_err(|_| VectorSearchError::InvalidField)?;
-        validate_field_name(parameter).map_err(|_| VectorSearchError::InvalidField)?;
+        if !validate_tql_identifier(field) || !validate_tql_identifier(parameter) {
+            return Err(VectorSearchError::InvalidField);
+        }
         if let Some(limit) = limit
             && (limit == 0 || limit > MAX_VECTOR_SEARCH_LIMIT)
         {
@@ -986,6 +988,29 @@ impl TqlVectorPredicate {
     }
 }
 
+/// Validates one TQL identifier — a field or parameter name that lands
+/// verbatim in grammar text: non-empty, at most
+/// [`MAX_FIELD_BYTES`](super::spec::MAX_FIELD_BYTES) bytes, ASCII letter
+/// or underscore first, then ASCII letters, digits, or underscores.
+///
+/// The bare-identifier alphabet carries none of the grammar's
+/// metacharacters (comma, parenthesis, space, `$`), so the render can
+/// never be corrupted through a name. The field-name rule of `spec.rs`
+/// is looser (it must admit the seam's dotted field paths); the render
+/// asks the stricter question because its output is grammar text. A
+/// future TQL-03 grammar that spells vector fields as paths is an
+/// additive widening of this rule within `vec/1.0`'s minor line.
+fn validate_tql_identifier(name: &str) -> bool {
+    if name.is_empty() || name.len() > MAX_FIELD_BYTES {
+        return false;
+    }
+    let mut characters = name.chars();
+    let starts_like_an_identifier =
+        matches!(characters.next(), Some(first) if first.is_ascii_alphabetic() || first == '_');
+    starts_like_an_identifier
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
 // ---------------------------------------------------------------------------
 // Execution: result, statistics, and the query-seam entry point
 // ---------------------------------------------------------------------------
@@ -1006,7 +1031,12 @@ impl VectorMatch {
         &self.id
     }
 
-    /// Returns the cosine similarity score in [-1, 1].
+    /// Returns the cosine similarity score, clamped to [-1, 1].
+    ///
+    /// The clamp is the enforcement of the documented range: the raw
+    /// quotient of an exact match can exceed 1.0 by one ulp of f64
+    /// rounding (`3 / (sqrt(3) * sqrt(3))`), and a reported score must
+    /// not.
     #[must_use]
     pub const fn score(&self) -> f64 {
         self.score
@@ -1194,8 +1224,25 @@ impl QueryStore<'_> {
         &self,
         request: &VectorSearchRequest,
         snapshot: &ReadSnapshot,
-        _default_window: std::time::Duration,
+        default_window: std::time::Duration,
     ) -> Result<VectorSearchResult, VectorSearchError> {
+        // D6: the execution bounds are materialized once, at entry — the
+        // include read-window pattern (`includes.rs`'s `read_deadline`).
+        // A request without a bound deadline executes inside the default
+        // window and one without a bound signal carries a fresh
+        // uncancelled signal, so no execution is unbounded by default and
+        // every checkpoint below enforces the same materialized bound.
+        let deadline = request
+            .deadline
+            .unwrap_or_else(|| Deadline::after(default_window).expect("positive default window"));
+        let cancellation = request.cancellation.clone().unwrap_or_default();
+        // The entry checkpoint fires before the snapshot view is
+        // materialized: an already-dead or already-cancelled request
+        // refuses before any data access. (The view materialization
+        // itself takes no deadline — the same index-less base path
+        // `execute.rs` records; the checkpoints bound everything around
+        // and after it.)
+        check_bounds(Some(deadline), Some(&cancellation)).map_err(map_bound_error)?;
         // The snapshot supplies the tenant binding and its own Engine
         // identity; the Engine validates both inside the view, before
         // any data access reaches storage.
@@ -1204,7 +1251,7 @@ impl QueryStore<'_> {
             .engine
             .snapshot_documents(&scope, snapshot)
             .map_err(|error| map_engine_error(&error))?;
-        check_bounds(request.deadline, request.cancellation.as_ref()).map_err(map_bound_error)?;
+        check_bounds(Some(deadline), Some(&cancellation)).map_err(map_bound_error)?;
 
         let dimensions = request.dimensions();
         let mut candidates: Vec<(f64, &Document)> = Vec::new();
@@ -1215,8 +1262,7 @@ impl QueryStore<'_> {
         let mut threshold_dropped: u64 = 0;
         for (position, document) in documents.iter().enumerate() {
             if position % CHECKPOINT_INTERVAL == 0 {
-                check_bounds(request.deadline, request.cancellation.as_ref())
-                    .map_err(map_bound_error)?;
+                check_bounds(Some(deadline), Some(&cancellation)).map_err(map_bound_error)?;
             }
             if document.collection() != request.source.collection() {
                 continue;
@@ -1253,19 +1299,9 @@ impl QueryStore<'_> {
             }
             candidates.push((similarity, document));
         }
-        check_bounds(request.deadline, request.cancellation.as_ref()).map_err(map_bound_error)?;
+        check_bounds(Some(deadline), Some(&cancellation)).map_err(map_bound_error)?;
 
-        // THE determinism rule: score descending, and a score tie
-        // resolves by document identity — one total order that neither
-        // scan order nor chance can change. Scores are finite by the
-        // fail-closed rule above, so the comparison is total.
-        candidates.sort_by(|left, right| {
-            right
-                .0
-                .partial_cmp(&left.0)
-                .unwrap_or(StdOrdering::Equal)
-                .then_with(|| compare_identity(left.1, right.1))
-        });
+        candidates.sort_by(compare_candidates);
         let limit = usize::try_from(request.limit).unwrap_or(usize::MAX);
         candidates.truncate(limit);
         let returned = u64::try_from(candidates.len()).unwrap_or(u64::MAX);
@@ -1291,6 +1327,24 @@ impl QueryStore<'_> {
             ),
         ))
     }
+}
+
+/// THE determinism rule's comparator: score descending, and a score tie
+/// resolves by document identity — one total order that neither scan
+/// order nor chance can change. Scores are finite by the fail-closed
+/// scoring rule, so the comparison is total.
+///
+/// Visible to the in-crate tests because the tie-break is load-bearing
+/// exactly when storage iteration is not the canonical identity order:
+/// the execution corpus cannot discriminate it (the snapshot view
+/// already iterates documents in canonical key order), so the comparator
+/// is pinned directly.
+pub(super) fn compare_candidates(left: &(f64, &Document), right: &(f64, &Document)) -> StdOrdering {
+    right
+        .0
+        .partial_cmp(&left.0)
+        .unwrap_or(StdOrdering::Equal)
+        .then_with(|| compare_identity(left.1, right.1))
 }
 
 /// Compares two documents by identity: collection, then identifier — a
@@ -1369,7 +1423,10 @@ fn stored_vector(value: &DocumentValue) -> Option<Vec<f64>> {
 /// The zero-magnitude rule: a zero query vector or a zero stored vector
 /// has no direction, and scores exactly `0.0` — a defined answer, never
 /// a NaN. `None` marks a score that is not finite (a magnitude
-/// overflow), which the caller fails closed on.
+/// overflow), which the caller fails closed on; a finite score is
+/// clamped into [-1, 1], because sqrt-then-multiply rounding can push
+/// the exact match of a stored vector one ulp past 1.0 — the
+/// mathematical range is enforced, not assumed.
 fn cosine_similarity(query: &[f32], stored: &[f64]) -> Option<f64> {
     let mut dot = 0.0;
     let mut query_magnitude = 0.0;
@@ -1385,5 +1442,8 @@ fn cosine_similarity(query: &[f32], stored: &[f64]) -> Option<f64> {
         return Some(0.0);
     }
     let score = dot / denominator;
-    score.is_finite().then_some(score)
+    if !score.is_finite() {
+        return None;
+    }
+    Some(score.clamp(-1.0, 1.0))
 }
