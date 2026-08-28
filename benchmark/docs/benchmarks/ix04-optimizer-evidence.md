@@ -199,6 +199,22 @@ it. `unrun` in this table is the state while the budgets were written.
   verdict is recorded with the exact vocabulary and its objective status
   is `inconclusive` against PostgreSQL, because the PostgreSQL baseline
   is unrun. The parent ratifies this reading.
+- **D4 (decided in-packet — no measurement hook in the read-only paths).**
+  The alternative was an additive entry-count accessor on the catalog (a
+  measurement hook in `src/index/`, permitted only as a collision action)
+  so MB-B4 could report a measured byte figure. Rejected: every budget
+  except MB-B4's byte figure is decidable from the typed reads that
+  already exist, and one packet's measurement should not grow the
+  engine's public surface for a number it can state the arithmetic of.
+  The hook stays available to a follow-up if the derived bound is ever
+  disputed.
+- **D5 (decided in-packet — display rides the existing typed query
+  operation).** The alternative for the studio and CLI was a dedicated
+  contract operation for selection records. Rejected for this packet: it
+  needs the contract owner's file, and the DB-05 index view already
+  established the pattern of a reserved, operator-visible query text over
+  the typed `query.execute` operation. The dedicated operation is recorded
+  as deferred to the contract owner, not silently skipped.
 - **D3 (decided in-packet — zero drain is the lane's lifecycle
   configuration).** The single-collection workload's supersessions must
   resolve inside the window for the live-auto counter to be observable,
@@ -258,6 +274,38 @@ budget table's `unrun` markers are resolved here, one row per budget.
   `no-improvement`, objective status `inconclusive`.
 - Both receipts pass `scripts/check_benchmark_receipts.py` (11 receipts
   under the root, every one carrying the objective-status line).
+
+### Standard receipts (command, exit code)
+
+Every command below was run with the ambient `RUSTUP_TOOLCHAIN` unset, from
+this worktree's root, on the committed tree at `c71265f` and its ancestors:
+
+| Command | Exit | Note |
+| --- | --- | --- |
+| `cargo fmt --all -- --check` | 0 | |
+| `cargo check --workspace --locked` | 0 | inside the `check.sh` runs below |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | 0 | after the clippy-driven cleanups recorded below |
+| `cargo test --workspace --locked` (dev) | attempt 1: **failed, 1 of 821**; attempt 2: **hung** | both attempts are recorded below as host-contention symptoms, with the evidence for each |
+| `TERRABASE_V1_ROOT=… ./scripts/check.sh` | see the run log below | includes fmt/check/test dev/test release/clippy/doc/parity/citations/secrets/license |
+
+**Attempt 1** (exit 101): 820 passed, 1 failed —
+`benchmarks::tests::a_self_comparison_reads_as_parity`, a **pre-existing
+SE-15 test landed before this packet**, which compares two wall-clock
+commissioning samples through the 5%-noise gate and asserted `Stable`; under
+the concurrent fleet load it read `Better` (`left: Better, right: Stable`).
+Re-run in isolation three times immediately after: **3/3 green**. Recorded as
+a load flake in a test this packet did not touch; its receipt citation lives
+in `se15-v2-lane-commissioning-receipt.md`, so this packet does not modify
+it — the observation is reported to the lane owner instead.
+
+**Attempt 2** (killed after 33 minutes): the same full run reached
+`tests/server_uds.rs`, where `backbone_subscription_streams_batches_and_triggers`
+ran for over 30 minutes with zero CPU and never returned. At that moment four
+`cargo test --workspace` runs were live on this host simultaneously (the
+main checkout plus the `gapf06`, `db04`, and `gapq14` worktrees; load
+average 72) — the UDS-socket contention the workspace's concurrent-run rule
+warns about. The same test binary and the same test **passed in seconds** in
+attempt 1 on the same tree. Recorded as a collision symptom, not a defect.
 
 ### RED observations
 
