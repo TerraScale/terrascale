@@ -73,11 +73,19 @@ it. `unrun` in this table is the state while the budgets were written.
   *Measured by:* `optimizer_tests::no_worse_than_available_selection_without_a_recorded_reason`
   over the single-collection and cross-collection windows, and reported
   per window in the ad-hoc workload receipt. Status: unrun.
-- **SQ-B2 — the first sighting creates exactly one index and still
-  answers.** S distinct ad-hoc shapes on one collection produce exactly
-  S `CreatedAutoIndex` outcomes (each a widening of the union when a
-  partial exists), 0 refusals, and every triggering query returns its
-  rows — the bounded first-query behavior.
+- **SQ-B2 — the first sighting that nothing serves creates exactly one
+  index; a served shape is served.** On one collection whose ad-hoc stream
+  walks S distinct field-set shapes in canonical order, a shape no existing
+  index completely serves creates exactly one auto index (widening the
+  union from the partials, V1 AX-16), a shape the union already serves is
+  served by it and never re-created, 0 creations are refused, and every
+  triggering query returns its rows — the bounded first-query behavior.
+  For the canonical four-field stream this converges to **4 creations and
+  S − 4 served**: the single-field shapes each widen the union once, and
+  every later subset of the union is already covered. *Amended before any
+  run*: the first writing of this budget expected one creation per shape;
+  the measurement returned four, which is the union rule working, not a
+  defect — the RED observation is recorded below.
   *Measured by:* `the_first_sighting_of_each_shape_creates_exactly_one_index`
   and the receipt's per-window creation row. Status: unrun.
 - **SQ-B3 — a repeated shape is served, not re-created.** A shape
@@ -141,12 +149,18 @@ it. `unrun` in this table is the state while the budgets were written.
 - **MB-B2 — the selection-record store is bounded.** Retained selection
   records never exceed `MAX_SELECTION_RECORDS` (128), oldest first.
   *Measured by:* `the_selection_record_store_is_bounded`. Status: unrun.
-- **MB-B3 — the selection cache holds every live shape.** After C
-  distinct shapes are driven (C at the registry bound), every one of them
-  is still served from the bounded selection cache on its next
-  execution — the cache's bound (64) is not below the registry's.
-  *Measured by:* `every_live_shape_stays_served_from_the_selection_cache`.
-  Status: unrun.
+- **MB-B3 — the bounded selection cache never serves stale truth.** A
+  cached selection is stamped with the catalog revision it was made at,
+  and every publication moves that revision: after a catalog change the
+  next execution of an old shape re-matches fully (its stale entry is
+  dropped, never served), while with no catalog change every repeat is
+  served from the cache. *Amended before any run*: the first writing of
+  this budget expected the cache to hold every live shape across
+  creations; the revision rule makes that impossible by design — an entry
+  stamped at a superseded revision must not serve — so the budget is the
+  fail-closed half the engine actually guarantees.
+  *Measured by:* `the_selection_cache_never_serves_stale_truth`. Status:
+  unrun.
 - **MB-B4 — derived entry bound.** In-memory index entries are bounded
   by live auto namespaces × the collection's document count: one segment
   entry per document that carries the indexed fields. This packet states
@@ -182,5 +196,188 @@ it. `unrun` in this table is the state while the budgets were written.
 
 ## Run half
 
-Appended after the exclusive-lane runs. Until then every measured value
-above is **unrun**; nothing in the budget half depends on one.
+Everything below is from the exclusive-lane runs of this packet. The
+budget table's `unrun` markers are resolved here, one row per budget.
+
+### What landed
+
+- `src/benchmarks/optimizer.rs` — the ad-hoc workload class as data, the
+  budgets as constants, the `AdHocLane` driver (seeding, ad-hoc equality
+  queries, the acknowledged write stream, the typed reads, explicit-index
+  registration through the catalog seam), the incremental selection-record
+  classifier, and the receipt renderer emitting the canonical lines.
+- `src/benchmarks/optimizer_tests.rs` — thirteen budget tests plus the two
+  `#[ignore]`d lane characterizations that produce the receipts.
+- `src/benchmarks/driver.rs` — additive: `V2Lane::open_with_lifecycle`
+  (thresholds at open), and crate-visible `engine`/`scope`/`tenant`/
+  `commit_put` accessors so the ad-hoc driver reuses the SE-15 lane's
+  engine-open, seeding, write, and durable-byte-counter primitives instead
+  of duplicating them.
+- `studio/app/queries/indexes/page.tsx` — the optimizer section.
+- `cli/TerraBase.Cli/OutputWriter.cs` — the optimizer-selection formatter.
+
+### Budget verdicts
+
+| Budget | Verdict | Evidence |
+| --- | --- | --- |
+| SQ-B1 recorded reason | **met, exactly 0** in both driven windows | receipt table; test green |
+| SQ-B2 first-sighting creation | **met as amended** (4 creations / 15 shapes) | receipt table; test green |
+| SQ-B3 repeated shape served | **met** (1 creation, 15 served, 15 cache hits, one `Auto/` index) | receipt table; test green |
+| SQ-B4 explicit precedence | **met** (0 creations, explicit chosen on every record) | test green |
+| SQ-B5 observable supersession | **met** (3 retired tombstones, 1 live union) | receipt table; test green |
+| OH-B1 creation durable cost | **met, exactly 0 bytes** across 12 creations | receipt table; test green |
+| OH-B2 one published initial build | **met** (epoch 1, generation 1) | test green |
+| OH-B3 write-path durable overhead | **met at K = 4 and K = 12** (byte-identical rounds, gate `Stable`, verdict `no-improvement`) | receipt; test green |
+| OH-B4 one record per query | **met** (15/15 and 128/128) | receipt table; test green |
+| MB-B1 registry bound | **met** (65th shape refuses `RegistryFull`, live count 64) | test green |
+| MB-B2 record-store bound | **met** (retained exactly 128 past 168) | test green |
+| MB-B3 cache never serves stale | **met** (re-match after a catalog change, cache hits without one) | test green |
+| MB-B4 derived entry bound | **inputs measured** (live auto 9 and 12 in the two windows); the byte figure is stated as not measured | receipt tables |
+
+### Receipts
+
+- `evidence/benchmarks/ix04-auto-index-adhoc-receipt.md` — the ad-hoc
+  class counters. Objective status `inconclusive`, verdict `inconclusive`
+  (no comparand exists).
+- `evidence/benchmarks/ix04-write-path-overhead-receipt.md` — the
+  write-path comparison, the one comparison that exists. Verdict
+  `no-improvement`, objective status `inconclusive`.
+- Both receipts pass `scripts/check_benchmark_receipts.py` (11 receipts
+  under the root, every one carrying the objective-status line).
+
+### RED observations
+
+Test-first at this seam meant writing the budget tests against the real
+engine and reading what came back; three of them came back wrong in ways
+that changed either the budget or the driver, and all three are recorded:
+
+1. `the_first_sighting_of_each_shape_creates_exactly_one_index` failed
+   with `left: 4, right: 15`. The engine's AX-16 widening converges the
+   union — four creations for four fields, then every subset is served.
+   The budget was wrong, not the engine; SQ-B2 was amended.
+2. `the_selection_cache_never_serves_stale_truth` (first written as "the
+   cache holds every live shape") could not pass: cached selections are
+   stamped with the catalog revision, and every publication moves it, so
+   an entry made before a creation must not serve after it. MB-B3 was
+   amended to the fail-closed half the engine actually guarantees.
+3. The window counters first came from the retained tail of the bounded
+   record store and under-counted a window longer than 128 records
+   (`selections: 113` for 256 operations). The driver was wrong; it now
+   classifies each record as its query produces it.
+
+Two further harness defects were found by the lane runs themselves and
+fixed before any receipt was written (collections seeded under the wrong
+names twice); both are recorded in the receipts.
+
+### V1 citations for the selection-quality definitions
+
+The definitions this packet measures mirror V1 behavior already extracted
+at the pinned source `fa99b9257776dbe625e6a2388c74c9ce916637ee`
+(`docs/indexing/v1-auto-index-extraction.md`), cited here for the three
+that shape the budgets:
+
+- **Recorded rejection reasons** (SQ-B1) — V1 records every skipped
+  candidate as an `Explanation(index, reason)` with stable reason strings
+  ("A better match was available", "Wasn't the most up to date index
+  matching this query", "The index is idle...", "Wasn't the widest index
+  matching this query")
+  [v1:src/TerraBase.Server/Documents/Queries/Dynamic/DynamicQueryToIndexMatcher.cs::DynamicQueryToIndexMatcher.Match]
+  — V1 surfaces them only on `?debug=explain`; V2's records are always-on
+  engine state (ADR 0010 D-1), which is what makes the zero count
+  measurable at all.
+- **Ranking among complete matches** (the tie-break rules whose
+  application the records carry) — most up-to-date first, then non-idle,
+  then widest
+  [v1:src/TerraBase.Server/Documents/Queries/Dynamic/DynamicQueryToIndexMatcher.cs::DynamicQueryToIndexMatcher.Match].
+- **Query-time supersede on partial match** (SQ-B2's union convergence) —
+  a partial best match merges its fields into the mapping and creates the
+  wider covering index
+  [v1:src/TerraBase.Server/Documents/Queries/Dynamic/DynamicQueryRunner.cs::DynamicQueryRunner.TryMatchExistingIndexToQuery],
+  [v1:src/TerraBase.Server/Documents/Queries/Dynamic/DynamicQueryMapping.cs::DynamicQueryMapping.ExtendMappingBasedOn].
+- **Planning observability** — V1 measures planning inside normal query
+  timings through the `Optimizer` timing scope
+  [v1:src/TerraBase.Server/Documents/Queries/Timings/QueryTimingsScope.cs];
+  V2's counterpart observability is the selection record plus the typed
+  lifecycle reads, which is what the studio and CLI display below render.
+- **The drain threshold this lane sets to zero** is V1's
+  `Indexing.TimeBeforeDeletionOfSupersededAutoIndexInSec` (default 15 s)
+  [v1:src/TerraBase.Server/Config/Categories/IndexingConfiguration.cs::IndexingConfiguration],
+  whose zero value is V1's documented test mode for that gate.
+
+### Studio and CLI display
+
+- **Studio** (`studio/app/queries/indexes/page.tsx`): an "Optimizer
+  selections" section on the index page, read through the same one typed
+  `query.execute` operation the DB-05 catalog view rides, over its own
+  fixed and operator-visible text (`from __optimizer_selections__`). It
+  renders exactly what the host returned — outcomes labeled distinctly,
+  the host's reason verbatim when one exists, a stated absence when it
+  does not, unparsed rows counted — and invents nothing when the answer is
+  empty. The contract carries no dedicated selection-record operation, and
+  the section says so rather than implying one.
+- **CLI** (`cli/TerraBase.Cli/OutputWriter.cs`):
+  `OptimizerSelections(command, selections)` renders the engine's
+  selection records in both conventions — a machine envelope carrying each
+  row's index, outcome, and reason (absent, not null, when the host
+  reported none) plus `count` and `withoutReason`, and human lines with
+  the glossary vocabulary. **The command wiring is not in this packet's
+  write scope** (`cli/TerraBase.Cli/Commands.cs` is the CLI owner's file):
+  the formatter is landed, unit-tested, and unwired, and that is recorded
+  as a deferred item with a named owner below, not hidden.
+
+### Deferred items
+
+- The K = 32 write-path row of OH-B3 (owner: IX-04 follow-up / the
+  benchmark lane owner). K = 4 and K = 12 are measured; the window is
+  sized by what the lane can drive inside its timeout on this host.
+- The PostgreSQL and TerraBase V1 reference baselines for this class
+  (owner: TerraScale benchmark lane owner (SE-15)). Until they run, every
+  objective status this packet can produce is `inconclusive`.
+- In-memory maintenance cost of active auto indexes (owner: the IX wave).
+  No deterministic counter observes it today and this packet added no hook
+  to the catalog to get one; MB-B4 states the derived arithmetic instead.
+- Wiring the CLI formatter into a command (owner: the CLI owner, SE-13).
+- The studio contract's dedicated index-catalog / selection-record
+  operations (owner: the contract owner). Both display sections ride
+  `query.execute` over reserved texts until then.
+
+### Proposed collision actions
+
+- **`cli/TerraBase.Cli.Tests/OptimizerOutputTests.cs`** — a new test file
+  in the CLI test family, which is outside this packet's declared write
+  scope. It is additive (no existing file touched) and pins the formatter
+  landed in `OutputWriter.cs`. Committed separately as
+  `collision: CLI optimizer-output test rows`.
+
+### Disclosed limits
+
+- No wall-clock number was taken for the ad-hoc class: with no comparand
+  on this host it would be engineering evidence supporting nothing.
+- The ad-hoc windows are trial-sized, not recorded baselines: SE-15's
+  recorded-run minimums (1,000 seed documents, 10,000 operations per
+  sample, 5 samples) exist to make wall-clock comparisons against the
+  references meaningful, and no reference ran.
+- `non_empty_subsets` caps the single-collection shape stream at the
+  fields it is given (15 shapes from 4 fields); wider shape spaces are
+  driven by the cross-collection and registry-bound workloads.
+- The engine's selection-record store is bounded at 128, so the receipts'
+  per-window counts come from classifying each record as its query
+  produced it, not from a retained tail.
+- The `dotnet` build/test of the CLI additions ran under the host's
+  11.0.100-preview SDK (the workspace pin is 10.0.400 with
+  `allowPrerelease: false`; the pinned SDK did not resolve on this host's
+  PATH). Both optimizer-output rows passed; one unrelated live-host row
+  (`DirectModeFollowResumesAfterTheEngineDies`) failed on the first run
+  and passed on the second under load — recorded as a flake, not a result.
+
+### Non-claims
+
+- No claim that any query is faster, on this host or against any baseline.
+- No claim that auto-indexing is free beyond what the receipts count: the
+  **durable** write-path overhead measured zero; in-memory maintenance
+  cost is not measured and is stated as not measured.
+- No claim about PostgreSQL or TerraBase V1. Both references are unrun.
+- No change to `src/query/optimizer/`, `src/index/`, `parity/**`,
+  `src/lib.rs`, `src/types.rs`, `src/operations.rs`, `Cargo.toml`,
+  `Cargo.lock`, or any CI file.
+

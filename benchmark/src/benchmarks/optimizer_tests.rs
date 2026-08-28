@@ -450,14 +450,18 @@ fn the_receipts_render_the_discipline_lines() {
 fn ix04_adhoc_workload_characterization() {
     let lane = AdHocLane::open("characterization");
     lane.seed_collection("adhoc", 256, &["f0", "f1", "f2", "f3"]);
+    // The cross-collection window drives the collections it names, so the
+    // seed has to name them too — the first run of this characterization
+    // seeded differently named collections and the window answered zero
+    // rows, which is recorded below as a harness defect, not a result.
     for collection in 0..8 {
-        lane.seed_collection(&format!("cx{collection}"), 128, &["f0"]);
+        lane.seed_collection(&format!("adhoc{collection}"), 128, &["f0"]);
     }
 
     let single = optimizer::run_single_collection(&lane, "adhoc", &["f0", "f1", "f2", "f3"]);
     println!("single-collection window: {single:?}");
 
-    let cross = optimizer::run_cross_collection(&lane, 8, &["f0"], 32);
+    let cross = optimizer::run_cross_collection(&lane, 8, &["f0"], 16);
     println!("cross-collection window: {cross:?}");
 
     println!(
@@ -488,33 +492,45 @@ fn ix04_adhoc_workload_characterization() {
 #[test]
 #[ignore = "a lane characterization, not a gate; run with --ignored --nocapture"]
 fn ix04_write_path_overhead_characterization() {
-    const COLLECTIONS: usize = 32;
-    const WRITES: usize = 64;
+    // Twelve active auto indexes over twelve collections, five measured
+    // rounds of twelve acknowledged writes per side. The window is sized to
+    // what the lane can drive inside its timeout on this host: the first
+    // attempt of this characterization drove 32 collections of 64 documents
+    // and did not finish inside 1800 seconds, which is recorded in the
+    // receipt as the honest limit of this run, not as a result.
+    const COLLECTIONS: usize = 12;
+    const WRITES: usize = 12;
 
     let without = {
         let lane = AdHocLane::open("write-without");
         for collection in 0..COLLECTIONS {
-            lane.seed_collection(&format!("w{collection}"), 64, &["f0"]);
+            lane.seed_collection(&format!("adhoc{collection}"), 8, &["f0"]);
         }
         (0..5)
             .map(|round| {
-                let target = format!("w{}", round % COLLECTIONS);
+                let target = format!("adhoc{}", round % COLLECTIONS);
                 let bytes = lane.write_stream(&target, WRITES);
                 f64::from(u32::try_from(bytes).unwrap_or(u32::MAX)) / (WRITES as f64)
             })
             .collect::<Vec<f64>>()
     };
 
+    // The same collection names the cross-collection driver queries, so the
+    // twelve auto indexes it creates sit on the very collections the
+    // measured writes land in — the first run of this window seeded
+    // differently named collections and put the indexes beside the writes
+    // instead of on them, which is recorded below as a harness defect.
     let lane = AdHocLane::open("write-with");
     for collection in 0..COLLECTIONS {
-        let name = format!("w{collection}");
-        lane.seed_collection(&name, 64, &["f0"]);
+        let name = format!("adhoc{collection}");
+        lane.seed_collection(&name, 8, &["f0"]);
     }
     let created = optimizer::run_cross_collection(&lane, COLLECTIONS, &["f0"], 1);
     println!("creation window before the measured writes: {created:?}");
-    let with = (0..5)
+    let rounds = 5;
+    let with = (0..rounds)
         .map(|round| {
-            let target = format!("w{}", round % COLLECTIONS);
+            let target = format!("adhoc{}", round % COLLECTIONS);
             let bytes = lane.write_stream(&target, WRITES);
             f64::from(u32::try_from(bytes).unwrap_or(u32::MAX)) / (WRITES as f64)
         })

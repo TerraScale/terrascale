@@ -428,6 +428,47 @@ impl AdHocLane {
         self.lane.engine().queries().registered_indexes(self.lane.tenant())
     }
 
+    /// The newest selection record, when one exists.
+    ///
+    /// The record store is bounded, so a window longer than
+    /// `MAX_SELECTION_RECORDS` drops its oldest records: classifying a window
+    /// from the retained tail would under-count it. The drivers therefore
+    /// classify each record as its query produces it, and this is how they
+    /// read it back.
+    pub(crate) fn last_selection(&self) -> Option<IndexSelectionRecord> {
+        self.selections().pop()
+    }
+
+    /// Classifies one produced selection record into the window counters.
+    pub(crate) fn classify(&self, record: &IndexSelectionRecord, window: &mut AdHocWindow) {
+        window.selections += 1;
+        match record.outcome() {
+            SelectionOutcome::CreatedAutoIndex { .. } => window.creations += 1,
+            SelectionOutcome::ChosenIndex { .. } => {
+                window.chosen += 1;
+                if record.cache_hit() {
+                    window.cache_hits += 1;
+                }
+            }
+            SelectionOutcome::CollectionScan => window.collection_scans += 1,
+            SelectionOutcome::CreationRefused { .. } => window.refusals += 1,
+        }
+        // SQ-B1, made mechanical: a complete candidate that lost must carry
+        // its recorded reason. The count is the budget the receipt decides.
+        for candidate in record.candidates() {
+            let complete = matches!(
+                candidate.verdict(),
+                CandidateVerdict::Complete | CandidateVerdict::CompleteButIdle
+            );
+            if complete
+                && !chosen_index_of(record).is_some_and(|name| name == candidate.name())
+                && candidate.note().is_none()
+            {
+                window.unexplained_unchosen_complete += 1;
+            }
+        }
+    }
+
     /// Shuts the engine down and removes its location.
     pub(crate) fn remove(self) {
         self.lane.remove();
@@ -473,16 +514,13 @@ pub(crate) fn run_single_collection(
     fields: &[&str],
 ) -> AdHocWindow {
     let baseline = lane.durable_bytes();
-    let before = lane.selections().len();
     let mut window = AdHocWindow::default();
     for shape in non_empty_subsets(fields) {
         window.operations += 1;
-        match lane.ad_hoc(collection, &shape, 0) {
-            Ok(rows) => window.documents_returned += u64::try_from(rows).unwrap_or(0),
-            Err(_) => window.refusals += 1,
-        }
+        let rows = lane.ad_hoc(collection, &shape, 0);
+        fold_one(lane, rows, &mut window);
     }
-    finish_window(lane, baseline, before, window)
+    finish_window(lane, baseline, window)
 }
 
 /// Drives the cross-collection ad-hoc workload: one shape per collection,
@@ -495,19 +533,16 @@ pub(crate) fn run_cross_collection(
     repeats: usize,
 ) -> AdHocWindow {
     let baseline = lane.durable_bytes();
-    let before = lane.selections().len();
     let mut window = AdHocWindow::default();
     for collection in 0..collections {
         let name = format!("adhoc{collection}");
         for repeat in 0..repeats {
             window.operations += 1;
-            match lane.ad_hoc(&name, fields, repeat) {
-                Ok(rows) => window.documents_returned += u64::try_from(rows).unwrap_or(0),
-                Err(_) => window.refusals += 1,
-            }
+            let rows = lane.ad_hoc(&name, fields, repeat);
+            fold_one(lane, rows, &mut window);
         }
     }
-    finish_window(lane, baseline, before, window)
+    finish_window(lane, baseline, window)
 }
 
 /// Drives the registry-bound workload: one shape per fresh collection until
@@ -531,43 +566,34 @@ pub(crate) fn run_registry_bound(
     window
 }
 
-/// Folds the typed reads into one window's counters.
-fn finish_window(
+/// Folds one executed operation and its produced selection record into the
+/// window counters, classifying the record as its query produced it.
+fn fold_one(
     lane: &AdHocLane,
-    baseline: u64,
-    records_before: usize,
-    mut window: AdHocWindow,
-) -> AdHocWindow {
-    let records = lane.selections();
-    window.selections = records.len().saturating_sub(records_before) as u64;
-    window.durable_bytes_written = lane.durable_bytes().saturating_sub(baseline);
-    for record in records.iter().skip(records_before) {
-        match record.outcome() {
-            SelectionOutcome::CreatedAutoIndex { .. } => window.creations += 1,
-            SelectionOutcome::ChosenIndex { .. } => {
-                window.chosen += 1;
-                if record.cache_hit() {
-                    window.cache_hits += 1;
-                }
-            }
-            SelectionOutcome::CollectionScan => window.collection_scans += 1,
-            SelectionOutcome::CreationRefused { .. } => window.refusals += 1,
-        }
-        // SQ-B1, made mechanical: a complete candidate that lost must carry
-        // its recorded reason. The count is the budget the receipt decides.
-        for candidate in record.candidates() {
-            let complete = matches!(
-                candidate.verdict(),
-                CandidateVerdict::Complete | CandidateVerdict::CompleteButIdle
-            );
-            if complete
-                && !chosen_index_of(record).is_some_and(|name| name == candidate.name())
-                && candidate.note().is_none()
-            {
-                window.unexplained_unchosen_complete += 1;
-            }
-        }
+    rows: Result<usize, crate::query::QueryError>,
+    window: &mut AdHocWindow,
+) {
+    if let Ok(rows) = rows {
+        window.documents_returned += u64::try_from(rows).unwrap_or(0);
     }
+    match lane.last_selection() {
+        Some(record) => lane.classify(&record, window),
+        // A typed error that produced no record would still be a refusal the
+        // window has to account for. Every fail-closed refusal in this seam
+        // records itself, so this arm is the guard that says so.
+        None if rows.is_err() => window.refusals += 1,
+        None => {}
+    }
+}
+
+/// Folds the typed reads into one window's final counters.
+///
+/// The record store is bounded (`MAX_SELECTION_RECORDS`), so a window longer
+/// than the bound retains only its newest records — the classification above
+/// happens per query for exactly that reason, and what this fold adds is the
+/// durable-byte counter and the two lifecycle counts.
+fn finish_window(lane: &AdHocLane, baseline: u64, mut window: AdHocWindow) -> AdHocWindow {
+    window.durable_bytes_written = lane.durable_bytes().saturating_sub(baseline);
     let registered = lane.registered();
     window.live_auto_after = live_auto_of(&registered);
     window.retired_after = retired_of(&registered);
