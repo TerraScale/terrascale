@@ -20,8 +20,15 @@
 ## Parallel Delivery and Contract Order
 
 - Claim a file or cohesive feature slice before editing it. Parallel agents must use disjoint write ownership; do not overwrite, reformat, or fold in another agent's uncommitted work without coordinating with its owner.
-- For a new or changed public capability, establish the public `TerraScale.Platform` REST contract first, then implement the SDK's typed client and source-generated JSON contracts against that contract. Do not invent SDK-only routes, DTO fields, headers, or server behavior.
-- A public SDK change is not evidenced by compilation alone: verify the typed client call, source-generated request/response metadata, and real public API E2E success and failure paths. Record the Platform/API dependency and the exact cross-repository commits or outstanding dependency in the handoff.
+- For a new or changed public capability, establish the public REST contract in
+  `TerraScale.Dashboard.Api`, `TerraScale.Database`, or Authentication first,
+  then implement the SDK's typed client and source-generated JSON contracts
+  against that contract. Do not invent SDK-only routes, DTO fields, headers, or
+  server behavior.
+- A public SDK change is not evidenced by compilation alone: verify the typed
+  client call, source-generated request/response metadata, and real public API
+  E2E success and failure paths. Record the owning API project and the exact
+  cross-repository commits or outstanding dependency in the handoff.
 - Keep live-service tests environment-gated when an endpoint or credentials are unavailable locally. A skipped, correctly gated real-API test is acceptable; a mock, fake, direct server reference, or weakened assertion is not a substitute.
 - Treat credentials, one-time secrets, tokens, connection strings, and raw sensitive response bodies as secrets: use local environment configuration, never commit them, and redact them from fixtures, test output, logs, commit messages, and cross-repo reports.
 - In a shared checkout, an ownership claim names the exact paths and public behavior
@@ -35,14 +42,23 @@
 
 ## API Boundary
 
-- The SDK must interact only with public HTTP endpoints implemented by `/workspaces/TerraScale/TerraScale.Internals/src/Platform/TerraScale.Platform`.
-- Architecture decision D-008 makes the SDK scope full public-API management parity, including database, repository, document, schema, query, billing, project, project database, environment, usage, notification, backup, restore, project auth API-key, and project machine-to-machine credential-management endpoints under `/api/v1`.
+- The SDK must interact only with versioned public HTTP endpoints implemented
+  by the Dashboard full-stack repository (`TerraScale.Dashboard.Api` and
+  `TerraScale.Database`) and the public Authentication service.
+- Architecture decision D-008 makes the SDK scope full public-API management
+  parity, including database, repository, document, schema, query, billing,
+  project, project database, environment, usage, notification, backup, restore,
+  project auth API-key, and project machine-to-machine credential-management
+  endpoints under `/api/v1`.
 - Credential-management support is allowed only through the public API. API-key and M2M create or rotate responses may surface secret values only in the creation or rotation response that the API returns; list, get, delete, revoke, docs, samples, tests, and logs must not hard-code or re-surface those secret values.
 - M2M token exchange must be constructible without pre-configured API-key or bearer-token authentication and must not attach unrelated auth headers to the anonymous token request. It may send OAuth client credentials through the endpoint-supported JSON body, form body, or HTTP Basic credential path.
 - Do not call account, user, organization-management, invitation, auth-provider, search, audit, admin, health, internal RPC, MagicOnion, or service-to-service endpoints from this SDK unless a later architecture decision explicitly adds them to the public SDK scope.
 - Authentication for authenticated API calls is caller-provided. Accept API keys or bearer tokens through SDK options or per-request context and attach them only to authenticated public API calls.
-- Do not reference `TerraScale.Platform`, `TerraScale.InternalRpc`, `TerraScale.Authentication`, `TerraBase`, or other server/internal projects as project references. Treat TerraScale as an external HTTP API.
-- Do not open TerraBase sessions, connect directly to storage, or bypass `TerraScale.Platform`.
+- Do not reference Dashboard server projects, `TerraScale.InternalRpc`,
+  Authentication, TerraBase, or other server/internal projects as project
+  references. Treat TerraScale as an external HTTP API.
+- Do not open TerraBase sessions or connect directly to storage. Treat the
+  Dashboard public API and Authentication service as the only server boundary.
 
 ## Entity Framework Core Integration
 
@@ -86,7 +102,9 @@
 ## Testing and Verification
 
 - Maintain TUnit end-to-end coverage for every feature and function in this repository. Each feature/function must have at least one success-path E2E test and at least one failure-path E2E test; public E2E flows may cover internal helpers only when the exercised behavior is the same as the direct helper behavior.
-- Integration and E2E tests must target the real `TerraScale.Platform` database/repository endpoints when credentials and endpoint configuration are available.
+- Integration and E2E tests must target the real `TerraScale.Database` and
+  Dashboard public database/repository endpoints when credentials and endpoint
+  configuration are available.
 - If real API credentials or endpoints are unavailable in the default developer environment, keep the E2E tests environment-gated rather than replacing the API with a stand-in.
 - Build with all CPU cores, for example `dotnet build -m`.
 
@@ -110,7 +128,7 @@ Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies in full:
   owned-path diff, and `git fetch origin`. If `origin/develop` moved, the checkout
   is dirty, or a shared-checkout/index lease conflicts, stop and coordinate rather
   than staging or pushing through it. Handoff identifies owned paths, commit,
-  validation results, Platform dependency commits, and known gaps.
+  validation results, owning API dependency commits, and known gaps.
 
 ## Agent skills
 

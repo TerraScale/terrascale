@@ -1209,7 +1209,7 @@ public sealed class TerraScaleClient
 
         activity.SetTag("http.request.method", method.Method);
         activity.SetTag("url.path", requestUri);
-        activity.SetTag("server.address", "TerraScale.Platform");
+        activity.SetTag("server.address", "TerraScale.Dashboard.Api");
         return activity;
     }
 

@@ -1,6 +1,6 @@
 # TerraScale.DotNet
 
-Official C# SDK for TerraScale Platform API families.
+Official C# SDK for TerraScale's versioned public API families.
 
 ## Support policy
 
@@ -12,7 +12,7 @@ The repository pins the .NET 10 SDK in `global.json`. Package references used by
 
 Public clients opt in by configuring `TerraScaleClientOptions.IdempotencyKeyFactory`. The SDK creates one key per logical mutation, reuses it across retries, and never retries an unsafe mutation without a key. Keys must be nonblank and no longer than 128 characters. Replayable API results expire after 24 hours; replays include `Idempotency-Replayed: true`, while reuse with different input returns `409 idempotency_key_reused`.
 
-The SDK calls verified TerraScale public endpoints. It covers region catalog, database, repository, document, schema, TQL, changes, billing, project, project database, physical database-branch capability and clone requests, environment, queue, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, restore, v2 saved-query conditional-update, v3 saved-query snapshot-pagination, and role-protected platform administration operations. It does not call TerraBase storage directly or Dashboard-internal endpoints.
+The SDK calls verified TerraScale public endpoints. It covers region catalog, database, repository, document, schema, TQL, changes, billing, project, project database, physical database-branch capability and clone requests, environment, queue, usage, project auth API key, machine-to-machine application, notification, backup, restore-point, restore, v2 saved-query conditional-update, v3 saved-query snapshot-pagination, and role-protected platform administration operations. Database and TerraBase endpoint families are owned by `TerraScale.Database` in the full-stack `TerraScale.Dashboard` repository. It does not call TerraBase storage directly or Dashboard-internal endpoints.
 
 ## Platform administration
 
@@ -218,7 +218,7 @@ var deletionCompleted = deletion.Deleted && deletion.Status == "Completed";
 // "RetryScheduled" means it remains pending; RetryAt is the server's retry hint.
 ```
 
-Physical database branches are a separate capability from logical environments. Inspect capability before requesting a clone; Platform currently fails clone requests closed with `TerraScaleApiException` (`503`, `TERRASCALE-5001`) until physical lifecycle provisioning is available:
+Physical database branches are a separate capability from logical environments. Inspect capability before requesting a clone; the public database service currently fails clone requests closed with `TerraScaleApiException` (`503`, `TERRASCALE-5001`) until physical lifecycle provisioning is available:
 
 ```csharp
 var branchCapability = await client.DatabaseBranches.GetCapabilityAsync(project.ProjectId, cancellationToken);
@@ -487,7 +487,7 @@ var orders = await source.Set<Order>().ListAsync(take: 25);
 
 ## Quickstart Sample
 
-The sample app uses the real TerraScale Platform API and is environment-gated:
+The sample app uses the real TerraScale public API and is environment-gated:
 
 ```bash
 export TERRASCALE_API_BASE_ADDRESS=https://api.terrascale.tech
@@ -504,7 +504,7 @@ Use `TERRASCALE_BEARER_TOKEN` instead of `TERRASCALE_API_KEY` and `TERRASCALE_PR
 ## Running Tests
 
 The test projects are E2E-first and intentionally environment-gated. Without
-TerraScale Platform API configuration they verify local configuration handling and skip
+TerraScale public API configuration they verify local configuration handling and skip
 networked success-path coverage instead of substituting a fake API.
 
 ```bash
@@ -530,7 +530,7 @@ export TERRASCALE_E2E_REPOSITORY=01J00000000000000000000001
 dotnet test TerraScale.DotNet.slnx --configuration Release --no-progress
 ```
 
-Route and DTO contract tests for the newer project, auth management, notification, and backups families run locally without fake HTTP servers. Full live-stack coverage for those API families belongs in the TerraScale.Platform integration test suite and is intentionally not duplicated here yet.
+Route and DTO contract tests for the newer project, auth management, notification, and backups families run locally without fake HTTP servers. Full live-stack coverage for those API families belongs in the owning Dashboard.Api/Database integration suites and is intentionally not duplicated here yet.
 
 For bearer-token coverage, set `TERRASCALE_E2E_BEARER_TOKEN` with
 `TERRASCALE_E2E_BASE_URL` and `TERRASCALE_E2E_REPOSITORY`.
