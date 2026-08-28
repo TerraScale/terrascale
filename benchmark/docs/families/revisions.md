@@ -52,13 +52,17 @@ kind keys (see collision actions): the tenant configuration
 car (`family:revision-snapshots/<document>`), which holds the collection,
 per-revision version contract, revert provenance, and attachment
 references, kept in lockstep with the log (trimmed entries are reaped on
-every write; reads hide side-car entries whose revision left the log).
+every GAP-F05 write — the repair-loop 1 fix below made this hold when the
+W3-F per-document policy, not the collection policy, is the trimming
+agent; reads hide side-car entries whose revision left the log).
 
-Tests: 18 focused inline tests (`#[cfg(test)] mod tests` in the module) and
-4 public-construction integration tests
-(`tests/families/revisions_public.rs`). Red-then-green: the full suite was
-written first and compiled-failed on exactly the missing API (receipt
-below), then the implementation turned it green.
+Tests: 22 focused inline tests (`#[cfg(test)] mod tests` in the module;
+18 at handoff plus 4 repair-loop regression tests) and 4
+public-construction integration tests (`tests/families/revisions_public.rs`).
+Red-then-green: the full suite was written first and compiled-failed on
+exactly the missing API (receipt below), then the implementation turned it
+green; the repair-loop regression tests landed red first against the
+handed-off tree (receipt below).
 
 ## Decision record D1 (PROPOSED — parent ratification required): ownership of revision state, policies, and enforcement
 
@@ -90,7 +94,7 @@ contract supplies identity only; enforcement splits by mechanism:
      (`RevisionsBinCleaner.cs:16`, `DoWork` at `:30-35`) whose cadence
      (`CleanerFrequencyInSec`, default 5 minutes) is an operational
      schedule the host owns, not family behavior. The bin age itself is
-     configuration (30-day default, `RevisionsBinConfiguration.cs:63`) and
+     configuration (30-day default, `RevisionsBinConfiguration.cs:27`) and
      rides the family's configuration record.
    - *Write-time snapshot creation* (V1's `ShouldVersionDocument` on every
      document put, `RevisionsStorage.cs:196-278`) belongs to the Engine
@@ -104,7 +108,7 @@ contract supplies identity only; enforcement splits by mechanism:
 
 - V1 gates revisions per collection with an explicit disable
   (`RevisionsCollectionConfiguration.Disabled`,
-  `RevisionsCollectionConfiguration.cs:19`); unconditional auto-snapshot in
+  `RevisionsCollectionConfiguration.cs:12`); unconditional auto-snapshot in
   the document contract cannot express that.
 - V1's per-collection resolution order and the disabled fallback
   (`RevisionsStorage.cs:176-194`) map exactly onto family-held
@@ -156,7 +160,12 @@ vector (`RevertRevisionsByIdOperation.cs:19-33`; server verification
 carries **no** contract of its own (its publication identity exists only
 after commit; recording a guess would launder identity) — it carries revert
 provenance (`reverted_to`) instead, so contract addressing stays
-unambiguous. A snapshot staged in the same transaction as a document write
+unambiguous — with one disclosed nuance: a document snapshotted twice
+without change captures the same contract twice, and a revert to that
+contract resolves to the first matching revision; the values are
+identical (the document never changed), so the restore is equivalent
+(warden repair-loop finding, disclosed here rather than silently
+assumed). A snapshot staged in the same transaction as a document write
 fails closed (`StorageFailure`) when the view's version and the provable
 publication contract disagree: the contract is a publication fact, never a
 guess (GAP-D02's `resolve_published` discipline).
@@ -191,7 +200,7 @@ logical times.
 | --- | --- |
 | Configuration shape: default + per-collection map | `TerraBase.Client/Documents/Operations/Revisions/RevisionsConfiguration.cs:23-32` |
 | Collection policy fields (min count, min age, disabled, purge-on-delete, max deletions per update) | `.../RevisionsCollectionConfiguration.cs:9-32` |
-| Bin configuration: 30-day default age, cleaner cadence, disabled switch | `.../RevisionsBinConfiguration.cs:40-63` |
+| Bin configuration: disabled switch, 30-day default age, cleaner cadence | `.../RevisionsBinConfiguration.cs:16-36` (`Disabled` `:16`, age `:27`, cadence `:36`) |
 | Resolution order: collection, default, empty-disabled fallback | `src/TerraBase.Server/Documents/Revisions/RevisionsStorage.cs:176-194`, empty config `:62` |
 | Per-update trim arithmetic, age floor, cap, `HasMore` | `RevisionsStorage.cs:754-835` (both limits unset yields nothing at `:768-772`; age keeps at `:806-818`; cap at `:778-783`; `HasMore` at `:833`) |
 | Purge-on-delete of a deleted document's revisions | `RevisionsStorage.cs:627-631` |
@@ -312,16 +321,149 @@ green (the table above plus the in-crate and integration suites); the
 script-level green run is blocked by a pre-existing load-sensitive test
 outside this packet's write scope (`src/benchmarks/**` is frozen to the
 benchmark lane) plus the script's worktree workspace-root resolution. The
-flake determination needs the parent's cross-packet view.
+flake determination needs the parent's cross-packet view. (Update,
+repair loop 1: with both env vars set on the command line, a re-run of
+`scripts/check.sh` finished green end to end — receipt in the repair
+section below — corroborating the load-noise determination; the
+workspace-root candidate fix for worktrees three levels deep remains a
+parent action.)
 
 Red-phase receipt: before the implementation existed, the test suite
 compiled with 36 errors — the unresolved GAP-F05 imports and the missing
 `FamilyStore` methods (`stage_revisions_configuration`,
-`stage_revision_snapshot`, `read_revision_snapshots`,
-`stage_revert_to_contract`, `stage_enforce_revision_policy`,
-`read_revisions_bin`, `stage_revisions_bin_clean`) — exit 101. That is the
+`read_revisions_configuration`, `stage_revision_snapshot`,
+`read_revision_snapshots`, `stage_revert_to_contract`,
+`stage_enforce_revision_policy`, `read_revisions_bin`,
+`stage_revisions_bin_clean`) — exit 101. That is the
 discriminating red: the tests failed for exactly the missing contract, not
-for an unrelated reason.
+for an unrelated reason. (The handoff record listed seven methods;
+inspection caught the transcription slip — the module exposes eight
+`FamilyStore` operations, all eight named above. `read_revisions_configuration`
+was added to this list in repair loop 1.)
+
+## Repair loop 1 (2026-08-28) — gate findings closed
+
+Inspector verdict GO (two MINORs, three NOTEs); warden verdict FAIL on
+one MAJOR with the repair fully specified and verified. Every MAJOR and
+every actionable MINOR is closed below, each red-then-green; NOTE-level
+items are closed where cheap and disclosed where they belong to the
+parent. Repair commits: `ad46482` (red tests), `ca23078` (fixes), plus
+this record.
+
+### Findings -> fixes
+
+1. **Warden MAJOR — the side car desynced from the log and grew without
+   bound under the W3-F per-document policy.**
+   `RevisionRecord::push` trims to the W3-F per-document policy
+   (`src/families/state.rs:1042`), and `apply_policy`'s four early
+   returns reap nothing, so `stage_revision_snapshot` — the one GAP-F05
+   write that did not re-unify the two records afterwards — left
+   `family:revision-snapshots/<doc>` growing one entry per write whenever
+   the collection policy had nothing to drop (warden repro: W3-F
+   `RevisionPolicy(1, Some(2))` + collection minimum 100, seven
+   snapshots, log 2 / side car 7). **Fix:** `side.retain_log(&log)`
+   unconditionally after the `apply_policy` call in
+   `stage_revision_snapshot`, matching `stage_revert_to_contract` and
+   `stage_enforce_revision_policy`. The record's "reaped on every write"
+   claim now holds for every GAP-F05 write; W3-F-native commands
+   (`ForceCreate`/`Revert`/`Configure`) still do not know the side car —
+   the next GAP-F05 write reaps what they trimmed (their lane is frozen
+   to W3-F).
+2. **Warden MINOR — u64 policy limits silently mutated through the
+   reserved-record codec.** `encode`'s overflow clamp mapped any count
+   above `i64::MAX` to `i64::MAX`, so staged `u64::MAX` limits read back
+   changed, with no error anywhere. **Fix:** the typed constructor now
+   refuses count limits above the record's i64 ceiling
+   (`MAX_RECORDED_COUNT`, the schemas module's `MAX_INTERCHANGE_INTEGER`
+   discipline): construction rejects instead of encoding a value storage
+   cannot return, and `i64::MAX` itself round-trips exactly. The snapshot
+   side-car codec's identically-shaped clamp on revision numbers stays:
+   one push creates one revision, so a revision number above the ceiling
+   is unreachable (and the counter saturates).
+3. **Warden MINOR — duplicate bin-clean candidates staged an
+   uncommittable transaction and an inflated count.** `try_new` accepted
+   a repeated document; the stage then cleared the same record repeatedly
+   (a commit-time `Validation` rejection) and reported `purged = 3` for
+   one document. **Fix:** `RevisionsBinCleanWrite::try_new` refuses
+   repeated candidates (`InvalidFamilyPayload`), fail-closed like the
+   module's other payload validations; V1's cleaner feeds distinct ids
+   from one bin page.
+4. **Warden NOTE — `removed`/`removed_by_policy` under-counted the W3-F
+   post-drain trim.** **Fix:** `apply_policy` counts the post-drain
+   `trim_to_policy` removals alongside the collection drain; `HasMore`
+   stays driven by the cap alone (`RevisionsStorage.cs:833`), never by
+   the W3-F trim. On every maintained log the public paths reach
+   `apply_policy` at or below the W3-F maximum, so the accounting change
+   only affects records that outgrew their policy — the defensive trim's
+   reason to exist; the unit test builds one by hand.
+5. **Inspector MINOR + warden NOTE — two V1 citation line pins were
+   wrong at `fa99b925` (claims true, pins off).** The 30-day bin-age
+   default is `RevisionsBinConfiguration.cs:27` (was cited `:63`, which
+   is inside `GetHashCode`; the table row's `:40-63` spanned
+   Equals/GetHashCode/ToJson and now reads `:16-36` — `Disabled` `:16`,
+   age `:27`, cadence `:36`), and
+   `RevisionsCollectionConfiguration.Disabled` is `:12` (was `:19`,
+   inside `Equals`). Fixed in this record and in both module doc
+   comments. The prose-pin gap in
+   `validate_v1_citations.py --mode strict` (it checks bracketed tokens,
+   not prose `File.cs:NN`) is disclosed for the parent's tooling lane.
+6. **Inspector NOTE — "seven FamilyStore operations" was a transcription
+   slip.** The module exposes eight; the red-phase receipt above now
+   names all eight (`read_revisions_configuration` was missing from the
+   original list).
+7. **Inspector NOTE + warden NOTE — record wording.** D2 now discloses
+   the double-unchanged-snapshot revert nuance. The unowned PB-3025
+   remainder (revision includes, collection statistics) remains flagged
+   for the parent to assign an owner at ratification — a builder cannot
+   open tickets.
+8. **Warden NOTE — parent-level tooling, no packet action.** The
+   benchmarks self-comparison flake and the `check.sh` worktree
+   workspace-root resolution stay parent determinations; the flake
+   reproduced once in this loop's first workspace run and passed in the
+   second (both recorded below), and `scripts/check.sh` is outside this
+   packet's write scope.
+
+### Tests — red first on the handed-off tree, then green
+
+| Regression test | Finding | Red (unfixed) | Green (fixed) |
+| --- | --- | --- | --- |
+| `snapshot_side_car_follows_the_w3f_policy_trim` | MAJOR | side car 7, expected 2 | log 2 / side car 2 |
+| `configuration_limits_round_trip_exactly_and_refuse_the_codec_ceiling` | MINOR u64 | `Ok(())` where refusal was required | ceiling refused; `i64::MAX` round-trips exactly |
+| `bin_clean_refuses_duplicate_candidates` | MINOR duplicates | `Ok(())` where refusal was required | refused |
+| `apply_policy_counts_every_removal_including_the_w3f_trim` | NOTE counts | removed 1, expected 3 | removed 3; side car 2 |
+
+Red receipt: `unset RUSTUP_TOOLCHAIN && cargo test --locked --lib
+families::revisions::tests` — exit 101, **18 passed / 4 failed**, each
+failure on exactly its finding's assertion (commit `ad46482` contains
+only the four tests). Green receipt: exit 0, **22 passed / 0 failed**
+(18 prior + 4 new), and `cargo test --locked --test families` — 25
+passed / 0 failed.
+
+Mutation re-check (the warden's mutation 4 — deleting both `retain_log`
+calls inside `apply_policy` left all 18 packet tests green): with the
+repair tests present, that mutation now turns
+`apply_policy_counts_every_removal_including_the_w3f_trim` red (its
+side-car assertion is the only one the mutation can touch), and deleting
+the new unconditional `retain_log` in `stage_revision_snapshot` turns
+`snapshot_side_car_follows_the_w3f_policy_trim` red — both lockstep
+layers now have discriminating coverage. Executed on a scratch copy and
+reverted; the committed tree is the fix.
+
+### Receipts (repair loop 1)
+
+| Command | Exit |
+| --- | --- |
+| `cargo fmt --all -- --check` | 0 |
+| `cargo check --workspace --locked` | 0 |
+| `cargo test --workspace --locked` (dev profile), run 1 | 101 — the sole failure is the pre-existing load-flaky `benchmarks::tests::a_self_comparison_reads_as_parity` (`src/benchmarks/tests.rs:492`, read `Better`, expected `Stable`, load average ~40); the packet diff (`da0df43..HEAD`) touches no `src/benchmarks` path |
+| `cargo test --workspace --locked` (dev profile), re-run | 0 — fully green: 45 suites, 1229 passed / 0 failed (1225 at handoff + the 4 repair tests); the flake also passed isolated |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | 0 |
+| `TERRABASE_V1_ROOT=<pin> TERRASCALE_WORKSPACE_ROOT=<workspace> ./scripts/check.sh`, run 1 | 101 — fmt, check, and the full dev-profile suite green (70 green result lines including doc-tests); died in the release-profile suite on the same benchmark flake (`Better` vs `Stable`) |
+| `TERRABASE_V1_ROOT=<pin> TERRASCALE_WORKSPACE_ROOT=<workspace> ./scripts/check.sh`, run 2 | **0 — the packet's first complete script-level green run** ("TerraBaseV2 foundation checks passed"): every stage including the strict V1 citation audit with the pinned root; `cargo-deny` recorded unrun (not installed) |
+
+`parity/v1-test-gaps.json` was hash-watched before and after each python
+receipt stage after the warden observed it rewritten in their session;
+it was untouched in this loop (same SHA-256 before and after every run).
 
 ## Non-claims
 
