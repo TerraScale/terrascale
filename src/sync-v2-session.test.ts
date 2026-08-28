@@ -765,6 +765,80 @@ describe("TerraScaleSyncV2Session over the API host HTTP/SSE surface", () => {
     await session.dispose();
   });
 
+  test("a well-behaved multi-event chunk does not trip the line bound", async () => {
+    const host = new FixtureApiHost();
+    host.commit("orders");
+    host.commit("orders");
+    // One reader chunk carrying many complete newline-terminated trigger
+    // events: every single line sits far below the 4096-unit line bound,
+    // while the chunk as a whole is several times over it. A bound that
+    // measures the chunk instead of the line false-positives exactly here.
+    const events: string[] = [];
+    for (let sequence = 1; sequence <= 80; sequence += 1) {
+      events.push(
+        `id: ${sequence}\nevent: trigger\n` +
+        `data: ${JSON.stringify({ subscriptionId: 1, collection: "orders", sequence, operationId: `op-${sequence}` })}\n\n`,
+      );
+    }
+    const chunk = events.join("");
+    const longestLine = Math.max(...chunk.split("\n").map((line) => line.length));
+    assert.ok(
+      chunk.length > 4096 && longestLine <= 4096,
+      `the fixture discriminates chunk length (${chunk.length}) from line length (${longestLine})`,
+    );
+
+    const chunkedStream: SyncV2Fetch = async (input, init) => {
+      const url = new URL(input.toString());
+      if ((init?.method ?? "GET").toUpperCase() === "GET" && url.pathname === "/v1/streams") {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(chunk));
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
+        });
+      }
+      return host.fetch(input, init);
+    };
+    const session = new TerraScaleSyncV2Session({
+      Url: "https://api.terrascale.test",
+      Collection: "orders",
+      Principal: "principal-1",
+      Tenant: "tenant-a",
+      Fetch: chunkedStream,
+      ReconnectDelayMilliseconds: 1,
+      MaxReconnectAttempts: 2,
+    });
+    const observedErrors: string[] = [];
+    session.getStore().subscribe(() => {
+      const lastError = session.getStore().getSnapshot().LastError;
+      if (lastError !== undefined) {
+        observedErrors.push(lastError);
+      }
+    });
+
+    await session.connect();
+    await waitFor(() =>
+      host.requests.filter((request) => request.path.endsWith("/delta")).length >= 1);
+    assert.equal(
+      session.getCheckpoint().storage_sequence,
+      2n,
+      "the drained events drive the checkpoint-bounded pulls",
+    );
+    assert.equal(
+      session.getStatus(),
+      "live",
+      "a fully well-behaved host keeps the session live",
+    );
+    assert.ok(
+      !observedErrors.some((error) => /stream_limit/u.test(error)),
+      `no false-positive stream limit: ${JSON.stringify(observedErrors)}`,
+    );
+    await session.dispose();
+  });
+
   test("construction fails closed without the backend-supplied tenant context", () => {
     const host = new FixtureApiHost();
     assert.throws(

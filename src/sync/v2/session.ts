@@ -1049,15 +1049,6 @@ function sseOverFetchWith(
           break;
         }
         buffer += decoder.decode(value, { stream: true });
-        if (buffer.length > sseMaxLineCodeUnits) {
-          // A pathological host streaming an undelimited line can never
-          // grow the buffer (or the read loop) without bound.
-          endWithError(new SyncV2SessionError(
-            "stream_limit",
-            `an event-stream line exceeds its ${sseMaxLineCodeUnits}-unit bound`,
-          ));
-          return;
-        }
         let newline = buffer.indexOf("\n");
         while (newline !== -1) {
           const line = buffer.slice(0, newline).replace(/\r$/u, "");
@@ -1083,6 +1074,20 @@ function sseOverFetchWith(
             dataLines.push(data);
           }
           newline = buffer.indexOf("\n");
+        }
+        // Only after every complete line is drained does the bound see the
+        // residual buffer — the one line the host has not terminated yet.
+        // (Evaluated on the read chunk, the bound measured transport
+        // coalescing, not line length: one chunk carrying many complete
+        // events — each individually far under the bound — tripped it.)
+        if (buffer.length > sseMaxLineCodeUnits) {
+          // A pathological host streaming an undelimited line can never
+          // grow the buffer (or the read loop) without bound.
+          endWithError(new SyncV2SessionError(
+            "stream_limit",
+            `an event-stream line exceeds its ${sseMaxLineCodeUnits}-unit bound`,
+          ));
+          return;
         }
       }
       if (!closed && !ended) {
