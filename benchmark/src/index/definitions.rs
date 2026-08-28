@@ -195,6 +195,20 @@ pub enum IndexDefinitionError {
     /// An output reference pattern names a field the reduce stage does not
     /// output.
     PatternFieldNotProjected,
+    /// A family map source carries an invalid name: empty, oversized, with
+    /// control characters or whitespace padding, or — for a series source —
+    /// carrying the reserved record separator.
+    InvalidSourceName,
+    /// Map stages mix source kinds: document sources with a family source,
+    /// or the counters and time-series families in one definition. V1 keeps
+    /// one definition type per source kind (`CountersIndexDefinition`,
+    /// `TimeSeriesIndexDefinition`), and the typed language keeps the same
+    /// one-kind rule.
+    SourceKindMismatch,
+    /// The all-entries family source is combined with a named source of the
+    /// same kind: the all-entries source already covers every entry the
+    /// named source maps, so every mapped entry would be double-counted.
+    OverlappingFamilySources,
 }
 
 /// The `idx/MAJOR.MINOR` version identity carried by every definition.
@@ -341,34 +355,116 @@ fn validate_field_path_text(value: &str) -> Result<(), IndexDefinitionError> {
     Ok(())
 }
 
-/// One source a map stage draws documents from.
+/// One source a map stage draws its input from: documents of one collection,
+/// every document, or the entries of one Data Family (GAP-Q19).
+///
+/// The family forms are V1's map-source spellings — `counters` /
+/// `counters.{name}` and `timeSeries` / `timeSeries.{name}` — where the
+/// name-less form maps every entry of the family and the named form one
+/// name across every document. The mapped input space is V1's per-family
+/// entry shape: `(DocumentId, Name, Value)` for counters, the summarized
+/// segment fields for time-series (decision record D2).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MapSource {
     /// Every document of one named collection.
     Collection(CollectionName),
     /// Every document of the tenant, regardless of collection.
     AllDocuments,
+    /// Live counter entries of the tenant, or one counter name across every
+    /// document when a name is carried.
+    Counters {
+        /// The restricted counter name, or `None` for every entry.
+        name: Option<String>,
+    },
+    /// Retained time-series entries of the tenant, or one series name
+    /// across every document when a name is carried.
+    TimeSeries {
+        /// The restricted series name, or `None` for every entry.
+        name: Option<String>,
+    },
 }
 
 impl MapSource {
-    /// Returns the source collection, or `None` for the all-documents
-    /// source.
+    /// Creates the every-entry counters source (V1 `counters`).
+    #[must_use]
+    pub fn counters() -> Self {
+        Self::Counters { name: None }
+    }
+
+    /// Creates the named counters source (V1 `counters.{name}`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexDefinitionError::InvalidSourceName`] for an invalid
+    /// name.
+    pub fn counters_named(name: &str) -> Result<Self, IndexDefinitionError> {
+        validate_source_name(name, false)?;
+        Ok(Self::Counters { name: Some(name.to_owned()) })
+    }
+
+    /// Creates the every-entry time-series source (V1 `timeSeries`).
+    #[must_use]
+    pub fn time_series() -> Self {
+        Self::TimeSeries { name: None }
+    }
+
+    /// Creates the named time-series source (V1 `timeSeries.{name}`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexDefinitionError::InvalidSourceName`] for an invalid
+    /// name or one carrying the reserved record separator.
+    pub fn time_series_named(name: &str) -> Result<Self, IndexDefinitionError> {
+        validate_source_name(name, true)?;
+        Ok(Self::TimeSeries { name: Some(name.to_owned()) })
+    }
+
+    /// Returns the source collection, or `None` for the all-documents and
+    /// family sources.
     #[must_use]
     pub const fn collection(&self) -> Option<&CollectionName> {
         match self {
             Self::Collection(collection) => Some(collection),
-            Self::AllDocuments => None,
+            _ => None,
         }
     }
 
+    /// Reports whether this is a family source (GAP-Q19).
+    #[must_use]
+    pub const fn is_family(&self) -> bool {
+        matches!(self, Self::Counters { .. } | Self::TimeSeries { .. })
+    }
+
     /// Returns the canonical identity of this source inside identity
-    /// renderings: all documents first, then collections in name order.
+    /// renderings: all documents and the family sources first (anchored
+    /// with the reserved NUL sentinel, which no collection name may
+    /// carry, so a family spelling can never collide with a same-named
+    /// user collection), then collections in name order.
     fn identity(&self) -> String {
         match self {
             Self::Collection(collection) => collection.as_str().to_owned(),
             Self::AllDocuments => "\u{0}all-documents".to_owned(),
+            Self::Counters { name } => match name {
+                None => "\u{0}counters".to_owned(),
+                Some(name) => format!("\u{0}counters.{name}"),
+            },
+            Self::TimeSeries { name } => match name {
+                None => "\u{0}timeSeries".to_owned(),
+                Some(name) => format!("\u{0}timeSeries.{name}"),
+            },
         }
     }
+}
+
+/// Validates one family source name with the shared name rule; a series
+/// name additionally rejects the reserved record separator, the same rule
+/// the family seam's series names apply.
+fn validate_source_name(name: &str, series: bool) -> Result<(), IndexDefinitionError> {
+    validate_name_text(name).map_err(|_| IndexDefinitionError::InvalidSourceName)?;
+    if series && name.contains('/') {
+        return Err(IndexDefinitionError::InvalidSourceName);
+    }
+    Ok(())
 }
 
 /// One typed projection a map stage applies to every document it maps.
@@ -506,13 +602,24 @@ impl MapStage {
     /// [`IndexDefinitionError::TooManyOutputFields`] for an out-of-bound
     /// output shape, [`IndexDefinitionError::DuplicateOutputField`] for a
     /// repeated output name, [`IndexDefinitionError::InvalidFieldName`] for
-    /// a malformed name, and [`IndexDefinitionError::TooManyDynamicRules`]
-    /// for an out-of-bound rule list.
+    /// a malformed name, [`IndexDefinitionError::TooManyDynamicRules`] for
+    /// an out-of-bound rule list, and
+    /// [`IndexDefinitionError::InvalidSourceName`] for a family source name
+    /// the constructors would refuse (GAP-Q19 repair 1: the whole-value
+    /// path enforces the same rule).
     pub fn try_new(
         source: MapSource,
         fields: Vec<MapOutputField>,
         dynamic: Vec<DynamicFieldRule>,
     ) -> Result<Self, IndexDefinitionError> {
+        // The family variants carry raw names: validate before anything
+        // else so a bad name can never reach identity rendering, whichever
+        // constructor path built the value.
+        match &source {
+            MapSource::Counters { name: Some(name) } => validate_source_name(name, false)?,
+            MapSource::TimeSeries { name: Some(name) } => validate_source_name(name, true)?,
+            _ => {}
+        }
         if fields.is_empty() {
             return Err(IndexDefinitionError::NoOutputFields);
         }
@@ -1439,10 +1546,56 @@ fn validate_maps(maps: Vec<MapStage>) -> Result<Vec<MapStage>, IndexDefinitionEr
     let mut seen_sources: Vec<&MapSource> = Vec::new();
     let mut all_documents = false;
     let mut collections = 0;
+    let mut family_kind: Option<MapSourceFamily> = None;
+    let mut family_sources = 0usize;
+    let mut family_all_entries = false;
     for stage in &maps {
-        match stage.source() {
-            MapSource::AllDocuments => all_documents = true,
-            MapSource::Collection(_) => collections += 1,
+        let source = stage.source();
+        // The one-kind rule (GAP-Q19): document sources and family sources
+        // never mix, and the two family kinds never mix — V1 keeps one
+        // definition type per source kind, and the typed language keeps
+        // the same boundary.
+        if source.is_family() {
+            let kind = match source {
+                MapSource::Counters { .. } => MapSourceFamily::Counters,
+                _ => MapSourceFamily::TimeSeries,
+            };
+            // The whole-value path validates here too (GAP-Q19 repair 1):
+            // the enum variants carry raw names, so the map validation
+            // enforces exactly the rule the constructors enforce — a bad
+            // name must never reach identity rendering.
+            match source {
+                MapSource::Counters { name: Some(name) } => {
+                    validate_source_name(name, false)?;
+                }
+                MapSource::TimeSeries { name: Some(name) } => {
+                    validate_source_name(name, true)?;
+                }
+                _ => {}
+            }
+            if collections > 0 || all_documents {
+                return Err(IndexDefinitionError::SourceKindMismatch);
+            }
+            if family_kind.is_some_and(|seen| seen != kind) {
+                return Err(IndexDefinitionError::SourceKindMismatch);
+            }
+            if matches!(
+                source,
+                MapSource::Counters { name: None } | MapSource::TimeSeries { name: None }
+            ) {
+                family_all_entries = true;
+            }
+            family_sources += 1;
+            family_kind = Some(kind);
+        } else {
+            match source {
+                MapSource::AllDocuments => all_documents = true,
+                MapSource::Collection(_) => collections += 1,
+                _ => unreachable!("the family branch returns before the document branch"),
+            }
+            if family_kind.is_some() {
+                return Err(IndexDefinitionError::SourceKindMismatch);
+            }
         }
         if seen_sources.iter().any(|source| **source == *stage.source()) {
             return Err(IndexDefinitionError::DuplicateMapSource);
@@ -1452,9 +1605,24 @@ fn validate_maps(maps: Vec<MapStage>) -> Result<Vec<MapStage>, IndexDefinitionEr
     if all_documents && collections > 0 {
         return Err(IndexDefinitionError::AllDocumentsWithCollections);
     }
+    // The all-entries source covers every entry of the family, so any
+    // second family source of the same kind overlaps it and would
+    // double-count every mapped entry.
+    if family_all_entries && family_sources > 1 {
+        return Err(IndexDefinitionError::OverlappingFamilySources);
+    }
     let mut canonical = maps;
     canonical.sort_by_key(|stage| stage.source.identity());
     Ok(canonical)
+}
+
+/// Which family a family map source draws from, for the one-kind rule.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MapSourceFamily {
+    /// The counters family.
+    Counters,
+    /// The time-series family.
+    TimeSeries,
 }
 
 /// Returns the ordered output shape shared by every stage.
@@ -1525,7 +1693,12 @@ fn validate_output(
     };
     let mapped: Vec<&CollectionName> =
         maps.iter().filter_map(|stage| stage.source().collection()).collect();
-    if mapped.is_empty() {
+    // A family map source maps entries of the family, not documents of a
+    // collection (GAP-Q19), so it can neither loop an output collection
+    // nor collide with one directly; the loop rules below stay the
+    // document-source rules they were.
+    let all_family = maps.iter().all(|stage| stage.source().is_family());
+    if mapped.is_empty() && !all_family {
         // The all-documents source maps every collection: any output loops.
         return Err(IndexDefinitionError::AllDocumentsOutputLoop);
     }

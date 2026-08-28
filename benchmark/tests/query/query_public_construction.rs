@@ -73,7 +73,10 @@ fn spec() -> QuerySpec {
 fn typed_clauses_validate_and_expose_read_only_parts() {
     let query = spec();
     assert_eq!(query.tenant_claim(), &tenant("tenant-a"));
-    assert_eq!(query.source().collection().as_str(), "users");
+    assert_eq!(
+        query.source().collection().map(terrabase_v2::types::CollectionName::as_str),
+        Some("users")
+    );
     assert_eq!(query.predicate().conditions().len(), 2);
     assert_eq!(query.predicate().conditions()[0].field(), "name");
     assert_eq!(query.ordering().keys()[0].field(), "age");
@@ -178,7 +181,10 @@ fn compile_produces_an_immutable_plan_from_public_input() {
     let store = engine.queries();
     let plan = store.compile(QueryInput::typed(spec())).expect("compiles");
     assert_eq!(plan.tenant_claim(), Some(&tenant("tenant-a")));
-    assert_eq!(plan.source().collection().as_str(), "users");
+    assert_eq!(
+        plan.source().collection().map(terrabase_v2::types::CollectionName::as_str),
+        Some("users")
+    );
     assert_eq!(plan.ordering().keys().len(), 1);
     // A plan is a value: its clone observes the same clauses. Full structural
     // equality additionally compares the deadline instant and the

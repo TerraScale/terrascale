@@ -6,6 +6,7 @@
 mod analyzer_foundation;
 mod bulk_by_query_contract;
 mod evaluator_parity;
+mod family_sources_contract;
 mod includes_contract;
 mod query_public_construction;
 mod result_statistics;

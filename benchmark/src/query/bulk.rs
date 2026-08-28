@@ -436,7 +436,9 @@ pub enum BulkRefusal {
     ConfirmationRequired,
     /// The request shape was invalid. Reserved for surface-level request
     /// validation; construction-time refusals report through
-    /// [`RequestValidationError`] directly.
+    /// [`RequestValidationError`] directly. A family-source selection
+    /// (GAP-Q19) refuses here: bulk mutations operate on documents, and
+    /// counter or series mutations belong to their family batches.
     InvalidRequest,
 }
 
@@ -921,6 +923,14 @@ impl QueryStore<'_> {
             audit(BulkAuditStage::Refused(BulkRefusal::ConfirmationRequired), 0, 0);
             return receipt;
         }
+        // Gate 1b — source kind: a family source names no documents, so a
+        // page-wise document mutation has nothing to select (GAP-Q19).
+        // Counter and series mutations go through their family batches.
+        if run.query.source().kind() != super::spec::QuerySourceKind::Collection {
+            receipt.termination = BulkTermination::Refused(BulkRefusal::InvalidRequest);
+            audit(BulkAuditStage::Refused(BulkRefusal::InvalidRequest), 0, 0);
+            return receipt;
+        }
         // Gate 2 — liveness: a pre-cancelled or pre-expired run never
         // dispatches; the counts stay zero and the stop is audited.
         if cancellation.is_cancelled() {
@@ -1034,7 +1044,13 @@ impl QueryStore<'_> {
         cancellation: &Cancellation,
         receipt: &mut BulkByQueryReceipt,
     ) -> bool {
-        let collection = run.query.source().collection().clone();
+        let Some(collection) = run.query.source().collection().cloned() else {
+            // Unreachable through the public path — the family-source gate
+            // refuses before selection — but a document mutation without a
+            // document source still stops here instead of guessing.
+            receipt.termination = BulkTermination::Refused(BulkRefusal::InvalidRequest);
+            return true;
+        };
         let mut next_page: u64 = 0;
         let mut index = 0usize;
         while index < identities.len() {

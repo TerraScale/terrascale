@@ -7,6 +7,14 @@
 //! immutable after compilation, and execution consumes only the caller's
 //! snapshot.
 //!
+//! GAP-Q19 adds the family query sources: counters and time-series are
+//! typed sources beside user collections, answering through typed family
+//! rows (`FamilyQueryRow`) read by the family seam against the query's own
+//! snapshot — with cursor-stable time-series paging through the GAP-F04
+//! window — while the documents path, its rows, and its includes stay
+//! exactly as they were. The decision record is
+//! `docs/query/gapq19-family-sources.md`.
+//!
 //! W3-2 proves the seam; it does not claim the V1 query matrix. Execution is
 //! an index-less full scan of the snapshot view, the private index catalog
 //! keeps in-memory segments, and every query parity row stays unresolved
@@ -27,10 +35,13 @@ mod v1;
 mod vector;
 
 pub mod bulk;
+mod family_sources;
 pub mod tql;
 
 #[cfg(test)]
 mod bulk_tests;
+#[cfg(test)]
+mod family_sources_tests;
 #[cfg(test)]
 mod includes_tests;
 #[cfg(test)]
@@ -62,14 +73,14 @@ pub use includes::{
     MAX_INCLUDE_DOCUMENTS, MAX_INCLUDE_PATH_SEGMENTS, MAX_INCLUDES, TimeSeriesInclude,
 };
 pub use result::{
-    IndexGenerationRef, ObservedGeneration, QueryResult, QueryRow, StaleIndexObservation,
-    StalenessReport,
+    CounterQueryRow, FamilyQueryRow, IndexGenerationRef, ObservedGeneration, QueryResult, QueryRow,
+    SeriesPageCursor, StaleIndexObservation, StalenessReport, TimeSeriesQueryRow,
 };
 pub use spec::{
     IndexNamespace, MAX_CONDITIONS, MAX_FIELD_BYTES, MAX_IN_VALUES, MAX_LOADS, MAX_ORDERING_KEYS,
     MAX_PAGE_LIMIT, MAX_PROJECTION_FIELDS, MAX_STALENESS_INDEXES, NullsPlacement, OrderDirection,
     OrderingKey, QueryCondition, QueryLoad, QueryOrdering, QueryPaging, QueryPredicate,
-    QueryProjection, QuerySource, QuerySpec, StalenessMode, StalenessPolicy,
+    QueryProjection, QuerySource, QuerySourceKind, QuerySpec, StalenessMode, StalenessPolicy,
 };
 // GAP-Q14 collision action: the spatial foundation types are defined in
 // the private `spatial` module the integrator wired; this re-export is the
@@ -82,6 +93,10 @@ pub use spatial::{
     SpatialPrecision, SpatialPredicate, SpatialRelation, SpatialShape, SpatialShapeError,
     SpatialUnits, Wgs84Point,
 };
+// The GAP-F04 window values a time-series source query binds (GAP-Q19):
+// re-exported beside the seam that consumes them so callers reach the
+// window and its source through one vocabulary.
+pub use crate::families::{TimeSeriesPaging, TimeSeriesRange};
 pub use statistics::{DiagnosticDuration, QueryStatistics, ResultEtag};
 #[allow(
     unused_imports,
@@ -323,6 +338,7 @@ impl<'engine> QueryStore<'engine> {
                 spec.deadline(),
                 spec.cancellation(),
                 spec.includes().to_vec(),
+                spec.time_series_window(),
             )),
             QueryInput::V1Compatible(text) => {
                 let (source, predicate, ordering, paging, projection) =
@@ -367,6 +383,23 @@ impl<'engine> QueryStore<'engine> {
                 if namespace.tenant() != claim {
                     return Err(QueryError::TenantMismatch);
                 }
+            }
+        }
+        // The family-source fail-closed rules (GAP-Q19): a family source is
+        // served index-less over the family read seam, its rows are typed
+        // family values rather than projected documents, and its clauses
+        // are the ones the documents path defines for documents. Anything
+        // the family contract does not define refuses here instead of
+        // silently degrading at execution.
+        if query.source().kind() != QuerySourceKind::Collection {
+            if !query.staleness().indexes().is_empty() {
+                return Err(QueryError::InvalidSpec);
+            }
+            if !query.loads().is_empty() || !query.includes().is_empty() {
+                return Err(QueryError::InvalidSpec);
+            }
+            if query.projection().selected().is_some() {
+                return Err(QueryError::InvalidSpec);
             }
         }
         Ok(QueryPlan::new(query))

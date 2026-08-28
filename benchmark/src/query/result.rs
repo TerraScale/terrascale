@@ -9,7 +9,8 @@
 use super::includes::IncludeSet;
 use super::spec::{IndexNamespace, QueryOrdering};
 use super::statistics::QueryStatistics;
-use crate::types::{Document, DocumentValue};
+use crate::families::TimeSeriesEntry;
+use crate::types::{Document, DocumentId, DocumentValue};
 
 /// One typed result row: the matched document and its projected fields.
 #[derive(Clone, Debug, PartialEq)]
@@ -196,10 +197,166 @@ impl IndexGenerationRef {
     }
 }
 
+/// One counter-source result row: one live counter entry (GAP-Q19).
+///
+/// The field space is V1's counter map input — `(DocumentId, Name, Value)`
+/// (`CounterEntry.cs` and `DynamicCounterEntry.cs`, pinned citations in
+/// `docs/query/gapq19-family-sources.md` D2). A row exists only for a
+/// present value: a counter that does not exist or is tombstoned
+/// contributes no row, the family read seam's own live-name rule.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CounterQueryRow {
+    document: DocumentId,
+    name: String,
+    value: i64,
+}
+
+impl CounterQueryRow {
+    /// Creates one counter row. Crate-only.
+    pub(crate) fn new(document: DocumentId, name: String, value: i64) -> Self {
+        Self { document, name, value }
+    }
+
+    /// Returns the owning document identity.
+    #[must_use]
+    pub const fn document(&self) -> &DocumentId {
+        &self.document
+    }
+
+    /// Returns the counter name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the live counter value.
+    #[must_use]
+    pub const fn value(&self) -> i64 {
+        self.value
+    }
+}
+
+/// One time-series-source result row: one retained series entry (GAP-Q19).
+///
+/// The field space is V1's `TimeSeriesEntry` — timestamp, values, tag — with
+/// the owning document and series name carried beside it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TimeSeriesQueryRow {
+    document: DocumentId,
+    name: String,
+    entry: TimeSeriesEntry,
+}
+
+impl TimeSeriesQueryRow {
+    /// Creates one series row. Crate-only.
+    pub(crate) fn new(document: DocumentId, name: String, entry: TimeSeriesEntry) -> Self {
+        Self { document, name, entry }
+    }
+
+    /// Returns the owning document identity.
+    #[must_use]
+    pub const fn document(&self) -> &DocumentId {
+        &self.document
+    }
+
+    /// Returns the series name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the series entry: timestamp, values, and optional tag.
+    #[must_use]
+    pub const fn entry(&self) -> &TimeSeriesEntry {
+        &self.entry
+    }
+
+    /// Returns the entry timestamp.
+    #[must_use]
+    pub fn timestamp(&self) -> i64 {
+        self.entry.timestamp()
+    }
+
+    /// Returns the entry values.
+    #[must_use]
+    pub fn values(&self) -> &[f64] {
+        self.entry.values()
+    }
+
+    /// Returns the entry tag, when one was appended.
+    #[must_use]
+    pub fn tag(&self) -> Option<&str> {
+        self.entry.tag()
+    }
+}
+
+/// One typed family-source result row (GAP-Q19).
+///
+/// Family state is never a document and never flows through the document
+/// row channel: a family query answers through this typed channel, one
+/// variant per family source kind.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FamilyQueryRow {
+    /// One live counter entry of a counter source.
+    Counter(CounterQueryRow),
+    /// One retained series entry of a time-series source.
+    TimeSeries(TimeSeriesQueryRow),
+}
+
+/// The resume cursor of one read series (GAP-Q19).
+///
+/// The GAP-F04 paging contract verbatim: the page's `next` cursor — the
+/// last served entry's timestamp, present exactly when more matched
+/// entries follow — keyed by the document and series it belongs to, so a
+/// caller chains pages through the same cursor seam a direct family read
+/// chains through.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SeriesPageCursor {
+    document: DocumentId,
+    name: String,
+    next: Option<i64>,
+}
+
+impl SeriesPageCursor {
+    /// Creates one cursor record. Crate-only.
+    pub(crate) fn new(document: DocumentId, name: String, next: Option<i64>) -> Self {
+        Self { document, name, next }
+    }
+
+    /// Returns the owning document identity.
+    #[must_use]
+    pub const fn document(&self) -> &DocumentId {
+        &self.document
+    }
+
+    /// Returns the series name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the cursor that resumes exactly after the served page, or
+    /// `None` when the series' addressed view is exhausted.
+    #[must_use]
+    pub const fn next(&self) -> Option<i64> {
+        self.next
+    }
+}
+
+/// The family-source channel of one result (GAP-Q19): its typed rows and
+/// the per-series resume cursors, behind one allocation so the result stays
+/// one bounded value in the operation responses that carry it.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct FamilyChannel {
+    rows: Vec<FamilyQueryRow>,
+    cursors: Vec<SeriesPageCursor>,
+}
+
 /// A typed query result.
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryResult {
     rows: Vec<QueryRow>,
+    family: Box<FamilyChannel>,
     matched: u64,
     ordering: QueryOrdering,
     staleness: StalenessReport,
@@ -219,13 +376,63 @@ impl QueryResult {
         includes: IncludeSet,
         statistics: QueryStatistics,
     ) -> Self {
-        Self { rows, matched, ordering, staleness, index_generation, includes, statistics }
+        Self {
+            rows,
+            family: Box::default(),
+            matched,
+            ordering,
+            staleness,
+            index_generation,
+            includes,
+            statistics,
+        }
+    }
+
+    /// Creates one family-source result from its typed parts (GAP-Q19).
+    ///
+    /// The document row channel stays empty: a family query's matched count,
+    /// statistics, and ordering describe the family entry rows it carries.
+    pub(crate) fn from_family_parts(
+        family_rows: Vec<FamilyQueryRow>,
+        series_cursors: Vec<SeriesPageCursor>,
+        matched: u64,
+        ordering: QueryOrdering,
+        staleness: StalenessReport,
+        statistics: QueryStatistics,
+    ) -> Self {
+        Self {
+            rows: Vec::new(),
+            family: Box::new(FamilyChannel { rows: family_rows, cursors: series_cursors }),
+            matched,
+            ordering,
+            staleness,
+            index_generation: None,
+            includes: IncludeSet::default(),
+            statistics,
+        }
     }
 
     /// Returns the result rows in result order.
     #[must_use]
     pub fn rows(&self) -> &[QueryRow] {
         &self.rows
+    }
+
+    /// Returns the family-source rows in result order (GAP-Q19).
+    ///
+    /// Empty for every documents-source query: family state answers only
+    /// through this typed channel, never as synthetic documents.
+    #[must_use]
+    pub fn family_rows(&self) -> &[FamilyQueryRow] {
+        &self.family.rows
+    }
+
+    /// Returns the per-series resume cursors of a time-series source query
+    /// (GAP-Q19), one per read `(document, series)` in read order. Empty for
+    /// every other query.
+    #[must_use]
+    pub fn series_cursors(&self) -> &[SeriesPageCursor] {
+        &self.family.cursors
     }
 
     /// Returns the number of rows the predicate matched before paging.

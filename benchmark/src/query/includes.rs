@@ -621,7 +621,11 @@ type SeriesRequest = (String, String, Option<(i64, i64)>);
 /// time-series includes simply have nothing to materialize for a reference
 /// that resolves to no document — so the callers skip that case before it
 /// can reach this mapping.
-fn map_family_error(error: FamilyError) -> QueryError {
+///
+/// Crate-only: the family-source execution path (GAP-Q19) maps the same
+/// failures through the same vocabulary, so an include and a family-source
+/// query never report one family read differently.
+pub(crate) fn map_family_error(error: FamilyError) -> QueryError {
     match error {
         FamilyError::EngineClosed => QueryError::EngineClosed,
         FamilyError::TenantMismatch => QueryError::TenantMismatch,
@@ -962,7 +966,11 @@ fn resolved_target<'view>(
 /// The read context is derived from the snapshot itself, exactly as
 /// execution derives the tenant scope, so the family read observes the same
 /// immutable view the rows came from.
-fn read_family(
+///
+/// Crate-only: the family-source execution path (GAP-Q19) reads through the
+/// same helper, which is the read-parity rule itself — a query row, an
+/// include entry, and a direct family read observe one seam.
+pub(crate) fn read_family(
     engine: &Engine,
     snapshot: &ReadSnapshot,
     request: FamilyReadRequest,
@@ -976,11 +984,11 @@ fn read_family(
 }
 
 /// The include read window for a plan that carries no deadline.
-fn read_deadline(deadline: Option<Deadline>) -> Deadline {
+pub(crate) fn read_deadline(deadline: Option<Deadline>) -> Deadline {
     deadline.unwrap_or_else(|| Deadline::after(INCLUDE_READ_WINDOW).expect("positive window"))
 }
 
 /// The include read signal for a plan that carries no cancellation.
-fn read_cancellation(cancellation: Option<&Cancellation>) -> Cancellation {
+pub(crate) fn read_cancellation(cancellation: Option<&Cancellation>) -> Cancellation {
     cancellation.cloned().unwrap_or_default()
 }

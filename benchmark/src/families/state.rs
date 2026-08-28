@@ -113,6 +113,27 @@ pub(crate) fn kind_of_record(id: &DocumentId) -> Option<super::FamilyKind> {
     .find(|kind| family_key(*kind) == kind_key)
 }
 
+/// Parses the owner segments of one reserved time-series record identifier
+/// (GAP-Q19): the document the series belongs to and the series name.
+///
+/// A series record is `family:time-series/<document>/<name>` and series
+/// names reject the separator (`validate_series_name`), so the split at the
+/// last separator is injective. An identifier of another family, without an
+/// owner pair, or with an empty segment parses to `None` — the caller skips
+/// it rather than guessing at family state.
+pub(crate) fn time_series_record_owner(id: &DocumentId) -> Option<(&str, &str)> {
+    let rest = id.as_str().strip_prefix(RECORD_PREFIX)?;
+    let (kind, owner) = rest.split_once('/')?;
+    if kind != family_key(super::FamilyKind::TimeSeries) || owner.is_empty() {
+        return None;
+    }
+    let (document, name) = owner.rsplit_once('/')?;
+    if document.is_empty() || name.is_empty() {
+        return None;
+    }
+    Some((document, name))
+}
+
 /// Returns the reserved tombstone map key of one family.
 pub(crate) fn family_key(family: super::FamilyKind) -> &'static str {
     match family {

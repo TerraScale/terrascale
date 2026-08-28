@@ -547,14 +547,20 @@ fn lowering_produces_a_typed_spec_that_compiles_through_the_seam() {
         Cancellation::new(),
     )
     .expect("the seam-expressible form lowers");
-    assert_eq!(spec.source().collection().as_str(), "users");
+    assert_eq!(
+        spec.source().collection().map(terrabase_v2::types::CollectionName::as_str),
+        Some("users")
+    );
     assert_eq!(spec.predicate().conditions().len(), 2);
     assert_eq!(spec.ordering().keys().len(), 1);
     assert_eq!(spec.projection().selected(), Some(&["name".to_owned()][..]));
     assert_eq!(spec.paging().offset(), 1);
     assert_eq!(spec.paging().limit(), Some(2));
     let plan = store.compile(QueryInput::typed(spec)).expect("the lowered spec compiles");
-    assert_eq!(plan.source().collection().as_str(), "users");
+    assert_eq!(
+        plan.source().collection().map(terrabase_v2::types::CollectionName::as_str),
+        Some("users")
+    );
     // The seam-glue entry produces the same plan from the TQL artifact.
     let direct = tql::compile(
         &store,

@@ -1529,3 +1529,41 @@ fn fan_out_fails_closed_when_a_members_endpoint_is_missing() {
     let directories = cluster.directories.clone();
     clean_up(cluster, directories);
 }
+
+#[test]
+fn a_family_source_query_refuses_sharded_execution_before_routing() {
+    // GAP-Q19 D5: a family source refuses the fan-out before routing —
+    // the merge and paging are document-row keyed, and silently dropping
+    // typed family rows is the failure this refusal prevents.
+    let topology = single_shard_topology();
+    let cluster = Cluster::build("family-refuse", &[], topology.clone());
+    let executor = ShardedQueries::new(topology);
+
+    let family = QuerySpec::try_new(
+        tenant("tenant-a"),
+        QuerySource::counters(),
+        QueryPredicate::all(vec![QueryCondition::Equals {
+            field: "name".to_owned(),
+            value: DocumentValue::String("likes".to_owned()),
+        }])
+        .expect("valid conjunction"),
+        QueryOrdering::try_new(vec![
+            OrderingKey::try_new("name", OrderDirection::Ascending).expect("valid key"),
+        ])
+        .expect("valid ordering"),
+        QueryProjection::whole_document(),
+        QueryPaging::try_new(0, None).expect("valid paging"),
+        index_free_staleness(),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("valid family specification");
+
+    let err = executor
+        .execute(&cluster.serving(), &family, &cluster.snapshots())
+        .expect_err("a family source must refuse the fan-out");
+    assert_eq!(err, ShardedExecutionError::FamilySourceUnsupported);
+
+    let directories = cluster.directories.clone();
+    clean_up(cluster, directories);
+}

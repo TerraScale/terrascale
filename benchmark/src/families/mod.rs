@@ -47,6 +47,13 @@
 //! ([`TimeSeriesPaging`]). Retention observes the tombstone retention
 //! watermark (GAP-R02) and never advances it; the decision record is
 //! `docs/families/gapf04-timeseries-execution.md`.
+//!
+//! GAP-Q19 makes the counter and time-series read seams the serving path of
+//! the query seam's family sources: the query module enumerates family
+//! records through the crate-private record-identity parser and reads every
+//! value through [`FamilyStore::read`], so a query row, an include entry,
+//! and a direct family read observe one seam. The decision record is
+//! `docs/query/gapq19-family-sources.md`.
 
 pub mod attachments;
 pub mod compare_exchange;
@@ -85,7 +92,9 @@ pub use schemas::SchemaFormatError;
 // predicate and the value merge at this crate-private surface instead of
 // re-deriving the reserved layout.
 pub(crate) use state::FamilyMergeError;
-pub(crate) use state::{RESERVED_COLLECTION, is_counter_record, merge_counter_values};
+pub(crate) use state::{
+    RESERVED_COLLECTION, is_counter_record, merge_counter_values, time_series_record_owner,
+};
 
 // The family record decoders the streaming change-payload mint (GAP-F02)
 // reads: the mint derives bounded payloads from published record values

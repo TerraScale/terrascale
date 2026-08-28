@@ -8,6 +8,7 @@
 //! the same compile seam as these typed values.
 
 use super::includes::IncludeClause;
+use crate::families::{TimeSeriesPaging, TimeSeriesRange};
 use crate::operations::RequestValidationError;
 use crate::types::{Cancellation, CollectionName, Deadline, DocumentValue, TenantId};
 
@@ -56,18 +57,47 @@ pub(crate) fn validate_field_name(field: &str) -> Result<(), RequestValidationEr
     Ok(())
 }
 
-/// A typed query source: one user collection.
+/// The kind of a typed query source (GAP-Q19).
 ///
-/// The reserved family collection `terrabase.families` is not a query source:
-/// family state is read only through the family seam, so a query naming it is
-/// rejected at construction instead of leaking family records.
+/// V1 names the same closed set on its index definitions — documents,
+/// time-series, counters (`IndexSourceType`, pinned citation in
+/// `docs/query/gapq19-family-sources.md` D1) — and the query seam adopts the
+/// one vocabulary for both surfaces.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QuerySourceKind {
+    /// Documents of one user collection.
+    Collection,
+    /// Live counter entries of the tenant (V1 `counters`).
+    Counters,
+    /// Retained time-series entries (V1 `timeSeries`).
+    TimeSeries,
+}
+
+/// The private shape of one query source: exactly one kind with its payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SourceShape {
+    Collection(CollectionName),
+    Counters { name: Option<Box<str>> },
+    TimeSeries { name: Option<Box<str>> },
+}
+
+/// A typed query source: documents of one user collection, or the entries of
+/// one Data Family (GAP-Q19).
+///
+/// The documents form is one user collection; the reserved family collection
+/// `terrabase.families` is not a query source — family state is read only
+/// through the family seam, so a query naming it is rejected at construction
+/// instead of leaking family records. The family forms are the V1 map-source
+/// spellings: `counters` / `counters.{name}` and `timeSeries` /
+/// `timeSeries.{name}`, where the name-less form addresses every entry of the
+/// family and the named form one name across every document.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QuerySource {
-    collection: CollectionName,
+    shape: SourceShape,
 }
 
 impl QuerySource {
-    /// Creates a typed source from one validated collection name.
+    /// Creates a typed documents source from one validated collection name.
     ///
     /// # Errors
     ///
@@ -77,13 +107,87 @@ impl QuerySource {
         if collection.as_str() == RESERVED_FAMILY_COLLECTION {
             return Err(RequestValidationError::InvalidQuery);
         }
-        Ok(Self { collection })
+        Ok(Self { shape: SourceShape::Collection(collection) })
     }
 
-    /// Returns the source collection.
+    /// Creates the counter-entry source of the tenant: every live counter
+    /// entry, one row per `(document, name)` (V1 `counters`).
     #[must_use]
-    pub fn collection(&self) -> &CollectionName {
-        &self.collection
+    pub fn counters() -> Self {
+        Self { shape: SourceShape::Counters { name: None } }
+    }
+
+    /// Creates the named counter-entry source: one counter name across every
+    /// document (V1 `counters.{name}`).
+    ///
+    /// # Errors
+    ///
+    /// Returns the field-name validation error of the name.
+    pub fn counters_named(name: &str) -> Result<Self, RequestValidationError> {
+        validate_field_name(name)?;
+        Ok(Self { shape: SourceShape::Counters { name: Some(name.into()) } })
+    }
+
+    /// Creates the time-series source of the tenant: every retained entry of
+    /// every series (V1 `timeSeries`).
+    #[must_use]
+    pub fn time_series() -> Self {
+        Self { shape: SourceShape::TimeSeries { name: None } }
+    }
+
+    /// Creates the named time-series source: one series name across every
+    /// document (V1 `timeSeries.{name}`).
+    ///
+    /// # Errors
+    ///
+    /// Returns the field-name validation error of the name. The series-name
+    /// rule of the family seam additionally rejects the reserved record
+    /// separator, enforced when the source's reads address a series.
+    pub fn time_series_named(name: &str) -> Result<Self, RequestValidationError> {
+        validate_field_name(name)?;
+        if name.contains('/') {
+            return Err(RequestValidationError::InvalidQuery);
+        }
+        Ok(Self { shape: SourceShape::TimeSeries { name: Some(name.into()) } })
+    }
+
+    /// Returns the source kind.
+    #[must_use]
+    pub const fn kind(&self) -> QuerySourceKind {
+        match self.shape {
+            SourceShape::Collection(_) => QuerySourceKind::Collection,
+            SourceShape::Counters { .. } => QuerySourceKind::Counters,
+            SourceShape::TimeSeries { .. } => QuerySourceKind::TimeSeries,
+        }
+    }
+
+    /// Returns the source collection, or `None` for a family source.
+    #[must_use]
+    pub const fn collection(&self) -> Option<&CollectionName> {
+        match &self.shape {
+            SourceShape::Collection(collection) => Some(collection),
+            _ => None,
+        }
+    }
+
+    /// Returns the restricted counter name, or `None` for the all-entries
+    /// counter source or a non-counter source.
+    #[must_use]
+    pub fn counter_name(&self) -> Option<&str> {
+        match &self.shape {
+            SourceShape::Counters { name } => name.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Returns the restricted series name, or `None` for the every-series
+    /// time-series source or a non-series source.
+    #[must_use]
+    pub fn series_name(&self) -> Option<&str> {
+        match &self.shape {
+            SourceShape::TimeSeries { name } => name.as_deref(),
+            _ => None,
+        }
     }
 }
 
@@ -669,6 +773,12 @@ pub struct QuerySpec {
     staleness: StalenessPolicy,
     // Shared and almost always empty, per `QueryClauses` above.
     clauses: std::sync::Arc<QueryClauses>,
+    // The family read window of a time-series source query (GAP-Q19):
+    // the optional inclusive range and the optional cursor-stable paging
+    // every underlying series read carries, behind one allocation because
+    // the specification travels by value inside `QueryInput`. `None` for
+    // every other source.
+    time_series_window: Option<Box<(Option<TimeSeriesRange>, Option<TimeSeriesPaging>)>>,
     deadline: Deadline,
     cancellation: Cancellation,
 }
@@ -709,6 +819,7 @@ impl QuerySpec {
             paging,
             staleness,
             clauses: std::sync::Arc::new(QueryClauses::default()),
+            time_series_window: None,
             deadline,
             cancellation,
         })
@@ -723,10 +834,15 @@ impl QuerySpec {
     /// # Errors
     ///
     /// Returns [`RequestValidationError::InvalidQuery`] when the alias list
-    /// is longer than [`MAX_LOADS`] or binds one alias twice — V1 rejects a
-    /// duplicate load alias the same way.
+    /// is longer than [`MAX_LOADS`], binds one alias twice — V1 rejects a
+    /// duplicate load alias the same way — or the source is a family source
+    /// (GAP-Q19): loads resolve result-row document references, and family
+    /// rows are not documents.
     pub fn with_loads(mut self, loads: Vec<QueryLoad>) -> Result<Self, RequestValidationError> {
         if loads.len() > MAX_LOADS {
+            return Err(RequestValidationError::InvalidQuery);
+        }
+        if !loads.is_empty() && self.source.kind() != QuerySourceKind::Collection {
             return Err(RequestValidationError::InvalidQuery);
         }
         let mut aliases: Vec<&str> = loads.iter().map(QueryLoad::alias).collect();
@@ -756,15 +872,56 @@ impl QuerySpec {
     ///
     /// Returns [`RequestValidationError::InvalidQuery`] when the clause list
     /// is longer than
-    /// [`MAX_INCLUDES`](crate::query::includes::MAX_INCLUDES). Each clause is
+    /// [`MAX_INCLUDES`](crate::query::includes::MAX_INCLUDES) or a non-empty
+    /// clause list meets a family source (GAP-Q19): includes walk result-row
+    /// document paths, and family rows are not documents. Each clause is
     /// validated by its own constructor.
     pub fn with_includes(
         mut self,
         includes: Vec<IncludeClause>,
     ) -> Result<Self, RequestValidationError> {
         IncludeClause::validate_list(&includes)?;
+        if !includes.is_empty() && self.source.kind() != QuerySourceKind::Collection {
+            return Err(RequestValidationError::InvalidQuery);
+        }
         std::sync::Arc::make_mut(&mut self.clauses).includes = includes.into_boxed_slice();
         Ok(self)
+    }
+
+    /// Binds the family read window of a time-series source query (GAP-Q19).
+    ///
+    /// The window is the GAP-F04 read contract every underlying series read
+    /// carries: an optional inclusive range and optional cursor-stable paging
+    /// (`after` exclusive lower timestamp bound, `limit` page bound). Each
+    /// series serves its own bounded page and reports its own resume cursor
+    /// on the result, so pages chain through the same seam a direct family
+    /// read chains through.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidQuery`] when the source is
+    /// not the time-series source: the window belongs to that source alone.
+    /// The range and paging values are pre-validated by their own
+    /// constructors.
+    pub fn with_time_series_window(
+        mut self,
+        range: Option<TimeSeriesRange>,
+        paging: Option<TimeSeriesPaging>,
+    ) -> Result<Self, RequestValidationError> {
+        if self.source.kind() != QuerySourceKind::TimeSeries {
+            return Err(RequestValidationError::InvalidQuery);
+        }
+        self.time_series_window = Some(Box::new((range, paging)));
+        Ok(self)
+    }
+
+    /// Returns the bound family read window of a time-series source query,
+    /// or `None` when no window was bound.
+    #[must_use]
+    pub fn time_series_window(
+        &self,
+    ) -> Option<(Option<TimeSeriesRange>, Option<TimeSeriesPaging>)> {
+        self.time_series_window.as_deref().copied()
     }
 
     /// Returns the include clauses in declaration order.
