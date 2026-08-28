@@ -65,10 +65,22 @@ pub const DEFAULT_DISTANCE_ERROR_PCT: f64 = 0.025;
 
 /// The Earth mean radius in kilometers V1 uses to translate circle radii
 /// into angular degrees.
-pub const EARTH_MEAN_RADIUS_KM: f64 = 6371.008_771_4;
+// The literal is V1's exact constant: separators cannot be inserted
+// without either misquoting it or grouping its digits inconsistently.
+#[allow(
+    clippy::unreadable_literal,
+    clippy::inconsistent_digit_grouping,
+    reason = "V1's exact constant, quoted digit for digit"
+)]
+pub const EARTH_MEAN_RADIUS_KM: f64 = 6371.0087714;
 
 /// The miles-to-kilometers factor V1 uses before that translation.
-pub const MILES_TO_KM: f64 = 1.609_34;
+// The literal is V1's exact constant; digit grouping would misquote it.
+#[allow(
+    clippy::inconsistent_digit_grouping,
+    reason = "V1's exact constant, quoted digit for digit"
+)]
+pub const MILES_TO_KM: f64 = 1.60934;
 
 /// International nautical miles per degree of great-circle arc V1's
 /// distance formula uses.
@@ -1036,8 +1048,7 @@ impl SpatialPredicate {
         distance_error_pct: f64,
     ) -> Result<Self, RequestValidationError> {
         if !distance_error_pct.is_finite()
-            || distance_error_pct < 0.0
-            || distance_error_pct > MAX_DISTANCE_ERROR_PCT
+            || !(0.0..=MAX_DISTANCE_ERROR_PCT).contains(&distance_error_pct)
         {
             return Err(RequestValidationError::InvalidQuery);
         }
@@ -1128,12 +1139,12 @@ impl SpatialPrecision {
 
     /// Returns the number of decimal places kept.
     #[must_use]
-    pub fn decimals(&self) -> u8 {
+    pub fn decimals(self) -> u8 {
         self.0
     }
 
     /// Returns the per-axis cell scale (`10^decimals`).
-    fn scale(&self) -> f64 {
+    fn scale(self) -> f64 {
         f64::from(10_u32.pow(u32::from(self.0)))
     }
 }
@@ -1191,11 +1202,13 @@ impl QuantizedCell {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::{
-        DEFAULT_DISTANCE_ERROR_PCT, Latitude, Longitude, MAX_DISTANCE_ERROR_PCT, MAX_POLYGON_RINGS,
-        MAX_SHAPE_POINTS, MAX_WKT_BYTES, QuantizedCell, SpatialFieldEncoding, SpatialPrecision,
-        SpatialPredicate, SpatialRelation, SpatialShape, SpatialShapeError, SpatialUnits,
-        Wgs84Point,
+        DEFAULT_DISTANCE_ERROR_PCT, EARTH_MEAN_RADIUS_KM, Latitude, Longitude,
+        MAX_DISTANCE_ERROR_PCT, MAX_POLYGON_RINGS, MAX_SHAPE_POINTS, MAX_WKT_BYTES, MILES_TO_KM,
+        QuantizedCell, SpatialFieldEncoding, SpatialPrecision, SpatialPredicate, SpatialRelation,
+        SpatialShape, SpatialShapeError, SpatialUnits, Wgs84Point,
     };
 
     /// Compares two distances with the tolerance double-parsed literals
@@ -1275,8 +1288,16 @@ mod tests {
     #[test]
     fn identical_points_are_exactly_zero_distance() {
         let a = point(12.345_6, -45.678_9);
-        assert_eq!(Wgs84Point::distance(&a, &a, SpatialUnits::Kilometers), 0.0);
-        assert_eq!(a.angular_distance_degrees(&a), 0.0);
+        // V1 short-circuits identical coordinates to exactly zero before
+        // any trigonometry; the foundation pins that exactness.
+        #[allow(
+            clippy::float_cmp,
+            reason = "the exact zero is the pinned contract, not an approximation"
+        )]
+        {
+            assert_eq!(Wgs84Point::distance(&a, &a, SpatialUnits::Kilometers), 0.0);
+            assert_eq!(a.angular_distance_degrees(&a), 0.0);
+        }
     }
 
     #[test]
@@ -1294,10 +1315,11 @@ mod tests {
         // V1 ShapeStringReadWriter.cs:56-62: km / 6371.0087714 * (180/pi),
         // with miles converted by 1.60934 first.
         let km_degrees = SpatialShape::circle_radius_degrees(100.0, SpatialUnits::Kilometers);
-        let expected = 100.0 / 6371.008_771_4 * (180.0 / std::f64::consts::PI);
+        let expected = 100.0 / EARTH_MEAN_RADIUS_KM * (180.0 / std::f64::consts::PI);
         assert!(approx(km_degrees, expected));
         let miles_degrees = SpatialShape::circle_radius_degrees(50.0, SpatialUnits::Miles);
-        let expected_miles = 50.0 * 1.609_34 / 6371.008_771_4 * (180.0 / std::f64::consts::PI);
+        let expected_miles =
+            50.0 * MILES_TO_KM / EARTH_MEAN_RADIUS_KM * (180.0 / std::f64::consts::PI);
         assert!(approx(miles_degrees, expected_miles));
     }
 
@@ -1464,23 +1486,23 @@ mod tests {
             SpatialShape::parse(&padded, SpatialUnits::Kilometers).unwrap_err(),
             SpatialShapeError::TooLarge
         );
+        let point_cap = u32::try_from(MAX_SHAPE_POINTS).expect("cap fits u32");
         let mut ring = String::from("POLYGON ((0 0");
-        for index in 0..=MAX_SHAPE_POINTS {
-            let x = index as f64 * 0.001;
-            ring.push_str(&format!(", {x} 0.0"));
+        for index in 0..=point_cap {
+            let x = f64::from(index) * 0.001;
+            let _ = write!(ring, ", {x} 0.0");
         }
         ring.push_str("))");
         assert_eq!(
             SpatialShape::parse(&ring, SpatialUnits::Kilometers).unwrap_err(),
             SpatialShapeError::TooManyPoints
         );
+        let ring_cap = u32::try_from(MAX_POLYGON_RINGS).expect("cap fits u32");
         let mut holes = String::from("POLYGON ((0 0, 1 0, 1 1, 0 1)");
-        for ring_index in 0..MAX_POLYGON_RINGS {
-            let base = 0.1 + ring_index as f64 * 0.01;
+        for ring_index in 0..ring_cap {
+            let base = 0.1 + f64::from(ring_index) * 0.01;
             let plus = base + 0.001;
-            holes.push_str(&format!(
-                ", ({base} {base}, {plus} {base}, {plus} {plus}, {base} {plus})"
-            ));
+            let _ = write!(holes, ", ({base} {base}, {plus} {base}, {plus} {plus}, {base} {plus})");
         }
         holes.push(')');
         assert_eq!(
@@ -1663,9 +1685,10 @@ mod tests {
         // sweeping the north edge and closing along the south so the
         // origin is inside the covered area.
         let mut exterior = String::from("POLYGON ((-90 -89");
-        for index in 0..(MAX_SHAPE_POINTS - 2) {
-            let x = -90.0 + 177.0 * (index as f64 / MAX_SHAPE_POINTS as f64);
-            exterior.push_str(&format!(", {x} 89.0"));
+        let point_cap = u32::try_from(MAX_SHAPE_POINTS - 2).expect("cap fits u32");
+        for index in 0..point_cap {
+            let x = -90.0 + 177.0 * (f64::from(index) / f64::from(point_cap + 2));
+            let _ = write!(exterior, ", {x} 89.0");
         }
         exterior.push_str(", 87 -89");
         exterior.push_str("))");
