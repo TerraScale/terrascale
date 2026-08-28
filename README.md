@@ -144,9 +144,9 @@ its digests, and how to re-vendor.
 
 ## Public API Surface
 
-The public client follows the versioned REST surface hosted by the
-`TerraScale.Dashboard.Api` application and its `TerraScale.Database` module,
-plus the public Authentication service. `TerraScale.Database` owns the
+The public client follows the versioned REST surface hosted by the single
+full-stack Vinext `TerraScale.Dashboard` application, plus the public
+Authentication service. Dashboard TypeScript backend modules own the
 database/TerraBase endpoint families below:
 
 - Project databases: list/create/get/delete under

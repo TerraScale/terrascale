@@ -39,7 +39,7 @@ build before testing or packing; do not rely on artifacts from another job.
 
 Release admission runs strict OpenAPI drift validation. The normal-CI debt
 baseline does not permit promotion: unresolved entries stop production release
-until `TerraScale.Dashboard.Api`, `TerraScale.Database`, or Authentication
+until the full-stack Vinext `TerraScale.Dashboard` application or Authentication
 publishes the matching typed schemas.
 It also regenerates and compares the committed comprehensive OpenAPI descriptor;
 operation IDs, parameters, request contracts, and every 2xx response shape must
