@@ -55,10 +55,10 @@ pub use spec::{
 // vocabulary. Everything else in that module stays private.
 pub use spatial::{
     DEFAULT_DISTANCE_ERROR_PCT, DEFAULT_PRECISION_DECIMALS, EARTH_MEAN_RADIUS_KM, Latitude,
-    Longitude, MAX_DISTANCE_ERROR_PCT, MAX_POLYGON_RINGS, MAX_PRECISION_DECIMALS,
-    MAX_SHAPE_POINTS, MAX_WKT_BYTES, MILES_TO_KM, QuantizedCell, SpatialFieldEncoding,
-    SpatialPolygon, SpatialPrecision, SpatialPredicate, SpatialRelation, SpatialShape,
-    SpatialShapeError, SpatialUnits, Wgs84Point,
+    Longitude, MAX_DISTANCE_ERROR_PCT, MAX_POLYGON_RINGS, MAX_PRECISION_DECIMALS, MAX_SHAPE_POINTS,
+    MAX_WKT_BYTES, MILES_TO_KM, QuantizedCell, SpatialFieldEncoding, SpatialPolygon,
+    SpatialPrecision, SpatialPredicate, SpatialRelation, SpatialShape, SpatialShapeError,
+    SpatialUnits, Wgs84Point,
 };
 pub use statistics::{DiagnosticDuration, QueryStatistics, ResultEtag};
 #[allow(

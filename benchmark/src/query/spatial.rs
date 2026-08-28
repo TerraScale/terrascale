@@ -185,10 +185,7 @@ impl Wgs84Point {
     /// left for a point to be invalid, so construction is infallible.
     #[must_use]
     pub fn new(longitude: Longitude, latitude: Latitude) -> Self {
-        Self {
-            longitude,
-            latitude,
-        }
+        Self { longitude, latitude }
     }
 
     /// Returns the point's longitude.

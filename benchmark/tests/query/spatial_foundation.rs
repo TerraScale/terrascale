@@ -12,9 +12,9 @@
 use terrabase_v2::{
     RequestValidationError,
     query::{
-        Latitude, Longitude, SpatialFieldEncoding, SpatialPredicate, SpatialRelation,
-        SpatialShape, SpatialShapeError, SpatialUnits, Wgs84Point, DEFAULT_DISTANCE_ERROR_PCT,
-        MAX_DISTANCE_ERROR_PCT,
+        DEFAULT_DISTANCE_ERROR_PCT, Latitude, Longitude, MAX_DISTANCE_ERROR_PCT,
+        SpatialFieldEncoding, SpatialPredicate, SpatialRelation, SpatialShape, SpatialShapeError,
+        SpatialUnits, Wgs84Point,
     },
 };
 
@@ -46,10 +46,7 @@ fn v1_distance_arithmetic_is_pinned_at_the_public_seam() {
 
 #[test]
 fn the_v1_dynamic_field_tokens_render_publicly() {
-    assert_eq!(
-        encoding().to_v1_field_token(),
-        "spatial.point(latitude, longitude)"
-    );
+    assert_eq!(encoding().to_v1_field_token(), "spatial.point(latitude, longitude)");
     let wkt = SpatialFieldEncoding::try_new_wkt("shape").expect("valid encoding");
     assert_eq!(wkt.to_v1_field_token(), "spatial.wkt(shape)");
 }
@@ -59,21 +56,13 @@ fn a_spatial_predicate_refuses_its_out_of_domain_error_pct() {
     let shape = SpatialShape::parse("Circle(0 0 d=10)", SpatialUnits::Kilometers)
         .expect("valid circle shape");
     assert_eq!(
-        SpatialPredicate::try_new(
-            encoding(),
-            SpatialRelation::Within,
-            shape.clone(),
-            f64::NAN
-        )
-        .unwrap_err(),
+        SpatialPredicate::try_new(encoding(), SpatialRelation::Within, shape.clone(), f64::NAN)
+            .unwrap_err(),
         RequestValidationError::InvalidQuery
     );
-    let predicate = SpatialPredicate::with_default_error_pct(
-        encoding(),
-        SpatialRelation::Within,
-        shape,
-    )
-    .expect("default error pct is in domain");
+    let predicate =
+        SpatialPredicate::with_default_error_pct(encoding(), SpatialRelation::Within, shape)
+            .expect("default error pct is in domain");
     assert_eq!(predicate.distance_error_pct(), DEFAULT_DISTANCE_ERROR_PCT);
     assert!(predicate.distance_error_pct() <= MAX_DISTANCE_ERROR_PCT);
 }
@@ -84,22 +73,16 @@ fn point_documents_evaluate_all_four_v1_relations() {
         .expect("valid circle shape");
     let inside = point(10.0, 10.5);
     let outside = point(10.0, 12.0);
-    for relation in [
-        SpatialRelation::Within,
-        SpatialRelation::Intersects,
-    ] {
+    for relation in [SpatialRelation::Within, SpatialRelation::Intersects] {
         let predicate =
             SpatialPredicate::with_default_error_pct(encoding(), relation, shape.clone())
                 .expect("valid predicate");
         assert!(predicate.matches_point(&inside), "{relation:?}");
         assert!(!predicate.matches_point(&outside), "{relation:?}");
     }
-    let disjoint = SpatialPredicate::with_default_error_pct(
-        encoding(),
-        SpatialRelation::Disjoint,
-        shape,
-    )
-    .expect("valid predicate");
+    let disjoint =
+        SpatialPredicate::with_default_error_pct(encoding(), SpatialRelation::Disjoint, shape)
+            .expect("valid predicate");
     assert!(!disjoint.matches_point(&inside));
     assert!(disjoint.matches_point(&outside));
 }
