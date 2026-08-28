@@ -485,21 +485,26 @@ fn the_commissioning_sampler_reports_inconclusive_without_references() {
 /// Sanity on the gate math through real samples: a workload measured against
 /// itself is stable, so the objective reading of a self-comparison is parity.
 ///
-/// Deterministic by construction: the SAME lane's samples feed both sides of
-/// the comparison. The original shape ran two independent real lanes and
-/// asserted the classifier called statistically-equal wall-clock runs
-/// `Stable` — true on a quiet host, flaky by construction under fleet load
-/// (observed failing the release gate once under load-average ~25 on
-/// 2026-08-27; green solo 3/3 and in the dev profile). Comparing two
-/// independent real lanes belongs to the ignored lane characterization,
-/// not to a deterministic gate test.
+/// The comparison is a sample set against **itself** — that is what a
+/// self-comparison is, and it is the only form that proves the gate's math
+/// rather than the host's quietness. Two *independent* runs of the same
+/// workload differ by however loaded the machine is, and this fleet's shared
+/// host runs sibling builders constantly: the original form of this test
+/// compared two independent runs and failed twice in three full-suite runs
+/// under load (reading `Better` where the math check expects `Stable`) while
+/// passing every isolated re-run. Repairing it to compare a run against
+/// itself keeps every property the test names — real samples, real gate,
+/// stable reading, parity objective — and removes an assumption no loaded
+/// host can honor. Recorded as a PROPOSED decision in
+/// `docs/benchmarks/ix04-optimizer-evidence.md` because SE-15's
+/// commissioning receipt cites this test by name.
 #[test]
 fn a_self_comparison_reads_as_parity() {
-    let lane = V2Lane::open("self-a").commission(Workload::DocumentRead, 5, 8);
-    let samples = lane.samples();
-    let comparison = throughput(samples, samples);
+    let run = V2Lane::open("self-a").commission(Workload::DocumentRead, 5, 8);
+    let comparison = throughput(run.samples(), run.samples());
     assert_eq!(comparison.throughput, Trend::Stable);
     assert_eq!(comparison.p95, Trend::Stable);
+    assert_eq!(gates::objective_status(comparison), (ObjectiveStatus::Met, Verdict::NoImprovement));
 }
 
 /// The V2-side counter characterization, run for real and transcribed into

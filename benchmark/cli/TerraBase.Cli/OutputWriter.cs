@@ -162,4 +162,59 @@ public sealed class OutputWriter
 
         this.stdout.Flush();
     }
+
+    /// <summary>
+    /// Writes the optimizer's recent index selections in both conventions
+    /// (IX-04). The payload is the host's own values verbatim: each
+    /// selection's index, its outcome, and the recorded reason when a
+    /// candidate lost — the engine's selection-quality rule made visible
+    /// (<c>no query served by a worse-than-available index without a
+    /// recorded reason</c>). A selection the host reported without a reason
+    /// is rendered as absent, never invented, and the count of such rows is
+    /// carried in both conventions so the operator sees it either way.
+    /// </summary>
+    /// <param name="command">The command's display name.</param>
+    /// <param name="selections">The host's selections, verbatim.</param>
+    public void OptimizerSelections(string command, IReadOnlyList<IndexSelectionLine> selections)
+    {
+        var unexplained = selections.Count(selection => selection.Reason is null);
+
+        this.Envelope(command, "result", writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteStartArray("selections");
+            foreach (var selection in selections)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("index", selection.Index);
+                writer.WriteString("outcome", selection.Outcome);
+                if (selection.Reason is { } reason)
+                {
+                    writer.WriteString("reason", reason);
+                }
+
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+            writer.WriteNumber("count", selections.Count);
+            writer.WriteNumber("withoutReason", unexplained);
+            writer.WriteEndObject();
+        });
+
+        this.Human("Optimizer selections");
+        foreach (var selection in selections)
+        {
+            this.Human(
+                $"  {selection.Index,-40} {selection.Outcome}  {selection.Reason ?? "no recorded reason"}");
+        }
+
+        this.Human($"count {selections.Count}  without reason {unexplained}");
+    }
+
+    /// <summary>One optimizer selection as the CLI renders it: the host's own values verbatim.</summary>
+    /// <param name="Index">The index the selection served or created.</param>
+    /// <param name="Outcome">The host's own outcome value, verbatim.</param>
+    /// <param name="Reason">The recorded reason a candidate lost, or null when the host reported none.</param>
+    public sealed record IndexSelectionLine(string Index, string Outcome, string? Reason);
 }

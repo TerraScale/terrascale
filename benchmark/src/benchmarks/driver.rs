@@ -89,12 +89,24 @@ pub(crate) struct V2Lane {
 impl V2Lane {
     /// Opens a durable engine under a fresh system-temp location.
     pub(crate) fn open(tag: &str) -> Self {
+        Self::open_with_lifecycle(tag, crate::query::optimizer::LifecycleThresholds::DEFAULT)
+    }
+
+    /// Opens a durable engine with explicit auto-index lifecycle thresholds,
+    /// for the workloads whose supersessions must resolve inside the window
+    /// (IX-04): a zero supersede drain is V1's documented test mode for that
+    /// gate, and the lane states it rather than sleeping it out.
+    pub(crate) fn open_with_lifecycle(
+        tag: &str,
+        thresholds: crate::query::optimizer::LifecycleThresholds,
+    ) -> Self {
         let index = WINDOW.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir()
             .join(format!("tbv2-se15-bench-{tag}-{}-{index}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
-        let engine = Engine::open(EngineConfig::durable(&dir).expect("durable location"))
-            .expect("engine opens");
+        let location = EngineConfig::durable(&dir).expect("durable location");
+        let engine =
+            Engine::open(location.with_lifecycle_thresholds(thresholds)).expect("engine opens");
         let tenant = TenantId::try_new("benchmark-tenant").expect("valid tenant");
         let scope = TenantScope::from_parts(tenant.clone(), engine.identity());
         Self {
@@ -105,6 +117,22 @@ impl V2Lane {
             seeded: AtomicUsize::new(0),
             operations: AtomicU64::new(0),
         }
+    }
+
+    /// The lane's engine, for the workload drivers that need the typed reads
+    /// beside the counters (IX-04's optimizer workloads).
+    pub(crate) fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
+    /// The lane's tenant scope.
+    pub(crate) fn scope(&self) -> &TenantScope {
+        &self.scope
+    }
+
+    /// The lane's tenant.
+    pub(crate) fn tenant(&self) -> &TenantId {
+        &self.tenant
     }
 
     /// Seeds `documents` documents shaped like V1's benchmark document: a
@@ -220,7 +248,7 @@ impl V2Lane {
 
     /// Commits one document put at the engine's acknowledged durability
     /// level, mirroring the PostgreSQL side's `synchronous_commit = on`.
-    fn commit_put(&self, document: Document, expected: ExpectedVersion) {
+    pub(crate) fn commit_put(&self, document: Document, expected: ExpectedVersion) {
         let snapshot = self.engine.read_snapshot(&self.scope).expect("snapshot");
         let mut transaction = self
             .engine
