@@ -489,7 +489,7 @@ mod tests {
             "the refusal is a typed input refusal, not a write failure"
         );
         assert_eq!(
-            std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0),
+            std::fs::metadata(&path).map_or(0, |meta| meta.len()),
             0,
             "the refusal happens before one byte is written"
         );
@@ -516,7 +516,9 @@ mod tests {
         // fail closed instead of truncating it away as a torn tail.
         let mut damaged = std::fs::read(&path).expect("store reads");
         let verified = damaged.len() as u64;
-        damaged.extend_from_slice(&((MAX_RETAINED_RECORD_BYTES + 1) as u32).to_le_bytes());
+        let impossible =
+            u32::try_from(MAX_RETAINED_RECORD_BYTES + 1).expect("the ceiling fits a u32");
+        damaged.extend_from_slice(&impossible.to_le_bytes());
         damaged.extend_from_slice(&[0_u8; 8]);
         damaged.extend_from_slice(&[0xa5, 0xa5]);
         std::fs::write(&path, &damaged).expect("store rewrites");
