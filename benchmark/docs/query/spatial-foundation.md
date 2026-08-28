@@ -268,10 +268,12 @@ concurrent fleet builds; every cargo step below ran to completion under
 | `cargo test --lib query::spatial` (green run, final tree) | 0 | 33 passed, 0 failed |
 | `cargo test --test query spatial_foundation` | 0 | 5 passed, 0 failed |
 | `cargo fmt --all -- --check` | 0 | after one intermediate fmt fix committed separately |
-| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | 0 | clean |
-| `cargo check --workspace --locked` | 0 | see check.sh below (runs it) |
-| `cargo test --workspace --locked` | 0 | via check.sh (dev profile) |
-| `TERRABASE_V1_ROOT=/home/mariogk/Projects/TerraScale/.worktrees/terrabase-v1-fa99b925-readonly ./scripts/check.sh` | 0 | full strict gate incl. release tests, cargo doc, parity tooling, V1 citation audit, secret scans |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | 0 | clean, run individually and inside every check.sh run |
+| `cargo check --workspace --locked` | 0 | inside every check.sh run below |
+| `cargo test --workspace --locked` (dev profile, required) | 0 | inside every check.sh run below |
+| `TERRABASE_V1_ROOT=... ./scripts/check.sh` (run 1) | 1 | every gate inside it passed (fmt, check, dev + release workspace tests, clippy, cargo doc, parity tooling, secret scans — zero failures in the log); the exit 1 is the script's own final workspace-root resolution, which tries only `../..` and so cannot find the TerraScale root from a worktree nested under `TerraBaseV2/.worktrees/`; fix candidate for the integrator: one more `../..` candidate or require `TERRASCALE_WORKSPACE_ROOT` in worktrees |
+| `TERRASCALE_WORKSPACE_ROOT=... TERRABASE_V1_ROOT=... ./scripts/check.sh` (run 2) | 101 | one failure in the release-profile test phase: `benchmarks::tests::a_self_comparison_reads_as_parity`, `left: Better, right: Stable` — a wall-clock throughput self-comparison that reads Better when the host's concurrent fleet load shifts between its two sampled lanes; 840 passed / 1 failed, dev phase fully green |
+| `TERRASCALE_WORKSPACE_ROOT=... TERRABASE_V1_ROOT=... ./scripts/check.sh` (run 3, the flake re-run) | 0 | full strict gate green, zero failures across dev + release tests, clippy, cargo doc, parity tooling, strict V1 citation audit, secret scans; cargo-deny recorded as unrun by the script (tool not installed on this host) — the license audit in D1 is therefore a recorded manual audit, not a cargo-deny run |
 
 Dependency-audit artifacts (scratch project `/tmp/geo-audit`, not part of
 the repo): `cargo add geo` resolved geo 0.33.1 with a 46-package closure;
