@@ -3,13 +3,13 @@
 Ticket: TerraBaseV2#86 (GAP-C4, CP-204 — the REQUIRED competitive row
 per PD-2026-08-26-07 D2). Implementation: `src/query/vector.rs` (public
 seam `terrabase_v2::query`); focused tests: `tests/query/vector_search.rs`
-(public seam, 22 tests), `tests/query/vector_conformance_vectors.rs`
-(conformance corpus, 3 tests over 32 named vectors), and
-`src/query/vector_tests.rs` (in-crate execution semantics, 15 tests plus
-a 5-vector semantic corpus). V1 parity anchors: PB-4024 (vector search)
-and PB-4051 (vector index options and quantization), both classified
-optional in `parity/contracts/query.json` and recorded required by the
-competitive routing (CP-204, EV-C8).
+(public seam, 25 tests), `tests/query/vector_conformance_vectors.rs`
+(conformance corpus, 3 tests over 36 named vectors), and
+`src/query/vector_tests.rs` (in-crate execution semantics, 19 tests
+including a 5-vector semantic corpus). V1 parity anchors: PB-4024
+(vector search) and PB-4051 (vector index options and quantization),
+both classified optional in `parity/contracts/query.json` and recorded
+required by the competitive routing (CP-204, EV-C8).
 
 V1 source identity for every anchor below: commit
 `fa99b9257776dbe625e6a2388c74c9ce916637ee`, read from the pinned clean
@@ -60,9 +60,11 @@ compares NaN-equal, so the committed contract text holds as written.
   vectors, the request's ordinary `QueryPredicate` applied as a
   pre-filter (the better-than measure vs Convex's actions-only
   restriction, EV-C8), a minimum-similarity threshold, limit 1..=256,
-  bounded deadline/cancellation checkpoints, and stage accounting
-  (`scanned`, `filter_skipped`, `missing_field`, `scored`,
-  `threshold_dropped`, `returned`).
+  bounded deadline/cancellation checkpoints with the default
+  one-minute window **materialized at entry and enforced at every
+  checkpoint** (the include read-window pattern; repair loop 1 made
+  this true in code), and stage accounting (`scanned`, `filter_skipped`,
+  `missing_field`, `scored`, `threshold_dropped`, `returned`).
 - **Deterministic result metadata**: matches carry id, score, and
   document; order is score descending with ties broken by document
   identity — pinned by test against a corpus whose ids are committed in
@@ -73,12 +75,16 @@ compares NaN-equal, so the committed contract text holds as written.
   fail-closed malformed-stored-vector class. No error carries a document
   value or identity.
 - **TQL predicate handoff**: `TqlVectorPredicate` (`vec/1.0`) renders
-  the `tql/1.0` grammar text of `docs/tql/spec.md` 8.2 and lowers a
-  bound parameter value into the engine's typed request. The grammar
-  integration rides TQL-03 (#34) — see the seam handoff below.
+  the `tql/1.0` grammar text `docs/tql/spec.md` 8.2 fixes for the
+  `vector.search(field, $parameter [, threshold])` where-clause and its
+  `limit` line — the `order by score() desc` composition rides TQL-03
+  (#34) — and lowers a bound parameter value into the engine's typed
+  request. Its field and parameter names are bare TQL identifiers
+  (repair loop 1): grammar metacharacters refuse typed instead of
+  rendering into the grammar text.
 - **Conformance vectors in CI**: `tests/query/vector_conformance_vectors.rs`
   follows the golden-vector pattern of `tests/query/tql_golden_vectors.rs`
-  — 32 named construction vectors with exact-count assertions and
+  — 36 named construction vectors with exact-count assertions and
   refusal-variant coverage checks that fail when a refusal class loses
   its last producing vector.
 
@@ -136,7 +142,11 @@ to floating-point behavior are pinned typed here: a zero-magnitude
 vector scores exactly `0.0` (a defined answer, never NaN), and any
 non-finite intermediate (a magnitude overflow) fails closed as
 `InvalidStoredVector` rather than producing a NaN score that would make
-the ordering non-total.
+the ordering non-total. Repair loop 1 adds the explicit range clamp: a
+finite score is clamped into [-1, 1] before it is reported, because the
+raw quotient of an exact match can sit one ulp outside the range
+(`3 / (sqrt(3)·sqrt(3))` is `1.0000000000000002`); a threshold of
+exactly 1.0 keeps an exact match.
 
 ### D3 — Declaration and drift model (adopt of the GAP-Q06 D10 pattern)
 
@@ -190,13 +200,28 @@ value the TQL-03 paging model may revisit.
 A request without a bound deadline gets a fresh one-minute window
 (`VECTOR_SEARCH_WINDOW`) and one without a bound cancellation gets a
 fresh uncancelled signal — the pattern of `src/query/includes.rs`
-(`INCLUDE_READ_WINDOW`), so no execution is unbounded by default.
-Cancellation is checked before execution begins, every 64 scanned
-documents, and before the ordering pass — the checkpoint cadence of
-`execute.rs`. A pre-cancelled signal binds freely and refuses at
+(`INCLUDE_READ_WINDOW`): the bounds are **materialized once, at
+execution entry** (deadline defaulting into the window, cancellation
+defaulting to a fresh signal), and every checkpoint below enforces the
+materialized bound, so no execution is unbounded by default. The
+checkpoints fire at entry — **before the snapshot view is
+materialized**, so an already-dead or already-cancelled request refuses
+before any data access — then after the view materialization, every 64
+scanned documents, and before the ordering pass: the checkpoint cadence
+of `execute.rs`. A pre-cancelled signal binds freely and refuses at
 execution (unlike `QuerySpec::try_new`, which refuses at construction);
 the vector request's builders never validate reachability, its
-execution does.
+execution does. The view materialization call itself carries no
+deadline (the same index-less base path `execute.rs` records): the
+entry checkpoint bounds entry, the later checkpoints everything after
+materialization.
+
+*Repair-loop-1 history:* the original landing materialized the default
+only in the public accessor `VectorSearchRequest::deadline()` while the
+checkpoints consumed the raw `Option` fields — an unbound request was
+in fact an unbounded scan, and both gates caught it. The bound is now
+materialized on the execution path itself and pinned by the tests named
+in the repair-loop section.
 
 ## WS-PARITY proposals (PB-4024 / PB-4051)
 
@@ -254,10 +279,19 @@ disposition, in the line of `docs/parity/gapq06-ws-parity-proposals.md`:
   else changed in the module root. The GAP-Q14 precedent (an integrator
   pre-wires the module declaration) was unavailable: the integrator rider
   `d2ba76f` did not pre-wire `vector`.
+- `tests/query/main.rs` (adopted with the base red commit `c598006`,
+  +2 lines): registers `vector_conformance_vectors` and `vector_search`
+  with the query integration harness. Within the packet's owned test
+  scope; disclosed here because the loop-0 handoff omitted it from its
+  files_changed list (inspector MINOR).
 - `src/query/spec.rs`, `src/index/definitions.rs`: **not edited** — the
   field-name rule is consumed through the existing `pub(crate)`
-  `validate_field_name`, and the name bound through the existing `pub`
-  `MAX_NAME_BYTES`; no edit to either shared file was required.
+  `validate_field_name` and the TQL identifier bound through the
+  existing `pub MAX_FIELD_BYTES`; since repair loop 1 the index-name
+  rule is consumed by delegating to the existing
+  `pub StaticIndexName::try_new` (the loop-0 restatement of its rules is
+  gone, and with it the drift risk the warden flagged); no edit to
+  either shared file was required.
 
 ## Disclosed limits
 
@@ -265,17 +299,26 @@ disposition, in the line of `docs/parity/gapq06-ws-parity-proposals.md`:
   the same index-less base path W3-2 records for ordinary queries. On a
   large collection an exact k-NN scores every candidate vector; the
   bounded checkpoints are the only guard. No claim about scan cost is
-  made or measured here.
+  made or measured here. The materialization call itself takes no
+  deadline (D6): the entry checkpoint bounds entry, the later
+  checkpoints everything after materialization.
 - A stored vector field present with a **null** value is malformed (fail
   closed, `InvalidStoredVector`); only an **absent** field is a
   non-candidate. The tests pin the absent-field rule; the null-field
   rule is the implementation's documented strict reading.
+- A stored vector field present as an **empty array** classifies as
+  `DimensionMismatch { expected: d, actual: 0 }` — emptiness is read as
+  a dimension fact — while null and nested-array values classify as
+  `InvalidStoredVector` shape facts. Recorded verbatim in repair loop 1
+  from the warden's hostile-input probes; behavior unchanged.
 - The execution fails the whole search on the first dimension-mismatched
   or malformed stored vector of the source collection — fail-closed by
   design; it does not skip the offender.
 - `VectorSearchMode::Approximate` exists as typed vocabulary with no
   producing path; `request.mode()` is always `Exact`.
-- The similarity measure is cosine only (`VectorSimilarity::Cosine`).
+- The similarity measure is cosine only (`VectorSimilarity::Cosine`);
+  the reported score is clamped into [-1, 1] (D2's repair-loop-1
+  clamp).
 
 ## Explicit non-claims
 
@@ -292,30 +335,152 @@ disposition, in the line of `docs/parity/gapq06-ws-parity-proposals.md`:
 
 ## Test evidence
 
-- Public seam (`tests/query/vector_search.rs`, 22 tests): declaration
-  construction and validation incl. reserved namespace and family
-  collection; identity key determinism and content addressing; drift
+- Public seam (`tests/query/vector_search.rs`, 25 tests): declaration
+  construction and validation incl. reserved namespace, family
+  collection, and the whole-string (non-ASCII-refusing) static-index
+  name rule; identity key determinism and content addressing; drift
   separation; dimension bounds at the competitive bar; limit bounds;
-  empty/out-of-bounds/non-finite query vectors; threshold range;
-  filter composition; declaration binding; TQL render, versioning,
-  lowering, and its refusals; deadline/cancellation binding.
+  empty/out-of-bounds/non-finite query vectors; threshold range; the
+  request-side invalid-field refusal; filter composition; declaration
+  binding; TQL render, versioning, lowering, its refusals, and the
+  bare-identifier rule for its names; deadline/cancellation binding.
 - Conformance corpus (`tests/query/vector_conformance_vectors.rs`,
-  32 vectors, 3 tests): every accept and refusal class of the
+  36 vectors, 3 tests): every accept and refusal class of the
   construction surface has a named vector; exact-count assertions pin
   the corpus size; refusal-variant checks fail when a class loses its
   last producing vector.
-- In-crate execution (`src/query/vector_tests.rs`, 15 tests + 5-vector
-  semantic corpus): the pinned cosine values (1, 0, −1, −√2⁻¹); the
-  zero-magnitude rule; descending order; the identity tie-break
-  determinism pin (reverse-committed ids, re-executed); k truncation
-  with accounting; pre-scoring filter; schema-optional missing fields;
-  collection isolation; dimension mismatch; the three malformed-stored
-  -vector shapes; threshold drop; cancellation; foreign-snapshot
-  refusal; the document payload beside id and score.
+- In-crate execution (`src/query/vector_tests.rs`, 19 tests incl. the
+  5-vector semantic corpus): the pinned cosine values (1, 0, −1,
+  −√2⁻¹); the zero-magnitude rule; descending order; the identity
+  tie-break determinism pin (reverse-committed ids, re-executed) plus
+  the direct comparator pin that discriminates the tie-break; k
+  truncation with accounting; pre-scoring filter; schema-optional
+  missing fields; collection isolation; dimension mismatch; the three
+  malformed-stored-vector shapes; threshold drop; cancellation;
+  foreign-snapshot refusal; the document payload beside id and score;
+  the default-window execution bound and the entry checkpoint; the
+  clamped score range.
 - Red-then-green: the red run is the previous builder's record (commit
   `c598006`: `cargo test` failing with exactly two `error[E0432]`
-  unresolved imports, exit 101). Green: all 40 vector tests pass; the
-  full workspace suite is green (see receipts).
+  unresolved imports, exit 101). Green: all 47 vector tests pass; the
+  full workspace suite is green (see receipts). Repair loop 1's red and
+  mutation runs are recorded in the repair-loop section.
+
+## Repair loop 1 (2026-08-28)
+
+The inspector returned NO-GO and the warden FAIL: one shared MAJOR (the
+recorded D6 bound did not exist in code), one record-integrity MAJOR
+(the check.sh receipt), and four actionable MINORs. Everything else —
+the delivered contract, write scope, V1 citations, charter discipline —
+was verified compliant by both gates and is unchanged. Commits:
+`5e961d2` (behavior-preserving execution seam), `0b0ef5e` (red tests),
+`47e717e` (fixes), plus this record.
+
+### Findings → fixes
+
+1. **MAJOR — D6's default one-minute window was never enforced**
+   (inspector 1 + warden 1). `check_bounds` received the raw `Option`
+   fields, so a request built without `.with_deadline(...)` — the
+   default for every naive caller — executed with no wall-clock bound,
+   while D6, the module rustdoc, and the handoff all asserted the
+   bound; the materializing accessor was dead code on the execution
+   path. **Fix:** `vector_search_within` (crate seam, `5e961d2`)
+   materializes the bound once at entry — deadline defaulting into the
+   injected window, cancellation defaulting to a fresh signal — and all
+   checkpoints pass the materialized bound; a new entry checkpoint
+   fires *before* the snapshot view is materialized. **Tests (red
+   first):** `an_unbounded_request_executes_inside_the_default_window`
+   (the window injected as 1ns through the crate seam — a const
+   one-minute window cannot be expired on a wall clock inside a test)
+   and `an_expired_bound_deadline_refuses_before_any_data_access` (an
+   expired deadline now outranks a foreign-Engine snapshot). Red run at
+   `0b0ef5e`: in-crate exit 101, both failed (the unbound scan ran to
+   completion; the foreign snapshot answered `SnapshotEngineMismatch`).
+   Green at `47e717e`: 19/19.
+2. **MAJOR — irreproducible check.sh receipt** (inspector 2). The
+   loop-0 receipt table recorded `TERRABASE_V1_ROOT=... ./scripts/check.sh
+   | 0` while disclosing the citation audit "did not execute" — from a
+   nested worktree the workspace-root candidates carry neither `specs/`
+   nor `TerraBase/`, and check.sh exits 1 at that stage, so exit 0 and
+   the disclosure cannot both be true. **Fix:** the receipt below
+   records the corrected invocation (explicit
+   `TERRASCALE_WORKSPACE_ROOT`, the warden's resolution); the audit
+   executed and passed strict validation at the pin. The loop-0 line
+   was defective as recorded; the loop-0 cargo receipts were
+   independently re-verified green by the inspector.
+3. **MINOR — `tests/query/main.rs` missing from the loop-0 handoff's
+   files_changed** (inspector 3). Disclosure only: the +2-line module
+   registration came with the adopted red commit `c598006`; it is now
+   listed under Proposed collision actions.
+4. **MINOR — the identity tie-break pin was non-discriminating**
+   (warden 2). Deleting `.then_with(compare_identity)` left the whole
+   vector suite green because the snapshot view already iterates
+   documents in canonical key order. **Fix:** the sort comparator is
+   extracted as `compare_candidates` (crate-visible) and pinned
+   directly from a non-identity input order
+   (`the_identity_tie_break_discriminates_tied_scores_from_any_order`).
+   **Mutation proof:** deleting the `.then_with` clause → the new test
+   fails (exit 101); restored → 19/19 green.
+5. **MINOR — `TqlVectorPredicate` accepted grammar metacharacters**
+   (warden 3). The field-name rule admitted commas, parentheses, and
+   spaces, so field `"a, 0.9) or true("` rendered a second predicate
+   and parameter `"p, 0.5) limit 999"` an injected threshold and limit
+   line — contrary to the rustdoc's injection-safety claim. **Fix:**
+   field and parameter must be bare TQL identifiers (ASCII letter or
+   underscore first, then letters/digits/underscores, at most
+   `MAX_FIELD_BYTES`); anything else refuses
+   `VectorSearchError::InvalidField`, and the rustdoc states the actual
+   rule (a future TQL-03 dotted-path form is an additive widening
+   within `vec/1.0`'s minor line). **Tests (red first):**
+   `tql_predicate_names_are_bare_identifiers_refusing_grammar_
+   metacharacters` and corpus vectors `tql/name-field-metacharacters` /
+   `tql/name-parameter-metacharacters`. Red run at `0b0ef5e`:
+   `--test query` exit 101, both failed ("produced Ok(()) for
+   RefusedRequest(InvalidField)"). Green at `47e717e`: 84/84.
+6. **MINOR — request-side `InvalidField` had no test and no conformance
+   vector** (warden 4). **Fix:** `an_invalid_request_field_refuses_typed`
+   plus corpus vectors `request/field-empty` /
+   `request/field-whitespace-padding`; `InvalidField` joined the
+   refusal-variant completeness list. These are green-on-arrival (the
+   refusal existed — the finding was the missing pin);
+   **discrimination proved by mutation:** removing the
+   `validate_field_name` call from `VectorSearchRequest::try_new` → the
+   test fails (exit 101); restored → green (exit 0).
+7. **NOTE — exact match could score one ulp past 1.0** (warden 5).
+   **Fix:** finite scores clamp into [-1, 1] after the fail-closed
+   finiteness check (non-finite still refuses `InvalidStoredVector`).
+   **Test (red first):**
+   `the_reported_score_stays_inside_the_documented_cosine_range` — red
+   at `0b0ef5e` (reported 1.0000000000000002), green at `47e717e`.
+8. **NOTE — `validate_index_name` duplicated
+   `StaticIndexName::try_new`'s rules** (warden 7). **Fix:** it
+   delegates to the static index language's own validator; behavior is
+   unchanged (pinned by
+   `declaration_names_reuse_the_static_index_name_rule_whole_string`:
+   non-ASCII names refuse typed), and the two rule sets can no longer
+   drift.
+9. **NOTE — hostile-input classification details** (warden 6) are
+   recorded verbatim as disclosed limits above (empty stored array =
+   `DimensionMismatch { actual: 0 }`; the view materialization carries
+   no deadline); behavior deliberately unchanged.
+
+The inspector's NOTE on the TQL render wording (it covers the 8.2
+predicate clause + limit line, not the `order by score() desc`
+composition) is corrected in the "What landed" wording above; the
+NOTE on lib-test count drift (885 claimed, 886 observed at loop-0
+HEAD) is resolved by the per-target counts in the receipts below.
+
+### Repair-loop test receipts
+
+| Run | Exit |
+| --- | --- |
+| RED `cargo test --workspace --locked --lib -- query::vector` at `0b0ef5e` — 3 failed (default window, entry precedence, score range), 15 passed | 101 |
+| RED `cargo test --workspace --locked --test query` at `0b0ef5e` — 2 failed (TQL identifiers: public test + corpus), 82 passed | 101 |
+| MUTATION delete the `.then_with(compare_identity)` tie-break → tie-break pin test | 101 |
+| MUTATION remove `validate_field_name` from `VectorSearchRequest::try_new` → InvalidField test | 101 |
+| same, restored → InvalidField test | 0 |
+| GREEN `cargo test --workspace --locked --lib -- query::vector` at `47e717e` — 19/19 | 0 |
+| GREEN `cargo test --workspace --locked --test query` at `47e717e` — 84/84 | 0 |
 
 ## Receipts
 
@@ -327,15 +492,17 @@ All commands run inside the packet worktree
 | --- | --- |
 | `cargo fmt --all -- --check` | 0 |
 | `cargo check --workspace --locked` | 0 |
-| `cargo test --workspace --locked` (dev profile, REQUIRED) | 0 — 885 lib tests, 81 query tests, all targets green, 0 failed |
+| `cargo test --workspace --locked` (dev profile, REQUIRED) | 0 — every target green; `terrabase_v2` lib 889 passed + 1 ignored, `tests/query` 84 passed |
 | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | 0 |
-| `TERRABASE_V1_ROOT=/home/mariogk/Projects/TerraScale/.worktrees/terrabase-v1-fa99b925-readonly ./scripts/check.sh` | 0 — includes the release-profile test pass (green), rustdoc, parity tooling (4 + 13 tests, OK), benchmark-receipt discipline (9 receipts), license check, and secret scan |
+| `TERRABASE_V1_ROOT=/home/mariogk/Projects/TerraScale/.worktrees/terrabase-v1-fa99b925-readonly TERRASCALE_WORKSPACE_ROOT=/home/mariogk/Projects/TerraScale ./scripts/check.sh` | 0 — includes the release-profile test pass (green), rustdoc, parity tooling, benchmark-receipt discipline, license check, secret scan, and the STRICT V1 citation audit (executed from this worktree and passed; see the correction below) |
 
-One stage inside check.sh reports itself UNRUN: the V1 citation audit
-prints "unable to resolve the TerraScale workspace root" when invoked
-from this nested worktree (`.worktrees/terrabasev2-gapc4`), so the
-automated audit did not execute. Compensating evidence: every
-`[v1:...]` citation in this record was verified by direct reads of the
-pinned tree at `fa99b9257776dbe625e6a2388c74c9ce916637ee` during this
-packet (the file:line anchors above are those reads). The parent may
-re-run the audit from the main checkout where the root resolves.
+**Receipt correction (repair loop 1, MAJOR 2):** the loop-0 table
+recorded the check.sh line without `TERRASCALE_WORKSPACE_ROOT` and with
+exit 0, alongside a disclosure that the citation audit "did not
+execute" — from a nested worktree that invocation deterministically
+exits 1 at the audit stage, so the recorded exit was wrong (or an
+unrecorded env var made the "did not execute" statement wrong). The
+corrected invocation above exports the workspace root explicitly; the
+audit then executes and passes in strict mode at pin
+`fa99b9257776dbe625e6a2388c74c9ce916637ee`. Any nested-worktree re-run
+of check.sh needs `TERRASCALE_WORKSPACE_ROOT` set.
