@@ -43,6 +43,24 @@ const RECORD_PREFIX: &str = "family:";
 /// populations can never occupy or destroy each other.
 pub(crate) const ATTACHMENT_CONTENT_KIND: &str = "attachment-content";
 
+/// The reserved kind key of the revisions configuration record
+/// (`family:revision-configuration/...`, GAP-F05).
+///
+/// A distinct kind key keeps the tenant's revision configuration disjoint
+/// from the revisions owner space (`family:revisions/<document>`) however a
+/// document is named, on the same namespace rule as
+/// [`ATTACHMENT_CONTENT_KIND`].
+pub(crate) const REVISION_CONFIGURATION_KIND: &str = "revision-configuration";
+
+/// The reserved kind key of the revision snapshot side-car records
+/// (`family:revision-snapshots/<document>`, GAP-F05).
+///
+/// The side car holds the GAP-F05 snapshot facts — version contracts, revert
+/// provenance, attachment references — beside the W3-F revision log, and its
+/// distinct kind key keeps those records disjoint from the revisions owner
+/// space however a document is named.
+pub(crate) const REVISION_SNAPSHOT_KIND: &str = "revision-snapshots";
+
 /// Builds one reserved record identifier.
 pub(crate) fn record_id(kind: &str, parts: &[&str]) -> Result<DocumentId, FamilyError> {
     let mut text = format!("{RECORD_PREFIX}{kind}");
@@ -72,6 +90,12 @@ pub(crate) fn kind_of_record(id: &DocumentId) -> Option<super::FamilyKind> {
     // for enumeration those records are still attachments-family records.
     if kind_key == ATTACHMENT_CONTENT_KIND {
         return Some(super::FamilyKind::Attachments);
+    }
+    // The GAP-F05 revision-configuration and revision-snapshot records sit
+    // under distinct kind keys for the same namespace reason, and are
+    // revisions-family records for enumeration.
+    if kind_key == REVISION_CONFIGURATION_KIND || kind_key == REVISION_SNAPSHOT_KIND {
+        return Some(super::FamilyKind::Revisions);
     }
     [
         super::FamilyKind::Attachments,
