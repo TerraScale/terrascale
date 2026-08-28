@@ -106,9 +106,16 @@ test.describe("documents on the shared fixture (core)", () => {
     await expect(page.getByTestId("collection-doc-count-studio-seed")).toHaveText("2");
     await expect(page.getByTestId("collection-row-parity")).toBeVisible();
 
-    // The catalog read runs server-side in the RSC render: the browser made no
-    // API call at all.
-    expect(apiRequests, "no browser-originated API traffic on the collections route").toEqual([]);
+    // The catalog read runs server-side in the RSC render: the browser made
+    // no API call at all beyond the DB-04 live subscription. The listener
+    // spans the whole session (the home page's live status island opens the
+    // backbone stream before the navigation), so /v1/streams is the one
+    // allowed browser-originated entry; the catalog route itself has no
+    // islands.
+    expect(
+      apiRequests.filter((entry) => entry !== "GET /v1/streams"),
+      "no browser-originated API traffic on the collections route beyond the live subscription",
+    ).toEqual([]);
 
     // Collection -> the honest pre-SE-08 empty state (the core serves only the
     // catalog, so the typed per-collection listing matches nothing yet).

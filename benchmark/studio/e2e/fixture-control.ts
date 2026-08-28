@@ -19,9 +19,18 @@ export function fixture(baseUrl: string): Fixture {
   };
 }
 
-/** Reads a rendered tick counter value (e.g. "Ticks", "Replayed") as a number. */
-export async function readCounter(page: Page, label: string): Promise<number> {
-  const text = await page.locator(`[data-counter="${label}"] dd`).textContent();
+/**
+ * Reads a rendered tick counter value (e.g. "Ticks", "Replayed") as a number.
+ * `scope` narrows the search when several live panels render the same label
+ * (the DB-04 changes feed and the tick feed both carry "Reconnects").
+ */
+export async function readCounter(
+  page: Page,
+  label: string,
+  scope?: { testId: string },
+): Promise<number> {
+  const root = scope === undefined ? page.locator("body") : page.getByTestId(scope.testId);
+  const text = await root.locator(`[data-counter="${label}"] dd`).first().textContent();
   if (text === null) {
     throw new Error(`counter ${label} not rendered`);
   }

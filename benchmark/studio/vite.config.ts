@@ -79,8 +79,16 @@ export default defineConfig({
         cache: false,
       },
       "unit:test": {
+        // DB-04 wires every landed test file (the DB-03/DB-05/DB-06 files
+        // were authored standalone — their vite.config.ts wiring was
+        // outside those packets' write scope and recorded as collision
+        // actions; studio/ is this packet's scope, so they land here).
         command:
-          "node --test tests/client-fresh.test.mjs tests/contract.test.mjs tests/documents-page.test.mts tests/families-page.test.mts tests/fixture-server.test.mjs tests/queries.test.mjs tests/topology-fixture.test.mjs tests/topology-vocabulary.test.mjs",
+          "node --test tests/changes-model.test.mjs tests/changes-subscription.test.mjs tests/client-fresh.test.mjs tests/contract.test.mjs tests/documents-page.test.mts tests/families-page.test.mts tests/fixture-server.test.mjs tests/queries.test.mjs tests/topology-fixture.test.mjs tests/topology-vocabulary.test.mjs",
+        cache: false,
+      },
+      "probe:real-host": {
+        command: "node scripts/real-host-probe.mjs",
         cache: false,
       },
     },

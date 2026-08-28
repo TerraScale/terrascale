@@ -4,7 +4,7 @@
 // a client component. The base URL is read at request time so one build serves
 // any local host or fixture.
 
-import { TerrabaseStudioClient } from "@/api/generated/client";
+import { TerrabaseStudioClient, type BackendContext } from "@/api/generated/client";
 
 /** Default base URL: the in-repo dev fixture server (pre-SE-08). */
 export const DEFAULT_API_BASE_URL = "http://127.0.0.1:3032";
@@ -15,6 +15,20 @@ export function apiBaseUrl(): string {
   return (
     configured === undefined || configured.length === 0 ? DEFAULT_API_BASE_URL : configured
   ).replace(/\/$/, "");
+}
+
+/**
+ * The backend-supplied context the real host's local gate requires
+ * (X-TB-Principal/X-TB-Tenant, PD-2026-08-26-11 D1): the caller is the
+ * trusted local backend — the studio is a local operator tool with no
+ * credentials on this surface, so fixed local identities (overridable per
+ * environment) are the honest shape.
+ */
+export function studioBackendContext(): BackendContext {
+  return {
+    principal: process.env.STUDIO_API_PRINCIPAL?.trim() || "studio-operator",
+    tenant: process.env.STUDIO_API_TENANT?.trim() || "tenant-a",
+  };
 }
 
 /** Creates a typed client against the C# API host (or the dev fixture). */
