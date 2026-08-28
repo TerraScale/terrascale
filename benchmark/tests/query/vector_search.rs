@@ -16,11 +16,10 @@ use std::time::Duration;
 use terrabase_v2::{
     Cancellation, Deadline, QueryPredicate, QuerySource,
     query::{
-        MAX_VECTOR_DIMENSIONS, MAX_VECTOR_SEARCH_LIMIT, MIN_VECTOR_DIMENSIONS,
-        TqlVectorPredicate, VECTOR_PREDICATE_VERSION, VectorEmbeddingType, QueryCondition,
-        VectorIndexDeclaration, VectorIndexDrift, VectorIndexError, VectorOptions,
-        VectorOptionsError, VectorSearchError, VectorSearchMode, VectorSearchRequest,
-        VectorSimilarity,
+        MAX_VECTOR_DIMENSIONS, MAX_VECTOR_SEARCH_LIMIT, MIN_VECTOR_DIMENSIONS, QueryCondition,
+        TqlVectorPredicate, VECTOR_PREDICATE_VERSION, VectorEmbeddingType, VectorIndexDeclaration,
+        VectorIndexDrift, VectorIndexError, VectorOptions, VectorOptionsError, VectorSearchError,
+        VectorSearchMode, VectorSearchRequest, VectorSimilarity,
     },
     types::{CollectionName, DocumentValue},
 };
@@ -59,10 +58,7 @@ fn single_to_single_declaration_is_the_served_configuration() {
     assert_eq!(declaration.field(), "embedding");
     assert_eq!(declaration.options().dimensions(), 3);
     assert_eq!(declaration.options().source(), VectorEmbeddingType::Single);
-    assert_eq!(
-        declaration.options().destination(),
-        VectorEmbeddingType::Single
-    );
+    assert_eq!(declaration.options().destination(), VectorEmbeddingType::Single);
     assert_eq!(declaration.options().candidates(), None);
     assert_eq!(declaration.options().edges(), None);
 }
@@ -239,13 +235,9 @@ fn declaration_drift_separates_option_evolution_from_identity_change() {
     )
     .expect("valid");
     // Same options, different name or field: a different index.
-    let renamed = VectorIndexDeclaration::try_new(
-        "docs/other",
-        collection("docs"),
-        "embedding",
-        options(3),
-    )
-    .expect("valid");
+    let renamed =
+        VectorIndexDeclaration::try_new("docs/other", collection("docs"), "embedding", options(3))
+            .expect("valid");
     assert_eq!(original.drift(&original), VectorIndexDrift::Unchanged);
     assert_eq!(original.drift(&evolved), VectorIndexDrift::OptionsChanged);
     assert_eq!(original.drift(&renamed), VectorIndexDrift::IdentityChanged);
@@ -407,10 +399,7 @@ fn tql_predicate_renders_the_specified_grammar_text() {
     // this render is what TQL-03's lowering must produce and consume.
     let predicate = TqlVectorPredicate::try_new("embedding", "queryVector", Some(0.62), Some(25))
         .expect("valid predicate");
-    assert_eq!(
-        predicate.render(),
-        "where vector.search(embedding, $queryVector, 0.62)\nlimit 25"
-    );
+    assert_eq!(predicate.render(), "where vector.search(embedding, $queryVector, 0.62)\nlimit 25");
     let bare = TqlVectorPredicate::try_new("embedding", "queryVector", None, None)
         .expect("valid predicate");
     assert_eq!(bare.render(), "where vector.search(embedding, $queryVector)");
