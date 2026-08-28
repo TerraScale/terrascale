@@ -29,6 +29,7 @@
 //! `docs/streaming/w4-stream.md`.
 
 mod backbone;
+mod payloads;
 mod sources;
 mod subscription;
 #[cfg(test)]
@@ -48,6 +49,11 @@ use crate::{
 pub use backbone::{
     ChangeCheckpoint, ChangeNotification, ChangeNotificationTap, ChangeReplayBatch,
     ChangeReplayRequest, MAX_CHANGE_NOTIFICATION_CAPACITY,
+};
+pub use payloads::{
+    AttachmentChangeEntry, AttachmentChangePayload, CHANGE_PAYLOAD_DIGEST_BYTES,
+    CounterChangeEntry, CounterChangePayload, FamilyChangePayload, MAX_CHANGE_PAYLOAD_ENTRIES,
+    MAX_CHANGE_PAYLOAD_TEXT_BYTES, PayloadShape, TimeSeriesChangePayload,
 };
 pub use sources::StreamSourceKind;
 
@@ -821,16 +827,19 @@ impl StreamPosition {
 }
 
 /// One committed change observed by a change or subscription stream
-/// (PB-6002, SE-03).
+/// (PB-6002, SE-03, GAP-F02).
 ///
 /// The event carries the change kind, tenant scope, the stable
 /// `OperationId`, and the `StorageSequence`, plus exactly one typed
 /// subject: the changed key (collection and document identity) for
 /// journal-derived events, or the content-free
 /// [`ConflictRecord`] for conflict
-/// events. It stays small: content-bearing payloads are fetched separately,
-/// and the event is observable only after its commit is published — or, for
-/// a conflict, after the observing seam records it.
+/// events. It stays small: the one body an event may carry is the bounded
+/// typed family change payload (GAP-F02) — counter totals, a time-series
+/// segment summary, or content-addressed attachment metadata — and every
+/// other content-bearing payload is fetched separately. The event is
+/// observable only after its commit is published — or, for a conflict,
+/// after the observing seam records it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChangeEvent {
     kind: ChangeKind,
@@ -838,6 +847,7 @@ pub struct ChangeEvent {
     operation_id: OperationId,
     sequence: StorageSequence,
     subject: ChangeSubject,
+    payload: Option<FamilyChangePayload>,
 }
 
 /// The typed subject one event carries. Crate-only: the closed subject set
@@ -870,7 +880,30 @@ impl ChangeEvent {
             operation_id,
             sequence,
             subject: ChangeSubject::Key { collection, document },
+            payload: None,
         }
+    }
+
+    /// Attaches one family change payload. Crate-only: payloads originate
+    /// from the expansion mint ([`payloads::derive`]) alone, so no other
+    /// path can put a body on an event.
+    pub(crate) fn with_payload(mut self, payload: FamilyChangePayload) -> Self {
+        self.payload = Some(payload);
+        self
+    }
+
+    /// Returns the typed family change payload this event carries, or
+    /// `None` for every event without one: user-document events, conflict
+    /// observations, and the family kinds the payload vocabulary leaves
+    /// payload-less by disposition.
+    ///
+    /// A payload is a bounded notification body — counter totals, a
+    /// time-series segment summary, or content-addressed attachment
+    /// metadata — never a document body, a values array, or attachment
+    /// bytes.
+    #[must_use]
+    pub fn payload(&self) -> Option<&FamilyChangePayload> {
+        self.payload.as_ref()
     }
 
     /// Creates one conflict event from a recorded conflict. Crate-only:
@@ -890,6 +923,7 @@ impl ChangeEvent {
             operation_id,
             sequence,
             subject: ChangeSubject::Conflict(record),
+            payload: None,
         }
     }
 
