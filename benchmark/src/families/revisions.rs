@@ -40,7 +40,7 @@
 //! counting against disposed digests — a revert re-puts references V1 also
 //! never verifies (`AttachmentsStorage.PutAttachmentRevert`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::engine::{
     DocumentHead, DocumentVersionContract, EngineError, HeadCondition, Transaction,
@@ -60,12 +60,19 @@ use crate::types::{
 
 /// The default minimum age of revisions-bin entries: V1's 30 days
 /// (`RevisionsBinConfiguration.MinimumEntriesAgeToKeepInMin` default
-/// `30 * 24 * 60`, `RevisionsBinConfiguration.cs:63`).
+/// `30 * 24 * 60`, `RevisionsBinConfiguration.cs:27`).
 pub const DEFAULT_BIN_MINIMUM_AGE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
 /// The bin cleaner's per-run document bound: V1's 64-bit batch size
 /// (`RevisionsBinCleaner.cs:27`, `10 * 1024`).
 pub const MAX_BIN_BATCH_DOCUMENTS: usize = 10 * 1024;
+
+/// The largest count limit the reserved configuration record can carry:
+/// its integers are i64 (`DocumentValue::Integer`). Construction refuses
+/// count limits above this bound so no staged policy is silently loosened
+/// on encode — the schemas module's `MAX_INTERCHANGE_INTEGER` discipline
+/// (`src/families/payloads.rs`).
+const MAX_RECORDED_COUNT: u64 = i64::MAX as u64;
 
 /// Rejects a deadline that has already elapsed.
 fn validate_deadline(deadline: &Deadline) -> Result<(), RequestValidationError> {
@@ -113,8 +120,9 @@ impl CollectionRevisionsConfiguration {
     /// # Errors
     ///
     /// Returns [`RequestValidationError::InvalidFamilyPayload`] for a zero
-    /// minimum-keep count, a negative minimum age, or a zero per-update
-    /// deletion cap.
+    /// minimum-keep count, a negative minimum age, a zero per-update
+    /// deletion cap, or a count limit above the reserved record's i64
+    /// ceiling ([`MAX_RECORDED_COUNT`]).
     pub fn try_new(
         minimum_revisions_to_keep: Option<u64>,
         minimum_revision_age_to_keep_ms: Option<i64>,
@@ -125,10 +133,16 @@ impl CollectionRevisionsConfiguration {
         if minimum_revisions_to_keep.is_some_and(|value| value == 0) {
             return Err(RequestValidationError::InvalidFamilyPayload);
         }
+        if minimum_revisions_to_keep.is_some_and(|value| value > MAX_RECORDED_COUNT) {
+            return Err(RequestValidationError::InvalidFamilyPayload);
+        }
         if minimum_revision_age_to_keep_ms.is_some_and(|value| value < 0) {
             return Err(RequestValidationError::InvalidFamilyPayload);
         }
         if maximum_revisions_to_delete_upon_update.is_some_and(|value| value == 0) {
+            return Err(RequestValidationError::InvalidFamilyPayload);
+        }
+        if maximum_revisions_to_delete_upon_update.is_some_and(|value| value > MAX_RECORDED_COUNT) {
             return Err(RequestValidationError::InvalidFamilyPayload);
         }
         Ok(Self {
@@ -188,7 +202,7 @@ impl CollectionRevisionsConfiguration {
 /// The whole revisions configuration of one tenant — V1's
 /// `RevisionsConfiguration`: a default policy plus per-collection policies
 /// (`RevisionsConfiguration.cs:23-32`) — with the bin cleaner's minimum
-/// entry age (`RevisionsBinConfiguration.cs:63`).
+/// entry age (`RevisionsBinConfiguration.cs:27`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RevisionsDatabaseConfiguration {
     default: Option<CollectionRevisionsConfiguration>,
@@ -860,7 +874,7 @@ impl RevisionsBinCleanWrite {
     /// # Errors
     ///
     /// Returns [`RequestValidationError::InvalidFamilyPayload`] for an empty
-    /// candidate list or a negative cutoff,
+    /// or repeated candidate list or a negative cutoff,
     /// [`RequestValidationError::InvalidRange`] for a candidate list past
     /// [`MAX_BIN_BATCH_DOCUMENTS`], [`RequestValidationError::InvalidDeadline`]
     /// for an elapsed deadline, and
@@ -875,6 +889,13 @@ impl RevisionsBinCleanWrite {
         cancellation: Cancellation,
     ) -> Result<Self, RequestValidationError> {
         if documents.is_empty() {
+            return Err(RequestValidationError::InvalidFamilyPayload);
+        }
+        // A repeated candidate would stage the same record deleted twice —
+        // a transaction that can never commit — and inflate the purged
+        // count; V1's cleaner feeds distinct ids from one bin page.
+        let mut seen = BTreeSet::new();
+        if documents.iter().any(|document| !seen.insert(document)) {
             return Err(RequestValidationError::InvalidFamilyPayload);
         }
         if documents.len() > MAX_BIN_BATCH_DOCUMENTS {
@@ -1703,7 +1724,9 @@ impl SnapshotEntry {
 /// to the cap. Deletion proceeds oldest-first and stops at the first
 /// revision younger than the age floor — in a revision-ordered log every
 /// later revision is younger still, so the stop covers V1's per-update
-/// behavior and its enforce-mode skip alike. The returned flag is V1's
+/// behavior and its enforce-mode skip alike. The removed count includes the
+/// per-document W3-F trim's removals whenever that policy still bounds the
+/// log after the drain. The returned flag is V1's
 /// `HasMore`: the cap, not the policy, stopped the deletion
 /// (`RevisionsStorage.cs:833`).
 fn apply_policy(
@@ -1758,12 +1781,18 @@ fn apply_policy(
     }
     log.entries.drain(..drop);
     side.retain_log(log);
-    // The per-document W3-F policy may still bound the log; keep its trim
-    // and reflect it in the side car.
+    // The per-document W3-F policy may still bound the log; keep its trim,
+    // reflect it in the side car, and count its removals alongside the
+    // drain — both are policy removals.
+    let before_trim = log.entries.len();
     log.trim_to_policy();
+    let trimmed = before_trim - log.entries.len();
     side.retain_log(log);
-    let removed = u64::try_from(drop).unwrap_or(u64::MAX);
-    (removed, capped && usize::try_from(removed).is_ok_and(|removed| removed >= budget))
+    let removed = u64::try_from(drop + trimmed).unwrap_or(u64::MAX);
+    // HasMore stays driven by the cap alone (`RevisionsStorage.cs:833`):
+    // the age floor, not the cap, stopped the collection drain whenever it
+    // removed fewer than the budget.
+    (removed, capped && drop >= budget)
 }
 
 /// Reads the tenant's recorded configuration through one transaction.
@@ -2041,6 +2070,11 @@ impl<'engine> super::FamilyStore<'engine> {
             attachments: references.clone(),
         });
         let (removed_by_policy, has_more) = apply_policy(&mut log, &mut side, &policy, now_ms);
+        // The W3-F per-document policy may have trimmed the log inside the
+        // push above, and the collection policy may have had nothing to
+        // drop (its four early returns reap nothing); either way the side
+        // car follows the log on every write.
+        side.retain_log(&log);
 
         // Everything validated; stage the two records now.
         let log_id = record_id("revisions", &[document.as_str()])
@@ -3355,8 +3389,9 @@ mod tests {
                 })
                 .collect(),
         };
-        let configuration = CollectionRevisionsConfiguration::try_new(Some(4), None, None, false, false)
-            .expect("valid configuration");
+        let configuration =
+            CollectionRevisionsConfiguration::try_new(Some(4), None, None, false, false)
+                .expect("valid configuration");
         let (removed, has_more) = super::apply_policy(&mut log, &mut side, &configuration, 2_000);
         assert_eq!(removed, 3, "the drain removes one and the W3-F trim two more");
         assert!(!has_more, "no cap stopped the collection policy");
