@@ -11,3 +11,5 @@ mod result_statistics;
 mod tql_golden_vectors;
 mod tql_public;
 mod tql_rql_parity_vectors;
+mod vector_conformance_vectors;
+mod vector_search;
