@@ -116,7 +116,7 @@ separate agent path.
 **Why.** Every element is the engine's existing discipline applied once more:
 identity allocation inside the creating transaction is the already-adjudicated
 no-explicit-ID rule (uniqueness is a database invariant, so a crashed create
-leaks no ids — the GAP-D01 record's row 12; `identities_read`/
+leaks no ids — the GAP-D01 record's row 12 (docs/sessions/gapd01-ownership-decision.md:65); `identities_read`/
 `identities_stage` at `src/families/store.rs:670,686`); reserved records under a
 distinct kind key are exactly how family values live today
 (`src/families/state.rs:32` — one reserved collection `terrabase.families`;
