@@ -533,6 +533,10 @@ pub struct Engine {
     /// Engine's lifetime. The leading underscore marks a guard whose `Drop`
     /// is its only effect.
     _index_subscription: SubscriptionGuard,
+    /// The bounded in-process audit journal of bulk-by-query runs (GAP-Q10):
+    /// one content-free event pair per run, engine-owned, with durable
+    /// audit shipping belonging to the Platform side.
+    bulk_audit: Arc<crate::query::bulk::BulkAuditJournal>,
 }
 
 impl Engine {
@@ -570,6 +574,7 @@ impl Engine {
             subscriptions,
             indexes,
             _index_subscription: index_subscription,
+            bulk_audit: Arc::new(crate::query::bulk::BulkAuditJournal::new()),
         })
     }
 
@@ -978,6 +983,37 @@ impl Engine {
         Arc::clone(&self.indexes)
     }
 
+    /// Returns the retained bulk-by-query audit events in recorded order
+    /// (GAP-Q10).
+    ///
+    /// The journal is bounded and in-process: the newest
+    /// [`MAX_BULK_AUDIT_ENTRIES`](crate::query::bulk::MAX_BULK_AUDIT_ENTRIES)
+    /// events of the engine are retained, each carrying only structural
+    /// identity and counts. V1 writes one audit line per operation at
+    /// scheduling time carrying the query text
+    /// (`AbstractDatabaseOperationQueriesHandlerProcessor.cs:55-66`, pinned
+    /// V1 tree); the engine journal's content-free shape is the
+    /// accepted-difference the decision record names, and durable audit
+    /// shipping belongs to the Platform side.
+    #[must_use]
+    pub fn bulk_operations_audit(&self) -> Vec<crate::query::bulk::BulkAuditEntry> {
+        self.bulk_audit.entries()
+    }
+
+    /// Records one bulk-by-query audit event. Crate-only: the query-to-write
+    /// bridge (`crate::query::bulk`) is the only writer.
+    pub(crate) fn record_bulk_audit(
+        &self,
+        stage: crate::query::bulk::BulkAuditStage,
+        kind: crate::query::bulk::BulkOperationKind,
+        tenant: &TenantId,
+        operation: Option<&OperationId>,
+        selected: u64,
+        processed: u64,
+    ) {
+        self.bulk_audit.record(stage, kind, tenant, operation, selected, processed);
+    }
+
     /// Runs one auto-index lifecycle maintenance pass (IX-03 rider).
     ///
     /// This is the engine-owned body a host schedules on its own timer
@@ -1252,6 +1288,31 @@ impl Transaction<'_> {
         let collection = self.read(&id)?.map(|document| document.collection().clone());
         self.writes.push(StagedWrite::Delete { collection, id, expected });
         Ok(())
+    }
+
+    /// Stages one collection-scoped document deletion (GAP-Q10).
+    ///
+    /// Storage keys a document by tenant, collection, and identifier, and
+    /// nothing forbids reusing one identifier across a tenant's collections,
+    /// so the identifier-only [`Transaction::delete`] resolves a reused
+    /// identifier to whichever collection storage reaches first. A
+    /// bulk-by-query selection targets one collection by construction, so
+    /// its deletions resolve by the exact key: this variant stages the
+    /// collection-named delete the storage seam already defines, with no
+    /// lookup. The caller owns existence — the bulk bridge reads the target
+    /// first and refuses a vanished one rather than staging a phantom
+    /// tombstone.
+    pub fn delete_in_collection(
+        &mut self,
+        collection: &CollectionName,
+        id: DocumentId,
+        expected: ExpectedVersion,
+    ) {
+        self.writes.push(StagedWrite::Delete {
+            collection: Some(collection.clone()),
+            id,
+            expected,
+        });
     }
 
     /// Publishes this transaction at the requested local durability point.

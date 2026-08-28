@@ -25,8 +25,11 @@ mod spec;
 mod statistics;
 mod v1;
 
+pub mod bulk;
 pub mod tql;
 
+#[cfg(test)]
+mod bulk_tests;
 #[cfg(test)]
 mod includes_tests;
 #[cfg(test)]
@@ -34,6 +37,12 @@ mod tests;
 
 use std::sync::Arc;
 
+pub use bulk::{
+    BulkAuditEntry, BulkAuditStage, BulkByQueryOptions, BulkByQueryReceipt, BulkDetail,
+    BulkDetailOutcome, BulkOperationKind, BulkPageReceipt, BulkRefusal, BulkTermination,
+    DeleteByQueryRequest, DeletionConfirmation, MAX_BULK_AUDIT_ENTRIES, MAX_BULK_DETAILS,
+    MAX_BULK_PAGE_DOCUMENTS, PatchByQueryRequest,
+};
 pub use includes::{
     CounterInclude, DocumentInclude, INCLUDE_READ_WINDOW, IncludeClause, IncludePath, IncludeSet,
     IncludedCounters, IncludedTimeSeries, MAX_INCLUDE_COUNTER_NAMES, MAX_INCLUDE_DEPTH,
