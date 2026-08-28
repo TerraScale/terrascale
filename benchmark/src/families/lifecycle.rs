@@ -43,7 +43,7 @@ use crate::operations::RequestValidationError;
 use crate::types::{Cancellation, Deadline, DocumentId, ExpectedVersion, TenantScope};
 
 use super::state::{
-    ArchivalRecord, LifecycleRecord, Records, RESERVED_COLLECTION, family_key, kind_of_record,
+    ArchivalRecord, LifecycleRecord, RESERVED_COLLECTION, Records, family_key, kind_of_record,
     now_millis, record_id,
 };
 use super::{FamilyError, FamilyKind, FamilyReadContext, FamilyStore, map_begin_error, store};
@@ -347,7 +347,10 @@ fn owner_of(id: &DocumentId, kind: &str) -> Result<Option<DocumentId>, FamilyErr
         return Ok(None);
     }
     let rebuilt = record_id(kind, &[owner])?;
-    Ok((rebuilt == *id).then(|| DocumentId::try_new(owner).map_err(|_| FamilyError::InvalidRequest)).transpose()?)
+    if rebuilt != *id {
+        return Ok(None);
+    }
+    DocumentId::try_new(owner).map(Some).map_err(|_| FamilyError::InvalidRequest)
 }
 
 /// Maps snapshot enumeration failures to their family cases, mirroring
@@ -391,14 +394,9 @@ impl<'engine> FamilyStore<'engine> {
     /// document does not parse as family state — the recorded W3-F
     /// collision limit, which fails the pass closed rather than skipping
     /// state it cannot name.
-    pub fn plan_lifecycle_pass(
-        &self,
-        scope: &TenantScope,
-    ) -> Result<LifecyclePass, FamilyError> {
-        let snapshot = self
-            .engine
-            .read_snapshot(scope)
-            .map_err(|error| map_snapshot_error(&error))?;
+    pub fn plan_lifecycle_pass(&self, scope: &TenantScope) -> Result<LifecyclePass, FamilyError> {
+        let snapshot =
+            self.engine.read_snapshot(scope).map_err(|error| map_snapshot_error(&error))?;
         let operation = store::internal_read_operation()?;
         let mut transaction = self
             .engine
@@ -420,13 +418,14 @@ impl<'engine> FamilyStore<'engine> {
             if window.is_empty() {
                 break;
             }
-            after = Some(window.last().expect("non-empty window").id().clone());
+            let Some(last) = window.last() else { break };
+            after = Some(last.id().clone());
             for document in window {
                 if document.collection().as_str() != RESERVED_COLLECTION {
                     continue;
                 }
-                let kind = kind_of_record(document.id())
-                    .ok_or(FamilyError::ReservedStateInvalid)?;
+                let kind =
+                    kind_of_record(document.id()).ok_or(FamilyError::ReservedStateInvalid)?;
                 match kind {
                     FamilyKind::ExpirationRefresh | FamilyKind::Archival => {
                         found.push((kind, document.id().clone(), document.value().clone()));
@@ -513,148 +512,29 @@ impl<'engine> FamilyStore<'engine> {
         pass: &LifecyclePass,
     ) -> Result<LifecyclePassStaged, FamilyError> {
         self.bind_transaction(transaction, pass.tenant_scope())?;
-        let mut deleted = Vec::new();
-        let mut refreshed = Vec::new();
-        let mut scheduled = Vec::new();
-        let mut archived = Vec::new();
-        let mut cleared_stale = Vec::new();
         let mut skipped = Vec::new();
-        let now = now_millis();
-
         // Deletions first: expiry outranks the other actions, and each
         // deletion is staged as one unit — document delete, lifecycle
         // record clear, family tombstone — inside the driver's single
         // transaction, so no intermediate state is observable.
-        for document in &pass.deletions {
-            let id = record_id("lifecycle", &[document.as_str()])?;
-            let Some(record_value) = Records::new(transaction).read(&id)? else {
-                skipped.push(document.clone());
-                continue;
-            };
-            let record = LifecycleRecord::decode(&record_value)?;
-            let Some((_, version, _)) = Records::new(transaction).user_document(document)?
-            else {
-                skipped.push(document.clone());
-                continue;
-            };
-            // V1 re-verifies the expiry inside the deleting command
-            // (ExpirationStorage.cs:29-35); the transaction's view is the
-            // authority, not the plan.
-            if !record.is_expired(now) {
-                skipped.push(document.clone());
-                continue;
-            }
-            transaction
-                .delete(document.clone(), ExpectedVersion::Exact(version))
-                .map_err(|_| FamilyError::StorageFailure)?;
-            let mut records = Records::new(transaction);
-            records.clear(&id)?;
-            // Record the lifecycle family tombstone with the same encoding
-            // the public `TombstoneWrite::Record` stage produces, so the
-            // landed guard order fences stale lifecycle writers.
-            let tombstone_id = record_id("tombstones", &[document.as_str()])?;
-            let mut tombstone = match records.read(&tombstone_id)? {
-                Some(value) => super::state::TombstoneRecord::decode(&value)?,
-                None => super::state::TombstoneRecord::default(),
-            };
-            tombstone.entries.insert(
-                family_key(FamilyKind::ExpirationRefresh).to_owned(),
-                (version, now_millis()),
-            );
-            records.write(tombstone_id, tombstone.encode())?;
-            deleted.push(document.clone());
-        }
-
+        let deleted = stage_expiry_deletions(transaction, &pass.deletions, &mut skipped)?;
         // Refresh consumption: the due marker is removed and the expiry is
         // left untouched (V1 RefreshStorage.cs:31-42).
-        for document in &pass.refreshes {
-            let id = record_id("lifecycle", &[document.as_str()])?;
-            let mut records = Records::new(transaction);
-            let Some(record_value) = records.read(&id)? else {
-                skipped.push(document.clone());
-                continue;
-            };
-            let mut record = LifecycleRecord::decode(&record_value)?;
-            if records.user_document(document)?.is_none()
-                || !record.refresh_at.is_some_and(|at| at <= now)
-            {
-                skipped.push(document.clone());
-                continue;
-            }
-            record.refresh_at = None;
-            write_record(&mut records, id, record.expires_at.is_none() && record.refresh_at.is_none(), record.encode())?;
-            refreshed.push(document.clone());
-        }
-
-        // Archival schedule materialization: a policy without a schedule
-        // gets one — `now + after_ms` — recorded durably in the archival
-        // record, so the schedule survives restarts and later passes
-        // (decision D3 in the packet record).
-        for document in &pass.schedules {
-            let id = record_id("archival", &[document.as_str()])?;
-            let mut records = Records::new(transaction);
-            let Some(record_value) = records.read(&id)? else {
-                skipped.push(document.clone());
-                continue;
-            };
-            let mut record = ArchivalRecord::decode(&record_value)?;
-            if records.user_document(document)?.is_none()
-                || record.archived
-                || record.at.is_some()
-                || record.after_ms.is_none()
-            {
-                skipped.push(document.clone());
-                continue;
-            }
-            record.at = Some(now.saturating_add(record.after_ms.unwrap_or(0)));
-            records.write(id, record.encode())?;
-            scheduled.push(document.clone());
-        }
-
-        // Archival marks: a due schedule archives the document (V1
-        // DataArchivalStorage.cs:35-44 sets the archived state at the due
-        // time).
-        for document in &pass.archival {
-            let id = record_id("archival", &[document.as_str()])?;
-            let mut records = Records::new(transaction);
-            let Some(record_value) = records.read(&id)? else {
-                skipped.push(document.clone());
-                continue;
-            };
-            let mut record = ArchivalRecord::decode(&record_value)?;
-            if records.user_document(document)?.is_none()
-                || record.archived
-                || !record.at.is_some_and(|at| now >= at)
-            {
-                skipped.push(document.clone());
-                continue;
-            }
-            record.archived = true;
-            records.write(id, record.encode())?;
-            archived.push(document.clone());
-        }
-
+        let refreshed = stage_refresh_consumption(transaction, &pass.refreshes, &mut skipped)?;
+        // Archival schedule materialization (decision D3 in the packet
+        // record) and archival marks (V1 DataArchivalStorage.cs:35-44).
+        let scheduled = stage_archival_schedules(transaction, &pass.schedules, &mut skipped)?;
+        let archived = stage_archival_marks(transaction, &pass.archival, &mut skipped)?;
         // Stale cleanup: the owner is still gone, so the family records
         // that outlived it are cleared.
-        for document in &pass.stale_records {
-            let mut records = Records::new(transaction);
-            if records.user_document(document)?.is_some() {
-                skipped.push(document.clone());
-                continue;
-            }
-            let lifecycle_id = record_id("lifecycle", &[document.as_str()])?;
-            if records.read(&lifecycle_id)?.is_some() {
-                records.clear(&lifecycle_id)?;
-            }
-            let archival_id = record_id("archival", &[document.as_str()])?;
-            if records.read(&archival_id)?.is_some() {
-                records.clear(&archival_id)?;
-            }
-            cleared_stale.push(document.clone());
-        }
-
+        let cleared_stale = stage_stale_cleanup(transaction, &pass.stale_records, &mut skipped)?;
         Ok(LifecyclePassStaged::new(
-            deleted, refreshed, scheduled, archived, cleared_stale, skipped,
+            deleted,
+            refreshed,
+            scheduled,
+            archived,
+            cleared_stale,
+            skipped,
         ))
     }
 
@@ -676,6 +556,7 @@ impl<'engine> FamilyStore<'engine> {
     /// before the read runs, and
     /// [`FamilyError::ReservedStateInvalid`] when a reserved record cannot
     /// be read as family state.
+    #[allow(clippy::needless_pass_by_value)] // the seam contract passes the context by value
     pub fn read_document_visibility(
         &self,
         context: FamilyReadContext,
@@ -711,6 +592,183 @@ impl<'engine> FamilyStore<'engine> {
         }
         Ok(VisibilityReport::new(entries))
     }
+}
+
+/// Stages the planned expiry deletions, re-verified inside the
+/// transaction. Each staged unit is the document delete (exact expected
+/// version), the lifecycle record clear, and the lifecycle family
+/// tombstone.
+fn stage_expiry_deletions(
+    transaction: &mut Transaction<'_>,
+    documents: &[DocumentId],
+    skipped: &mut Vec<DocumentId>,
+) -> Result<Vec<DocumentId>, FamilyError> {
+    let now = now_millis();
+    let mut deleted = Vec::new();
+    for document in documents {
+        let id = record_id("lifecycle", &[document.as_str()])?;
+        let Some(record_value) = Records::new(transaction).read(&id)? else {
+            skipped.push(document.clone());
+            continue;
+        };
+        let record = LifecycleRecord::decode(&record_value)?;
+        let Some((_, version, _)) = Records::new(transaction).user_document(document)? else {
+            skipped.push(document.clone());
+            continue;
+        };
+        // V1 re-verifies the expiry inside the deleting command
+        // (ExpirationStorage.cs:29-35); the transaction's view is the
+        // authority, not the plan.
+        if !record.is_expired(now) {
+            skipped.push(document.clone());
+            continue;
+        }
+        transaction
+            .delete(document.clone(), ExpectedVersion::Exact(version))
+            .map_err(|_| FamilyError::StorageFailure)?;
+        let mut records = Records::new(transaction);
+        records.clear(&id)?;
+        // Record the lifecycle family tombstone with the same encoding the
+        // public `TombstoneWrite::Record` stage produces, so the landed
+        // guard order fences stale lifecycle writers.
+        let tombstone_id = record_id("tombstones", &[document.as_str()])?;
+        let mut tombstone = match records.read(&tombstone_id)? {
+            Some(value) => super::state::TombstoneRecord::decode(&value)?,
+            None => super::state::TombstoneRecord::default(),
+        };
+        tombstone
+            .entries
+            .insert(family_key(FamilyKind::ExpirationRefresh).to_owned(), (version, now_millis()));
+        records.write(tombstone_id, tombstone.encode())?;
+        deleted.push(document.clone());
+    }
+    Ok(deleted)
+}
+
+/// Stages the planned refresh consumptions: the due marker is removed and
+/// the expiry is left untouched (V1 RefreshStorage.cs:31-42).
+fn stage_refresh_consumption(
+    transaction: &mut Transaction<'_>,
+    documents: &[DocumentId],
+    skipped: &mut Vec<DocumentId>,
+) -> Result<Vec<DocumentId>, FamilyError> {
+    let now = now_millis();
+    let mut refreshed = Vec::new();
+    for document in documents {
+        let id = record_id("lifecycle", &[document.as_str()])?;
+        let mut records = Records::new(transaction);
+        let Some(record_value) = records.read(&id)? else {
+            skipped.push(document.clone());
+            continue;
+        };
+        let mut record = LifecycleRecord::decode(&record_value)?;
+        if records.user_document(document)?.is_none() || record.refresh_at.is_none_or(|at| at > now)
+        {
+            skipped.push(document.clone());
+            continue;
+        }
+        record.refresh_at = None;
+        write_record(
+            &mut records,
+            id,
+            record.expires_at.is_none() && record.refresh_at.is_none(),
+            record.encode(),
+        )?;
+        refreshed.push(document.clone());
+    }
+    Ok(refreshed)
+}
+
+/// Stages the planned archival schedule materializations: a policy without
+/// a schedule gets `at = now + after_ms`, recorded durably in the archival
+/// record (decision D3 in the packet record).
+fn stage_archival_schedules(
+    transaction: &mut Transaction<'_>,
+    documents: &[DocumentId],
+    skipped: &mut Vec<DocumentId>,
+) -> Result<Vec<DocumentId>, FamilyError> {
+    let now = now_millis();
+    let mut scheduled = Vec::new();
+    for document in documents {
+        let id = record_id("archival", &[document.as_str()])?;
+        let mut records = Records::new(transaction);
+        let Some(record_value) = records.read(&id)? else {
+            skipped.push(document.clone());
+            continue;
+        };
+        let mut record = ArchivalRecord::decode(&record_value)?;
+        if records.user_document(document)?.is_none()
+            || record.archived
+            || record.at.is_some()
+            || record.after_ms.is_none()
+        {
+            skipped.push(document.clone());
+            continue;
+        }
+        record.at = Some(now.saturating_add(record.after_ms.unwrap_or(0)));
+        records.write(id, record.encode())?;
+        scheduled.push(document.clone());
+    }
+    Ok(scheduled)
+}
+
+/// Stages the planned archival marks: a due schedule archives the document
+/// (V1 DataArchivalStorage.cs:35-44 sets the archived state at the due
+/// time).
+fn stage_archival_marks(
+    transaction: &mut Transaction<'_>,
+    documents: &[DocumentId],
+    skipped: &mut Vec<DocumentId>,
+) -> Result<Vec<DocumentId>, FamilyError> {
+    let now = now_millis();
+    let mut archived = Vec::new();
+    for document in documents {
+        let id = record_id("archival", &[document.as_str()])?;
+        let mut records = Records::new(transaction);
+        let Some(record_value) = records.read(&id)? else {
+            skipped.push(document.clone());
+            continue;
+        };
+        let mut record = ArchivalRecord::decode(&record_value)?;
+        if records.user_document(document)?.is_none()
+            || record.archived
+            || record.at.is_none_or(|at| now < at)
+        {
+            skipped.push(document.clone());
+            continue;
+        }
+        record.archived = true;
+        records.write(id, record.encode())?;
+        archived.push(document.clone());
+    }
+    Ok(archived)
+}
+
+/// Stages the planned stale cleanups: the owner is still gone, so the
+/// lifecycle and archival records that outlived it are cleared.
+fn stage_stale_cleanup(
+    transaction: &mut Transaction<'_>,
+    documents: &[DocumentId],
+    skipped: &mut Vec<DocumentId>,
+) -> Result<Vec<DocumentId>, FamilyError> {
+    let mut cleared = Vec::new();
+    for document in documents {
+        let mut records = Records::new(transaction);
+        if records.user_document(document)?.is_some() {
+            skipped.push(document.clone());
+            continue;
+        }
+        let lifecycle_id = record_id("lifecycle", &[document.as_str()])?;
+        if records.read(&lifecycle_id)?.is_some() {
+            records.clear(&lifecycle_id)?;
+        }
+        let archival_id = record_id("archival", &[document.as_str()])?;
+        if records.read(&archival_id)?.is_some() {
+            records.clear(&archival_id)?;
+        }
+        cleared.push(document.clone());
+    }
+    Ok(cleared)
 }
 
 /// Writes one record value, or clears the record when it holds no state —
@@ -875,16 +933,18 @@ mod tests {
         store
             .stage(
                 transaction,
-                FamilyWriteRequest::lifecycle_update(LifecycleWrite::try_new(
-                    tenant_scope.clone(),
-                    document_id(id),
-                    LifecycleCommand::SetExpiration { at },
-                    ExpectedVersion::Any,
-                    identity.clone(),
-                    deadline(),
-                    cancellation(),
-                )
-                .expect("valid lifecycle write")),
+                FamilyWriteRequest::lifecycle_update(
+                    LifecycleWrite::try_new(
+                        tenant_scope.clone(),
+                        document_id(id),
+                        LifecycleCommand::SetExpiration { at },
+                        ExpectedVersion::Any,
+                        identity.clone(),
+                        deadline(),
+                        cancellation(),
+                    )
+                    .expect("valid lifecycle write"),
+                ),
             )
             .expect("stages the expiry");
     }
@@ -900,16 +960,18 @@ mod tests {
         store
             .stage(
                 transaction,
-                FamilyWriteRequest::lifecycle_update(LifecycleWrite::try_new(
-                    tenant_scope.clone(),
-                    document_id(id),
-                    LifecycleCommand::SetRefresh { at },
-                    ExpectedVersion::Any,
-                    identity.clone(),
-                    deadline(),
-                    cancellation(),
-                )
-                .expect("valid lifecycle write")),
+                FamilyWriteRequest::lifecycle_update(
+                    LifecycleWrite::try_new(
+                        tenant_scope.clone(),
+                        document_id(id),
+                        LifecycleCommand::SetRefresh { at },
+                        ExpectedVersion::Any,
+                        identity.clone(),
+                        deadline(),
+                        cancellation(),
+                    )
+                    .expect("valid lifecycle write"),
+                ),
             )
             .expect("stages the refresh");
     }
@@ -925,15 +987,17 @@ mod tests {
         store
             .stage(
                 transaction,
-                FamilyWriteRequest::archival_update(ArchivalWrite::try_new(
-                    tenant_scope.clone(),
-                    document_id(id),
-                    ArchivalCommand::SetPolicy { after_ms },
-                    identity.clone(),
-                    deadline(),
-                    cancellation(),
-                )
-                .expect("valid archival write")),
+                FamilyWriteRequest::archival_update(
+                    ArchivalWrite::try_new(
+                        tenant_scope.clone(),
+                        document_id(id),
+                        ArchivalCommand::SetPolicy { after_ms },
+                        identity.clone(),
+                        deadline(),
+                        cancellation(),
+                    )
+                    .expect("valid archival write"),
+                ),
             )
             .expect("stages the archival policy");
     }
@@ -1037,7 +1101,7 @@ mod tests {
             .families()
             .read_document_visibility(FamilyReadContext::new(tenant_scope, snapshot), request)
             .expect("reads visibility");
-        report.entries().iter().map(|entry| entry.state()).collect()
+        report.entries().iter().map(super::DocumentVisibility::state).collect()
     }
 
     fn document_present(engine: &Engine, tenant_name: &str, id: &str) -> bool {
@@ -1080,10 +1144,8 @@ mod tests {
             stage_expiration(store, transaction, ts, id, "doc-live", Some(now + 3_600_000));
         });
 
-        let pass = engine
-            .families()
-            .plan_lifecycle_pass(&scope(&engine, "tenant-a"))
-            .expect("plans");
+        let pass =
+            engine.families().plan_lifecycle_pass(&scope(&engine, "tenant-a")).expect("plans");
         assert_eq!(pass.expired_documents(), [document_id("doc-expired")]);
         assert!(pass.refresh_due_documents().is_empty());
 
@@ -1091,7 +1153,10 @@ mod tests {
         assert_eq!(staged.deleted(), [document_id("doc-expired")]);
 
         assert!(!document_present(&engine, "tenant-a", "doc-expired"));
-        assert!(document_present(&engine, "tenant-a", "doc-live"), "only the expired document dies");
+        assert!(
+            document_present(&engine, "tenant-a", "doc-live"),
+            "only the expired document dies"
+        );
         let state = lifecycle_state(&engine, "doc-expired");
         assert!(!state.present(), "the deleted document is not resurrected");
         assert!(
@@ -1153,10 +1218,7 @@ mod tests {
             "a document whose expiry was cleared after the plan is skipped, not deleted"
         );
         assert!(staged.deleted().is_empty());
-        assert!(
-            document_present(&engine, "tenant-a", "doc-1"),
-            "the un-expired document survives"
-        );
+        assert!(document_present(&engine, "tenant-a", "doc-1"), "the un-expired document survives");
         engine.shutdown().expect("shuts down");
     }
 
@@ -1191,10 +1253,8 @@ mod tests {
             stage_refresh(store, transaction, ts, id, "doc-both", Some(now - 1));
         });
 
-        let pass = engine
-            .families()
-            .plan_lifecycle_pass(&scope(&engine, "tenant-a"))
-            .expect("plans");
+        let pass =
+            engine.families().plan_lifecycle_pass(&scope(&engine, "tenant-a")).expect("plans");
         assert_eq!(pass.refresh_due_documents(), [document_id("doc-refresh")]);
         assert_eq!(pass.expired_documents(), [document_id("doc-both")]);
 
@@ -1304,10 +1364,8 @@ mod tests {
             "W3-F keeps family state past a plain delete"
         );
 
-        let pass = engine
-            .families()
-            .plan_lifecycle_pass(&scope(&engine, "tenant-a"))
-            .expect("plans");
+        let pass =
+            engine.families().plan_lifecycle_pass(&scope(&engine, "tenant-a")).expect("plans");
         assert_eq!(pass.stale_records(), [document_id("doc-1")]);
         let staged = run_pass(&engine, "tenant-a", "pass-1");
         assert_eq!(staged.cleared_stale(), [document_id("doc-1")]);
@@ -1325,10 +1383,8 @@ mod tests {
             stage_expiration(store, transaction, ts, id, "doc-b", Some(now - 1));
         });
 
-        let pass = engine
-            .families()
-            .plan_lifecycle_pass(&scope(&engine, "tenant-a"))
-            .expect("plans");
+        let pass =
+            engine.families().plan_lifecycle_pass(&scope(&engine, "tenant-a")).expect("plans");
         assert!(pass.is_empty(), "tenant-a's pass plans nothing for tenant-b");
 
         run_pass(&engine, "tenant-a", "pass-a");
@@ -1386,15 +1442,17 @@ mod tests {
             store
                 .stage(
                     transaction,
-                    FamilyWriteRequest::archival_update(ArchivalWrite::try_new(
-                        ts.clone(),
-                        document_id("doc-archived"),
-                        ArchivalCommand::Archive { at: now },
-                        id.clone(),
-                        deadline(),
-                        cancellation(),
-                    )
-                    .expect("valid archival write")),
+                    FamilyWriteRequest::archival_update(
+                        ArchivalWrite::try_new(
+                            ts.clone(),
+                            document_id("doc-archived"),
+                            ArchivalCommand::Archive { at: now },
+                            id.clone(),
+                            deadline(),
+                            cancellation(),
+                        )
+                        .expect("valid archival write"),
+                    ),
                 )
                 .expect("stages the archival mark");
         });
