@@ -13,6 +13,18 @@
 // payload bytes opaque to the protocol; this wave's store is memory-only
 // and advances the authoritative client state (the checkpoint) while
 // handing payload bytes to an optional materializer.
+//
+// Follow-up repairs (TerraBaseV2#88, warden re-gate MINORs, both pinned
+// red-then-green): the SSE line bound is evaluated only after complete
+// lines are drained from the read buffer, so it measures an actual
+// (undelimited) line, never a reader chunk carrying many complete events;
+// and the reconnect ladder resets only after a sustained-stability
+// horizon (no stream failure for longer than every gap the ladder can
+// schedule), so a stream dying on any cadence inside the horizon — with a
+// healthy delta endpoint — is one sustained outage that still reaches
+// MaxReconnectAttempts. Neither repair changes the public options, their
+// defaults, or the SSE/HTTP contract surfaces; and neither diagnoses why
+// a host's stream dies — the session only bounds its own reconnection.
 
 import {
   syncV2CanonicalCheckpoint,
@@ -299,13 +311,22 @@ const maxDrainBatches = 4096;
 const reconnectDelayDefault = 100;
 const maxReconnectAttemptsDefault = 8;
 const reconnectDelayCapMilliseconds = 30_000;
-/**
- * How long a stream must stay open before the ladder forgets previous
- * attempts: a stream that keeps dying within the window is one sustained
- * outage (attempts accumulate); a stream that was stable for a window
- * starts a fresh ladder on its next failure.
- */
+/** The stream-stability window: the quantum the ladder measures stability in. */
 const reconnectStabilityMilliseconds = 1_000;
+/**
+ * How long the ladder stays sticky after a stream failure — the sustained
+ * stability a stream must outlive before the ladder forgets previous
+ * attempts: the delay cap plus one stability window. Two properties pin
+ * the value. Being open for a single window is not stability: a stream
+ * dying on any cadence just past the window (its delta endpoint healthy)
+ * is one sustained outage and must still reach `MaxReconnectAttempts`.
+ * And the horizon strictly exceeds every gap the ladder itself can
+ * schedule (a single delay is at most the cap), so no late attempt's own
+ * backoff gap can masquerade as stability and reset the ladder
+ * mid-outage.
+ */
+const reconnectStabilityHorizonMilliseconds =
+  reconnectDelayCapMilliseconds + reconnectStabilityMilliseconds;
 const maxSafeInteger = 9_007_199_254_740_991n;
 
 /**
@@ -342,8 +363,12 @@ function errorMessageOf(error: unknown): string {
  * `LastError` on the store and climb a bounded exponential-backoff ladder
  * (`ReconnectDelayMilliseconds` base, jittered, capped at 30 s, at most
  * `MaxReconnectAttempts` attempts; a recovered tick clears the recorded
- * error, and a stream that stays open for a stability window starts a
- * fresh ladder on its next failure). Terminal codes — `session_closed`,
+ * error, and the ladder forgets previous attempts only after a
+ * sustained-stability horizon — no stream failure for longer than every
+ * gap the ladder can schedule, the 30 s cap plus the 1 s window — so a
+ * stream that dies on any cadence inside the horizon is one sustained
+ * outage that still reaches `MaxReconnectAttempts`). Terminal codes —
+ * `session_closed`,
  * `scope_refused`, `http_401`, `http_403` — and ladder exhaustion
  * transition the session to
  * the terminal `failed` state with `LastError` recorded and the host
@@ -366,7 +391,7 @@ export class TerraScaleSyncV2Session {
   #status: SyncV2ConnectionStatus = "idle";
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   #reconnectAttempts = 0;
-  #streamOpenedAt = 0;
+  #lastStreamFailureAt = 0;
 
   public constructor(options: TerraScaleSyncV2SessionOptions) {
     if (options.Url.length === 0 || !/^https?:/u.test(options.Url)) {
@@ -685,7 +710,6 @@ export class TerraScaleSyncV2Session {
       },
       (error) => this.#onStreamEnded(error),
     );
-    this.#streamOpenedAt = Date.now();
   }
 
   #onStreamEnded(error: unknown): void {
@@ -743,13 +767,19 @@ export class TerraScaleSyncV2Session {
       // stream end and the drain of the same tick) climb one ladder.
       return;
     }
-    if (Date.now() - this.#streamOpenedAt >= reconnectStabilityMilliseconds) {
-      // The previous stream was stable for a full window, so this failure
-      // is a fresh outage, not a continuation of the last one. (Without
-      // this, a stream that keeps dying while the delta endpoint answers
-      // would reset its own ladder through the tick's drain and loop.)
+    const failureAt = Date.now();
+    if (failureAt - this.#lastStreamFailureAt >= reconnectStabilityHorizonMilliseconds) {
+      // No stream failure within the sustained-stability horizon — the
+      // stream outlived every backoff gap the ladder itself can schedule
+      // (the delay cap plus a window) — so this failure starts a fresh
+      // outage on a fresh ladder instead of continuing the last one.
       this.#reconnectAttempts = 0;
     }
+    // Otherwise the failure sits inside the horizon and continues the same
+    // outage: the ladder keeps climbing, so a stream that dies on any
+    // cadence inside the horizon (its delta endpoint healthy) still
+    // reaches MaxReconnectAttempts instead of resetting its own ladder.
+    this.#lastStreamFailureAt = failureAt;
     const maxAttempts = this.#options.MaxReconnectAttempts ?? maxReconnectAttemptsDefault;
     if (this.#reconnectAttempts >= maxAttempts) {
       this.#failTerminally(new SyncV2SessionError(
@@ -777,9 +807,9 @@ export class TerraScaleSyncV2Session {
       void this.#drainDeltas().then(() => {
         if (this.#status === "reconnecting") {
           // A completed reconnect-tick drain clears the recorded transient
-          // error; the ladder itself resets only after a stable stream
-          // window (a dying stream with a healthy delta endpoint must not
-          // reset its own ladder).
+          // error; the ladder itself resets only after the
+          // sustained-stability horizon (a dying stream with a healthy
+          // delta endpoint must not reset its own ladder).
           this.#setStatus("live");
         }
       }).catch((error: unknown) => {
@@ -1049,15 +1079,6 @@ function sseOverFetchWith(
           break;
         }
         buffer += decoder.decode(value, { stream: true });
-        if (buffer.length > sseMaxLineCodeUnits) {
-          // A pathological host streaming an undelimited line can never
-          // grow the buffer (or the read loop) without bound.
-          endWithError(new SyncV2SessionError(
-            "stream_limit",
-            `an event-stream line exceeds its ${sseMaxLineCodeUnits}-unit bound`,
-          ));
-          return;
-        }
         let newline = buffer.indexOf("\n");
         while (newline !== -1) {
           const line = buffer.slice(0, newline).replace(/\r$/u, "");
@@ -1083,6 +1104,20 @@ function sseOverFetchWith(
             dataLines.push(data);
           }
           newline = buffer.indexOf("\n");
+        }
+        // Only after every complete line is drained does the bound see the
+        // residual buffer — the one line the host has not terminated yet.
+        // (Evaluated on the read chunk, the bound measured transport
+        // coalescing, not line length: one chunk carrying many complete
+        // events — each individually far under the bound — tripped it.)
+        if (buffer.length > sseMaxLineCodeUnits) {
+          // A pathological host streaming an undelimited line can never
+          // grow the buffer (or the read loop) without bound.
+          endWithError(new SyncV2SessionError(
+            "stream_limit",
+            `an event-stream line exceeds its ${sseMaxLineCodeUnits}-unit bound`,
+          ));
+          return;
         }
       }
       if (!closed && !ended) {
