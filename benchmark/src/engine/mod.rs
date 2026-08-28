@@ -669,7 +669,7 @@ impl Engine {
     ///
     /// The store is bound to this Engine's lifetime; streaming behavior is
     /// implemented in the streaming module. This acquisition path is the only
-    /// production way to obtain a [`StreamStore`](crate::streaming::StreamStore),
+    /// production way to obtain a [`StreamStore`],
     /// mirroring [`Engine::queries`] and [`Engine::families`].
     pub fn streams(&self) -> StreamStore<'_> {
         StreamStore::from_engine(self)

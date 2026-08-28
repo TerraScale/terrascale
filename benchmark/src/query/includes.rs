@@ -15,7 +15,7 @@
 //! [`MAX_INCLUDE_DOCUMENTS`]; and the one hazard chaining introduces — a
 //! reference cycle — is detected over the finite include graph the
 //! execution actually traversed and refused as
-//! [`QueryError::IncludeCycle`](super::QueryError::IncludeCycle). There is
+//! [`QueryError::IncludeCycle`]. There is
 //! no recursion anywhere on this path: the expansion is a bounded level
 //! walk and the cycle test is an explicit stack.
 //!

@@ -113,7 +113,7 @@ pub enum QueryError {
     /// of following it.
     IncludeCycle,
     /// The include set would materialize more than
-    /// [`MAX_INCLUDE_DOCUMENTS`](includes::MAX_INCLUDE_DOCUMENTS) distinct
+    /// [`MAX_INCLUDE_DOCUMENTS`] distinct
     /// documents. Depth bounds the levels, not the width, so this is the
     /// bound that keeps one array field from materializing without limit.
     IncludeBoundExceeded,

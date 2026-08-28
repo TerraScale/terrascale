@@ -429,7 +429,7 @@ impl<'engine> IngestStream<'engine> {
     /// reaches the request's bound (or at source exhaustion). The
     /// cancellation signal gates between pulls and before the final partial
     /// batch publishes — a shareable by-reference signal, like the
-    /// streaming seam's, because a cloned [`Cancellation`] is an
+    /// streaming seam's, because a cloned [`Cancellation`](crate::types::Cancellation) is an
     /// independent snapshot.
     ///
     /// # Panics

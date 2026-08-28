@@ -30,7 +30,7 @@
 //!
 //! Exhaustion is refused, never wrapped: the planning step applies the
 //! identity stage's own ceiling inequality
-//! ([`IDENTITY_CEILING`](self::IDENTITY_CEILING)), and the stage refuses
+//! ([`IDENTITY_CEILING`]), and the stage refuses
 //! again underneath it.
 
 use crate::engine::Engine;
