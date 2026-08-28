@@ -24,9 +24,9 @@ use super::payloads::{
     IdentityRangeResult, IdentityRead, IdentityWrite, LifecycleCommand, LifecycleRead,
     LifecycleResult, LifecycleWrite, MAX_IDENTITY_VALUE, RevisionCommand, RevisionEntry,
     RevisionPage, RevisionRead, RevisionWrite, RollupPolicy, SchemaDefinition, TimeSeriesAppend,
-    TimeSeriesBatchWrite, TimeSeriesDelete, TimeSeriesEntry, TimeSeriesPage, TimeSeriesPolicy,
-    TimeSeriesRead, TombstoneCommand, TombstoneEntry, TombstoneRead, TombstoneResult,
-    TombstoneWrite, ValidationRead, ValidationResult, ValidationWrite,
+    TimeSeriesBatchWrite, TimeSeriesDelete, TimeSeriesEntry, TimeSeriesPage, TimeSeriesPaging,
+    TimeSeriesPolicy, TimeSeriesRead, TombstoneCommand, TombstoneEntry, TombstoneRead,
+    TombstoneResult, TombstoneWrite, ValidationRead, ValidationResult, ValidationWrite,
 };
 use super::schemas::{validate_schema, violations};
 use super::state::{
@@ -432,11 +432,26 @@ fn time_series_read(
         Some(value) => TimeSeriesRecord::decode(&value)?,
         None => TimeSeriesRecord::default(),
     };
+    // GAP-F04: a rollup selector addresses one derived section; a name the
+    // series' stored policy does not carry is the typed policy refusal, so
+    // a removed rollup stops being addressable instead of serving stale
+    // points.
+    let view: &[TimeSeriesAppend] = match request.rollup() {
+        Some(rollup) => {
+            let policy = record.policy.as_ref().ok_or(FamilyError::TimeSeriesPolicyInvalid)?;
+            if policy.rollups().iter().any(|configured| configured.name() == rollup) {
+                record.rollups.get(rollup).map_or(&[][..], Vec::as_slice)
+            } else {
+                return Err(FamilyError::TimeSeriesPolicyInvalid);
+            }
+        }
+        None => &record.entries,
+    };
     // The retention policy bounds both read paths symmetrically: a ranged
     // read whose entire range precedes the horizon is a typed range error,
     // and a full read returns the retained view only. The horizon is derived
-    // from the newest stored point, because retention cleanup itself belongs
-    // to the streaming packet.
+    // from the newest stored raw point and bounds the rollup view the same
+    // way, because retention cleanup (GAP-F04) trims both to it.
     let horizon =
         record.policy.as_ref().and_then(TimeSeriesPolicy::retention_ms).and_then(|retention| {
             record.entries.last().map(|newest| newest.timestamp().saturating_sub(retention))
@@ -446,13 +461,28 @@ fn time_series_read(
     {
         return Err(FamilyError::TimeSeriesRangeInvalid);
     }
-    let entries = record
-        .entries
+    // The matched view: range- and horizon-filtered, in timestamp order,
+    // before any paging. Its length is the reported total.
+    let matched: Vec<&TimeSeriesAppend> = view
         .iter()
         .filter(|entry| match request.range() {
             Some(range) => entry.timestamp() >= range.start() && entry.timestamp() <= range.end(),
             None => horizon.is_none_or(|bound| entry.timestamp() >= bound),
         })
+        .collect();
+    let total = u64::try_from(matched.len()).unwrap_or(u64::MAX);
+    // GAP-F04 paging: the cursor serves strictly-after entries, the limit
+    // bounds the page, and the next cursor is the last served timestamp
+    // exactly when more matched entries follow.
+    let after = request.paging().and_then(TimeSeriesPaging::after);
+    let served =
+        matched.iter().copied().filter(|entry| after.is_none_or(|bound| entry.timestamp() > bound));
+    let limit = request
+        .paging()
+        .and_then(TimeSeriesPaging::limit)
+        .map_or(usize::MAX, |limit| usize::try_from(limit).unwrap_or(usize::MAX));
+    let entries: Vec<TimeSeriesEntry> = served
+        .take(limit)
         .map(|entry| {
             TimeSeriesEntry::new(
                 entry.timestamp(),
@@ -461,7 +491,16 @@ fn time_series_read(
             )
         })
         .collect();
-    Ok(TimeSeriesPage::new(entries, record.policy.clone()))
+    let served_count = entries.len();
+    let next = if served_count < limit
+        || matched.last().is_none_or(|last| {
+            entries.last().is_some_and(|page| page.timestamp() >= last.timestamp())
+        }) {
+        None
+    } else {
+        entries.last().map(TimeSeriesEntry::timestamp)
+    };
+    Ok(TimeSeriesPage::new(entries, record.policy.clone(), total, next))
 }
 
 fn validate_policy(policy: &TimeSeriesPolicy) -> Result<(), FamilyError> {
@@ -523,7 +562,10 @@ fn time_series_stage(
     }
     record.entries.sort_by_key(TimeSeriesAppend::timestamp);
     record.arity = arity;
-    let empty = record.entries.is_empty() && record.policy.is_none();
+    // GAP-F04: derived rollup sections are record state too, so a record is
+    // empty only when it holds neither raw points, nor a policy, nor any
+    // section.
+    let empty = record.entries.is_empty() && record.policy.is_none() && record.rollups.is_empty();
     write_or_clear(records, id, empty, record.encode())
 }
 
