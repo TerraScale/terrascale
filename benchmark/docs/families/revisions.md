@@ -266,12 +266,53 @@ Worktree `.worktrees/terrabasev2-gapf05`, toolchain pin honored
 | --- | --- |
 | `cargo fmt --all -- --check` | 0 |
 | `cargo check --workspace --locked` | 0 |
-| `cargo test --workspace --locked` | 0 (1225 passed / 0 failed across 45 suites, dev profile) |
+| `cargo test --workspace --locked` (dev profile) | 0 — one fully green run: 1225 passed / 0 failed across 45 suites |
 | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | 0 |
-| `TERRABASE_V1_ROOT=... ./scripts/check.sh` (run 1) | 101 — one flake: `benchmarks::tests::a_self_comparison_reads_as_parity` read `Worse` on real wall-clock self-comparison samples under concurrent fleet load; this packet touches nothing near `src/benchmarks/**` |
-| single-test re-run of that test | 0 (passed) |
-| `./scripts/check.sh` (run 2) | timeout of the wrapping 590 s shell (still compiling under fleet load); re-run without the wrapper recorded below |
-| `./scripts/check.sh` (run 3) | see the packet record addendum; run in background to escape the tool timeout, result recorded in the structured output |
+| `cargo doc --workspace --no-deps --locked` | 0 |
+| `python3 scripts/validate_parity.py --check` | 0 |
+| `python3 scripts/test_parity_tooling.py` | 0 |
+| `python3 scripts/test_v1_citations.py` | 0 |
+| `python3 scripts/test_secret_scan.py` | 0 |
+| `python3 scripts/check_license.py` | 0 |
+| `python3 scripts/check_benchmark_receipts.py` | 0 (9 receipts, discipline held) |
+| `python3 scripts/test_benchmark_receipt_discipline.py` | 0 |
+| `./scripts/check_secrets.sh` | 0 |
+| `validate_v1_citations.py --mode strict` with the V1 root and workspace root | 0 |
+| `cargo deny check` | unrun — cargo-deny is not installed on this host |
+
+### `scripts/check.sh` — six attempts, honestly recorded
+
+No single invocation of the full script finished green, for two distinct
+reasons, neither in this packet's diff (`git diff --name-only da0df43..HEAD`
+contains no `src/benchmarks/**` path):
+
+- Runs 1, 3, 5, and 6 (exit 101): the pre-existing
+  `benchmarks::tests::a_self_comparison_reads_as_parity`
+  (`src/benchmarks/tests.rs:481-493`) compares two real wall-clock
+  throughput samples of a workload against itself and expects `Stable`;
+  under this host's concurrent fleet load (load average ~70 during the
+  runs) it read `Worse` twice and `Better` twice — both wrong directions,
+  which is noise, not a regression. In isolation the test passed 3/3
+  consecutive runs, and the dev-profile workspace suite passed it in the
+  dedicated green run above.
+- Run 4 (exit 1): every stage green — fmt, check, dev tests (the timing
+  test passed), release tests, clippy, doc, all python stages, secret
+  scan — and failed only at the final V1-citation audit because the
+  script's workspace-root auto-resolution does not account for worktrees
+  one level below the main checkout; that audit passes with
+  `TERRASCALE_WORKSPACE_ROOT` set (exit 0 above).
+- Run 2 was cut by my own wrapping 590 s shell timeout while still
+  compiling under load, and one release attempt was spoiled when I killed
+  a live `server_uds` test helper process I mistook for an orphan of that
+  killed run — that failure is mine and is disclosed here, not counted
+  against the tree.
+
+Disposition for the parent: the packet's own receipts are complete and
+green (the table above plus the in-crate and integration suites); the
+script-level green run is blocked by a pre-existing load-sensitive test
+outside this packet's write scope (`src/benchmarks/**` is frozen to the
+benchmark lane) plus the script's worktree workspace-root resolution. The
+flake determination needs the parent's cross-packet view.
 
 Red-phase receipt: before the implementation existed, the test suite
 compiled with 36 errors — the unresolved GAP-F05 imports and the missing
