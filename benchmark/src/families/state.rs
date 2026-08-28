@@ -807,11 +807,59 @@ fn decode_policy(value: &DocumentValue) -> Result<TimeSeriesPolicy, FamilyError>
 }
 
 /// The stored state of one named series.
+///
+/// GAP-F04 adds the derived rollup sections: each configured rollup name
+/// maps to its aggregated entries, encoded inside the same record value so
+/// one family write covers a series' raw and derived state atomically and
+/// no derived record identifier can collide with a user-named series.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct TimeSeriesRecord {
     pub(crate) arity: Option<usize>,
     pub(crate) entries: Vec<TimeSeriesAppend>,
     pub(crate) policy: Option<TimeSeriesPolicy>,
+    pub(crate) rollups: BTreeMap<String, Vec<TimeSeriesAppend>>,
+}
+
+/// Decodes one encoded series point.
+fn decode_entry(encoded: &DocumentValue) -> Result<TimeSeriesAppend, FamilyError> {
+    let Some(timestamp) = integer(encoded, "timestamp") else {
+        return Err(FamilyError::ReservedStateInvalid);
+    };
+    let Some(values) = array(encoded, "values") else {
+        return Err(FamilyError::ReservedStateInvalid);
+    };
+    let values = values
+        .iter()
+        .map(|item| match item {
+            DocumentValue::Number(number) => Some(*number),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or(FamilyError::ReservedStateInvalid)?;
+    let tag = match field(encoded, "tag") {
+        None | Some(DocumentValue::Null) => None,
+        Some(DocumentValue::String(tag)) => Some(tag.clone()),
+        _ => return Err(FamilyError::ReservedStateInvalid),
+    };
+    Ok(TimeSeriesAppend::new(timestamp, values, tag))
+}
+
+/// Encodes one series point.
+fn encode_entry(entry: &TimeSeriesAppend) -> DocumentValue {
+    let mut fields = vec![
+        ("timestamp", DocumentValue::Integer(entry.timestamp())),
+        (
+            "values",
+            DocumentValue::Array(
+                entry.values().iter().map(|v| DocumentValue::Number(*v)).collect(),
+            ),
+        ),
+    ];
+    match entry.tag().map(str::to_owned) {
+        Some(tag) => fields.push(("tag", DocumentValue::String(tag))),
+        None => fields.push(("tag", DocumentValue::Null)),
+    }
+    object(fields)
 }
 
 impl TimeSeriesRecord {
@@ -824,33 +872,28 @@ impl TimeSeriesRecord {
         };
         let mut entries = Vec::new();
         for encoded in array(value, "entries").ok_or(FamilyError::ReservedStateInvalid)? {
-            let Some(timestamp) = integer(encoded, "timestamp") else {
-                return Err(FamilyError::ReservedStateInvalid);
-            };
-            let Some(values) = array(encoded, "values") else {
-                return Err(FamilyError::ReservedStateInvalid);
-            };
-            let values = values
-                .iter()
-                .map(|item| match item {
-                    DocumentValue::Number(number) => Some(*number),
-                    _ => None,
-                })
-                .collect::<Option<Vec<_>>>()
-                .ok_or(FamilyError::ReservedStateInvalid)?;
-            let tag = match field(encoded, "tag") {
-                None | Some(DocumentValue::Null) => None,
-                Some(DocumentValue::String(tag)) => Some(tag.clone()),
-                _ => return Err(FamilyError::ReservedStateInvalid),
-            };
-            entries.push(TimeSeriesAppend::new(timestamp, values, tag));
+            entries.push(decode_entry(encoded)?);
         }
         entries.sort_by_key(TimeSeriesAppend::timestamp);
         let policy = match field(value, "policy") {
             None | Some(DocumentValue::Null) => None,
             Some(encoded) => Some(decode_policy(encoded)?),
         };
-        Ok(Self { arity, entries, policy })
+        // GAP-F04: the rollup sections are absent from every pre-GAP-F04
+        // record and decode as empty.
+        let mut rollups = BTreeMap::new();
+        for encoded in array(value, "rollups").unwrap_or(&[]) {
+            let Some(name) = text(encoded, "name") else {
+                return Err(FamilyError::ReservedStateInvalid);
+            };
+            let mut section = Vec::new();
+            for encoded in array(encoded, "entries").unwrap_or(&[]) {
+                section.push(decode_entry(encoded)?);
+            }
+            section.sort_by_key(TimeSeriesAppend::timestamp);
+            rollups.insert(name.to_owned(), section);
+        }
+        Ok(Self { arity, entries, policy, rollups })
     }
 
     /// Encodes one record value.
@@ -863,40 +906,32 @@ impl TimeSeriesRecord {
                     None => DocumentValue::Null,
                 },
             ),
-            (
-                "entries",
-                DocumentValue::Array(
-                    self.entries
-                        .iter()
-                        .map(|entry| {
-                            let mut fields = vec![
-                                ("timestamp", DocumentValue::Integer(entry.timestamp())),
-                                (
-                                    "values",
-                                    DocumentValue::Array(
-                                        entry
-                                            .values()
-                                            .iter()
-                                            .map(|v| DocumentValue::Number(*v))
-                                            .collect(),
-                                    ),
-                                ),
-                            ];
-                            match entry.tag().map(str::to_owned) {
-                                Some(tag) => fields.push(("tag", DocumentValue::String(tag))),
-                                None => fields.push(("tag", DocumentValue::Null)),
-                            }
-                            object(fields)
-                        })
-                        .collect(),
-                ),
-            ),
+            ("entries", DocumentValue::Array(self.entries.iter().map(encode_entry).collect())),
             (
                 "policy",
                 match &self.policy {
                     Some(policy) => encode_policy(policy),
                     None => DocumentValue::Null,
                 },
+            ),
+            (
+                "rollups",
+                DocumentValue::Array(
+                    self.rollups
+                        .iter()
+                        .map(|(name, section)| {
+                            object(vec![
+                                ("name", DocumentValue::String(name.clone())),
+                                (
+                                    "entries",
+                                    DocumentValue::Array(
+                                        section.iter().map(encode_entry).collect(),
+                                    ),
+                                ),
+                            ])
+                        })
+                        .collect(),
+                ),
             ),
         ])
     }

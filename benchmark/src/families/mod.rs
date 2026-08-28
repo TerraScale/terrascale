@@ -39,6 +39,14 @@
 //! explicit size limits. The plane records the engine-side halves of the
 //! PB-3007/PB-3045 backup and migration obligations; its decision record is
 //! `docs/families/attachment-content-plane.md`.
+//!
+//! GAP-F04 adds time-series execution under the public [`timeseries`]
+//! module: rollup generation, retention cleanup, and the rollups-then-
+//! retention drive, each step one committed Engine transaction, plus
+//! bounded cursor-stable paging on the time-series read seam
+//! ([`TimeSeriesPaging`]). Retention observes the tombstone retention
+//! watermark (GAP-R02) and never advances it; the decision record is
+//! `docs/families/gapf04-timeseries-execution.md`.
 
 pub mod attachments;
 pub mod compare_exchange;
@@ -52,6 +60,7 @@ mod state;
 mod store;
 #[cfg(test)]
 mod tests;
+pub mod timeseries;
 
 pub use payloads::{
     Aggregation, ArchivalCommand, ArchivalReadRequest, ArchivalReadResult, ArchivalState,
@@ -60,13 +69,13 @@ pub use payloads::{
     CompareExchangeRead, CompareExchangeValueResult, CompareExchangeWrite, CounterBatchWrite,
     CounterEntry, CounterGroupResult, CounterOperation, CounterRead, IdentityCommand,
     IdentityEntry, IdentityRangeResult, IdentityRead, IdentityWrite, LifecycleCommand,
-    LifecycleRead, LifecycleResult, LifecycleWrite, RevisionCommand, RevisionEntry, RevisionPage,
-    RevisionPaging, RevisionPolicy, RevisionRead, RevisionWrite, RollupPolicy, SchemaDefinition,
-    SchemaFieldType, SchemaRule, SchemaVersion, SchemaViolation, TimeSeriesAppend,
-    TimeSeriesBatchWrite, TimeSeriesDelete, TimeSeriesEntry, TimeSeriesPage, TimeSeriesPolicy,
-    TimeSeriesRange, TimeSeriesRead, TombstoneCommand, TombstoneEntry, TombstoneRead,
-    TombstoneResult, TombstoneWrite, ValidationRead, ValidationResult, ValidationWrite,
-    ViolationKind,
+    LifecycleRead, LifecycleResult, LifecycleWrite, MAX_TIMESERIES_PAGE_LIMIT, RevisionCommand,
+    RevisionEntry, RevisionPage, RevisionPaging, RevisionPolicy, RevisionRead, RevisionWrite,
+    RollupPolicy, SchemaDefinition, SchemaFieldType, SchemaRule, SchemaVersion, SchemaViolation,
+    TimeSeriesAppend, TimeSeriesBatchWrite, TimeSeriesDelete, TimeSeriesEntry, TimeSeriesPage,
+    TimeSeriesPaging, TimeSeriesPolicy, TimeSeriesRange, TimeSeriesRead, TombstoneCommand,
+    TombstoneEntry, TombstoneRead, TombstoneResult, TombstoneWrite, ValidationRead,
+    ValidationResult, ValidationWrite, ViolationKind,
 };
 pub use schemas::SchemaFormatError;
 

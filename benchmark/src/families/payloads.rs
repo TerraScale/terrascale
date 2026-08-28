@@ -670,12 +670,19 @@ pub struct TimeSeriesRead {
     document: DocumentId,
     name: String,
     range: Option<TimeSeriesRange>,
+    rollup: Option<String>,
+    paging: Option<TimeSeriesPaging>,
     deadline: Deadline,
     cancellation: Cancellation,
 }
 
 impl TimeSeriesRead {
     /// Creates a validated time-series read.
+    ///
+    /// The read addresses the series' raw entries; the
+    /// [`Self::reading_rollup`] builder selects a derived rollup section and
+    /// [`Self::with_paging`] bounds the page (GAP-F04). Without them the
+    /// read keeps its exact prior whole-retained-view behavior.
     ///
     /// # Errors
     ///
@@ -694,7 +701,27 @@ impl TimeSeriesRead {
         validate_series_name(&name)?;
         validate_deadline(&deadline)?;
         validate_cancellation(&cancellation)?;
-        Ok(Self { document, name, range, deadline, cancellation })
+        Ok(Self { document, name, range, rollup: None, paging: None, deadline, cancellation })
+    }
+
+    /// Selects a named rollup section of the series instead of its raw
+    /// entries (GAP-F04).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidFamilyPayload`] for an
+    /// invalid rollup name.
+    pub fn reading_rollup(mut self, rollup: &str) -> Result<Self, RequestValidationError> {
+        validate_name(rollup)?;
+        self.rollup = Some(rollup.to_owned());
+        Ok(self)
+    }
+
+    /// Bounds the read with cursor-stable paging (GAP-F04).
+    #[must_use]
+    pub fn with_paging(mut self, paging: TimeSeriesPaging) -> Self {
+        self.paging = Some(paging);
+        self
     }
 
     /// Returns the owning document identity.
@@ -713,6 +740,20 @@ impl TimeSeriesRead {
     #[must_use]
     pub fn range(&self) -> Option<TimeSeriesRange> {
         self.range
+    }
+
+    /// Returns the addressed rollup section's name, or `None` for the raw
+    /// series.
+    #[must_use]
+    pub fn rollup(&self) -> Option<&str> {
+        self.rollup.as_deref()
+    }
+
+    /// Returns the bounded, cursor-stable paging, or `None` for the whole
+    /// retained view.
+    #[must_use]
+    pub fn paging(&self) -> Option<TimeSeriesPaging> {
+        self.paging
     }
 
     /// Returns the request deadline.
@@ -1028,17 +1069,73 @@ impl TimeSeriesEntry {
     }
 }
 
+/// The largest page one time-series read may serve (GAP-F04).
+///
+/// The bound matches the query seam's page limit and the streaming seam's
+/// batch cap, so every bounded surface of the engine agrees on one page
+/// ceiling.
+pub const MAX_TIMESERIES_PAGE_LIMIT: u32 = 1024;
+
+/// The bounded, cursor-stable paging of one time-series read (GAP-F04).
+///
+/// `after` is an exclusive lower timestamp bound: the page serves entries
+/// strictly greater than it, in ascending timestamp order. Because series
+/// timestamps are unique within a record, the cursor is a total order key
+/// and pages chained through [`TimeSeriesPage::next_cursor`] serve every
+/// matched entry exactly once. `limit` bounds the page; `None` requests no
+/// bound (the prior whole-view behavior).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TimeSeriesPaging {
+    after: Option<i64>,
+    limit: Option<u32>,
+}
+
+impl TimeSeriesPaging {
+    /// Creates validated paging.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidRange`] for a zero limit or
+    /// a limit above [`MAX_TIMESERIES_PAGE_LIMIT`].
+    pub fn try_new(after: Option<i64>, limit: Option<u32>) -> Result<Self, RequestValidationError> {
+        if limit.is_some_and(|value| value == 0 || value > MAX_TIMESERIES_PAGE_LIMIT) {
+            return Err(RequestValidationError::InvalidRange);
+        }
+        Ok(Self { after, limit })
+    }
+
+    /// Returns the exclusive lower timestamp bound, or `None` to read from
+    /// the start of the retained view.
+    #[must_use]
+    pub const fn after(self) -> Option<i64> {
+        self.after
+    }
+
+    /// Returns the page limit, or `None` when no bound was requested.
+    #[must_use]
+    pub const fn limit(self) -> Option<u32> {
+        self.limit
+    }
+}
+
 /// One bounded page of a time-series read.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TimeSeriesPage {
     entries: Vec<TimeSeriesEntry>,
     policy: Option<TimeSeriesPolicy>,
+    total: u64,
+    next: Option<i64>,
 }
 
 impl TimeSeriesPage {
     /// Creates one page. Crate-only.
-    pub(crate) fn new(entries: Vec<TimeSeriesEntry>, policy: Option<TimeSeriesPolicy>) -> Self {
-        Self { entries, policy }
+    pub(crate) fn new(
+        entries: Vec<TimeSeriesEntry>,
+        policy: Option<TimeSeriesPolicy>,
+        total: u64,
+        next: Option<i64>,
+    ) -> Self {
+        Self { entries, policy, total, next }
     }
 
     /// Returns the entries in timestamp order.
@@ -1051,6 +1148,22 @@ impl TimeSeriesPage {
     #[must_use]
     pub fn policy(&self) -> Option<&TimeSeriesPolicy> {
         self.policy.as_ref()
+    }
+
+    /// Returns how many entries the range and retention horizon matched
+    /// before paging (GAP-F04): the whole addressed view, not just this
+    /// page.
+    #[must_use]
+    pub const fn total(&self) -> u64 {
+        self.total
+    }
+
+    /// Returns the cursor that resumes exactly after this page: the last
+    /// served entry's timestamp, present exactly when more matched entries
+    /// follow. `None` means the addressed view is exhausted by this page.
+    #[must_use]
+    pub const fn next_cursor(&self) -> Option<i64> {
+        self.next
     }
 }
 
