@@ -285,8 +285,8 @@ this worktree's root, on the committed tree at `c71265f` and its ancestors:
 | `cargo fmt --all -- --check` | 0 | |
 | `cargo check --workspace --locked` | 0 | inside the `check.sh` runs below |
 | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | 0 | after the clippy-driven cleanups recorded below |
-| `cargo test --workspace --locked` (dev) | attempt 1: **failed, 1 of 821**; attempt 2: **hung** | both attempts are recorded below as host-contention symptoms, with the evidence for each |
-| `TERRABASE_V1_ROOT=… ./scripts/check.sh` | see the run log below | includes fmt/check/test dev/test release/clippy/doc/parity/citations/secrets/license |
+| `cargo test --workspace --locked` (dev) | **0** in the final run (`check9`); two earlier attempts failed on host contention, recorded below | 820 passed, 3 ignored, inside the green `check.sh` run |
+| `TERRABASE_V1_ROOT=… TERRASCALE_WORKSPACE_ROOT=… ./scripts/check.sh` | **0** — "TerraBaseV2 foundation checks passed" | final run `check9`; includes fmt/check/test dev/test release/clippy/doc/parity tooling/license/benchmark-receipt discipline/secrets/V1 citation audit (STRICT passed). `cargo-deny` unavailable on this host and recorded as unrun by the script itself |
 
 **Attempt 3** (`check6`, exit 1): every cargo step green — fmt, check,
 dev tests, release tests, clippy, doc, parity tooling, license, the
@@ -299,8 +299,21 @@ variable `check.sh` documents for exactly this — is the fix, applied to
 the runs below.
 
 **Attempt 4** (`check7`, exit 101): the same SE-15 timing test as attempt
-1, again under load (average 45). Repaired per decision D6 below; the
-final run follows.
+1, again under load (average 45). Repaired per decision D6 below.
+
+**Attempt 5** (`check8`, exit 1 at the first step): the D6 repair was
+committed unformatted and `cargo fmt --check` rejected it. Formatted and
+re-run.
+
+**Final run** (`check9`, exit **0**): every step green — fmt, check, the
+dev suite (820 passed, 3 ignored), the release suite, clippy with warnings
+denied, docs, the parity tooling, license metadata, the benchmark-receipt
+discipline over 11 receipts, the secret scan, and the strict V1 citation
+audit (258 rows, 1 adjudicated gap, 0 unresolved). `cargo-deny` is not
+installed on this host and the script records it as unrun itself.
+
+Both lane characterizations were re-run at the final commit afterwards and
+reproduced the receipts' counters exactly.
 
 **Attempt 1** (exit 101): 820 passed, 1 failed —
 `benchmarks::tests::a_self_comparison_reads_as_parity`, a **pre-existing

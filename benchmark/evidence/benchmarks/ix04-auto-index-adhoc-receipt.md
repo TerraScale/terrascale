@@ -150,6 +150,10 @@ recorded, and that creating twelve auto indexes cost zero durable bytes.
 
 ## Validity notes
 
+- The whole characterization was re-run at this packet's final commit
+  (`077def3`) after the behavior-neutral cleanups that followed the run
+  (a clippy-driven variant rename and the non-vacuity window): **identical
+  counters in both windows**, exit 0, runtime 332.21 s.
 - Every value above is a deterministic counter (operations, records,
   documents, bytes, indexes) — reproducible on any machine, independent of
   profile and load. No wall-clock number appears in this receipt at all:

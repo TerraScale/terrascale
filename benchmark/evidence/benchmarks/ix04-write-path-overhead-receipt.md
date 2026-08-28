@@ -119,6 +119,9 @@ which no deterministic counter in the lane observes.
 
 ## Validity notes
 
+- The whole characterization was re-run at this packet's final commit
+  (`077def3`): **byte-identical rounds on both sides**, the same
+  `no-improvement` verdict, exit 0, runtime 90.36 s.
 - The measured quantity is a deterministic counter; the values are
   reproducible on any machine, independent of profile and load.
 - Objective status `inconclusive`: the PostgreSQL reference baseline is
