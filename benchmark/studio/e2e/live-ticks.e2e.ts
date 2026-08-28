@@ -27,14 +27,20 @@ test.describe("studio live view", () => {
     // asserted: the loss is observed and counted, delivery returns to live,
     // the missed identities are replayed, and ticks keep flowing.
     await expect
-      .poll(async () => readCounter(page, "Reconnects", { testId: "tick-counters" }), { timeout: 20_000 })
+      .poll(async () => readCounter(page, "Reconnects", { testId: "tick-counters" }), {
+        timeout: 20_000,
+      })
       .toBeGreaterThanOrEqual(1);
     await expect(state).toHaveAttribute("data-connection-state", "live", { timeout: 20_000 });
     await expect
-      .poll(async () => readCounter(page, "Replayed", { testId: "tick-counters" }), { timeout: 20_000 })
+      .poll(async () => readCounter(page, "Replayed", { testId: "tick-counters" }), {
+        timeout: 20_000,
+      })
       .toBeGreaterThanOrEqual(1);
     await expect
-      .poll(async () => readCounter(page, "Ticks", { testId: "tick-counters" }), { timeout: 20_000 })
+      .poll(async () => readCounter(page, "Ticks", { testId: "tick-counters" }), {
+        timeout: 20_000,
+      })
       .toBeGreaterThan(ticksBefore);
   });
 
@@ -49,14 +55,18 @@ test.describe("studio live view", () => {
 
     await control({ framePoison: true });
     await expect
-      .poll(async () => readCounter(page, "Rejected", { testId: "tick-counters" }), { timeout: 20_000 })
+      .poll(async () => readCounter(page, "Rejected", { testId: "tick-counters" }), {
+        timeout: 20_000,
+      })
       .toBeGreaterThanOrEqual(1);
     await expect(page.getByTestId("tick-last-error")).toContainText("unknown frame type");
 
     // Fail-closed rejection is counted, not fatal: the connection stays live.
     await expect(state).toHaveAttribute("data-connection-state", "live");
     await expect
-      .poll(async () => readCounter(page, "Ticks", { testId: "tick-counters" }), { timeout: 20_000 })
+      .poll(async () => readCounter(page, "Ticks", { testId: "tick-counters" }), {
+        timeout: 20_000,
+      })
       .toBeGreaterThan(ticksBefore);
   });
 
@@ -73,7 +83,9 @@ test.describe("studio live view", () => {
     await expect(state).toHaveAttribute("data-connection-state", "live", { timeout: 15_000 });
 
     await expect
-      .poll(async () => readCounter(page, "Resyncs", { testId: "tick-counters" }), { timeout: 30_000 })
+      .poll(async () => readCounter(page, "Resyncs", { testId: "tick-counters" }), {
+        timeout: 30_000,
+      })
       .toBeGreaterThanOrEqual(1);
     await expect(page.getByTestId("tick-last-error")).toContainText("resync required");
 
@@ -81,7 +93,9 @@ test.describe("studio live view", () => {
     await expect(state).toHaveAttribute("data-connection-state", "live", { timeout: 15_000 });
     const ticksBefore = await readCounter(page, "Ticks", { testId: "tick-counters" });
     await expect
-      .poll(async () => readCounter(page, "Ticks", { testId: "tick-counters" }), { timeout: 20_000 })
+      .poll(async () => readCounter(page, "Ticks", { testId: "tick-counters" }), {
+        timeout: 20_000,
+      })
       .toBeGreaterThan(ticksBefore);
   });
 });

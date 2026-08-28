@@ -472,7 +472,11 @@ async function run() {
     // matters is the checkpoint reconnect, asserted below either way.
     let markerWait = "";
     try {
-      await waitFor(() => slow.drops.length >= 1, 15_000, "the resumed slow consumer's drop marker");
+      await waitFor(
+        () => slow.drops.length >= 1,
+        15_000,
+        "the resumed slow consumer's drop marker",
+      );
     } catch (failure) {
       markerWait = failure instanceof Error ? failure.message : String(failure);
     }
@@ -483,8 +487,7 @@ async function run() {
           markerWait,
           sequencesObserved: slow.events.length,
           dropsObserved: slow.drops.length,
-          note:
-            "Kestrel's response minimum data rate can abort a long-stalled SSE response before it drains; the in-band drop marker itself is proven over the real BackboneStream by the host's own test (host/TerraBase.Api.Tests/StreamsTests.cs AFullBoundedQueueDropsCountsAndSurfaces), and the studio client's marker handling and UI surfacing are proven against the fixture (tests/changes-subscription.test.mjs, live-changes.e2e.ts)",
+          note: "Kestrel's response minimum data rate can abort a long-stalled SSE response before it drains; the in-band drop marker itself is proven over the real BackboneStream by the host's own test (host/TerraBase.Api.Tests/StreamsTests.cs AFullBoundedQueueDropsCountsAndSurfaces), and the studio client's marker handling and UI surfacing are proven against the fixture (tests/changes-subscription.test.mjs, live-changes.e2e.ts)",
         },
       });
     }
@@ -516,8 +519,7 @@ async function run() {
       slowDropBoundary: slow.drops[0]?.resumeFrom ?? null,
       slowDroppedCount: slow.drops[0]?.dropped ?? null,
       recoveredEvents: recovered.events.length,
-      note:
-        "a blocked host could not have accepted the flood: every mutation answered while the slow consumer read nothing",
+      note: "a blocked host could not have accepted the flood: every mutation answered while the slow consumer read nothing",
     };
     recovered.close();
     watcher.close();
@@ -620,7 +622,8 @@ async function run() {
         pass: rewindSeen[0] === boundary,
         boundary,
         redeliveredOldestFirst: rewindSeen.slice(0, 5),
-        reported: "non-gating: the host's replay batch is bounded (MAX_LIST_ITEMS); a wider shed range needs repeated resumes",
+        reported:
+          "non-gating: the host's replay batch is bounded (MAX_LIST_ITEMS); a wider shed range needs repeated resumes",
       };
       rewind.close();
     }
@@ -649,7 +652,9 @@ if (isDirectRun) {
   run().then(
     (code) => process.exit(code),
     (failure) => {
-      process.stderr.write(`[db04-probe] failed: ${failure instanceof Error ? failure.stack : failure}\n`);
+      process.stderr.write(
+        `[db04-probe] failed: ${failure instanceof Error ? failure.stack : failure}\n`,
+      );
       process.exit(1);
     },
   );
