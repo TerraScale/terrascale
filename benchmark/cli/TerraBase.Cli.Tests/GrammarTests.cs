@@ -178,6 +178,55 @@ public sealed class GrammarTests
     public async Task AMalformedExpectedIsAUsageErrorInHostMode() =>
         await RefusedAsync(["document", "write", "orders", "d-01", "{}", "--expected", "later"], "expected");
 
+    /// <summary>Runs one refused invocation and asserts its machine envelope names the full command path.</summary>
+    /// <param name="args">The refused invocation, in machine mode.</param>
+    /// <param name="command">The full command path the envelope's <c>command</c> must name.</param>
+    /// <returns>A task that completes when the label held.</returns>
+    private static async Task LabeledAsync(string[] args, string command)
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+        var exit = await Cli.RunAsync(args, stdout, stderr, environment: NoEnvironment);
+        await Assert.That(exit).IsEqualTo(1);
+        await Assert.That(stdout.ToString()).IsEmpty();
+        var error = MachineEnvelope.Parse(stderr.ToString()).Single();
+        await MachineEnvelope.AssertWellFormedAsync(error, command, "host");
+        await Assert.That(error.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("usage");
+    }
+
+    /// <summary>A <c>document write</c> usage error names the full path, not its first word.</summary>
+    [Test]
+    public async Task ADocumentWriteUsageErrorNamesTheFullPath() =>
+        await LabeledAsync(["--json", "document", "write", "orders", "d-01", "not-json"], "document write");
+
+    /// <summary>A <c>document read</c> usage error names the full path, not its first word.</summary>
+    [Test]
+    public async Task ADocumentReadUsageErrorNamesTheFullPath() =>
+        await LabeledAsync(["--json", "document", "read", "orders", "d-01", "--bogus"], "document read");
+
+    /// <summary>A <c>document delete</c> usage error names the full path, not its first word.</summary>
+    [Test]
+    public async Task ADocumentDeleteUsageErrorNamesTheFullPath() =>
+        await LabeledAsync(["--json", "document", "delete", "orders", "d-01", "d-02"], "document delete");
+
+    /// <summary>A <c>document browse</c> usage error names the full path, not its first word.</summary>
+    [Test]
+    public async Task ADocumentBrowseUsageErrorNamesTheFullPath() =>
+        await LabeledAsync(["--json", "document", "browse", "orders", "--max-items", "many"], "document browse");
+
+    /// <summary>The other multi-word command paths keep their full names in the usage envelope.</summary>
+    [Test]
+    public async Task NonDocumentMultiWordPathsStayFullyNamed()
+    {
+        await LabeledAsync(["--json", "query", "cancel"], "query cancel");
+        await LabeledAsync(["--json", "engine", "shutdown", "--reason", "whim"], "engine shutdown");
+    }
+
+    /// <summary>A single-word command's usage envelope stays a single word.</summary>
+    [Test]
+    public async Task ASingleWordCommandStaysASingleWord() =>
+        await LabeledAsync(["--json", "changes", "--idle", "abc"], "changes");
+
     /// <summary>Every machine envelope carries the stable header and exactly one payload property.</summary>
     [Test]
     public async Task MachineEnvelopesCarryTheStableHeaderAndOnePayload()

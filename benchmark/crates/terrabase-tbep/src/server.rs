@@ -5,7 +5,7 @@
 //! channel binding (PD-2026-08-26-11 D1 — the backend-supplied tenant
 //! binds the channel before any tenant-scoped operation runs, and no
 //! frame ever carries a tenant), and serves every frame family through
-//! the [`TbepHost`](crate::host::TbepHost) seam.
+//! the [`TbepHost`] seam.
 //!
 //! The UDS binding is the required local transport; the socket file is
 //! created with mode `0600` (owner-only) so only the serving user's C#

@@ -226,7 +226,10 @@ public static class Cli
     private static string ExtractCommandName(string[] args)
     {
         // Best effort for the usage envelope's command label: the same
-        // walk the grammar uses, an option's value never counted.
+        // walk the grammar uses, an option's value never counted. The
+        // label itself comes from the grammar's table — the longest
+        // matching command prefix — so a multi-word command path is
+        // always named in full, never by its first word alone.
         var plain = new List<string>();
         for (var index = 0; index < args.Length; index++)
         {
@@ -250,7 +253,7 @@ public static class Cli
             }
         }
 
-        return plain.Count > 1 && plain[0] is "query" or "engine" ? $"{plain[0]} {plain[1]}" : plain.FirstOrDefault() ?? string.Empty;
+        return CliGrammar.CommandLabel(plain);
 
         static bool BooleanFlag(string name) => name is "json" or "follow";
     }

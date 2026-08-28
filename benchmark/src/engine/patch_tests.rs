@@ -954,3 +954,58 @@ fn add_or_patch_patch_leg_honors_the_expected_version() {
     assert_eq!(error, PatchError::StaleTarget { observed: 1 });
     assert!(transaction.staged_writes().is_empty());
 }
+
+#[test]
+fn add_or_patch_refuses_a_create_document_that_retargets_the_write() {
+    let engine = seeded_engine("aop-retarget");
+
+    // A compound addressed at users/2 whose create document carries a
+    // different id: V1's create path stores under the command's key
+    // (`PatchDocumentCommand.cs:186` puts `id`, the addressed key, with the
+    // create value as the body), so the typed seam refuses instead of
+    // silently writing to the unaddressed target.
+    let scope = tenant_scope(&engine, "t");
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    let mut transaction = engine.begin(&scope, snapshot, operation("aop-1")).expect("begins");
+    let error = apply_add_or_patch(
+        &mut transaction,
+        &collection("users"),
+        &document_id("users/2"),
+        ExpectedVersion::Any,
+        &AddOrPatch::new(
+            Document::new(document_id("users/9"), collection("users"), object(&[])),
+            patch(vec![PatchOperation::Increment { path: field_path(&["login_count"]), delta: 1 }]),
+        ),
+    )
+    .expect_err("the create leg may not write to an id other than the addressed one");
+    assert_eq!(
+        error,
+        PatchError::Construction(RequestValidationError::InvalidPatch),
+        "a retargeting create document is a malformed compound, refused at application time"
+    );
+    assert!(transaction.staged_writes().is_empty());
+
+    // The collection leg of the same discipline.
+    let scope = tenant_scope(&engine, "t");
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    let mut transaction = engine.begin(&scope, snapshot, operation("aop-2")).expect("begins");
+    let error = apply_add_or_patch(
+        &mut transaction,
+        &collection("users"),
+        &document_id("users/2"),
+        ExpectedVersion::Any,
+        &AddOrPatch::new(
+            Document::new(document_id("users/2"), collection("archive"), object(&[])),
+            patch(vec![PatchOperation::Increment { path: field_path(&["login_count"]), delta: 1 }]),
+        ),
+    )
+    .expect_err("the create leg may not write to a collection other than the addressed one");
+    assert_eq!(error, PatchError::Construction(RequestValidationError::InvalidPatch));
+    assert!(transaction.staged_writes().is_empty());
+
+    // Neither refusal staged anything, and the seam's all-or-nothing
+    // publication is the only write path, so the published state cannot
+    // hold either target of the retargeting compounds.
+    assert!(read_value(&engine, "users/2").is_none(), "the addressed target stays absent");
+    assert!(read_value(&engine, "users/9").is_none(), "the unaddressed id was never written");
+}

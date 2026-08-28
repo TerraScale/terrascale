@@ -721,7 +721,7 @@ impl TombstoneRetention {
     /// evidence and no non-deletion publication the watermark must record —
     /// the honest declaration for an engine whose history below the bound
     /// is empty. A windowed extraction uses
-    /// [`TombstoneRetention::declare_history_bound_from_commits`], which is
+    /// `TombstoneRetention::declare_history_bound_from_commits`, which is
     /// crate-private because it takes the journal's commit records.
     ///
     /// # Errors
