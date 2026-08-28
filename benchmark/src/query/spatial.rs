@@ -1301,6 +1301,26 @@ mod tests {
     }
 
     #[test]
+    fn identical_points_are_exactly_zero_even_where_the_unguarded_formula_is_not() {
+        // The guard is the only reason the answer is zero: at this
+        // latitude the unguarded law of cosines yields sin^2 + cos^2 one
+        // ulp below one, so acos returns about 8.5e-7 degrees instead of
+        // zero. The input above (-45.6789) cannot detect the guard's
+        // removal because its unguarded sum rounds to at least one; this
+        // one can, which is what makes the pinned exactness testable
+        // rather than accidental.
+        let a = point(0.0, 10.0);
+        #[allow(
+            clippy::float_cmp,
+            reason = "the exact zero is the pinned contract, not an approximation"
+        )]
+        {
+            assert_eq!(a.angular_distance_degrees(&a), 0.0);
+            assert_eq!(Wgs84Point::distance(&a, &a, SpatialUnits::Kilometers), 0.0);
+        }
+    }
+
+    #[test]
     fn rounding_floors_to_the_round_factor_like_v1() {
         // V1 SpatialUtils.cs:63-67: distance - distance % round, only for
         // round > 0.
@@ -1509,6 +1529,19 @@ mod tests {
             SpatialShape::parse(&holes, SpatialUnits::Kilometers).unwrap_err(),
             SpatialShapeError::TooManyRings
         );
+        // The linestring cap is its own check in the parser, so it gets its
+        // own over-cap input: 256 positions per linestring is part of the
+        // bounded-evaluation contract, not a polygon-ring side effect.
+        let mut line = String::from("LINESTRING (0 0");
+        for index in 0..=point_cap {
+            let x = f64::from(index) * 0.001;
+            let _ = write!(line, ", {x} 0.0");
+        }
+        line.push(')');
+        assert_eq!(
+            SpatialShape::parse(&line, SpatialUnits::Kilometers).unwrap_err(),
+            SpatialShapeError::TooManyPoints
+        );
     }
 
     // ---- typed predicate -------------------------------------------------
@@ -1551,6 +1584,125 @@ mod tests {
         assert!(SpatialFieldEncoding::try_new_wkt("").is_err(), "an empty field name must refuse");
     }
 
+    #[test]
+    fn spatial_field_encodings_refuse_token_delimiter_field_names() {
+        // A field name carrying one of the dynamic-field token's own
+        // delimiters would render a token V1 parses with a different
+        // structure than the fields it names ("a, b" + "c" and "a" +
+        // "b, c" render the same token; "x)" renders a broken one). V1
+        // escapes such names before interpolating them; this renderer does
+        // not, so the constructors refuse them instead.
+        for bad in ["a, b", "x)", "(y"] {
+            assert!(
+                SpatialFieldEncoding::try_new_point(bad, "longitude").is_err(),
+                "point latitude field {bad:?} must refuse"
+            );
+            assert!(
+                SpatialFieldEncoding::try_new_point("latitude", bad).is_err(),
+                "point longitude field {bad:?} must refuse"
+            );
+            assert!(
+                SpatialFieldEncoding::try_new_wkt(bad).is_err(),
+                "wkt field {bad:?} must refuse"
+            );
+        }
+        // Names free of the delimiters still construct and render tokens
+        // that name exactly these fields.
+        let plain = SpatialFieldEncoding::try_new_point("lat_1", "lng-2").expect("plain names pass");
+        assert_eq!(plain.to_v1_field_token(), "spatial.point(lat_1, lng-2)");
+    }
+
+    #[test]
+    fn the_predicate_seam_validates_hand_built_shapes() {
+        // SpatialShape is a public enum, so its variants can be assembled
+        // with contents SpatialShape::parse refuses. The predicate seam is
+        // where those contents would reach evaluation, so it re-validates:
+        // an empty or single-point linestring, a non-finite or non-positive
+        // circle radius, an over-long linestring, and an envelope whose
+        // south exceeds its north must all refuse — otherwise evaluation
+        // would be profile-dependent (an empty linestring underflows in
+        // debug and, under Disjoint in release, matches every document).
+        let line = |count: usize| SpatialShape::LineString {
+            points: (0..count)
+                .map(|index| point(f64::from(u32::try_from(index).expect("u32")) * 0.1, 0.0))
+                .collect(),
+        };
+        let invalid = [
+            line(0),
+            line(1),
+            line(MAX_SHAPE_POINTS + 1),
+            SpatialShape::Circle {
+                center: point(0.0, 0.0),
+                radius: f64::NAN,
+                units: SpatialUnits::Kilometers,
+            },
+            SpatialShape::Circle {
+                center: point(0.0, 0.0),
+                radius: 0.0,
+                units: SpatialUnits::Kilometers,
+            },
+            SpatialShape::Circle {
+                center: point(0.0, 0.0),
+                radius: -1.0,
+                units: SpatialUnits::Kilometers,
+            },
+            SpatialShape::Envelope {
+                west: lon(0.0),
+                south: lat(10.0),
+                east: lon(20.0),
+                north: lat(-10.0),
+            },
+        ];
+        for shape in invalid {
+            assert!(
+                SpatialPredicate::with_default_error_pct(
+                    encoding(),
+                    SpatialRelation::Within,
+                    shape.clone()
+                )
+                .is_err(),
+                "hand-built shape {shape:?} must refuse at the seam"
+            );
+        }
+        // The parser-shaped contents still construct: two positions, a
+        // full-cap linestring, a positive radius, and an envelope whose
+        // west exceeds its east (the antimeridian wrap, which stays legal).
+        let valid = [
+            line(2),
+            line(MAX_SHAPE_POINTS),
+            SpatialShape::Circle {
+                center: point(0.0, 0.0),
+                radius: 1.0,
+                units: SpatialUnits::Miles,
+            },
+            SpatialShape::Envelope {
+                west: lon(170.0),
+                south: lat(-10.0),
+                east: lon(-170.0),
+                north: lat(10.0),
+            },
+        ];
+        for shape in valid {
+            assert!(
+                SpatialPredicate::with_default_error_pct(
+                    encoding(),
+                    SpatialRelation::Within,
+                    shape.clone()
+                )
+                .is_ok(),
+                "valid hand-built shape {shape:?} must construct"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hand_built_empty_linestring_does_not_panic_evaluation() {
+        // Evaluation stays total even on a shape the predicate seam
+        // refuses: an empty linestring cannot underflow its segment loop.
+        let empty = SpatialShape::LineString { points: Vec::new() };
+        assert!(!empty.contains_point(&point(0.0, 0.0)));
+    }
+
     // ---- predicate evaluation over point documents -----------------------
 
     fn circle_around(x: f64, y: f64, radius: f64, units: SpatialUnits) -> SpatialShape {
@@ -1578,6 +1730,40 @@ mod tests {
         )
         .unwrap();
         assert!(intersects.matches_point(&near));
+    }
+
+    #[test]
+    fn the_circle_boundary_is_inclusive_at_the_translated_radius() {
+        // contains_point documents the circle boundary as included, and the
+        // comparison that implements it is closed. The radius below is the
+        // exact inverse of this point's translated angular distance, so the
+        // point sits on the boundary rather than near it, and the first
+        // assertion pins the bitwise equality that makes this input
+        // discriminate: an open comparison must fail it.
+        let center = point(0.0, 0.0);
+        let boundary = point(1.0, 0.0);
+        let degrees = center.angular_distance_degrees(&boundary);
+        let radius = degrees * (std::f64::consts::PI / 180.0) * EARTH_MEAN_RADIUS_KM;
+        #[allow(
+            clippy::float_cmp,
+            reason = "bitwise equality of the two compared doubles is the precondition under test"
+        )]
+        {
+            assert_eq!(
+                SpatialShape::circle_radius_degrees(radius, SpatialUnits::Kilometers),
+                degrees
+            );
+        }
+        let on_the_boundary =
+            SpatialShape::Circle { center, radius, units: SpatialUnits::Kilometers };
+        assert!(on_the_boundary.contains_point(&boundary));
+        let within = SpatialPredicate::with_default_error_pct(
+            encoding(),
+            SpatialRelation::Within,
+            on_the_boundary,
+        )
+        .expect("a boundary-valid circle is a valid predicate");
+        assert!(within.matches_point(&boundary));
     }
 
     #[test]

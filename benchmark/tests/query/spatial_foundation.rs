@@ -95,3 +95,56 @@ fn unsupported_wkt_refuses_with_a_typed_public_error() {
         SpatialShapeError::Unsupported
     );
 }
+
+#[test]
+fn a_spatial_predicate_refuses_an_unvalidated_hand_built_shape() {
+    // SpatialShape is a public enum, so a caller can assemble a variant
+    // the parser would refuse; the predicate seam must refuse it too, or
+    // point-document evaluation would depend on the build profile.
+    let empty_line = SpatialShape::LineString { points: Vec::new() };
+    assert_eq!(
+        SpatialPredicate::with_default_error_pct(
+            encoding(),
+            SpatialRelation::Disjoint,
+            empty_line
+        )
+        .unwrap_err(),
+        RequestValidationError::InvalidQuery
+    );
+    let non_positive_circle = SpatialShape::Circle {
+        center: point(0.0, 0.0),
+        radius: 0.0,
+        units: SpatialUnits::Kilometers,
+    };
+    assert_eq!(
+        SpatialPredicate::with_default_error_pct(
+            encoding(),
+            SpatialRelation::Within,
+            non_positive_circle
+        )
+        .unwrap_err(),
+        RequestValidationError::InvalidQuery
+    );
+    // The shapes the parser produces still construct at the seam.
+    let parsed = SpatialShape::parse("LINESTRING (0 0, 1 1)", SpatialUnits::Kilometers)
+        .expect("parsed linestring is valid");
+    assert!(
+        SpatialPredicate::with_default_error_pct(encoding(), SpatialRelation::Within, parsed)
+            .is_ok()
+    );
+}
+
+#[test]
+fn spatial_encodings_refuse_field_names_that_break_the_token() {
+    // Field names carrying the token's own delimiters would render a token
+    // whose structure names different fields than the encoding holds, so
+    // the constructors refuse them at the public seam as well.
+    assert_eq!(
+        SpatialFieldEncoding::try_new_point("lat, x", "lng").unwrap_err(),
+        RequestValidationError::InvalidQuery
+    );
+    assert_eq!(
+        SpatialFieldEncoding::try_new_wkt("shape, extra").unwrap_err(),
+        RequestValidationError::InvalidQuery
+    );
+}
