@@ -504,10 +504,7 @@ fn a_self_comparison_reads_as_parity() {
     let comparison = throughput(run.samples(), run.samples());
     assert_eq!(comparison.throughput, Trend::Stable);
     assert_eq!(comparison.p95, Trend::Stable);
-    assert_eq!(
-        gates::objective_status(comparison),
-        (ObjectiveStatus::Met, Verdict::NoImprovement)
-    );
+    assert_eq!(gates::objective_status(comparison), (ObjectiveStatus::Met, Verdict::NoImprovement));
 }
 
 /// The V2-side counter characterization, run for real and transcribed into
