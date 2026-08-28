@@ -194,10 +194,16 @@ adopted from V1's contract.
 1. **No arbitrary code** — closed typed values only (D2). Tested
    negatively: no code-carrying surface exists to test positively.
 2. **Bounded tokenization** — input cap, term cap, and token-mass cap,
-   each refusing with a typed error; the token cap is checked as tokens
-   are emitted, so a pathological value refuses rather than allocating
-   toward its length. All three caps are reachable in tests, and each
-   cap's exact boundary is pinned as valid.
+   each refusing with a typed error. Correction (integrator, from the
+   warden finding): the token cap is checked AFTER `tokenize` has
+   materialized the token ranges, not as tokens are emitted — so the
+   intermediate allocation is bounded by the INPUT cap
+   (`MAX_ANALYZED_VALUE_BYTES`), not by the token cap; a pathological
+   value allocates at most proportional to its (already-bounded) input
+   and then refuses. The original "checked as tokens are emitted / no
+   allocation toward its length" wording overstated the mechanism and is
+   withdrawn. All three caps are reachable in tests, and each cap's
+   exact boundary is pinned as valid.
 3. **No recursion** — tokenization is one linear walk. Tested with
    maximal pathological inputs (a full-cap run of separators; a
    full-cap run of one character).
