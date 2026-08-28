@@ -87,3 +87,18 @@ engine, replication, and streaming modules remain zero-dependency;
 `#![deny(unsafe_code)]` and the deterministic test discipline are
 unchanged. Claim discipline (ADR-0003) is unchanged: nothing in this
 record is a performance or readiness claim.
+
+Amended 2026-08-27 by the parent (charter PD-2026-08-27-01, ratifying
+the GAP-S2 decision record
+`docs/storage/encryption-key-management.md`): the storage module gains
+one carve-out — vetted cryptographic dependencies (the RustCrypto AEAD
+family; `chacha20poly1305` 0.11.0, XChaCha20-Poly1305 — V1's exact
+algorithm family) are permitted for encryption at rest. Rationale:
+PB-5011 sits on a `critical` risk row, and the zero-dependency
+alternative would extend BK-04's in-crate composition whose recorded
+non-claim ("nothing about vetted-cipher strength") is untenable as the
+integrity basis for the entire database at rest. The carve-out is
+narrow: storage-at-rest cryptography only; no other engine module gains
+dependency permission from this amendment. The `r-efi` LGPL-option
+exception (already in the lock via `getrandom`, permissive at choice)
+is ratified as a recorded license disposition.
