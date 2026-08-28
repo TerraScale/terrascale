@@ -1428,7 +1428,13 @@ mod tests {
                 worker.join().expect("the guarded worker ends");
                 value
             }
-            Err(_) => panic!("`{tag}` did not terminate within 30 s"),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                panic!("`{tag}` did not terminate within 30 s");
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = worker.join();
+                panic!("`{tag}` ended without reporting a value");
+            }
         }
     }
 

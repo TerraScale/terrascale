@@ -25,11 +25,13 @@ pattern GAP-F01 used to add the attachment content plane without editing
 
 - `FamilyStore::plan_lifecycle_pass(&TenantScope) -> LifecyclePass` — one
   read-only pass plan from one immutable snapshot and one pass time. The
-  plan pages the tenant's documents through the bounded snapshot window
-  (`Engine::snapshot_documents_from`, 1024 documents per page) and keeps
-  only lifecycle and archival records; owner presence is then a point read
-  inside one never-committed read transaction, so the plan never
-  materializes a whole tenant.
+  plan enumerates the tenant's family records through the landed W3-F
+  `FamilyStore::snapshot_family_records` materialization (the same seam
+  backup consumes, integrator action W4-CA-5) and keeps only lifecycle
+  and archival records; owner presence is then a point read inside one
+  never-committed read transaction. (Repair loop 1 replaced the original
+  windowed paging here — see the repair section for the cycle it admitted
+  and the memory profile this trades to.)
 - `FamilyStore::stage_lifecycle_pass(&mut Transaction, &LifecyclePass) ->
   LifecyclePassStaged` — stages every planned action into the caller's
   transaction. Nothing is durable until the driver commits.
@@ -56,7 +58,12 @@ Actions the pass plans and stages:
    recorded durably into the archival record (saturating addition).
 4. **Archival marks.** A record whose `at` is due (`now >= at`, not
    archived) is marked `archived = true` with `at` kept as the archival
-   time.
+   time. V1 contrast (recorded for the parity sweep): V1 *removes* the
+   `@archive-at` trigger when it sets `@archived` (DataArchivalStorage.cs:40-42);
+   V2 keeps `at` because the landed archival vocabulary freezes the
+   schedule time in the record (`ArchivalCommand::Archive { at }` rounds
+   on the same shape) — a deliberate frozen-vocabulary consequence, not an
+   oversight.
 5. **Stale record cleanup.** A lifecycle or archival record whose owner
    document is gone is cleared (the owner must still be gone at stage
    time).
@@ -65,8 +72,9 @@ Every stage action re-verifies its facts inside the staging transaction
 before staging anything; a document whose facts no longer match the plan is
 reported in `LifecyclePassStaged::skipped` and left for the next pass.
 
-New tests: 10 inline in `src/families/lifecycle.rs`
-(`#[cfg(test)] mod tests`), 2 integration in
+New tests: 13 inline in `src/families/lifecycle.rs`
+(`#[cfg(test)] mod tests` — 10 from the original loop, 3 from repair loop
+1), 2 integration in
 `tests/families/lifecycle_execution_public.rs` (public construction and
 accessor observation only — integration tests cannot seed documents, since
 `TenantScope` has no public constructor by design).
@@ -114,12 +122,12 @@ Evidence and alternatives considered:
   fork the invariant.
 - **V1 evidence for the body being server-owned**:
   `ExpiredDocumentsCleaner` (Expiration/ExpiredDocumentsCleaner.cs:19-45)
-  and `DataArchivist` (DataArchival/DataArchivist.cs:23-28) run inside the
+  and `DataArchivist` (DataArchival/DataArchivist.cs:24-33) run inside the
   V1 server on 60-second default cadences
   (ExpiredDocumentsCleaner.cs:21-23), batching 4096 documents per run
   (ExpiredDocumentsCleaner.cs:25-27). V2's equivalent batching knob is the
-  plan page size (1024) plus the driver's commit granularity; a per-pass
-  document-count bound is a deferred item below.
+  driver's commit granularity (a host can stage and commit one plan slice
+  at a time); a per-pass document-count bound is a deferred item below.
 
 **A pass that stages nothing publishes nothing**: the engine rejects an
 empty write set (`CommitResult::Rejected(Validation)`,
@@ -176,7 +184,7 @@ first observation: `at = pass_now + after_ms`, recorded durably in the
 archival record; later passes archive when `now >= at`. Consequences: the
 delay runs from the first pass that sees the policy, not from the exact
 policy write (bounded by the host's cadence — V1's own default cadence is
-60 s, DataArchivist.cs:28, so the granularity matches V1's scheduling
+60 s, DataArchivist.cs:32, so the granularity matches V1's scheduling
 granularity); the schedule is durable across restarts; and the explicit
 `Archive { at }` command remains the caller's immediate, anchor-free mark.
 
@@ -284,7 +292,7 @@ exactly).
 | Expiry/refresh cadence defaults (60 s), batch size (4096), one `currentTime` per run | src/TerraBase.Server/Documents/Expiration/ExpiredDocumentsCleaner.cs:21-27, 133 |
 | Due `@refresh` removes the marker and re-puts; `@expires` untouched | src/TerraBase.Server/Documents/Refresh/RefreshStorage.cs:24-57 |
 | Elapsed `@archive-at` marks `@archived`, removes the trigger, re-puts | src/TerraBase.Server/Documents/DataArchival/DataArchivalStorage.cs:22-47 |
-| Archivist cadence default (60 s) | src/TerraBase.Server/Documents/DataArchival/DataArchivist.cs:28 |
+| Archivist cadence default (60 s) | src/TerraBase.Server/Documents/DataArchival/DataArchivist.cs:32 |
 | Missing document drops its background-work entry | src/TerraBase.Server/Documents/BackgroundWork/DocumentBackgroundWorkStorage.cs:13-24 |
 | `HasPassed` = `currentTime >= date` | src/TerraBase.Server/Documents/BackgroundWork/AbstractBackgroundWorkStorageBase.cs:30-44 |
 | Put indexes `@expires`/`@refresh`/`@archive-at` into the work trees | src/TerraBase.Server/Documents/DocumentPutAction.cs:296-306 |
@@ -311,6 +319,114 @@ and in Studio's AI-chat persistence settings; there is no server-side
   no tenant scoping observable; both backup-interaction tests failing at
   their first pass-dependent assertion).
 - Green (commit `f8fdcb0`): the identical command → 10 passed / 0 failed.
+- Repair loop 1 red (unfixed code, pre-`657786c`): the identical command →
+  FAILED, 10 passed / 3 failed, exit 101 — each new regression test on its
+  discriminating assertion: the duplicate-id tenant's plan "did not
+  terminate within 30 s" (the warden's busy cycle, bounded by the test's
+  own guard), the squatter-value plan returned `Ok` with
+  `stale_records: [doc-1]` (the warden's probe outcome), and the
+  stale-owner list read `[doc-1, doc-2, doc-1, doc-2]` against the
+  expected `[doc-1, doc-2]`.
+- Repair loop 1 green (commit `657786c`): the identical command →
+  13 passed / 0 failed, exit 0 (suite wall time 1.13 s — the duplicate-id
+  plan that previously never returned now completes inside the suite).
+
+## Repair loop 1 (warden FAIL: findings → fixes → tests → receipts)
+
+Gate outcome: warden FAIL on one MAJOR and two actionable MINORs;
+inspector GO with one citation-anchor MINOR. All four are closed below,
+red first. The two warden NOTEs that need no code change are recorded
+under Limits and Receipts.
+
+### Findings → fixes
+
+1. **MAJOR — `plan_lifecycle_pass` busy-hung forever on a tenant reusing
+   one document id across collections.** Root cause: the plan paged the
+   tenant through `Engine::snapshot_documents_from`, whose cursor is a
+   bare document identifier that resumes strictly after the *first*
+   canonical key bearing that identifier (`src/storage/root.rs`,
+   `tenant_documents_from`, the shape its own doc warns "can also cycle").
+   A window ending inside a reused-id run re-served the same tail window
+   forever — two ordinary puts wedged the pass; the original record's
+   "bounded snapshot window" phrasing overstated the guarantee and the
+   Limits section did not disclose the hang. **Fix (commit `657786c`):**
+   the plan now enumerates family records through the landed
+   `FamilyStore::snapshot_family_records` materialization — the W3-F seam
+   the warden's finding itself named ("as W3-F does"), the same seam
+   backup consumes. No cursor exists to cycle; every reserved record is
+   observed exactly once; the fail-closed contract for unparseable
+   reserved identifiers is byte-identical (both paths reject through
+   `kind_of_record` → `ReservedStateInvalid`). Why not the warden's other
+   directions: a consumer-side bound (page budget, stall detection) can
+   only convert the hang into a typed failure for such tenants — the
+   id-only resume *starves* as well as cycles (a reused-id run at least
+   one window long keeps the window from ever reaching later keys, so no
+   consumer-side cursor trick can advance past it), which is exactly why
+   the two landed consumers of the same seam accept bounded loss instead
+   (streaming bounds batch window reads; migrations fails a stalled
+   composite cursor closed with `MigrationError::PageProgressStalled`).
+   A key-cursor or collection-scoped selector at the storage seam is the
+   exact paged path — it is recorded as a deferred item, not made here.
+2. **MINOR — the record overstated the fail-closed guarantee for
+   malformed lifecycle records.** A non-object value (the warden's probe:
+   a string) at `family:lifecycle/<doc>` decoded through the shared
+   `LifecycleRecord::decode` as the *empty* record — absent fields, no
+   error — so the pass returned `Ok` and treated the document as having
+   no lifecycle state; only object-with-malformed-field values failed
+   closed. **Fix:** a packet-local `decode_lifecycle_record` used at all
+   four decode sites (plan, visibility read, both stage paths) rejects
+   non-object values with `ReservedStateInvalid`, matching the contract
+   `ArchivalRecord::decode` already gave through its required `archived`
+   boolean. The record's blanket claim is now true as written; objects
+   with absent or `null` fields still decode as absent state.
+3. **MINOR — `push_unique`'s "adjacent duplicates only" invariant was
+   false.** Canonical key order places every `family:archival/*` record
+   before every `family:lifecycle/*` record, so one gone owner with both
+   record kinds reached `stale_records` (and through it `cleared_stale`)
+   twice, non-adjacently — the warden's `[A, B, A, B]` counterexample.
+   No state corruption (the second stage pass no-ops), but the documented
+   invariant was wrong. **Fix:** full membership check; every plan list is
+   now a set of owners in first-visit order.
+4. **Inspector MINOR — one V1 citation anchor was imprecise.** The
+   archivist cadence default is `DataArchivist.cs:32`
+   (`_archivePeriod = TimeSpan.FromSeconds(... ?? 60)`); line 28 is the
+   private constructor signature. Both anchors corrected (D3 and the
+   citation table); the D1 evidence bullet's range tightened from
+   `:23-28` to `:24-33` so the cited region actually contains the default
+   it is cited for. Verified at the pin before editing.
+
+Recorded alongside (inspector NOTE, no action required): the V1 archival
+metadata contrast is now explicit at action 4 above — V1 removes
+`@archive-at` when it sets `@archived` (DataArchivalStorage.cs:40-42);
+V2 keeps `at` as the archival time because the landed
+`ArchivalCommand::Archive { at }` vocabulary freezes the schedule in the
+record.
+
+### Tests (all red on the unfixed code, green after)
+
+- `the_plan_terminates_and_covers_a_tenant_that_reuses_one_id_across_collections`
+  — the warden's exact shape (`doc-x` in `users` and `zzz`, an elapsed
+  expiry on `doc-x`). The plan call runs inside a 30 s termination guard
+  (`must_terminate`, a worker thread + `recv_timeout`): red = the guard
+  fires, because the unfixed plan cycles forever; green = the plan
+  completes and still plans the reused id's deletion. The guard bounds
+  the regression forever — a reintroduced cycle fails the suite in 30 s
+  instead of hanging it.
+- `a_non_object_lifecycle_record_value_fails_the_pass_closed` — a squatter
+  string document at the reserved `family:lifecycle/doc-1` identifier;
+  red = the plan returned `Ok` with the record read as absent state
+  (asserted `expect_err`, so the red run prints the exact `Ok` value the
+  warden probed); green = `ReservedStateInvalid`.
+- `stale_owner_lists_stay_unique_when_owners_have_both_record_kinds` — two
+  gone owners, each with a stale lifecycle *and* a stale archival record;
+  red = `stale_records` read `[doc-1, doc-2, doc-1, doc-2]`; green =
+  unique lists, both record kinds cleared for both owners after the
+  staged pass commits.
+
+### Receipts (repair loop, standard set re-run)
+
+See "Receipts" below for the full refreshed set; the repair-specific
+runs are the red/green rows in "Red-then-green evidence" above.
 
 ## Receipts
 
@@ -366,6 +482,16 @@ Run from the worktree root with `RUSTUP_TOOLCHAIN` unset (the ambient
   a host can bound work by committing per plan slice; a first-class knob
   (`LifecyclePassRequest` with a bound) is a payloads collision if wanted.
   Owner: parent.
+- **Key-cursor or collection-scoped enumeration at the storage seam**
+  (repair loop 1): `snapshot_documents_from`'s identifier-only cursor
+  cycles and starves on tenants that reuse identifiers across collections
+  (`src/storage/root.rs` names "collection scoped selectors" as the exact
+  path; `src/storage/tests.rs` models the cycle), which is why the plan
+  materializes through `snapshot_family_records` today. A
+  `(collection, id)` cursor would restore paged planning without the
+  materialization memory profile. Owner: storage owner, with the
+  migrations and streaming consumers (both already bound or fail closed
+  against the same shape).
 - **Cadence configuration** (V1's `ExpirationConfiguration` /
   `RefreshConfiguration` / `DataArchivalConfiguration`): no V2
   configuration surface exists; the host owns cadence per D1. Owner:
@@ -416,15 +542,23 @@ tests/families packet used).
   `ExpectedVersion::Exact` delete (the engine's commit-time conflict
   check, src/storage/file.rs:349-357). The host retries the pass; skipped
   actions are per-pass facts, not durable state.
-- The plan pages documents but does not bound total actions; a tenant with
-  millions of expired documents stages one large transaction unless the
-  driver slices.
-- A malformed value at a reserved record identifier, or a
-  reserved-collection identifier that does not parse as a family record,
-  fails the pass closed with `ReservedStateInvalid` (the recorded W3-F
-  collision limit — the engine does not reserve the collection name), so a
-  squatter document can block maintenance until cleared. Deliberate
-  fail-closed, mirroring `snapshot_family_records`.
+- The plan materializes the tenant's documents once per pass through
+  `snapshot_family_records` (repair loop 1's replacement for windowed
+  paging) and does not bound total actions: a tenant with millions of
+  expired documents holds one tenant-sized snapshot read and stages one
+  large transaction unless the driver slices. The materialization memory
+  profile is the price of the termination guarantee below; a collection-
+  scoped or key-cursor enumeration seam would restore paged planning and
+  is noted under deferred items.
+- A malformed value at a reserved record identifier — since repair loop 1
+  including a *non-object* lifecycle value, which the shared decoder alone
+  read as absent state — or a reserved-collection identifier that does not
+  parse as a family record, fails the pass closed with
+  `ReservedStateInvalid` (the recorded W3-F collision limit — the engine
+  does not reserve the collection name), so a squatter document can block
+  maintenance until cleared. An object whose fields are absent or `null`
+  still decodes as absent state, mirroring `snapshot_family_records` and
+  `ArchivalRecord::decode`'s existing fail-closed shape.
 - Deleting an expired document does not cascade to its other family
   records (the W3-F no-cascade limit stands): the pass's deletion clears
   only the lifecycle record and records only the lifecycle tombstone;
@@ -435,6 +569,12 @@ tests/families packet used).
   is stale state (V1's queue cleanup has the same shape,
   DocumentBackgroundWorkStorage.cs:13-24); a restore can re-materialize
   such records from an archive taken before the cleanup.
+- The visibility batch read validates its deadline and cancellation once
+  at entry and then performs one point read per requested document without
+  mid-loop signal rechecks; the document list is caller-bounded, matching
+  the single-document family reads (warden note, accepted as-is — a
+  mid-loop check becomes owed only if this read grows a server-side
+  bound).
 - `LifecyclePass` and the staged receipt carry document identities only —
   no document values, content, paths, or credentials.
 - Times are epoch milliseconds from `SystemTime`
