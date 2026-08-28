@@ -1,6 +1,6 @@
 # TerraScale.DotNet
 
-Official C# SDK for TerraScale Platform API families.
+Official C# SDK for TerraScale public API families, including the Dashboard-owned database API.
 
 ## Support policy
 
@@ -487,7 +487,7 @@ var orders = await source.Set<Order>().ListAsync(take: 25);
 
 ## Quickstart Sample
 
-The sample app uses the real TerraScale Platform API and is environment-gated:
+The sample app uses the real TerraScale Dashboard API and is environment-gated:
 
 ```bash
 export TERRASCALE_API_BASE_ADDRESS=https://api.terrascale.tech
@@ -504,7 +504,7 @@ Use `TERRASCALE_BEARER_TOKEN` instead of `TERRASCALE_API_KEY` and `TERRASCALE_PR
 ## Running Tests
 
 The test projects are E2E-first and intentionally environment-gated. Without
-TerraScale Platform API configuration they verify local configuration handling and skip
+TerraScale Dashboard API configuration they verify local configuration handling and skip
 networked success-path coverage instead of substituting a fake API.
 
 ```bash
@@ -530,7 +530,7 @@ export TERRASCALE_E2E_REPOSITORY=01J00000000000000000000001
 dotnet test TerraScale.DotNet.slnx --configuration Release --no-progress
 ```
 
-Route and DTO contract tests for the newer project, auth management, notification, and backups families run locally without fake HTTP servers. Full live-stack coverage for those API families belongs in the TerraScale.Platform integration test suite and is intentionally not duplicated here yet.
+Route and DTO contract tests for the newer project, auth management, notification, and backups families run locally without fake HTTP servers. Full live-stack coverage for those API families belongs in the Dashboard API integration test suite and is intentionally not duplicated here yet.
 
 For bearer-token coverage, set `TERRASCALE_E2E_BEARER_TOKEN` with
 `TERRASCALE_E2E_BASE_URL` and `TERRASCALE_E2E_REPOSITORY`.
