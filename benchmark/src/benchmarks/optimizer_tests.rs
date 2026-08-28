@@ -26,8 +26,8 @@ fn every_optimizer_workload_names_both_sides_of_its_mapping() {
         assert!(workload.postgres_equivalent().starts_with("-- "), "{workload:?}");
         assert_eq!(workload.driver_status(), None, "the class drives all four in-process");
     }
-    assert!(optimizer::OptimizerWorkload::AdHocRegistryBound.has_postgresql_equivalent() == false);
-    assert!(optimizer::OptimizerWorkload::AdHocWritePath.has_postgresql_equivalent());
+    assert!(!optimizer::OptimizerWorkload::RegistryBound.has_postgresql_equivalent());
+    assert!(optimizer::OptimizerWorkload::WritePath.has_postgresql_equivalent());
     assert_eq!(
         optimizer::OptimizerWorkload::ALL.map(optimizer::OptimizerWorkload::as_str),
         [
@@ -221,7 +221,7 @@ fn each_creation_performs_one_published_initial_build() {
         .into_iter()
         .filter_map(|record| match record.outcome() {
             crate::query::optimizer::SelectionOutcome::CreatedAutoIndex { build, .. } => {
-                Some(build.clone())
+                Some(*build)
             }
             _ => None,
         })
@@ -259,7 +259,8 @@ fn active_auto_indexes_add_no_durable_bytes_to_the_write_path() {
             .map(|round| {
                 let target = format!("adhoc{}", round % COLLECTIONS);
                 let bytes = lane.write_stream(&target, WRITES);
-                f64::from(u32::try_from(bytes).unwrap_or(u32::MAX)) / (WRITES as f64)
+                f64::from(u32::try_from(bytes).unwrap_or(u32::MAX))
+                    / f64::from(u32::try_from(WRITES).unwrap_or(u32::MAX))
             })
             .collect::<Vec<f64>>();
         assert_eq!(lane.registered().len(), 0, "the baseline lane carries no index at all");
@@ -282,7 +283,8 @@ fn active_auto_indexes_add_no_durable_bytes_to_the_write_path() {
             .map(|round| {
                 let target = format!("adhoc{}", round % COLLECTIONS);
                 let bytes = lane.write_stream(&target, WRITES);
-                f64::from(u32::try_from(bytes).unwrap_or(u32::MAX)) / (WRITES as f64)
+                f64::from(u32::try_from(bytes).unwrap_or(u32::MAX))
+                    / f64::from(u32::try_from(WRITES).unwrap_or(u32::MAX))
             })
             .collect::<Vec<f64>>();
         assert_eq!(lane.registered().len(), COLLECTIONS, "the measured lane carries the indexes");
@@ -356,10 +358,6 @@ fn the_selection_record_store_is_bounded() {
     optimizer::run_cross_collection(&lane, 1, &["f0"], bound + 40);
 
     assert_eq!(lane.selections().len(), bound, "the retained store is exactly the bound");
-    assert!(
-        lane.selections().iter().all(|record| !record.cache_hit() || true),
-        "records stay readable after the drop"
-    );
 
     lane.remove();
 }
@@ -411,7 +409,7 @@ fn the_selection_cache_never_serves_stale_truth() {
 #[test]
 fn the_receipts_render_the_discipline_lines() {
     let comparison = OptimizerRunRecord::budget_comparison(
-        OptimizerWorkload::AdHocWritePath,
+        OptimizerWorkload::WritePath,
         Verdict::NoImprovement,
         Vec::new(),
     );
@@ -423,8 +421,7 @@ fn the_receipts_render_the_discipline_lines() {
     assert!(!text.contains("regression follow-up owner:"), "{text}");
     assert_eq!(comparison.status, ObjectiveStatus::Inconclusive);
 
-    let counters =
-        OptimizerRunRecord::counters_only(OptimizerWorkload::AdHocRegistryBound, Vec::new());
+    let counters = OptimizerRunRecord::counters_only(OptimizerWorkload::RegistryBound, Vec::new());
     let counter_text = counters.render();
     assert!(counter_text.contains("verdict: inconclusive"), "{counter_text}");
     assert!(counter_text.contains("no comparand:"), "{counter_text}");
@@ -467,7 +464,7 @@ fn ix04_adhoc_workload_characterization() {
     println!(
         "receipt (single-collection):\n{}",
         OptimizerRunRecord::counters_only(
-            OptimizerWorkload::AdHocSingleCollection,
+            OptimizerWorkload::SingleCollection,
             vec![format!(
                 "window counters: {} operations, {} selections, {} creations, {} chosen, {} \
                  cache hits, {} unexplained complete candidates, {} durable bytes, {} live auto",
@@ -510,7 +507,8 @@ fn ix04_write_path_overhead_characterization() {
             .map(|round| {
                 let target = format!("adhoc{}", round % COLLECTIONS);
                 let bytes = lane.write_stream(&target, WRITES);
-                f64::from(u32::try_from(bytes).unwrap_or(u32::MAX)) / (WRITES as f64)
+                f64::from(u32::try_from(bytes).unwrap_or(u32::MAX))
+                    / f64::from(u32::try_from(WRITES).unwrap_or(u32::MAX))
             })
             .collect::<Vec<f64>>()
     };
@@ -532,7 +530,8 @@ fn ix04_write_path_overhead_characterization() {
         .map(|round| {
             let target = format!("adhoc{}", round % COLLECTIONS);
             let bytes = lane.write_stream(&target, WRITES);
-            f64::from(u32::try_from(bytes).unwrap_or(u32::MAX)) / (WRITES as f64)
+            f64::from(u32::try_from(bytes).unwrap_or(u32::MAX))
+                / f64::from(u32::try_from(WRITES).unwrap_or(u32::MAX))
         })
         .collect::<Vec<f64>>();
 
@@ -545,7 +544,7 @@ fn ix04_write_path_overhead_characterization() {
     println!(
         "receipt (write-path):\n{}",
         OptimizerRunRecord::budget_comparison(
-            OptimizerWorkload::AdHocWritePath,
+            OptimizerWorkload::WritePath,
             comparison.verdict,
             vec![format!(
                 "gate trend {:?}; budget OH-B3 is {} durable bytes per write per active index",

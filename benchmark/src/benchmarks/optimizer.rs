@@ -81,55 +81,51 @@ use super::{
 pub(crate) enum OptimizerWorkload {
     /// Sequential ad-hoc shapes over one collection: each first sighting
     /// triggers one optimizer pass on a served execution.
-    AdHocSingleCollection,
+    SingleCollection,
     /// One ad-hoc shape per collection across many collections, each
     /// repeated: the cross-collection ad-hoc stream.
-    AdHocCrossCollection,
+    CrossCollection,
     /// The acknowledged write stream with active auto indexes, against the
     /// same stream with none.
-    AdHocWritePath,
+    WritePath,
     /// Distinct shapes driven past the per-tenant auto-index registry bound.
-    AdHocRegistryBound,
+    RegistryBound,
 }
 
 impl OptimizerWorkload {
     /// Every workload of the class.
-    pub(crate) const ALL: [Self; 4] = [
-        Self::AdHocSingleCollection,
-        Self::AdHocCrossCollection,
-        Self::AdHocWritePath,
-        Self::AdHocRegistryBound,
-    ];
+    pub(crate) const ALL: [Self; 4] =
+        [Self::SingleCollection, Self::CrossCollection, Self::WritePath, Self::RegistryBound];
 
     /// The receipt token.
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::AdHocSingleCollection => "auto-index-adhoc-single-collection",
-            Self::AdHocCrossCollection => "auto-index-adhoc-cross-collection",
-            Self::AdHocWritePath => "auto-index-adhoc-write-path",
-            Self::AdHocRegistryBound => "auto-index-adhoc-registry-bound",
+            Self::SingleCollection => "auto-index-adhoc-single-collection",
+            Self::CrossCollection => "auto-index-adhoc-cross-collection",
+            Self::WritePath => "auto-index-adhoc-write-path",
+            Self::RegistryBound => "auto-index-adhoc-registry-bound",
         }
     }
 
     /// The TerraBaseV2 operation this workload measures.
     pub(crate) const fn terrabase_v2_operation(self) -> &'static str {
         match self {
-            Self::AdHocSingleCollection => {
+            Self::SingleCollection => {
                 "Engine::queries().compile + execute — S sequential ad-hoc \
                  equality shapes (distinct field sets) over one seeded collection; every \
                  execution runs one optimizer pass that selects, widens, or creates"
             }
-            Self::AdHocCrossCollection => {
+            Self::CrossCollection => {
                 "Engine::queries().compile + execute — one ad-hoc shape per collection across \
                  C seeded collections, each repeated R times: creation on first sighting, then \
                  selection against post-maintenance truth"
             }
-            Self::AdHocWritePath => {
+            Self::WritePath => {
                 "Engine::begin + Transaction::put + commit(LocalDurability::Synced) — the \
                  acknowledged write stream with K active auto indexes, against the same stream \
                  with none, measured by the lane's deterministic durable-byte counter"
             }
-            Self::AdHocRegistryBound => {
+            Self::RegistryBound => {
                 "Engine::queries().compile + execute — distinct ad-hoc shapes driven past \
                  MAX_AUTO_INDEXES_PER_TENANT: the registry bound and its fail-closed refusal"
             }
@@ -139,18 +135,18 @@ impl OptimizerWorkload {
     /// The PostgreSQL equivalent, as the SQL the reference side would run.
     pub(crate) const fn postgres_equivalent(self) -> &'static str {
         match self {
-            Self::AdHocSingleCollection | Self::AdHocCrossCollection => {
+            Self::SingleCollection | Self::CrossCollection => {
                 "-- one CREATE INDEX per distinct shape, then the SELECT it serves.\n-- \
                  PostgreSQL has no automatic index creation: the comparable act is the \
                  operator's manual CREATE INDEX, decided and run by a human. That asymmetry \
                  is the workload's stated fairness note, not a hidden tuning difference."
             }
-            Self::AdHocWritePath => {
+            Self::WritePath => {
                 "-- INSERT INTO t (...) VALUES (...) ON CONFLICT DO UPDATE, synchronous_commit \
                  = on,\n-- on a table carrying K indexes, against the same table carrying \
                  none: index maintenance on the write path"
             }
-            Self::AdHocRegistryBound => {
+            Self::RegistryBound => {
                 "-- no PostgreSQL equivalent: PostgreSQL's index count per table is \
                  operator-chosen and bounded by no engine rule, so no shared budget exists; \
                  this workload compares TerraBaseV2 against its own written bound"
@@ -162,13 +158,20 @@ impl OptimizerWorkload {
     /// three name one; the registry bound does not, and says so rather than
     /// implying a comparison nobody can run.
     pub(crate) const fn has_postgresql_equivalent(self) -> bool {
-        !matches!(self, Self::AdHocRegistryBound)
+        !matches!(self, Self::RegistryBound)
     }
 
     /// The reason this workload has no driver here, with its owner. All four
     /// are driven in-process against the engine core, so the class declares
-    /// no open adapter slot.
-    pub(crate) const fn driver_status(self) -> Option<(&'static str, &'static str)> {
+    /// no open adapter slot — the same shape the SE-15 `Workload` uses, so
+    /// a future slot lands as a reason and an owner rather than a silent
+    /// skip.
+    #[allow(
+        clippy::unused_self,
+        reason = "mirrors lane::Workload::driver_status so a future open slot lands in the \
+                  same shape; today every workload of this class is driven"
+    )]
+    pub(crate) fn driver_status(self) -> Option<(&'static str, &'static str)> {
         None
     }
 }
@@ -439,36 +442,6 @@ impl AdHocLane {
         self.selections().pop()
     }
 
-    /// Classifies one produced selection record into the window counters.
-    pub(crate) fn classify(&self, record: &IndexSelectionRecord, window: &mut AdHocWindow) {
-        window.selections += 1;
-        match record.outcome() {
-            SelectionOutcome::CreatedAutoIndex { .. } => window.creations += 1,
-            SelectionOutcome::ChosenIndex { .. } => {
-                window.chosen += 1;
-                if record.cache_hit() {
-                    window.cache_hits += 1;
-                }
-            }
-            SelectionOutcome::CollectionScan => window.collection_scans += 1,
-            SelectionOutcome::CreationRefused { .. } => window.refusals += 1,
-        }
-        // SQ-B1, made mechanical: a complete candidate that lost must carry
-        // its recorded reason. The count is the budget the receipt decides.
-        for candidate in record.candidates() {
-            let complete = matches!(
-                candidate.verdict(),
-                CandidateVerdict::Complete | CandidateVerdict::CompleteButIdle
-            );
-            if complete
-                && !chosen_index_of(record).is_some_and(|name| name == candidate.name())
-                && candidate.note().is_none()
-            {
-                window.unexplained_unchosen_complete += 1;
-            }
-        }
-    }
-
     /// Shuts the engine down and removes its location.
     pub(crate) fn remove(self) {
         self.lane.remove();
@@ -566,6 +539,39 @@ pub(crate) fn run_registry_bound(
     window
 }
 
+/// Classifies one produced selection record into the window counters.
+///
+/// Called per query as the record is produced, never from the retained tail
+/// of the bounded store.
+fn classify_selection(record: &IndexSelectionRecord, window: &mut AdHocWindow) {
+    window.selections += 1;
+    match record.outcome() {
+        SelectionOutcome::CreatedAutoIndex { .. } => window.creations += 1,
+        SelectionOutcome::ChosenIndex { .. } => {
+            window.chosen += 1;
+            if record.cache_hit() {
+                window.cache_hits += 1;
+            }
+        }
+        SelectionOutcome::CollectionScan => window.collection_scans += 1,
+        SelectionOutcome::CreationRefused { .. } => window.refusals += 1,
+    }
+    // SQ-B1, made mechanical: a complete candidate that lost must carry its
+    // recorded reason. The count is the budget the receipt decides.
+    for candidate in record.candidates() {
+        let complete = matches!(
+            candidate.verdict(),
+            CandidateVerdict::Complete | CandidateVerdict::CompleteButIdle
+        );
+        if complete
+            && chosen_index_of(record).is_none_or(|name| name != candidate.name())
+            && candidate.note().is_none()
+        {
+            window.unexplained_unchosen_complete += 1;
+        }
+    }
+}
+
 /// Folds one executed operation and its produced selection record into the
 /// window counters, classifying the record as its query produced it.
 fn fold_one(
@@ -577,7 +583,7 @@ fn fold_one(
         window.documents_returned += u64::try_from(rows).unwrap_or(0);
     }
     match lane.last_selection() {
-        Some(record) => lane.classify(&record, window),
+        Some(record) => classify_selection(&record, window),
         // A typed error that produced no record would still be a refusal the
         // window has to account for. Every fail-closed refusal in this seam
         // records itself, so this arm is the guard that says so.
