@@ -37,7 +37,10 @@ test("FamilyKind carries the engine's closed family kind set", async () => {
 
 test("operation vocabulary mirrors the engine PublicOperation set", async () => {
   // src/operations.rs PublicOperation: DocumentRead, DocumentWrite, Query,
-  // Family(Read|Write) — plus the host-level engine.status read.
+  // Family(Read|Write), Schema(SM-04) — plus the host-level engine.status
+  // read. The studio contract carries the schema lifecycle's read side
+  // (schema.status); the lifecycle's other five operations are backend
+  // actions served by the CLI and the API host, not studio page reads.
   const names = contract.operations.map((operation) => operation.name);
   assert.deepEqual(names.sort(), [
     "document.read",
@@ -46,6 +49,7 @@ test("operation vocabulary mirrors the engine PublicOperation set", async () => 
     "family.read",
     "family.write",
     "query.execute",
+    "schema.status",
   ]);
   for (const operation of contract.operations) {
     assert.equal(operation.path, `/api/v2/operations/${operation.name}`);

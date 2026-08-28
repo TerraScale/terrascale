@@ -159,10 +159,12 @@ impl TbepServer {
     }
 }
 
-/// One outbound unit for the writer thread.
+/// One outbound unit for the writer thread. The frame is boxed: the schema
+/// surface's response bodies (migration plans and receipts) grew the frame
+/// past the point where a queue of inline frames pays for itself in copies.
 enum Outbound {
     /// A frame to write.
-    Frame(TbepFrame),
+    Frame(Box<TbepFrame>),
     /// Close the stream after writing everything queued before this.
     Close,
 }
@@ -197,7 +199,7 @@ impl Connection {
     }
 
     fn send(&mut self, frame: TbepFrame) {
-        self.send_outbound(Outbound::Frame(frame));
+        self.send_outbound(Outbound::Frame(Box::new(frame)));
     }
 
     /// Queues the graceful close marker (best effort: a slow consumer
@@ -509,6 +511,55 @@ fn dispatch(connection: &mut Connection, frame: &TbepFrame) -> bool {
                 );
             }
         }
+        // The SM-04 schema-lifecycle requests (PB-3036/PB-3037 and the
+        // schema-migration new capability) route through the hosting seam's
+        // own methods, whose default implementations refuse typed: the
+        // shipped hosts do not serve the schema lifecycle, and the wire
+        // says so typed instead of misreporting the request as a direction
+        // violation. Serving them from a live engine process is the
+        // engine-backed host integrator action the SM-04 record names.
+        TbepBody::SchemaDeclareRequest(body) => {
+            if let Some(tenant) = bound_tenant(connection, causation)
+                && let Some(key) = frame_key(frame)
+            {
+                answer(
+                    connection,
+                    causation,
+                    connection.host.schema_declare(&tenant, &body, key.as_str()),
+                );
+            }
+        }
+        TbepBody::SchemaStatusRequest(body) => {
+            if let Some(tenant) = bound_tenant(connection, causation) {
+                answer(connection, causation, connection.host.schema_status(&tenant, &body));
+            }
+        }
+        TbepBody::SchemaValidateRequest(body) => {
+            if let Some(tenant) = bound_tenant(connection, causation) {
+                answer(connection, causation, connection.host.schema_validate(&tenant, &body));
+            }
+        }
+        TbepBody::MigrationStatusRequest(body) => {
+            if let Some(tenant) = bound_tenant(connection, causation) {
+                answer(connection, causation, connection.host.migration_status(&tenant, &body));
+            }
+        }
+        TbepBody::MigrationDryRunRequest(body) => {
+            if let Some(tenant) = bound_tenant(connection, causation) {
+                answer(connection, causation, connection.host.migration_dry_run(&tenant, &body));
+            }
+        }
+        TbepBody::MigrationApplyRequest(body) => {
+            if let Some(tenant) = bound_tenant(connection, causation)
+                && let Some(key) = frame_key(frame)
+            {
+                answer(
+                    connection,
+                    causation,
+                    connection.host.migration_apply(&tenant, &body, key.as_str()),
+                );
+            }
+        }
         // Response and notification kinds are engine-to-host frames: a
         // host sending them to the engine is a protocol violation.
         TbepBody::Error(body) => {
@@ -581,7 +632,7 @@ fn spawn_drainer(
                     // ends this subscription's stream (the connection is
                     // closed under it) rather than queueing without bound.
                     if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
-                        outbound.try_send(Outbound::Frame(frame))
+                        outbound.try_send(Outbound::Frame(Box::new(frame)))
                     {
                         break;
                     }
@@ -635,7 +686,7 @@ mod tests {
             _ => unreachable!("the fixture builds a trigger"),
         }
         .expect("seals");
-        Outbound::Frame(frame)
+        Outbound::Frame(Box::new(frame))
     }
 
     #[test]

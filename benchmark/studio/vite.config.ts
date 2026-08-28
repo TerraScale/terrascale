@@ -80,7 +80,7 @@ export default defineConfig({
       },
       "unit:test": {
         command:
-          "node --test tests/client-fresh.test.mjs tests/contract.test.mjs tests/documents-page.test.mts tests/families-page.test.mts tests/fixture-server.test.mjs tests/queries.test.mjs tests/topology-fixture.test.mjs tests/topology-vocabulary.test.mjs",
+          "node --test tests/client-fresh.test.mjs tests/contract.test.mjs tests/documents-page.test.mts tests/families-page.test.mts tests/fixture-server.test.mjs tests/queries.test.mjs tests/schemas-page.test.mts tests/topology-fixture.test.mjs tests/topology-vocabulary.test.mjs",
         cache: false,
       },
     },

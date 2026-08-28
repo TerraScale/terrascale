@@ -7,7 +7,7 @@
     "The shape follows the SE-04 frame vocabulary (session open/resume, delta frames, heartbeat, resync-required, fatal errors; envelope discipline: version, frame type, correlation/causation IDs, idempotency key, content digest, fail closed) and the engine PublicOperation set in src/operations.rs (DocumentRead, DocumentWrite, Query, Family Read/Write).",
     "The fixture server (scripts/fixture-server.mjs) implements this contract locally; when SE-08 lands, the integration flag STUDIO_API_BASE_URL flips to the real C# API host and any drift is reconciled there.",
     "Every request, response, and frame is typed and versioned; unknown versions, unknown frame types, correlation mismatches, and digest mismatches fail closed.",
-    "Operator session bootstrap is host-enforced (see `session`): the default local host surface is ungated (charter PD-2026-08-26-11 — the studio is a local operator tool without an auth gate); a host that does enforce an operator session answers typed operations with the `session.unauthenticated` error and a `loginUrl`, and the studio's only client-side behavior is honoring that redirect. The studio never sends or logs credentials on this surface."
+    "Operator session bootstrap is host-enforced (see `session`): the default local host surface is ungated (charter PD-2026-08-26-11 \u2014 the studio is a local operator tool without an auth gate); a host that does enforce an operator session answers typed operations with the `session.unauthenticated` error and a `loginUrl`, and the studio's only client-side behavior is honoring that redirect. The studio never sends or logs credentials on this surface."
   ],
   "session": {
     "enforcedBy": "host",
@@ -81,52 +81,120 @@
           "type": "integer",
           "doc": "Number of documents across collections."
         },
-        { "name": "walBytes", "type": "integer", "doc": "Current write-ahead log size in bytes." }
+        {
+          "name": "walBytes",
+          "type": "integer",
+          "doc": "Current write-ahead log size in bytes."
+        }
       ]
     },
     "OperationCounters": {
       "kind": "object",
       "fields": [
-        { "name": "reads", "type": "integer" },
-        { "name": "writes", "type": "integer" },
-        { "name": "queries", "type": "integer" },
-        { "name": "familyOperations", "type": "integer" }
+        {
+          "name": "reads",
+          "type": "integer"
+        },
+        {
+          "name": "writes",
+          "type": "integer"
+        },
+        {
+          "name": "queries",
+          "type": "integer"
+        },
+        {
+          "name": "familyOperations",
+          "type": "integer"
+        }
       ]
     },
     "EngineStatus": {
       "kind": "object",
       "fields": [
-        { "name": "engineId", "type": "string", "doc": "Stable engine process identity." },
-        { "name": "engineVersion", "type": "string", "doc": "Engine build version." },
-        { "name": "role", "type": "EngineRole" },
-        { "name": "startedAt", "type": "string", "doc": "ISO-8601 UTC engine start time." },
-        { "name": "uptimeMs", "type": "integer" },
-        { "name": "storage", "type": "StorageStats" },
-        { "name": "counters", "type": "OperationCounters" }
+        {
+          "name": "engineId",
+          "type": "string",
+          "doc": "Stable engine process identity."
+        },
+        {
+          "name": "engineVersion",
+          "type": "string",
+          "doc": "Engine build version."
+        },
+        {
+          "name": "role",
+          "type": "EngineRole"
+        },
+        {
+          "name": "startedAt",
+          "type": "string",
+          "doc": "ISO-8601 UTC engine start time."
+        },
+        {
+          "name": "uptimeMs",
+          "type": "integer"
+        },
+        {
+          "name": "storage",
+          "type": "StorageStats"
+        },
+        {
+          "name": "counters",
+          "type": "OperationCounters"
+        }
       ]
     },
     "CollectionSummary": {
       "kind": "object",
       "fields": [
-        { "name": "name", "type": "string" },
-        { "name": "documents", "type": "integer" },
-        { "name": "sizeBytes", "type": "integer" }
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "documents",
+          "type": "integer"
+        },
+        {
+          "name": "sizeBytes",
+          "type": "integer"
+        }
       ]
     },
     "DocumentRecord": {
       "kind": "object",
       "fields": [
-        { "name": "id", "type": "string" },
-        { "name": "collection", "type": "string" },
-        { "name": "version", "type": "integer", "doc": "Published version from DocumentMetadata." },
-        { "name": "value", "type": "json" }
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "collection",
+          "type": "string"
+        },
+        {
+          "name": "version",
+          "type": "integer",
+          "doc": "Published version from DocumentMetadata."
+        },
+        {
+          "name": "value",
+          "type": "json"
+        }
       ]
     },
     "DocumentReadRequest": {
       "kind": "object",
       "fields": [
-        { "name": "collection", "type": "string" },
-        { "name": "documentId", "type": "string" }
+        {
+          "name": "collection",
+          "type": "string"
+        },
+        {
+          "name": "documentId",
+          "type": "string"
+        }
       ]
     },
     "DocumentReadResult": {
@@ -143,48 +211,98 @@
     "DocumentWriteInput": {
       "kind": "object",
       "fields": [
-        { "name": "id", "type": "string" },
-        { "name": "collection", "type": "string" },
-        { "name": "value", "type": "json" }
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "collection",
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "type": "json"
+        }
       ]
     },
     "DocumentWriteRequest": {
       "kind": "object",
       "fields": [
-        { "name": "document", "type": "DocumentWriteInput" },
+        {
+          "name": "document",
+          "type": "DocumentWriteInput"
+        },
         {
           "name": "expectedVersion",
           "type": "integer",
           "optional": true,
           "doc": "ExpectedVersion precondition; absent means create-or-replace."
         },
-        { "name": "operationId", "type": "string", "doc": "Stable OperationId for retry identity." }
+        {
+          "name": "operationId",
+          "type": "string",
+          "doc": "Stable OperationId for retry identity."
+        }
       ]
     },
     "CommitReceipt": {
       "kind": "object",
       "doc": "CommitOutcome projected to the public surface.",
       "fields": [
-        { "name": "operationId", "type": "string" },
-        { "name": "collection", "type": "string" },
-        { "name": "documentId", "type": "string" },
-        { "name": "version", "type": "integer" },
-        { "name": "committedAt", "type": "string", "doc": "ISO-8601 UTC commit time." }
+        {
+          "name": "operationId",
+          "type": "string"
+        },
+        {
+          "name": "collection",
+          "type": "string"
+        },
+        {
+          "name": "documentId",
+          "type": "string"
+        },
+        {
+          "name": "version",
+          "type": "integer"
+        },
+        {
+          "name": "committedAt",
+          "type": "string",
+          "doc": "ISO-8601 UTC commit time."
+        }
       ]
     },
     "QueryInput": {
       "kind": "union",
       "doc": "The engine accepts Typed(QuerySpec) and V1Compatible text; the pre-landing shape carries the v1 text form only and records the typed form as a contract TODO for SE-08.",
-      "variants": [{ "kind": "v1", "fields": [{ "name": "text", "type": "string" }] }]
+      "variants": [
+        {
+          "kind": "v1",
+          "fields": [
+            {
+              "name": "text",
+              "type": "string"
+            }
+          ]
+        }
+      ]
     },
     "QueryRequest": {
       "kind": "object",
-      "fields": [{ "name": "input", "type": "QueryInput" }]
+      "fields": [
+        {
+          "name": "input",
+          "type": "QueryInput"
+        }
+      ]
     },
     "QueryRowResult": {
       "kind": "object",
       "fields": [
-        { "name": "document", "type": "DocumentRecord" },
+        {
+          "name": "document",
+          "type": "DocumentRecord"
+        },
         {
           "name": "projected",
           "type": "array",
@@ -196,23 +314,46 @@
     "Projection": {
       "kind": "object",
       "fields": [
-        { "name": "name", "type": "string" },
-        { "name": "value", "type": "json" }
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "type": "json"
+        }
       ]
     },
     "StaleIndexObservation": {
       "kind": "object",
       "fields": [
-        { "name": "indexId", "type": "string" },
-        { "name": "reason", "type": "string" }
+        {
+          "name": "indexId",
+          "type": "string"
+        },
+        {
+          "name": "reason",
+          "type": "string"
+        }
       ]
     },
     "QueryResult": {
       "kind": "object",
       "fields": [
-        { "name": "rows", "type": "array", "items": "QueryRowResult" },
-        { "name": "matched", "type": "integer" },
-        { "name": "staleness", "type": "array", "items": "StaleIndexObservation" }
+        {
+          "name": "rows",
+          "type": "array",
+          "items": "QueryRowResult"
+        },
+        {
+          "name": "matched",
+          "type": "integer"
+        },
+        {
+          "name": "staleness",
+          "type": "array",
+          "items": "StaleIndexObservation"
+        }
       ]
     },
     "FamilyKind": {
@@ -234,7 +375,10 @@
     "FamilyReadRequest": {
       "kind": "object",
       "fields": [
-        { "name": "kind", "type": "FamilyKind" },
+        {
+          "name": "kind",
+          "type": "FamilyKind"
+        },
         {
           "name": "scope",
           "type": "string",
@@ -245,34 +389,59 @@
     "FamilyReadResult": {
       "kind": "object",
       "fields": [
-        { "name": "kind", "type": "FamilyKind" },
-        { "name": "scope", "type": "string" },
-        { "name": "state", "type": "json" }
+        {
+          "name": "kind",
+          "type": "FamilyKind"
+        },
+        {
+          "name": "scope",
+          "type": "string"
+        },
+        {
+          "name": "state",
+          "type": "json"
+        }
       ]
     },
     "FamilyWriteRequest": {
       "kind": "object",
       "fields": [
-        { "name": "kind", "type": "FamilyKind" },
-        { "name": "scope", "type": "string" },
+        {
+          "name": "kind",
+          "type": "FamilyKind"
+        },
+        {
+          "name": "scope",
+          "type": "string"
+        },
         {
           "name": "operation",
           "type": "json",
           "doc": "Typed family mutation payload (validated per kind)."
         },
-        { "name": "operationId", "type": "string" }
+        {
+          "name": "operationId",
+          "type": "string"
+        }
       ]
     },
     "ApiError": {
       "kind": "object",
       "fields": [
-        { "name": "code", "type": "string", "doc": "Stable machine-readable error code." },
+        {
+          "name": "code",
+          "type": "string",
+          "doc": "Stable machine-readable error code."
+        },
         {
           "name": "message",
           "type": "string",
           "doc": "Human-readable; never contains credentials or document bodies."
         },
-        { "name": "retryable", "type": "boolean" },
+        {
+          "name": "retryable",
+          "type": "boolean"
+        },
         {
           "name": "loginUrl",
           "type": "string",
@@ -284,19 +453,28 @@
     "SessionOpenedPayload": {
       "kind": "object",
       "fields": [
-        { "name": "sessionId", "type": "string" },
+        {
+          "name": "sessionId",
+          "type": "string"
+        },
         {
           "name": "resumable",
           "type": "boolean",
           "doc": "Whether the session retains frames for checkpoint resume."
         },
-        { "name": "heartbeatIntervalMs", "type": "integer" }
+        {
+          "name": "heartbeatIntervalMs",
+          "type": "integer"
+        }
       ]
     },
     "SubscriptionEstablishedPayload": {
       "kind": "object",
       "fields": [
-        { "name": "subscriptionId", "type": "string" },
+        {
+          "name": "subscriptionId",
+          "type": "string"
+        },
         {
           "name": "checkpoint",
           "type": "string",
@@ -313,27 +491,130 @@
       "kind": "object",
       "doc": "The trivial tick feed proving live plumbing before real data flows (DB-02).",
       "fields": [
-        { "name": "seq", "type": "integer" },
-        { "name": "emittedAt", "type": "string" },
-        { "name": "counter", "type": "integer" }
+        {
+          "name": "seq",
+          "type": "integer"
+        },
+        {
+          "name": "emittedAt",
+          "type": "string"
+        },
+        {
+          "name": "counter",
+          "type": "integer"
+        }
       ]
     },
     "HeartbeatPayload": {
       "kind": "object",
-      "fields": [{ "name": "at", "type": "string" }]
+      "fields": [
+        {
+          "name": "at",
+          "type": "string"
+        }
+      ]
     },
     "ResyncRequiredPayload": {
       "kind": "object",
       "fields": [
-        { "name": "reason", "type": "string" },
-        { "name": "lastSeq", "type": "integer" }
+        {
+          "name": "reason",
+          "type": "string"
+        },
+        {
+          "name": "lastSeq",
+          "type": "integer"
+        }
       ]
     },
     "FatalErrorPayload": {
       "kind": "object",
       "fields": [
-        { "name": "code", "type": "string" },
-        { "name": "message", "type": "string" }
+        {
+          "name": "code",
+          "type": "string"
+        },
+        {
+          "name": "message",
+          "type": "string"
+        }
+      ]
+    },
+    "SchemaStateRequest": {
+      "kind": "object",
+      "fields": [
+        {
+          "name": "collection",
+          "type": "string",
+          "doc": "The collection whose schema state is read."
+        }
+      ]
+    },
+    "SchemaStateResult": {
+      "kind": "object",
+      "fields": [
+        {
+          "name": "collection",
+          "type": "string",
+          "doc": "The collection."
+        },
+        {
+          "name": "enforcedVersion",
+          "type": "integer",
+          "doc": "The enforced Schema Version, or null for a schema-free collection.",
+          "optional": true
+        },
+        {
+          "name": "ruleCount",
+          "type": "integer",
+          "doc": "The recorded rule count of the enforced Document Schema."
+        },
+        {
+          "name": "validation",
+          "type": "string",
+          "doc": "The validation status in the schema model's vocabulary: enforced or none."
+        },
+        {
+          "name": "migrationKind",
+          "type": "string",
+          "doc": "The Schema Migration state: none, in_progress, rolling_back, or complete."
+        },
+        {
+          "name": "migrationManifest",
+          "type": "string",
+          "doc": "The manifest digest of the recorded drive, when one exists.",
+          "optional": true
+        },
+        {
+          "name": "migrationFromVersion",
+          "type": "integer",
+          "doc": "The drive's from-version, when one exists.",
+          "optional": true
+        },
+        {
+          "name": "migrationToVersion",
+          "type": "integer",
+          "doc": "The drive's to-version, when one exists.",
+          "optional": true
+        },
+        {
+          "name": "migrationDocuments",
+          "type": "integer",
+          "doc": "The documents the drive scanned so far.",
+          "optional": true
+        },
+        {
+          "name": "migrationTransformed",
+          "type": "integer",
+          "doc": "The documents the drive transformed so far.",
+          "optional": true
+        },
+        {
+          "name": "migrationPages",
+          "type": "integer",
+          "doc": "The pages the drive committed so far.",
+          "optional": true
+        }
       ]
     }
   },
@@ -342,45 +623,80 @@
       "name": "engine.status",
       "path": "/api/v2/operations/engine.status",
       "doc": "Host-level typed read wrapping engine identity, storage stats, and operation counters.",
-      "request": { "type": "none" },
-      "response": { "type": "EngineStatus" }
+      "request": {
+        "type": "none"
+      },
+      "response": {
+        "type": "EngineStatus"
+      }
     },
     {
       "name": "document.read",
       "path": "/api/v2/operations/document.read",
       "doc": "PublicOperation::DocumentRead.",
-      "request": { "type": "DocumentReadRequest" },
-      "response": { "type": "DocumentReadResult" }
+      "request": {
+        "type": "DocumentReadRequest"
+      },
+      "response": {
+        "type": "DocumentReadResult"
+      }
     },
     {
       "name": "document.write",
       "path": "/api/v2/operations/document.write",
       "doc": "PublicOperation::DocumentWrite (idempotent via OperationId + idempotencyKey).",
-      "request": { "type": "DocumentWriteRequest" },
-      "response": { "type": "CommitReceipt" },
+      "request": {
+        "type": "DocumentWriteRequest"
+      },
+      "response": {
+        "type": "CommitReceipt"
+      },
       "idempotent": true
     },
     {
       "name": "query.execute",
       "path": "/api/v2/operations/query.execute",
       "doc": "PublicOperation::Query over the v1-compatible grammar.",
-      "request": { "type": "QueryRequest" },
-      "response": { "type": "QueryResult" }
+      "request": {
+        "type": "QueryRequest"
+      },
+      "response": {
+        "type": "QueryResult"
+      }
     },
     {
       "name": "family.read",
       "path": "/api/v2/operations/family.read",
       "doc": "PublicOperation::Family(FamilyReadRequest). Unknown FamilyKind values fail closed with family.kind-unknown.",
-      "request": { "type": "FamilyReadRequest" },
-      "response": { "type": "FamilyReadResult" }
+      "request": {
+        "type": "FamilyReadRequest"
+      },
+      "response": {
+        "type": "FamilyReadResult"
+      }
     },
     {
       "name": "family.write",
       "path": "/api/v2/operations/family.write",
       "doc": "PublicOperation::Family(FamilyWriteRequest) (idempotent via OperationId + idempotencyKey).",
-      "request": { "type": "FamilyWriteRequest" },
-      "response": { "type": "CommitReceipt" },
+      "request": {
+        "type": "FamilyWriteRequest"
+      },
+      "response": {
+        "type": "CommitReceipt"
+      },
       "idempotent": true
+    },
+    {
+      "name": "schema.status",
+      "path": "/api/v2/operations/schema.status",
+      "doc": "PublicOperation::Schema(SchemaOperation::Status). One typed read of one collection's Document Schema state and Schema Migration state; the studio's schema page reads nothing else.",
+      "request": {
+        "type": "SchemaStateRequest"
+      },
+      "response": {
+        "type": "SchemaStateResult"
+      }
     }
   ],
   "subscriptions": [

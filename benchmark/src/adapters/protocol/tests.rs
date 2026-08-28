@@ -196,6 +196,7 @@ fn registry_kind(operation: &PublicOperation) -> &'static str {
         PublicOperation::DocumentWrite(_) => "document-write",
         PublicOperation::Query(_) => "query",
         PublicOperation::Family(_) => "family",
+        PublicOperation::Schema(_) => "schema",
     }
 }
 

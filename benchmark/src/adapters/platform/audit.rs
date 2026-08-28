@@ -46,6 +46,18 @@ pub enum AuditOperation {
     FamilyRead,
     /// One family write.
     FamilyWrite,
+    /// One schema declaration (declare, replace, or clear).
+    SchemaDeclare,
+    /// One schema status read.
+    SchemaStatus,
+    /// One on-demand document validation.
+    SchemaValidate,
+    /// One Schema Migration status read.
+    SchemaMigrationStatus,
+    /// One Schema Migration dry run.
+    SchemaMigrationDryRun,
+    /// One Schema Migration apply.
+    SchemaMigrationApply,
 }
 
 impl fmt::Display for AuditOperation {
@@ -56,6 +68,12 @@ impl fmt::Display for AuditOperation {
             Self::Query => "query",
             Self::FamilyRead => "family-read",
             Self::FamilyWrite => "family-write",
+            Self::SchemaDeclare => "schema-declare",
+            Self::SchemaStatus => "schema-status",
+            Self::SchemaValidate => "schema-validate",
+            Self::SchemaMigrationStatus => "schema-migration-status",
+            Self::SchemaMigrationDryRun => "schema-migration-dry-run",
+            Self::SchemaMigrationApply => "schema-migration-apply",
         })
     }
 }

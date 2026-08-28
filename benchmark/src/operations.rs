@@ -13,8 +13,8 @@ use crate::{
     families::{FamilyReadRequest, FamilyReadResult, FamilyWriteRequest},
     query::{QueryResult, QuerySpec},
     types::{
-        Cancellation, CollectionName, Deadline, Document, DocumentId, ExpectedVersion, OperationId,
-        TenantId,
+        Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
+        ExpectedVersion, OperationId, TenantId,
     },
 };
 
@@ -342,6 +342,8 @@ pub enum PublicOperation {
     Query(QueryOperation),
     /// Execute one family operation.
     Family(FamilyOperation),
+    /// Execute one schema-lifecycle operation.
+    Schema(SchemaOperation),
 }
 
 impl PublicOperation {
@@ -364,6 +366,550 @@ impl PublicOperation {
     pub fn family(value: FamilyOperation) -> Self {
         Self::Family(value)
     }
+
+    /// Wraps a schema-lifecycle operation.
+    pub fn schema(value: SchemaOperation) -> Self {
+        Self::Schema(value)
+    }
+}
+
+/// A typed request to declare, replace, or clear one collection's schema.
+///
+/// The schema arrives as a [`SchemaDefinition`] — the typed, versioned,
+/// bounded rule set of the schema model — never as bytes, text, or a raw
+/// frame body, so the generic family byte path cannot express it and this
+/// constructor cannot smuggle one. A `None` schema clears the collection's
+/// policy, returning it to schema-free behavior.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SchemaDeclareRequest {
+    tenant_claim: TenantId,
+    collection: CollectionName,
+    schema: Option<crate::families::SchemaDefinition>,
+    operation_id: OperationId,
+    deadline: Deadline,
+    cancellation: Cancellation,
+}
+
+impl SchemaDeclareRequest {
+    /// Creates a request after checking its deadline and cancellation state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidDeadline`] for an elapsed
+    /// deadline and [`RequestValidationError::InvalidCancellation`] for an
+    /// already cancelled signal.
+    pub fn try_new(
+        tenant_claim: TenantId,
+        collection: CollectionName,
+        schema: Option<crate::families::SchemaDefinition>,
+        operation_id: OperationId,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Result<Self, RequestValidationError> {
+        if deadline.is_expired() {
+            return Err(RequestValidationError::InvalidDeadline);
+        }
+        if cancellation.is_cancelled() {
+            return Err(RequestValidationError::InvalidCancellation);
+        }
+        Ok(Self { tenant_claim, collection, schema, operation_id, deadline, cancellation })
+    }
+
+    /// Returns the untrusted tenant claim.
+    pub fn tenant_claim(&self) -> &TenantId {
+        &self.tenant_claim
+    }
+
+    /// Returns the collection name.
+    pub fn collection(&self) -> &CollectionName {
+        &self.collection
+    }
+
+    /// Returns the requested policy, or `None` to clear it.
+    pub fn schema(&self) -> Option<&crate::families::SchemaDefinition> {
+        self.schema.as_ref()
+    }
+
+    /// Returns the stable operation identity.
+    pub fn operation_id(&self) -> &OperationId {
+        &self.operation_id
+    }
+
+    /// Returns the request deadline.
+    pub fn deadline(&self) -> Deadline {
+        self.deadline
+    }
+
+    /// Returns a clone of the cancellation signal.
+    pub fn cancellation(&self) -> Cancellation {
+        self.cancellation.clone()
+    }
+}
+
+/// A typed request for one collection's recorded schema state.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SchemaStatusRequest {
+    tenant_claim: TenantId,
+    collection: CollectionName,
+    deadline: Deadline,
+    cancellation: Cancellation,
+}
+
+impl SchemaStatusRequest {
+    /// Creates a request after checking its deadline and cancellation state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidDeadline`] for an elapsed
+    /// deadline and [`RequestValidationError::InvalidCancellation`] for an
+    /// already cancelled signal.
+    pub fn try_new(
+        tenant_claim: TenantId,
+        collection: CollectionName,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Result<Self, RequestValidationError> {
+        if deadline.is_expired() {
+            return Err(RequestValidationError::InvalidDeadline);
+        }
+        if cancellation.is_cancelled() {
+            return Err(RequestValidationError::InvalidCancellation);
+        }
+        Ok(Self { tenant_claim, collection, deadline, cancellation })
+    }
+
+    /// Returns the untrusted tenant claim.
+    pub fn tenant_claim(&self) -> &TenantId {
+        &self.tenant_claim
+    }
+
+    /// Returns the collection name.
+    pub fn collection(&self) -> &CollectionName {
+        &self.collection
+    }
+
+    /// Returns the request deadline.
+    pub fn deadline(&self) -> Deadline {
+        self.deadline
+    }
+
+    /// Returns a clone of the cancellation signal.
+    pub fn cancellation(&self) -> Cancellation {
+        self.cancellation.clone()
+    }
+}
+
+/// A typed request to validate one document value against the collection's
+/// recorded schema.
+///
+/// Validation is pure: nothing is staged and nothing is written, so the
+/// operation is the on-demand check the studio and the CLI surface. The
+/// value arrives as a [`DocumentValue`]; the answer's violations are the
+/// schema model's field-and-kind vocabulary and never carry a field value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SchemaValidateRequest {
+    tenant_claim: TenantId,
+    collection: CollectionName,
+    value: DocumentValue,
+    deadline: Deadline,
+    cancellation: Cancellation,
+}
+
+impl SchemaValidateRequest {
+    /// Creates a request after checking its deadline and cancellation state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidDeadline`] for an elapsed
+    /// deadline and [`RequestValidationError::InvalidCancellation`] for an
+    /// already cancelled signal.
+    pub fn try_new(
+        tenant_claim: TenantId,
+        collection: CollectionName,
+        value: DocumentValue,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Result<Self, RequestValidationError> {
+        if deadline.is_expired() {
+            return Err(RequestValidationError::InvalidDeadline);
+        }
+        if cancellation.is_cancelled() {
+            return Err(RequestValidationError::InvalidCancellation);
+        }
+        Ok(Self { tenant_claim, collection, value, deadline, cancellation })
+    }
+
+    /// Returns the untrusted tenant claim.
+    pub fn tenant_claim(&self) -> &TenantId {
+        &self.tenant_claim
+    }
+
+    /// Returns the collection name.
+    pub fn collection(&self) -> &CollectionName {
+        &self.collection
+    }
+
+    /// Returns the document value to validate.
+    pub fn value(&self) -> &DocumentValue {
+        &self.value
+    }
+
+    /// Returns the request deadline.
+    pub fn deadline(&self) -> Deadline {
+        self.deadline
+    }
+
+    /// Returns a clone of the cancellation signal.
+    pub fn cancellation(&self) -> Cancellation {
+        self.cancellation.clone()
+    }
+}
+
+/// A typed request for one collection's Schema Migration state.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationStatusRequest {
+    tenant_claim: TenantId,
+    collection: CollectionName,
+    deadline: Deadline,
+    cancellation: Cancellation,
+}
+
+impl MigrationStatusRequest {
+    /// Creates a request after checking its deadline and cancellation state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidDeadline`] for an elapsed
+    /// deadline and [`RequestValidationError::InvalidCancellation`] for an
+    /// already cancelled signal.
+    pub fn try_new(
+        tenant_claim: TenantId,
+        collection: CollectionName,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Result<Self, RequestValidationError> {
+        if deadline.is_expired() {
+            return Err(RequestValidationError::InvalidDeadline);
+        }
+        if cancellation.is_cancelled() {
+            return Err(RequestValidationError::InvalidCancellation);
+        }
+        Ok(Self { tenant_claim, collection, deadline, cancellation })
+    }
+
+    /// Returns the untrusted tenant claim.
+    pub fn tenant_claim(&self) -> &TenantId {
+        &self.tenant_claim
+    }
+
+    /// Returns the collection name.
+    pub fn collection(&self) -> &CollectionName {
+        &self.collection
+    }
+
+    /// Returns the request deadline.
+    pub fn deadline(&self) -> Deadline {
+        self.deadline
+    }
+
+    /// Returns a clone of the cancellation signal.
+    pub fn cancellation(&self) -> Cancellation {
+        self.cancellation.clone()
+    }
+}
+
+/// A typed request to compute one migration contract's dry run.
+///
+/// The contract is the typed [`SchemaMigration`] of the migration model; the
+/// answer is the plan with its evidence, and nothing is mutated.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationDryRunRequest {
+    tenant_claim: TenantId,
+    contract: crate::families::migrations::SchemaMigration,
+    deadline: Deadline,
+    cancellation: Cancellation,
+}
+
+impl MigrationDryRunRequest {
+    /// Creates a request after checking its deadline and cancellation state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidDeadline`] for an elapsed
+    /// deadline and [`RequestValidationError::InvalidCancellation`] for an
+    /// already cancelled signal.
+    pub fn try_new(
+        tenant_claim: TenantId,
+        contract: crate::families::migrations::SchemaMigration,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Result<Self, RequestValidationError> {
+        if deadline.is_expired() {
+            return Err(RequestValidationError::InvalidDeadline);
+        }
+        if cancellation.is_cancelled() {
+            return Err(RequestValidationError::InvalidCancellation);
+        }
+        Ok(Self { tenant_claim, contract, deadline, cancellation })
+    }
+
+    /// Returns the untrusted tenant claim.
+    pub fn tenant_claim(&self) -> &TenantId {
+        &self.tenant_claim
+    }
+
+    /// Returns the migration contract.
+    pub fn contract(&self) -> &crate::families::migrations::SchemaMigration {
+        &self.contract
+    }
+
+    /// Returns the request deadline.
+    pub fn deadline(&self) -> Deadline {
+        self.deadline
+    }
+
+    /// Returns a clone of the cancellation signal.
+    pub fn cancellation(&self) -> Cancellation {
+        self.cancellation.clone()
+    }
+}
+
+/// A typed request to apply one migration contract to completion.
+///
+/// Apply drives the migration model's step operations — begin, page,
+/// finalize — under one stable operation identity, so a retried apply names
+/// the same drive and the model's idempotency answers with the recorded
+/// receipt instead of a second application.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationApplyRequest {
+    tenant_claim: TenantId,
+    contract: crate::families::migrations::SchemaMigration,
+    options: crate::families::migrations::MigrationOptions,
+    operation_id: OperationId,
+    deadline: Deadline,
+    cancellation: Cancellation,
+}
+
+impl MigrationApplyRequest {
+    /// Creates a request after checking its deadline and cancellation state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestValidationError::InvalidDeadline`] for an elapsed
+    /// deadline and [`RequestValidationError::InvalidCancellation`] for an
+    /// already cancelled signal.
+    pub fn try_new(
+        tenant_claim: TenantId,
+        contract: crate::families::migrations::SchemaMigration,
+        options: crate::families::migrations::MigrationOptions,
+        operation_id: OperationId,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Result<Self, RequestValidationError> {
+        if deadline.is_expired() {
+            return Err(RequestValidationError::InvalidDeadline);
+        }
+        if cancellation.is_cancelled() {
+            return Err(RequestValidationError::InvalidCancellation);
+        }
+        Ok(Self { tenant_claim, contract, options, operation_id, deadline, cancellation })
+    }
+
+    /// Returns the untrusted tenant claim.
+    pub fn tenant_claim(&self) -> &TenantId {
+        &self.tenant_claim
+    }
+
+    /// Returns the migration contract.
+    pub fn contract(&self) -> &crate::families::migrations::SchemaMigration {
+        &self.contract
+    }
+
+    /// Returns the apply options, including the not-rollbackable
+    /// acknowledgment.
+    pub fn options(&self) -> crate::families::migrations::MigrationOptions {
+        self.options
+    }
+
+    /// Returns the stable operation identity.
+    pub fn operation_id(&self) -> &OperationId {
+        &self.operation_id
+    }
+
+    /// Returns the request deadline.
+    pub fn deadline(&self) -> Deadline {
+        self.deadline
+    }
+
+    /// Returns a clone of the cancellation signal.
+    pub fn cancellation(&self) -> Cancellation {
+        self.cancellation.clone()
+    }
+}
+
+/// The closed schema-lifecycle operation set.
+///
+/// Six variants, one per lifecycle step, and no more: the set is the
+/// vertical exposure slice the schema wave names (declare, status, validate
+/// document, migration status, dry run, apply). There is deliberately no
+/// byte, text, or frame-body form — a schema crosses this seam only as the
+/// typed [`SchemaDefinition`](crate::families::SchemaDefinition), and a
+/// migration only as the typed
+/// [`SchemaMigration`](crate::families::migrations::SchemaMigration).
+#[derive(Clone, Debug, PartialEq)]
+pub enum SchemaOperation {
+    /// Declare, replace, or clear one collection's schema.
+    Declare(SchemaDeclareRequest),
+    /// Read one collection's recorded schema state.
+    Status(SchemaStatusRequest),
+    /// Validate one document value against the recorded schema.
+    Validate(SchemaValidateRequest),
+    /// Read one collection's Schema Migration state.
+    MigrationStatus(MigrationStatusRequest),
+    /// Compute one migration contract's dry run.
+    MigrationDryRun(MigrationDryRunRequest),
+    /// Apply one migration contract to completion.
+    MigrationApply(MigrationApplyRequest),
+}
+
+impl SchemaOperation {
+    /// Wraps a schema declaration.
+    pub fn declare(value: SchemaDeclareRequest) -> Self {
+        Self::Declare(value)
+    }
+
+    /// Wraps a schema status read.
+    pub fn status(value: SchemaStatusRequest) -> Self {
+        Self::Status(value)
+    }
+
+    /// Wraps a document validation.
+    pub fn validate(value: SchemaValidateRequest) -> Self {
+        Self::Validate(value)
+    }
+
+    /// Wraps a migration status read.
+    pub fn migration_status(value: MigrationStatusRequest) -> Self {
+        Self::MigrationStatus(value)
+    }
+
+    /// Wraps a migration dry run.
+    pub fn migration_dry_run(value: MigrationDryRunRequest) -> Self {
+        Self::MigrationDryRun(value)
+    }
+
+    /// Wraps a migration apply.
+    pub fn migration_apply(value: MigrationApplyRequest) -> Self {
+        Self::MigrationApply(value)
+    }
+}
+
+/// The answer of one declared schema: the version the collection now
+/// enforces and the recorded rule count.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaDeclared {
+    enforced_version: Option<crate::families::SchemaVersion>,
+    rule_count: usize,
+}
+
+impl SchemaDeclared {
+    /// Creates one declared answer. Crate-only.
+    pub(crate) fn new(
+        enforced_version: Option<crate::families::SchemaVersion>,
+        rule_count: usize,
+    ) -> Self {
+        Self { enforced_version, rule_count }
+    }
+
+    /// Returns the version now enforced, or `None` when the policy cleared.
+    pub fn enforced_version(&self) -> Option<crate::families::SchemaVersion> {
+        self.enforced_version
+    }
+
+    /// Returns the recorded rule count.
+    pub fn rule_count(&self) -> usize {
+        self.rule_count
+    }
+}
+
+/// The answer of one schema status read.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaStatus {
+    enforced_version: Option<crate::families::SchemaVersion>,
+    rule_count: usize,
+}
+
+impl SchemaStatus {
+    /// Creates one status answer. Crate-only.
+    pub(crate) fn new(
+        enforced_version: Option<crate::families::SchemaVersion>,
+        rule_count: usize,
+    ) -> Self {
+        Self { enforced_version, rule_count }
+    }
+
+    /// Returns the version enforced, or `None` for a schema-free collection.
+    pub fn enforced_version(&self) -> Option<crate::families::SchemaVersion> {
+        self.enforced_version
+    }
+
+    /// Returns the recorded rule count.
+    pub fn rule_count(&self) -> usize {
+        self.rule_count
+    }
+}
+
+/// The answer of one document validation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaValidation {
+    enforced_version: Option<crate::families::SchemaVersion>,
+    violations: Vec<crate::families::SchemaViolation>,
+}
+
+impl SchemaValidation {
+    /// Creates one validation answer. Crate-only.
+    pub(crate) fn new(
+        enforced_version: Option<crate::families::SchemaVersion>,
+        violations: Vec<crate::families::SchemaViolation>,
+    ) -> Self {
+        Self { enforced_version, violations }
+    }
+
+    /// Returns the version the validation enforced.
+    pub fn enforced_version(&self) -> Option<crate::families::SchemaVersion> {
+        self.enforced_version
+    }
+
+    /// Reports whether the value satisfies the recorded schema.
+    pub fn valid(&self) -> bool {
+        self.violations.is_empty()
+    }
+
+    /// Returns the typed violations in the schema model's canonical order.
+    pub fn violations(&self) -> &[crate::families::SchemaViolation] {
+        &self.violations
+    }
+}
+
+/// A typed response of the schema-lifecycle operation set.
+///
+/// Every variant reuses the migration model's own public result types where
+/// one exists — the plan, the receipt, and the migration status — so the
+/// surface adds vocabulary without duplicating evidence shapes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SchemaResponse {
+    /// The answer of one schema declaration.
+    Declared(SchemaDeclared),
+    /// The answer of one schema status read.
+    Status(SchemaStatus),
+    /// The answer of one document validation.
+    Validation(SchemaValidation),
+    /// The answer of one migration status read.
+    MigrationStatus(crate::families::migrations::MigrationStatus),
+    /// The plan of one dry run.
+    Plan(crate::families::migrations::MigrationPlan),
+    /// The receipt of one applied migration.
+    Receipt(crate::families::migrations::MigrationReceipt),
 }
 
 /// A typed response returned by the public operation registry.
@@ -377,6 +923,8 @@ pub enum PublicResponse {
     Family(FamilyReadResult),
     /// A local commit response.
     Commit(CommitOutcome),
+    /// A schema-lifecycle response.
+    Schema(SchemaResponse),
 }
 
 /// A trusted in-process request passed from Platform to Engine.
@@ -390,6 +938,8 @@ pub(crate) enum EngineRequest {
     Query { scope: crate::types::TenantScope, request: QueryOperation },
     /// Execute one family operation in an authorized scope.
     Family { scope: crate::types::TenantScope, request: FamilyOperation },
+    /// Execute one schema-lifecycle operation in an authorized scope.
+    Schema { scope: crate::types::TenantScope, request: SchemaOperation },
 }
 
 /// A trusted in-process response returned by Engine.
@@ -403,4 +953,6 @@ pub(crate) enum EngineResponse {
     Family(FamilyReadResult),
     /// A local commit response.
     Commit(CommitOutcome),
+    /// A schema-lifecycle response.
+    Schema(SchemaResponse),
 }

@@ -1510,6 +1510,23 @@ fn emit_rust_operation_table(out: &mut String, schema: &Schema) {
 
 #[allow(clippy::too_many_lines)]
 fn generate_csharp(schema: &Schema) -> String {
+    // A closed vocabulary that some body declares optional must round-trip
+    // a nil on the C# side: the optional slot is where the schema allows
+    // nil, so its formatter writes and reads one instead of failing. Every
+    // vocabulary no body declares optional keeps the strict refusal.
+    let optional_enums: std::collections::HashSet<String> = schema
+        .operations
+        .iter()
+        .flat_map(|operation| {
+            [operation.request.fields.as_slice(), operation.response.fields.as_slice()]
+        })
+        .chain(schema.types.iter().map(|(_, fields)| fields.as_slice()))
+        .chain(schema.notifications.iter().map(|notification| notification.fields.as_slice()))
+        .chain(schema.channel_frames.iter().map(|frame| frame.fields.as_slice()))
+        .flat_map(|fields| fields.iter())
+        .filter(|field| field.optional)
+        .map(|field| field.type_name.clone())
+        .collect();
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -1584,7 +1601,8 @@ fn generate_csharp(schema: &Schema) -> String {
     let _ = writeln!(out);
 
     for enum_def in &schema.enums {
-        emit_csharp_enum(&mut out, enum_def);
+        let nil_tolerant = optional_enums.contains(&enum_def.name);
+        emit_csharp_enum(&mut out, enum_def, nil_tolerant);
     }
 
     let mut bodies: Vec<(&str, &[FieldDef])> = Vec::new();
@@ -1607,13 +1625,14 @@ fn generate_csharp(schema: &Schema) -> String {
 }
 
 #[allow(clippy::too_many_lines)]
-fn emit_csharp_enum(out: &mut String, enum_def: &EnumDef) {
+fn emit_csharp_enum(out: &mut String, enum_def: &EnumDef, nil_tolerant: bool) {
     let name = pascal(&enum_def.name);
     let (tag_type, read, write_cast) = if enum_def.tag == "u16" {
         ("ushort", "ReadUInt16", "(ushort)")
     } else {
         ("byte", "ReadByte", "(byte)")
     };
+    let nullable = if nil_tolerant { "?" } else { "" };
     let _ = writeln!(
         out,
         "/// <summary>The generated `{}` closed vocabulary.</summary>",
@@ -1672,12 +1691,17 @@ fn emit_csharp_enum(out: &mut String, enum_def: &EnumDef) {
     let _ = writeln!(out, "    /// <inheritdoc/>");
     let _ = writeln!(
         out,
-        "    public {name} Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)"
+        "    public {name}{nullable} Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)"
     );
     let _ = writeln!(out, "    {{");
     let _ = writeln!(out, "        if (reader.TryReadNil())");
     let _ = writeln!(out, "        {{");
-    let _ = writeln!(out, "            throw TbepWire.FormatException(\"nil is not a {name}\");");
+    if nil_tolerant {
+        let _ = writeln!(out, "            return null;");
+    } else {
+        let _ =
+            writeln!(out, "            throw TbepWire.FormatException(\"nil is not a {name}\");");
+    }
     let _ = writeln!(out, "        }}");
     let _ = writeln!(out, "        var count = reader.ReadArrayHeader();");
     let _ = writeln!(out, "        var tag = reader.{read}();");
@@ -1760,7 +1784,13 @@ fn emit_csharp_enum(out: &mut String, enum_def: &EnumDef) {
     let _ = writeln!(out, "    {{");
     let _ = writeln!(out, "        if (value is null)");
     let _ = writeln!(out, "        {{");
-    let _ = writeln!(out, "            throw TbepWire.FormatException(\"nil is not a {name}\");");
+    if nil_tolerant {
+        let _ = writeln!(out, "            writer.WriteNil();");
+        let _ = writeln!(out, "            return;");
+    } else {
+        let _ =
+            writeln!(out, "            throw TbepWire.FormatException(\"nil is not a {name}\");");
+    }
     let _ = writeln!(out, "        }}");
     let _ = writeln!(out, "        switch (value.Variant)");
     let _ = writeln!(out, "        {{");
@@ -1885,8 +1915,16 @@ fn emit_csharp_struct(out: &mut String, name: &str, fields: &[FieldDef]) {
     let hash_parts: Vec<String> = fields.iter().map(|f| pascal(&f.name).clone()).collect();
     if hash_parts.is_empty() {
         let _ = writeln!(out, "        return typeof({struct_name}).GetHashCode();");
-    } else {
+    } else if hash_parts.len() <= 8 {
+        // `System.HashCode.Combine` accepts at most eight values, so a
+        // wider record folds its fields in bounded groups instead.
         let _ = writeln!(out, "        return System.HashCode.Combine({});", hash_parts.join(", "));
+    } else {
+        let _ = writeln!(out, "        var hash = new System.HashCode();");
+        for part in &hash_parts {
+            let _ = writeln!(out, "        hash.Add({part});");
+        }
+        let _ = writeln!(out, "        return hash.ToHashCode();");
     }
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "}}");

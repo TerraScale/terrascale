@@ -14,13 +14,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{
     engine::{CommitError, CommitOutcome, Engine, EngineClosed, EngineError, EnginePort},
-    families::{FamilyError, FamilyReadContext, FamilyReadRequest, FamilyWriteRequest},
+    families::{
+        FamilyError, FamilyReadContext, FamilyReadRequest, FamilyReadResult, FamilyWriteRequest,
+    },
     operations::{
         DocumentReadRequest, DocumentWriteRequest, EngineRequest, EngineResponse, FamilyOperation,
         QueryOperation,
     },
     query::QueryError,
-    types::{LocalDurability, OperationId, TenantScope},
+    types::{Cancellation, Deadline, LocalDurability, OperationId, TenantScope},
 };
 
 /// The local durability point every public mutation commits at.
@@ -46,7 +48,189 @@ impl EnginePort for Engine {
             EngineRequest::Family { scope, request: FamilyOperation::Write(request) } => {
                 execute_family_write(self, &scope, request)
             }
+            EngineRequest::Schema { scope, request } => {
+                execute_schema_operation(self, &scope, request)
+            }
         }
+    }
+}
+
+/// Executes one schema-lifecycle operation through the schema seams.
+///
+/// Every step runs under the authorized [`TenantScope`] the Platform adapter
+/// derived: the claim was already checked to name the same tenant, and the
+/// family and migration seams repeat the engine-side scope validation on
+/// every snapshot and transaction they open. The declare step stages the
+/// schema policy through the family write seam — the same path any other
+/// family mutation takes — while the migration steps drive the migration
+/// model's own step operations, which own their transactions.
+fn execute_schema_operation(
+    engine: &Engine,
+    scope: &TenantScope,
+    request: crate::operations::SchemaOperation,
+) -> Result<EngineResponse, EngineError> {
+    use crate::operations::SchemaOperation;
+
+    let answer = match request {
+        SchemaOperation::Declare(request) => {
+            let write = crate::families::ValidationWrite::try_new(
+                scope.clone(),
+                request.collection().clone(),
+                request.schema().cloned(),
+                request.operation_id().clone(),
+                request.deadline(),
+                request.cancellation(),
+            )
+            .map_err(|_| EngineError::InvalidDocument)?;
+            let snapshot = engine.read_snapshot(write.tenant_scope())?;
+            let mut transaction =
+                engine.begin(write.tenant_scope(), snapshot, write.operation_id().clone())?;
+            let staged = FamilyWriteRequest::schema_validation_update(write);
+            engine.families().stage(&mut transaction, staged).map_err(map_family_error)?;
+            commit_response(transaction.commit(PUBLIC_WRITE_DURABILITY))?;
+            let (version, rules) = recorded_policy(engine, scope, request.collection())?;
+            crate::operations::SchemaResponse::Declared(crate::operations::SchemaDeclared::new(
+                version, rules,
+            ))
+        }
+        SchemaOperation::Status(request) => {
+            let (version, rules) = recorded_policy(engine, scope, request.collection())?;
+            crate::operations::SchemaResponse::Status(crate::operations::SchemaStatus::new(
+                version, rules,
+            ))
+        }
+        SchemaOperation::Validate(request) => {
+            let result = validation_of(engine, scope, request.collection())?;
+            let violations = result
+                .policy()
+                .map(|policy| crate::families::schemas::violations(policy, request.value()))
+                .unwrap_or_default();
+            crate::operations::SchemaResponse::Validation(crate::operations::SchemaValidation::new(
+                result.enforced_version(),
+                violations,
+            ))
+        }
+        SchemaOperation::MigrationStatus(request) => {
+            let status = crate::families::migrations::status(engine, scope, request.collection())
+                .map_err(map_migration_error)?;
+            crate::operations::SchemaResponse::MigrationStatus(status)
+        }
+        SchemaOperation::MigrationDryRun(request) => {
+            let plan = crate::families::migrations::dry_run(engine, scope, request.contract())
+                .map_err(map_migration_error)?;
+            crate::operations::SchemaResponse::Plan(plan)
+        }
+        SchemaOperation::MigrationApply(request) => {
+            let receipt = crate::families::migrations::apply(
+                engine,
+                scope,
+                request.contract(),
+                &dry_run(engine, scope, request.contract())?,
+                request.options(),
+            )
+            .map_err(map_migration_error)?;
+            crate::operations::SchemaResponse::Receipt(receipt)
+        }
+    };
+    Ok(EngineResponse::Schema(answer))
+}
+
+/// Reads one collection's recorded policy as a schema-surface answer shape.
+fn recorded_policy(
+    engine: &Engine,
+    scope: &TenantScope,
+    collection: &crate::types::CollectionName,
+) -> Result<(Option<crate::families::SchemaVersion>, usize), EngineError> {
+    let snapshot = engine.read_snapshot(scope)?;
+    let context = FamilyReadContext::new(scope.clone(), snapshot);
+    let request = crate::families::ValidationRead::try_new(
+        collection.clone(),
+        None,
+        Deadline::after(std::time::Duration::from_secs(30))
+            .map_err(|_| EngineError::InvalidDocument)?,
+        Cancellation::new(),
+    )
+    .map_err(|_| EngineError::InvalidDocument)?;
+    let read = FamilyReadRequest::validation(request);
+    let FamilyReadResult::Validation(result) =
+        engine.families().read(context, read).map_err(map_family_error)?
+    else {
+        return Err(EngineError::StorageFailure);
+    };
+    let (version, rules) = match result.policy() {
+        None => (None, 0),
+        Some(policy) => (Some(policy.version()), policy.rules().len()),
+    };
+    Ok((version, rules))
+}
+
+/// Reads one collection's full validation result, policy included.
+fn validation_of(
+    engine: &Engine,
+    scope: &TenantScope,
+    collection: &crate::types::CollectionName,
+) -> Result<crate::families::ValidationResult, EngineError> {
+    let snapshot = engine.read_snapshot(scope)?;
+    let context = FamilyReadContext::new(scope.clone(), snapshot);
+    let request = crate::families::ValidationRead::try_new(
+        collection.clone(),
+        None,
+        Deadline::after(std::time::Duration::from_secs(30))
+            .map_err(|_| EngineError::InvalidDocument)?,
+        Cancellation::new(),
+    )
+    .map_err(|_| EngineError::InvalidDocument)?;
+    let read = FamilyReadRequest::validation(request);
+    match engine.families().read(context, read).map_err(map_family_error)? {
+        FamilyReadResult::Validation(result) => Ok(result),
+        _ => Err(EngineError::StorageFailure),
+    }
+}
+
+/// Recomputes the plan an apply must reproduce.
+///
+/// The migration model's apply requires the plan the caller derived from the
+/// same contract; the operation surface derives it here under the same
+/// authorized scope, so a caller cannot hand in a plan addressed to another
+/// collection or version.
+fn dry_run(
+    engine: &Engine,
+    scope: &TenantScope,
+    contract: &crate::families::migrations::SchemaMigration,
+) -> Result<crate::families::migrations::MigrationPlan, EngineError> {
+    crate::families::migrations::dry_run(engine, scope, contract).map_err(map_migration_error)
+}
+
+/// Maps one typed Schema Migration failure onto the Engine error vocabulary.
+///
+/// The migration model's own typed detail stays at its seam, where its tests
+/// prove it; here it collapses to the engine categories the Platform adapter
+/// maps. The state refusals — a drive already in progress, a from-version
+/// the collection does not record, another contract's manifest — cross as
+/// [`EngineError::Conflict`]: they are refusals against the observed state,
+/// not malformed requests.
+#[allow(clippy::match_same_arms)] // the typed rows stay readable per refusal
+fn map_migration_error(error: crate::families::migrations::MigrationError) -> EngineError {
+    use crate::families::migrations::MigrationError;
+    match error {
+        MigrationError::DriveInProgress
+        | MigrationError::FromVersionMismatch
+        | MigrationError::ManifestMismatch
+        | MigrationError::PlanMismatch
+        | MigrationError::ScanIncomplete
+        | MigrationError::NotInProgress
+        | MigrationError::ChecksumMismatch
+        | MigrationError::CountMismatch => EngineError::Conflict,
+        MigrationError::NotRollbackable => EngineError::Conflict,
+        MigrationError::InvalidContract
+        | MigrationError::TargetSchemaMalformed
+        | MigrationError::InvalidRequest
+        | MigrationError::AcknowledgmentRequired
+        | MigrationError::TransformRejected
+        | MigrationError::TargetViolation => EngineError::InvalidDocument,
+        MigrationError::PageProgressStalled
+        | MigrationError::ReservedStateInvalid
+        | MigrationError::StorageFailure => EngineError::StorageFailure,
     }
 }
 

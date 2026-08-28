@@ -55,6 +55,7 @@ pub const BUDGETS: &[(&str, usize)] = &[
     ("trigger", 256),
     ("delivery", 65536),
     ("observation", 65536),
+    ("schema", 65536),
 ];
 
 /// The generated `error_code` closed vocabulary.
@@ -1944,6 +1945,830 @@ impl<'de> serde::Deserialize<'de> for ReplicationStatus {
     }
 }
 
+/// The generated `violation_kind` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ViolationKind {
+    /// The `document_not_object` row (code 1).
+    DocumentNotObject,
+    /// The `missing_required_field` row (code 2).
+    MissingRequiredField,
+    /// The `type_mismatch` row (code 3).
+    TypeMismatch,
+    /// The `value_not_allowed` row (code 4).
+    ValueNotAllowed,
+    /// The `number_out_of_range` row (code 5).
+    NumberOutOfRange,
+    /// The `length_out_of_range` row (code 6).
+    LengthOutOfRange,
+}
+
+impl ViolationKind {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::DocumentNotObject => 1,
+            Self::MissingRequiredField => 2,
+            Self::TypeMismatch => 3,
+            Self::ValueNotAllowed => 4,
+            Self::NumberOutOfRange => 5,
+            Self::LengthOutOfRange => 6,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::DocumentNotObject),
+            2 => Some(Self::MissingRequiredField),
+            3 => Some(Self::TypeMismatch),
+            4 => Some(Self::ValueNotAllowed),
+            5 => Some(Self::NumberOutOfRange),
+            6 => Some(Self::LengthOutOfRange),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for ViolationKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::DocumentNotObject => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::MissingRequiredField => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+            Self::TypeMismatch => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&3u8)?;
+                tuple.end()
+            }
+            Self::ValueNotAllowed => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&4u8)?;
+                tuple.end()
+            }
+            Self::NumberOutOfRange => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&5u8)?;
+                tuple.end()
+            }
+            Self::LengthOutOfRange => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&6u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ViolationKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ViolationKind;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a violation_kind array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ViolationKind::DocumentNotObject)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ViolationKind::MissingRequiredField)
+                    }
+                    3 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ViolationKind::TypeMismatch)
+                    }
+                    4 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ViolationKind::ValueNotAllowed)
+                    }
+                    5 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ViolationKind::NumberOutOfRange)
+                    }
+                    6 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ViolationKind::LengthOutOfRange)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown violation_kind code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `coercion` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Coercion {
+    /// The `integer_to_text` row (code 1).
+    IntegerToText,
+    /// The `text_to_integer` row (code 2).
+    TextToInteger,
+    /// The `integer_to_number` row (code 3).
+    IntegerToNumber,
+    /// The `number_to_integer` row (code 4).
+    NumberToInteger,
+}
+
+impl Coercion {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::IntegerToText => 1,
+            Self::TextToInteger => 2,
+            Self::IntegerToNumber => 3,
+            Self::NumberToInteger => 4,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::IntegerToText),
+            2 => Some(Self::TextToInteger),
+            3 => Some(Self::IntegerToNumber),
+            4 => Some(Self::NumberToInteger),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for Coercion {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::IntegerToText => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::TextToInteger => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+            Self::IntegerToNumber => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&3u8)?;
+                tuple.end()
+            }
+            Self::NumberToInteger => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&4u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Coercion {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Coercion;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a coercion array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(Coercion::IntegerToText)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(Coercion::TextToInteger)
+                    }
+                    3 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(Coercion::IntegerToNumber)
+                    }
+                    4 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(Coercion::NumberToInteger)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown coercion code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `transform_rejection` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TransformRejection {
+    /// The `value_not_coercible` row (code 1).
+    ValueNotCoercible,
+    /// The `target_field_occupied` row (code 2).
+    TargetFieldOccupied,
+}
+
+impl TransformRejection {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::ValueNotCoercible => 1,
+            Self::TargetFieldOccupied => 2,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::ValueNotCoercible),
+            2 => Some(Self::TargetFieldOccupied),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for TransformRejection {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::ValueNotCoercible => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::TargetFieldOccupied => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TransformRejection {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TransformRejection;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a transform_rejection array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(TransformRejection::ValueNotCoercible)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(TransformRejection::TargetFieldOccupied)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown transform_rejection code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `rollback_limit_kind` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RollbackLimitKind {
+    /// The `reversible` row (code 1).
+    Reversible,
+    /// The `not_reversible` row (code 2).
+    NotReversible,
+}
+
+impl RollbackLimitKind {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Reversible => 1,
+            Self::NotReversible => 2,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::Reversible),
+            2 => Some(Self::NotReversible),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for RollbackLimitKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Reversible => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::NotReversible => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for RollbackLimitKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = RollbackLimitKind;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a rollback_limit_kind array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(RollbackLimitKind::Reversible)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(RollbackLimitKind::NotReversible)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown rollback_limit_kind code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `migration_state_kind` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MigrationStateKind {
+    /// The `none` row (code 1).
+    None,
+    /// The `in_progress` row (code 2).
+    InProgress,
+    /// The `rolling_back` row (code 3).
+    RollingBack,
+    /// The `complete` row (code 4).
+    Complete,
+}
+
+impl MigrationStateKind {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::None => 1,
+            Self::InProgress => 2,
+            Self::RollingBack => 3,
+            Self::Complete => 4,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::None),
+            2 => Some(Self::InProgress),
+            3 => Some(Self::RollingBack),
+            4 => Some(Self::Complete),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for MigrationStateKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::None => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::InProgress => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+            Self::RollingBack => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&3u8)?;
+                tuple.end()
+            }
+            Self::Complete => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&4u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MigrationStateKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = MigrationStateKind;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a migration_state_kind array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(MigrationStateKind::None)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(MigrationStateKind::InProgress)
+                    }
+                    3 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(MigrationStateKind::RollingBack)
+                    }
+                    4 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(MigrationStateKind::Complete)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown migration_state_kind code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `plan_problem_kind` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PlanProblemKind {
+    /// The `transform_rejected` row (code 1).
+    TransformRejected,
+    /// The `target_violations` row (code 2).
+    TargetViolations,
+}
+
+impl PlanProblemKind {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::TransformRejected => 1,
+            Self::TargetViolations => 2,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::TransformRejected),
+            2 => Some(Self::TargetViolations),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for PlanProblemKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::TransformRejected => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::TargetViolations => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PlanProblemKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = PlanProblemKind;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a plan_problem_kind array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(PlanProblemKind::TransformRejected)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(PlanProblemKind::TargetViolations)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown plan_problem_kind code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `transform_literal` closed vocabulary.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TransformLiteral {
+    /// The `boolean` row (code 1).
+    Boolean(bool),
+    /// The `integer` row (code 2).
+    Integer(i64),
+    /// The `text` row (code 3).
+    Text(String),
+}
+
+impl TransformLiteral {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub fn code(&self) -> u8 {
+        match self {
+            Self::Boolean(_) => 1,
+            Self::Integer(_) => 2,
+            Self::Text(_) => 3,
+        }
+    }
+}
+
+impl serde::Serialize for TransformLiteral {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Boolean(payload) => {
+                let mut tuple = serializer.serialize_tuple(2)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.serialize_element(payload)?;
+                tuple.end()
+            }
+            Self::Integer(payload) => {
+                let mut tuple = serializer.serialize_tuple(2)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.serialize_element(payload)?;
+                tuple.end()
+            }
+            Self::Text(payload) => {
+                let mut tuple = serializer.serialize_tuple(2)?;
+                tuple.serialize_element(&3u8)?;
+                tuple.serialize_element(payload)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TransformLiteral {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TransformLiteral;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a transform_literal array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        let payload = seq.next_element::<bool>()?
+                            .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(2, &self));
+                        }
+                        Ok(TransformLiteral::Boolean(payload))
+                    }
+                    2 => {
+                        let payload = seq.next_element::<i64>()?
+                            .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(2, &self));
+                        }
+                        Ok(TransformLiteral::Integer(payload))
+                    }
+                    3 => {
+                        let payload = seq.next_element::<String>()?
+                            .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(2, &self));
+                        }
+                        Ok(TransformLiteral::Text(payload))
+                    }
+                    _ => Err(serde::de::Error::custom("unknown transform_literal code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `field_transform` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FieldTransform {
+    /// The `add_field` row (code 1).
+    AddField,
+    /// The `remove_field` row (code 2).
+    RemoveField,
+    /// The `rename_field` row (code 3).
+    RenameField,
+    /// The `retype_field` row (code 4).
+    RetypeField,
+}
+
+impl FieldTransform {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::AddField => 1,
+            Self::RemoveField => 2,
+            Self::RenameField => 3,
+            Self::RetypeField => 4,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::AddField),
+            2 => Some(Self::RemoveField),
+            3 => Some(Self::RenameField),
+            4 => Some(Self::RetypeField),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for FieldTransform {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::AddField => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::RemoveField => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+            Self::RenameField => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&3u8)?;
+                tuple.end()
+            }
+            Self::RetypeField => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&4u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for FieldTransform {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = FieldTransform;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a field_transform array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(FieldTransform::AddField)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(FieldTransform::RemoveField)
+                    }
+                    3 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(FieldTransform::RenameField)
+                    }
+                    4 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(FieldTransform::RetypeField)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown field_transform code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
 /// The `document_body` frame body.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DocumentBody {
@@ -2555,6 +3380,626 @@ impl<'de> serde::Deserialize<'de> for DenialRecord {
                     scope_tenant,
                     attempted_tenant,
                     counterparty,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `schema_violation` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SchemaViolation {
+    /// The `field` field.
+    pub field: String,
+    /// The `kind` field.
+    pub kind: ViolationKind,
+}
+
+impl serde::Serialize for SchemaViolation {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.field.as_str())?;
+        tuple.serialize_element(&self.kind)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SchemaViolation {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = SchemaViolation;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a schema_violation array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let field = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let kind = seq
+                    .next_element::<ViolationKind>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    field,
+                    kind,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `plan_problem` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlanProblem {
+    /// The `document` field.
+    pub document: String,
+    /// The `field` field.
+    pub field: String,
+    /// The `kind` field.
+    pub kind: PlanProblemKind,
+    /// The `rejection` field.
+    pub rejection: Option<TransformRejection>,
+    /// The `violations` field.
+    pub violations: Vec<SchemaViolation>,
+}
+
+impl serde::Serialize for PlanProblem {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(5)?;
+        tuple.serialize_element(&self.document.as_str())?;
+        tuple.serialize_element(&self.field.as_str())?;
+        tuple.serialize_element(&self.kind)?;
+        tuple.serialize_element(&self.rejection.as_ref())?;
+        tuple.serialize_element(&self.violations.as_slice())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PlanProblem {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = PlanProblem;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a plan_problem array of 5 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let document = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let field = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let kind = seq
+                    .next_element::<PlanProblemKind>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let rejection = seq
+                    .next_element::<Option<TransformRejection>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let violations = seq
+                    .next_element::<Vec<SchemaViolation>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(5, &self));
+                }
+                Ok(Self::Value {
+                    document,
+                    field,
+                    kind,
+                    rejection,
+                    violations,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `transform_counts` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TransformCounts {
+    /// The `added` field.
+    pub added: u64,
+    /// The `removed` field.
+    pub removed: u64,
+    /// The `renamed` field.
+    pub renamed: u64,
+    /// The `retyped` field.
+    pub retyped: u64,
+}
+
+impl serde::Serialize for TransformCounts {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(4)?;
+        tuple.serialize_element(&self.added)?;
+        tuple.serialize_element(&self.removed)?;
+        tuple.serialize_element(&self.renamed)?;
+        tuple.serialize_element(&self.retyped)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TransformCounts {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TransformCounts;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a transform_counts array of 4 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let added = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let removed = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let renamed = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let retyped = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(4, &self));
+                }
+                Ok(Self::Value {
+                    added,
+                    removed,
+                    renamed,
+                    retyped,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `migration_state` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationState {
+    /// The `kind` field.
+    pub kind: MigrationStateKind,
+    /// The `manifest` field.
+    pub manifest: String,
+    /// The `from_version` field.
+    pub from_version: u64,
+    /// The `to_version` field.
+    pub to_version: u64,
+    /// The `documents` field.
+    pub documents: u64,
+    /// The `transformed` field.
+    pub transformed: u64,
+    /// The `pages` field.
+    pub pages: u64,
+}
+
+impl serde::Serialize for MigrationState {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(7)?;
+        tuple.serialize_element(&self.kind)?;
+        tuple.serialize_element(&self.manifest.as_str())?;
+        tuple.serialize_element(&self.from_version)?;
+        tuple.serialize_element(&self.to_version)?;
+        tuple.serialize_element(&self.documents)?;
+        tuple.serialize_element(&self.transformed)?;
+        tuple.serialize_element(&self.pages)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MigrationState {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = MigrationState;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a migration_state array of 7 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let kind = seq
+                    .next_element::<MigrationStateKind>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let manifest = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let from_version = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let to_version = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let documents = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
+                let transformed = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(5, &self))?;
+                let pages = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(6, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(7, &self));
+                }
+                Ok(Self::Value {
+                    kind,
+                    manifest,
+                    from_version,
+                    to_version,
+                    documents,
+                    transformed,
+                    pages,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `migration_plan` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationPlan {
+    /// The `manifest` field.
+    pub manifest: String,
+    /// The `collection` field.
+    pub collection: String,
+    /// The `from_version` field.
+    pub from_version: u64,
+    /// The `to_version` field.
+    pub to_version: u64,
+    /// The `ready` field.
+    pub ready: bool,
+    /// The `documents` field.
+    pub documents: u64,
+    /// The `source_digest` field.
+    pub source_digest: String,
+    /// The `result_digest` field.
+    pub result_digest: String,
+    /// The `transform_counts` field.
+    pub transform_counts: TransformCounts,
+    /// The `problems` field.
+    pub problems: Vec<PlanProblem>,
+    /// The `problems_truncated` field.
+    pub problems_truncated: bool,
+}
+
+impl serde::Serialize for MigrationPlan {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(11)?;
+        tuple.serialize_element(&self.manifest.as_str())?;
+        tuple.serialize_element(&self.collection.as_str())?;
+        tuple.serialize_element(&self.from_version)?;
+        tuple.serialize_element(&self.to_version)?;
+        tuple.serialize_element(&self.ready)?;
+        tuple.serialize_element(&self.documents)?;
+        tuple.serialize_element(&self.source_digest.as_str())?;
+        tuple.serialize_element(&self.result_digest.as_str())?;
+        tuple.serialize_element(&self.transform_counts)?;
+        tuple.serialize_element(&self.problems.as_slice())?;
+        tuple.serialize_element(&self.problems_truncated)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MigrationPlan {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = MigrationPlan;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a migration_plan array of 11 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let manifest = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let collection = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let from_version = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let to_version = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let ready = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
+                let documents = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(5, &self))?;
+                let source_digest = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(6, &self))?;
+                let result_digest = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(7, &self))?;
+                let transform_counts = seq
+                    .next_element::<TransformCounts>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(8, &self))?;
+                let problems = seq
+                    .next_element::<Vec<PlanProblem>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(9, &self))?;
+                let problems_truncated = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(10, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(11, &self));
+                }
+                Ok(Self::Value {
+                    manifest,
+                    collection,
+                    from_version,
+                    to_version,
+                    ready,
+                    documents,
+                    source_digest,
+                    result_digest,
+                    transform_counts,
+                    problems,
+                    problems_truncated,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `migration_receipt` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationReceipt {
+    /// The `collection` field.
+    pub collection: String,
+    /// The `manifest` field.
+    pub manifest: String,
+    /// The `from_version` field.
+    pub from_version: u64,
+    /// The `to_version` field.
+    pub to_version: u64,
+    /// The `source_digest` field.
+    pub source_digest: String,
+    /// The `result_digest` field.
+    pub result_digest: String,
+    /// The `documents` field.
+    pub documents: u64,
+    /// The `transformed` field.
+    pub transformed: u64,
+    /// The `transform_counts` field.
+    pub transform_counts: TransformCounts,
+    /// The `pages` field.
+    pub pages: u64,
+    /// The `rollback_limit` field.
+    pub rollback_limit: RollbackLimitKind,
+    /// The `acknowledged_not_rollbackable` field.
+    pub acknowledged_not_rollbackable: bool,
+    /// The `already_applied` field.
+    pub already_applied: bool,
+}
+
+impl serde::Serialize for MigrationReceipt {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(13)?;
+        tuple.serialize_element(&self.collection.as_str())?;
+        tuple.serialize_element(&self.manifest.as_str())?;
+        tuple.serialize_element(&self.from_version)?;
+        tuple.serialize_element(&self.to_version)?;
+        tuple.serialize_element(&self.source_digest.as_str())?;
+        tuple.serialize_element(&self.result_digest.as_str())?;
+        tuple.serialize_element(&self.documents)?;
+        tuple.serialize_element(&self.transformed)?;
+        tuple.serialize_element(&self.transform_counts)?;
+        tuple.serialize_element(&self.pages)?;
+        tuple.serialize_element(&self.rollback_limit)?;
+        tuple.serialize_element(&self.acknowledged_not_rollbackable)?;
+        tuple.serialize_element(&self.already_applied)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MigrationReceipt {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = MigrationReceipt;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a migration_receipt array of 13 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let collection = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let manifest = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let from_version = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let to_version = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let source_digest = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
+                let result_digest = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(5, &self))?;
+                let documents = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(6, &self))?;
+                let transformed = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(7, &self))?;
+                let transform_counts = seq
+                    .next_element::<TransformCounts>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(8, &self))?;
+                let pages = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(9, &self))?;
+                let rollback_limit = seq
+                    .next_element::<RollbackLimitKind>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(10, &self))?;
+                let acknowledged_not_rollbackable = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(11, &self))?;
+                let already_applied = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(12, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(13, &self));
+                }
+                Ok(Self::Value {
+                    collection,
+                    manifest,
+                    from_version,
+                    to_version,
+                    source_digest,
+                    result_digest,
+                    documents,
+                    transformed,
+                    transform_counts,
+                    pages,
+                    rollback_limit,
+                    acknowledged_not_rollbackable,
+                    already_applied,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `schema_migration_contract` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SchemaMigrationContract {
+    /// The `collection` field.
+    pub collection: String,
+    /// The `from_version` field.
+    pub from_version: u64,
+    /// The `to_version` field.
+    pub to_version: u64,
+    /// The `target` field.
+    pub target: TbepValue,
+    /// The `transforms` field.
+    pub transforms: Vec<FieldTransformStep>,
+}
+
+impl serde::Serialize for SchemaMigrationContract {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(5)?;
+        tuple.serialize_element(&self.collection.as_str())?;
+        tuple.serialize_element(&self.from_version)?;
+        tuple.serialize_element(&self.to_version)?;
+        tuple.serialize_element(&self.target)?;
+        tuple.serialize_element(&self.transforms.as_slice())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SchemaMigrationContract {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = SchemaMigrationContract;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a schema_migration_contract array of 5 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let collection = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let from_version = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let to_version = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let target = seq
+                    .next_element::<TbepValue>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let transforms = seq
+                    .next_element::<Vec<FieldTransformStep>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(5, &self));
+                }
+                Ok(Self::Value {
+                    collection,
+                    from_version,
+                    to_version,
+                    target,
+                    transforms,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `field_transform_step` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldTransformStep {
+    /// The `kind` field.
+    pub kind: FieldTransform,
+    /// The `field` field.
+    pub field: String,
+    /// The `to` field.
+    pub to: Option<String>,
+    /// The `default` field.
+    pub default: Option<TransformLiteral>,
+    /// The `coercion` field.
+    pub coercion: Option<Coercion>,
+}
+
+impl serde::Serialize for FieldTransformStep {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(5)?;
+        tuple.serialize_element(&self.kind)?;
+        tuple.serialize_element(&self.field.as_str())?;
+        tuple.serialize_element(&self.to.as_deref())?;
+        tuple.serialize_element(&self.default.as_ref())?;
+        tuple.serialize_element(&self.coercion.as_ref())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for FieldTransformStep {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = FieldTransformStep;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a field_transform_step array of 5 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let kind = seq
+                    .next_element::<FieldTransform>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let field = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let to = seq
+                    .next_element::<Option<String>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let default = seq
+                    .next_element::<Option<TransformLiteral>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let coercion = seq
+                    .next_element::<Option<Coercion>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(5, &self));
+                }
+                Ok(Self::Value {
+                    kind,
+                    field,
+                    to,
+                    default,
+                    coercion,
                 })
             }
         }
@@ -5451,6 +6896,634 @@ impl crate::codec::WireBody for SupervisionShutdownResponse {
     }
 }
 
+/// The `schema_declare_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SchemaDeclareRequest {
+    /// The `collection` field.
+    pub collection: String,
+    /// The `schema` field.
+    pub schema: Option<TbepValue>,
+    /// The `operation_id` field.
+    pub operation_id: String,
+}
+
+impl serde::Serialize for SchemaDeclareRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(3)?;
+        tuple.serialize_element(&self.collection.as_str())?;
+        tuple.serialize_element(&self.schema.as_ref())?;
+        tuple.serialize_element(&self.operation_id.as_str())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SchemaDeclareRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = SchemaDeclareRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a schema_declare_request array of 3 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let collection = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let schema = seq
+                    .next_element::<Option<TbepValue>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let operation_id = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(3, &self));
+                }
+                Ok(Self::Value {
+                    collection,
+                    schema,
+                    operation_id,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for SchemaDeclareRequest {
+    const KIND: FrameKind = FrameKind::SchemaDeclareRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.collection, 64, "collection")?;
+        crate::codec::check_str_bound(&self.operation_id, 128, "operation_id")?;
+        Ok(())
+    }
+}
+
+/// The `schema_declare_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SchemaDeclareResponse {
+    /// The `enforced_version` field.
+    pub enforced_version: Option<u64>,
+    /// The `rule_count` field.
+    pub rule_count: u32,
+}
+
+impl serde::Serialize for SchemaDeclareResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.enforced_version.as_ref())?;
+        tuple.serialize_element(&self.rule_count)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SchemaDeclareResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = SchemaDeclareResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a schema_declare_response array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let enforced_version = seq
+                    .next_element::<Option<u64>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let rule_count = seq
+                    .next_element::<u32>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    enforced_version,
+                    rule_count,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for SchemaDeclareResponse {
+    const KIND: FrameKind = FrameKind::SchemaDeclareResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `schema_status_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SchemaStatusRequest {
+    /// The `collection` field.
+    pub collection: String,
+}
+
+impl serde::Serialize for SchemaStatusRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(1)?;
+        tuple.serialize_element(&self.collection.as_str())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SchemaStatusRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = SchemaStatusRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a schema_status_request array of 1 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let collection = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(1, &self));
+                }
+                Ok(Self::Value {
+                    collection,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for SchemaStatusRequest {
+    const KIND: FrameKind = FrameKind::SchemaStatusRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.collection, 64, "collection")?;
+        Ok(())
+    }
+}
+
+/// The `schema_status_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SchemaStatusResponse {
+    /// The `enforced_version` field.
+    pub enforced_version: Option<u64>,
+    /// The `rule_count` field.
+    pub rule_count: u32,
+}
+
+impl serde::Serialize for SchemaStatusResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.enforced_version.as_ref())?;
+        tuple.serialize_element(&self.rule_count)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SchemaStatusResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = SchemaStatusResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a schema_status_response array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let enforced_version = seq
+                    .next_element::<Option<u64>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let rule_count = seq
+                    .next_element::<u32>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    enforced_version,
+                    rule_count,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for SchemaStatusResponse {
+    const KIND: FrameKind = FrameKind::SchemaStatusResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `schema_validate_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SchemaValidateRequest {
+    /// The `collection` field.
+    pub collection: String,
+    /// The `document` field.
+    pub document: TbepValue,
+}
+
+impl serde::Serialize for SchemaValidateRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.collection.as_str())?;
+        tuple.serialize_element(&self.document)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SchemaValidateRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = SchemaValidateRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a schema_validate_request array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let collection = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let document = seq
+                    .next_element::<TbepValue>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    collection,
+                    document,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for SchemaValidateRequest {
+    const KIND: FrameKind = FrameKind::SchemaValidateRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.collection, 64, "collection")?;
+        Ok(())
+    }
+}
+
+/// The `schema_validate_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SchemaValidateResponse {
+    /// The `enforced_version` field.
+    pub enforced_version: Option<u64>,
+    /// The `valid` field.
+    pub valid: bool,
+    /// The `violations` field.
+    pub violations: Vec<SchemaViolation>,
+}
+
+impl serde::Serialize for SchemaValidateResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(3)?;
+        tuple.serialize_element(&self.enforced_version.as_ref())?;
+        tuple.serialize_element(&self.valid)?;
+        tuple.serialize_element(&self.violations.as_slice())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SchemaValidateResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = SchemaValidateResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a schema_validate_response array of 3 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let enforced_version = seq
+                    .next_element::<Option<u64>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let valid = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let violations = seq
+                    .next_element::<Vec<SchemaViolation>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(3, &self));
+                }
+                Ok(Self::Value {
+                    enforced_version,
+                    valid,
+                    violations,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for SchemaValidateResponse {
+    const KIND: FrameKind = FrameKind::SchemaValidateResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_list_bound(&self.violations, MAX_LIST_ITEMS, "violations")?;
+        Ok(())
+    }
+}
+
+/// The `migration_status_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationStatusRequest {
+    /// The `collection` field.
+    pub collection: String,
+}
+
+impl serde::Serialize for MigrationStatusRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(1)?;
+        tuple.serialize_element(&self.collection.as_str())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MigrationStatusRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = MigrationStatusRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a migration_status_request array of 1 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let collection = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(1, &self));
+                }
+                Ok(Self::Value {
+                    collection,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for MigrationStatusRequest {
+    const KIND: FrameKind = FrameKind::MigrationStatusRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.collection, 64, "collection")?;
+        Ok(())
+    }
+}
+
+/// The `migration_status_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationStatusResponse {
+    /// The `state` field.
+    pub state: MigrationState,
+}
+
+impl serde::Serialize for MigrationStatusResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(1)?;
+        tuple.serialize_element(&self.state)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MigrationStatusResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = MigrationStatusResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a migration_status_response array of 1 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let state = seq
+                    .next_element::<MigrationState>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(1, &self));
+                }
+                Ok(Self::Value {
+                    state,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for MigrationStatusResponse {
+    const KIND: FrameKind = FrameKind::MigrationStatusResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `migration_dry_run_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationDryRunRequest {
+    /// The `contract` field.
+    pub contract: SchemaMigrationContract,
+}
+
+impl serde::Serialize for MigrationDryRunRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(1)?;
+        tuple.serialize_element(&self.contract)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MigrationDryRunRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = MigrationDryRunRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a migration_dry_run_request array of 1 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let contract = seq
+                    .next_element::<SchemaMigrationContract>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(1, &self));
+                }
+                Ok(Self::Value {
+                    contract,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for MigrationDryRunRequest {
+    const KIND: FrameKind = FrameKind::MigrationDryRunRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `migration_dry_run_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationDryRunResponse {
+    /// The `plan` field.
+    pub plan: MigrationPlan,
+}
+
+impl serde::Serialize for MigrationDryRunResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(1)?;
+        tuple.serialize_element(&self.plan)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MigrationDryRunResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = MigrationDryRunResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a migration_dry_run_response array of 1 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let plan = seq
+                    .next_element::<MigrationPlan>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(1, &self));
+                }
+                Ok(Self::Value {
+                    plan,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for MigrationDryRunResponse {
+    const KIND: FrameKind = FrameKind::MigrationDryRunResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `migration_apply_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationApplyRequest {
+    /// The `contract` field.
+    pub contract: SchemaMigrationContract,
+    /// The `acknowledge_not_rollbackable` field.
+    pub acknowledge_not_rollbackable: bool,
+    /// The `operation_id` field.
+    pub operation_id: String,
+}
+
+impl serde::Serialize for MigrationApplyRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(3)?;
+        tuple.serialize_element(&self.contract)?;
+        tuple.serialize_element(&self.acknowledge_not_rollbackable)?;
+        tuple.serialize_element(&self.operation_id.as_str())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MigrationApplyRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = MigrationApplyRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a migration_apply_request array of 3 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let contract = seq
+                    .next_element::<SchemaMigrationContract>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let acknowledge_not_rollbackable = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let operation_id = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(3, &self));
+                }
+                Ok(Self::Value {
+                    contract,
+                    acknowledge_not_rollbackable,
+                    operation_id,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for MigrationApplyRequest {
+    const KIND: FrameKind = FrameKind::MigrationApplyRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.operation_id, 128, "operation_id")?;
+        Ok(())
+    }
+}
+
+/// The `migration_apply_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationApplyResponse {
+    /// The `receipt` field.
+    pub receipt: MigrationReceipt,
+}
+
+impl serde::Serialize for MigrationApplyResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(1)?;
+        tuple.serialize_element(&self.receipt)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MigrationApplyResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = MigrationApplyResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a migration_apply_response array of 1 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let receipt = seq
+                    .next_element::<MigrationReceipt>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(1, &self));
+                }
+                Ok(Self::Value {
+                    receipt,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for MigrationApplyResponse {
+    const KIND: FrameKind = FrameKind::MigrationApplyResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
 /// The `subscription_batch` frame body.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SubscriptionBatch {
@@ -5755,6 +7828,18 @@ pub enum FrameKind {
     SupervisionHealthRequest,
     /// Code 322 (host-to-engine; supervision).
     SupervisionShutdownRequest,
+    /// Code 336 (host-to-engine; schemas).
+    SchemaDeclareRequest,
+    /// Code 337 (host-to-engine; schemas).
+    SchemaStatusRequest,
+    /// Code 338 (host-to-engine; schemas).
+    SchemaValidateRequest,
+    /// Code 339 (host-to-engine; schemas).
+    MigrationStatusRequest,
+    /// Code 340 (host-to-engine; schemas).
+    MigrationDryRunRequest,
+    /// Code 341 (host-to-engine; schemas).
+    MigrationApplyRequest,
     /// Code 513 (engine-to-host; documents).
     DocumentReadResponse,
     /// Code 514 (engine-to-host; documents).
@@ -5809,6 +7894,18 @@ pub enum FrameKind {
     SupervisionHealthResponse,
     /// Code 578 (engine-to-host; supervision).
     SupervisionShutdownResponse,
+    /// Code 592 (engine-to-host; schemas).
+    SchemaDeclareResponse,
+    /// Code 593 (engine-to-host; schemas).
+    SchemaStatusResponse,
+    /// Code 594 (engine-to-host; schemas).
+    SchemaValidateResponse,
+    /// Code 595 (engine-to-host; schemas).
+    MigrationStatusResponse,
+    /// Code 596 (engine-to-host; schemas).
+    MigrationDryRunResponse,
+    /// Code 597 (engine-to-host; schemas).
+    MigrationApplyResponse,
     /// Code 769 (engine-to-host; backbone).
     SubscriptionBatch,
     /// Code 770 (engine-to-host; backbone).
@@ -5850,6 +7947,12 @@ impl FrameKind {
             Self::ChannelBindRequest => 320,
             Self::SupervisionHealthRequest => 321,
             Self::SupervisionShutdownRequest => 322,
+            Self::SchemaDeclareRequest => 336,
+            Self::SchemaStatusRequest => 337,
+            Self::SchemaValidateRequest => 338,
+            Self::MigrationStatusRequest => 339,
+            Self::MigrationDryRunRequest => 340,
+            Self::MigrationApplyRequest => 341,
             Self::DocumentReadResponse => 513,
             Self::DocumentWriteResponse => 514,
             Self::DocumentDeleteResponse => 515,
@@ -5877,6 +7980,12 @@ impl FrameKind {
             Self::ChannelBindResponse => 576,
             Self::SupervisionHealthResponse => 577,
             Self::SupervisionShutdownResponse => 578,
+            Self::SchemaDeclareResponse => 592,
+            Self::SchemaStatusResponse => 593,
+            Self::SchemaValidateResponse => 594,
+            Self::MigrationStatusResponse => 595,
+            Self::MigrationDryRunResponse => 596,
+            Self::MigrationApplyResponse => 597,
             Self::SubscriptionBatch => 769,
             Self::TriggerNotification => 770,
             Self::SubscriptionClosed => 771,
@@ -5915,6 +8024,12 @@ impl FrameKind {
             320 => Some(Self::ChannelBindRequest),
             321 => Some(Self::SupervisionHealthRequest),
             322 => Some(Self::SupervisionShutdownRequest),
+            336 => Some(Self::SchemaDeclareRequest),
+            337 => Some(Self::SchemaStatusRequest),
+            338 => Some(Self::SchemaValidateRequest),
+            339 => Some(Self::MigrationStatusRequest),
+            340 => Some(Self::MigrationDryRunRequest),
+            341 => Some(Self::MigrationApplyRequest),
             513 => Some(Self::DocumentReadResponse),
             514 => Some(Self::DocumentWriteResponse),
             515 => Some(Self::DocumentDeleteResponse),
@@ -5942,6 +8057,12 @@ impl FrameKind {
             576 => Some(Self::ChannelBindResponse),
             577 => Some(Self::SupervisionHealthResponse),
             578 => Some(Self::SupervisionShutdownResponse),
+            592 => Some(Self::SchemaDeclareResponse),
+            593 => Some(Self::SchemaStatusResponse),
+            594 => Some(Self::SchemaValidateResponse),
+            595 => Some(Self::MigrationStatusResponse),
+            596 => Some(Self::MigrationDryRunResponse),
+            597 => Some(Self::MigrationApplyResponse),
             769 => Some(Self::SubscriptionBatch),
             770 => Some(Self::TriggerNotification),
             771 => Some(Self::SubscriptionClosed),
@@ -5981,6 +8102,12 @@ impl FrameKind {
             Self::ChannelBindRequest => "ChannelBindRequest",
             Self::SupervisionHealthRequest => "SupervisionHealthRequest",
             Self::SupervisionShutdownRequest => "SupervisionShutdownRequest",
+            Self::SchemaDeclareRequest => "SchemaDeclareRequest",
+            Self::SchemaStatusRequest => "SchemaStatusRequest",
+            Self::SchemaValidateRequest => "SchemaValidateRequest",
+            Self::MigrationStatusRequest => "MigrationStatusRequest",
+            Self::MigrationDryRunRequest => "MigrationDryRunRequest",
+            Self::MigrationApplyRequest => "MigrationApplyRequest",
             Self::DocumentReadResponse => "DocumentReadResponse",
             Self::DocumentWriteResponse => "DocumentWriteResponse",
             Self::DocumentDeleteResponse => "DocumentDeleteResponse",
@@ -6008,6 +8135,12 @@ impl FrameKind {
             Self::ChannelBindResponse => "ChannelBindResponse",
             Self::SupervisionHealthResponse => "SupervisionHealthResponse",
             Self::SupervisionShutdownResponse => "SupervisionShutdownResponse",
+            Self::SchemaDeclareResponse => "SchemaDeclareResponse",
+            Self::SchemaStatusResponse => "SchemaStatusResponse",
+            Self::SchemaValidateResponse => "SchemaValidateResponse",
+            Self::MigrationStatusResponse => "MigrationStatusResponse",
+            Self::MigrationDryRunResponse => "MigrationDryRunResponse",
+            Self::MigrationApplyResponse => "MigrationApplyResponse",
             Self::SubscriptionBatch => "SubscriptionBatch",
             Self::TriggerNotification => "TriggerNotification",
             Self::SubscriptionClosed => "SubscriptionClosed",
@@ -6046,6 +8179,12 @@ impl FrameKind {
             Self::ChannelBindRequest => "supervision",
             Self::SupervisionHealthRequest => "supervision",
             Self::SupervisionShutdownRequest => "supervision",
+            Self::SchemaDeclareRequest => "schemas",
+            Self::SchemaStatusRequest => "schemas",
+            Self::SchemaValidateRequest => "schemas",
+            Self::MigrationStatusRequest => "schemas",
+            Self::MigrationDryRunRequest => "schemas",
+            Self::MigrationApplyRequest => "schemas",
             Self::DocumentReadResponse => "documents",
             Self::DocumentWriteResponse => "documents",
             Self::DocumentDeleteResponse => "documents",
@@ -6073,6 +8212,12 @@ impl FrameKind {
             Self::ChannelBindResponse => "supervision",
             Self::SupervisionHealthResponse => "supervision",
             Self::SupervisionShutdownResponse => "supervision",
+            Self::SchemaDeclareResponse => "schemas",
+            Self::SchemaStatusResponse => "schemas",
+            Self::SchemaValidateResponse => "schemas",
+            Self::MigrationStatusResponse => "schemas",
+            Self::MigrationDryRunResponse => "schemas",
+            Self::MigrationApplyResponse => "schemas",
             Self::SubscriptionBatch => "backbone",
             Self::TriggerNotification => "backbone",
             Self::SubscriptionClosed => "backbone",
@@ -6111,6 +8256,12 @@ impl FrameKind {
             Self::ChannelBindRequest => "control",
             Self::SupervisionHealthRequest => "control",
             Self::SupervisionShutdownRequest => "control",
+            Self::SchemaDeclareRequest => "schema",
+            Self::SchemaStatusRequest => "schema",
+            Self::SchemaValidateRequest => "schema",
+            Self::MigrationStatusRequest => "schema",
+            Self::MigrationDryRunRequest => "schema",
+            Self::MigrationApplyRequest => "schema",
             Self::DocumentReadResponse => "operation",
             Self::DocumentWriteResponse => "operation_large",
             Self::DocumentDeleteResponse => "operation",
@@ -6138,6 +8289,12 @@ impl FrameKind {
             Self::ChannelBindResponse => "control",
             Self::SupervisionHealthResponse => "control",
             Self::SupervisionShutdownResponse => "control",
+            Self::SchemaDeclareResponse => "schema",
+            Self::SchemaStatusResponse => "schema",
+            Self::SchemaValidateResponse => "schema",
+            Self::MigrationStatusResponse => "schema",
+            Self::MigrationDryRunResponse => "schema",
+            Self::MigrationApplyResponse => "schema",
             Self::SubscriptionBatch => "subscription",
             Self::TriggerNotification => "trigger",
             Self::SubscriptionClosed => "control",
@@ -6151,6 +8308,8 @@ impl FrameKind {
             Self::DocumentDeleteRequest
             | Self::DocumentWriteRequest
             | Self::FamilyWriteRequest
+            | Self::MigrationApplyRequest
+            | Self::SchemaDeclareRequest
             | Self::SyncMutationSubmitRequest
         )
     }
@@ -6199,6 +8358,12 @@ pub const FRAME_ROWS: &[FrameRow] = &[
     FrameRow { code: 320, kind: "ChannelBindRequest", family: "supervision", class: "control" },
     FrameRow { code: 321, kind: "SupervisionHealthRequest", family: "supervision", class: "control" },
     FrameRow { code: 322, kind: "SupervisionShutdownRequest", family: "supervision", class: "control" },
+    FrameRow { code: 336, kind: "SchemaDeclareRequest", family: "schemas", class: "schema" },
+    FrameRow { code: 337, kind: "SchemaStatusRequest", family: "schemas", class: "schema" },
+    FrameRow { code: 338, kind: "SchemaValidateRequest", family: "schemas", class: "schema" },
+    FrameRow { code: 339, kind: "MigrationStatusRequest", family: "schemas", class: "schema" },
+    FrameRow { code: 340, kind: "MigrationDryRunRequest", family: "schemas", class: "schema" },
+    FrameRow { code: 341, kind: "MigrationApplyRequest", family: "schemas", class: "schema" },
     FrameRow { code: 513, kind: "DocumentReadResponse", family: "documents", class: "operation" },
     FrameRow { code: 514, kind: "DocumentWriteResponse", family: "documents", class: "operation_large" },
     FrameRow { code: 515, kind: "DocumentDeleteResponse", family: "documents", class: "operation" },
@@ -6226,6 +8391,12 @@ pub const FRAME_ROWS: &[FrameRow] = &[
     FrameRow { code: 576, kind: "ChannelBindResponse", family: "supervision", class: "control" },
     FrameRow { code: 577, kind: "SupervisionHealthResponse", family: "supervision", class: "control" },
     FrameRow { code: 578, kind: "SupervisionShutdownResponse", family: "supervision", class: "control" },
+    FrameRow { code: 592, kind: "SchemaDeclareResponse", family: "schemas", class: "schema" },
+    FrameRow { code: 593, kind: "SchemaStatusResponse", family: "schemas", class: "schema" },
+    FrameRow { code: 594, kind: "SchemaValidateResponse", family: "schemas", class: "schema" },
+    FrameRow { code: 595, kind: "MigrationStatusResponse", family: "schemas", class: "schema" },
+    FrameRow { code: 596, kind: "MigrationDryRunResponse", family: "schemas", class: "schema" },
+    FrameRow { code: 597, kind: "MigrationApplyResponse", family: "schemas", class: "schema" },
     FrameRow { code: 769, kind: "SubscriptionBatch", family: "backbone", class: "subscription" },
     FrameRow { code: 770, kind: "TriggerNotification", family: "backbone", class: "trigger" },
     FrameRow { code: 771, kind: "SubscriptionClosed", family: "backbone", class: "control" },
@@ -6290,6 +8461,18 @@ pub enum TbepBody {
     SupervisionHealthRequest(SupervisionHealthRequest),
     /// The `SupervisionShutdownRequest` body.
     SupervisionShutdownRequest(SupervisionShutdownRequest),
+    /// The `SchemaDeclareRequest` body.
+    SchemaDeclareRequest(SchemaDeclareRequest),
+    /// The `SchemaStatusRequest` body.
+    SchemaStatusRequest(SchemaStatusRequest),
+    /// The `SchemaValidateRequest` body.
+    SchemaValidateRequest(SchemaValidateRequest),
+    /// The `MigrationStatusRequest` body.
+    MigrationStatusRequest(MigrationStatusRequest),
+    /// The `MigrationDryRunRequest` body.
+    MigrationDryRunRequest(MigrationDryRunRequest),
+    /// The `MigrationApplyRequest` body.
+    MigrationApplyRequest(MigrationApplyRequest),
     /// The `DocumentReadResponse` body.
     DocumentReadResponse(DocumentReadResponse),
     /// The `DocumentWriteResponse` body.
@@ -6344,6 +8527,18 @@ pub enum TbepBody {
     SupervisionHealthResponse(SupervisionHealthResponse),
     /// The `SupervisionShutdownResponse` body.
     SupervisionShutdownResponse(SupervisionShutdownResponse),
+    /// The `SchemaDeclareResponse` body.
+    SchemaDeclareResponse(SchemaDeclareResponse),
+    /// The `SchemaStatusResponse` body.
+    SchemaStatusResponse(SchemaStatusResponse),
+    /// The `SchemaValidateResponse` body.
+    SchemaValidateResponse(SchemaValidateResponse),
+    /// The `MigrationStatusResponse` body.
+    MigrationStatusResponse(MigrationStatusResponse),
+    /// The `MigrationDryRunResponse` body.
+    MigrationDryRunResponse(MigrationDryRunResponse),
+    /// The `MigrationApplyResponse` body.
+    MigrationApplyResponse(MigrationApplyResponse),
     /// The `SubscriptionBatch` body.
     SubscriptionBatch(SubscriptionBatch),
     /// The `TriggerNotification` body.
@@ -6464,6 +8659,30 @@ impl From<SupervisionShutdownRequest> for TbepBody {
     fn from(value: SupervisionShutdownRequest) -> Self { Self::SupervisionShutdownRequest(value) }
 }
 
+impl From<SchemaDeclareRequest> for TbepBody {
+    fn from(value: SchemaDeclareRequest) -> Self { Self::SchemaDeclareRequest(value) }
+}
+
+impl From<SchemaStatusRequest> for TbepBody {
+    fn from(value: SchemaStatusRequest) -> Self { Self::SchemaStatusRequest(value) }
+}
+
+impl From<SchemaValidateRequest> for TbepBody {
+    fn from(value: SchemaValidateRequest) -> Self { Self::SchemaValidateRequest(value) }
+}
+
+impl From<MigrationStatusRequest> for TbepBody {
+    fn from(value: MigrationStatusRequest) -> Self { Self::MigrationStatusRequest(value) }
+}
+
+impl From<MigrationDryRunRequest> for TbepBody {
+    fn from(value: MigrationDryRunRequest) -> Self { Self::MigrationDryRunRequest(value) }
+}
+
+impl From<MigrationApplyRequest> for TbepBody {
+    fn from(value: MigrationApplyRequest) -> Self { Self::MigrationApplyRequest(value) }
+}
+
 impl From<DocumentReadResponse> for TbepBody {
     fn from(value: DocumentReadResponse) -> Self { Self::DocumentReadResponse(value) }
 }
@@ -6572,6 +8791,30 @@ impl From<SupervisionShutdownResponse> for TbepBody {
     fn from(value: SupervisionShutdownResponse) -> Self { Self::SupervisionShutdownResponse(value) }
 }
 
+impl From<SchemaDeclareResponse> for TbepBody {
+    fn from(value: SchemaDeclareResponse) -> Self { Self::SchemaDeclareResponse(value) }
+}
+
+impl From<SchemaStatusResponse> for TbepBody {
+    fn from(value: SchemaStatusResponse) -> Self { Self::SchemaStatusResponse(value) }
+}
+
+impl From<SchemaValidateResponse> for TbepBody {
+    fn from(value: SchemaValidateResponse) -> Self { Self::SchemaValidateResponse(value) }
+}
+
+impl From<MigrationStatusResponse> for TbepBody {
+    fn from(value: MigrationStatusResponse) -> Self { Self::MigrationStatusResponse(value) }
+}
+
+impl From<MigrationDryRunResponse> for TbepBody {
+    fn from(value: MigrationDryRunResponse) -> Self { Self::MigrationDryRunResponse(value) }
+}
+
+impl From<MigrationApplyResponse> for TbepBody {
+    fn from(value: MigrationApplyResponse) -> Self { Self::MigrationApplyResponse(value) }
+}
+
 impl From<SubscriptionBatch> for TbepBody {
     fn from(value: SubscriptionBatch) -> Self { Self::SubscriptionBatch(value) }
 }
@@ -6617,6 +8860,12 @@ impl TbepBody {
             Self::ChannelBindRequest(_) => FrameKind::ChannelBindRequest,
             Self::SupervisionHealthRequest(_) => FrameKind::SupervisionHealthRequest,
             Self::SupervisionShutdownRequest(_) => FrameKind::SupervisionShutdownRequest,
+            Self::SchemaDeclareRequest(_) => FrameKind::SchemaDeclareRequest,
+            Self::SchemaStatusRequest(_) => FrameKind::SchemaStatusRequest,
+            Self::SchemaValidateRequest(_) => FrameKind::SchemaValidateRequest,
+            Self::MigrationStatusRequest(_) => FrameKind::MigrationStatusRequest,
+            Self::MigrationDryRunRequest(_) => FrameKind::MigrationDryRunRequest,
+            Self::MigrationApplyRequest(_) => FrameKind::MigrationApplyRequest,
             Self::DocumentReadResponse(_) => FrameKind::DocumentReadResponse,
             Self::DocumentWriteResponse(_) => FrameKind::DocumentWriteResponse,
             Self::DocumentDeleteResponse(_) => FrameKind::DocumentDeleteResponse,
@@ -6644,6 +8893,12 @@ impl TbepBody {
             Self::ChannelBindResponse(_) => FrameKind::ChannelBindResponse,
             Self::SupervisionHealthResponse(_) => FrameKind::SupervisionHealthResponse,
             Self::SupervisionShutdownResponse(_) => FrameKind::SupervisionShutdownResponse,
+            Self::SchemaDeclareResponse(_) => FrameKind::SchemaDeclareResponse,
+            Self::SchemaStatusResponse(_) => FrameKind::SchemaStatusResponse,
+            Self::SchemaValidateResponse(_) => FrameKind::SchemaValidateResponse,
+            Self::MigrationStatusResponse(_) => FrameKind::MigrationStatusResponse,
+            Self::MigrationDryRunResponse(_) => FrameKind::MigrationDryRunResponse,
+            Self::MigrationApplyResponse(_) => FrameKind::MigrationApplyResponse,
             Self::SubscriptionBatch(_) => FrameKind::SubscriptionBatch,
             Self::TriggerNotification(_) => FrameKind::TriggerNotification,
             Self::SubscriptionClosed(_) => FrameKind::SubscriptionClosed,
@@ -6685,6 +8940,12 @@ impl TbepBody {
             Self::ChannelBindRequest(body) => crate::codec::encode_body(body),
             Self::SupervisionHealthRequest(body) => crate::codec::encode_body(body),
             Self::SupervisionShutdownRequest(body) => crate::codec::encode_body(body),
+            Self::SchemaDeclareRequest(body) => crate::codec::encode_body(body),
+            Self::SchemaStatusRequest(body) => crate::codec::encode_body(body),
+            Self::SchemaValidateRequest(body) => crate::codec::encode_body(body),
+            Self::MigrationStatusRequest(body) => crate::codec::encode_body(body),
+            Self::MigrationDryRunRequest(body) => crate::codec::encode_body(body),
+            Self::MigrationApplyRequest(body) => crate::codec::encode_body(body),
             Self::DocumentReadResponse(body) => crate::codec::encode_body(body),
             Self::DocumentWriteResponse(body) => crate::codec::encode_body(body),
             Self::DocumentDeleteResponse(body) => crate::codec::encode_body(body),
@@ -6712,6 +8973,12 @@ impl TbepBody {
             Self::ChannelBindResponse(body) => crate::codec::encode_body(body),
             Self::SupervisionHealthResponse(body) => crate::codec::encode_body(body),
             Self::SupervisionShutdownResponse(body) => crate::codec::encode_body(body),
+            Self::SchemaDeclareResponse(body) => crate::codec::encode_body(body),
+            Self::SchemaStatusResponse(body) => crate::codec::encode_body(body),
+            Self::SchemaValidateResponse(body) => crate::codec::encode_body(body),
+            Self::MigrationStatusResponse(body) => crate::codec::encode_body(body),
+            Self::MigrationDryRunResponse(body) => crate::codec::encode_body(body),
+            Self::MigrationApplyResponse(body) => crate::codec::encode_body(body),
             Self::SubscriptionBatch(body) => crate::codec::encode_body(body),
             Self::TriggerNotification(body) => crate::codec::encode_body(body),
             Self::SubscriptionClosed(body) => crate::codec::encode_body(body),
@@ -6753,6 +9020,12 @@ impl TbepBody {
             FrameKind::ChannelBindRequest => Ok(Self::ChannelBindRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::SupervisionHealthRequest => Ok(Self::SupervisionHealthRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::SupervisionShutdownRequest => Ok(Self::SupervisionShutdownRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::SchemaDeclareRequest => Ok(Self::SchemaDeclareRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::SchemaStatusRequest => Ok(Self::SchemaStatusRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::SchemaValidateRequest => Ok(Self::SchemaValidateRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::MigrationStatusRequest => Ok(Self::MigrationStatusRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::MigrationDryRunRequest => Ok(Self::MigrationDryRunRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::MigrationApplyRequest => Ok(Self::MigrationApplyRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::DocumentReadResponse => Ok(Self::DocumentReadResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::DocumentWriteResponse => Ok(Self::DocumentWriteResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::DocumentDeleteResponse => Ok(Self::DocumentDeleteResponse(crate::codec::decode_body(bytes)?)),
@@ -6780,6 +9053,12 @@ impl TbepBody {
             FrameKind::ChannelBindResponse => Ok(Self::ChannelBindResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::SupervisionHealthResponse => Ok(Self::SupervisionHealthResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::SupervisionShutdownResponse => Ok(Self::SupervisionShutdownResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::SchemaDeclareResponse => Ok(Self::SchemaDeclareResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::SchemaStatusResponse => Ok(Self::SchemaStatusResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::SchemaValidateResponse => Ok(Self::SchemaValidateResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::MigrationStatusResponse => Ok(Self::MigrationStatusResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::MigrationDryRunResponse => Ok(Self::MigrationDryRunResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::MigrationApplyResponse => Ok(Self::MigrationApplyResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::SubscriptionBatch => Ok(Self::SubscriptionBatch(crate::codec::decode_body(bytes)?)),
             FrameKind::TriggerNotification => Ok(Self::TriggerNotification(crate::codec::decode_body(bytes)?)),
             FrameKind::SubscriptionClosed => Ok(Self::SubscriptionClosed(crate::codec::decode_body(bytes)?)),
@@ -7062,6 +9341,63 @@ pub const OPERATIONS: &[OperationRow] = &[
         mutation: false,
         parity: &[
             "new-capability: engine-process supervision contract (PD-2026-08-26-02 D2)",
+        ],
+    },
+    OperationRow {
+        name: "schema.declare",
+        request_code: 336,
+        response_code: 592,
+        mutation: true,
+        parity: &[
+            "PB-3036",
+            "PB-3037",
+        ],
+    },
+    OperationRow {
+        name: "schema.status",
+        request_code: 337,
+        response_code: 593,
+        mutation: false,
+        parity: &[
+            "PB-3036",
+            "PB-3037",
+        ],
+    },
+    OperationRow {
+        name: "schema.validate",
+        request_code: 338,
+        response_code: 594,
+        mutation: false,
+        parity: &[
+            "PB-3036",
+            "PB-3037",
+        ],
+    },
+    OperationRow {
+        name: "migration.status",
+        request_code: 339,
+        response_code: 595,
+        mutation: false,
+        parity: &[
+            "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)",
+        ],
+    },
+    OperationRow {
+        name: "migration.dry_run",
+        request_code: 340,
+        response_code: 596,
+        mutation: false,
+        parity: &[
+            "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)",
+        ],
+    },
+    OperationRow {
+        name: "migration.apply",
+        request_code: 341,
+        response_code: 597,
+        mutation: true,
+        parity: &[
+            "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)",
         ],
     },
 ];

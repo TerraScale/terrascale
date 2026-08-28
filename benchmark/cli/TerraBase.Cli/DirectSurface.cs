@@ -154,6 +154,38 @@ public sealed class DirectTbepSurface : ITerraBaseSurface
         ThrowHostOnly();
 
     /// <inheritdoc/>
+    public Task<SchemaStateReport> ReadSchemaStateAsync(string collection, CancellationToken cancellationToken) =>
+        ThrowSchemaSurface();
+
+    /// <inheritdoc/>
+    public Task<SchemaCheckReport> ValidateSchemaAsync(string collection, JsonElement document, CancellationToken cancellationToken) =>
+        ThrowSchemaCheck();
+
+    /// <inheritdoc/>
+    public Task<JsonElement> MigrationDryRunAsync(string collection, JsonElement contract, CancellationToken cancellationToken) =>
+        ThrowHostOnly();
+
+    /// <inheritdoc/>
+    public Task<JsonElement> MigrationApplyAsync(string collection, JsonElement contract, bool acknowledgeNotRollbackable, string idempotencyKey, CancellationToken cancellationToken) =>
+        ThrowHostOnly();
+
+    /// <summary>
+    /// The schema-lifecycle refusal of the direct surface: the typed
+    /// operations are registered on the wire, but serving them from a live
+    /// engine process is the engine-backed host integrator action the SM-04
+    /// record names, so the direct mode states the limit instead of
+    /// inventing an answer. The host mode serves the full lifecycle.
+    /// </summary>
+    /// <returns>Nothing; the call always refuses.</returns>
+    private static Task<SchemaCheckReport> ThrowSchemaCheck() =>
+        throw new SurfaceUsageException(
+            "the schema lifecycle is served by the API host surface; run it with --mode host (serving schema operations from a local engine process is the recorded engine-backed host integrator action)");
+
+    private static Task<SchemaStateReport> ThrowSchemaSurface() =>
+        throw new SurfaceUsageException(
+            "the schema lifecycle is served by the API host surface; run it with --mode host (serving schema operations from a local engine process is the recorded engine-backed host integrator action)");
+
+    /// <inheritdoc/>
     public async Task<ShutdownReport> ShutdownAsync(string reason, CancellationToken cancellationToken)
     {
         var why = reason == "supervisor" ? ShutdownReason.Supervisor() : ShutdownReason.Operator();

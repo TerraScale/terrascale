@@ -58,6 +58,14 @@ public static class Commands
                 return await EngineViewAsync(command, surface, output, EngineView.Topology, cancellation).ConfigureAwait(false);
             case "engine shutdown":
                 return await ShutdownAsync(command, surface, output, cancellation).ConfigureAwait(false);
+            case "schema status":
+                return await SchemaStatusAsync(command, surface, output, cancellation).ConfigureAwait(false);
+            case "schema validate":
+                return await SchemaValidateAsync(command, surface, output, cancellation).ConfigureAwait(false);
+            case "migration dry-run":
+                return await MigrationDryRunAsync(command, surface, output, cancellation).ConfigureAwait(false);
+            case "migration apply":
+                return await MigrationApplyAsync(command, surface, output, cancellation).ConfigureAwait(false);
             default:
                 throw new SurfaceUsageException($"unknown command \"{command.Name}\"");
         }
@@ -611,6 +619,126 @@ public static class Commands
     /// </summary>
     /// <param name="body">The body operand.</param>
     /// <returns>The parsed body document.</returns>
+    private static async Task<int> SchemaStatusAsync(CliGrammar.Command command, ITerraBaseSurface surface, OutputWriter output, CancellationToken cancellation)
+    {
+        var state = await surface.ReadSchemaStateAsync(command.Operands[0], cancellation).ConfigureAwait(false);
+
+        output.Envelope(command.DisplayName, "result", writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteString("collection", command.Operands[0]);
+            if (state.EnforcedVersion is { } version)
+            {
+                writer.WriteNumber("enforcedVersion", version);
+            }
+            else
+            {
+                writer.WriteNull("enforcedVersion");
+            }
+
+            writer.WriteNumber("ruleCount", state.RuleCount);
+            writer.WriteString("migration", state.MigrationKind);
+            writer.WriteEndObject();
+        });
+
+        output.Human("Schema");
+        output.Human($"  collection      {command.Operands[0]}");
+        output.Human(state.EnforcedVersion is { } recorded
+            ? $"  enforced        version {recorded} ({state.RuleCount} rules)"
+            : "  enforced        none (schema-free)");
+        output.Human($"  migration       {state.MigrationKind}");
+        return 0;
+    }
+
+    private static async Task<int> SchemaValidateAsync(CliGrammar.Command command, ITerraBaseSurface surface, OutputWriter output, CancellationToken cancellation)
+    {
+        using var parsed = ParseBody(command.Operands[1]);
+        var check = await surface.ValidateSchemaAsync(command.Operands[0], parsed.RootElement.Clone(), cancellation).ConfigureAwait(false);
+
+        output.Envelope(command.DisplayName, "result", writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteString("collection", command.Operands[0]);
+            if (check.EnforcedVersion is { } version)
+            {
+                writer.WriteNumber("enforcedVersion", version);
+            }
+            else
+            {
+                writer.WriteNull("enforcedVersion");
+            }
+
+            writer.WriteBoolean("valid", check.Valid);
+            writer.WriteStartArray("violations");
+            foreach (var violation in check.Violations)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("field", violation.Field);
+                writer.WriteString("kind", violation.Kind);
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        });
+
+        output.Human("Schema validation");
+        output.Human($"  collection      {command.Operands[0]}");
+        output.Human(check.Valid ? "  verdict         valid" : "  verdict         invalid");
+        foreach (var violation in check.Violations)
+        {
+            output.Human($"  violation       {violation.Field} {violation.Kind}");
+        }
+
+        return check.Valid ? 0 : 1;
+    }
+
+    private static async Task<int> MigrationDryRunAsync(CliGrammar.Command command, ITerraBaseSurface surface, OutputWriter output, CancellationToken cancellation)
+    {
+        using var parsed = ParseBody(command.Operands[1]);
+        var plan = await surface.MigrationDryRunAsync(command.Operands[0], parsed.RootElement.Clone(), cancellation).ConfigureAwait(false);
+
+        // The machine shape is the canonical plan inside the CLI's one-line
+        // envelope: the same fields, the same order, every run, so a caller
+        // can diff two dry runs byte for byte.
+        output.Envelope(command.DisplayName, "result", plan);
+        using var document = JsonDocument.Parse(plan.GetRawText());
+        var root = document.RootElement;
+        output.Human("Migration dry run");
+        output.Human($"  collection      {root.GetProperty("collection").GetString()}");
+        output.Human($"  versions        {root.GetProperty("fromVersion").GetUInt64()} -> {root.GetProperty("toVersion").GetUInt64()}");
+        output.Human($"  plan            {(root.GetProperty("ready").GetBoolean() ? "ready" : "blocked")}");
+        output.Human($"  documents       {root.GetProperty("documents").GetUInt64()}");
+        output.Human($"  source digest   {root.GetProperty("sourceDigest").GetString()}");
+        output.Human($"  result digest   {root.GetProperty("resultDigest").GetString()}");
+        foreach (var problem in root.GetProperty("problems").EnumerateArray())
+        {
+            output.Human($"  problem         {problem.GetProperty("document").GetString()} {problem.GetProperty("field").GetString()} {problem.GetProperty("kind").GetString()}");
+        }
+
+        return root.GetProperty("ready").GetBoolean() ? 0 : 1;
+    }
+
+    private static async Task<int> MigrationApplyAsync(CliGrammar.Command command, ITerraBaseSurface surface, OutputWriter output, CancellationToken cancellation)
+    {
+        using var parsed = ParseBody(command.Operands[1]);
+        var key = command.Option("idempotency-key", $"cli-{Guid.NewGuid():N}");
+        var acknowledged = command.Options.ContainsKey("acknowledge-not-rollbackable");
+        var receipt = await surface.MigrationApplyAsync(command.Operands[0], parsed.RootElement.Clone(), acknowledged, key, cancellation).ConfigureAwait(false);
+
+        output.Envelope(command.DisplayName, "result", receipt);
+        using var document = JsonDocument.Parse(receipt.GetRawText());
+        var root = document.RootElement;
+        output.Human("Migration apply");
+        output.Human($"  collection      {root.GetProperty("collection").GetString()}");
+        output.Human($"  versions        {root.GetProperty("fromVersion").GetUInt64()} -> {root.GetProperty("toVersion").GetUInt64()}");
+        output.Human($"  documents       {root.GetProperty("documents").GetUInt64()} (transformed {root.GetProperty("transformed").GetUInt64()})");
+        output.Human($"  pages           {root.GetProperty("pages").GetUInt64()}");
+        output.Human($"  rollback        {root.GetProperty("rollbackLimit").GetString()}");
+        output.Human($"  receipt         {root.GetProperty("manifest").GetString()}");
+        return 0;
+    }
+
     private static JsonDocument ParseBody(string body)
     {
         try

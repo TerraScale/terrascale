@@ -60,6 +60,7 @@ public static partial class TbepRegistry
         ("trigger", 256),
         ("delivery", 65536),
         ("observation", 65536),
+        ("schema", 65536),
     ];
 }
 
@@ -1899,6 +1900,817 @@ public sealed class ReplicationStatusFormatter : IMessagePackFormatter<Replicati
     }
 }
 
+/// <summary>The generated `violation_kind` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(ViolationKindFormatter))]
+public sealed class ViolationKind : IEquatable<ViolationKind>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `document_not_object` variant.</summary>
+    public static ViolationKind DocumentNotObject() => new() { Variant = "DocumentNotObject", Tag = (byte)1 };
+    /// <summary>The `missing_required_field` variant.</summary>
+    public static ViolationKind MissingRequiredField() => new() { Variant = "MissingRequiredField", Tag = (byte)2 };
+    /// <summary>The `type_mismatch` variant.</summary>
+    public static ViolationKind TypeMismatch() => new() { Variant = "TypeMismatch", Tag = (byte)3 };
+    /// <summary>The `value_not_allowed` variant.</summary>
+    public static ViolationKind ValueNotAllowed() => new() { Variant = "ValueNotAllowed", Tag = (byte)4 };
+    /// <summary>The `number_out_of_range` variant.</summary>
+    public static ViolationKind NumberOutOfRange() => new() { Variant = "NumberOutOfRange", Tag = (byte)5 };
+    /// <summary>The `length_out_of_range` variant.</summary>
+    public static ViolationKind LengthOutOfRange() => new() { Variant = "LengthOutOfRange", Tag = (byte)6 };
+
+    /// <inheritdoc/>
+    public bool Equals(ViolationKind? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ViolationKind);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="ViolationKind"/>.</summary>
+public sealed class ViolationKindFormatter : IMessagePackFormatter<ViolationKind?>
+{
+    /// <inheritdoc/>
+    public ViolationKind Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            throw TbepWire.FormatException("nil is not a ViolationKind");
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("DocumentNotObject carries no payload");
+            }
+            return new ViolationKind { Variant = "DocumentNotObject", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("MissingRequiredField carries no payload");
+            }
+            return new ViolationKind { Variant = "MissingRequiredField", Tag = tag };
+        }
+        if (tag == (byte)3)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("TypeMismatch carries no payload");
+            }
+            return new ViolationKind { Variant = "TypeMismatch", Tag = tag };
+        }
+        if (tag == (byte)4)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("ValueNotAllowed carries no payload");
+            }
+            return new ViolationKind { Variant = "ValueNotAllowed", Tag = tag };
+        }
+        if (tag == (byte)5)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("NumberOutOfRange carries no payload");
+            }
+            return new ViolationKind { Variant = "NumberOutOfRange", Tag = tag };
+        }
+        if (tag == (byte)6)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("LengthOutOfRange carries no payload");
+            }
+            return new ViolationKind { Variant = "LengthOutOfRange", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown ViolationKind tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, ViolationKind? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            throw TbepWire.FormatException("nil is not a ViolationKind");
+        }
+        switch (value.Variant)
+        {
+            case "DocumentNotObject":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "MissingRequiredField":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            case "TypeMismatch":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)3);
+                return;
+            case "ValueNotAllowed":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)4);
+                return;
+            case "NumberOutOfRange":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)5);
+                return;
+            case "LengthOutOfRange":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)6);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown ViolationKind variant");
+        }
+    }
+}
+
+/// <summary>The generated `coercion` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(CoercionFormatter))]
+public sealed class Coercion : IEquatable<Coercion>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `integer_to_text` variant.</summary>
+    public static Coercion IntegerToText() => new() { Variant = "IntegerToText", Tag = (byte)1 };
+    /// <summary>The `text_to_integer` variant.</summary>
+    public static Coercion TextToInteger() => new() { Variant = "TextToInteger", Tag = (byte)2 };
+    /// <summary>The `integer_to_number` variant.</summary>
+    public static Coercion IntegerToNumber() => new() { Variant = "IntegerToNumber", Tag = (byte)3 };
+    /// <summary>The `number_to_integer` variant.</summary>
+    public static Coercion NumberToInteger() => new() { Variant = "NumberToInteger", Tag = (byte)4 };
+
+    /// <inheritdoc/>
+    public bool Equals(Coercion? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as Coercion);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="Coercion"/>.</summary>
+public sealed class CoercionFormatter : IMessagePackFormatter<Coercion?>
+{
+    /// <inheritdoc/>
+    public Coercion? Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            return null;
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("IntegerToText carries no payload");
+            }
+            return new Coercion { Variant = "IntegerToText", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("TextToInteger carries no payload");
+            }
+            return new Coercion { Variant = "TextToInteger", Tag = tag };
+        }
+        if (tag == (byte)3)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("IntegerToNumber carries no payload");
+            }
+            return new Coercion { Variant = "IntegerToNumber", Tag = tag };
+        }
+        if (tag == (byte)4)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("NumberToInteger carries no payload");
+            }
+            return new Coercion { Variant = "NumberToInteger", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown Coercion tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, Coercion? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            writer.WriteNil();
+            return;
+        }
+        switch (value.Variant)
+        {
+            case "IntegerToText":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "TextToInteger":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            case "IntegerToNumber":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)3);
+                return;
+            case "NumberToInteger":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)4);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown Coercion variant");
+        }
+    }
+}
+
+/// <summary>The generated `transform_rejection` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(TransformRejectionFormatter))]
+public sealed class TransformRejection : IEquatable<TransformRejection>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `value_not_coercible` variant.</summary>
+    public static TransformRejection ValueNotCoercible() => new() { Variant = "ValueNotCoercible", Tag = (byte)1 };
+    /// <summary>The `target_field_occupied` variant.</summary>
+    public static TransformRejection TargetFieldOccupied() => new() { Variant = "TargetFieldOccupied", Tag = (byte)2 };
+
+    /// <inheritdoc/>
+    public bool Equals(TransformRejection? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TransformRejection);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="TransformRejection"/>.</summary>
+public sealed class TransformRejectionFormatter : IMessagePackFormatter<TransformRejection?>
+{
+    /// <inheritdoc/>
+    public TransformRejection? Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            return null;
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("ValueNotCoercible carries no payload");
+            }
+            return new TransformRejection { Variant = "ValueNotCoercible", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("TargetFieldOccupied carries no payload");
+            }
+            return new TransformRejection { Variant = "TargetFieldOccupied", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown TransformRejection tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, TransformRejection? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            writer.WriteNil();
+            return;
+        }
+        switch (value.Variant)
+        {
+            case "ValueNotCoercible":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "TargetFieldOccupied":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown TransformRejection variant");
+        }
+    }
+}
+
+/// <summary>The generated `rollback_limit_kind` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(RollbackLimitKindFormatter))]
+public sealed class RollbackLimitKind : IEquatable<RollbackLimitKind>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `reversible` variant.</summary>
+    public static RollbackLimitKind Reversible() => new() { Variant = "Reversible", Tag = (byte)1 };
+    /// <summary>The `not_reversible` variant.</summary>
+    public static RollbackLimitKind NotReversible() => new() { Variant = "NotReversible", Tag = (byte)2 };
+
+    /// <inheritdoc/>
+    public bool Equals(RollbackLimitKind? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as RollbackLimitKind);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="RollbackLimitKind"/>.</summary>
+public sealed class RollbackLimitKindFormatter : IMessagePackFormatter<RollbackLimitKind?>
+{
+    /// <inheritdoc/>
+    public RollbackLimitKind Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            throw TbepWire.FormatException("nil is not a RollbackLimitKind");
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Reversible carries no payload");
+            }
+            return new RollbackLimitKind { Variant = "Reversible", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("NotReversible carries no payload");
+            }
+            return new RollbackLimitKind { Variant = "NotReversible", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown RollbackLimitKind tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, RollbackLimitKind? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            throw TbepWire.FormatException("nil is not a RollbackLimitKind");
+        }
+        switch (value.Variant)
+        {
+            case "Reversible":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "NotReversible":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown RollbackLimitKind variant");
+        }
+    }
+}
+
+/// <summary>The generated `migration_state_kind` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(MigrationStateKindFormatter))]
+public sealed class MigrationStateKind : IEquatable<MigrationStateKind>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `none` variant.</summary>
+    public static MigrationStateKind None() => new() { Variant = "None", Tag = (byte)1 };
+    /// <summary>The `in_progress` variant.</summary>
+    public static MigrationStateKind InProgress() => new() { Variant = "InProgress", Tag = (byte)2 };
+    /// <summary>The `rolling_back` variant.</summary>
+    public static MigrationStateKind RollingBack() => new() { Variant = "RollingBack", Tag = (byte)3 };
+    /// <summary>The `complete` variant.</summary>
+    public static MigrationStateKind Complete() => new() { Variant = "Complete", Tag = (byte)4 };
+
+    /// <inheritdoc/>
+    public bool Equals(MigrationStateKind? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as MigrationStateKind);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="MigrationStateKind"/>.</summary>
+public sealed class MigrationStateKindFormatter : IMessagePackFormatter<MigrationStateKind?>
+{
+    /// <inheritdoc/>
+    public MigrationStateKind Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            throw TbepWire.FormatException("nil is not a MigrationStateKind");
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("None carries no payload");
+            }
+            return new MigrationStateKind { Variant = "None", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("InProgress carries no payload");
+            }
+            return new MigrationStateKind { Variant = "InProgress", Tag = tag };
+        }
+        if (tag == (byte)3)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("RollingBack carries no payload");
+            }
+            return new MigrationStateKind { Variant = "RollingBack", Tag = tag };
+        }
+        if (tag == (byte)4)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Complete carries no payload");
+            }
+            return new MigrationStateKind { Variant = "Complete", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown MigrationStateKind tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, MigrationStateKind? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            throw TbepWire.FormatException("nil is not a MigrationStateKind");
+        }
+        switch (value.Variant)
+        {
+            case "None":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "InProgress":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            case "RollingBack":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)3);
+                return;
+            case "Complete":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)4);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown MigrationStateKind variant");
+        }
+    }
+}
+
+/// <summary>The generated `plan_problem_kind` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(PlanProblemKindFormatter))]
+public sealed class PlanProblemKind : IEquatable<PlanProblemKind>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `transform_rejected` variant.</summary>
+    public static PlanProblemKind TransformRejected() => new() { Variant = "TransformRejected", Tag = (byte)1 };
+    /// <summary>The `target_violations` variant.</summary>
+    public static PlanProblemKind TargetViolations() => new() { Variant = "TargetViolations", Tag = (byte)2 };
+
+    /// <inheritdoc/>
+    public bool Equals(PlanProblemKind? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as PlanProblemKind);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="PlanProblemKind"/>.</summary>
+public sealed class PlanProblemKindFormatter : IMessagePackFormatter<PlanProblemKind?>
+{
+    /// <inheritdoc/>
+    public PlanProblemKind Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            throw TbepWire.FormatException("nil is not a PlanProblemKind");
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("TransformRejected carries no payload");
+            }
+            return new PlanProblemKind { Variant = "TransformRejected", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("TargetViolations carries no payload");
+            }
+            return new PlanProblemKind { Variant = "TargetViolations", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown PlanProblemKind tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, PlanProblemKind? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            throw TbepWire.FormatException("nil is not a PlanProblemKind");
+        }
+        switch (value.Variant)
+        {
+            case "TransformRejected":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "TargetViolations":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown PlanProblemKind variant");
+        }
+    }
+}
+
+/// <summary>The generated `transform_literal` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(TransformLiteralFormatter))]
+public sealed class TransformLiteral : IEquatable<TransformLiteral>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `boolean` variant.</summary>
+    public static TransformLiteral Boolean(bool payload) => new() { Variant = "Boolean", Tag = (byte)1, Payload = payload };
+    /// <summary>The `integer` variant.</summary>
+    public static TransformLiteral Integer(long payload) => new() { Variant = "Integer", Tag = (byte)2, Payload = payload };
+    /// <summary>The `text` variant.</summary>
+    public static TransformLiteral Text(string payload) => new() { Variant = "Text", Tag = (byte)3, Payload = payload };
+
+    /// <inheritdoc/>
+    public bool Equals(TransformLiteral? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TransformLiteral);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="TransformLiteral"/>.</summary>
+public sealed class TransformLiteralFormatter : IMessagePackFormatter<TransformLiteral?>
+{
+    /// <inheritdoc/>
+    public TransformLiteral? Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            return null;
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 2)
+            {
+                throw TbepWire.FormatException("Boolean carries exactly one payload");
+            }
+            var payload = reader.ReadBoolean();
+            return new TransformLiteral { Variant = "Boolean", Tag = tag, Payload = payload };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 2)
+            {
+                throw TbepWire.FormatException("Integer carries exactly one payload");
+            }
+            var payload = reader.ReadInt64();
+            return new TransformLiteral { Variant = "Integer", Tag = tag, Payload = payload };
+        }
+        if (tag == (byte)3)
+        {
+            if (count != 2)
+            {
+                throw TbepWire.FormatException("Text carries exactly one payload");
+            }
+            var payload = options.Resolver!.GetFormatter<string>()!.Deserialize(ref reader, options);
+            return new TransformLiteral { Variant = "Text", Tag = tag, Payload = payload };
+        }
+        throw TbepWire.FormatException("unknown TransformLiteral tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, TransformLiteral? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            writer.WriteNil();
+            return;
+        }
+        switch (value.Variant)
+        {
+            case "Boolean":
+                writer.WriteArrayHeader(2);
+                writer.Write((byte)1);
+                writer.Write((bool)value.Payload!);
+                return;
+            case "Integer":
+                writer.WriteArrayHeader(2);
+                writer.Write((byte)2);
+                writer.Write((long)value.Payload!);
+                return;
+            case "Text":
+                writer.WriteArrayHeader(2);
+                writer.Write((byte)3);
+                options.Resolver!.GetFormatter<string>()!.Serialize(ref writer, (string)value.Payload!, options);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown TransformLiteral variant");
+        }
+    }
+}
+
+/// <summary>The generated `field_transform` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(FieldTransformFormatter))]
+public sealed class FieldTransform : IEquatable<FieldTransform>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `add_field` variant.</summary>
+    public static FieldTransform AddField() => new() { Variant = "AddField", Tag = (byte)1 };
+    /// <summary>The `remove_field` variant.</summary>
+    public static FieldTransform RemoveField() => new() { Variant = "RemoveField", Tag = (byte)2 };
+    /// <summary>The `rename_field` variant.</summary>
+    public static FieldTransform RenameField() => new() { Variant = "RenameField", Tag = (byte)3 };
+    /// <summary>The `retype_field` variant.</summary>
+    public static FieldTransform RetypeField() => new() { Variant = "RetypeField", Tag = (byte)4 };
+
+    /// <inheritdoc/>
+    public bool Equals(FieldTransform? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as FieldTransform);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="FieldTransform"/>.</summary>
+public sealed class FieldTransformFormatter : IMessagePackFormatter<FieldTransform?>
+{
+    /// <inheritdoc/>
+    public FieldTransform Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            throw TbepWire.FormatException("nil is not a FieldTransform");
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("AddField carries no payload");
+            }
+            return new FieldTransform { Variant = "AddField", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("RemoveField carries no payload");
+            }
+            return new FieldTransform { Variant = "RemoveField", Tag = tag };
+        }
+        if (tag == (byte)3)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("RenameField carries no payload");
+            }
+            return new FieldTransform { Variant = "RenameField", Tag = tag };
+        }
+        if (tag == (byte)4)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("RetypeField carries no payload");
+            }
+            return new FieldTransform { Variant = "RetypeField", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown FieldTransform tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, FieldTransform? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            throw TbepWire.FormatException("nil is not a FieldTransform");
+        }
+        switch (value.Variant)
+        {
+            case "AddField":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "RemoveField":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            case "RenameField":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)3);
+                return;
+            case "RetypeField":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)4);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown FieldTransform variant");
+        }
+    }
+}
+
 /// <summary>The `document_body` frame body.</summary>
 [MessagePackObject]
 public sealed class DocumentBody : IEquatable<DocumentBody>
@@ -2246,6 +3058,384 @@ public sealed class DenialRecord : IEquatable<DenialRecord>
     public override int GetHashCode()
     {
         return System.HashCode.Combine(Seam, ScopeTenant, AttemptedTenant, Counterparty);
+    }
+}
+
+/// <summary>The `schema_violation` frame body.</summary>
+[MessagePackObject]
+public sealed class SchemaViolation : IEquatable<SchemaViolation>
+{
+    /// <summary>The `field` field.</summary>
+    [Key(0)]
+    public required string Field { get; init; }
+    /// <summary>The `kind` field.</summary>
+    [Key(1)]
+    public required ViolationKind Kind { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(SchemaViolation? other) => other is not null
+        && TbepRegistry.FieldEquals(Field, other.Field)
+        && TbepRegistry.FieldEquals(Kind, other.Kind);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as SchemaViolation);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Field, Kind);
+    }
+}
+
+/// <summary>The `plan_problem` frame body.</summary>
+[MessagePackObject]
+public sealed class PlanProblem : IEquatable<PlanProblem>
+{
+    /// <summary>The `document` field.</summary>
+    [Key(0)]
+    public required string Document { get; init; }
+    /// <summary>The `field` field.</summary>
+    [Key(1)]
+    public required string Field { get; init; }
+    /// <summary>The `kind` field.</summary>
+    [Key(2)]
+    public required PlanProblemKind Kind { get; init; }
+    /// <summary>The `rejection` field.</summary>
+    [Key(3)]
+    public TransformRejection? Rejection { get; init; }
+    /// <summary>The `violations` field.</summary>
+    [Key(4)]
+    public required SchemaViolation[] Violations { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(PlanProblem? other) => other is not null
+        && TbepRegistry.FieldEquals(Document, other.Document)
+        && TbepRegistry.FieldEquals(Field, other.Field)
+        && TbepRegistry.FieldEquals(Kind, other.Kind)
+        && TbepRegistry.FieldEquals(Rejection, other.Rejection)
+        && TbepRegistry.FieldEquals(Violations, other.Violations);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as PlanProblem);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Document, Field, Kind, Rejection, Violations);
+    }
+}
+
+/// <summary>The `transform_counts` frame body.</summary>
+[MessagePackObject]
+public sealed class TransformCounts : IEquatable<TransformCounts>
+{
+    /// <summary>The `added` field.</summary>
+    [Key(0)]
+    public required ulong Added { get; init; }
+    /// <summary>The `removed` field.</summary>
+    [Key(1)]
+    public required ulong Removed { get; init; }
+    /// <summary>The `renamed` field.</summary>
+    [Key(2)]
+    public required ulong Renamed { get; init; }
+    /// <summary>The `retyped` field.</summary>
+    [Key(3)]
+    public required ulong Retyped { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(TransformCounts? other) => other is not null
+        && TbepRegistry.FieldEquals(Added, other.Added)
+        && TbepRegistry.FieldEquals(Removed, other.Removed)
+        && TbepRegistry.FieldEquals(Renamed, other.Renamed)
+        && TbepRegistry.FieldEquals(Retyped, other.Retyped);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TransformCounts);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Added, Removed, Renamed, Retyped);
+    }
+}
+
+/// <summary>The `migration_state` frame body.</summary>
+[MessagePackObject]
+public sealed class MigrationState : IEquatable<MigrationState>
+{
+    /// <summary>The `kind` field.</summary>
+    [Key(0)]
+    public required MigrationStateKind Kind { get; init; }
+    /// <summary>The `manifest` field.</summary>
+    [Key(1)]
+    public required string Manifest { get; init; }
+    /// <summary>The `from_version` field.</summary>
+    [Key(2)]
+    public required ulong FromVersion { get; init; }
+    /// <summary>The `to_version` field.</summary>
+    [Key(3)]
+    public required ulong ToVersion { get; init; }
+    /// <summary>The `documents` field.</summary>
+    [Key(4)]
+    public required ulong Documents { get; init; }
+    /// <summary>The `transformed` field.</summary>
+    [Key(5)]
+    public required ulong Transformed { get; init; }
+    /// <summary>The `pages` field.</summary>
+    [Key(6)]
+    public required ulong Pages { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(MigrationState? other) => other is not null
+        && TbepRegistry.FieldEquals(Kind, other.Kind)
+        && TbepRegistry.FieldEquals(Manifest, other.Manifest)
+        && TbepRegistry.FieldEquals(FromVersion, other.FromVersion)
+        && TbepRegistry.FieldEquals(ToVersion, other.ToVersion)
+        && TbepRegistry.FieldEquals(Documents, other.Documents)
+        && TbepRegistry.FieldEquals(Transformed, other.Transformed)
+        && TbepRegistry.FieldEquals(Pages, other.Pages);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as MigrationState);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Kind, Manifest, FromVersion, ToVersion, Documents, Transformed, Pages);
+    }
+}
+
+/// <summary>The `migration_plan` frame body.</summary>
+[MessagePackObject]
+public sealed class MigrationPlan : IEquatable<MigrationPlan>
+{
+    /// <summary>The `manifest` field.</summary>
+    [Key(0)]
+    public required string Manifest { get; init; }
+    /// <summary>The `collection` field.</summary>
+    [Key(1)]
+    public required string Collection { get; init; }
+    /// <summary>The `from_version` field.</summary>
+    [Key(2)]
+    public required ulong FromVersion { get; init; }
+    /// <summary>The `to_version` field.</summary>
+    [Key(3)]
+    public required ulong ToVersion { get; init; }
+    /// <summary>The `ready` field.</summary>
+    [Key(4)]
+    public required bool Ready { get; init; }
+    /// <summary>The `documents` field.</summary>
+    [Key(5)]
+    public required ulong Documents { get; init; }
+    /// <summary>The `source_digest` field.</summary>
+    [Key(6)]
+    public required string SourceDigest { get; init; }
+    /// <summary>The `result_digest` field.</summary>
+    [Key(7)]
+    public required string ResultDigest { get; init; }
+    /// <summary>The `transform_counts` field.</summary>
+    [Key(8)]
+    public required TransformCounts TransformCounts { get; init; }
+    /// <summary>The `problems` field.</summary>
+    [Key(9)]
+    public required PlanProblem[] Problems { get; init; }
+    /// <summary>The `problems_truncated` field.</summary>
+    [Key(10)]
+    public required bool ProblemsTruncated { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(MigrationPlan? other) => other is not null
+        && TbepRegistry.FieldEquals(Manifest, other.Manifest)
+        && TbepRegistry.FieldEquals(Collection, other.Collection)
+        && TbepRegistry.FieldEquals(FromVersion, other.FromVersion)
+        && TbepRegistry.FieldEquals(ToVersion, other.ToVersion)
+        && TbepRegistry.FieldEquals(Ready, other.Ready)
+        && TbepRegistry.FieldEquals(Documents, other.Documents)
+        && TbepRegistry.FieldEquals(SourceDigest, other.SourceDigest)
+        && TbepRegistry.FieldEquals(ResultDigest, other.ResultDigest)
+        && TbepRegistry.FieldEquals(TransformCounts, other.TransformCounts)
+        && TbepRegistry.FieldEquals(Problems, other.Problems)
+        && TbepRegistry.FieldEquals(ProblemsTruncated, other.ProblemsTruncated);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as MigrationPlan);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        var hash = new System.HashCode();
+        hash.Add(Manifest);
+        hash.Add(Collection);
+        hash.Add(FromVersion);
+        hash.Add(ToVersion);
+        hash.Add(Ready);
+        hash.Add(Documents);
+        hash.Add(SourceDigest);
+        hash.Add(ResultDigest);
+        hash.Add(TransformCounts);
+        hash.Add(Problems);
+        hash.Add(ProblemsTruncated);
+        return hash.ToHashCode();
+    }
+}
+
+/// <summary>The `migration_receipt` frame body.</summary>
+[MessagePackObject]
+public sealed class MigrationReceipt : IEquatable<MigrationReceipt>
+{
+    /// <summary>The `collection` field.</summary>
+    [Key(0)]
+    public required string Collection { get; init; }
+    /// <summary>The `manifest` field.</summary>
+    [Key(1)]
+    public required string Manifest { get; init; }
+    /// <summary>The `from_version` field.</summary>
+    [Key(2)]
+    public required ulong FromVersion { get; init; }
+    /// <summary>The `to_version` field.</summary>
+    [Key(3)]
+    public required ulong ToVersion { get; init; }
+    /// <summary>The `source_digest` field.</summary>
+    [Key(4)]
+    public required string SourceDigest { get; init; }
+    /// <summary>The `result_digest` field.</summary>
+    [Key(5)]
+    public required string ResultDigest { get; init; }
+    /// <summary>The `documents` field.</summary>
+    [Key(6)]
+    public required ulong Documents { get; init; }
+    /// <summary>The `transformed` field.</summary>
+    [Key(7)]
+    public required ulong Transformed { get; init; }
+    /// <summary>The `transform_counts` field.</summary>
+    [Key(8)]
+    public required TransformCounts TransformCounts { get; init; }
+    /// <summary>The `pages` field.</summary>
+    [Key(9)]
+    public required ulong Pages { get; init; }
+    /// <summary>The `rollback_limit` field.</summary>
+    [Key(10)]
+    public required RollbackLimitKind RollbackLimit { get; init; }
+    /// <summary>The `acknowledged_not_rollbackable` field.</summary>
+    [Key(11)]
+    public required bool AcknowledgedNotRollbackable { get; init; }
+    /// <summary>The `already_applied` field.</summary>
+    [Key(12)]
+    public required bool AlreadyApplied { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(MigrationReceipt? other) => other is not null
+        && TbepRegistry.FieldEquals(Collection, other.Collection)
+        && TbepRegistry.FieldEquals(Manifest, other.Manifest)
+        && TbepRegistry.FieldEquals(FromVersion, other.FromVersion)
+        && TbepRegistry.FieldEquals(ToVersion, other.ToVersion)
+        && TbepRegistry.FieldEquals(SourceDigest, other.SourceDigest)
+        && TbepRegistry.FieldEquals(ResultDigest, other.ResultDigest)
+        && TbepRegistry.FieldEquals(Documents, other.Documents)
+        && TbepRegistry.FieldEquals(Transformed, other.Transformed)
+        && TbepRegistry.FieldEquals(TransformCounts, other.TransformCounts)
+        && TbepRegistry.FieldEquals(Pages, other.Pages)
+        && TbepRegistry.FieldEquals(RollbackLimit, other.RollbackLimit)
+        && TbepRegistry.FieldEquals(AcknowledgedNotRollbackable, other.AcknowledgedNotRollbackable)
+        && TbepRegistry.FieldEquals(AlreadyApplied, other.AlreadyApplied);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as MigrationReceipt);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        var hash = new System.HashCode();
+        hash.Add(Collection);
+        hash.Add(Manifest);
+        hash.Add(FromVersion);
+        hash.Add(ToVersion);
+        hash.Add(SourceDigest);
+        hash.Add(ResultDigest);
+        hash.Add(Documents);
+        hash.Add(Transformed);
+        hash.Add(TransformCounts);
+        hash.Add(Pages);
+        hash.Add(RollbackLimit);
+        hash.Add(AcknowledgedNotRollbackable);
+        hash.Add(AlreadyApplied);
+        return hash.ToHashCode();
+    }
+}
+
+/// <summary>The `schema_migration_contract` frame body.</summary>
+[MessagePackObject]
+public sealed class SchemaMigrationContract : IEquatable<SchemaMigrationContract>
+{
+    /// <summary>The `collection` field.</summary>
+    [Key(0)]
+    public required string Collection { get; init; }
+    /// <summary>The `from_version` field.</summary>
+    [Key(1)]
+    public required ulong FromVersion { get; init; }
+    /// <summary>The `to_version` field.</summary>
+    [Key(2)]
+    public required ulong ToVersion { get; init; }
+    /// <summary>The `target` field.</summary>
+    [Key(3)]
+    public required TbepValue Target { get; init; }
+    /// <summary>The `transforms` field.</summary>
+    [Key(4)]
+    public required FieldTransformStep[] Transforms { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(SchemaMigrationContract? other) => other is not null
+        && TbepRegistry.FieldEquals(Collection, other.Collection)
+        && TbepRegistry.FieldEquals(FromVersion, other.FromVersion)
+        && TbepRegistry.FieldEquals(ToVersion, other.ToVersion)
+        && TbepRegistry.FieldEquals(Target, other.Target)
+        && TbepRegistry.FieldEquals(Transforms, other.Transforms);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as SchemaMigrationContract);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Collection, FromVersion, ToVersion, Target, Transforms);
+    }
+}
+
+/// <summary>The `field_transform_step` frame body.</summary>
+[MessagePackObject]
+public sealed class FieldTransformStep : IEquatable<FieldTransformStep>
+{
+    /// <summary>The `kind` field.</summary>
+    [Key(0)]
+    public required FieldTransform Kind { get; init; }
+    /// <summary>The `field` field.</summary>
+    [Key(1)]
+    public required string Field { get; init; }
+    /// <summary>The `to` field.</summary>
+    [Key(2)]
+    public string? To { get; init; }
+    /// <summary>The `default` field.</summary>
+    [Key(3)]
+    public TransformLiteral? Default { get; init; }
+    /// <summary>The `coercion` field.</summary>
+    [Key(4)]
+    public Coercion? Coercion { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(FieldTransformStep? other) => other is not null
+        && TbepRegistry.FieldEquals(Kind, other.Kind)
+        && TbepRegistry.FieldEquals(Field, other.Field)
+        && TbepRegistry.FieldEquals(To, other.To)
+        && TbepRegistry.FieldEquals(Default, other.Default)
+        && TbepRegistry.FieldEquals(Coercion, other.Coercion);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as FieldTransformStep);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Kind, Field, To, Default, Coercion);
     }
 }
 
@@ -3646,6 +4836,306 @@ public sealed class SupervisionShutdownResponse : IEquatable<SupervisionShutdown
     }
 }
 
+/// <summary>The `schema_declare_request` frame body.</summary>
+[MessagePackObject]
+public sealed class SchemaDeclareRequest : IEquatable<SchemaDeclareRequest>
+{
+    /// <summary>The `collection` field.</summary>
+    [Key(0)]
+    public required string Collection { get; init; }
+    /// <summary>The `schema` field.</summary>
+    [Key(1)]
+    public TbepValue? Schema { get; init; }
+    /// <summary>The `operation_id` field.</summary>
+    [Key(2)]
+    public required string OperationId { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(SchemaDeclareRequest? other) => other is not null
+        && TbepRegistry.FieldEquals(Collection, other.Collection)
+        && TbepRegistry.FieldEquals(Schema, other.Schema)
+        && TbepRegistry.FieldEquals(OperationId, other.OperationId);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as SchemaDeclareRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Collection, Schema, OperationId);
+    }
+}
+
+/// <summary>The `schema_declare_response` frame body.</summary>
+[MessagePackObject]
+public sealed class SchemaDeclareResponse : IEquatable<SchemaDeclareResponse>
+{
+    /// <summary>The `enforced_version` field.</summary>
+    [Key(0)]
+    public ulong? EnforcedVersion { get; init; }
+    /// <summary>The `rule_count` field.</summary>
+    [Key(1)]
+    public required uint RuleCount { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(SchemaDeclareResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(EnforcedVersion, other.EnforcedVersion)
+        && TbepRegistry.FieldEquals(RuleCount, other.RuleCount);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as SchemaDeclareResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(EnforcedVersion, RuleCount);
+    }
+}
+
+/// <summary>The `schema_status_request` frame body.</summary>
+[MessagePackObject]
+public sealed class SchemaStatusRequest : IEquatable<SchemaStatusRequest>
+{
+    /// <summary>The `collection` field.</summary>
+    [Key(0)]
+    public required string Collection { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(SchemaStatusRequest? other) => other is not null
+        && TbepRegistry.FieldEquals(Collection, other.Collection);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as SchemaStatusRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Collection);
+    }
+}
+
+/// <summary>The `schema_status_response` frame body.</summary>
+[MessagePackObject]
+public sealed class SchemaStatusResponse : IEquatable<SchemaStatusResponse>
+{
+    /// <summary>The `enforced_version` field.</summary>
+    [Key(0)]
+    public ulong? EnforcedVersion { get; init; }
+    /// <summary>The `rule_count` field.</summary>
+    [Key(1)]
+    public required uint RuleCount { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(SchemaStatusResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(EnforcedVersion, other.EnforcedVersion)
+        && TbepRegistry.FieldEquals(RuleCount, other.RuleCount);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as SchemaStatusResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(EnforcedVersion, RuleCount);
+    }
+}
+
+/// <summary>The `schema_validate_request` frame body.</summary>
+[MessagePackObject]
+public sealed class SchemaValidateRequest : IEquatable<SchemaValidateRequest>
+{
+    /// <summary>The `collection` field.</summary>
+    [Key(0)]
+    public required string Collection { get; init; }
+    /// <summary>The `document` field.</summary>
+    [Key(1)]
+    public required TbepValue Document { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(SchemaValidateRequest? other) => other is not null
+        && TbepRegistry.FieldEquals(Collection, other.Collection)
+        && TbepRegistry.FieldEquals(Document, other.Document);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as SchemaValidateRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Collection, Document);
+    }
+}
+
+/// <summary>The `schema_validate_response` frame body.</summary>
+[MessagePackObject]
+public sealed class SchemaValidateResponse : IEquatable<SchemaValidateResponse>
+{
+    /// <summary>The `enforced_version` field.</summary>
+    [Key(0)]
+    public ulong? EnforcedVersion { get; init; }
+    /// <summary>The `valid` field.</summary>
+    [Key(1)]
+    public required bool Valid { get; init; }
+    /// <summary>The `violations` field.</summary>
+    [Key(2)]
+    public required SchemaViolation[] Violations { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(SchemaValidateResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(EnforcedVersion, other.EnforcedVersion)
+        && TbepRegistry.FieldEquals(Valid, other.Valid)
+        && TbepRegistry.FieldEquals(Violations, other.Violations);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as SchemaValidateResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(EnforcedVersion, Valid, Violations);
+    }
+}
+
+/// <summary>The `migration_status_request` frame body.</summary>
+[MessagePackObject]
+public sealed class MigrationStatusRequest : IEquatable<MigrationStatusRequest>
+{
+    /// <summary>The `collection` field.</summary>
+    [Key(0)]
+    public required string Collection { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(MigrationStatusRequest? other) => other is not null
+        && TbepRegistry.FieldEquals(Collection, other.Collection);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as MigrationStatusRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Collection);
+    }
+}
+
+/// <summary>The `migration_status_response` frame body.</summary>
+[MessagePackObject]
+public sealed class MigrationStatusResponse : IEquatable<MigrationStatusResponse>
+{
+    /// <summary>The `state` field.</summary>
+    [Key(0)]
+    public required MigrationState State { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(MigrationStatusResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(State, other.State);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as MigrationStatusResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(State);
+    }
+}
+
+/// <summary>The `migration_dry_run_request` frame body.</summary>
+[MessagePackObject]
+public sealed class MigrationDryRunRequest : IEquatable<MigrationDryRunRequest>
+{
+    /// <summary>The `contract` field.</summary>
+    [Key(0)]
+    public required SchemaMigrationContract Contract { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(MigrationDryRunRequest? other) => other is not null
+        && TbepRegistry.FieldEquals(Contract, other.Contract);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as MigrationDryRunRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Contract);
+    }
+}
+
+/// <summary>The `migration_dry_run_response` frame body.</summary>
+[MessagePackObject]
+public sealed class MigrationDryRunResponse : IEquatable<MigrationDryRunResponse>
+{
+    /// <summary>The `plan` field.</summary>
+    [Key(0)]
+    public required MigrationPlan Plan { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(MigrationDryRunResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Plan, other.Plan);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as MigrationDryRunResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Plan);
+    }
+}
+
+/// <summary>The `migration_apply_request` frame body.</summary>
+[MessagePackObject]
+public sealed class MigrationApplyRequest : IEquatable<MigrationApplyRequest>
+{
+    /// <summary>The `contract` field.</summary>
+    [Key(0)]
+    public required SchemaMigrationContract Contract { get; init; }
+    /// <summary>The `acknowledge_not_rollbackable` field.</summary>
+    [Key(1)]
+    public required bool AcknowledgeNotRollbackable { get; init; }
+    /// <summary>The `operation_id` field.</summary>
+    [Key(2)]
+    public required string OperationId { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(MigrationApplyRequest? other) => other is not null
+        && TbepRegistry.FieldEquals(Contract, other.Contract)
+        && TbepRegistry.FieldEquals(AcknowledgeNotRollbackable, other.AcknowledgeNotRollbackable)
+        && TbepRegistry.FieldEquals(OperationId, other.OperationId);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as MigrationApplyRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Contract, AcknowledgeNotRollbackable, OperationId);
+    }
+}
+
+/// <summary>The `migration_apply_response` frame body.</summary>
+[MessagePackObject]
+public sealed class MigrationApplyResponse : IEquatable<MigrationApplyResponse>
+{
+    /// <summary>The `receipt` field.</summary>
+    [Key(0)]
+    public required MigrationReceipt Receipt { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(MigrationApplyResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Receipt, other.Receipt);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as MigrationApplyResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Receipt);
+    }
+}
+
 /// <summary>The `subscription_batch` frame body.</summary>
 [MessagePackObject]
 public sealed class SubscriptionBatch : IEquatable<SubscriptionBatch>
@@ -3825,6 +5315,18 @@ public enum TbepFrameKind : ushort
     SupervisionHealthRequest = 321,
     /// <summary>Code 322 (host-to-engine; supervision).</summary>
     SupervisionShutdownRequest = 322,
+    /// <summary>Code 336 (host-to-engine; schemas).</summary>
+    SchemaDeclareRequest = 336,
+    /// <summary>Code 337 (host-to-engine; schemas).</summary>
+    SchemaStatusRequest = 337,
+    /// <summary>Code 338 (host-to-engine; schemas).</summary>
+    SchemaValidateRequest = 338,
+    /// <summary>Code 339 (host-to-engine; schemas).</summary>
+    MigrationStatusRequest = 339,
+    /// <summary>Code 340 (host-to-engine; schemas).</summary>
+    MigrationDryRunRequest = 340,
+    /// <summary>Code 341 (host-to-engine; schemas).</summary>
+    MigrationApplyRequest = 341,
     /// <summary>Code 513 (engine-to-host; documents).</summary>
     DocumentReadResponse = 513,
     /// <summary>Code 514 (engine-to-host; documents).</summary>
@@ -3879,6 +5381,18 @@ public enum TbepFrameKind : ushort
     SupervisionHealthResponse = 577,
     /// <summary>Code 578 (engine-to-host; supervision).</summary>
     SupervisionShutdownResponse = 578,
+    /// <summary>Code 592 (engine-to-host; schemas).</summary>
+    SchemaDeclareResponse = 592,
+    /// <summary>Code 593 (engine-to-host; schemas).</summary>
+    SchemaStatusResponse = 593,
+    /// <summary>Code 594 (engine-to-host; schemas).</summary>
+    SchemaValidateResponse = 594,
+    /// <summary>Code 595 (engine-to-host; schemas).</summary>
+    MigrationStatusResponse = 595,
+    /// <summary>Code 596 (engine-to-host; schemas).</summary>
+    MigrationDryRunResponse = 596,
+    /// <summary>Code 597 (engine-to-host; schemas).</summary>
+    MigrationApplyResponse = 597,
     /// <summary>Code 769 (engine-to-host; backbone).</summary>
     SubscriptionBatch = 769,
     /// <summary>Code 770 (engine-to-host; backbone).</summary>
@@ -3921,6 +5435,12 @@ public static partial class TbepRegistry
         (320, "ChannelBindRequest", "supervision", "control", "host-to-engine", false),
         (321, "SupervisionHealthRequest", "supervision", "control", "host-to-engine", false),
         (322, "SupervisionShutdownRequest", "supervision", "control", "host-to-engine", false),
+        (336, "SchemaDeclareRequest", "schemas", "schema", "host-to-engine", true),
+        (337, "SchemaStatusRequest", "schemas", "schema", "host-to-engine", false),
+        (338, "SchemaValidateRequest", "schemas", "schema", "host-to-engine", false),
+        (339, "MigrationStatusRequest", "schemas", "schema", "host-to-engine", false),
+        (340, "MigrationDryRunRequest", "schemas", "schema", "host-to-engine", false),
+        (341, "MigrationApplyRequest", "schemas", "schema", "host-to-engine", true),
         (513, "DocumentReadResponse", "documents", "operation", "engine-to-host", false),
         (514, "DocumentWriteResponse", "documents", "operation_large", "engine-to-host", false),
         (515, "DocumentDeleteResponse", "documents", "operation", "engine-to-host", false),
@@ -3948,6 +5468,12 @@ public static partial class TbepRegistry
         (576, "ChannelBindResponse", "supervision", "control", "engine-to-host", false),
         (577, "SupervisionHealthResponse", "supervision", "control", "engine-to-host", false),
         (578, "SupervisionShutdownResponse", "supervision", "control", "engine-to-host", false),
+        (592, "SchemaDeclareResponse", "schemas", "schema", "engine-to-host", false),
+        (593, "SchemaStatusResponse", "schemas", "schema", "engine-to-host", false),
+        (594, "SchemaValidateResponse", "schemas", "schema", "engine-to-host", false),
+        (595, "MigrationStatusResponse", "schemas", "schema", "engine-to-host", false),
+        (596, "MigrationDryRunResponse", "schemas", "schema", "engine-to-host", false),
+        (597, "MigrationApplyResponse", "schemas", "schema", "engine-to-host", false),
         (769, "SubscriptionBatch", "backbone", "subscription", "engine-to-host", false),
         (770, "TriggerNotification", "backbone", "trigger", "engine-to-host", false),
         (771, "SubscriptionClosed", "backbone", "control", "engine-to-host", false),
@@ -3990,5 +5516,11 @@ public static partial class TbepRegistry
         new OperationRow("replication.denials", 311, 567, false, ["PB-5035", "new-capability: typed tenant-isolation denial observation (engine-enforced isolation evidence)"]),
         new OperationRow("supervision.health", 321, 577, false, ["PB-5032"]),
         new OperationRow("supervision.shutdown", 322, 578, false, ["new-capability: engine-process supervision contract (PD-2026-08-26-02 D2)"]),
+        new OperationRow("schema.declare", 336, 592, true, ["PB-3036", "PB-3037"]),
+        new OperationRow("schema.status", 337, 593, false, ["PB-3036", "PB-3037"]),
+        new OperationRow("schema.validate", 338, 594, false, ["PB-3036", "PB-3037"]),
+        new OperationRow("migration.status", 339, 595, false, ["new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)"]),
+        new OperationRow("migration.dry_run", 340, 596, false, ["new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)"]),
+        new OperationRow("migration.apply", 341, 597, true, ["new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)"]),
     ];
 }
