@@ -573,9 +573,9 @@ impl Engine {
         })
     }
 
-    /// Returns the never-reused identity of this Engine instance. Tests and
-    /// crate-internal callers read it to forge scopes and snapshots.
-    #[cfg(test)]
+    /// Returns the never-reused identity of this Engine instance. Tests
+    /// and crate-internal callers — the index store's rebuild step among
+    /// them — read it to forge scopes and snapshots.
     pub(crate) fn identity(&self) -> u128 {
         self.identity
     }
@@ -655,6 +655,19 @@ impl Engine {
     /// implemented in the query module.
     pub fn queries(&self) -> QueryStore<'_> {
         QueryStore::from_engine(self)
+    }
+
+    /// Returns an index store borrowed from this Engine (GAP-Q18).
+    ///
+    /// The store is bound to this Engine's lifetime and its engine-owned
+    /// index catalog; it is the typed surface of the index lifecycle
+    /// operations, per-state staleness, the bounded wait-for-non-stale,
+    /// and the engine-owned statistics. This acquisition path is the only
+    /// production way to obtain an
+    /// [`IndexStore`](crate::index::operations::IndexStore), mirroring
+    /// [`Engine::queries`] and [`Engine::families`].
+    pub fn indexes(&self) -> crate::index::operations::IndexStore<'_> {
+        crate::index::operations::IndexStore::from_engine(self)
     }
 
     /// Returns a family store borrowed from this Engine.

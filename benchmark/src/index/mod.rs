@@ -21,6 +21,14 @@
 //! W3-2 proves this seam with in-memory segments. Nothing here persists an
 //! epoch or generation across a restart, asks Storage to publish a data root,
 //! or holds a storage lock while building or publishing.
+//!
+//! GAP-Q18 adds the operational half of the lifecycle in
+//! [`operations`]: the per-explicit-index administrative state machine,
+//! lock modes, reset modes, recorded errors, per-state staleness, the
+//! bounded wait-for-non-stale, and the statistics surface. Its
+//! "a non-normal state performs no indexing" rule is enforced by the
+//! driver — the typed maintenance step refuses those states — while the
+//! compare-and-publish core below stays state-agnostic.
 
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -32,9 +40,13 @@ use std::{
 mod definitions_tests;
 
 #[cfg(test)]
+mod operations_tests;
+
+#[cfg(test)]
 mod tests;
 
 pub mod definitions;
+pub mod operations;
 
 use crate::{
     engine::{CommitPublicationSink, Engine},
@@ -54,6 +66,10 @@ use crate::{
         Document, DocumentId, DocumentValue, IndexGenerationSet, ReadSnapshot, StorageSequence,
         TenantId, TenantScope,
     },
+};
+use operations::{
+    INDEX_ERROR_STATE_THRESHOLD, IndexErrorAction, IndexErrorCategory, IndexErrorListing,
+    IndexErrorRecord, IndexStaleness, MAX_INDEX_ERRORS_PER_INDEX,
 };
 
 /// Index publication failures. Crate-private by design.
@@ -183,6 +199,52 @@ struct AutoLifecycle {
     transitions: VecDeque<IndexTransition>,
 }
 
+/// The operational bookkeeping of one namespace (GAP-Q18): the
+/// administrative state machine, the deployment record, the bounded
+/// failure records, and the build counters. Meaningful only for
+/// explicitly created indexes — the typed operations refuse every other
+/// namespace — and defaulting to a fresh normal state elsewhere.
+#[derive(Debug)]
+struct Operational {
+    state: operations::IndexOperationalState,
+    priority: operations::IndexPriority,
+    lock_mode: operations::IndexLockMode,
+    errors: VecDeque<IndexErrorRecord>,
+    consecutive_failures: usize,
+    attempts: u64,
+    successes: u64,
+    failures: u64,
+    created_at: Instant,
+    last_indexed: Option<Instant>,
+}
+
+impl Default for Operational {
+    fn default() -> Self {
+        Self {
+            state: operations::IndexOperationalState::Normal,
+            priority: operations::IndexPriority::Normal,
+            lock_mode: operations::IndexLockMode::Unlock,
+            errors: VecDeque::new(),
+            consecutive_failures: 0,
+            attempts: 0,
+            successes: 0,
+            failures: 0,
+            created_at: Instant::now(),
+            last_indexed: None,
+        }
+    }
+}
+
+impl Operational {
+    /// Records one bounded failure record, newest last.
+    fn record(&mut self, record: IndexErrorRecord) {
+        self.errors.push_back(record);
+        while self.errors.len() > MAX_INDEX_ERRORS_PER_INDEX {
+            self.errors.pop_front();
+        }
+    }
+}
+
 impl Default for AutoLifecycle {
     fn default() -> Self {
         Self { state: IndexLifecycleState::Active, idle_since: None, transitions: VecDeque::new() }
@@ -206,6 +268,7 @@ struct NamespaceState {
     definition: Option<IndexDefinition>,
     last_queried: Option<Instant>,
     lifecycle: Option<AutoLifecycle>,
+    operational: Operational,
     epochs: BTreeMap<u64, EpochState>,
 }
 
@@ -358,6 +421,62 @@ impl SupersedeView {
     pub(crate) fn target(&self) -> &IndexNamespace {
         &self.target
     }
+}
+
+/// The deploy decision phase's verdict.
+enum Deploy {
+    /// Identical content: never a definition change.
+    Unchanged(u64),
+    /// Locked-ignore: the change is a recorded no-op.
+    Ignored(u64),
+    /// Locked-error: the change fails closed.
+    Locked,
+    /// Write the definition; the flag distinguishes create from update.
+    Write { existed: bool },
+}
+
+/// One accumulating row of the engine statistics aggregate.
+#[derive(Default)]
+struct Row {
+    normal: usize,
+    paused: usize,
+    disabled: usize,
+    error: usize,
+    attempts: u64,
+    successes: u64,
+    failures: u64,
+    recorded_errors: usize,
+}
+
+/// Derives the staleness facts of one namespace from guarded state
+/// (GAP-Q18 decision D3).
+///
+/// An error index is unconditionally stale — V1's faulty-index rule — and
+/// every other state is coverage-based: stale exactly when the namespace's
+/// covered storage sequence trails the latest observed publication, or
+/// when publications exist and nothing was ever published. An engine that
+/// has observed no publication at all has nothing to cover, so a fresh
+/// index there is not stale.
+fn staleness_facts(
+    operational: operations::IndexOperationalState,
+    covered: Option<u64>,
+    latest: Option<u64>,
+) -> IndexStaleness {
+    use operations::{IndexOperationalState, StalenessReason};
+    let mut reasons = Vec::new();
+    if operational == IndexOperationalState::Error {
+        reasons.push(StalenessReason::ErrorState);
+    }
+    match (covered, latest) {
+        (None, Some(latest)) => {
+            reasons.push(StalenessReason::NotYetPublished { latest });
+        }
+        (Some(covered), Some(latest)) if covered < latest => {
+            reasons.push(StalenessReason::CoverageBehind { covered, latest });
+        }
+        _ => {}
+    }
+    IndexStaleness::new(operational, !reasons.is_empty(), reasons)
 }
 
 /// Reports whether one pending supersession's replacement has reached the
@@ -1027,6 +1146,454 @@ impl IndexCatalog {
         state.optimizer.last_surpass_revision = Some(revision);
     }
 
+    // -----------------------------------------------------------------------
+    // The GAP-Q18 operational lifecycle surface
+    // -----------------------------------------------------------------------
+
+    /// Looks up one namespace's state entry, requiring an explicitly
+    /// created index: the administrative operations own explicit indexes
+    /// only, so every other namespace fails closed here.
+    fn explicit_entry_mut<'state>(
+        state: &'state mut CatalogState,
+        namespace: &IndexNamespace,
+    ) -> Result<&'state mut NamespaceState, operations::IndexOperationError> {
+        let entry = state
+            .namespaces
+            .get_mut(&namespace.catalog_key())
+            .ok_or(operations::IndexOperationError::NamespaceUnknown)?;
+        if !entry
+            .definition
+            .as_ref()
+            .is_some_and(|definition| definition.kind() == IndexKind::Explicit)
+        {
+            return Err(operations::IndexOperationError::NotExplicitIndex);
+        }
+        Ok(entry)
+    }
+
+    /// Deploys one explicit index: fresh creation, in-place update, a
+    /// recorded no-op for identical content, or a lock-mode refusal.
+    pub(crate) fn deploy_explicit(
+        &self,
+        namespace: &IndexNamespace,
+        definition: &IndexDefinition,
+        deployment: operations::IndexDeployment,
+    ) -> Result<operations::IndexCreationOutcome, operations::IndexOperationError> {
+        if namespace.name().starts_with(crate::query::optimizer::AUTO_NAMESPACE_PREFIX) {
+            return Err(operations::IndexOperationError::AutoNamespaceReserved);
+        }
+        if definition.kind() != IndexKind::Explicit {
+            return Err(operations::IndexOperationError::KindMismatch);
+        }
+        let mut state = self.state.lock().expect("index lock");
+        let key = namespace.catalog_key();
+        let decision = {
+            let existing = state.namespaces.get(&key).filter(|entry| entry.definition.is_some());
+            if existing.is_some_and(|entry| entry.definition.as_ref() == Some(definition)) {
+                Deploy::Unchanged(existing.map_or(0, NamespaceState::current_epoch))
+            } else {
+                match existing.map(|entry| entry.operational.lock_mode) {
+                    Some(operations::IndexLockMode::LockedIgnore) => {
+                        Deploy::Ignored(existing.map_or(0, NamespaceState::current_epoch))
+                    }
+                    Some(operations::IndexLockMode::LockedError) => Deploy::Locked,
+                    _ => Deploy::Write { existed: existing.is_some() },
+                }
+            }
+        };
+        match decision {
+            Deploy::Unchanged(epoch) => {
+                // The deployment record still follows the request.
+                let entry = state.namespaces.get_mut(&key).expect("decided against it");
+                entry.operational.priority = deployment.priority();
+                entry.operational.lock_mode = deployment.lock_mode();
+                Ok(operations::IndexCreationOutcome::Unchanged { epoch })
+            }
+            Deploy::Ignored(epoch) => Ok(operations::IndexCreationOutcome::Ignored { epoch }),
+            Deploy::Locked => Err(operations::IndexOperationError::DefinitionLocked),
+            Deploy::Write { existed } => {
+                let epoch = {
+                    let entry = state.namespaces.entry(key).or_default();
+                    if entry.epochs.is_empty() {
+                        entry
+                            .epochs
+                            .insert(1, EpochState { next_generation: 1, ..EpochState::default() });
+                    }
+                    entry.fields =
+                        definition.fields().iter().map(|field| field.name().to_owned()).collect();
+                    if entry.definition.is_none() {
+                        entry.operational.created_at = self.clock.now();
+                    }
+                    entry.definition = Some(definition.clone());
+                    entry.operational.priority = deployment.priority();
+                    entry.operational.lock_mode = deployment.lock_mode();
+                    entry.current_epoch()
+                };
+                state.optimizer.revision += 1;
+                if existed {
+                    Ok(operations::IndexCreationOutcome::Updated { epoch })
+                } else {
+                    Ok(operations::IndexCreationOutcome::Created { epoch })
+                }
+            }
+        }
+    }
+
+    /// Deletes one explicit index, keeping a bounded tombstone.
+    pub(crate) fn delete_explicit(
+        &self,
+        namespace: &IndexNamespace,
+    ) -> Result<(), operations::IndexOperationError> {
+        let mut state = self.state.lock().expect("index lock");
+        let key = namespace.catalog_key();
+        {
+            let entry = Self::explicit_entry_mut(&mut state, namespace)?;
+            let definition = entry.definition.as_ref().expect("explicit entry carries one");
+            let record = RetiredRecord {
+                tenant: namespace.tenant().clone(),
+                name: namespace.name().to_owned(),
+                kind: definition.kind(),
+                collection: definition.collection().as_str().to_owned(),
+                fields: definition.fields().to_vec(),
+                // Explicit indexes carry no automatic lifecycle, so their
+                // tombstone history is the deletion itself.
+                transitions: Vec::new(),
+            };
+            let queue =
+                state.optimizer.retired.entry(namespace.tenant().as_str().to_owned()).or_default();
+            queue.push_back(record);
+            while queue.len() > MAX_RETAINED_RETIRED {
+                queue.pop_front();
+            }
+        }
+        state.namespaces.remove(&key);
+        state
+            .optimizer
+            .pending
+            .retain(|pending| pending.replacement != *namespace && pending.target != *namespace);
+        state.optimizer.revision += 1;
+        Ok(())
+    }
+
+    /// Applies one lifecycle transition request against the exhaustive
+    /// state matrix (GAP-Q18 decision D2). The legal target moves the
+    /// state, the idempotent same-axis calls record a no-op, and every
+    /// other cell is a typed refusal without effect.
+    pub(crate) fn transition_operational(
+        &self,
+        namespace: &IndexNamespace,
+        operation: operations::IndexLifecycleOperation,
+    ) -> Result<operations::LifecycleTransition, operations::IndexOperationError> {
+        use operations::{IndexLifecycleOperation as Op, IndexOperationalState as State};
+        let mut state = self.state.lock().expect("index lock");
+        let entry = Self::explicit_entry_mut(&mut state, namespace)?;
+        let from = entry.operational.state;
+        // The legal transitions; `None` marks the idempotent no-ops.
+        let target = match (operation, from) {
+            (Op::Start, State::Paused) | (Op::Enable, State::Disabled) => Some(State::Normal),
+            (Op::Stop, State::Normal) => Some(State::Paused),
+            (Op::Disable, State::Normal | State::Paused) => Some(State::Disabled),
+            (Op::Start, State::Normal)
+            | (Op::Stop, State::Paused)
+            | (Op::Enable, State::Normal | State::Paused)
+            | (Op::Disable, State::Disabled) => None,
+            // V1's indexing thread refuses to start in Disabled and Error
+            // (Index.cs:1040-1041); nothing indexes there, so nothing can
+            // pause, disable, or be cleared.
+            _ => {
+                return Err(operations::IndexOperationError::IllegalTransition { from, operation });
+            }
+        };
+        match target {
+            Some(to) => {
+                entry.operational.state = to;
+                Ok(operations::LifecycleTransition::new(from, to, true))
+            }
+            None => Ok(operations::LifecycleTransition::new(from, from, false)),
+        }
+    }
+
+    /// Resets one explicit index in place or side by side (GAP-Q18 D6),
+    /// returning it to the normal running state from every state.
+    pub(crate) fn reset_index(
+        &self,
+        namespace: &IndexNamespace,
+        mode: operations::IndexResetMode,
+    ) -> Result<operations::LifecycleTransition, operations::IndexOperationError> {
+        let mut state = self.state.lock().expect("index lock");
+        let entry = Self::explicit_entry_mut(&mut state, namespace)?;
+        let from = entry.operational.state;
+        match mode {
+            operations::IndexResetMode::InPlace => {
+                // Keep the epoch id — epoch monotonicity stands — and drop
+                // the indexed data with the generation numbering.
+                let current = entry.current_epoch();
+                let keys: Vec<u64> = entry.epochs.keys().copied().collect();
+                for epoch in keys {
+                    if epoch != current {
+                        entry.epochs.remove(&epoch);
+                    }
+                }
+                if let Some(epoch_state) = entry.epochs.get_mut(&current) {
+                    epoch_state.published = None;
+                    epoch_state.history.clear();
+                    epoch_state.next_generation = 1;
+                }
+            }
+            operations::IndexResetMode::SideBySide => {
+                // The replacement epoch builds alongside the still-serving
+                // old one; its first publication is the cutover. The
+                // definition and deployment record are kept.
+                let next = entry.current_epoch() + 1;
+                entry
+                    .epochs
+                    .insert(next, EpochState { next_generation: 1, ..EpochState::default() });
+            }
+        }
+        entry.operational.state = operations::IndexOperationalState::Normal;
+        entry.operational.errors.clear();
+        entry.operational.consecutive_failures = 0;
+        state.optimizer.revision += 1;
+        Ok(operations::LifecycleTransition::new(
+            from,
+            operations::IndexOperationalState::Normal,
+            true,
+        ))
+    }
+
+    /// Sets the definition-change lock mode.
+    pub(crate) fn set_lock_mode(
+        &self,
+        namespace: &IndexNamespace,
+        mode: operations::IndexLockMode,
+    ) -> Result<(), operations::IndexOperationError> {
+        let mut state = self.state.lock().expect("index lock");
+        Self::explicit_entry_mut(&mut state, namespace)?.operational.lock_mode = mode;
+        Ok(())
+    }
+
+    /// Clears the recorded errors and leaves the error state.
+    pub(crate) fn clear_recorded_errors(
+        &self,
+        namespace: &IndexNamespace,
+    ) -> Result<operations::LifecycleTransition, operations::IndexOperationError> {
+        let mut state = self.state.lock().expect("index lock");
+        let entry = Self::explicit_entry_mut(&mut state, namespace)?;
+        let from = entry.operational.state;
+        if from != operations::IndexOperationalState::Error {
+            return Err(operations::IndexOperationError::IllegalTransition {
+                from,
+                operation: operations::IndexLifecycleOperation::ClearErrors,
+            });
+        }
+        entry.operational.state = operations::IndexOperationalState::Normal;
+        entry.operational.errors.clear();
+        entry.operational.consecutive_failures = 0;
+        Ok(operations::LifecycleTransition::new(
+            from,
+            operations::IndexOperationalState::Normal,
+            true,
+        ))
+    }
+
+    /// Records one engine-observed build or publish failure (GAP-Q18 D5):
+    /// the engine's own failure ingress, crate-private by design. Records
+    /// only while the index indexes (normal) or is already in error;
+    /// returns whether this record moved the state into error.
+    pub(crate) fn note_operation_failure(
+        &self,
+        namespace: &IndexNamespace,
+        action: IndexErrorAction,
+        category: IndexErrorCategory,
+    ) -> bool {
+        use operations::IndexOperationalState::{Disabled, Error, Normal, Paused};
+        let now = self.clock.now();
+        let mut state = self.state.lock().expect("index lock");
+        let Ok(entry) = Self::explicit_entry_mut(&mut state, namespace) else {
+            return false;
+        };
+        match entry.operational.state {
+            Normal | Error => {}
+            Paused | Disabled => return false,
+        }
+        entry.operational.record(IndexErrorRecord::new(action, category, now));
+        entry.operational.failures = entry.operational.failures.saturating_add(1);
+        if entry.operational.state == Normal {
+            entry.operational.consecutive_failures += 1;
+            if entry.operational.consecutive_failures >= INDEX_ERROR_STATE_THRESHOLD {
+                entry.operational.state = Error;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Counts one build attempt.
+    pub(crate) fn note_operation_attempt(&self, namespace: &IndexNamespace) {
+        let mut state = self.state.lock().expect("index lock");
+        if let Ok(entry) = Self::explicit_entry_mut(&mut state, namespace) {
+            entry.operational.attempts = entry.operational.attempts.saturating_add(1);
+        }
+    }
+
+    /// Counts one successful build and resets the consecutive-failure
+    /// streak.
+    pub(crate) fn note_operation_success(&self, namespace: &IndexNamespace) {
+        let now = self.clock.now();
+        let mut state = self.state.lock().expect("index lock");
+        if let Ok(entry) = Self::explicit_entry_mut(&mut state, namespace) {
+            entry.operational.successes = entry.operational.successes.saturating_add(1);
+            entry.operational.consecutive_failures = 0;
+            entry.operational.last_indexed = Some(now);
+        }
+    }
+
+    /// Returns the operational state of one explicit index.
+    pub(crate) fn operational_state_of(
+        &self,
+        namespace: &IndexNamespace,
+    ) -> Result<operations::IndexOperationalState, operations::IndexOperationError> {
+        let mut state = self.state.lock().expect("index lock");
+        Ok(Self::explicit_entry_mut(&mut state, namespace)?.operational.state)
+    }
+
+    /// Returns the covered storage sequence of any namespace's newest
+    /// published segment.
+    pub(crate) fn covered_sequence_of(&self, namespace: &IndexNamespace) -> Option<u64> {
+        let state = self.state.lock().expect("index lock");
+        state.namespaces.get(&namespace.catalog_key()).and_then(NamespaceState::covered_sequence)
+    }
+
+    /// Returns the staleness facts of any namespace.
+    pub(crate) fn staleness_of(&self, namespace: &IndexNamespace) -> Option<IndexStaleness> {
+        let state = self.state.lock().expect("index lock");
+        let entry = state.namespaces.get(&namespace.catalog_key())?;
+        Some(staleness_facts(
+            entry.operational.state,
+            entry.covered_sequence(),
+            state.delta.as_ref().map(IndexDelta::covered_sequence),
+        ))
+    }
+
+    /// Returns one tenant's recorded index errors, in catalog order.
+    pub(crate) fn errors_of(&self, tenant: &TenantId) -> Vec<IndexErrorListing> {
+        let state = self.state.lock().expect("index lock");
+        state
+            .namespaces
+            .iter()
+            .filter_map(|(key, entry)| {
+                if entry.operational.errors.is_empty() {
+                    return None;
+                }
+                let (tenant_key, name) = key.split_once('\u{1f}')?;
+                if tenant_key != tenant.as_str() {
+                    return None;
+                }
+                Some(IndexErrorListing::new(
+                    name.to_owned(),
+                    entry.operational.errors.iter().copied().collect(),
+                ))
+            })
+            .collect()
+    }
+
+    /// Returns one tenant's explicit-index statistics, in catalog order.
+    pub(crate) fn statistics_of(&self, tenant: &TenantId) -> Vec<operations::IndexStatistics> {
+        let state = self.state.lock().expect("index lock");
+        state
+            .namespaces
+            .iter()
+            .filter_map(|(key, entry)| {
+                let definition = entry.definition.as_ref()?;
+                if definition.kind() != IndexKind::Explicit {
+                    return None;
+                }
+                let (tenant_key, name) = key.split_once('\u{1f}')?;
+                if tenant_key != tenant.as_str() {
+                    return None;
+                }
+                let segment = entry
+                    .published_epoch()
+                    .and_then(|epoch| entry.epochs.get(&epoch))
+                    .and_then(|epoch_state| epoch_state.published.as_ref());
+                let published = segment
+                    .map(|segment| ObservedGeneration::new(segment.epoch(), segment.generation()));
+                let covered = entry.covered_sequence();
+                let staleness = staleness_facts(
+                    entry.operational.state,
+                    covered,
+                    state.delta.as_ref().map(IndexDelta::covered_sequence),
+                );
+                Some(operations::IndexStatistics::new(
+                    tenant.clone(),
+                    name.to_owned(),
+                    definition.kind(),
+                    entry.operational.state,
+                    entry.operational.priority,
+                    entry.operational.lock_mode,
+                    staleness,
+                    covered,
+                    published,
+                    segment.map_or(0, |segment| segment.entries.len()),
+                    entry.operational.attempts,
+                    entry.operational.successes,
+                    entry.operational.failures,
+                    entry.operational.errors.len(),
+                    entry.operational.created_at,
+                    entry.operational.last_indexed,
+                    entry.last_queried,
+                ))
+            })
+            .collect()
+    }
+
+    /// Returns the engine-wide per-tenant index statistics aggregate, in
+    /// tenant name order.
+    pub(crate) fn engine_statistics(&self) -> Vec<operations::TenantIndexStatistics> {
+        use operations::IndexOperationalState::{Disabled, Error, Normal, Paused};
+        let state = self.state.lock().expect("index lock");
+        let mut rows: BTreeMap<&str, Row> = BTreeMap::new();
+        for (key, entry) in &state.namespaces {
+            if !entry
+                .definition
+                .as_ref()
+                .is_some_and(|definition| definition.kind() == IndexKind::Explicit)
+            {
+                continue;
+            }
+            let Some((tenant_key, _)) = key.split_once('\u{1f}') else {
+                continue;
+            };
+            let row = rows.entry(tenant_key).or_default();
+            match entry.operational.state {
+                Normal => row.normal += 1,
+                Paused => row.paused += 1,
+                Disabled => row.disabled += 1,
+                Error => row.error += 1,
+            }
+            row.attempts = row.attempts.saturating_add(entry.operational.attempts);
+            row.successes = row.successes.saturating_add(entry.operational.successes);
+            row.failures = row.failures.saturating_add(entry.operational.failures);
+            row.recorded_errors += entry.operational.errors.len();
+        }
+        rows.into_iter()
+            .filter_map(|(tenant_key, row)| {
+                let tenant = TenantId::try_new(tenant_key).ok()?;
+                Some(operations::TenantIndexStatistics::new(
+                    tenant,
+                    row.normal,
+                    row.paused,
+                    row.disabled,
+                    row.error,
+                    row.attempts,
+                    row.successes,
+                    row.failures,
+                    row.recorded_errors,
+                ))
+            })
+            .collect()
+    }
+
     /// Returns the published segment of a namespace's newest published epoch.
     #[allow(dead_code, reason = "observed by the index tests")]
     pub(crate) fn segment(&self, namespace: &IndexNamespace) -> Option<IndexSegment> {
@@ -1208,6 +1775,13 @@ impl GenerationView for IndexCatalog {
     fn available_generation(&self, namespace: &IndexNamespace) -> Option<ObservedGeneration> {
         let state = self.state.lock().expect("index lock");
         let entry = state.namespaces.get(&namespace.catalog_key())?;
+        // An error index vouches for no generation (GAP-Q18 D3, V1's
+        // faulty-index rule): every staleness observation against it
+        // reports stale, and a strict policy refuses instead of trusting
+        // coverage an error index cannot have.
+        if entry.operational.state == operations::IndexOperationalState::Error {
+            return None;
+        }
         let epoch = entry.published_epoch()?;
         entry.epochs.get(&epoch).and_then(|epoch_state| {
             epoch_state
