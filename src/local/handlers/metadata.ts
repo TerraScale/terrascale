@@ -50,23 +50,15 @@ export const handleLocalMetadata: LocalHandler = async (context) => {
   const projectId = projectIdFromContext(context) ?? projectIdFromRoute(context);
   if (projectId !== undefined) {
     match = matchLocalRoute(context, "GET", "/api/v1/projects/{projectId}/saved-queries");
-    if (match !== undefined && match.projectId! === projectId) return jsonResponse(await savedQueries(store, projectId));
+    if (match !== undefined && match.projectId! === projectId) return jsonResponse(await savedQueries(store, projectId, context.url.searchParams));
     match = matchLocalRoute(context, "POST", "/api/v1/projects/{projectId}/saved-queries");
     if (match !== undefined && match.projectId! === projectId) return createSavedQuery(store, context, projectId);
+    match = matchLocalRoute(context, "GET", "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}");
+    if (match !== undefined && match.projectId! === projectId) return getSavedQuery(store, projectId, match.savedQueryId!);
     match = matchLocalRoute(context, "PUT", "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}");
-    if (match !== undefined && match.projectId! === projectId) return updateSavedQuery(store, context, projectId, match.savedQueryId!, false);
+    if (match !== undefined && match.projectId! === projectId) return updateSavedQuery(store, context, projectId, match.savedQueryId!);
     match = matchLocalRoute(context, "DELETE", "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}");
     if (match !== undefined && match.projectId! === projectId) return deleteSavedQuery(store, projectId, match.savedQueryId!);
-
-    match = matchLocalRoute(context, "GET", "/api/v2/projects/{projectId}/saved-queries");
-    if (match !== undefined && match.projectId! === projectId) return jsonResponse(await savedQueriesV2(store, projectId));
-    match = matchLocalRoute(context, "GET", "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}");
-    if (match !== undefined && match.projectId! === projectId) return getSavedQuery(store, projectId, match.savedQueryId!, true);
-    match = matchLocalRoute(context, "PUT", "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}");
-    if (match !== undefined && match.projectId! === projectId) return updateSavedQuery(store, context, projectId, match.savedQueryId!, true);
-
-    match = matchLocalRoute(context, "GET", "/api/v3/projects/{projectId}/saved-queries");
-    if (match !== undefined && match.projectId! === projectId) return snapshotSavedQueries(store, projectId, context.url.searchParams);
 
     match = matchLocalRoute(context, "GET", "/api/v1/projects/{projectId}/access/team-members");
     if (match !== undefined && match.projectId! === projectId) return jsonResponse(await pageItems<Models.TeamMember>(store, "team-members", `${projectId}:`));
@@ -103,28 +95,28 @@ async function createSavedQuery(store: TerraScaleSqliteStore, context: LocalRequ
   const item: Models.ProjectSavedQueryResponse = {
     savedQueryId, projectId: projectId as ProjectId, name, query,
     repositoryId: text(body.repositoryId) as Models.ProjectSavedQueryResponse["repositoryId"] ?? null,
-    createdAt: context.now, updatedAt: context.now,
+    createdAt: context.now, updatedAt: context.now, revision: "1",
   };
   await put(store, "saved-queries", queryKey(projectId, savedQueryId), item);
   return jsonResponse(item, 201);
 }
 
-async function updateSavedQuery(store: TerraScaleSqliteStore, context: LocalRequestContext, projectId: string, id: string, withRevision: boolean): Promise<Response> {
+async function updateSavedQuery(store: TerraScaleSqliteStore, context: LocalRequestContext, projectId: string, id: string): Promise<Response> {
   const old = await get<Models.ProjectSavedQueryResponse>(store, "saved-queries", queryKey(projectId, id));
   if (old === undefined) return notFound("saved query");
   const body = objectBody(context);
   const currentRevision = revisionOf(store, projectId, id);
   const revision = await currentRevision;
-  if (withRevision && body.revision !== revision) return problemResponse(409, "conflict", "The saved query revision is stale.");
+  if (body.revision !== revision) return problemResponse(409, "conflict", "The saved query revision is stale.");
   const name = text(body.name) ?? old.name;
   const query = text(body.query) ?? old.query;
   const normalizedRepositoryId = text(body.repositoryId);
   const repositoryId = body.repositoryId === undefined ? old.repositoryId : normalizedRepositoryId === undefined ? null : normalizedRepositoryId as Models.ProjectSavedQueryResponse["repositoryId"];
-  const updated = { ...old, name, query, repositoryId, updatedAt: context.now };
-  await put(store, "saved-queries", queryKey(projectId, id), updated);
   const nextRevision = String(Number(revision) + 1);
+  const updated = { ...old, name, query, repositoryId, updatedAt: context.now, revision: nextRevision };
+  await put(store, "saved-queries", queryKey(projectId, id), updated);
   await store.setMeta(`saved-query-revisions:${queryKey(projectId, id)}`, nextRevision);
-  return jsonResponse(withRevision ? { ...updated, revision: nextRevision } satisfies Models.ProjectSavedQueryV2Response : updated);
+  return jsonResponse(updated);
 }
 
 async function deleteSavedQuery(store: TerraScaleSqliteStore, projectId: string, id: string): Promise<Response> {
@@ -134,29 +126,22 @@ async function deleteSavedQuery(store: TerraScaleSqliteStore, projectId: string,
   return jsonResponse({ savedQueryId: old.savedQueryId, projectId: old.projectId, deleted: true } satisfies Models.DeletedProjectSavedQueryResponse);
 }
 
-async function getSavedQuery(store: TerraScaleSqliteStore, projectId: string, id: string, withRevision: boolean): Promise<Response> {
+async function getSavedQuery(store: TerraScaleSqliteStore, projectId: string, id: string): Promise<Response> {
   const item = await get<Models.ProjectSavedQueryResponse>(store, "saved-queries", queryKey(projectId, id));
   if (item === undefined) return notFound("saved query");
-  return jsonResponse(withRevision ? { ...item, revision: await revisionOf(store, projectId, id) } satisfies Models.ProjectSavedQueryV2Response : item);
+  return jsonResponse(item);
 }
 
-async function savedQueries(store: TerraScaleSqliteStore, projectId: string): Promise<Models.ProjectSavedQueryResponse[]> {
-  return records<Models.ProjectSavedQueryResponse>(store, "saved-queries", `${projectId}:`);
-}
-
-async function savedQueriesV2(store: TerraScaleSqliteStore, projectId: string): Promise<Models.ProjectSavedQueryV2Response[]> {
-  const items = await savedQueries(store, projectId);
-  return Promise.all(items.map(async (item) => ({ ...item, revision: await revisionOf(store, projectId, item.savedQueryId) })));
-}
-
-async function snapshotSavedQueries(store: TerraScaleSqliteStore, projectId: string, params: URLSearchParams): Promise<Response> {
-  const items = await savedQueriesV2(store, projectId);
+async function savedQueries(store: TerraScaleSqliteStore, projectId: string, params: URLSearchParams): Promise<Models.ProjectSavedQueryPageResponse> {
+  const items = await records<Models.ProjectSavedQueryResponse>(store, "saved-queries", `${projectId}:`);
   const requestedTake = Number(params.get("take") ?? "100");
   const take = Number.isFinite(requestedTake) ? Math.max(1, Math.min(1000, Math.trunc(requestedTake))) : 100;
-  const offset = decodeCursor(params.get("cursor"));
+  const requestedSkip = Number(params.get("skip") ?? "0");
+  const skip = Number.isFinite(requestedSkip) ? Math.max(0, Math.trunc(requestedSkip)) : 0;
+  const offset = params.has("cursor") ? decodeCursor(params.get("cursor")) : skip;
   const selected = items.slice(offset, offset + take);
   const nextCursor = offset + take < items.length ? encodeCursor(offset + take) : null;
-  return jsonResponse({ items: selected, nextCursor } satisfies Models.ProjectSavedQuerySnapshotPageResponse);
+  return { items: selected, nextCursor };
 }
 
 async function addTeamMember(store: TerraScaleSqliteStore, context: LocalRequestContext, projectId: string): Promise<Response> {

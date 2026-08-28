@@ -142,6 +142,11 @@ export const localManifestRoutes = [
     "routeName": "savedQueries.create"
   },
   {
+    "method": "GET",
+    "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
+    "routeName": "savedQueries.get"
+  },
+  {
     "method": "PUT",
     "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
     "routeName": "savedQueries.update"
@@ -150,26 +155,6 @@ export const localManifestRoutes = [
     "method": "DELETE",
     "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
     "routeName": "savedQueries.delete"
-  },
-  {
-    "method": "GET",
-    "pathTemplate": "/api/v2/projects/{projectId}/saved-queries",
-    "routeName": "savedQueries.v2.list"
-  },
-  {
-    "method": "GET",
-    "pathTemplate": "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}",
-    "routeName": "savedQueries.v2.get"
-  },
-  {
-    "method": "PUT",
-    "pathTemplate": "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}",
-    "routeName": "savedQueries.v2.update"
-  },
-  {
-    "method": "GET",
-    "pathTemplate": "/api/v3/projects/{projectId}/saved-queries",
-    "routeName": "savedQueries.v3.list"
   },
   {
     "method": "GET",

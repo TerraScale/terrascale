@@ -91,20 +91,21 @@ test("organizations, regions, and saved-query versions have real CRUD, isolation
 
     const scoped = client(runtime, project.projectId);
     const saved = value(await scoped.savedQueries.create({ name: "Initial query", query: "from docs" }));
-    assert.equal(value(await scoped.savedQueries.list()).length, 1);
-    assert.equal(value(await scoped.savedQueries.update(saved.savedQueryId, { name: "Updated query", query: "from docs where active = true" })).name, "Updated query");
-    assert.equal(value(await scoped.savedQueries.v2.list()).length, 1);
-    const v2 = value(await scoped.savedQueries.v2.get(saved.savedQueryId));
-    assert.equal(v2.revision, "2");
-    const v2Updated = value(await scoped.savedQueries.v2.update(saved.savedQueryId, { name: "V2 query", query: "from docs where v2 = true", revision: v2.revision }));
-    assert.equal(v2Updated.revision, "3");
-    failure(await scoped.savedQueries.v2.update(saved.savedQueryId, { name: "Stale", query: "from docs", revision: v2.revision }), "conflict");
-    const snapshot = value(await scoped.savedQueries.v3.list(undefined, { take: 10 }));
-    assert.equal(snapshot.items[0]?.revision, "3");
-    assert.equal(snapshot.nextCursor, null);
+    assert.equal(value(await scoped.savedQueries.list()).items.length, 1);
+    const updated = value(await scoped.savedQueries.update(saved.savedQueryId, { name: "Updated query", query: "from docs where active = true", revision: saved.revision }));
+    assert.equal(updated.name, "Updated query");
+    assert.equal(updated.revision, "2");
+    const fetched = value(await scoped.savedQueries.get(saved.savedQueryId));
+    assert.equal(fetched.revision, "2");
+    const revisionUpdated = value(await scoped.savedQueries.update(saved.savedQueryId, { name: "Revision query", query: "from docs where revision = true", revision: fetched.revision }));
+    assert.equal(revisionUpdated.revision, "3");
+    failure(await scoped.savedQueries.update(saved.savedQueryId, { name: "Stale", query: "from docs", revision: fetched.revision }), "conflict");
+    const page = value(await scoped.savedQueries.list(undefined, { take: 10 }));
+    assert.equal(page.items[0]?.revision, "3");
+    assert.equal(page.nextCursor, null);
     assert.equal(value(await scoped.savedQueries.delete(saved.savedQueryId)).deleted, true);
-    assert.equal(value(await scoped.savedQueries.list()).length, 0);
-    assert.equal(value(await client(runtime, otherProject.projectId).savedQueries.list()).length, 0);
+    assert.equal(value(await scoped.savedQueries.list()).items.length, 0);
+    assert.equal(value(await client(runtime, otherProject.projectId).savedQueries.list()).items.length, 0);
 
     assert.equal(value(await root.organizations.requestDeletion(organization.organizationId, { confirm: true, organizationName: "Renamed organization" })).status, "DeletionPending");
     assert.equal(value(await root.organizations.deleteProject(project.projectId, { confirm: true, projectName: "Updated project" })).deleted, true);

@@ -445,12 +445,19 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "savedQueries",
+    operation: "get",
+    defaultProject: true,
+    invoke: (client) => client.savedQueries.get(sampleIds.savedQueryId),
+  },
+  {
+    client: "savedQueries",
     operation: "update",
     defaultProject: true,
     invoke: (client) =>
       client.savedQueries.update(sampleIds.savedQueryId, {
         name: "Active users",
         query: "SELECT * FROM users WHERE active = true",
+        revision: "opaque-revision",
       }),
   },
   {
@@ -458,36 +465,6 @@ const captureOperations: readonly CaptureOperation[] = [
     operation: "delete",
     defaultProject: true,
     invoke: (client) => client.savedQueries.delete(sampleIds.savedQueryId),
-  },
-  {
-    client: "savedQueries.v2",
-    operation: "list",
-    defaultProject: true,
-    invoke: (client) => client.savedQueries.v2.list(),
-  },
-  {
-    client: "savedQueries.v2",
-    operation: "get",
-    defaultProject: true,
-    invoke: (client) => client.savedQueries.v2.get(sampleIds.savedQueryId),
-  },
-  {
-    client: "savedQueries.v2",
-    operation: "update",
-    defaultProject: true,
-    invoke: (client) =>
-      client.savedQueries.v2.update(sampleIds.savedQueryId, {
-        name: "Active users",
-        query: "SELECT * FROM users WHERE active = true",
-        revision: "opaque-revision",
-      }),
-  },
-  {
-    client: "savedQueries.v3",
-    operation: "list",
-    defaultProject: true,
-    invoke: (client) =>
-      client.savedQueries.v3.list(undefined, { cursor: "opaque-snapshot-cursor", take: 100 }),
   },
   {
     client: "databases",

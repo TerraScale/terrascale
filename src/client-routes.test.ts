@@ -12,9 +12,8 @@ import type {
   CreateDatabaseBranchRequest,
   DeletedProjectDatabaseEnvironmentResponse,
   JsonValue,
+  ProjectSavedQueryPageResponse,
   ProjectSavedQueryResponse,
-  ProjectSavedQuerySnapshotPageResponse,
-  ProjectSavedQueryV2Response,
 } from "./models.js";
 
 const projectId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
@@ -72,7 +71,7 @@ describe("TerraScaleClient route contracts", () => {
       manifest.routes.map(routeManifestCore),
       capturedRoutes.map(routeManifestCore),
     );
-    assert.equal(manifest.routeCount, 82);
+    assert.equal(manifest.routeCount, 79);
     assert.equal(manifest.routeCount, capturedRoutes.length);
     assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
     assert.deepEqual(
@@ -399,13 +398,14 @@ describe("TerraScaleClient route contracts", () => {
       repositoryId: null,
       createdAt: "2026-08-05T00:00:00Z",
       updatedAt: "2026-08-05T00:00:00Z",
+      revision: "opaque-resource-revision",
     } satisfies ProjectSavedQueryResponse;
     const { client, requests } = createCapturingClientWithResponses([
-      [savedQuery],
-      [savedQuery],
-      [savedQuery],
-      [savedQuery],
-      [savedQuery],
+      { items: [savedQuery], nextCursor: null },
+      { items: [savedQuery], nextCursor: null },
+      { items: [savedQuery], nextCursor: null },
+      { items: [savedQuery], nextCursor: null },
+      { items: [savedQuery], nextCursor: null },
       savedQuery,
       savedQuery,
       { savedQueryId, projectId, deleted: true },
@@ -414,9 +414,9 @@ describe("TerraScaleClient route contracts", () => {
     const defaultListResult = await client.savedQueries.list();
     assert.equal(defaultListResult.ok, true);
     if (defaultListResult.ok) {
-      assert.deepEqual(defaultListResult.value, [savedQuery]);
-      assert.equal(defaultListResult.value[0]?.repositoryId, null);
-      assert.equal(Object.hasOwn(defaultListResult.value[0]!, "repositoryId"), true);
+      assert.deepEqual(defaultListResult.value.items, [savedQuery]);
+      assert.equal(defaultListResult.value.items[0]?.repositoryId, null);
+      assert.equal(Object.hasOwn(defaultListResult.value.items[0]!, "repositoryId"), true);
     }
     assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/saved-queries`);
     assert.equal(requests[0]?.url.search, "?skip=0&take=100");
@@ -443,7 +443,7 @@ describe("TerraScaleClient route contracts", () => {
     const listResult = await client.savedQueries.list(otherProjectId, { skip: 10, take: 20 });
     assert.equal(listResult.ok, true);
     if (listResult.ok) {
-      assert.deepEqual(listResult.value, [savedQuery]);
+      assert.deepEqual(listResult.value.items, [savedQuery]);
     }
     assertRequest(requests[4], "GET", `/api/v1/projects/${otherProjectId}/saved-queries`);
     assert.equal(requests[4]?.url.search, "?skip=10&take=20");
@@ -468,6 +468,7 @@ describe("TerraScaleClient route contracts", () => {
     await client.savedQueries.update(savedQueryId, {
       name: "Active users v2",
       query: savedQuery.query,
+      revision: savedQuery.revision,
     });
     assertRequest(
       requests[6],
@@ -477,6 +478,7 @@ describe("TerraScaleClient route contracts", () => {
     assert.deepEqual(requests[6]?.body, {
       name: "Active users v2",
       query: savedQuery.query,
+      revision: savedQuery.revision,
     });
     assert.equal(requests[6]?.headers.get("idempotency-key"), "saved-query-replay-key");
 
@@ -503,35 +505,35 @@ describe("TerraScaleClient route contracts", () => {
       createdAt: "2026-08-05T00:00:00Z",
       updatedAt: "2026-08-05T00:00:00Z",
       revision: "opaque-resource-revision",
-    } satisfies ProjectSavedQueryV2Response;
+    } satisfies ProjectSavedQueryResponse;
     const { client, requests } = createCapturingClientWithResponses([
-      [savedQuery],
-      [savedQuery],
+      { items: [savedQuery], nextCursor: null },
+      { items: [savedQuery], nextCursor: null },
       savedQuery,
       savedQuery,
     ], { idempotencyKeyFactory: () => "saved-query-v2-replay-key" });
 
-    await client.savedQueries.v2.list();
-    assertRequest(requests[0], "GET", `/api/v2/projects/${projectId}/saved-queries`);
+    await client.savedQueries.list();
+    assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/saved-queries`);
     assert.equal(requests[0]?.url.search, "?skip=0&take=100");
 
-    const listed = await client.savedQueries.v2.list(undefined, { skip: 10, take: 20 });
+    const listed = await client.savedQueries.list(undefined, { skip: 10, take: 20 });
     assert.equal(listed.ok, true);
-    if (listed.ok) assert.deepEqual(listed.value, [savedQuery]);
-    assertRequest(requests[1], "GET", `/api/v2/projects/${projectId}/saved-queries`);
+    if (listed.ok) assert.deepEqual(listed.value.items, [savedQuery]);
+    assertRequest(requests[1], "GET", `/api/v1/projects/${projectId}/saved-queries`);
     assert.equal(requests[1]?.url.search, "?skip=10&take=20");
 
-    const fetched = await client.savedQueries.v2.get(savedQueryId);
+    const fetched = await client.savedQueries.get(savedQueryId);
     assert.equal(fetched.ok, true);
     if (fetched.ok) assert.equal(fetched.value.revision, savedQuery.revision);
-    assertRequest(requests[2], "GET", `/api/v2/projects/${projectId}/saved-queries/${savedQueryId}`);
+    assertRequest(requests[2], "GET", `/api/v1/projects/${projectId}/saved-queries/${savedQueryId}`);
 
-    await client.savedQueries.v2.update(savedQueryId, {
+    await client.savedQueries.update(savedQueryId, {
       name: "Active users v2",
       query: savedQuery.query,
       revision: savedQuery.revision,
     });
-    assertRequest(requests[3], "PUT", `/api/v2/projects/${projectId}/saved-queries/${savedQueryId}`);
+    assertRequest(requests[3], "PUT", `/api/v1/projects/${projectId}/saved-queries/${savedQueryId}`);
     assert.deepEqual(requests[3]?.body, {
       name: "Active users v2",
       query: savedQuery.query,
@@ -550,22 +552,22 @@ describe("TerraScaleClient route contracts", () => {
       createdAt: "2026-08-05T00:00:00Z",
       updatedAt: "2026-08-05T00:00:00Z",
       revision: "opaque-resource-revision",
-    } satisfies ProjectSavedQueryV2Response;
+    } satisfies ProjectSavedQueryResponse;
     const page = {
       items: [savedQuery],
       nextCursor: null,
-    } satisfies ProjectSavedQuerySnapshotPageResponse;
+    } satisfies ProjectSavedQueryPageResponse;
     const { client, requests } = createCapturingClientWithResponses([page]);
 
-    const result = await client.savedQueries.v3.list(otherProjectId, {
+    const result = await client.savedQueries.list(otherProjectId, {
       cursor: "opaque-project-bound-cursor",
       take: 500,
     });
 
     assert.equal(result.ok, true);
     if (result.ok) assert.deepEqual(result.value, page);
-    assertRequest(requests[0], "GET", `/api/v3/projects/${otherProjectId}/saved-queries`);
-    assert.equal(requests[0]?.url.search, "?cursor=opaque-project-bound-cursor&take=500");
+    assertRequest(requests[0], "GET", `/api/v1/projects/${otherProjectId}/saved-queries`);
+    assert.equal(requests[0]?.url.search, "?cursor=opaque-project-bound-cursor&skip=0&take=500");
   });
 
   test("maps expired v3 snapshot cursors to the public conflict result", async () => {
@@ -579,7 +581,7 @@ describe("TerraScaleClient route contracts", () => {
         ),
     });
 
-    const result = await client.savedQueries.v3.list(undefined, { cursor: "expired-cursor" });
+    const result = await client.savedQueries.list(undefined, { cursor: "expired-cursor" });
 
     assert.equal(result.ok, false);
     if (!result.ok) {
@@ -609,7 +611,7 @@ describe("TerraScaleClient route contracts", () => {
           ),
       });
 
-      const result = await client.savedQueries.v3.list(undefined, { cursor: "tampered-cursor" });
+      const result = await client.savedQueries.list(undefined, { cursor: "tampered-cursor" });
       assert.equal(result.ok, false);
       if (!result.ok) {
         assert.equal(result.status, status);
@@ -629,7 +631,7 @@ describe("TerraScaleClient route contracts", () => {
         ),
     });
 
-    const result = await client.savedQueries.v2.update(savedQueryId, {
+    const result = await client.savedQueries.update(savedQueryId, {
       name: "Active users v2",
       query: "SELECT * FROM users WHERE active = true",
       revision: "opaque-resource-revision",

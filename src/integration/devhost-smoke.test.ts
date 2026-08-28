@@ -92,44 +92,45 @@ describe("DevHost saved-query CRUD", { skip: savedQueriesSkipReason }, () => {
       const listed = await client.savedQueries.list();
       assert.equal(listed.ok, true);
       if (listed.ok) {
-        assert.equal(listed.value.some((savedQuery) => savedQuery.savedQueryId === savedQueryId), true);
+        assert.equal(listed.value.items.some((savedQuery) => savedQuery.savedQueryId === savedQueryId), true);
       }
 
       const updated = await client.savedQueries.update(savedQueryId, {
         name: `SDK smoke updated ${suffix}`,
         query: "from sdk_smoke where active = true",
+        revision: created.value.revision,
       });
       assert.equal(updated.ok, true);
       if (updated.ok) assert.equal(updated.value.name, `SDK smoke updated ${suffix}`);
 
-      const fetchedV2 = await client.savedQueries.v2.get(savedQueryId);
-      assert.equal(fetchedV2.ok, true);
-      if (!fetchedV2.ok) return;
+      const fetched = await client.savedQueries.get(savedQueryId);
+      assert.equal(fetched.ok, true);
+      if (!fetched.ok) return;
 
-      const listedV2 = await client.savedQueries.v2.list();
-      assert.equal(listedV2.ok, true);
-      if (listedV2.ok) {
+      const listedCurrent = await client.savedQueries.list();
+      assert.equal(listedCurrent.ok, true);
+      if (listedCurrent.ok) {
         assert.equal(
-          listedV2.value.some(
+          listedCurrent.value.items.some(
             (savedQuery) =>
-              savedQuery.savedQueryId === savedQueryId && savedQuery.revision === fetchedV2.value.revision,
+              savedQuery.savedQueryId === savedQueryId && savedQuery.revision === fetched.value.revision,
           ),
           true,
         );
       }
 
-      const updatedV2 = await client.savedQueries.v2.update(savedQueryId, {
-        name: `SDK smoke v2 updated ${suffix}`,
+      const updatedCurrent = await client.savedQueries.update(savedQueryId, {
+        name: `SDK smoke revision updated ${suffix}`,
         query: "from sdk_smoke where active = false",
-        revision: fetchedV2.value.revision,
+        revision: fetched.value.revision,
       });
-      assert.equal(updatedV2.ok, true);
-      if (updatedV2.ok) assert.equal(updatedV2.value.name, `SDK smoke v2 updated ${suffix}`);
+      assert.equal(updatedCurrent.ok, true);
+      if (updatedCurrent.ok) assert.equal(updatedCurrent.value.name, `SDK smoke revision updated ${suffix}`);
 
-      const stale = await client.savedQueries.v2.update(savedQueryId, {
+      const stale = await client.savedQueries.update(savedQueryId, {
         name: `SDK smoke stale ${suffix}`,
         query: "from sdk_smoke where active = false",
-        revision: fetchedV2.value.revision,
+        revision: fetched.value.revision,
       });
       assert.equal(stale.ok, false);
       if (!stale.ok) {

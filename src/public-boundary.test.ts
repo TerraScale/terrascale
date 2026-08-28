@@ -23,8 +23,7 @@ test("built package keeps all public clients on typed operations without a runti
   assert.equal("request" in client, false);
   assert.equal(typeof client.regions.list, "function");
   assert.equal(typeof client.savedQueries.list, "function");
-  assert.equal(typeof client.savedQueries.v2.update, "function");
-  assert.equal(typeof client.savedQueries.v3.list, "function");
+  assert.equal(typeof client.savedQueries.update, "function");
   assert.equal(typeof client.databaseBranches.getCapability, "function");
   assert.equal(typeof client.databaseBranches.requestClone, "function");
   assert.equal(Object.values(client).length, 15);
@@ -41,13 +40,9 @@ test("built package keeps all public clients on typed operations without a runti
     assert.equal(removedOnboardingMethod in client.onboarding, false);
   }
   const savedQueries: sdk.SavedQueriesClient = client.savedQueries;
-  const savedQueriesV2: sdk.SavedQueriesV2Client = client.savedQueries.v2;
-  const savedQueriesV3: sdk.SavedQueriesV3Client = client.savedQueries.v3;
   const databaseBranches: sdk.DatabaseBranchesClient = client.databaseBranches;
   const savedQuery: sdk.ProjectSavedQueryResponse | undefined = undefined;
   assert.equal(savedQueries, client.savedQueries);
-  assert.equal(savedQueriesV2, client.savedQueries.v2);
-  assert.equal(savedQueriesV3, client.savedQueries.v3);
   assert.equal(databaseBranches, client.databaseBranches);
   assert.equal(savedQuery, undefined);
 

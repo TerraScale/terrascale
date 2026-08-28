@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 82,
+  "routeCount": 79,
   "routes": [
     {
       "base": "api",
@@ -704,7 +704,7 @@
       "routeName": "savedQueries.list",
       "method": "GET",
       "pathTemplate": "/api/v1/projects/{projectId}/saved-queries",
-      "responseType": "readonly ProjectSavedQueryResponse[]",
+      "responseType": "ProjectSavedQueryPageResponse",
       "sourceContract": {
         "body": {
           "kind": "void"
@@ -769,18 +769,44 @@
     {
       "base": "api",
       "client": "savedQueries",
+      "operation": "get",
+      "routeName": "savedQueries.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
+      "responseType": "ProjectSavedQueryResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "savedQueries",
       "operation": "update",
       "routeName": "savedQueries.update",
       "method": "PUT",
       "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
-      "requestType": "ProjectSavedQueryRequest",
+      "requestType": "UpdateProjectSavedQueryRequest",
       "responseType": "ProjectSavedQueryResponse",
       "sourceContract": {
         "body": {
           "kind": "json",
           "shape": {
             "name": "Active users",
-            "query": "SELECT * FROM users WHERE active = true"
+            "query": "SELECT * FROM users WHERE active = true",
+            "revision": "opaque-revision"
           }
         },
         "headers": [
@@ -823,134 +849,6 @@
           }
         ],
         "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries.v2",
-      "operation": "list",
-      "routeName": "savedQueries.v2.list",
-      "method": "GET",
-      "pathTemplate": "/api/v2/projects/{projectId}/saved-queries",
-      "responseType": "readonly ProjectSavedQueryV2Response[]",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "100"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries.v2",
-      "operation": "get",
-      "routeName": "savedQueries.v2.get",
-      "method": "GET",
-      "pathTemplate": "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}",
-      "responseType": "ProjectSavedQueryV2Response",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries.v2",
-      "operation": "update",
-      "routeName": "savedQueries.v2.update",
-      "method": "PUT",
-      "pathTemplate": "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}",
-      "requestType": "UpdateProjectSavedQueryV2Request",
-      "responseType": "ProjectSavedQueryV2Response",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "name": "Active users",
-            "query": "SELECT * FROM users WHERE active = true",
-            "revision": "opaque-revision"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries.v3",
-      "operation": "list",
-      "routeName": "savedQueries.v3.list",
-      "method": "GET",
-      "pathTemplate": "/api/v3/projects/{projectId}/saved-queries",
-      "responseType": "ProjectSavedQuerySnapshotPageResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "cursor",
-            "value": "opaque-snapshot-cursor"
-          },
-          {
-            "name": "take",
-            "value": "100"
-          }
-        ]
       }
     },
     {
