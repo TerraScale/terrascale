@@ -1648,37 +1648,59 @@ fn publication_sink_never_blocks_a_commit_behind_a_wedged_poll() {
     // the wedge is process-global and tests run in parallel.
     let _wedge_session = streaming::subscription::begin_wedge_session();
     streaming::subscription::arm_poll_wedge("wedged-poll");
-    let (committed, commit_elapsed, wedged_batch) = std::thread::scope(|scope_thread| {
-        let consumer = scope_thread.spawn(|| {
-            store
-                .next_subscription_batch(&tenant_scope, "wedged-poll", &Cancellation::new())
-                .expect("the wedged poll completes after release")
+    let (committed, commit_elapsed, commit_returned_with_wedge_held, wedged_batch) =
+        std::thread::scope(|scope_thread| {
+            let consumer = scope_thread.spawn(|| {
+                store
+                    .next_subscription_batch(&tenant_scope, "wedged-poll", &Cancellation::new())
+                    .expect("the wedged poll completes after release")
+            });
+            // Wait for the poll to actually enter the wedge (bounded).
+            let entered_by = Instant::now() + Duration::from_secs(5);
+            while !streaming::subscription::wedge_entered() {
+                assert!(Instant::now() < entered_by, "the consumer poll never wedged");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            // The measured commit runs while the wedge is held: its emit must
+            // not wait on the subscriber's lock.
+            let started = Instant::now();
+            let committed =
+                commit_document(&engine, "t1", "op-during-wedge", "users", "doc-wedge", "v");
+            let commit_elapsed = started.elapsed();
+            // Sample the wedge BEFORE releasing it: the causal observation this
+            // test exists to make. A non-blocking sink returns while the wedge
+            // is still held; a blocking sink cannot return before the wedge's
+            // own five-second deadline fires (the committing thread would be
+            // waiting on the very lock the wedge holds, and the wedge is only
+            // released below). Made deterministic-by-construction 2026-08-27
+            // (ticket #101): the previous absolute wall-clock bound (<1s) was
+            // load-sensitive — a synced commit's fsync legitimately took 4.1s
+            // under full-suite parallel load and failed the bound without any
+            // sink blocking. The wedge-held sample plus the 5s deadline bound
+            // discriminate the same property independent of machine load
+            // (only a commit slower than the wedge's own deadline could still
+            // false-fail, which is a broken machine, not a busy one).
+            let commit_returned_with_wedge_held = streaming::subscription::wedge_entered();
+            streaming::subscription::release_poll_wedge();
+            let batch = consumer.join().expect("the consumer thread does not panic");
+            (committed, commit_elapsed, commit_returned_with_wedge_held, batch)
         });
-        // Wait for the poll to actually enter the wedge (bounded).
-        let entered_by = Instant::now() + Duration::from_secs(5);
-        while !streaming::subscription::wedge_entered() {
-            assert!(Instant::now() < entered_by, "the consumer poll never wedged");
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        // The measured commit runs while the wedge is held: its emit must
-        // not wait on the subscriber's lock.
-        let started = Instant::now();
-        let committed =
-            commit_document(&engine, "t1", "op-during-wedge", "users", "doc-wedge", "v");
-        let commit_elapsed = started.elapsed();
-        streaming::subscription::release_poll_wedge();
-        let batch = consumer.join().expect("the consumer thread does not panic");
-        (committed, commit_elapsed, batch)
-    });
 
     // The commit returned while the poll was still wedged: the sink never
-    // waited on the subscriber's lock. The bound is generous (a synced
-    // commit takes milliseconds), while a blocking sink would wait out the
-    // wedge's own five-second deadline and fail this bound.
+    // waited on the subscriber's lock. The causal sample was taken before
+    // release; the wall-clock leg only guards the degenerate case where
+    // the wedge's own deadline fired first (a blocking sink waits out that
+    // full deadline, so it cannot return under it).
     assert!(committed.get() > 0, "the commit published");
     assert!(
-        commit_elapsed < Duration::from_secs(1),
-        "the commit blocked {commit_elapsed:?} behind a wedged subscriber poll"
+        commit_returned_with_wedge_held,
+        "the commit did not return while the wedge was held (elapsed {commit_elapsed:?}): \
+        the sink waited on the wedged subscriber lock or the wedge deadline fired"
+    );
+    assert!(
+        commit_elapsed < Duration::from_secs(5),
+        "the commit took {commit_elapsed:?}, at or past the wedge's own deadline — \
+        inconclusive run, treat as a broken machine rather than a sink regression"
     );
     assert!(
         wedged_batch.events().iter().any(|event| event.operation_id().as_str() == "op-seed"),
