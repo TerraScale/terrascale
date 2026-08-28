@@ -104,10 +104,15 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
     [Test]
     public async Task EveryRecordedFrameEncodesByteExactAndDecodesBack()
     {
-        // The expected total is recounted from the corpus in the same
-        // pass (every structurally present frame entry), so a regenerated
-        // corpus moves the expectation with it.
-        var recordedFrames = 0;
+        // The expected total is derived from the corpus JSON shape in its
+        // own pass, before any checking runs — the assertion gates the
+        // checking loop, so a loop that skips an entry class fails it.
+        var recordedFrames = await CountCorpusStepsAsync(static step =>
+            (step.TryGetProperty("client_frame", out _) ? 1 : 0)
+            + (step.TryGetProperty("server_frame", out _) ? 1 : 0)
+            + (step.TryGetProperty("serve_delta", out var delta) && delta.TryGetProperty("expect_frame", out _) ? 1 : 0)
+            + (step.TryGetProperty("serve_snapshot", out _) ? 1 : 0)
+            + (step.TryGetProperty("serve_trigger", out _) ? 1 : 0));
         var framesChecked = 0;
         foreach (var file in CorpusFiles())
         {
@@ -121,7 +126,6 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
                     {
                         await CheckRecordedFrame(file.Category, entry);
                         framesChecked++;
-                        recordedFrames++;
                     }
                 }
 
@@ -129,21 +133,18 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
                 {
                     await CheckRecordedFrame(file.Category, Wrap(deltaFrame, delta.GetProperty("expect_wire").GetString()!));
                     framesChecked++;
-                    recordedFrames++;
                 }
 
                 if (step.TryGetProperty("serve_snapshot", out var snapshot))
                 {
                     await CheckRecordedFrame(file.Category, Wrap(snapshot.GetProperty("expect_frame"), snapshot.GetProperty("expect_wire").GetString()!));
                     framesChecked++;
-                    recordedFrames++;
                 }
 
                 if (step.TryGetProperty("serve_trigger", out var trigger))
                 {
                     await CheckRecordedFrame(file.Category, Wrap(trigger.GetProperty("expect_frame"), trigger.GetProperty("expect_wire").GetString()!));
                     framesChecked++;
-                    recordedFrames++;
                 }
             }
         }
@@ -156,8 +157,9 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
     [Test]
     public async Task ServeExpectationsDecodeByteExactWithTheirDescriptions()
     {
-        // The expected total is recounted from the corpus in the same pass.
-        var serveExpectations = 0;
+        // The expected total is derived from the corpus JSON shape first.
+        var serveExpectations = await CountCorpusStepsAsync(static step =>
+            CountServeWire(step, "serve_delta") + CountServeWire(step, "serve_snapshot") + CountServeWire(step, "serve_trigger"));
         var checkedExpectations = 0;
         foreach (var file in CorpusFiles())
         {
@@ -173,7 +175,6 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
                         continue;
                     }
 
-                    serveExpectations++;
                     var bytes = HexToBytes(wire.GetString()!);
                     var decoded = TerraScaleSyncV2Frame.Decode(bytes);
                     await Assert.That(decoded.Verify()).IsTrue();
@@ -192,8 +193,9 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
     [Test]
     public async Task TriggerFramesStayContentFreeAndWithinBudget()
     {
-        // The expected total is recounted from the corpus in the same pass.
-        var serveTriggers = 0;
+        // The expected total is derived from the corpus JSON shape first.
+        var serveTriggers = await CountCorpusStepsAsync(static step =>
+            step.TryGetProperty("serve_trigger", out _) ? 1 : 0);
         var triggers = 0;
         foreach (var file in CorpusFiles())
         {
@@ -205,7 +207,6 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
                     continue;
                 }
 
-                serveTriggers++;
                 var described = trigger.GetProperty("expect_frame");
                 var keys = described.EnumerateObject().Select(property => property.Name).OrderBy(name => name, StringComparer.Ordinal).ToArray();
                 await Assert.That(keys)
@@ -225,8 +226,9 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
     [Test]
     public async Task MalformedFramesAreRejectedWithTheRecordedTypedError()
     {
-        // The expected total is recounted from the corpus in the same pass.
-        var decodeRejections = 0;
+        // The expected total is derived from the corpus JSON shape first.
+        var decodeRejections = await CountCorpusStepsAsync(static step =>
+            step.TryGetProperty("decode_rejects", out _) ? 1 : 0);
         var rejections = 0;
         foreach (var file in CorpusFiles())
         {
@@ -238,7 +240,6 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
                     continue;
                 }
 
-                decodeRejections++;
                 var bytes = HexToBytes(entry.GetProperty("wire").GetString()!);
                 var expected = entry.GetProperty("error").GetString()!;
                 var failure = Assert.Throws<TerraScaleSyncV2ProtocolException>(() => TerraScaleSyncV2Frame.Decode(bytes));
@@ -255,8 +256,9 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
     [Test]
     public async Task BudgetStepsRecountFromClassWireAndPayload()
     {
-        // The expected total is recounted from the corpus in the same pass.
-        var budgetSteps = 0;
+        // The expected total is derived from the corpus JSON shape first.
+        var budgetSteps = await CountCorpusStepsAsync(static step =>
+            step.TryGetProperty("budget", out _) ? 1 : 0);
         var budgets = 0;
         foreach (var file in CorpusFiles())
         {
@@ -268,7 +270,6 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
                     continue;
                 }
 
-                budgetSteps++;
                 var bytes = HexToBytes(entry.GetProperty("wire").GetString()!);
                 var decoded = TerraScaleSyncV2Frame.Decode(bytes);
                 var recordedClass = entry.GetProperty("class").GetString()!;
@@ -437,6 +438,40 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
             .Select(path => (Path.GetFileNameWithoutExtension(path), path))
             .OrderBy(entry => entry.Item1, StringComparer.Ordinal);
     }
+
+    /// <summary>
+    /// Counts the corpus entries of one shape by JSON structure alone, in
+    /// a pass of its own that runs no production code: the recount
+    /// expectation is derived independently of the checking loop it
+    /// gates, so a loop that skips an entry class fails the comparison.
+    /// </summary>
+    /// <param name="shape">How many entries of its shape one step carries.</param>
+    /// <returns>The structural total across the corpus.</returns>
+    private static async Task<int> CountCorpusStepsAsync(Func<JsonElement, int> shape)
+    {
+        var total = 0;
+        foreach (var file in CorpusFiles())
+        {
+            using var document = JsonDocument.Parse(await File.ReadAllTextAsync(file.Path));
+            foreach (var step in document.RootElement.GetProperty("steps").EnumerateArray())
+            {
+                total += shape(step);
+            }
+        }
+
+        return total;
+    }
+
+    /// <summary>Whether one serve entry carries a non-empty expected wire string (its byte-exact check runs).</summary>
+    /// <param name="step">The corpus step.</param>
+    /// <param name="key">The serve entry name.</param>
+    /// <returns>One when the entry is checkable, zero otherwise.</returns>
+    private static int CountServeWire(JsonElement step, string key) =>
+        step.TryGetProperty(key, out var entry)
+            && entry.TryGetProperty("expect_wire", out var wire)
+            && wire.GetString() is { Length: > 0 }
+            ? 1
+            : 0;
 
     private static async Task CheckRecordedFrame(string category, JsonElement entry)
     {
