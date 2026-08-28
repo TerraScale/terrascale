@@ -122,8 +122,11 @@ public sealed record TerraScaleSyncV2SessionOptions
 
     /// <summary>
     /// The largest one server-sent event (any single field line or the
-    /// accumulated data of one event) may occupy. A larger event ends the
-    /// stream — the live loop reconnects; it is never buffered or
+    /// accumulated data of one event) may occupy, measured in UTF-8
+    /// bytes. A larger event ends the stream — the live loop reconnects
+    /// on the same bounded ladder as transient failures, and a stream
+    /// that persistently delivers oversize events surfaces the typed
+    /// failure; the event itself is never buffered without limit or
     /// dispatched. The default is one mebibyte.
     /// </summary>
     public int MaxStreamEventBytes { get; init; } = 1024 * 1024;
@@ -343,6 +346,19 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
     /// </summary>
     internal const int MaxSessionReopens = 3;
 
+    /// <summary>
+    /// How many times the live loop tolerates a stream ended by an event
+    /// past <see cref="TerraScaleSyncV2SessionOptions.MaxStreamEventBytes"/>
+    /// before the typed failure surfaces. An oversize event is a host
+    /// contract violation, never a transient condition — reconnecting
+    /// re-delivers the same event from the last event id — so the aborts
+    /// climb the same bounded ladder as transient failures, exhausting to
+    /// the terminal typed failure. The counter resets when a reconnected
+    /// stream delivers a well-formed event; every abort pays the
+    /// reconnect backoff.
+    /// </summary>
+    internal const int MaxOversizeEventReconnects = 3;
+
     private readonly HttpClient http;
     private readonly TerraScaleSyncV2ClientOptions clientOptions;
     private readonly TerraScaleSyncV2SessionOptions options;
@@ -350,6 +366,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
     private TerraScaleSyncV2SessionAccepted? accepted;
     private ulong lastEventId;
     private TimeSpan reconnectDelay;
+    private int oversizeEventAborts;
 
     internal TerraScaleSyncV2Session(
         HttpClient http,
@@ -540,11 +557,15 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
     /// checkpoint until current, acknowledging as it goes — push the
     /// hint, pull the delta; there is no polling. A dropped stream
     /// reconnects with the last observed event id; a transiently refused
-    /// stream open (an engine blip) reconnects the same way; an ended
-    /// session is re-opened by resuming from the durable checkpoint,
-    /// bounded to <see cref="MaxSessionReopens"/> backed-off attempts
-    /// before the typed failure surfaces; a resync demand adopts a full
-    /// snapshot. The loop runs only while the caller enumerates it.
+    /// stream open (an engine blip) reconnects the same way; a stream
+    /// ended by an event past
+    /// <see cref="TerraScaleSyncV2SessionOptions.MaxStreamEventBytes"/>
+    /// reconnects on the bounded oversize ladder (a persistent violation
+    /// surfaces the typed failure, never an unbounded abort/reconnect
+    /// cycle); an ended session is re-opened by resuming from the durable
+    /// checkpoint, bounded to <see cref="MaxSessionReopens"/> backed-off
+    /// attempts before the typed failure surfaces; a resync demand adopts
+    /// a full snapshot. The loop runs only while the caller enumerates it.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The live updates.</returns>
@@ -861,7 +882,15 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
             yield break;
         }
 
-        reconnectDelay = TimeSpan.Zero;
+        if (oversizeEventAborts == 0)
+        {
+            // A stream opening outside an oversize-abort cycle restarts
+            // the backoff ladder at its base; inside one it keeps
+            // climbing — the aborts pay the escalated delay, like the
+            // session-reopen ladder.
+            reconnectDelay = TimeSpan.Zero;
+        }
+
         var maxEvent = options.MaxStreamEventBytes;
         await using (stream!)
         using (response!)
@@ -871,6 +900,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
         ulong? eventId = null;
         var eventName = "message";
         var data = new StringBuilder();
+        long dataBytes = 0;
         while (true)
         {
             string? line;
@@ -880,8 +910,10 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
             }
             catch (SyncV2OversizeEventException)
             {
-                // A field line past the event bound: bounded reading ends
-                // the stream; the live loop reconnects.
+                // A field line past the byte bound: bounded reading ends
+                // the stream on the oversize ladder; the live loop
+                // reconnects, bounded, or surfaces the typed failure.
+                EndStreamOnOversizeEvent();
                 yield break;
             }
             catch (Exception failure) when (failure is HttpRequestException or IOException or SocketException or ObjectDisposedException)
@@ -899,12 +931,18 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
             {
                 if (data.Length > 0)
                 {
+                    // A well-formed event was delivered under the bound:
+                    // the oversize ladder and the backoff ladder both
+                    // restart from a stream that proves itself.
+                    oversizeEventAborts = 0;
+                    reconnectDelay = TimeSpan.Zero;
                     yield return (eventId, eventName, data.ToString());
                 }
 
                 eventId = null;
                 eventName = "message";
                 data.Clear();
+                dataBytes = 0;
                 continue;
             }
 
@@ -921,16 +959,21 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
             }
             else if (line.StartsWith("data:", StringComparison.Ordinal))
             {
+                var value = FieldValue(line, 5);
                 if (data.Length > 0)
                 {
                     _ = data.Append('\n');
+                    dataBytes++;
                 }
 
-                _ = data.Append(FieldValue(line, 5));
-                if (data.Length > maxEvent)
+                _ = data.Append(value);
+                dataBytes += Encoding.UTF8.GetByteCount(value);
+                if (dataBytes > maxEvent)
                 {
-                    // The accumulated event is past the bound: end the
-                    // stream instead of buffering it without limit.
+                    // The accumulated event is past the byte bound: end
+                    // the stream on the oversize ladder instead of
+                    // buffering it without limit.
+                    EndStreamOnOversizeEvent();
                     yield break;
                 }
             }
@@ -939,17 +982,46 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
     }
 
     /// <summary>
+    /// Ends the stream on one event past the byte bound, on the same
+    /// bounded ladder as transient failures: reconnecting re-delivers the
+    /// same oversize event from the last observed event id, so a
+    /// persistent violation is given up on with the typed failure after
+    /// <see cref="MaxOversizeEventReconnects"/> tolerated aborts instead
+    /// of an unbounded abort/reconnect cycle.
+    /// </summary>
+    private void EndStreamOnOversizeEvent()
+    {
+        if (oversizeEventAborts >= MaxOversizeEventReconnects)
+        {
+            throw new TerraScaleSyncV2HostException(
+                HttpStatusCode.OK,
+                "stream-event-oversize",
+                $"the event stream delivered events past the configured bound of {options.MaxStreamEventBytes} bytes"
+                    + $" on more than {MaxOversizeEventReconnects} consecutive streams");
+        }
+
+        oversizeEventAborts++;
+    }
+
+    /// <summary>
     /// Reads newline-terminated lines (an optional trailing carriage
-    /// return is stripped) with a hard per-line bound: a line that grows
-    /// past the bound throws instead of buffering without limit. Chars
-    /// read past the first line's terminator are retained for the next
-    /// line, so one chunked read never loses the events it carried.
+    /// return is stripped) with a hard per-line bound measured in UTF-8
+    /// bytes: a line that grows past the bound throws instead of
+    /// buffering without limit. The line is accumulated in one buffer
+    /// (chars read past the first line's terminator are retained for the
+    /// next line, so one chunked read never loses the events it carried)
+    /// and its UTF-8 byte length is counted per chunk — the decoder
+    /// emits whole UTF-16 sequences per read, so the per-chunk count is
+    /// exact and the bound is a byte bound, not a character count.
     /// </summary>
     private sealed class SyncV2BoundedLineReader
     {
         private readonly StreamReader reader;
         private readonly char[] chunk = new char[256];
-        private string pending = string.Empty;
+        private readonly StringBuilder pending = new();
+        private int start;
+        private int searched;
+        private long pendingBytes;
 
         /// <summary>Initializes the reader.</summary>
         /// <param name="reader">The decoded stream reader.</param>
@@ -959,35 +1031,64 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
         }
 
         /// <summary>Reads the next line, or <c>null</c> at the end of the stream.</summary>
-        /// <param name="maxChars">The hard per-line bound in characters.</param>
+        /// <param name="maxBytes">The hard per-line bound in UTF-8 bytes.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The line, or <c>null</c>.</returns>
-        public async Task<string?> ReadLineAsync(int maxChars, CancellationToken cancellationToken)
+        public async Task<string?> ReadLineAsync(int maxBytes, CancellationToken cancellationToken)
         {
             while (true)
             {
-                var terminator = this.pending.IndexOf('\n');
+                var terminator = IndexOfUnreadLineTerminator();
                 if (terminator >= 0)
                 {
-                    var line = this.pending[..terminator];
-                    this.pending = this.pending[(terminator + 1)..];
+                    var line = this.pending.ToString(this.start, terminator - this.start);
+                    var consumed = terminator - this.start + 1;
+                    this.pendingBytes -= Encoding.UTF8.GetByteCount(this.pending.ToString(this.start, consumed));
+                    this.start += consumed;
+                    this.searched = this.start;
+                    if (this.start == this.pending.Length)
+                    {
+                        this.pending.Clear();
+                        this.start = 0;
+                        this.searched = 0;
+                    }
+
                     return line.EndsWith('\r') ? line[..^1] : line;
                 }
 
                 var read = await this.reader.ReadAsync(this.chunk, cancellationToken).ConfigureAwait(false);
                 if (read == 0)
                 {
-                    var rest = this.pending;
-                    this.pending = string.Empty;
+                    var rest = this.pending.ToString(this.start, this.pending.Length - this.start);
+                    this.pending.Clear();
+                    this.start = 0;
+                    this.searched = 0;
+                    this.pendingBytes = 0;
                     return rest.Length == 0 ? null : rest;
                 }
 
-                this.pending += new string(this.chunk, 0, read);
-                if (this.pending.IndexOf('\n') < 0 && this.pending.Length > maxChars)
+                _ = this.pending.Append(this.chunk, 0, read);
+                this.pendingBytes += Encoding.UTF8.GetByteCount(this.chunk, 0, read);
+                if (IndexOfUnreadLineTerminator() < 0 && this.pendingBytes > maxBytes)
                 {
                     throw new SyncV2OversizeEventException();
                 }
             }
+        }
+
+        /// <summary>The next unread line terminator's position, or <c>-1</c>; the scan never revisits consumed or searched chars.</summary>
+        private int IndexOfUnreadLineTerminator()
+        {
+            for (var index = this.searched; index < this.pending.Length; index++)
+            {
+                if (this.pending[index] == '\n')
+                {
+                    return index;
+                }
+            }
+
+            this.searched = this.pending.Length;
+            return -1;
         }
     }
 
@@ -1096,9 +1197,13 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
                 message = detailElement.GetString();
             }
 
-            if (document.RootElement.TryGetProperty("resyncRequired", out var resyncElement))
+            if (document.RootElement.TryGetProperty("resyncRequired", out var resyncElement)
+                && resyncElement.ValueKind == JsonValueKind.True)
             {
-                resync = resyncElement.GetBoolean();
+                // Null-safe like the TS core (sessionErrorOf): only a
+                // literal true marks the demand — a null or absent marker
+                // (the plain typed refusals) never crashes the parse.
+                resync = true;
             }
 
             if (document.RootElement.TryGetProperty("floor", out var floorElement) && floorElement.GetString() is { Length: > 0 } floorText)
