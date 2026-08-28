@@ -34,6 +34,16 @@ mod tests;
 
 use std::sync::Arc;
 
+// GAP-Q13 (TerraBaseV2#67) collision action: the analyzer foundation was
+// wired in as a declaration-only private root; without this re-export its
+// typed contract is unreachable and rustc treats its contents as dead
+// code. The export shape is the parent's to ratify or reshape.
+pub use analyzer::{
+    ANALYZER_LANGUAGE_PREFIX, ANALYZER_LANGUAGE_VERSION, Analyzer, AnalyzerError, AnalyzerKind,
+    MAX_ANALYZED_VALUE_BYTES, MAX_ANALYZER_NAME_BYTES, MAX_TERM_BYTES, MAX_TOKEN_FILTERS,
+    MAX_TOKENS_PER_FIELD, TermOffset, TermVector, TermVectorEntry, TermVectorMode, TokenFilterKind,
+    TokenizerKind,
+};
 pub use includes::{
     CounterInclude, DocumentInclude, INCLUDE_READ_WINDOW, IncludeClause, IncludePath, IncludeSet,
     IncludedCounters, IncludedTimeSeries, MAX_INCLUDE_COUNTER_NAMES, MAX_INCLUDE_DEPTH,
