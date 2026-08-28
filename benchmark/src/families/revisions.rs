@@ -2453,7 +2453,8 @@ mod tests {
     use crate::engine::{CommitOutcome, Engine, EngineConfig, HeadCondition, Transaction};
     use crate::families::{
         AttachmentMutation, AttachmentRead, AttachmentWrite, FamilyError, FamilyReadContext,
-        FamilyReadRequest, FamilyReadResult, FamilyWriteRequest, RevisionPaging, RevisionRead,
+        FamilyReadRequest, FamilyReadResult, FamilyWriteRequest, RevisionCommand, RevisionPaging,
+        RevisionPolicy, RevisionRead, RevisionWrite,
     };
     use crate::operations::RequestValidationError;
     use crate::types::{
@@ -2740,6 +2741,121 @@ mod tests {
     // Configuration
     // -----------------------------------------------------------------------
 
+    /// Reads the snapshot side car's entry count straight from the reserved
+    /// record: the lockstep invariant the public reads cannot show, because
+    /// their totals come from the log. Repair-loop 1's warden finding.
+    fn side_car_entries(engine: &Engine, tenant_name: &str, document: &str) -> usize {
+        let tenant_scope = scope(engine, tenant_name);
+        let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+        let identity = unique_operation("gapf05-side-read");
+        let mut transaction = engine.begin(&tenant_scope, snapshot, identity).expect("begins");
+        let mut records = crate::families::state::Records::new(&mut transaction);
+        let id = super::snapshot_id(&document_id(document)).expect("side-car id");
+        match records.read(&id) {
+            Ok(None) => 0,
+            Ok(Some(value)) => {
+                super::SnapshotRecord::decode(&value).expect("decodes the side car").entries.len()
+            }
+            Err(error) => panic!("the side-car read failed: {error:?}"),
+        }
+    }
+
+    /// Configures the W3-F per-document retention policy through the public
+    /// revision command — the trimming agent the collection policy does not
+    /// control.
+    fn configure_w3f_policy(
+        engine: &Engine,
+        tenant_name: &str,
+        document: &str,
+        policy: RevisionPolicy,
+    ) {
+        expect_committed(&commit(
+            engine,
+            tenant_name,
+            unique_operation("w3f-configure").as_str(),
+            |store, transaction, scope, identity| {
+                let write = RevisionWrite::try_new(
+                    scope.clone(),
+                    document_id(document),
+                    RevisionCommand::Configure { policy },
+                    identity.clone(),
+                    deadline(),
+                    cancellation(),
+                )
+                .expect("valid revision command");
+                store
+                    .stage(transaction, FamilyWriteRequest::revision_command(write))
+                    .expect("stages the configure");
+            },
+        ));
+    }
+
+    #[test]
+    fn configuration_limits_round_trip_exactly_and_refuse_the_codec_ceiling() {
+        let (_dir, engine) = open_engine("config-ceiling");
+        // A count limit past the reserved record's i64 integer ceiling
+        // cannot round-trip: staged u64::MAX must not read back as
+        // i64::MAX. The typed constructor refuses such limits instead of
+        // silently clamping them.
+        assert_eq!(
+            CollectionRevisionsConfiguration::try_new(Some(u64::MAX), None, None, false, false)
+                .map(|_| ()),
+            Err(RequestValidationError::InvalidFamilyPayload),
+            "a minimum-keep count past the codec ceiling is refused"
+        );
+        assert_eq!(
+            CollectionRevisionsConfiguration::try_new(Some(1), None, Some(u64::MAX), false, false)
+                .map(|_| ()),
+            Err(RequestValidationError::InvalidFamilyPayload),
+            "a per-update deletion cap past the codec ceiling is refused"
+        );
+
+        // The ceiling itself is the largest representable policy and
+        // round-trips exactly through the reserved record.
+        let ceiling = CollectionRevisionsConfiguration::try_new(
+            Some(i64::MAX as u64),
+            None,
+            Some(i64::MAX as u64),
+            false,
+            false,
+        )
+        .expect("valid configuration");
+        let database = RevisionsDatabaseConfiguration::try_new(
+            Some(ceiling),
+            vec![],
+            DEFAULT_BIN_MINIMUM_AGE_MS,
+        )
+        .expect("valid database configuration");
+        expect_committed(&commit(
+            &engine,
+            "t1",
+            "configure-ceiling",
+            |store, transaction, scope, identity| {
+                let write = RevisionsConfigurationWrite::try_new(
+                    scope.clone(),
+                    database.clone(),
+                    identity.clone(),
+                    deadline(),
+                    cancellation(),
+                )
+                .expect("valid configuration write");
+                store
+                    .stage_revisions_configuration(transaction, write)
+                    .expect("stages the configuration");
+            },
+        ));
+        let read_scope = scope(&engine, "t1");
+        let snapshot = engine.read_snapshot(&read_scope).expect("snapshot");
+        let context = FamilyReadContext::new(read_scope, snapshot);
+        let read =
+            RevisionsConfigurationRead::try_new(deadline(), cancellation()).expect("valid read");
+        let stored = engine
+            .families()
+            .read_revisions_configuration(context, read)
+            .expect("reads the configuration");
+        assert_eq!(stored, database, "the codec ceiling round-trips exactly");
+    }
+
     #[test]
     fn collection_configuration_validates_v1_field_shapes() {
         assert_eq!(
@@ -3000,6 +3116,47 @@ mod tests {
         );
     }
 
+    #[test]
+    fn snapshot_side_car_follows_the_w3f_policy_trim() {
+        let (_dir, engine) = open_engine("w3f-lockstep");
+        // The collection policy keeps a wide 100 revisions, so it never
+        // trims and the W3-F per-document policy (maximum 2) is the only
+        // trimming agent.
+        enable(
+            &engine,
+            "t1",
+            CollectionRevisionsConfiguration::try_new(Some(100), None, None, false, false)
+                .expect("valid configuration"),
+        );
+        put_user_document(&engine, "t1", "put-1", "doc-1", user_value("one"));
+        snapshot_op(&engine, "t1", "doc-1", ExpectedVersion::Any).expect("records");
+        configure_w3f_policy(
+            &engine,
+            "t1",
+            "doc-1",
+            RevisionPolicy::try_new(1, Some(2)).expect("valid policy"),
+        );
+
+        for label in ["two", "three", "four", "five", "six", "seven"] {
+            put_user_document(&engine, "t1", &format!("put-{label}"), "doc-1", user_value(label));
+            snapshot_op(&engine, "t1", "doc-1", ExpectedVersion::Any).expect("records");
+        }
+
+        // The W3-F policy holds the log at two entries, and the side car is
+        // reaped in lockstep: one entry per surviving revision, never one
+        // per historical write.
+        assert_eq!(revision_page_total(&engine, "t1", "doc-1"), 2);
+        assert_eq!(
+            side_car_entries(&engine, "t1", "doc-1"),
+            2,
+            "the side car holds one entry per surviving log revision"
+        );
+        // Every surviving snapshot still reads with its captured contract.
+        let page = read_snapshots(&engine, "t1", "doc-1", None).expect("reads");
+        assert_eq!(page.total(), 2);
+        assert!(page.entries().iter().all(|entry| entry.contract().is_some()));
+    }
+
     // -----------------------------------------------------------------------
     // Revert by change vector (the GAP-D02 version contract)
     // -----------------------------------------------------------------------
@@ -3174,6 +3331,37 @@ mod tests {
         let outcome = store.stage_enforce_revision_policy(&mut transaction, write)?;
         expect_committed(&transaction.commit(LocalDurability::Synced));
         Ok(outcome)
+    }
+
+    #[test]
+    fn apply_policy_counts_every_removal_including_the_w3f_trim() {
+        // A hand-built log that outgrew its W3-F maximum (the defensive
+        // post-drain trim's reason to exist) exercises the accounting: the
+        // collection drain removes one revision, the W3-F trim two more,
+        // and every removal is reported and reaped from the side car.
+        let mut log = crate::families::state::RevisionRecord {
+            next: 6,
+            entries: (1..=5).map(|revision| (revision, 1_000, user_value("held"))).collect(),
+            policy: Some(RevisionPolicy::try_new(1, Some(2)).expect("valid policy")),
+        };
+        let mut side = super::SnapshotRecord {
+            collection: Some(collection("users")),
+            entries: (1..=5)
+                .map(|revision| super::SnapshotEntry {
+                    revision,
+                    contract: None,
+                    reverted_to: None,
+                    attachments: vec![],
+                })
+                .collect(),
+        };
+        let configuration = CollectionRevisionsConfiguration::try_new(Some(4), None, None, false, false)
+            .expect("valid configuration");
+        let (removed, has_more) = super::apply_policy(&mut log, &mut side, &configuration, 2_000);
+        assert_eq!(removed, 3, "the drain removes one and the W3-F trim two more");
+        assert!(!has_more, "no cap stopped the collection policy");
+        assert_eq!(log.entries.len(), 2);
+        assert_eq!(side.entries.len(), 2, "the side car follows both removals");
     }
 
     #[test]
@@ -3366,6 +3554,27 @@ mod tests {
             RevisionsBinRead::try_new(-1, 10, deadline(), cancellation()).map(|_| ()),
             Err(RequestValidationError::InvalidFamilyPayload),
             "a negative cutoff is refused"
+        );
+    }
+
+    #[test]
+    fn bin_clean_refuses_duplicate_candidates() {
+        let (_dir, engine) = open_engine("bin-clean-duplicates");
+        // A repeated candidate would stage the same record deleted twice —
+        // a transaction that can never commit — and inflate the purged
+        // count; the typed constructor refuses it.
+        assert_eq!(
+            RevisionsBinCleanWrite::try_new(
+                scope(&engine, "t1"),
+                vec![document_id("doc-1"), document_id("doc-1"), document_id("doc-1")],
+                5_000,
+                operation("bin-clean-duplicates"),
+                deadline(),
+                cancellation(),
+            )
+            .map(|_| ()),
+            Err(RequestValidationError::InvalidFamilyPayload),
+            "a repeated candidate document is refused"
         );
     }
 
