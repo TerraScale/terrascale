@@ -138,7 +138,10 @@ XChaCha20-Poly1305 with a 32-byte key and fail-closed wrong-key
 decryption
 ([v1:src/TerraBase.Server/Documents/PeriodicBackup/EncryptedBackup.cs],
 lines 13-31 and 190 onward; mode selection `None` / `UseDatabaseKey` /
-`UseProvidedKey` at lines 43-46).
+`UseProvidedKey` — the `EncryptionMode` enum lives at
+[v1:src/TerraBase.Client/Documents/Operations/Backups/BackupEncryptionSettings.cs],
+lines 43-47, not in EncryptedBackup.cs; attribution corrected by the
+integrator from the gate findings).
 
 **Exact V1 encryption tests** (the parity row names them):
 `WriteAndReadPageUsingCryptoPager`
@@ -295,6 +298,20 @@ more:
   tree from the data files. That file joins GAP-S1 D2's never-rewrite,
   never-delete list, and the loss-of-last-copy rule mirrors V1's
   fail-closed open.
+- **Key-record durability ordering (added by the integrator from the
+  gate findings; binding on the implementation packet):** a wrapped
+  epoch key must be DURABLE in the key-record file (entry appended AND
+  fsynced, with the file's directory synced on first creation) BEFORE
+  any frame citing that epoch is durable. A crash between the two leaves
+  frames whose key is permanently absent — a fail-closed open
+  indistinguishable from data loss, which is exactly the availability
+  hazard the ordering rule exists to make unrepresentable. The
+  key-record file also carries its own torn-tail rule: a torn trailing
+  entry (crash mid-append) truncates to the last verified entry at open
+  — the WAL's fail-closed stance does NOT apply here, because a torn
+  key-record tail endangers only the not-yet-referenced epoch key it was
+  appending, never an already-published frame; a mid-file damaged entry
+  still fails closed.
 
 **Per-database versus per-tenant granularity — PROPOSED: one data key
 per location per epoch; per-tenant keys are deferred.** Evidence for why
