@@ -240,7 +240,7 @@ security webhooks, SSO/SCIM settings, and public project switching.
 
 The OpenAPI drift check carries a reviewed typed-contract debt baseline. It prevents
 new or changed untyped SDK contracts, while the listed debt still blocks production
-qualification until Dashboard.Api or Authentication publishes the missing schemas
+qualification until the full-stack Vinext Dashboard or Authentication publishes the missing schemas
 and removes the baseline.
 
 ## Development
@@ -290,7 +290,7 @@ that boundary and are not represented as distinct wire fields.
 
 The drift checker accepts any OpenAPI JSON file path or live spec URL, including
 a DevHost-served `/openapi/v1.json`. Refresh the Dashboard canonical snapshot
-from the current Dashboard.Api/database OpenAPI artifact before treating a
+from the current full-stack Dashboard OpenAPI artifact before treating a
 snapshot failure as an SDK defect; the Documentation site consumes that same
 snapshot.
 
