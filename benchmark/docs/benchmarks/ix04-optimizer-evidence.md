@@ -89,13 +89,19 @@ it. `unrun` in this table is the state while the budgets were written.
   *Measured by:* `the_first_sighting_of_each_shape_creates_exactly_one_index`
   and the receipt's per-window creation row. Status: unrun.
 - **SQ-B3 — a repeated shape is served, not re-created.** A shape
-  repeated R times produces 1 creation and R−1 `ChosenIndex` outcomes of
-  the same deterministic auto index, each reporting its cache-hit origin.
+  repeated R times produces exactly 1 creation and R−1 `ChosenIndex`
+  outcomes, all naming the same deterministic `Auto/` index, with the
+  bounded selection cache serving at least one of the repeats (its
+  cache-hit origin is recorded on the record).
   *Measured by:* `a_repeated_shape_is_served_not_recreated`. Status: unrun.
-- **SQ-B4 — an equivalent explicit index wins and says so.** With an
-  equivalent explicit index registered, 0 auto indexes are created, the
-  explicit index is chosen, and the losing auto candidates carry
-  `ExplicitPreferredOverAuto` (ADR 0010 D-3).
+- **SQ-B4 — an equivalent explicit index wins.** With an equivalent
+  explicit index registered for the queried collection, 0 auto indexes are
+  created and every selection record chooses the explicit index (ADR 0010
+  D-3). *Measured as stated*: with no auto index of that collection in the
+  registry, the precedence is observable through the explicit choice and
+  the absence of any auto candidate; the `ExplicitPreferredOverAuto` note
+  itself is exercised only where an auto candidate of the same collection
+  competes, which this window does not produce and does not claim.
   *Measured by:* `an_equivalent_explicit_index_is_preferred_and_records_why`.
   Status: unrun.
 - **SQ-B5 — a superseded partial is recorded, not silently dropped.**
@@ -111,8 +117,10 @@ it. `unrun` in this table is the state while the budgets were written.
   catalog and its segments are in-memory engine state derived from
   storage publication order, and creation writes no journal record.
   *Measured by:* the durable-byte counter across the single-collection
-  ad-hoc window, asserted by
-  `auto_index_creation_appends_no_durable_bytes`. Status: unrun.
+  ad-hoc window, asserted inside
+  `the_first_sighting_of_each_shape_creates_exactly_one_index` (the whole
+  creation stream of that window must append exactly zero bytes) and
+  reported per window in the ad-hoc workload receipt. Status: unrun.
 - **OH-B2 — creation does exactly one initial build.** Each creation
   performs one initial build that publishes at generation 1 covering the
   latest observed publication; the record carries the build outcome and
@@ -168,8 +176,8 @@ it. `unrun` in this table is the state while the budgets were written.
   through the typed read; documents through the seeded count); it does
   **not** claim a measured byte figure, because the catalog exposes no
   entry-count read and this packet adds no hook to get one.
-  *Measured by:* the live-auto counter in the registry-bound test.
-  Status: unrun.
+  *Measured by:* the live-auto counters of the driven windows (the
+  registry-bound test and both receipts). Status: unrun.
 
 ## Decisions this packet owes
 
@@ -277,14 +285,16 @@ at the pinned source `fa99b9257776dbe625e6a2388c74c9ce916637ee`
 that shape the budgets:
 
 - **Recorded rejection reasons** (SQ-B1) — V1 records every skipped
-  candidate as an `Explanation(index, reason)` with stable reason strings
-  ("A better match was available", "Wasn't the most up to date index
-  matching this query", "The index is idle...", "Wasn't the widest index
-  matching this query")
+  candidate with a stable reason string: "A better match was available"
+  (line 97), "Wasn't the most up to date index matching this query"
+  (line 102), "The index is idle. The preference is for active indexes -
+  making a complete match but marking the index as idle" (line 108), and
+  "Wasn't the widest index matching this query" (line 113), all in
   [v1:src/TerraBase.Server/Documents/Queries/Dynamic/DynamicQueryToIndexMatcher.cs::DynamicQueryToIndexMatcher.Match]
   — V1 surfaces them only on `?debug=explain`; V2's records are always-on
   engine state (ADR 0010 D-1), which is what makes the zero count
-  measurable at all.
+  measurable at all. Line numbers verified at the pin
+  `fa99b9257776dbe625e6a2388c74c9ce916637ee` for this packet.
 - **Ranking among complete matches** (the tie-break rules whose
   application the records carry) — most up-to-date first, then non-idle,
   then widest
@@ -295,14 +305,16 @@ that shape the budgets:
   [v1:src/TerraBase.Server/Documents/Queries/Dynamic/DynamicQueryRunner.cs::DynamicQueryRunner.TryMatchExistingIndexToQuery],
   [v1:src/TerraBase.Server/Documents/Queries/Dynamic/DynamicQueryMapping.cs::DynamicQueryMapping.ExtendMappingBasedOn].
 - **Planning observability** — V1 measures planning inside normal query
-  timings through the `Optimizer` timing scope
-  [v1:src/TerraBase.Server/Documents/Queries/Timings/QueryTimingsScope.cs];
-  V2's counterpart observability is the selection record plus the typed
-  lifecycle reads, which is what the studio and CLI display below render.
+  timings through the `Optimizer` timing scope, declared at
+  [v1:src/TerraBase.Server/Documents/Queries/Timings/QueryTimingsScope.cs]
+  line 30 (`public static string Optimizer;`); V2's counterpart
+  observability is the selection record plus the typed lifecycle reads,
+  which is what the studio and CLI display below render.
 - **The drain threshold this lane sets to zero** is V1's
-  `Indexing.TimeBeforeDeletionOfSupersededAutoIndexInSec` (default 15 s)
-  [v1:src/TerraBase.Server/Config/Categories/IndexingConfiguration.cs::IndexingConfiguration],
-  whose zero value is V1's documented test mode for that gate.
+  `Indexing.TimeBeforeDeletionOfSupersededAutoIndexInSec`, declared at
+  [v1:src/TerraBase.Server/Config/Categories/IndexingConfiguration.cs::IndexingConfiguration]
+  lines 175-176 with its default of 15 s; a zero value is V1's documented
+  test mode for that gate, which is exactly what this lane configures.
 
 ### Studio and CLI display
 

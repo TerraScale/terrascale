@@ -194,12 +194,7 @@ function parseSelectionRows(
     const rawOutcome = typeof record.outcome === "string" ? record.outcome : "";
     const reason =
       typeof record.reason === "string" && record.reason.length > 0 ? record.reason : null;
-    parsed.push({
-      index,
-      outcome: classifyOutcome(rawOutcome),
-      rawOutcome,
-      reason,
-    });
+    parsed.push({ index, outcome: classifyOutcome(rawOutcome), rawOutcome, reason });
   }
   return { rows: parsed, unparsed };
 }
@@ -216,7 +211,13 @@ function classifyOutcome(raw: string): SelectionOutcome {
   return "unknown";
 }
 
-function OptimizerSelectionsView({ rows, unparsed }: { rows: SelectionRow[]; unparsed: number }) {
+function OptimizerSelectionsView({
+  rows,
+  unparsed,
+}: {
+  rows: SelectionRow[];
+  unparsed: number;
+}) {
   return (
     <section
       aria-labelledby="optimizer-heading"

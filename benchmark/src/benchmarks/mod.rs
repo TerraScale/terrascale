@@ -30,7 +30,12 @@
 //! - the **V2-side driver** that really runs the engine workloads and
 //!   returns exact, deterministic counters ([`driver`]);
 //! - the **receipt renderer** that emits the canonical objective-status
-//!   line every performance receipt must carry ([`record`]).
+//!   line every performance receipt must carry ([`record`]);
+//! - the **optimizer measurement class** ([`optimizer`], IX-04): the
+//!   auto-indexed ad-hoc workloads of PD-2026-08-26-09 D3 — selection
+//!   quality, auto-index creation cost, write-path overhead, and the
+//!   bounded registry — with their budgets written before any measurement
+//!   ran and decided by the budget tests in [`optimizer_tests`].
 //!
 //! ## What this adapter does not do
 //!
@@ -60,7 +65,12 @@
 //! an operation stream, in the SE-07 lane's sense. Wall-clock samples are
 //! taken only by the commissioning sampler to prove the gate machinery, and
 //! they are rendered with the status and verdict both forced to
-//! `inconclusive`.
+//! `inconclusive`. The IX-04 class takes no wall-clock sample at all: with
+//! no reference baseline on this host a timing would be engineering
+//! evidence supporting nothing, so its receipts carry counters only — plus
+//! the one comparison that does exist (write-path durable overhead with and
+//! without active auto indexes), which the SE-15 gate reads and whose
+//! objective status is still fail-closed to `inconclusive`.
 
 #![allow(clippy::doc_markdown)] // dense with the proper nouns PostgreSQL and TerraBaseV2
 
