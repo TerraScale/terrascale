@@ -1179,6 +1179,23 @@ impl QueryStore<'_> {
         request: &VectorSearchRequest,
         snapshot: &ReadSnapshot,
     ) -> Result<VectorSearchResult, VectorSearchError> {
+        self.vector_search_within(request, snapshot, VECTOR_SEARCH_WINDOW)
+    }
+
+    /// Crate-only execution seam: [`vector_search`](Self::vector_search)
+    /// with an explicit default execution window.
+    ///
+    /// The window is the D6 bound a request that binds no deadline of its
+    /// own executes inside; taking it as a parameter keeps the public
+    /// constant the one source of truth while the bound itself stays
+    /// provable in tests — a const one-minute window cannot be expired on
+    /// a wall clock inside a test run.
+    pub(crate) fn vector_search_within(
+        &self,
+        request: &VectorSearchRequest,
+        snapshot: &ReadSnapshot,
+        _default_window: std::time::Duration,
+    ) -> Result<VectorSearchResult, VectorSearchError> {
         // The snapshot supplies the tenant binding and its own Engine
         // identity; the Engine validates both inside the view, before
         // any data access reaches storage.
