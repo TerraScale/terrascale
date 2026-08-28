@@ -199,6 +199,12 @@ pub enum ShardedExecutionError {
         /// The shard whose snapshot names another tenant.
         shard: ShardId,
     },
+    /// The query's source is a family source (GAP-Q19). Shard routing and
+    /// the fan-out merge are keyed by document rows and collection shard
+    /// keys, so a family-source query refuses here instead of silently
+    /// dropping its typed family rows. Serving family sources across a
+    /// sharded table stays with the sharding wave.
+    FamilySourceUnsupported,
     /// Building one per-shard page of the query was refused by request
     /// validation, most plausibly a deadline or cancellation that expired
     /// while the fan-out was still fetching.
@@ -445,7 +451,9 @@ impl ShardedQueries {
     /// non-equality condition, or a literal the Shard Key cannot render
     /// yields no pin: the query fans out rather than prune to a wrong shard.
     fn pinned_bucket(&self, spec: &QuerySpec) -> Option<Bucket> {
-        let collection = spec.source().collection();
+        // A family source has no collection shard key to pin (GAP-Q19); the
+        // fan-out refuses family sources before routing anyway.
+        let collection = spec.source().collection()?;
         let ShardKeyKind::Fields(fields) = self.topology.shard_keys().declaration_for(collection)
         else {
             return None;
@@ -498,6 +506,12 @@ impl ShardedQueries {
         spec: &QuerySpec,
         snapshots: &ShardSnapshots,
     ) -> Result<ShardedQueryResult, ShardedExecutionError> {
+        // A family source refuses before routing (GAP-Q19): the fan-out's
+        // merge and paging are document-row keyed, and a family query's
+        // typed rows would be silently dropped by them.
+        if spec.source().collection().is_none() {
+            return Err(ShardedExecutionError::FamilySourceUnsupported);
+        }
         let routing = self.route(spec).map_err(ShardedExecutionError::Routing)?;
         for route in routing.routes() {
             let snapshot = snapshots

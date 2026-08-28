@@ -13,6 +13,7 @@ use super::spec::{
     NullsPlacement, OrderDirection, QueryCondition, QueryLoad, QueryOrdering, QueryPaging,
     QueryPredicate, QueryProjection, QuerySource, StalenessPolicy,
 };
+use crate::families::{TimeSeriesPaging, TimeSeriesRange};
 use crate::types::{Cancellation, Deadline, Document, DocumentValue, TenantId};
 
 /// The validated internal query model both input forms normalize into.
@@ -26,6 +27,7 @@ pub(crate) struct NormalizedQuery {
     staleness: StalenessPolicy,
     loads: Vec<QueryLoad>,
     includes: Vec<IncludeClause>,
+    time_series_window: Option<(Option<TimeSeriesRange>, Option<TimeSeriesPaging>)>,
     tenant_claim: Option<TenantId>,
     deadline: Option<Deadline>,
     cancellation: Option<Cancellation>,
@@ -46,6 +48,7 @@ impl NormalizedQuery {
         deadline: Deadline,
         cancellation: Cancellation,
         includes: Vec<IncludeClause>,
+        time_series_window: Option<(Option<TimeSeriesRange>, Option<TimeSeriesPaging>)>,
     ) -> Self {
         Self {
             source,
@@ -56,6 +59,7 @@ impl NormalizedQuery {
             staleness,
             loads,
             includes,
+            time_series_window,
             tenant_claim: Some(tenant_claim),
             deadline: Some(deadline),
             cancellation: Some(cancellation),
@@ -84,6 +88,7 @@ impl NormalizedQuery {
             staleness,
             loads: Vec::new(),
             includes: Vec::new(),
+            time_series_window: None,
             tenant_claim: None,
             deadline: None,
             cancellation: None,
@@ -130,6 +135,14 @@ impl NormalizedQuery {
         &self.includes
     }
 
+    /// Returns the bound family read window of a time-series source query,
+    /// or `None` when no window was bound (GAP-Q19).
+    pub(crate) const fn time_series_window(
+        &self,
+    ) -> Option<(Option<TimeSeriesRange>, Option<TimeSeriesPaging>)> {
+        self.time_series_window
+    }
+
     /// Returns the tenant claim, or `None` for the unbound V1 form.
     pub(crate) fn tenant_claim(&self) -> Option<&TenantId> {
         self.tenant_claim.as_ref()
@@ -172,6 +185,42 @@ pub(crate) fn field_of<'document>(
         DocumentValue::Object(fields) => fields.get(field),
         _ => None,
     }
+}
+
+/// Reports whether one field map satisfies the predicate conjunction.
+///
+/// The family-source execution path (GAP-Q19) evaluates predicates over the
+/// entry field space — the same closed condition list, the same
+/// [`matches_condition`] evaluator, over a map instead of a document, so the
+/// two paths can never drift apart.
+pub(crate) fn matches_fields(
+    predicate: &QueryPredicate,
+    fields: &std::collections::BTreeMap<&str, DocumentValue>,
+) -> bool {
+    predicate
+        .conditions()
+        .iter()
+        .all(|condition| matches_condition(condition, fields.get(condition.field())))
+}
+
+/// Compares two field maps under one typed ordering.
+///
+/// The mirror of [`compare_documents`] for the family entry space: the same
+/// [`compare_key`] comparison, the same total document order, over the map's
+/// field values. The sort applied on top is stable, so equal keys keep the
+/// deterministic enumeration order of the family read.
+pub(crate) fn compare_field_maps(
+    ordering: &QueryOrdering,
+    left: &std::collections::BTreeMap<&str, DocumentValue>,
+    right: &std::collections::BTreeMap<&str, DocumentValue>,
+) -> Ordering {
+    for key in ordering.keys() {
+        let ordering = compare_key(key, left.get(key.field()), right.get(key.field()));
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    Ordering::Equal
 }
 
 /// Reports whether one document satisfies the predicate conjunction.

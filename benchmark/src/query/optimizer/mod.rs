@@ -870,7 +870,15 @@ pub(crate) fn demand_of(query: &NormalizedQuery) -> QueryDemand {
     for key in query.ordering().keys() {
         demand_field(&mut fields, key.field(), IndexCapability::Ordering);
     }
-    QueryDemand { collection: query.source().collection().as_str().to_owned(), fields }
+    QueryDemand {
+        // A family source never reaches the optimizer pass (its execution
+        // bypasses it), so its demand is recorded without a collection.
+        collection: query
+            .source()
+            .collection()
+            .map_or_else(|| "\u{0}family".to_owned(), |collection| collection.as_str().to_owned()),
+        fields,
+    }
 }
 
 /// Unions one demanded capability into the ordinal field list.

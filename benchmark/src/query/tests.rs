@@ -491,7 +491,7 @@ fn query_store_compiles_and_executes_against_supplied_snapshot() {
     );
     let plan = store.compile(QueryInput::typed(query)).expect("compiles");
     assert_eq!(plan.tenant_claim(), Some(&tenant("tenant-a")));
-    assert_eq!(plan.source().collection().as_str(), "users");
+    assert_eq!(plan.source().collection().map(CollectionName::as_str), Some("users"));
     let result = store.execute(&plan, &snapshot).expect("executes");
     assert_eq!(row_ids(&result), ["doc-1"], "only the matching user document");
     assert_eq!(result.matched(), 1);
@@ -1043,7 +1043,7 @@ fn v1_grammar_parses_the_supported_subset_into_typed_clauses() {
         "from users where exists(flag) and age >= 30 and missing(note) order by age desc, name limit 10 offset 5 select name, age",
     )
     .expect("parses the documented subset");
-    assert_eq!(source.collection().as_str(), "users");
+    assert_eq!(source.collection().map(CollectionName::as_str), Some("users"));
     assert_eq!(predicate.conditions().len(), 3);
     assert_eq!(ordering.keys().len(), 2);
     assert_eq!(ordering.keys()[0].field(), "age");

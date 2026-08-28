@@ -82,7 +82,10 @@ fn delete_requests_refuse_by_default_and_carry_the_confirmation_token() {
     assert!(request.confirmation().is_none(), "no token means the engine seam refuses");
     assert_eq!(request.durability(), LocalDurability::Written);
     assert_eq!(request.options().page_documents(), MAX_BULK_PAGE_DOCUMENTS);
-    assert_eq!(request.query().source().collection().as_str(), "orders");
+    assert_eq!(
+        request.query().source().collection().map(terrabase_v2::types::CollectionName::as_str),
+        Some("orders")
+    );
     assert!(request.operation_id().is_none());
 
     let token = DeletionConfirmation::confirm_deletions();

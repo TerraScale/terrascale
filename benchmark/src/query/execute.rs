@@ -42,7 +42,10 @@ pub(crate) fn check_bounds(
 }
 
 /// Maps an Engine error from the snapshot view onto the typed query errors.
-fn map_engine_error(error: &crate::engine::EngineError) -> QueryError {
+///
+/// Crate-only: the family-source execution path (GAP-Q19) maps the snapshot
+/// view through the same vocabulary.
+pub(crate) fn map_engine_error(error: &crate::engine::EngineError) -> QueryError {
     match error {
         // A scope mismatch can only mean the snapshot claims another Engine.
         crate::engine::EngineError::SnapshotEngineMismatch
@@ -115,6 +118,13 @@ pub(crate) fn execute(
     plan: &super::QueryPlan,
     snapshot: &ReadSnapshot,
 ) -> Result<QueryResult, QueryError> {
+    // A family source runs the family-source bridge and never the optimizer
+    // pass (GAP-Q19): auto indexes are keyed by collection demand, and V1's
+    // auto-index surface is document-only, so there is no selection to
+    // record and no index to create for the family entry space.
+    if plan.model().source().kind() != super::spec::QuerySourceKind::Collection {
+        return execute_with_view(engine, indexes.as_ref(), plan, snapshot);
+    }
     if plan.model().staleness().indexes().is_empty() {
         // Execution validates the plan's bindings — tenant claim, namespace
         // tenants, the snapshot's Engine identity inside the snapshot view —
@@ -158,6 +168,13 @@ pub(crate) fn execute_with_view(
     }
     let staleness = select_indexes(view, query.staleness(), snapshot)?;
     check_bounds(query.deadline(), query.cancellation_signal())?;
+    // A family source runs the family-source bridge from here (GAP-Q19):
+    // its row space is the family entry space, read through the family
+    // seam against this same snapshot, and it never touches the document
+    // scan below.
+    if query.source().kind() != super::spec::QuerySourceKind::Collection {
+        return super::family_sources::execute_family(engine, query, snapshot, staleness);
+    }
     // The snapshot supplies the tenant binding and its own Engine identity;
     // the Engine validates both against its real identity inside the view.
     let scope = TenantScope::from_parts(snapshot.tenant().clone(), snapshot.engine_identity());
@@ -172,11 +189,16 @@ pub(crate) fn execute_with_view(
     let mut matched: Vec<&Document> = Vec::new();
     let mut scanned: u64 = 0;
     let mut skipped: u64 = 0;
+    let Some(source_collection) = query.source().collection() else {
+        // The family branch above returns before the scan; a model without
+        // a collection cannot reach this point.
+        return Err(QueryError::InvalidSpec);
+    };
     for (position, document) in documents.iter().enumerate() {
         if position % CHECKPOINT_INTERVAL == 0 {
             check_bounds(query.deadline(), query.cancellation_signal())?;
         }
-        if document.collection() != query.source().collection() {
+        if document.collection() != source_collection {
             continue;
         }
         scanned = scanned.saturating_add(1);
