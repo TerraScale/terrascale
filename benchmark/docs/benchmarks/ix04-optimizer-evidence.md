@@ -71,8 +71,13 @@ it. `unrun` in this table is the state while the budgets were written.
   charter rule made mechanical: the audit surface is the record, so the
   measurement counts records, not vibes.
   *Measured by:* `optimizer_tests::no_worse_than_available_selection_without_a_recorded_reason`
-  over the single-collection and cross-collection windows, and reported
-  per window in the ad-hoc workload receipt. Status: unrun.
+  over the single-collection and cross-collection windows **plus a
+  third window built to make the zero non-vacuous** — an explicit index
+  and a wider auto index that both completely serve one shape, so a
+  complete candidate really does lose there and the test asserts the
+  window contains at least one such loser before asserting the count.
+  Also reported per window in the ad-hoc workload receipt. Status:
+  unrun.
 - **SQ-B2 — the first sighting that nothing serves creates exactly one
   index; a served shape is served.** On one collection whose ad-hoc stream
   walks S distinct field-set shapes in canonical order, a shape no existing
@@ -94,14 +99,15 @@ it. `unrun` in this table is the state while the budgets were written.
   bounded selection cache serving at least one of the repeats (its
   cache-hit origin is recorded on the record).
   *Measured by:* `a_repeated_shape_is_served_not_recreated`. Status: unrun.
-- **SQ-B4 — an equivalent explicit index wins.** With an equivalent
-  explicit index registered for the queried collection, 0 auto indexes are
-  created and every selection record chooses the explicit index (ADR 0010
-  D-3). *Measured as stated*: with no auto index of that collection in the
-  registry, the precedence is observable through the explicit choice and
-  the absence of any auto candidate; the `ExplicitPreferredOverAuto` note
-  itself is exercised only where an auto candidate of the same collection
-  competes, which this window does not produce and does not claim.
+- **SQ-B4 — an equivalent explicit index wins and says so.** Where an
+  explicit index and an auto index both completely serve one query, the
+  explicit index is chosen, the losing auto candidate carries
+  `ExplicitPreferredOverAuto`, and the applied rule is recorded as a tie
+  break (ADR 0010 D-3). The window builds the competition deliberately:
+  an explicit index on one field, a wider ad-hoc shape that widens into a
+  covering auto index (the explicit partial never joins the union and is
+  never superseded), then the narrow shape again, which both completely
+  serve.
   *Measured by:* `an_equivalent_explicit_index_is_preferred_and_records_why`.
   Status: unrun.
 - **SQ-B5 — a superseded partial is recorded, not silently dropped.**
@@ -228,10 +234,10 @@ budget table's `unrun` markers are resolved here, one row per budget.
 
 | Budget | Verdict | Evidence |
 | --- | --- | --- |
-| SQ-B1 recorded reason | **met, exactly 0** in both driven windows | receipt table; test green |
+| SQ-B1 recorded reason | **met, exactly 0**, and measured non-vacuously: the deciding window contains a losing complete candidate (the explicit/auto competition) | receipt table; test green |
 | SQ-B2 first-sighting creation | **met as amended** (4 creations / 15 shapes) | receipt table; test green |
 | SQ-B3 repeated shape served | **met** (1 creation, 15 served, 15 cache hits, one `Auto/` index) | receipt table; test green |
-| SQ-B4 explicit precedence | **met** (0 creations, explicit chosen on every record) | test green |
+| SQ-B4 explicit precedence | **met** (explicit wins the competition, the auto candidate carries `ExplicitPreferredOverAuto`, the rule is recorded as a tie break) | test green |
 | SQ-B5 observable supersession | **met** (3 retired tombstones, 1 live union) | receipt table; test green |
 | OH-B1 creation durable cost | **met, exactly 0 bytes** across 12 creations | receipt table; test green |
 | OH-B2 one published initial build | **met** (epoch 1, generation 1) | test green |

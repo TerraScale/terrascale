@@ -65,6 +65,67 @@ fn no_worse_than_available_selection_without_a_recorded_reason() {
     );
     assert!(single.outcomes_accounted() && cross.outcomes_accounted());
 
+    // Non-vacuity: neither window above contains a losing complete candidate
+    // (every candidate of another collection fails on the collection, and the
+    // union retires the partials it covers), so a zero here would prove
+    // nothing on its own. This window builds a real competition — an explicit
+    // index and a wider auto index that both completely serve one shape — so
+    // the zero is measured against a selection where a candidate really lost.
+    lane.seed_collection("compete", 8, &["f0", "f1"]);
+    let explicit = lane.register_explicit_index("compete", "f0");
+    assert_eq!(lane.ad_hoc("compete", &["f0"], 0), Ok(1));
+    assert_eq!(lane.ad_hoc("compete", &["f0", "f1"], 0), Ok(1));
+    assert_eq!(lane.ad_hoc("compete", &["f0"], 1), Ok(1));
+
+    let records = lane.selections();
+    let losing_complete = records
+        .iter()
+        .flat_map(|record| {
+            record.candidates().iter().filter(move |candidate| {
+                let complete = matches!(
+                    candidate.verdict(),
+                    crate::query::optimizer::CandidateVerdict::Complete
+                        | crate::query::optimizer::CandidateVerdict::CompleteButIdle
+                );
+                complete && chosen_index_of(record).is_none_or(|name| name != candidate.name())
+            })
+        })
+        .count();
+    assert!(
+        losing_complete > 0,
+        "the window must contain at least one losing complete candidate, or the budget is vacuous"
+    );
+    let unexplained = records
+        .iter()
+        .flat_map(|record| {
+            record.candidates().iter().filter(move |candidate| {
+                let complete = matches!(
+                    candidate.verdict(),
+                    crate::query::optimizer::CandidateVerdict::Complete
+                        | crate::query::optimizer::CandidateVerdict::CompleteButIdle
+                );
+                complete
+                    && chosen_index_of(record).is_none_or(|name| name != candidate.name())
+                    && candidate.note().is_none()
+            })
+        })
+        .count();
+    assert_eq!(
+        u64::try_from(unexplained).unwrap_or(u64::MAX),
+        budgets::UNEXPLAINED_UNCHOSEN_COMPLETE,
+        "every losing complete candidate across all {losing_complete} of them carries its reason"
+    );
+    assert!(
+        records.iter().any(|record| {
+            record
+                .tie_breaks()
+                .contains(&crate::query::optimizer::TieBreak::ExplicitPreferred)
+                && matches!(record.outcome(),
+                    crate::query::optimizer::SelectionOutcome::ChosenIndex { name, .. } if name == &explicit)
+        }),
+        "the competition is the explicit-precedence one, not an accident"
+    );
+
     lane.remove();
 }
 
@@ -148,35 +209,75 @@ fn a_repeated_shape_is_served_not_recreated() {
     lane.remove();
 }
 
-/// SQ-B4 — an equivalent explicit index wins the selection, no auto index is
-/// created, and the losing auto candidates carry the recorded reason.
+/// SQ-B4 (and SQ-B1 made non-vacuous) — an equivalent explicit index wins
+/// the selection against a live auto index that also completely serves the
+/// query, and the losing auto candidate carries `ExplicitPreferredOverAuto`:
+/// the charter's selection-quality rule measured on a window that really does
+/// contain a losing complete candidate, not one where no candidate ever lost.
+///
+/// The window builds that competition deliberately: an explicit index on one
+/// field, then a wider ad-hoc shape that widens into an auto index covering
+/// both fields (an explicit partial never contributes to the union and is
+/// never superseded — a dynamic query never disturbs an explicit index), then
+/// the narrow shape again, which both completely serve.
 #[test]
 fn an_equivalent_explicit_index_is_preferred_and_records_why() {
     let lane = AdHocLane::open("sq-b4");
-    lane.seed_collection("adhoc0", 16, &["f0"]);
+    lane.seed_collection("adhoc0", 16, &["f0", "f1"]);
     let explicit = lane.register_explicit_index("adhoc0", "f0");
 
-    let window = optimizer::run_cross_collection(&lane, 1, &["f0"], 4);
+    // The narrow shape: only the explicit index exists, so it serves alone.
+    assert_eq!(lane.ad_hoc("adhoc0", &["f0"], 0), Ok(1));
 
-    assert_eq!(window.creations, 0, "an equivalent explicit index prevents creation");
-    let records = lane.selections();
-    let chose_explicit = records
-        .iter()
-        .filter(|record| {
-            matches!(
-                record.outcome(),
-                crate::query::optimizer::SelectionOutcome::ChosenIndex { name, .. } if name == &explicit
-            )
-        })
+    // The wider shape: the explicit index is partial, so the optimizer widens
+    // into an auto index covering both fields. The explicit index is never a
+    // supersede target and never contributes to the union.
+    assert_eq!(lane.ad_hoc("adhoc0", &["f0", "f1"], 0), Ok(1));
+    let auto_indexes = lane
+        .registered()
+        .into_iter()
+        .filter(|index| index.kind() == crate::query::optimizer::IndexKind::Auto)
         .count();
-    assert_eq!(chose_explicit, records.len(), "every selection chooses the explicit index");
+    assert_eq!(auto_indexes, 1, "the wider shape creates exactly one auto index");
 
-    // ADR 0010 D-3: where an explicit and an auto index both serve, the
-    // record says which rule decided. With no auto index of this collection
-    // in the registry the candidates list names the explicit index alone, so
-    // the precedence is observable through the absence of any auto
-    // candidate and the explicit choice on every record.
-    assert_eq!(window.live_auto_after, 0);
+    // The narrow shape again: two complete candidates now compete.
+    assert_eq!(lane.ad_hoc("adhoc0", &["f0"], 1), Ok(1));
+
+    let replay = lane.selections().pop().expect("the competing selection");
+    let chosen = match replay.outcome() {
+        crate::query::optimizer::SelectionOutcome::ChosenIndex { name, .. } => name.clone(),
+        other => panic!("the explicit index must win the competition: {other:?}"),
+    };
+    assert_eq!(chosen, explicit, "the explicit index wins");
+
+    let losing_complete = replay
+        .candidates()
+        .iter()
+        .filter(|candidate| {
+            let complete = matches!(
+                candidate.verdict(),
+                crate::query::optimizer::CandidateVerdict::Complete
+                    | crate::query::optimizer::CandidateVerdict::CompleteButIdle
+            );
+            complete && chosen_index_of(&replay).is_none_or(|name| name != candidate.name())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(losing_complete.len(), 1, "exactly one complete candidate loses this selection");
+    assert_eq!(
+        losing_complete[0].note(),
+        Some(crate::query::optimizer::CandidateNote::ExplicitPreferredOverAuto),
+        "the loss carries its recorded reason (ADR 0010 D-3)"
+    );
+    assert!(
+        replay.tie_breaks().contains(&crate::query::optimizer::TieBreak::ExplicitPreferred),
+        "the rule is recorded as applied: {:?}",
+        replay.tie_breaks()
+    );
+    assert!(
+        losing_complete[0].name().starts_with("Auto/"),
+        "the loser is the engine-created index: {}",
+        losing_complete[0].name()
+    );
 
     lane.remove();
 }
@@ -556,4 +657,16 @@ fn ix04_write_path_overhead_characterization() {
     );
 
     lane.remove();
+}
+
+/// The index one record's outcome served, when it served one.
+fn chosen_index_of(record: &crate::query::optimizer::IndexSelectionRecord) -> Option<&str> {
+    match record.outcome() {
+        crate::query::optimizer::SelectionOutcome::ChosenIndex { name, .. }
+        | crate::query::optimizer::SelectionOutcome::CreatedAutoIndex { name, .. } => {
+            Some(name.as_str())
+        }
+        crate::query::optimizer::SelectionOutcome::CollectionScan
+        | crate::query::optimizer::SelectionOutcome::CreationRefused { .. } => None,
+    }
 }
