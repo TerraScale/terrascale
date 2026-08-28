@@ -484,12 +484,30 @@ fn the_commissioning_sampler_reports_inconclusive_without_references() {
 
 /// Sanity on the gate math through real samples: a workload measured against
 /// itself is stable, so the objective reading of a self-comparison is parity.
+///
+/// The comparison is a sample set against **itself** — that is what a
+/// self-comparison is, and it is the only form that proves the gate's math
+/// rather than the host's quietness. Two *independent* runs of the same
+/// workload differ by however loaded the machine is, and this fleet's shared
+/// host runs sibling builders constantly: the original form of this test
+/// compared two independent runs and failed twice in three full-suite runs
+/// under load (reading `Better` where the math check expects `Stable`) while
+/// passing every isolated re-run. Repairing it to compare a run against
+/// itself keeps every property the test names — real samples, real gate,
+/// stable reading, parity objective — and removes an assumption no loaded
+/// host can honor. Recorded as a PROPOSED decision in
+/// `docs/benchmarks/ix04-optimizer-evidence.md` because SE-15's
+/// commissioning receipt cites this test by name.
 #[test]
 fn a_self_comparison_reads_as_parity() {
-    let first = V2Lane::open("self-a").commission(Workload::DocumentRead, 5, 8);
-    let second = V2Lane::open("self-b").commission(Workload::DocumentRead, 5, 8);
-    let comparison = throughput(first.samples(), second.samples());
+    let run = V2Lane::open("self-a").commission(Workload::DocumentRead, 5, 8);
+    let comparison = throughput(run.samples(), run.samples());
     assert_eq!(comparison.throughput, Trend::Stable);
+    assert_eq!(comparison.p95, Trend::Stable);
+    assert_eq!(
+        gates::objective_status(comparison),
+        (ObjectiveStatus::Met, Verdict::NoImprovement)
+    );
 }
 
 /// The V2-side counter characterization, run for real and transcribed into
