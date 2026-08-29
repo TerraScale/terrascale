@@ -2,61 +2,68 @@
 status: accepted
 ---
 
-# ADR 0007: NoSQL with optional schemas and migrations
+# NoSQL with optional native schemas and migrations
 
-Parent record of charter PD-2026-08-26-04 at repository level,
-2026-08-26, accepted on user instruction.
+## Collection modes
 
-Owner: the parent fleet orchestrator, on the workspace owner's product
-direction and the accepted W3-F family contract.
+TerraBaseV2 remains a NoSQL document database. Each collection uses one mode:
 
-## Context
+| Mode | Contract |
+| --- | --- |
+| `schema-free` | Documents need no declared application schema. A path's first typed mutation establishes its CRDT kind. |
+| `validated` | A versioned schema governs declared paths and permits undeclared paths. |
+| `strict` | Every application path and relationship must be declared. Unknown paths fail. |
 
-The workspace owner directed that TerraBaseV2 stays NoSQL but supports
-schemas and migrations where needed. The accepted family contract
-already defines `FamilyKind::SchemaValidation` (PD-2026-08-24-01 D4),
-and the Platform surface already carries a typed Schemas concept
-upstream of the engine. V1 has no enforced document-schema validation,
-so schema enforcement is a V2 capability whose parity rows need explicit
-dispositions rather than silent scope changes.
+A schema declares value domain, CRDT kind and conflict policy, required and
+optional paths, bounds, relationship shape, index capabilities, and rules that
+remain valid under merge. TerraBase never infers a counter, set, flag, or
+relationship from a plain JSON scalar or array.
 
-## Decisions
+Every mutation names the schema version it was validated against. Every Member
+validates the typed mutation before WAL admission and validates materialized
+state after merge. A remote schema mismatch fails closed and does not advance
+applied progress.
 
-### D-1 — schema-optional NoSQL
+Rules closed under the selected CRDT join remain available during a network
+partition. Uniqueness, one-time consume, strict cross-record checks, and other
+rules not closed under merge use the coordinated lane or are rejected. Schema
+validation never pretends a local check proves a global invariant.
 
-The model is unchanged: documents stay schema-free by default, and
-nothing makes a schema mandatory for reading or writing a collection.
-Adopting a schema never changes a collection's stored model or
-V1-parity schema-free behavior. Rejected: mandatory schemas (contradicts
-the NoSQL model and V1 parity).
+## Schema catalog changes
 
-### D-2 — typed, versioned collection schemas on write
+The schema catalog is versioned database metadata. A catalog update uses the
+coordinated lane and names its compatibility class. Members admit mutations
+only when they understand the required schema and datatype codec. Rolling
+deployment may support a declared old and new version window, but unknown
+required behavior fails closed.
 
-A collection may declare a typed, versioned validation contract enforced
-at the engine seam on write, building on the accepted
-`SchemaValidation` family kind. Validation is bounded, deterministic,
-tenant-scoped, and reported through a typed error vocabulary. The wire
-format is decided with evidence in the implementation ticket; the
-working default is a typed schema language compatible with a documented
-subset of JSON Schema for interoperability. Rejected: adopting JSON
-Schema verbatim (unbounded constructs, ecosystem drift).
+Adding an optional path or tightening a bound only for future writes may be an
+online compatible change. Changing an established CRDT kind, field identity,
+relationship identity, or merge policy is breaking. It requires a new path or
+incarnation plus an explicit data migration. Reinterpreting stored bytes in
+place is forbidden.
 
-### D-3 — migration contracts distinct from Logical Migration
+## Native schema migrations
 
-Schema evolution moves a collection between schema versions under an
-explicit engine contract: declarative transforms first, programmatic
-escape only through typed operations. Migrations are idempotent,
-resumable, and prove manifest, checksum, count, and rollback-limit
-evidence under the recovery-lane discipline. This is a different concept
-from the manifest-verified V1→V2 Logical Migration, which is unchanged;
-the glossary keeps the two terms separate. Rejected: treating schema
-migration as a Logical Migration instance (different source, contract,
-and evidence).
+A migration is a versioned, idempotent, resumable plan over native V2 data. It
+is unrelated to V1 import. The first release permits bounded declarative
+transforms over typed paths, defaults, renames, copies, removals, relationship
+changes, and new incarnations. It does not execute arbitrary JavaScript, WASM,
+plugins, agents, or user processes inside TerraBase.
 
-### D-4 — typed-only exposure
+The engine runs migration output as ordinary authorized native commits. Each
+Partition records plan identity, source and target schema, cursor, causal cut,
+counts, checksums, failures, resource use, and completion. Retry uses stable
+idempotency identities. A migration can pause, resume, cancel before cutover,
+or report partial completion. It cannot roll back already replicated immutable
+commits by deleting history.
 
-Schemas and migrations surface exclusively through typed operations
-(TBEP → C# API host → studio and CLI). No generic schema blob endpoint,
-no raw validation surface, no private-route exposure. Parity rows for
-schema behavior receive WS-PARITY dispositions with this ADR as their
-decision record.
+Cutover occurs only after every selected Region understands the target schema,
+required Auto-Indexes are ready, migration verification passes, and the
+coordinated catalog decision activates the target version. Failed documents
+remain visible under the old admitted version or quarantine according to the
+declared plan. The engine never publishes a half-activated schema generation.
+
+Schemas and migrations use named public TerraScale operations through
+`TerraScale.Database`. There is no generic schema blob, direct Member route,
+or raw migration-code endpoint.

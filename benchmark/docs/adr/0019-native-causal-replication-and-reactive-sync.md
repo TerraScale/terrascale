@@ -26,10 +26,17 @@ rules, snapshots, compaction, and wire formats. Causal state is Partition
 scoped and bounded by server replica actors. Loro is removed from persistence,
 replication, sync, SDK conformance, and supported protocol formats.
 
-The initial required CRDT types are `LWWRegister`, `MVRegister`,
-`PNCounter`, `ORSet`, and `ORMap`. Advanced types follow only after the
-native core passes deterministic merge, collection, snapshot, and recovery
-properties.
+The initial required CRDT types are `LWWRegister`, `MVRegister`, `GCounter`,
+`PNCounter`, explicitly policy-bound add-wins and remove-wins sets, `ORMap`,
+`Flag`, and delete-wins document tombstones with incarnation identity.
+Advanced types follow only after the native core passes deterministic merge,
+collection, snapshot, and recovery properties.
+
+ADR 0022 fixes the exact identity, causal, datatype, codec, and collection
+contract. ADR 0023 fixes RF=2 partial-write recovery, replication, repair,
+snapshot, membership, and stable-frontier behavior. ADR 0024 fixes the
+reactive query-view and checkpoint state machine. They are normative under the
+workspace goal and cannot be replaced by implementation-local choices.
 
 ### Active placement and writes
 

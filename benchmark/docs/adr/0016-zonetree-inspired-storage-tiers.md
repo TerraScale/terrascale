@@ -70,8 +70,9 @@ Tier Mover inherits versioned policies from cluster to database to
 collection. The mover transfers immutable segments or key ranges, never
 one object per document; mixed-temperature segments may be split through
 bounded compaction only when the predicted NVMe saving exceeds the
-rewrite cost. Upload and read-after-write verification complete before a
-`RegionalQuorum` publishes the cold-tier manifest. S3 never counts
+rewrite cost. Upload and read-after-write verification complete before both
+active local Members durably publish the cold-tier manifest under the current
+replica-set epoch. S3 never counts
 toward write acknowledgement and is not a backup by itself. Hot
 PostgreSQL parity and cold-tier performance have separate evidence
 gates.

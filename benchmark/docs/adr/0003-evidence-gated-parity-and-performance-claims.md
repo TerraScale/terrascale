@@ -2,11 +2,23 @@
 status: accepted
 ---
 
-# Gate parity and performance claims with evidence
+# Gate capability and performance claims with evidence
 
-V2 calls a capability complete only when its Parity Matrix entry has the
-required V1 evidence, contract semantics, implementation ownership, and Proof
-IDs. V2 calls a performance result only when an approved TerraBase.Benchmark
-run passes its statistical and correctness gates against a comparable V1
-baseline. Local tests or a single timing run can inform work, but they cannot
-support a parity or speed claim by themselves.
+TerraBaseV2 makes no RavenDB or TerraBase V1 parity claim. A native capability
+is complete only when its current contract, implementation, tests, fault
+evidence, security checks, resource bounds, and operations evidence all agree.
+An accepted goal or ADR is a design decision, not implementation evidence.
+
+Performance comparisons come only from reproducible TerraBase.Benchmark runs
+with pinned source and environment identity, correctness validation, raw
+receipts, warmup and sample policy, resource isolation, and an equivalent
+workload. Local microbenchmarks guide development but do not support product
+claims.
+
+PostgreSQL remains a useful database comparison. Loro, Yrs, Automerge, and
+other CRDT systems may be external research or benchmark references where
+semantics match. None is a compatibility target or correctness oracle.
+
+Expected golden values must be independently specified. A test does not prove
+conformance when the implementation under test also generates its expected
+output.

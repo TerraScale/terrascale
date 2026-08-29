@@ -76,10 +76,10 @@ and does not demote its sole fallback copy into the active cluster's S3
 tier. Normal routing never reads from a backup while the local active
 path, home S3, or any active Region can serve the data.
 
-### D-6 — non-voting and `BackupAck`
+### D-6 — non-voting and `BackupDurable`
 
-Backup clusters never contribute to `RegionalQuorum` or `GlobalQuorum`.
-Optional `BackupAck` succeeds only after the requested regional or
+Backup clusters never contribute to `RegionalDurable` or `GlobalDurable`.
+Optional `BackupDurable` succeeds only after the requested regional or
 global level and durable apply by two of the configured backup cluster's
 three HDD Members. Timeout reports that the active write may already be
 committed and supports idempotent retry with the same operation
@@ -105,4 +105,5 @@ current state, causal frontiers, retention pins, and restore data.
 P1's mover design carries the D-2 fairness and forecasting contract; the
 backup-cluster storage path lands with P2/P5 replication work. The
 current tree has no tier manifest, mover, cold-read fallback, backup
-mode, or `BackupAck` — all are recorded gaps until their phases deliver.
+mode, or `BackupDurable` path. All remain recorded gaps until their phases
+deliver.

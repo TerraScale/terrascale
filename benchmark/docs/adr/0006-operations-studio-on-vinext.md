@@ -2,61 +2,36 @@
 status: accepted
 ---
 
-# ADR 0006: Operations studio on Vinext
+# Internal Operations Studio on Vinext
 
-Parent record of charter PD-2026-08-26-01 D2 at repository level,
-2026-08-26.
+## Decision
 
-Owner: the parent fleet orchestrator, on the workspace owner's stack
-policy (dashboards use Vinext) and the studio ticket wave's accepted
-assumptions.
+TerraBaseV2 owns one internal Operations Studio under `studio/`. It is a
+Vinext React application on the repository's pinned VitePlus `vp` toolchain.
+It is not the customer Dashboard and does not own authentication, Organizations,
+Projects, Users, Payments, MCP, or customer product workflows.
 
-## Context
+The Studio contains no C#/.NET host or second backend in this repository. It
+uses named typed operator operations through the independently deployed
+`TerraScale.Database` gateway. It never connects to a TerraBase Member, TBEP,
+storage files, NATS, or object storage directly.
 
-The workspace owner directed that dashboards use Vinext (React RSC on
-the VitePlus `vp` toolchain), superseding an earlier Rust+Datastar
-proposal for the V2 operations dashboard before any repository
-execution. TerraBase V1 ships its Studio inside the database repository;
-that self-contained precedent is kept for V2.
+Operator authentication comes from Dashboard-owned Better Auth. The Database
+API converts a current authorized operator grant into a short-lived engine
+context. Studio access follows the same tenant boundaries, confirmation,
+audit, secret handling, rate limits, and field projection rules as the
+underlying operation.
 
-## Decisions
+The Studio may inspect documents, queries, Auto-Indexes, relationships,
+replication progress, Partitions, snapshots, recovery, resource use, and
+qualified metrics. Mutating and destructive operations remain individually
+typed, authorization checked, confirmation gated, and auditable. There is no
+raw HTTP, arbitrary TBEP, shell, query-code, or private control-plane escape
+hatch.
 
-### D-1 — stack
+Live views use the bounded reactive protocol. Disconnect and process loss
+recover from checkpoints or a fresh authorized snapshot. No correctness or
+operator action depends on one Studio process or browser session.
 
-The operations studio is a Vinext application: React 19 React Server
-Components on the VitePlus `vp` toolchain, Tailwind v4 styling
-conventions, Playwright e2e — following the tooling discipline
-established by TerraScale.Dashboard.Next: `vp install --frozen-lockfile`,
-`vp run vinext:dev|build|start`, `vp check`, no pnpm/yarn/bun/corepack,
-no second lockfile, no direct npm/npx/vite/next/playwright invocations.
-
-### D-2 — location and rejected alternatives
-
-The studio lives in this repository under `studio/`, mirroring V1's
-Studio-in-repo precedent: the database product ships self-contained
-(Rust engine core, C# `host/` + `cli/`, Vinext `studio/`). Rejected:
-hosting beside Dashboard.Next in TerraScale.Internals (splits the
-database product across repositories and couples an operator tool to
-customer-product infrastructure) and the superseded Rust+Datastar
-direction (contradicts the owner's dashboard policy).
-
-### D-3 — data access and live views
-
-The studio consumes a generated typed client against the C# API host
-contract only. No direct engine or storage access, no Rust C ABI, no
-Platform/customer SDK dependency, no private routes. Live views ride the
-API host's subscription endpoints (SSE/WebSocket) fed by the change
-event backbone; backpressure (bounded queues, counted drops) is surfaced
-in the UI honestly.
-
-### D-4 — packaging (parked)
-
-Whether the studio ships as host-served output (mirroring V1's
-studio-zip convention) or a standalone Node process is decided in the
-packaging ticket (DB-08) against the C# host artifact story and CI.
-
-### D-5 — untouched by this decision
-
-TerraBase V1 Studio (the parity reference), DevHost (fixed tailnet ports
-18445/18446 and reserved loopback endpoints), and TerraScale.Dashboard.Next
-(which already follows this policy).
+The Orchestrator owns deployment and routing of the emitted Vinext artifact.
+Packaging must not place a Node or C# runtime inside the Rust engine process.
