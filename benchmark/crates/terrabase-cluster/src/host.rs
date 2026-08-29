@@ -395,6 +395,54 @@ impl ClusterHost {
         Ok(receipt)
     }
 
+    /// Restores from a backup set into a NEW active cluster identity
+    /// (backup-cluster contract §6 scenario 9): the target root must
+    /// be empty, the new identity is created ACTIVE (a fresh identity,
+    /// never a mode change of the backup — the backup stays backup,
+    /// terminal), and every document the backup's converged state
+    /// holds is replayed into the new cluster as fresh restore
+    /// operations through the coordinators.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClusterError::InvalidShape`] for an empty spec or a
+    /// non-empty target root, [`ClusterError::Member`] when the
+    /// backup's state cannot be read, and the coordinators' typed
+    /// failures during replay.
+    pub fn restore_from_backup(
+        root: &Path,
+        cluster: &str,
+        creation_record: &str,
+        spec: &[MemberSpec],
+        tenant: &str,
+        backup: &mut BackupSet,
+    ) -> Result<Self, ClusterError> {
+        if spec.is_empty() {
+            return Err(ClusterError::InvalidShape);
+        }
+        // The target must be empty: a restore never silently merges
+        // into existing state.
+        if root.exists() && std::fs::read_dir(root).map_or(true, |entries| entries.count() > 0) {
+            return Err(ClusterError::InvalidShape);
+        }
+        let documents = backup.documents().map_err(ClusterError::Member)?;
+        let mut restored =
+            Self::create(root, cluster, ClusterMode::Active, creation_record, spec, tenant)?;
+        for (document, body) in documents {
+            let write = ComposedWrite::Put {
+                // Fresh restore identities: the replay names itself,
+                // never the backup's original operations.
+                operation: format!("restore:{cluster}:{document}"),
+                document,
+                body,
+            };
+            restored
+                .client_write(spec[0].name.as_str(), &write, LeaderlessLevel::RegionalQuorum)
+                .map_err(write_refusal_to_error)?;
+        }
+        Ok(restored)
+    }
+
     /// Steps the membership to a new epoch through the P2 epoch
     /// coordinator: the overlapping-quorum precondition holds or the
     /// step refuses typed, and every member records the epoch durably.
@@ -412,6 +460,16 @@ impl ClusterHost {
         let receipt = outcome.map_err(ClusterWriteRefusal::from_epoch)?;
         self.set = proposed;
         Ok(receipt)
+    }
+}
+
+/// Maps a coordinated-write refusal onto the host error shape for the
+/// internal replay paths (restore, catch-up).
+fn write_refusal_to_error(refusal: ClusterWriteRefusal) -> ClusterError {
+    match refusal {
+        ClusterWriteRefusal::QuorumNotReached => ClusterError::QuorumNotReached,
+        ClusterWriteRefusal::AdmissionRefused => ClusterError::AdmissionRefused,
+        _ => ClusterError::ApplyFailed,
     }
 }
 

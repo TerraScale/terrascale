@@ -192,6 +192,24 @@ impl ClusterMember {
         self.member = Some(member);
     }
 
+    /// Enumerates the member's visible documents with their merged
+    /// bodies — the restore observation surface.
+    ///
+    /// # Errors
+    ///
+    /// Returns the composed member's failure.
+    pub fn documents(
+        &mut self,
+    ) -> Result<
+        std::collections::BTreeMap<
+            String,
+            std::collections::BTreeMap<String, terrabase_v2::types::DocumentValue>,
+        >,
+        MemberError,
+    > {
+        self.composed_mut().documents().map_err(|_| MemberError::StateRefused)
+    }
+
     /// Reads one document through the composed state. Both modes read:
     /// the backup serves last-resort reads per the contract's routing
     /// order.

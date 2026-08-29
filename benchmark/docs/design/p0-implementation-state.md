@@ -1137,3 +1137,40 @@ until the read-level wiring lands.
 Receipts: `cargo test -p terrabase-cluster` 32/32 (5 new rows);
 `cargo test -p terrabase-tbep` unchanged suites green; clippy
 `-D warnings` and fmt clean. `scripts/check.sh` not run (AC-12).
+
+## 29. The P7 in-process qualification lane and restore-from-backup (P7 landing 1)
+
+`ClusterHost::restore_from_backup` delivers backup-cluster contract
+§6 scenario 9: a converged backup set restores into a NEW active
+cluster identity at a fresh root — a non-empty target refuses typed, a
+fresh identity is minted ACTIVE (never a mode change of the backup),
+and every document the backup holds is replayed through the
+coordinators as fresh `restore:<cluster>:<document>` operations. The
+source backup remains mode `backup`, terminal, unchanged: restore is
+not promotion, and no promotion path exists. Document enumeration
+landed as `ComposedMember::documents()` (exposing the merged-state
+reader), with `ClusterMember::documents()` and `BackupSet::documents()`
+above it.
+
+The qualification lane
+(`crates/terrabase-cluster/tests/qualification.rs`, receipt
+`docs/evidence/p7-leaderless-qualification-lane.md`) assembles the
+charter's AC-2/AC-3/AC-4 fault scenarios through the cluster surface:
+idempotent retry through another member after a lost coordinator; the
+three acknowledgement levels' distinct receipts with the backup
+partial-outcome fault variant and the structural non-voting proof; a
+disjoint membership step refusing typed (quorum intersection);
+concurrent two-Region writes converging under duplication, whole-
+cluster restart, and member rejoin through epoch step + catch-up; and
+the restore scenario end to end.
+
+Scoping kept honest: coordinator failure is modeled by the idempotent
+retry path (no crash injection at the cluster seam in-process); the
+isolated-machine benchmark lanes are NOT run — the standing
+`PostgreSQL-parity-or-better: inconclusive` verdict holds under SE-15;
+live NATS and object-store rows remain unrun.
+
+Receipts: `cargo test -p terrabase-cluster --test qualification` 4/4;
+the full cluster+takes battery 18 suites green; `terrabase-v2 --lib`
+1080/1080; `terrabase-replication-core` 28/28; clippy `-D warnings`
+and fmt clean. `scripts/check.sh` not run (AC-12).

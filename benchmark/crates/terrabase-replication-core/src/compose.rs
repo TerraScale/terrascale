@@ -422,6 +422,19 @@ impl ComposedMember {
         self.replica.deep_value()
     }
 
+    /// Enumerates the Member's visible documents with their merged
+    /// bodies — the restore and qualification observation surface.
+    ///
+    /// # Errors
+    ///
+    /// Returns the compose failure when the merged state cannot be
+    /// read back as documents.
+    pub fn documents(
+        &self,
+    ) -> Result<BTreeMap<String, BTreeMap<String, DocumentValue>>, ComposeError> {
+        crdt_documents(&self.merged_state())
+    }
+
     /// Selects the collection's schema policy (contract §1): the mode
     /// and, for `validated`/`strict`, the governing definition. The
     /// policy governs admission here and post-merge validation in

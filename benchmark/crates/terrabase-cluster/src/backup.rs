@@ -122,6 +122,22 @@ impl BackupSet {
         self.members.iter().map(ClusterMember::position).min().unwrap_or(0)
     }
 
+    /// Enumerates the first backup member's visible documents with
+    /// their merged bodies — the restore source observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the member's typed failure when the state cannot be
+    /// read as documents.
+    pub fn documents(
+        &mut self,
+    ) -> Result<
+        std::collections::BTreeMap<String, std::collections::BTreeMap<String, DocumentValue>>,
+        crate::member::MemberError,
+    > {
+        self.members.first_mut().ok_or(crate::member::MemberError::StateUnavailable)?.documents()
+    }
+
     /// Reads one document through the first backup member — the
     /// backup's last-resort read of the frozen routing order.
     #[must_use]
