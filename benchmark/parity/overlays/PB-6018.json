@@ -3,5 +3,6 @@
   "item_id": "PB-6018",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Smuggler export/import exists as a manifest-bound, atomically published, version-checked local file artifact with family selection counts/digests, checksum-verified round trips, cancellation, and typed rejection of tampered manifests, digest mismatches, corrupt records, and unsupported versions — all focused-tested; the gaps are that only a local file artifact in a V2-native format exists (no stream or remote transfer modes) and there is no V1 package import, so the migration-comtract clause is only partially met.",
   "previous_status": "unresolved"
 }

@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4008",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No search predicate exists in QueryCondition or execution; TQL search() is capability-gated and fails closed with CapabilityUnavailable against the engine that reports no capability. Only the unwired analyzer foundation (src/query/analyzer.rs) exists, which is PB-4048's foundation, not search execution."
 }

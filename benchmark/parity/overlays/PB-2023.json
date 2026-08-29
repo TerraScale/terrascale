@@ -3,5 +3,6 @@
   "item_id": "PB-2023",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Session stream_documents serves ordered canonical batches with terminal completion and load_starting_with pages by prefix and match over the streaming seam, with cursor resume, prompt cancellation, and bounded memory proven at that seam; projections stay a separate query-seam source as the row requires. Gap: no destination-buffer into-stream forms (V1 LoadStartingWithIntoStream/QueryIntoStream), and numeric start maps to cursor skipping — a recorded GAP-D01 accepted difference.",
   "previous_status": "unresolved"
 }

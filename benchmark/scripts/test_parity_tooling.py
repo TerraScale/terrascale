@@ -113,7 +113,8 @@ class ParityToolingTests(unittest.TestCase):
             root = self.fixture(Path(temporary))
             overlay_path = root / "parity" / "overlays" / "PB-1000.json"
             overlay = self.read_json(overlay_path)
-            overlay.update({"status": "implemented", "previous_status": "in-progress"})
+            # Explicitly emptied: the live overlay may already carry proofs.
+            overlay.update({"status": "implemented", "previous_status": "in-progress", "proof_ids": []})
             self.write_json(overlay_path, overlay)
             result = self.run_cli(root, "--check")
             self.assertNotEqual(result.returncode, 0)
@@ -136,6 +137,8 @@ class ParityToolingTests(unittest.TestCase):
             root = self.fixture(Path(temporary))
             overlay_path = root / "parity" / "overlays" / "PB-1000.json"
             overlay = self.read_json(overlay_path)
+            # Explicitly removed: the live overlay may already carry a disposition.
+            overlay.pop("disposition", None)
             overlay.update({"status": "accepted-exclusion", "previous_status": "unresolved", "proof_ids": ["P-001"]})
             self.write_json(overlay_path, overlay)
             result = self.run_cli(root, "--check")

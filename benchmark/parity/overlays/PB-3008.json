@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-3008",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No remote-destination configuration, remote flags, credential handling, schema update, or transfer-error code exists anywhere under src/; the contract itself records this as unresolved ('Remote storage remains unresolved until an approved adapter and secret-handling contract exists; no V1 exclusion is implied'), so it is an open gap, not an accepted exclusion."
 }

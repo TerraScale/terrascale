@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4052",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "V2 has exactly one index implementation; there is no engine selection, no engine field in index metadata, and no engine-specific disposition record. The only cross-engine artifact is a proposed (not accepted) accepted-difference entry for the V1 lucene() function in docs/tql/rql-mapping.md."
 }

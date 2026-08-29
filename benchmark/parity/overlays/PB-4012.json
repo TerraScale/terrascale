@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4012",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "V1's post-index FILTER clause and filter-limit outcome do not exist: TQL's `filter` is its WHERE-stage predicate (single filter stage), not a post-index filter, and no filter-limit behavior exists anywhere. docs/tql/rql-mapping.md section 9 records filter/filter_limit only as a PROPOSED accepted difference pending parent acceptance, so the row stays in scope with no behavior."
 }

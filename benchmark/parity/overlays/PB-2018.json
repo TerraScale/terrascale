@@ -3,5 +3,6 @@
   "item_id": "PB-2018",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The compare-exchange family stages PutIfIndex/PutIfMissing conditions with typed stale-index failure and expiry hiding expired values — focused-tested. Gap: single-key read only (no get-many, prefix paging, delete-by-index, or lazy/async forms), and a stale index fails only the family write inside the local transaction rather than an encompassing cluster transaction.",
   "previous_status": "unresolved"
 }

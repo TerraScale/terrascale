@@ -3,5 +3,6 @@
   "item_id": "PB-5002",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Open of a configured path, creation of an absent directory, reopen of the same durable state, and fail-closed opens on unrelated or foreign-format locations are all focused-tested on the LSM default backend. Gap: no explicit stop/dispose-path test and no configuration-change policy test.",
   "previous_status": "unresolved"
 }

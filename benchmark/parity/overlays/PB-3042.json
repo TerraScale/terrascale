@@ -3,5 +3,6 @@
   "item_id": "PB-3042",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The engine-side obligations are implemented and tested at the Platform adapter (family read/write dispatch end to end, cross-tenant probe denied and audited, no credentials read, refusals recorded with the typed category) plus engine-enforced tenant scoping; per-family stream, backup/import, and replication-administration authorization paths are untested, and V1's HTTP family-handler surface is replaced by the TBEP seam (PD-2026-08-28-02) - AGENTS.md still cites PD-2026-08-26-11 placing customer auth and PB-3042 at the TerraScale Platform, but that decision is absent from the current GOAL.md register, so this is not graded an accepted exclusion.",
   "previous_status": "unresolved"
 }

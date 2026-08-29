@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-6027",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No ETL delivery, retry, dead-letter, health-state, or metrics code exists. Not an accepted exclusion: no charter PD record excludes ETL observability, so it stays in scope unimplemented."
 }

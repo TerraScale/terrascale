@@ -3,5 +3,6 @@
   "item_id": "PB-2015",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The engine IngestStream commits per-batch atomically across batches with bounded memory, create-only refusal without false success, unknown-commit abort, cancellation, and a typed refusal vocabulary — focused-tested. Gap: engine ingest seam only — no store-level BulkInsert writer, no metadata mutation during bulk, and no dynamic collection delegate; the P4 document.batch TBEP op is a bounded atomic multi-put, not a streaming bulk writer.",
   "previous_status": "unresolved"
 }

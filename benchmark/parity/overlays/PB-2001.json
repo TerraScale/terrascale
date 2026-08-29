@@ -3,5 +3,6 @@
   "item_id": "PB-2001",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Session::save_changes implements the unit of work: puts/deletes/deferred commands staged in V1 batch order until save, one atomic engine transaction per save, committed-state clearing with deleted-document eviction, and failure preserving session state; all focused-tested. Gap: no asynchronous save form exists anywhere (the C# TBEP client's async ops are single-document, not a session unit of work) and the save-event surface is only the on_after_save hook.",
   "previous_status": "unresolved"
 }

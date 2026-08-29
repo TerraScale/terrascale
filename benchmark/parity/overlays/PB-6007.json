@@ -3,5 +3,6 @@
   "item_id": "PB-6007",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Document streaming supports id/prefix/match/exclusion selectors with key-order preservation, the V1-style result shape, typed errors for missing documents and invalid selectors, and cursor continuation — all focused-tested; the gaps are that match is substring containment rather than V1 regex (src/streaming/sources.rs:623), and there is no transport-level document stream or sync/async consumer pair proving identical ordering and terminal behavior.",
   "previous_status": "unresolved"
 }

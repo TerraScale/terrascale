@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-1002",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No disposition or accounting artifact for the V1 admin/debug/setup/operations route families exists: parity/adjudications.json carries no adapters-row decision and the V1 families appear only as text inside the contract JSON. V2's own admin surfaces (host /v1/engine/* endpoints, TBEP tier administration) are new capabilities, not mappings of the V1 admin families, so the row's evidence-backed-disposition obligation is unmet."
 }

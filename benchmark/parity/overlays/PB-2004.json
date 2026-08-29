@@ -3,5 +3,6 @@
   "item_id": "PB-2004",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "DocumentVersionContract (version/sequence/stamp), Transaction::head, and V1ChangeVector parse plus provenance mapping are implemented and focused-tested including across reopen. Gap: no last-modified timestamp and no V1 @metadata dictionary surface exist anywhere (the TQL @last_modified token has no executor), and the V1 change vector is parse/migration-only with no advanced-session accessors.",
   "previous_status": "unresolved"
 }

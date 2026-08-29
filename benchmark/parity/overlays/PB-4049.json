@@ -3,5 +3,6 @@
   "item_id": "PB-4049",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Dynamic and compound fields exist as validated declaration-time typed rules (bounds fail closed, compound is a hint-only extension) and participate in identity keys. There is no runtime-name field creation during indexing and no compound-field engine optimization, so the V1 dynamic-field behavior itself is not implemented.",
   "previous_status": "unresolved"
 }

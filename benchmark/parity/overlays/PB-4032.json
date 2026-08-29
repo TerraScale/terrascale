@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4032",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No LINQ provider or expression-translation layer exists; the V2 query surface is TQL text (PD-2026-08-26-08) served raw over TBEP. No charter PD excludes V1 LINQ translation and the contract still requires it for the official client adapter, so the row stays in scope as unimplemented."
 }

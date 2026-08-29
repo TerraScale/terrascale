@@ -3,5 +3,6 @@
   "item_id": "PB-3020",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Time-series query sources are real (entry rows with series cursors, paging, range windows, includes through the family seam) and index definitions accept timeSeries map sources with V1 identity spelling; aggregation/grouping/scale query forms, JS projections, and maintained time-series indexes (sources fail closed index-less) do not exist.",
   "previous_status": "unresolved"
 }

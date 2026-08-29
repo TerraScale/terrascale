@@ -3,5 +3,6 @@
   "item_id": "PB-3034",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Typed archival state round-trips and the execution pass materializes schedules then archives due documents tenant-scoped, with stale family records cleared when the owner is gone; the clause-1 semantics of preserving archived metadata through document updates and reprocessing, archive-at parsing, batch limits, and compression have no tests or behavior.",
   "previous_status": "unresolved"
 }

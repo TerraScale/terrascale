@@ -3,5 +3,6 @@
   "item_id": "PB-4011",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Typed TqlParameters bind name-to-DocumentValue values with strict pairing in both directions (missing and unused both fail closed), focused-tested and exercised by the parity vectors. The V1 '$'-prefixed parameter form is not accepted anywhere — the V1-compatible grammar has no parameter clause at all.",
   "previous_status": "unresolved"
 }

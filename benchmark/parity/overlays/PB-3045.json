@@ -3,5 +3,6 @@
   "item_id": "PB-3045",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The logical-migration path is strong and tested: V1 export manifest validation before any write, counts/checksums verified before success, explicit loss matrix, resumable/interruptible and idempotent migration and import, no-direct-V1-file-open claim, V1 change-vector provenance recorded with fail-closed malformed handling, and tampered/truncated-input rejection; family-specific V1 typed errors (AttachmentDoesNotExist, InvalidAttachmentRange, RevisionsDisabled) are not mapped to V1 shapes in transfer, revision/conflict transfer is shallow, and no attachment-content fixture rides the smuggler round-trip.",
   "previous_status": "unresolved"
 }

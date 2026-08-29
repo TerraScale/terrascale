@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4046",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "Dynamic GROUP BY fails closed at lowering and the optimizer has no aggregation demand, so no auto-map-reduce index is ever created or selected. The row's capability is absent."
 }

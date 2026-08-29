@@ -3,5 +3,6 @@
   "item_id": "PB-5001",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Durable storage with WAL replay, torn-tail truncation, manifest recovery, and checksum rejection exists on both the default LSM backend and the root-file backend with focused tests. Gap: no storage-restart Recovery Receipt (the receipt exists only at the restore seam and as the migration loss matrix) and no quota/disk-full exhaustion behavior.",
   "previous_status": "unresolved"
 }

@@ -3,5 +3,6 @@
   "item_id": "PB-2002",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Real conflict/tombstone behavior exists and is tested: content-free tenant-scoped ConflictRecord with recorded policy outcomes, deleted-vs-missing distinction at head, family/backup tombstones, and composed delete-wins convergence (P2). Gap: no V1-style client-visible conflict metadata, 409 load/delete/patch outcomes, or GetConflicts equivalent — conflicts resolve by recorded policy and are engine-side records only; the legacy row's explicit disposition (GAP-D09) remains unrecorded.",
   "previous_status": "unresolved"
 }

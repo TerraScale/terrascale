@@ -3,5 +3,6 @@
   "item_id": "PB-3032",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Identity state survives member loss (dead owners' blocks never re-handed, deposed owners cannot allocate after the replacement appears, tails burned) and migration asserts identity seed arrival; sharded identity routing does not exist (sharding carries no family routing), and no restore-then-allocate rollback test or listing/debug authorization path exists.",
   "previous_status": "unresolved"
 }

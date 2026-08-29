@@ -3,5 +3,6 @@
   "item_id": "PB-4048",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The analyzer foundation resolves the three V1 default analyzer names, fails closed on unknown names, and records positions/offsets and term-vector shapes with tests. It is not wired into any executing search or indexing path, has no stopword handling, and no suggestion-enabled fields exist.",
   "previous_status": "unresolved"
 }

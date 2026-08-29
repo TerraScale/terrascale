@@ -3,5 +3,6 @@
   "item_id": "PB-2024",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The streaming subscription seam observes only committed publication events, filters by document, prefix, and collection (ChangeFilter), keeps durable checkpoints, resends unacknowledged items after reconnect, and reports drops without advancing the checkpoint — focused-tested. Gap: SubscriptionStatus is delivery state, not V1's connection-state machine (database-missing/fault/disposed), and delivery is engine-journal-driven at-least-once with no topology-aware client reconnect.",
   "previous_status": "unresolved"
 }

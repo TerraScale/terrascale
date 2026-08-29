@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4019",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No facet vocabulary, aggregation operation, setup document, or facet result kind exists anywhere under src/ (grep for facet finds only explanatory comments). The contract keeps facets an open optional obligation; nothing to exclude or grade as behavior."
 }

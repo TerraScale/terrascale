@@ -1,6 +1,8 @@
 {
   "schema_version": "1.0",
   "item_id": "PB-1024",
-  "status": "unresolved",
-  "proof_ids": []
+  "status": "in-progress",
+  "proof_ids": [],
+  "disposition": "Accepted with PB-1023 under PD-2026-08-28-02: the PostgreSQL integration whose admin API this row describes has no V2 surface because the accepted client/network contract is C#/.NET over TBEP; administration of a non-existent integration cannot be exposed, and secret-handling policy stays at the Platform seam by PD-2026-08-26-11. The disposition is not yet recorded in parity/adjudications.json (the ps-04 proposal PD-2026-08-26-10 D4 remains unfrozen), which P6 should write. [downgraded by verification: no charter decision names this exclusion]",
+  "previous_status": "unresolved"
 }

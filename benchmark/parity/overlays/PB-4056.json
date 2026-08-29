@@ -3,5 +3,6 @@
   "item_id": "PB-4056",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Typed IndexStatistics report the engine-owned V1 subset and aggregate per tenant and state, focused-tested. There is no terms listing (V1 /terms) and no performance or timing counters (rates deliberately withheld), and no admin route exposes them.",
   "previous_status": "unresolved"
 }

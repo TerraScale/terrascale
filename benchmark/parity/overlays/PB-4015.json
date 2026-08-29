@@ -3,5 +3,6 @@
   "item_id": "PB-4015",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Field projection plus LOAD bindings with alias-qualified projection are implemented and focused-tested against source documents. No stored-index-field projection path exists, and map-reduce, nested-path, metadata, array, and dictionary projection shapes are unsupported (map-reduce is PB-4018/4042).",
   "previous_status": "unresolved"
 }

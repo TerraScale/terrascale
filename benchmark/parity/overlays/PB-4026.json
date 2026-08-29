@@ -3,5 +3,6 @@
   "item_id": "PB-4026",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Staleness modes (allowed/strict with generation bounds) and an IndexStore-level bounded wait_for_non_stale with typed outcomes are implemented and focused-tested at query and index seams. There is no client-visible WaitForNonStaleResults timeout surface on the query request, and the newly-created/side-by-side/deleted index matrix is only partially covered (side-by-side covered at PB-4054).",
   "previous_status": "unresolved"
 }

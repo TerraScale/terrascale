@@ -3,5 +3,6 @@
   "item_id": "PB-5022",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Conflicts produce deterministic CRDT merge outcomes with retained, content-free conflict records and tenant-scoped conflict observations, and the deterministic winner is proven invariant under delivery order. Gap: V1's conflict-exposure model (409 with conflicting values on load/delete/patch), scripted resolvers, and tombstone winners are architecturally replaced by the charter's merge contract (PD-2026-08-28-03) with no per-row accepted-difference entry.",
   "previous_status": "unresolved"
 }

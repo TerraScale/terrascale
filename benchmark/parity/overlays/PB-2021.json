@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-2021",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No request cache, aggressive-caching scope, conditional-revalidation consumer, or change-driven eviction exists anywhere in src/, crates/, or host/ — the only caches in src/ are query plan-selection caches, not document response caches. GAP-D01 routes this capability SDK-side under PD-2026-08-26-12 (engine supplies freshness primitives only: head/conditional load, publication events), but the SDK repositories remain untouched by charter, so there is no behavior and nothing to test in this tree."
 }

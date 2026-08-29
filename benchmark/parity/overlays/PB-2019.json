@@ -3,5 +3,6 @@
   "item_id": "PB-2019",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Pending lazy reads register without executing, resolve as one batched load per collection on execute_all_pending_lazy_operations and again at save, and are removed by evict/clear — focused-tested with an observable batch counter. Gap: registration only — no value-returning lazy handle, no lazy conditional loads, and no async cancellation forms.",
   "previous_status": "unresolved"
 }

@@ -3,5 +3,6 @@
   "item_id": "PB-5017",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The charter's leaderless decision (PD-2026-08-28-07) removes elections by design: coordinator failure is recovered by idempotent retry through another Member and membership changes go through overlapping-quorum epochs, both focused-tested, and the old single-leader plane's fencing tests still pass. Gap: no vote/term/candidate election semantics exist and no per-row accepted-difference record names the V1 election-model delta.",
   "previous_status": "unresolved"
 }

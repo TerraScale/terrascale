@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4044",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No JavaScript map or map-reduce index support exists, and no accepted disposition has been recorded: parity/adjudications.json has no entry, the overlay is status 'unresolved', and no charter PD covers it (docs/parity/gapq06-ws-parity-proposals.md still carries the open GAP-Q16 proposal). The contract requires an explicit accepted disposition, which does not yet exist, so the row cannot be an accepted-exclusion."
 }

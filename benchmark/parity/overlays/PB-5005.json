@@ -1,7 +1,10 @@
 {
   "schema_version": "1.0",
   "item_id": "PB-5005",
-  "status": "in-progress",
-  "proof_ids": [],
-  "previous_status": "unresolved"
+  "status": "implemented",
+  "proof_ids": [
+    "P-012"
+  ],
+  "disposition": "Snapshot isolation, conflict-free abort with no partial writes, and atomic multi-write commits are focused-tested on both backends; uncommitted prepares are discarded at recovery. V2 uses a single-writer commit path with sequence-floored immutable snapshots instead of V1 reader/writer locks, and no threaded lock-contention test exists.",
+  "previous_status": "in-progress"
 }

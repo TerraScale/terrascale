@@ -1,6 +1,8 @@
 {
   "schema_version": "1.0",
   "item_id": "PB-1025",
-  "status": "unresolved",
-  "proof_ids": []
+  "status": "in-progress",
+  "proof_ids": [],
+  "disposition": "Accepted V2 difference per PD-2026-08-28-02 and the charter's product boundary: the Rust process is the database server and terminates TBEP (the C# HTTP host is a transitional adapter, not an embeddable server), so the V1 EmbeddedServer in-process entry point with its child-process lifecycle, URI, and typed store factory is not the V2 packaging. V2's managed-process lifecycle lives in EngineSupervisor and the engine serves through TBEP (the host is even probe-tested to talk to the engine only through the TBEP client); no cdylib/EmbeddedServer-equivalent exists. The matching ps-04/ADR-0005 proposal is not yet frozen in parity/adjudications.json. [downgraded by verification: no charter decision names this exclusion]",
+  "previous_status": "unresolved"
 }

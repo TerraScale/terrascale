@@ -3,5 +3,6 @@
   "item_id": "PB-2014",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The engine's typed patch implements add/replace/remove/increment with in-order application that sees earlier effects, mid-failure staging nothing, commit rejection leaving the document untouched, and add-or-patch — focused-tested plus public-contract rows. Gap: no session-level Patch or defer integration, no JSON-Patch (RFC 6902) form, and no script patch language (typed paths only, per the recorded patch-language decision).",
   "previous_status": "unresolved"
 }

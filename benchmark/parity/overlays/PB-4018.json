@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4018",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "GROUP BY parses and the registry enforces group-derivation rules, but lowering fails closed with UnsupportedForPlanning and StaticIndexDefinition's ReduceStage is definition-validation only. No grouping or aggregation (count/sum/avg/min/max) is ever executed, so the row's capability is absent."
 }

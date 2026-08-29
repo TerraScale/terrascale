@@ -1,7 +1,10 @@
 {
   "schema_version": "1.0",
   "item_id": "PB-5034",
-  "status": "in-progress",
-  "proof_ids": [],
-  "previous_status": "unresolved"
+  "status": "implemented",
+  "proof_ids": [
+    "P-022"
+  ],
+  "disposition": "The V1 process-local active-active observations are reproduced on the leaderless planes: writes accepted during partition converge deterministically after healing, three-way isolated concurrent writes converge by causal merge, and the receipt is secret-safe and names its faults and limits. These remain process-local lanes; deployed-Region and metering qualification stays P7/PB-5046.",
+  "previous_status": "in-progress"
 }

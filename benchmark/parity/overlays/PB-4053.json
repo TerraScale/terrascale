@@ -3,5 +3,6 @@
   "item_id": "PB-4053",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Create, delete, start, stop, enable, disable, and reset exist with an exhaustive typed transition matrix and refused-transition invariants, focused-tested at the engine's IndexStoreOperations seam. Gaps: no dump/optimize/test-index actions and lifecycle operations have no protocol route or public adapter.",
   "previous_status": "unresolved"
 }

@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-6031",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No typed connection-string records, provider validation, get/put/remove, dependency checks, or secret-redaction tests exist anywhere; the only destination kind is local and carries no credentials (the backup-layer key-secrecy tests are about encryption keys, not connection strings). Not an accepted exclusion — the row stays in scope unimplemented."
 }

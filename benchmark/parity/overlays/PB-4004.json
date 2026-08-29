@@ -3,5 +3,6 @@
   "item_id": "PB-4004",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Equals/NotEquals distinguish present-null, absent, and empty with V1 not-equals matching missing, both focused-tested. Gaps: only exact-mode equality (no analyzed mode), and nested field paths are a documented limit (src/query/model.rs notes 'nested paths are a documented limit'), so EXISTS on nested paths is unmet.",
   "previous_status": "unresolved"
 }

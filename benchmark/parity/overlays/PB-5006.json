@@ -3,5 +3,6 @@
   "item_id": "PB-5006",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The ordered key-value core exists and is tested (canonical key order, cursor-resumed paging, sparse-index seeks in LSM segments), but no table/compact-tree/fixed-size-tree/overflow-value analogue exists and no accepted-difference record disposes the V1 tree and table surface.",
   "previous_status": "unresolved"
 }

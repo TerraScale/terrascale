@@ -3,5 +3,6 @@
   "item_id": "PB-6005",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Bounded ingress, disconnect/reconnect preserving the checkpoint, resending of unacknowledged items, and typed close reasons (subscription_closed on the wire, tagged PB-6005) are implemented and tested, including SSE reconnect resume and engine-process-loss closes in the C# host; the gap is that reconnect is in-process/single-engine only: no cross-member failover, worker takeover, or retry-timing behavior exists for subscriptions, and multi-region qualification is P7 scope.",
   "previous_status": "unresolved"
 }

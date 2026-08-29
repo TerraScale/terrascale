@@ -1,6 +1,8 @@
 {
   "schema_version": "1.0",
   "item_id": "PB-1015",
-  "status": "unresolved",
-  "proof_ids": []
+  "status": "in-progress",
+  "proof_ids": [],
+  "disposition": "Accepted V2 difference per PD-2026-08-28-02: C#/.NET is the only supported client and the network path is typed TBEP over QUIC/TLS and UDS, so the V1 HTTP command wire (RequestExecutor, URL/query/body/raft-header contract) is not the V2 surface; the replacement typed-command seam exists and is tested (the C# client drives the real engine across a restart, and every registry operation carries a parity mapping). The workspace sweep docs/parity/ps-04-transfer-adapters-sweep.md proposed the same exclusion (PD-2026-08-26-10 D4), but it is not yet frozen in parity/adjudications.json, so the disposition should be recorded there. [downgraded by verification: no charter decision names this exclusion]",
+  "previous_status": "unresolved"
 }

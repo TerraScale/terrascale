@@ -3,5 +3,6 @@
   "item_id": "PB-3016",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Out-of-order appends sort by timestamp, range and point deletes, and range-filtered reads are proven, with arity/policy rules typed; the same-timestamp behavior (V1 merges appended values, V2 replaces the point) is untested and undecided against V1, and tag/name casing parity has no test.",
   "previous_status": "unresolved"
 }

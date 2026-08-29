@@ -3,5 +3,6 @@
   "item_id": "PB-3039",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Cross-family composition is proven: documents plus any family writes publish exactly one transaction marker, abort hides every staged family change, counter batches are atomic, and V1 staging order is pinned; the clause requiring replication to expose one coherent transaction marker is unproven - family replication exists only on the superseded plane and for counters/time-series.",
   "previous_status": "unresolved"
 }

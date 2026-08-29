@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-1007",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "The V1 authorization-level taxonomy (ClusterAdmin, Operator, DatabaseAdmin, ValidUser, UnauthenticatedClients, RestrictedAccess), EndpointType read/write checks, and debug markers do not exist anywhere in the tree. Only the binary local gate (401 without backend context) and engine tenant isolation (403, plus TBEP channel tenant binding) exist, and the Platform authorization variants remain unused by design (PD-2026-08-26-11), so there is no behavior for the row's typed-authorization-metadata capability."
 }

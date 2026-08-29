@@ -3,5 +3,6 @@
   "item_id": "PB-3022",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Migration verifies counts and checksums before reporting success and reports an explicit loss matrix with TimeSeries fixture records through a real codec conversion; there is no positive time-series value read-back after migration, and deleted ranges, dead segments, and rollup state are not modeled in fixtures (deleted-range modeling is blocked by PB-3018).",
   "previous_status": "unresolved"
 }

@@ -3,5 +3,6 @@
   "item_id": "PB-4060",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Shard index definitions register on every seated shard (auto namespaces refused), readers report each shard's publication and the least-advanced basis, and partial registration is reported rather than hidden — all focused-tested and consistent with composed query staleness. Per-shard distinct/spatial/score readers cannot exist because those query modes do not exist anywhere; multi-Region failure semantics are P7 qualification.",
   "previous_status": "unresolved"
 }

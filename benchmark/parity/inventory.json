@@ -38,7 +38,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "approved protocol adapter",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "The closed typed adapter exists and is exercised: PublicOperation is a closed registry (no route/body/bytes/SQL/handle/permission variant exists) and the focused tests prove generic payloads, generic routes, and private control-plane operations are rejected while one approved typed operation with stable identity is forwarded and answered. The row's compatibility clause (V1 wire compatibility proven per typed operation) remains an open proof obligation, not missing behavior; the boundary semantics themselves are implemented and tested."
       },
       "public_contract": {
         "parity_required": true,
@@ -58,7 +59,9 @@
         "level": "critical",
         "description": "A broad adapter can bypass authorization, tenant isolation, confirmation, audit, or private-route boundaries."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-001"
+      ]
     },
     {
       "id": "PB-1001",
@@ -75,7 +78,8 @@
       "v2": {
         "owner": "adapter/platform",
         "public_seam": "Platform Adapter",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The Platform seam is real and focused-tested for the clauses it owns: engine-enforced tenant isolation with audited cross-tenant refusal, content-free lifecycle audit, no credential reads, and closed-registry dispatch through the in-process engine port. Authorization, confirmation, and secret-handling policy are deliberately absent at this seam — the module header cites PD-2026-08-26-11 keeping the boundary trusted with CallerDenied/PermissionDenied/ConfirmationRequired/SecretPolicyViolation unused for the future Platform side — so the row's full semantics are not yet met."
       },
       "public_contract": {
         "parity_required": true,
@@ -112,7 +116,8 @@
       "v2": {
         "owner": "unresolved",
         "public_seam": "engine/control-plane separation",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No disposition or accounting artifact for the V1 admin/debug/setup/operations route families exists: parity/adjudications.json carries no adapters-row decision and the V1 families appear only as text inside the contract JSON. V2's own admin surfaces (host /v1/engine/* endpoints, TBEP tier administration) are new capabilities, not mappings of the V1 admin families, so the row's evidence-backed-disposition obligation is unmet."
       },
       "public_contract": {
         "parity_required": true,
@@ -149,7 +154,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "route catalog and typed protocol registry",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No generated inventory of V1 route attributes or method/template pairs exists anywhere in the tree; the 878/563/315 counts live only as prose in the contract's v1_evidence scope. The registry drift tests inventory the V2 TBEP operations against parity rows, which is a different catalog (V2 ops to PB rows, not V1 routes), so the row's required V1 route catalog artifact does not exist."
       },
       "public_contract": {
         "parity_required": true,
@@ -186,7 +192,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "typed route registry",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Typed route registration and dispatch exist at the C# host (TypedApi.MapApi maps method+path to typed handlers gated on backend context, tested) and dispatch through the real engine is proven at the TBEP spine. None of the V1 registration mechanics are implemented: no duplicate-route registration failure, no sharded-handler selection or database-loading wait, and no change-check/usage/request-time route metadata."
       },
       "public_contract": {
         "parity_required": true,
@@ -224,7 +231,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "database protocol adapter",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "A database-scoped typed route family exists (documents GET/PUT/DELETE, query + cancel, families read/write, schemas, migrations, streams, sync sessions) and is tested against the scripted engine, while the engine itself serves documents, V1-compatible queries, and schema declare/status over TBEP against a real durable engine. However, the HTTP routes against the real engine still answer 501 operation_refused (RealEngineTests.TheEngineBackedOperationsAnswerTheTypedRefusal), the attachment, index, and operations route families have no V2 surface, and no per-route public/Platform/private disposition exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -264,7 +272,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "server/admin route classification",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Server-level routes exist behind the local gate (/health, /v1/metrics, /v1/audit, /v1/engine/health|status|topology|shutdown) with tests for gate refusal and supervision behavior. The V1 /admin families (certificates, studio, operations-server, tcp-connection-info) are neither enumerated nor dispositioned, and no V1 authorization-marker or debug-flag classification exists on V2 server routes."
       },
       "public_contract": {
         "parity_required": true,
@@ -303,7 +312,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "typed authorization metadata",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "The V1 authorization-level taxonomy (ClusterAdmin, Operator, DatabaseAdmin, ValidUser, UnauthenticatedClients, RestrictedAccess), EndpointType read/write checks, and debug markers do not exist anywhere in the tree. Only the binary local gate (401 without backend context) and engine tenant isolation (403, plus TBEP channel tenant binding) exist, and the Platform authorization variants remain unused by design (PD-2026-08-26-11), so there is no behavior for the row's typed-authorization-metadata capability."
       },
       "public_contract": {
         "parity_required": true,
@@ -340,7 +350,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "HTTP CORS/preflight adapter",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No CORS or preflight code exists anywhere under host/ or src/ or crates/ (grep for cors/preflight/OPTIONS handling finds nothing). The host registers no OPTIONS routes and emits no CORS headers, so there is no behavior to grade."
       },
       "public_contract": {
         "parity_required": true,
@@ -377,7 +388,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "HTTP method/path dispatcher",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "The host uses only framework-standard MapGet/MapPost/MapPut/MapDelete; the V1 method vocabulary (RESET, TRACE, HEAD, legacy Get), the CONNECT-to-GET WebSocket fallback, and CSRF-safe method classification are all absent. The only adjacent test refuses a plain GET on the WebSocket endpoint rather than exercising a method vocabulary."
       },
       "public_contract": {
         "parity_required": true,
@@ -415,7 +427,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "bounded request-body stream",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No Content-Encoding handling exists: grep for gzip/zstd/Brotli/deflate/content-encoding finds no code and not even a compression dependency in any Cargo.toml. Request bodies are typed JSON or TBEP frames with no encoding negotiation, bounded decompression, or defined unsupported-encoding error."
       },
       "public_contract": {
         "parity_required": true,
@@ -454,7 +467,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "HTTP response compression adapter",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No response-compression behavior exists in the host or the engine (no providers, no Accept-Encoding handling, no HTTPS gating). The TBEP negotiation capability set explicitly omits compression until benchmark receipts justify it, which is a charter deferral of frame compression, not an implementation of this row's HTTP response behavior."
       },
       "public_contract": {
         "parity_required": true,
@@ -492,7 +506,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "streaming protocol adapter",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "The streaming contract is implemented on both sides of the seam with focused tests: engine streams preserve ordering, honor cancellation without leaking locks or buffers, stay bounded under a non-draining consumer, and never block a commit behind a wedged consumer; the host's SSE/WebSocket backbone proves bounded queues with counted drops, exact delivery accounting, checkpointed reconnect, and explicit terminal lifecycle refusal. The framing is V2-native (SSE/WS plus TBEP backbone lanes) per PD-2026-08-28-02 rather than V1 HTTP stream framing, and the distinct long-lived contracts (changes, subscriptions, WebSocket) are separate tested surfaces."
       },
       "public_contract": {
         "parity_required": true,
@@ -514,7 +529,9 @@
         "level": "critical",
         "description": "A stream that loses ordering, ignores cancellation, or buffers without bounds can corrupt results or exhaust resources."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-002"
+      ]
     },
     {
       "id": "PB-1013",
@@ -531,7 +548,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "typed HTTP response contract",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "A typed V2 status/header subset exists and is tested: Results.Json content type, 401 gate refusal, 422 scope refusal, the X-TB-Expected conditional mapped across header cases, SSE Cache-Control: no-cache, and 409/410 conflict/gone rows on sync sessions. No ETag/If-None-Match conditional-304 behavior, no Server-Version or transaction headers, and no wire-level header casing/quoting tests exist, so the V1-shaped contract is only partially covered."
       },
       "public_contract": {
         "parity_required": true,
@@ -569,7 +587,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "typed error adapter",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "A typed error adapter exists: host/TerraBase.Api/TypedApi.cs Failure/SchemaFailure map typed TBEP codes onto 400/401/403/409/410/422/500/501/502/503 with a {code,message} envelope, exercised by focused gate/session/supervision tests. The V1 {Url,Type,Message,Error} envelope shape, the 408-timeout, 425-TooEarly, and moved-database-410-with-cache-control mappings, and full client exception dispatch parity are absent (the C# client surfaces typed TbepException codes only)."
       },
       "public_contract": {
         "parity_required": true,
@@ -607,7 +626,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "typed command/wire adapter",
-        "status": "unresolved"
+        "status": "in-progress",
+        "disposition": "Accepted V2 difference per PD-2026-08-28-02: C#/.NET is the only supported client and the network path is typed TBEP over QUIC/TLS and UDS, so the V1 HTTP command wire (RequestExecutor, URL/query/body/raft-header contract) is not the V2 surface; the replacement typed-command seam exists and is tested (the C# client drives the real engine across a restart, and every registry operation carries a parity mapping). The workspace sweep docs/parity/ps-04-transfer-adapters-sweep.md proposed the same exclusion (PD-2026-08-26-10 D4), but it is not yet frozen in parity/adjudications.json, so the disposition should be recorded there. [downgraded by verification: no charter decision names this exclusion]"
       },
       "public_contract": {
         "parity_required": true,
@@ -645,7 +665,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "topology discovery adapter",
-        "status": "unresolved"
+        "status": "in-progress",
+        "disposition": "Since the P0 pass, a real topology read exists: the TBEP topology.read operation answers the actual binding, subsystems, cluster mode, and (on the cluster host) the real active/backup mode and engine topology, tested over UDS. But no client-side discovery exists — the C# client has no initial-URL discovery loop, no topology ETags or serialized cacheable updates, and no member/promotable/rehab role vocabulary — so the row's client discovery semantics remain unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -682,7 +703,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "member selection policy",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No node-selection or read-balance behavior exists at the client: the C# client targets a single endpoint, and there is no NodeSelector, session-stable selection, failure counter, or fastest-member logic anywhere in the tree. The engine-side read-level surface (local vs regional/global quorum reads with positions) is a different seam and does not implement this row's client selection policy."
       },
       "public_contract": {
         "parity_required": true,
@@ -720,7 +742,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "request retry/failover adapter",
-        "status": "unresolved"
+        "status": "in-progress",
+        "disposition": "The retry-safety half is real and tested: retries carry idempotency keys that replay the recorded receipt (engine spine over UDS, sync sessions), and the client resumes across a hard engine process kill on the same durable location. The failover half is absent: no multi-endpoint client, no V1 status-code retry rules (410 moved, 503/502/timeouts, 425 TooEarly), and no topology/client-configuration ETag or version-exchange headers."
       },
       "public_contract": {
         "parity_required": true,
@@ -758,7 +781,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "versioned TCP protocol adapter",
-        "status": "unresolved"
+        "status": "in-progress",
+        "disposition": "A versioned connection handshake now exists and is tested from both languages: TBEP negotiation_request/response selects the highest common wire version, fails closed with the typed protocol_version_mismatch before any operation frame, and intersects capabilities; the envelope also fails closed on unknown versions, and the C# client negotiates against the real engine. The V1-specific remainder is unimplemented: no per-operation version sets for the V1 TCP operation types (Drop/Subscription/Replication/Cluster/Heartbeats/Ping/TestConnection), no TcpConnectionStatus vocabulary, and no negotiated compression (charter-deferred until benchmarks justify it)."
       },
       "public_contract": {
         "parity_required": true,
@@ -797,7 +821,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "changes stream adapter",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The V2 changes surface implements typed notifications across the V1 kind set (document/index/counter/time-series/operation/database plus conflict) with an explicit V1 parity-mapping table, committed-only visibility, in-order delivery with operation identity and storage sequence, tenant-scoped isolation, and checkpointed reconnect — all focused-tested. Heartbeat events and index-name filter refinement are recorded limits, authorization is engine tenant scope rather than V1 database scope, and the framing is SSE/WS plus TBEP backbone lanes rather than the V1 TCP wire."
       },
       "public_contract": {
         "parity_required": true,
@@ -835,7 +860,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "subscription stream adapter",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The subscription seam implements bounded batches with checkpoint-gated acknowledgement, at-least-once redelivery of unacknowledged items after reconnect, durable checkpoint preservation, duplicate-delivery identifiability, and an explicit terminal close status — all focused-tested. The V1 connection-status vocabulary (Redirect/NotFound/Closed/Invalid/InUse/Accepted), includes, heartbeats, and sharded-subscription routing/ordering have no V2 equivalent, and TBEP/SSE framing replaces the V1 TCP protocol."
       },
       "public_contract": {
         "parity_required": true,
@@ -873,7 +899,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "replication/cluster protocol adapter",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Replication and cluster traffic exist as V2-native leaderless member lanes with focused tests: identity-checked rejoin and catch-up without duplicates, anti-entropy repair, cross-tenant replication probes denied and observable, quorum writes converging after a partition, epoch transitions keeping acknowledged writes, and the cluster served over TBEP separated from customer typed operations. The V1 wire half of the row is unimplemented and superseded: no Rachis/V1 replication or cluster TCP contract or versioned feature gates exist, per PD-2026-08-28-07's leaderless replacement and PD-2026-08-28-02's TBEP boundary; that wire-contract accounting still needs a recorded disposition."
       },
       "public_contract": {
         "parity_required": true,
@@ -911,7 +938,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "PostgreSQL wire adapter",
-        "status": "unresolved"
+        "status": "in-progress",
+        "disposition": "Accepted V2 difference per PD-2026-08-28-02: the database server is Rust with C#/.NET as the only supported client over TBEP on QUIC/TLS and UDS, so a PostgreSQL wire listener serving non-TBEP database clients is outside the accepted support contract; no PostgreSQL wire code exists in the tree (only benchmark reference comparisons in src/benchmarks). PostgreSQL parity itself remains a mandatory, separately-owned benchmark obligation (PD-2026-08-26-03), and the ps-04 sweep's matching exclusion proposal (PD-2026-08-26-10 D4) is not yet frozen in parity/adjudications.json, which should record this disposition. [downgraded by verification: no charter decision names this exclusion]"
       },
       "public_contract": {
         "parity_required": true,
@@ -949,7 +977,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "typed PostgreSQL administration adapter",
-        "status": "unresolved"
+        "status": "in-progress",
+        "disposition": "Accepted with PB-1023 under PD-2026-08-28-02: the PostgreSQL integration whose admin API this row describes has no V2 surface because the accepted client/network contract is C#/.NET over TBEP; administration of a non-existent integration cannot be exposed, and secret-handling policy stays at the Platform seam by PD-2026-08-26-11. The disposition is not yet recorded in parity/adjudications.json (the ps-04 proposal PD-2026-08-26-10 D4 remains unfrozen), which P6 should write. [downgraded by verification: no charter decision names this exclusion]"
       },
       "public_contract": {
         "parity_required": true,
@@ -987,7 +1016,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "embedded engine entry point",
-        "status": "unresolved"
+        "status": "in-progress",
+        "disposition": "Accepted V2 difference per PD-2026-08-28-02 and the charter's product boundary: the Rust process is the database server and terminates TBEP (the C# HTTP host is a transitional adapter, not an embeddable server), so the V1 EmbeddedServer in-process entry point with its child-process lifecycle, URI, and typed store factory is not the V2 packaging. V2's managed-process lifecycle lives in EngineSupervisor and the engine serves through TBEP (the host is even probe-tested to talk to the engine only through the TBEP client); no cdylib/EmbeddedServer-equivalent exists. The matching ps-04/ADR-0005 proposal is not yet frozen in parity/adjudications.json. [downgraded by verification: no charter decision names this exclusion]"
       },
       "public_contract": {
         "parity_required": true,
@@ -1025,7 +1055,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "build identity endpoint",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No build/version identity surface exists: no /build/version route, no Server-Version header exchange, and no commit-hash, product-version, or startup-time identity anywhere in host/, the TBEP registry, or the engine (the registry carries only wire/registry version numbers, and TBEP negotiation exchanges wire versions, not build identity). Nothing implements the row's capability."
       },
       "public_contract": {
         "parity_required": true,
@@ -1063,7 +1094,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "startup/readiness boundary",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "A truthful readiness boundary exists and is tested: the composite /health answers 200 serving vs 503 engine-unavailable (never optimistic), engine loss is clean and recovers without orphaned state, calls during the loss window hear the typed 503 refusal, the restart policy is bounded, and failed startup disposes the spawned engine. The V1 unsafe-mode semantics (503 with HTML/JSON warning with only /debug/server-id allowed through) have no V2 equivalent, and the composite /health is a V2 contract V1 never had — the parent decision and parity case the row demands are still open."
       },
       "public_contract": {
         "parity_required": true,
@@ -1101,7 +1133,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "typed operations adapter",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No operation-ID registry, state, listing, or kill surface for long-running operations exists, and no server-level operation controls; the closest behavior is the typed query.cancel operation with live/already_complete/unknown_query outcomes, which is the GAP-Q12 query-cancellation capability, not the V1 operations contract. Nothing implements the row's capability."
       },
       "public_contract": {
         "parity_required": true,
@@ -1139,7 +1172,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "typed TCP information adapter",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No TCP connection information or management endpoints exist: no /info/tcp, no per-database TCP info, and no remote-task/debug TCP diagnostics anywhere in the tree. The V2 topology reads (/v1/engine/topology and TBEP topology.read) are registry-mapped elsewhere and are not the V1 TCP information contract, so there is no behavior for this row."
       },
       "public_contract": {
         "parity_required": true,
@@ -1177,7 +1211,8 @@
       "v2": {
         "owner": "unresolved",
         "public_seam": "private diagnostic boundary",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No accepted debug-route disposition exists: parity/adjudications.json carries no decision for this row and no artifact accounts for the V1 debug-marked or debug-package routes beyond the contract text. V2 does expose no debug routes and the closed adapter provably cannot forward private control-plane operations, but the row demands a named accepted exclusion with proof, which neither the contract facts nor any charter PD currently provides."
       },
       "public_contract": {
         "parity_required": true,
@@ -1216,7 +1251,8 @@
       "v2": {
         "owner": "unresolved",
         "public_seam": "control-plane exclusion boundary",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "The contract facts themselves state this row has neither a named decision nor proof, and nothing has changed: no accepted control-plane exclusion exists, and the V1 setup/provisioning/certificate-enrollment families have no accounting artifact. V2's own control surfaces (NATS-backed control metadata, host engine admin) are new seams, not dispositions of the V1 setup family, so the row stays open exactly as recorded."
       },
       "public_contract": {
         "parity_required": true,
@@ -1255,7 +1291,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "TLS and certificate authentication hook",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "TLS is now real on both bindings since the P0 pass: the client-facing TBEP QUIC binding serves TLS 1.3 (rustls, fixed ALPN identity, engine-owned server certificate that clients verify), proven over a real socket from Rust and driven from the C# client (the C# QUIC row skips only where the platform lacks msquic), and member lanes use mutual TLS with per-member certificates from a lane CA. Client-certificate authorization on the client path, short-lived tenant tokens, external certificate-validator callbacks, and certificate refresh/lifecycle remain absent (recorded honest limits of P4/P5 landings), so the V1 hook set is only partially covered."
       },
       "public_contract": {
         "parity_required": true,
@@ -1294,7 +1331,8 @@
       "v2": {
         "owner": "unresolved",
         "public_seam": "Platform Adapter and approved protocol boundary",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The no-escape-hatch half is implemented and tested: the closed PublicOperation registry cannot express a raw route, arbitrary command, or generic transport, private control-plane operations are rejected, and the host sources are probe-tested to reach the engine only through the TBEP client with tenant isolation, audited refusals, and credential-free dispatch at the Platform seam. The acceptance half is unfinished: no charter PD names this row's Platform-only-SDK decision, TerraScale.DotNet/TypeScript live outside this tree so their Platform-only consumption is unverifiable here, and the Platform authorization/confirmation/secret-policy variants remain unused (PD-2026-08-26-11)."
       },
       "public_contract": {
         "parity_required": true,
@@ -1331,7 +1369,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The V2 form is the durable Engine plus Session::open, which gates on the engine-validated TenantScope (database selection maps to tenant scope, not V1 named databases) and SessionOptions defaults; open-gating and options are focused-tested and passing. Gap: exactly one synchronous session form — no async session and no session created/disposed hooks, so the V1 lifecycle clause has no counterpart."
       },
       "public_contract": {
         "parity_required": true,
@@ -1367,7 +1406,8 @@
       "v2": {
         "owner": "engine/transactions",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Session::save_changes implements the unit of work: puts/deletes/deferred commands staged in V1 batch order until save, one atomic engine transaction per save, committed-state clearing with deleted-document eviction, and failure preserving session state; all focused-tested. Gap: no asynchronous save form exists anywhere (the C# TBEP client's async ops are single-document, not a session unit of work) and the save-event surface is only the on_after_save hook."
       },
       "public_contract": {
         "parity_required": true,
@@ -1404,7 +1444,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Real conflict/tombstone behavior exists and is tested: content-free tenant-scoped ConflictRecord with recorded policy outcomes, deleted-vs-missing distinction at head, family/backup tombstones, and composed delete-wins convergence (P2). Gap: no V1-style client-visible conflict metadata, 409 load/delete/patch outcomes, or GetConflicts equivalent — conflicts resolve by recorded policy and are engine-side records only; the legacy row's explicit disposition (GAP-D09) remains unrecorded."
       },
       "public_contract": {
         "parity_required": true,
@@ -1441,7 +1482,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "store_generated allocates sequential ids from the collection's identity family inside the save transaction (a vetoed save leaks no identity) and the GAP-F9 HiLo distributor landed with V1 block bounds — both focused-tested. Gap: no ULID identity form exists anywhere in the tree, and convention-based entity-id extraction is decided SDK-side (GAP-D01 row 11) with no implementation."
       },
       "public_contract": {
         "parity_required": true,
@@ -1478,7 +1520,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "DocumentVersionContract (version/sequence/stamp), Transaction::head, and V1ChangeVector parse plus provenance mapping are implemented and focused-tested including across reopen. Gap: no last-modified timestamp and no V1 @metadata dictionary surface exist anywhere (the TQL @last_modified token has no executor), and the V1 change vector is parse/migration-only with no advanced-session accessors."
       },
       "public_contract": {
         "parity_required": true,
@@ -1515,7 +1558,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Session load/load_many implement single-ID loads, identity-map pinning of the loaded instance, and known-missing registration, with batch results in request order — focused-tested. Gap: no async load form or cancellation parameter, and the batch answers Vec<Option> in request order rather than V1's dictionary shape keyed by requested ID."
       },
       "public_contract": {
         "parity_required": true,
@@ -1552,7 +1596,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Transaction::head serves existence/HEAD with distinct Any vs If-Unchanged conditions, missing-vs-deleted distinction, published-view (not staged) reads, and contract survival across reopen — focused-tested. Gap: head lives on the engine Transaction with no session-level Exists convenience, and ULID identities do not exist as a distinct form."
       },
       "public_contract": {
         "parity_required": true,
@@ -1589,7 +1634,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Transaction::load_if_match serves exact version contracts, rejects stale vectors with typed ConditionalLoadError::Stale, rejects the recreated document's stale vector, and the error vocabulary is pinned in a public-contract test. Gap: no session-level, lazy, or async conditional-load forms exist — the capability is engine-Transaction-only."
       },
       "public_contract": {
         "parity_required": true,
@@ -1626,7 +1672,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "store/store_new/store_checked implement the overwrite (Any), create-only (New), and expected-version (Exact) overloads with expectation adoption by a later store, expectation consumption on successful save, and engine-side expected-version enforcement — all focused-tested. Gap: a single synchronous form (no async overloads with cancellation), and the generated-ID store reserves engine-side rather than extracting client-side identities."
       },
       "public_contract": {
         "parity_required": true,
@@ -1663,7 +1710,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "delete/delete_expected stage deferred deletes: loads answer absent after a pending delete, store-then-delete never resurrects on a later save, before-delete veto is atomic, and commit conflicts reject without partial writes — focused-tested. Gap: the delete path is ID-addressed only (no entity-object overload, so V1's changed-entity guard and before-delete listener differences have no direct counterpart test); delete-then-store ordering is a recorded accepted difference."
       },
       "public_contract": {
         "parity_required": true,
@@ -1700,7 +1748,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "refresh replaces tracked state with the current server value (registering newly-missing ids), evict/clear remove tracked plus queued pending state including pending lazy reads, and is_loaded/is_known_missing report identity-map state rather than server existence — all focused-tested. Gap: refresh takes one document at a time; V1's multi-entity refresh overload has no counterpart."
       },
       "public_contract": {
         "parity_required": true,
@@ -1736,7 +1785,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "One-instance-per-document identity-map tracking, has_changes/has_changed, ignore_changes_for (tracked but outside the save), and the NoTracking refusal set — reads answer while every write path refuses, matching V1's throw set — are focused-tested. Gap: no tracked-entity enumeration (tracked_count only) and NoTracking incompatibilities are proven for the Store/SaveChanges paths only."
       },
       "public_contract": {
         "parity_required": true,
@@ -1773,7 +1823,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "what_changed reports field-level old/new values and change types with V1's exact change-type vocabulary, including nested and root type changes and array handling — focused-tested at the session and in public-construction tests. Gap: no per-entity WhatChangedFor report form exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -1810,7 +1861,8 @@
       "v2": {
         "owner": "engine/transactions",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "defer stages typed family commands after document puts in V1 batch order with save-time validation — a deferred command on a session-deleted document refuses the whole save, and deferred identity commands are not document-guarded — focused-tested. Gap: only family-write commands are deferrable (no deferred patch/JSON-patch commands) and there is no no-reply batch flag."
       },
       "public_contract": {
         "parity_required": true,
@@ -1847,7 +1899,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The engine's typed patch implements add/replace/remove/increment with in-order application that sees earlier effects, mid-failure staging nothing, commit rejection leaving the document untouched, and add-or-patch — focused-tested plus public-contract rows. Gap: no session-level Patch or defer integration, no JSON-Patch (RFC 6902) form, and no script patch language (typed paths only, per the recorded patch-language decision)."
       },
       "public_contract": {
         "parity_required": true,
@@ -1884,7 +1937,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The engine IngestStream commits per-batch atomically across batches with bounded memory, create-only refusal without false success, unknown-commit abort, cancellation, and a typed refusal vocabulary — focused-tested. Gap: engine ingest seam only — no store-level BulkInsert writer, no metadata mutation during bulk, and no dynamic collection delegate; the P4 document.batch TBEP op is a bounded atomic multi-put, not a streaming bulk writer."
       },
       "public_contract": {
         "parity_required": true,
@@ -1921,7 +1975,8 @@
       "v2": {
         "owner": "engine/transactions",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Single-node SaveChanges commits the session's whole batch atomically on one member with distinct durability points (Buffered/Written/Synced, focused-tested), and the mode contract is observable — mode fixed at open with ClusterWide failing closed, a recorded GAP-D01 accepted difference. Gap: the sharded single-bucket and non-transactional multi-bucket variants live only at the sharding coordination seam (Atomic vs PerShard outcomes); the session has no sharding integration."
       },
       "public_contract": {
         "parity_required": true,
@@ -1958,7 +2013,8 @@
       "v2": {
         "owner": "engine/transactions",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Since the P0 sweep, real cluster transactions exist at the composed seam (P2-P5): coordinate_composed_transaction heals to the frontier fixed point, evaluates coordinated constraints, fans at GlobalQuorum, and refuses under partition; ClusterHost client_write coordinates leaderless writes with ack-level receipts. Gap: the document session's ClusterWide mode still fails closed (SessionError::ClusterWideUnavailable) so no session runs a cluster-wide save, V1 leader/index waits are superseded by the leaderless charter (PD-2026-08-28-07), and per-data-family mode restrictions are unmapped."
       },
       "public_contract": {
         "parity_required": true,
@@ -1995,7 +2051,8 @@
       "v2": {
         "owner": "engine/transactions",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The compare-exchange family stages PutIfIndex/PutIfMissing conditions with typed stale-index failure and expiry hiding expired values — focused-tested. Gap: single-key read only (no get-many, prefix paging, delete-by-index, or lazy/async forms), and a stale index fails only the family write inside the local transaction rather than an encompassing cluster transaction."
       },
       "public_contract": {
         "parity_required": true,
@@ -2032,7 +2089,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Pending lazy reads register without executing, resolve as one batched load per collection on execute_all_pending_lazy_operations and again at save, and are removed by evict/clear — focused-tested with an observable batch counter. Gap: registration only — no value-returning lazy handle, no lazy conditional loads, and no async cancellation forms."
       },
       "public_contract": {
         "parity_required": true,
@@ -2069,7 +2127,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The query seam materializes document, counter, and time-series includes in the same request, walking nested paths and flattening arrays, omitting unresolved references and the row's own document — focused-tested. Gap: includes live on the query seam only (no session Load-with-include form exists in src/session) and V1 dictionary key/value include paths have no direct mapping test."
       },
       "public_contract": {
         "parity_required": true,
@@ -2106,7 +2165,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No request cache, aggressive-caching scope, conditional-revalidation consumer, or change-driven eviction exists anywhere in src/, crates/, or host/ — the only caches in src/ are query plan-selection caches, not document response caches. GAP-D01 routes this capability SDK-side under PD-2026-08-26-12 (engine supplies freshness primitives only: head/conditional load, publication events), but the SDK repositories remain untouched by charter, so there is no behavior and nothing to test in this tree."
       },
       "public_contract": {
         "parity_required": true,
@@ -2143,7 +2203,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "approved protocol adapter",
-        "status": "unresolved"
+        "status": "in-progress",
+        "disposition": "Upgraded from the P0 sweep's unresolved: P4 landing 11 added real client retry/resume — TbepClient.Reconnect re-binds the same principal and tenant, and the engine's durable idempotency ledger makes a retried idempotency key replay exactly one commit, proven from C# across a hard process kill; CommitError::retry_disposition is a closed replay-safety mapping. Gap: the client holds no topology state — no per-request member selection, no topology update from server responses, and no AllTopologyNodesDown-equivalent typed failure (cluster topology is served via topology.read but the client never fails over across members)."
       },
       "public_contract": {
         "parity_required": true,
@@ -2180,7 +2241,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Session stream_documents serves ordered canonical batches with terminal completion and load_starting_with pages by prefix and match over the streaming seam, with cursor resume, prompt cancellation, and bounded memory proven at that seam; projections stay a separate query-seam source as the row requires. Gap: no destination-buffer into-stream forms (V1 LoadStartingWithIntoStream/QueryIntoStream), and numeric start maps to cursor skipping — a recorded GAP-D01 accepted difference."
       },
       "public_contract": {
         "parity_required": true,
@@ -2217,7 +2279,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The streaming subscription seam observes only committed publication events, filters by document, prefix, and collection (ChangeFilter), keeps durable checkpoints, resends unacknowledged items after reconnect, and reports drops without advancing the checkpoint — focused-tested. Gap: SubscriptionStatus is delivery state, not V1's connection-state machine (database-missing/fault/disposed), and delivery is engine-journal-driven at-least-once with no topology-aware client reconnect."
       },
       "public_contract": {
         "parity_required": true,
@@ -2254,7 +2317,8 @@
       "v2": {
         "owner": "adapter/protocol",
         "public_seam": "approved protocol adapter",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The engine keeps a typed, non-collapsed error taxonomy with durable idempotent resolution of unknown outcomes (focused-tested), cancellation is enforced at the ingest and query seams and on the wire (query.cancel, overload gate), and TBEP carries 22 typed error codes. Gap: no V1 exception-taxonomy mapping (DocumentDoesNotExist/DocumentConflict/BulkInsertAborted/AllTopologyNodesDown) on any client wire surface, and per-operation replay-safety declarations exist only as the engine-side retry_disposition, not an enumerated contract."
       },
       "public_contract": {
         "parity_required": true,
@@ -2291,7 +2355,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The revisions family implements paging and revert with snapshot identity, policy trimming, V1 field shapes, collection→default→disabled policy resolution, and V1-derived limits — focused-tested including public-contract rows. Gap: no session revision access and no revision includes (IncludeRevisionsByChangeVector equivalent), revision conflict/replication visibility is untested, and the engine-document-contract vs data-family ownership adjudication (GAP-D17) is not recorded."
       },
       "public_contract": {
         "parity_required": true,
@@ -2328,7 +2393,8 @@
       "v2": {
         "owner": "engine/document",
         "public_seam": "document engine and transactions",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Three pre-commit lifecycle hooks exist with a cannot-partially-commit contract — before-store (value mutation plus veto), before-delete (veto), after-save (operation and sequence observation) — focused-tested. Gap: only these three of V1's hook points exist; there are no query, request success/failure, topology-update, or session-disposing hooks, and conversion hooks are a recorded accepted difference (typed documents, SDK-side mapping per GAP-D01) rather than implemented behavior."
       },
       "public_contract": {
         "parity_required": true,
@@ -2365,7 +2431,8 @@
       "v2": {
         "owner": "unresolved",
         "public_seam": "control-plane separation",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No maintenance-operation executor, server/database statistics, database-record, ongoing-task, or server/database lifecycle adapter exists, and the row's own ownership adjudication (GAP-D18: splitting V1's maintenance inventory into engine-owned vs control-plane operations) is not recorded anywhere in docs/ or parity/. Adjacent V2-native surfaces exist — tier administration and engine-owned index rebuild scheduling — but neither is the V1 maintenance-operation parity surface, and ADR 0002 records only the general engine/Platform/control-plane separation, not this row's inventory."
       },
       "public_contract": {
         "parity_required": true,
@@ -2402,7 +2469,8 @@
       "v2": {
         "owner": "engine/families/attachments",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Store/Delete/Rename/Copy/Move are staged, validated, and focused-tested (duplicate-name typed, one-record same-document copy/move, ordered metadata enumeration with tenant scoping), but AttachmentMetadata carries name/content-type/size/hash/document only - the contract-listed change-vector metadata semantic is wholly absent from the surface."
       },
       "public_contract": {
         "parity_required": true,
@@ -2440,7 +2508,8 @@
       "v2": {
         "owner": "engine/families/counters",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Signed 64-bit increment/delete/one-many-group reads with missing-as-None, significant casing, tombstoned recreation failing closed, and cross-tenant refusal are tested; no change vector is returned with values, the V1 @counters document-metadata flag has no V2 counterpart, and no test asserts that a counter change creates no revision."
       },
       "public_contract": {
         "parity_required": true,
@@ -2480,7 +2549,8 @@
       "v2": {
         "owner": "engine/families/attachments",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The content plane (GAP-F01) landed: whole-content reads, V1 RangeHelper-style range normalization (open-ended clamp, suffix, unsatisfiable typed errors), bounded segment-crossing readers, digest validation, dedup, and explicit size limits are all focused-tested; ordered multi-attachment content enumeration with skip and read-after-disposal error distinctions remain untested."
       },
       "public_contract": {
         "parity_required": true,
@@ -2517,7 +2587,8 @@
       "v2": {
         "owner": "engine/families/attachments",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Attachment mutations compose with document and counter writes in one transaction marker, abort hides all staged family changes, and V1 batch staging order is pinned; no bulk-insert attachment path exists and there is no client input-stream validation model (non-readable/non-zero-position/lengthless streams are a V1 client concept with no V2 counterpart yet)."
       },
       "public_contract": {
         "parity_required": true,
@@ -2556,7 +2627,8 @@
       "v2": {
         "owner": "engine/families/attachments",
         "public_seam": "data families",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No attachment replication path exists: src/replication contains no attachment handling (commit_family_write merge-special-cases counter records only) and attachment change payloads exist solely as streaming notifications, not replication; no focused test."
       },
       "public_contract": {
         "parity_required": true,
@@ -2594,7 +2666,8 @@
       "v2": {
         "owner": "engine/families/attachments",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Revision snapshots capture attachment references (name, content type, size, content digest) at snapshot time and revert re-puts references by digest exactly as V1 does, with stale-version snapshot refusal tested; no revision-scoped historical attachment-content (byte) read test exists and revision/attachment replication is absent (PB-3028)."
       },
       "public_contract": {
         "parity_required": true,
@@ -2633,7 +2706,8 @@
       "v2": {
         "owner": "engine/families/attachments",
         "public_seam": "data families",
-        "status": "unresolved"
+        "status": "in-progress",
+        "disposition": "Sharding exists as a real subsystem but carries no family routing: family-source queries refuse sharded execution before routing (explicit, tested refusal rather than silent misrouting), while attachment operation routing and shard-local attachment counts do not exist."
       },
       "public_contract": {
         "parity_required": true,
@@ -2671,7 +2745,8 @@
       "v2": {
         "owner": "engine/families/attachments",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The smuggler round-trips family records (attachment metadata and segment records are reserved-collection records) with manifest counts/digests, tamper/digest/truncate rejection, idempotent and resumable import, and migration converts Attachment records with an explicit loss matrix; no attachment-content fixture rides the smuggler round-trip test and no incremental export exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -2709,7 +2784,8 @@
       "v2": {
         "owner": "engine/families/attachments",
         "public_seam": "data families",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No remote-destination configuration, remote flags, credential handling, schema update, or transfer-error code exists anywhere under src/; the contract itself records this as unresolved ('Remote storage remains unresolved until an approved adapter and secret-handling contract exists; no V1 exclusion is implied'), so it is an open gap, not an accepted exclusion."
       },
       "public_contract": {
         "parity_required": true,
@@ -2747,7 +2823,8 @@
       "v2": {
         "owner": "engine/families/counters",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "One batch stages increment, delete, and recreate atomically (values verify after commit), a mid-batch overflow stages nothing, tombstoned-name recreation fails closed, and transaction abort plus V1 staging order are proven; tests verified passing at HEAD 5c041b8. Residual deltas (V1 exception-identity mapping, replication acknowledgement default) are adapter/cross-cutting concerns the contract itself holds open."
       },
       "public_contract": {
         "parity_required": true,
@@ -2768,7 +2845,9 @@
         "level": "critical",
         "description": "Partial counter batches produce totals no client can reconcile."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-003"
+      ]
     },
     {
       "id": "PB-3010",
@@ -2785,7 +2864,8 @@
       "v2": {
         "owner": "engine/families/counters",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Counter family queries are real: entry rows across documents, named restriction, predicate/ordering over entry fields, paging, includes matching direct reads, and index definitions accepting counters map sources with V1 identity spelling; no counter map/map-reduce index is maintained (family sources fail closed as index-less)."
       },
       "public_contract": {
         "parity_required": true,
@@ -2823,7 +2903,8 @@
       "v2": {
         "owner": "engine/families/counters",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Counter merge semantics are implemented and lane-proven (concurrent increments merge to the union total, delete wins, duplicate delivery idempotent, rejoin preserves totals, plus associative/idempotent merge and forged-sequence fail-closed unit proofs), but all of it rides the superseded leader-per-range member plane (src/replication/member.rs), not the P2 leaderless coordinators; Unicode-name/split-group scenarios and the contract's unresolved acknowledgement-level policy remain open."
       },
       "public_contract": {
         "parity_required": true,
@@ -2862,7 +2943,8 @@
       "v2": {
         "owner": "engine/families/counters",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The engine-local tombstone guard (a recorded tombstone newer than the writer's view rejects before any other answer) and retention floors that never advance past the slowest consumer are tested; sharded routing of counter groups and cross-member tombstone-cleaner coordination do not exist."
       },
       "public_contract": {
         "parity_required": true,
@@ -2900,7 +2982,8 @@
       "v2": {
         "owner": "engine/families/counters",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Migration writes counters only through the engine transaction seam with the V1 value asserted to arrive, smuggler round-trips family records with checksums, and imports apply tombstones as engine deletes; no restored-store replication convergence test (V1 RestoreAndReplicate equivalents) exists, so restored totals replicating without change is unproven."
       },
       "public_contract": {
         "parity_required": true,
@@ -2938,7 +3021,8 @@
       "v2": {
         "owner": "engine/families/counters",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Counter change events carry a typed counters payload (name, total, shape, record version, bounded entries) proven through replay and live delivery, with checkpoint-not-advancing-before-ack and resend-after-reconnect; no document-metadata counter notification (V1 @counters flag concept) exists and no counter-specific backpressure test exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -2976,7 +3060,8 @@
       "v2": {
         "owner": "engine/families/counters",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Overflow is a typed failure that never wraps, clamps, or commits a partial increment (checked_add, abort-before-staging), merged totals failing closed on overflow, malformed names/fields rejected at construction, and missing-document distinct from malformed/conflict errors; tests verified passing. V1's artificial-document target class has no V2 counterpart (no artificial documents exist in the model) and exception-identity mapping is adapter territory."
       },
       "public_contract": {
         "parity_required": true,
@@ -2997,7 +3082,9 @@
         "level": "critical",
         "description": "Numeric wraparound is silent corruption and invalidates replication merges."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-004"
+      ]
     },
     {
       "id": "PB-3016",
@@ -3013,7 +3100,8 @@
       "v2": {
         "owner": "engine/families/time-series",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Out-of-order appends sort by timestamp, range and point deletes, and range-filtered reads are proven, with arity/policy rules typed; the same-timestamp behavior (V1 merges appended values, V2 replaces the point) is untested and undecided against V1, and tag/name casing parity has no test."
       },
       "public_contract": {
         "parity_required": true,
@@ -3052,7 +3140,8 @@
       "v2": {
         "owner": "engine/families/time-series",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Range-window-bounded reads, bounded cursor-stable paging chained to exhaustion, multi-series enumeration, includes through the family seam, retention-horizon reads, and ordered streaming are all tested (the GAP-F04 paging half landed); the V1 include metadata shape (From/To/Entries/TotalResults - no totals exist in pages), multiple-ranges-in-one-request, and cancellation-specific range parity remain untested."
       },
       "public_contract": {
         "parity_required": true,
@@ -3091,7 +3180,8 @@
       "v2": {
         "owner": "engine/families/time-series",
         "public_seam": "data families",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No incremental time-series arithmetic exists: appends carry absolute value vectors, there is no add/subtract-at-timestamp operation, no same-timestamp merge rule, and no full-vs-raw result distinction; the 'incremental encoding' note in the timeseries module is rollup recompute-replace (decision D2), not incremental series."
       },
       "public_contract": {
         "parity_required": true,
@@ -3129,7 +3219,8 @@
       "v2": {
         "owner": "engine/families/time-series",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The execution half landed (GAP-F04): rollup windows align and stop at now, per-column aggregations match policy, rerun extends/preserves prior windows, policy change prunes, retention drops pre-horizon entries and trims rollups, and run order is V1's rollups-then-retention; policy-frequency/replay configuration and collection-scoped configuration state (V1 TimeSeriesConfiguration per collection) are absent - policies are per-series with caller-driven ticks."
       },
       "public_contract": {
         "parity_required": true,
@@ -3168,7 +3259,8 @@
       "v2": {
         "owner": "engine/families/time-series",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Time-series query sources are real (entry rows with series cursors, paging, range windows, includes through the family seam) and index definitions accept timeSeries map sources with V1 identity spelling; aggregation/grouping/scale query forms, JS projections, and maintained time-series indexes (sources fail closed index-less) do not exist."
       },
       "public_contract": {
         "parity_required": true,
@@ -3206,7 +3298,8 @@
       "v2": {
         "owner": "engine/families/time-series",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Time-series records replicate by decided whole-record last-writer-wins (decision D4 in docs/families/counter-merge-encoding.md, pinned by a test so the exclusion is observable, never silent) and retention observes the tombstone evidence window; V1's segment split/merge, out-of-order value merge, deleted-range replication, and tombstone cleaner do not exist, and the lane machinery is the superseded leader-per-range plane."
       },
       "public_contract": {
         "parity_required": true,
@@ -3245,7 +3338,8 @@
       "v2": {
         "owner": "engine/families/time-series",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Migration verifies counts and checksums before reporting success and reports an explicit loss matrix with TimeSeries fixture records through a real codec conversion; there is no positive time-series value read-back after migration, and deleted ranges, dead segments, and rollup state are not modeled in fixtures (deleted-range modeling is blocked by PB-3018)."
       },
       "public_contract": {
         "parity_required": true,
@@ -3283,7 +3377,8 @@
       "v2": {
         "owner": "engine/families/time-series",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Time-series change events carry typed segment-summary payloads proven through replay and live delivery under the checkpointed/acknowledged subscription rules; subscription include-ranges (V1's last n by count/time or all entries in document batches) are not implemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -3321,7 +3416,8 @@
       "v2": {
         "owner": "engine/families/time-series",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "The time-series error taxonomy is typed, distinct, and focused-tested: arity and policy rules, name-separator rejection (one series cannot alias another document's series), inverted/pre-horizon range rejection, validated paging bounds, unknown-rollup refusal, and family-source composition refusals; tests verified passing. Residual delta is V1 exception-identity mapping (adapter concern) and a couple of bulk-request edge shapes."
       },
       "public_contract": {
         "parity_required": true,
@@ -3342,7 +3438,9 @@
         "level": "high",
         "description": "Collapsing time-series failures makes retries unsafe and hides malformed data."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-005"
+      ]
     },
     {
       "id": "PB-3025",
@@ -3358,7 +3456,8 @@
       "v2": {
         "owner": "engine/families/revisions",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Paged snapshot reads with totals, forced snapshot creation with expected-version refusal, and revert (restoring value and attachment references, unknown references typed) are tested, with collection policies validated against V1 field shapes; revision includes in queries, collection statistics, single-revision get, and the deleted/orphaned-revision distinction beyond the bin page are absent, and revert keys on the V2 revision contract rather than a V1 change vector."
       },
       "public_contract": {
         "parity_required": true,
@@ -3396,7 +3495,8 @@
       "v2": {
         "owner": "engine/families/revisions",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Far past the P0 hypothesis: collection and database-default policies validate V1 field shapes, the revisions bin lists deleted documents past the age and its cleaner purges eligible entries atomically while refusing live documents, minimum-age floors and per-update caps hold, and purge-on-delete is configurable; conflict-revision configuration (GAP-F07 note in src/families/revisions.rs) and start-from-etag semantics remain absent."
       },
       "public_contract": {
         "parity_required": true,
@@ -3435,7 +3535,8 @@
       "v2": {
         "owner": "engine/families/revisions",
         "public_seam": "data families",
-        "status": "unresolved"
+        "status": "in-progress",
+        "disposition": "Content-free conflict audit metadata exists and is tested (ConflictRecord carries tenant, operation identities, writers, clocks, and outcome; events never carry document contents), which serves the row's audit clause; the central revision-conflict states - resolved flags, revision tombstones, deleted revisions, conflict vectors - do not exist, and the conflict machinery sits on the superseded replication plane."
       },
       "public_contract": {
         "parity_required": true,
@@ -3474,7 +3575,8 @@
       "v2": {
         "owner": "engine/families/revisions",
         "public_seam": "data families",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No revision or revision-tombstone replication path or test exists: src/replication merge-special-cases counter records only, and migration carries revision records locally (latest-only policy collapse) without any transfer/convergence contract for history."
       },
       "public_contract": {
         "parity_required": true,
@@ -3513,7 +3615,8 @@
       "v2": {
         "owner": "engine/families/compare-exchange",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Engine-local conditional semantics are implemented and tested (PutIfIndex/PutIfMissing/DeleteIfIndex against a monotonic index, stale index typed, deleted values hidden, keys validated); the row's cluster-wide scope is explicitly held open by the contract itself ('Ownership remains unresolved between engine and control plane'), and no oversized-key or concurrent-writer race test exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -3552,7 +3655,8 @@
       "v2": {
         "owner": "engine/families/compare-exchange",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Expiry is enforced at read and staging with the retained index still rejecting stale writers (a concurrent conditional advance is structurally never un-done by expiry), and migration carries a CompareExchange fixture record; batch compare-exchange commands (one key per request today), an expiry cleanup job, and an expiry-vs-conditional-advance race test are absent."
       },
       "public_contract": {
         "parity_required": true,
@@ -3589,7 +3693,8 @@
       "v2": {
         "owner": "engine/families/identities",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "V1's Hi-Lo generator moved engine-side as HiLoDistributor with the V1 block floor/ceiling, first-allocation transition burn, mint-only-after-loss-surviving-acknowledgement, burned (never re-handed) tails, ceiling refusal not wraparound, monotonic allocation with forced backwards seeding, typed exhaustion, and next-value listing (identities_read); cross-member non-reuse is proven in src/replication/hilo_tests.rs. Tests verified passing; the only untested corner is a same-member concurrent-allocator race."
       },
       "public_contract": {
         "parity_required": true,
@@ -3611,7 +3716,9 @@
         "level": "critical",
         "description": "Duplicate identities overwrite documents; unsafe force-seeding can move counters backwards."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-006"
+      ]
     },
     {
       "id": "PB-3032",
@@ -3628,7 +3735,8 @@
       "v2": {
         "owner": "engine/families/identities",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Identity state survives member loss (dead owners' blocks never re-handed, deposed owners cannot allocate after the replacement appears, tails burned) and migration asserts identity seed arrival; sharded identity routing does not exist (sharding carries no family routing), and no restore-then-allocate rollback test or listing/debug authorization path exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -3665,7 +3773,8 @@
       "v2": {
         "owner": "engine/families/lifecycle",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "The lifecycle execution engine is real and focused-tested: the pass deletes expired documents and records evidence, skips documents changed after the plan, refresh consumes its marker leaving expiry untouched, expired documents are invisible before and after the pass, updates never resurrect deleted documents, and the pass is tenant-scoped; execution is caller-driven passes (recorded decision - the synchronous engine owns no clock), and V1's cleanup batch-limit configuration has no counterpart."
       },
       "public_contract": {
         "parity_required": true,
@@ -3688,7 +3797,9 @@
         "level": "critical",
         "description": "Expiry races can expose deleted data or delete a document a concurrent refresh should retain."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-007"
+      ]
     },
     {
       "id": "PB-3034",
@@ -3705,7 +3816,8 @@
       "v2": {
         "owner": "engine/families/data-archival",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Typed archival state round-trips and the execution pass materializes schedules then archives due documents tenant-scoped, with stale family records cleared when the owner is gone; the clause-1 semantics of preserving archived metadata through document updates and reprocessing, archive-at parsing, batch limits, and compression have no tests or behavior."
       },
       "public_contract": {
         "parity_required": true,
@@ -3744,7 +3856,8 @@
       "v2": {
         "owner": "engine/families/data-archival",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Two interactions are contracted and tested (full backup/restore reproduces archived state and expired deletions; an incremental chain replays pass deletions on restore) plus owner-gone family-record clearing; the row requires an independent contract per interaction, and index, patch, replication, sharding, subscription, and revision interactions are absent."
       },
       "public_contract": {
         "parity_required": true,
@@ -3783,7 +3896,8 @@
       "v2": {
         "owner": "engine/families/schema-validation",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Validation is enforced at the engine put seam (violating write refused typed, nothing staged), collection-scoped policies reject malformed definitions and duplicated enums, on-demand validation reads work, and P3 added the three schema modes plus P4's schema.declare/status/validate over UDS; the rule set is a bounded subset (Required/FieldType/EnumValues/NumberRange/TextLength) - V1's references, conditionals, patternProperties, arrays, and additional-properties are rejected rather than supported, with no recorded charter decision and no V1 error-detail parity tests."
       },
       "public_contract": {
         "parity_required": true,
@@ -3823,7 +3937,8 @@
       "v2": {
         "owner": "engine/families/schema-validation",
         "public_seam": "data families",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "The indexing/sharding half has no behavior: nothing under src/query or src/index consults a validation policy during indexing, there is no validator cache, and no sharded validator routing exists; write-time enforcement belongs to PB-3036's evidence, and the query-plane quarantine gate is recorded as open P4/P6 work in docs/design/p0-implementation-state.md section 11."
       },
       "public_contract": {
         "parity_required": true,
@@ -3862,7 +3977,8 @@
       "v2": {
         "owner": "engine/families/conflicts-tombstones",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Typed family tombstones exist with the guard outranking every other answer (stale local resurrection blocked, explicit clear unblocks), and replication retention floors prove cleanup waits for the slowest consumer with newest-evidence-only retention; tombstones carry kind/document/deletion-version/time but not V1's etags/change vectors/collection/flags, they are not recorded automatically on every family delete path, and no cross-member cleaner coordination test exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -3902,7 +4018,8 @@
       "v2": {
         "owner": "engine/families/transactions",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Cross-family composition is proven: documents plus any family writes publish exactly one transaction marker, abort hides every staged family change, counter batches are atomic, and V1 staging order is pinned; the clause requiring replication to expose one coherent transaction marker is unproven - family replication exists only on the superseded plane and for counters/time-series."
       },
       "public_contract": {
         "parity_required": true,
@@ -3941,7 +4058,8 @@
       "v2": {
         "owner": "engine/families/query-index",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Family query sources for counters and time-series are implemented and tested (entry rows, predicates, paging, includes matching direct reads, public compilation seam, index definitions accepting family map sources with mixed/overlapping refusal); no family index is maintained (family_source_refuses_index_staleness_policy - sources fail closed index-less), there is no map-reduce, and attachments/revisions/compare-exchange are not queryable."
       },
       "public_contract": {
         "parity_required": true,
@@ -3980,7 +4098,8 @@
       "v2": {
         "owner": "engine/families/changes-subscriptions",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Typed change payloads exist for counters, time-series (segment summaries), and attachments (content-addressed metadata) and round-trip through replay and live delivery under bounded, acknowledged, checkpointed subscriptions with at-least-once identifiable duplicates and document-body refusal; the other family kinds never mint payloads (pinned by test rather than silently dropped), and per-family include/filter delivery is untested."
       },
       "public_contract": {
         "parity_required": true,
@@ -4019,7 +4138,8 @@
       "v2": {
         "owner": "adapter/platform-family-access",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The engine-side obligations are implemented and tested at the Platform adapter (family read/write dispatch end to end, cross-tenant probe denied and audited, no credentials read, refusals recorded with the typed category) plus engine-enforced tenant scoping; per-family stream, backup/import, and replication-administration authorization paths are untested, and V1's HTTP family-handler surface is replaced by the TBEP seam (PD-2026-08-28-02) - AGENTS.md still cites PD-2026-08-26-11 placing customer auth and PB-3042 at the TerraScale Platform, but that decision is absent from the current GOAL.md register, so this is not graded an accepted exclusion."
       },
       "public_contract": {
         "parity_required": true,
@@ -4059,7 +4179,8 @@
       "v2": {
         "owner": "engine/families/streaming",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Bounded streaming is proven: family streams reuse bounded family readers, memory stays bounded under a non-draining consumer, backpressure never blocks an engine commit, cancellation closes promptly without leaked locks or buffers, and the attachment plane enforces explicit limits (64 KiB segments, 8 MiB content ceiling) with typed over-limit errors; no huge-file/stress-scale attachment test exists (V1 BigFiles/HugeFiles; the 8 MiB V2 ceiling is an explicit refusal with no charter decision), and position/partial-consumption semantics are only partially asserted."
       },
       "public_contract": {
         "parity_required": true,
@@ -4098,7 +4219,8 @@
       "v2": {
         "owner": "engine/families/replication-sharding",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Family replication is real only for counters (merge encoding) and time-series (decided whole-record LWW) with rejoin/preservation proofs, but it rides the superseded leader-per-range member plane (src/replication/member.rs) rather than the P2 leaderless coordinators, which carry documents only; there is no family-aware shard routing (family queries refuse sharded execution), attachment/revision/compare-exchange replication is untested, and the contract's acknowledgement levels remain unresolved - fault/convergence qualification is P7 regardless."
       },
       "public_contract": {
         "parity_required": true,
@@ -4139,7 +4261,8 @@
       "v2": {
         "owner": "engine/families/backup-migration",
         "public_seam": "data families",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The logical-migration path is strong and tested: V1 export manifest validation before any write, counts/checksums verified before success, explicit loss matrix, resumable/interruptible and idempotent migration and import, no-direct-V1-file-open claim, V1 change-vector provenance recorded with fail-closed malformed handling, and tampered/truncated-input rejection; family-specific V1 typed errors (AttachmentDoesNotExist, InvalidAttachmentRange, RevisionsDisabled) are not mapped to V1 shapes in transfer, revision/conflict transfer is shallow, and no attachment-content fixture rides the smuggler round-trip."
       },
       "public_contract": {
         "parity_required": true,
@@ -4178,7 +4301,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "One typed compile/execute seam (typed spec, V1-compatible text, TQL) with typed errors and positions exists and is served over TBEP, all tested and passing. The result-shape bullet is still short of V1: result metadata lacks the V1 index-name string, timestamp, and node tag, and the result-kind set excludes map-reduce/facet/suggestion outputs (tracked by PB-4025/4018/4019)."
       },
       "public_contract": {
         "parity_required": true,
@@ -4215,7 +4339,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "StaticIndexDefinition with identity/comparison/multi-map/reduce/output-rule validation exists and is tested, but it is not wired into the engine catalog/optimizer: the catalog registers the seam-local optimizer::IndexDefinition field lists, so a static definition never serves a query. Planning itself (selection, auto-index creation) is real and tested."
       },
       "public_contract": {
         "parity_required": true,
@@ -4252,7 +4377,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "QuerySource selects collection or named-index sources (mutually exclusive), and FROM aliases are retained through WHERE/ORDER/SELECT/LOAD lowering with dedicated tests. Map-reduce source mode fails closed (GROUP BY is not lowered) and index-name sources reach the optimizer only through staleness-policy namespaces; note docs/tql/rql-mapping.md records 'from index' as only a PROPOSED accepted difference under PD-2026-08-26-09, not a charter-accepted one, so the row stays in scope."
       },
       "public_contract": {
         "parity_required": true,
@@ -4288,7 +4414,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "Or/Not/parentheses parse into the TQL AST but lowering fails closed with UnsupportedForPlanning, and the executable QueryCondition set is a flat conjunction only — no disjunction or negation is ever executed. This is a fail-closed stub, not behavior: no boolean precedence or negation semantics exist at the seam."
       },
       "public_contract": {
         "parity_required": true,
@@ -4324,7 +4451,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Equals/NotEquals distinguish present-null, absent, and empty with V1 not-equals matching missing, both focused-tested. Gaps: only exact-mode equality (no analyzed mode), and nested field paths are a documented limit (src/query/model.rs notes 'nested paths are a documented limit'), so EXISTS on nested paths is unmet."
       },
       "public_contract": {
         "parity_required": true,
@@ -4360,7 +4488,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "In (any-match over scalar and array fields) and AllIn (every listed value, empty list as V1's TrueToken) are implemented at the seam, in the TQL grammar (in-any/in-all), and pinned by a focused test covering scalar/array/absence and empty-list semantics. Only the V1 client builder spellings (ContainsAny/ContainsAll helpers) have no equivalent in the C# raw-text client."
       },
       "public_contract": {
         "parity_required": true,
@@ -4380,7 +4509,9 @@
         "level": "high",
         "description": "Wrong any/all semantics can over-select records without producing an execution error."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-008"
+      ]
     },
     {
       "id": "PB-4006",
@@ -4396,7 +4527,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Inclusive BETWEEN with V1 null-bound semantics plus exact numeric/date/string ordering across integer and number domains are implemented and focused-tested at the seam and in TQL. The cross-engine agreement clause is vacuous today because V2 has exactly one index engine (engine selection is PB-4052, unresolved)."
       },
       "public_contract": {
         "parity_required": true,
@@ -4417,7 +4549,9 @@
         "level": "high",
         "description": "Boundary and type-coercion differences create silent result drift."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-009"
+      ]
     },
     {
       "id": "PB-4007",
@@ -4433,7 +4567,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "StartsWith/EndsWith/Contains are implemented with V1 exact-mode case-sensitive matching over string and array fields, focused-tested. Regex is absent: the TQL registry rejects it (docs/tql/rql-mapping.md R42 records regex only as a PROPOSED accepted difference, not charter-accepted), so a named predicate mode of this row is unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -4469,7 +4604,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No search predicate exists in QueryCondition or execution; TQL search() is capability-gated and fails closed with CapabilityUnavailable against the engine that reports no capability. Only the unwired analyzer foundation (src/query/analyzer.rs) exists, which is PB-4048's foundation, not search execution."
       },
       "public_contract": {
         "parity_required": true,
@@ -4506,7 +4642,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No fuzzy, proximity, phrase, or boost execution anywhere; the gated registry functions fail closed. docs/tql/rql-mapping.md rows R44/R45 record fuzzy/proximity only as proposed accepted differences not yet accepted by the charter, so the row remains an open obligation."
       },
       "public_contract": {
         "parity_required": true,
@@ -4542,7 +4679,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Intersection-of-matches semantics are real and tested: the seam executes a conjunction of clauses as their intersection (the V1 Intersect meaning). There is no INTERSECT grammar surface (the registry rejects it as an unknown function) and no malformed-intersect error shape, so the row's grammar-level contract is unmet."
       },
       "public_contract": {
         "parity_required": true,
@@ -4577,7 +4715,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Typed TqlParameters bind name-to-DocumentValue values with strict pairing in both directions (missing and unused both fail closed), focused-tested and exercised by the parity vectors. The V1 '$'-prefixed parameter form is not accepted anywhere — the V1-compatible grammar has no parameter clause at all."
       },
       "public_contract": {
         "parity_required": true,
@@ -4614,7 +4753,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "V1's post-index FILTER clause and filter-limit outcome do not exist: TQL's `filter` is its WHERE-stage predicate (single filter stage), not a post-index filter, and no filter-limit behavior exists anywhere. docs/tql/rql-mapping.md section 9 records filter/filter_limit only as a PROPOSED accepted difference pending parent acceptance, so the row stays in scope with no behavior."
       },
       "public_contract": {
         "parity_required": true,
@@ -4650,7 +4790,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Multi-field ordering with direction, type, explicit nulls placement, total deterministic cross-type order, and seeded random ordering are implemented and focused-tested. Score ordering does not exist because no full-text scoring path exists (PB-4008), leaving that clause of the row unmet."
       },
       "public_contract": {
         "parity_required": true,
@@ -4687,7 +4828,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "LIMIT/OFFSET with typed bounds, caps (MAX_PAGE_LIMIT=1024), capped/saturating totals, skipped accounting, and consistent sharded paging are implemented and focused-tested. The V1 'LIMIT offset, take' tuple form is absent — docs/tql/spec.md section 4.7 explicitly excludes the comma form (a proposed, not accepted, difference)."
       },
       "public_contract": {
         "parity_required": true,
@@ -4724,7 +4866,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Field projection plus LOAD bindings with alias-qualified projection are implemented and focused-tested against source documents. No stored-index-field projection path exists, and map-reduce, nested-path, metadata, array, and dictionary projection shapes are unsupported (map-reduce is PB-4018/4042)."
       },
       "public_contract": {
         "parity_required": true,
@@ -4762,7 +4905,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Document, counter, and time-series includes materialize through the family seam, bounded to the page, with a frozen include-clause contract on compiled plans — all focused-tested. Includes exist only on the typed spec (TQL include lowering fails closed), there is no session registration (sessions never run queries), and the sharded path does not merge includes."
       },
       "public_contract": {
         "parity_required": true,
@@ -4799,7 +4943,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "`select distinct` parses in the TQL grammar and lowering fails closed with UnsupportedForPlanning naming the construct (pinned by the 'select-distinct-not-planned' parity vector). No distinct execution, counting, or paging agreement exists anywhere — a fail-closed stub, not behavior."
       },
       "public_contract": {
         "parity_required": true,
@@ -4835,7 +4980,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "GROUP BY parses and the registry enforces group-derivation rules, but lowering fails closed with UnsupportedForPlanning and StaticIndexDefinition's ReduceStage is definition-validation only. No grouping or aggregation (count/sum/avg/min/max) is ever executed, so the row's capability is absent."
       },
       "public_contract": {
         "parity_required": true,
@@ -4872,7 +5018,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No facet vocabulary, aggregation operation, setup document, or facet result kind exists anywhere under src/ (grep for facet finds only explanatory comments). The contract keeps facets an open optional obligation; nothing to exclude or grade as behavior."
       },
       "public_contract": {
         "parity_required": true,
@@ -4908,7 +5055,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No suggestion query, options, or suggestion-enabled field metadata exists anywhere; the analyzer foundation has no suggestion wiring. The row remains an open optional obligation."
       },
       "public_contract": {
         "parity_required": true,
@@ -4944,7 +5092,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No more-like-this scope, options, or execution exists; the TQL registry rejects it as an unknown function (R46 in the mapping corpus, recorded only as a proposed accepted difference). No behavior to grade."
       },
       "public_contract": {
         "parity_required": true,
@@ -4980,7 +5129,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "A real spatial predicate seam exists (WKT/circle/polygon shapes, four V1 relations, typed WKT refusal) and is tested at the foundation level. It is not a QueryCondition: TQL spatial.* functions are capability-gated and fail closed, and no query execution over documents goes through a spatial predicate."
       },
       "public_contract": {
         "parity_required": true,
@@ -5016,7 +5166,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "Distance arithmetic and units are pinned by a foundation test, but QueryOrdering has no distance ordering key and no lowering accepts one, so distance ordering in queries does not exist. The pinned arithmetic is a foundation, not the row's capability."
       },
       "public_contract": {
         "parity_required": true,
@@ -5052,7 +5203,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "An exact cosine k-NN path exists (QueryStore::vector_search with threshold, candidate filtering, and typed validation; quantization and text-source auto-embedding are refused typed) with focused passing tests, and a typed TqlVectorPredicate lowers bound parameters to the request. Gaps: the general TQL grammar predicate is capability-gated (never lowered in a query), and approximate mode and multiple-vector behavior are unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -5089,7 +5241,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "QueryResult carries rows/family rows, matched totals, staleness report, index generation, includes, and statistics with focused tests. The V1 metadata set is incomplete (no index-name string, timestamp, or node tag) and the result kinds exclude map-reduce, facet, and suggestion outputs."
       },
       "public_contract": {
         "parity_required": true,
@@ -5126,7 +5279,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Staleness modes (allowed/strict with generation bounds) and an IndexStore-level bounded wait_for_non_stale with typed outcomes are implemented and focused-tested at query and index seams. There is no client-visible WaitForNonStaleResults timeout surface on the query request, and the newly-created/side-by-side/deleted index matrix is only partially covered (side-by-side covered at PB-4054)."
       },
       "public_contract": {
         "parity_required": true,
@@ -5163,7 +5317,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No query-result cache, NoCaching, query-result tracking, WithTag, or before/after-query callbacks exist; sessions never run queries (NoTracking covers document loads only, src/session). None of the row's customization capabilities exist."
       },
       "public_contract": {
         "parity_required": true,
@@ -5199,7 +5354,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "QueryStatistics reports matched totals with typed caps, skipped/scanned accounting, staleness, a result etag, and a duration, all focused-tested (statistics count caps are typed, exact, and saturating). Statistics are always computed — there is no unrequested/opt-in marker — and stream statistics expose only the generation/staleness subset."
       },
       "public_contract": {
         "parity_required": true,
@@ -5236,7 +5392,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "Only a single always-recorded DiagnosticDuration exists (with its observation test); there is no opt-in, no per-part timing tree, and no query plan or inspection output. That is a stub of the row's capability, not timings-and-plan behavior."
       },
       "public_contract": {
         "parity_required": true,
@@ -5273,7 +5430,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No explanation options, result fields, or explain route exist anywhere (R53 in the mapping corpus is rejected as an unknown function and recorded only as a proposed accepted difference). Nothing to grade as behavior."
       },
       "public_contract": {
         "parity_required": true,
@@ -5309,7 +5467,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No Highlight clause, fragment output, or field-requirements error exists; term-vector modes exist only in the unwired analyzer foundation (PB-4048). The row's highlighting capability is absent."
       },
       "public_contract": {
         "parity_required": true,
@@ -5346,7 +5505,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No LINQ provider or expression-translation layer exists; the V2 query surface is TQL text (PD-2026-08-26-08) served raw over TBEP. No charter PD excludes V1 LINQ translation and the contract still requires it for the official client adapter, so the row stays in scope as unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -5382,7 +5542,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No First/Single/Any/Count/LongCount terminal operations exist at the query seam; results are full pages with matched totals (capped) and a truncation flag. The row's cardinality and exception semantics are absent as a distinct contract."
       },
       "public_contract": {
         "parity_required": true,
@@ -5419,7 +5580,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "in-progress",
+        "disposition": "Upgraded by P4: raw V1-compatible query text now executes as a typed public operation over TBEP (query.execute) with bounded deadline/cancellation and typed query.cancel outcomes, proven over a real UDS socket; the C# channel exposes QueryExecuteAsync/QueryCancelAsync. Gaps: no lazy execution, no client session-disposal contract, and no C# test drives QueryExecuteAsync."
       },
       "public_contract": {
         "parity_required": true,
@@ -5455,7 +5617,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Query streaming over a compiled plan is real and focused-tested: incremental delivery, bounded memory under a non-draining consumer, prompt cancellation, and backpressure that never blocks a commit, plus stream/paged include equivalence. The supported formats are internal typed batch framing only — no JSON or CSV output writers exist."
       },
       "public_contract": {
         "parity_required": true,
@@ -5493,7 +5656,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Sharded routing (default fan-out, shard-key pinning, TQL-lowered plans), merge with V1-consistent ordering, paging, true matched counts, and composed staleness are implemented with property and skew tests. Gaps: no sharded map-reduce reduction, no include merging, and family-source queries refuse sharded execution."
       },
       "public_contract": {
         "parity_required": true,
@@ -5530,7 +5694,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Patch-by-query applies a typed patch to matched documents with typed refusals, reconciliation, audit entries, and bounded details, all focused-tested at the engine seam. Gaps: a one-field typed patch vocabulary only (no script patch), and the operation is absent from the PublicOperation/TBEP registries so no typed adapter exposes it."
       },
       "public_contract": {
         "parity_required": true,
@@ -5567,7 +5732,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Delete-by-query exists at the engine seam with default refusal requiring confirmation, bounded-page deletion, selection limits, and strict/allow-stale behavior, all focused-tested and audited. It is not exposed as a public protocol operation, and the options surface is a subset of V1's QueryOperationOptions."
       },
       "public_contract": {
         "parity_required": true,
@@ -5605,7 +5771,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "Streaming subscriptions select with a ChangeFilter selector, not the query parser; there is no subscription query grammar and none of V1's distinct/group-by/order-by rejection rules. No behavior for this row's capability exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -5643,7 +5810,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Query is now a typed public protocol operation (query.execute and query.cancel in the TBEP registry, served over UDS/QUIC with tenant isolation and a cross-tenant denial/audit test, plus the generic-route refusal test). Gaps: stream, patch, delete, and explain query operations are absent from the public registry, and the only authorization gate is tenant scope — no V1 authorization-class mapping."
       },
       "public_contract": {
         "parity_required": true,
@@ -5680,7 +5848,8 @@
       "v2": {
         "owner": "engine/query",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Malformed clauses, invalid combinations, and adversarial input return distinguishable typed errors carrying grammar version and line/column positions, with dedicated adversarial and position tests. Gaps: no invalid-JavaScript category (script clauses do not exist by design) and no focused test asserting secret/value redaction inside query error payloads."
       },
       "public_contract": {
         "parity_required": true,
@@ -5717,7 +5886,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "Map and reduce definitions are validated shapes only (group-by shape pinned by a definitions test); no map/reduce execution, no grouped query results, and StaticIndexDefinition is not wired into the catalog. The row's capability — executing map-reduce indexes — does not exist."
       },
       "public_contract": {
         "parity_required": true,
@@ -5754,7 +5924,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "The multi-map shape is validated (one common shape, unique sources), but StaticIndexDefinition is not registered through the engine catalog, so no multi-map index serves queries and a missing source map cannot drop or add a family in practice. Definition-validation only, not behavior."
       },
       "public_contract": {
         "parity_required": true,
@@ -5791,7 +5962,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No JavaScript map or map-reduce index support exists, and no accepted disposition has been recorded: parity/adjudications.json has no entry, the overlay is status 'unresolved', and no charter PD covers it (docs/parity/gapq06-ws-parity-proposals.md still carries the open GAP-Q16 proposal). The contract requires an explicit accepted disposition, which does not yet exist, so the row cannot be an accepted-exclusion."
       },
       "public_contract": {
         "parity_required": true,
@@ -5828,7 +6000,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Dynamic queries create deterministic auto indexes with canonical names, prefer explicit equivalents, and produce identical results indexed or not, with a full lifecycle (widen/supersede/idle/retire) tested. Auto-index fields carry capability sets only — no spatial, vector, or suggestion options are derived from the query."
       },
       "public_contract": {
         "parity_required": true,
@@ -5865,7 +6038,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "Dynamic GROUP BY fails closed at lowering and the optimizer has no aggregation demand, so no auto-map-reduce index is ever created or selected. The row's capability is absent."
       },
       "public_contract": {
         "parity_required": true,
@@ -5902,7 +6076,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "FieldIndexing/FieldStorage/AnalyzerName/IndexFieldOptions are validated and canonicalized into definition identity with tests, and term-vector modes round-trip V1 wire names in the analyzer foundation. Field options are not consumed by index building or projection (no stored-field projection path) and IndexFieldOptions carries no term-vector, spatial, or vector settings."
       },
       "public_contract": {
         "parity_required": true,
@@ -5939,7 +6114,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The analyzer foundation resolves the three V1 default analyzer names, fails closed on unknown names, and records positions/offsets and term-vector shapes with tests. It is not wired into any executing search or indexing path, has no stopword handling, and no suggestion-enabled fields exist."
       },
       "public_contract": {
         "parity_required": true,
@@ -5976,7 +6152,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Dynamic and compound fields exist as validated declaration-time typed rules (bounds fail closed, compound is a hint-only extension) and participate in identity keys. There is no runtime-name field creation during indexing and no compound-field engine optimization, so the V1 dynamic-field behavior itself is not implemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -6013,7 +6190,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Spatial field encodings, V1 units (nautical-mile factors), precision quantization, and dynamic field tokens are implemented and pinned by foundation tests. It is not an index-definition option, and there is no geohash/quad-tree/bounding-box strategy selection, bounds, tree level, or cartesian type."
       },
       "public_contract": {
         "parity_required": true,
@@ -6049,7 +6227,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "VectorOptions and VectorIndexDeclaration validate dimensions, refuse text destinations as V1 does, refuse quantization typed while deferred, and carry a content-addressed identity — all focused-tested. Quantized/approximate interpretation is deferred (refused typed), and exact-versus-approximate agreement is proven only as refusal."
       },
       "public_contract": {
         "parity_required": true,
@@ -6087,7 +6266,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "V2 has exactly one index implementation; there is no engine selection, no engine field in index metadata, and no engine-specific disposition record. The only cross-engine artifact is a proposed (not accepted) accepted-difference entry for the V1 lucene() function in docs/tql/rql-mapping.md."
       },
       "public_contract": {
         "parity_required": true,
@@ -6124,7 +6304,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Create, delete, start, stop, enable, disable, and reset exist with an exhaustive typed transition matrix and refused-transition invariants, focused-tested at the engine's IndexStoreOperations seam. Gaps: no dump/optimize/test-index actions and lifecycle operations have no protocol route or public adapter."
       },
       "public_contract": {
         "parity_required": true,
@@ -6161,7 +6342,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Coverage-based staleness across normal/paused/disabled states, side-by-side reset serving the old epoch until cutover, monotonic rebuild generations, and bounded wait-to-non-stale are implemented and focused-tested. The catalog is in-memory: epoch/generation and progress do not persist across restart, and there is no tombstone-work progress reporting."
       },
       "public_contract": {
         "parity_required": true,
@@ -6198,7 +6380,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Index failures are recorded content-safe and bounded, drive an error state with a reset streak, and can be cleared — all focused-tested. Error records carry category/action/timestamp only (no document or batch context), and there is no external typed listing/clear route beyond the engine seam."
       },
       "public_contract": {
         "parity_required": true,
@@ -6236,7 +6419,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Typed IndexStatistics report the engine-owned V1 subset and aggregate per tenant and state, focused-tested. There is no terms listing (V1 /terms) and no performance or timing counters (rates deliberately withheld), and no admin route exposes them."
       },
       "public_contract": {
         "parity_required": true,
@@ -6274,7 +6458,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Lock modes guarding definition changes exactly as V1, deployment options, priorities, reset modes, and side-by-side cutover are implemented and focused-tested. There is no rolling index deployment or replace/finish-rolling flow."
       },
       "public_contract": {
         "parity_required": true,
@@ -6311,7 +6496,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Index definitions accept counter and time-series map sources and refuse mixed/overlapping family sources, and family-source queries return entry rows with series cursators through the family seam — all focused-tested. Family map sources are not registered through the engine catalog as serving indexes, and there is no reduce or retention behavior over family sources."
       },
       "public_contract": {
         "parity_required": true,
@@ -6348,7 +6534,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "Output-collection naming and pattern rules are validated by definitions tests only; no map-reduce execution exists to write output or reference documents. The row's capability (map-reduce output collections creating durable documents) is absent."
       },
       "public_contract": {
         "parity_required": true,
@@ -6386,7 +6573,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Shard index definitions register on every seated shard (auto namespaces refused), readers report each shard's publication and the least-advanced basis, and partial registration is reported rather than hidden — all focused-tested and consistent with composed query staleness. Per-shard distinct/spatial/score readers cannot exist because those query modes do not exist anywhere; multi-Region failure semantics are P7 qualification."
       },
       "public_contract": {
         "parity_required": true,
@@ -6424,7 +6612,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The raw observations exist and are tested (engine-owned index statistics, an execution duration observation, a bounded non-stale wait), but the row's benchmark-observation contract is unmet: no separation of build/wait/result-processing timing fields, no workload-identity surface, and no benchmark-adapter wiring. Per the contract these observations are inputs only; any speed claim is P7-gated."
       },
       "public_contract": {
         "parity_required": true,
@@ -6461,7 +6650,8 @@
       "v2": {
         "owner": "engine/index",
         "public_seam": "query and index",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "Index lifecycle operations are tenant-scoped and typed at the engine seam, but there is no database-admin authorization class (tenant scope is the only gate), no dump/optimize/test-index actions, no index-admin route in the TBEP registry, and no recorded disposition for private or debug-only admin operations. None of the row's authorization contract exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -6498,7 +6688,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "A locally accepted write becomes visible at peer members, retries after link failure, and resumes from durable cursors, on both the current leaderless composed plane and the (superseded, ADR 0018 D-8) single-leader member plane; the external-destination, pull hub/sink, attachment, and revision sub-capabilities are graded on their own rows below."
       },
       "public_contract": {
         "parity_required": true,
@@ -6521,7 +6712,9 @@
         "level": "critical",
         "description": "Replication behavior can acknowledge data that is not durable or converged unless each acknowledgement and failure mode is proven."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-010"
+      ]
     },
     {
       "id": "PB-5001",
@@ -6539,7 +6732,8 @@
       "v2": {
         "owner": "engine/storage",
         "public_seam": "storage/WAL/recovery",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Durable storage with WAL replay, torn-tail truncation, manifest recovery, and checksum rejection exists on both the default LSM backend and the root-file backend with focused tests. Gap: no storage-restart Recovery Receipt (the receipt exists only at the restore seam and as the migration loss matrix) and no quota/disk-full exhaustion behavior."
       },
       "public_contract": {
         "parity_required": true,
@@ -6578,7 +6772,8 @@
       "v2": {
         "owner": "engine/storage",
         "public_seam": "storage/WAL/recovery",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Open of a configured path, creation of an absent directory, reopen of the same durable state, and fail-closed opens on unrelated or foreign-format locations are all focused-tested on the LSM default backend. Gap: no explicit stop/dispose-path test and no configuration-change policy test."
       },
       "public_contract": {
         "parity_required": true,
@@ -6615,7 +6810,8 @@
       "v2": {
         "owner": "engine/storage",
         "public_seam": "storage/WAL/recovery",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Both backends carry format magic/version identity (FORMAT_MAGIC in src/storage/file.rs, the LSM manifest in src/storage/lsm/manifest.rs) and reject foreign or non-verifying locations with typed errors. Gap: only format version 1 exists — no version-transition or upgrade contract beyond reject."
       },
       "public_contract": {
         "parity_required": true,
@@ -6653,7 +6849,8 @@
       "v2": {
         "owner": "engine/storage",
         "public_seam": "storage/WAL/recovery",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Commit ordering, committed-only visibility, and distinct buffered/written/synced loss windows are proven, and the LSM's rotation, WAL truncation, and compaction checkpoint cover V1's multi-log/flush-to-data-file/journal-deletion observables."
       },
       "public_contract": {
         "parity_required": true,
@@ -6674,7 +6871,9 @@
         "level": "critical",
         "description": "Reordering or acknowledging before the required sync can expose uncommitted data or lose a committed write."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-011"
+      ]
     },
     {
       "id": "PB-5005",
@@ -6691,7 +6890,8 @@
       "v2": {
         "owner": "engine/storage",
         "public_seam": "storage/WAL/recovery",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Snapshot isolation, conflict-free abort with no partial writes, and atomic multi-write commits are focused-tested on both backends; uncommitted prepares are discarded at recovery. V2 uses a single-writer commit path with sequence-floored immutable snapshots instead of V1 reader/writer locks, and no threaded lock-contention test exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -6712,7 +6912,9 @@
         "level": "critical",
         "description": "A concurrency mismatch can produce stale reads, lost updates, leaked uncommitted pages, or unreproducible recovery results."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-012"
+      ]
     },
     {
       "id": "PB-5006",
@@ -6728,7 +6930,8 @@
       "v2": {
         "owner": "engine/storage",
         "public_seam": "storage/WAL/recovery",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The ordered key-value core exists and is tested (canonical key order, cursor-resumed paging, sparse-index seeks in LSM segments), but no table/compact-tree/fixed-size-tree/overflow-value analogue exists and no accepted-difference record disposes the V1 tree and table surface."
       },
       "public_contract": {
         "parity_required": true,
@@ -6765,7 +6968,8 @@
       "v2": {
         "owner": "engine/storage",
         "public_seam": "storage/WAL/recovery",
-        "status": "unresolved"
+        "status": "in-progress",
+        "disposition": "The LSM replaces the scratch subsystem with bounded memtables and immutable frozen segments, and rotation at both bounds plus MVCC-immutable segments are tested. Gap: no active-byte accounting, forced-flush-of-old-pages, or scratch read-back analogue, and no accepted-difference record names this row."
       },
       "public_contract": {
         "parity_required": true,
@@ -6803,7 +7007,8 @@
       "v2": {
         "owner": "engine/storage",
         "public_seam": "storage/WAL/recovery",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Compaction produces a readable environment, survives kill points at every phase idempotently, truncates the WAL, reports bounded facts and progress publicly, and composes with the backup/restore seam through the shared watermark instead of V1's refuse-while-incremental-enabled rule."
       },
       "public_contract": {
         "parity_required": true,
@@ -6824,7 +7029,9 @@
         "level": "high",
         "description": "Compaction can lose pages or invalidate backup and replication cursors if it rewrites state without preserving their contracts."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-013"
+      ]
     },
     {
       "id": "PB-5009",
@@ -6842,7 +7049,8 @@
       "v2": {
         "owner": "engine/storage",
         "public_seam": "storage/WAL/recovery",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Startup replay, restart persistence, committed-versus-uncommitted recovery, and multi-segment manifest recovery are focused-tested on both backends. Gap: no typed Recovery Receipt at the storage-restart seam and no sample-database/time-series recovery harness (the manifest-verified logical migration covers migration instead)."
       },
       "public_contract": {
         "parity_required": true,
@@ -6881,7 +7089,8 @@
       "v2": {
         "owner": "engine/storage",
         "public_seam": "storage/WAL/recovery",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Corruption fault behavior is well covered: bad checksums, truncated frames, failed torn-tail truncation, and foreign formats fail the open rather than silently succeeding. Gap: no quota/disk-full exhaustion behavior anywhere and no partial-recovery alert with a data-loss boundary in a Recovery Receipt."
       },
       "public_contract": {
         "parity_required": true,
@@ -6920,7 +7129,8 @@
       "v2": {
         "owner": "engine/storage",
         "public_seam": "storage/WAL/recovery",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Only backup artifacts are encrypted: sealed schedule bundles open only with the right key, fail closed on tampering, and never leak key material. No encrypted pager, journal, or storage-at-rest path exists despite PD-2026-08-27-01 mandating encryption at rest, so encrypted-storage recovery is unproven."
       },
       "public_contract": {
         "parity_required": true,
@@ -6959,7 +7169,8 @@
       "v2": {
         "owner": "engine/storage",
         "public_seam": "storage/WAL/recovery",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "V2 implements the contract's chosen path: a manifest-verified logical migration that rejects unsupported manifest versions and never claims direct V1 file opens, plus versioned, resumable, rollbackable collection schema migrations with forward-only lineage. [downgraded by verification: citations did not survive review]"
       },
       "public_contract": {
         "parity_required": true,
@@ -6995,7 +7206,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Full and snapshot backups write manifest-sealed archives with ordered digests, counts, and tenant scopes; restore verifies identity, refuses non-empty or unrelated targets, reopens with the same values, and emits the Recovery Receipt disclosing counts, duplicates, and limits. V2 uses its own manifest-directory archive (with compression at the schedule-bundle seam), not V1 zip/Deflate/Zstd."
       },
       "public_contract": {
         "parity_required": true,
@@ -7017,7 +7229,9 @@
         "level": "critical",
         "description": "A backup that omits a journal, header, or family value can produce an apparently successful but incomplete restore."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-014"
+      ]
     },
     {
       "id": "PB-5014",
@@ -7033,7 +7247,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Incremental runs append to the base chain with the journal-range boundary, anchor the cursor on the durable shared watermark, and verification rejects a missing or reordered link before any target exists; below-bound windows fail closed rather than resurrecting. The cursor is anchored on the watermark (carried on the public backup seam) rather than in a V1-style file header."
       },
       "public_contract": {
         "parity_required": true,
@@ -7055,7 +7270,9 @@
         "level": "critical",
         "description": "Accepting a missing incremental archive creates a restore with an unreported data gap."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-015"
+      ]
     },
     {
       "id": "PB-5015",
@@ -7072,7 +7289,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Local manifest discovery and validation is strong: tampered member bytes, truncated/missing members, path traversal, in-progress manifests, unsealed orphans, and identity selection are all rejected before database creation. Gap: no remote-source manifest discovery, remote root binding, or staging-directory ownership/reclamation — local filesystem destinations only."
       },
       "public_contract": {
         "parity_required": true,
@@ -7110,7 +7328,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "consensus/membership",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Quorum commit and consistent apply exist on the leaderless coordinators: any Member accepts, every eligible replica applies, minority failure is a typed refusal, and receipts name every contributing Member and Region. V2 replaces the Raft log with leaderless request-scoped coordination per charter PD-2026-08-28-07, not with a Rachis analogue."
       },
       "public_contract": {
         "parity_required": true,
@@ -7131,7 +7350,9 @@
         "level": "critical",
         "description": "Applying an uncommitted command or reporting commit without quorum can diverge topology and data across members."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-016"
+      ]
     },
     {
       "id": "PB-5017",
@@ -7147,7 +7368,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "consensus/membership",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The charter's leaderless decision (PD-2026-08-28-07) removes elections by design: coordinator failure is recovered by idempotent retry through another Member and membership changes go through overlapping-quorum epochs, both focused-tested, and the old single-leader plane's fencing tests still pass. Gap: no vote/term/candidate election semantics exist and no per-row accepted-difference record names the V1 election-model delta."
       },
       "public_contract": {
         "parity_required": true,
@@ -7185,7 +7407,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "consensus/membership",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Behind and diverged members are reconciled by anti-entropy, stamp/causal merge, and snapshot adoption below the retained floor, with caught-up state answerable (UpToDate) — V2's replacement for V1 divergent-log rollback and InstallSnapshot."
       },
       "public_contract": {
         "parity_required": true,
@@ -7206,7 +7429,9 @@
         "level": "critical",
         "description": "Incorrect divergence repair can overwrite committed history or admit a stale member as current."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-017"
+      ]
     },
     {
       "id": "PB-5019",
@@ -7222,7 +7447,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "consensus/membership",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Membership and topology changes exist and are tested: Platform-validated views with monotonic ownership epochs, overlapping-quorum epoch transitions, one-step expansion, and refusal of stale topology (a lost owner cannot be re-seated through a new shard identity; epoch regressions refuse). V2 replaces V1 promotable/rehabilitating member roles with epoch-fenced symmetric seats per the leaderless charter; no per-row accepted-difference record names that role-model delta."
       },
       "public_contract": {
         "parity_required": true,
@@ -7260,7 +7486,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "consensus/membership",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Member and Region loss produce typed outcomes rather than silent success, partial durability names its contributors, coordinator loss is recovered by idempotent retry through another Member, and loss assessments name shards, owners, and failure domains. Deployed-Region failover qualification remains P7."
       },
       "public_contract": {
         "parity_required": true,
@@ -7282,7 +7509,9 @@
         "level": "critical",
         "description": "Failover without explicit commit and replay boundaries can duplicate writes or lose acknowledged state."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-018"
+      ]
     },
     {
       "id": "PB-5021",
@@ -7298,7 +7527,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "V1 change-vector grammar is parsed for migration with provenance-only mapping, document conditionals answer a three-way outcome, and stamp-skew convergence is typed. Gap: V1 multi-entry vector comparison outcomes (AlreadyMerged/Update/Conflict over mixed, reordered, differently identified, differently sized vectors) are not reproduced — V2 replaces vectors with (version, sequence, HLC stamp) and Loro causal identity."
       },
       "public_contract": {
         "parity_required": true,
@@ -7336,7 +7566,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Conflicts produce deterministic CRDT merge outcomes with retained, content-free conflict records and tenant-scoped conflict observations, and the deterministic winner is proven invariant under delivery order. Gap: V1's conflict-exposure model (409 with conflicting values on load/delete/patch), scripted resolvers, and tombstone winners are architecturally replaced by the charter's merge contract (PD-2026-08-28-03) with no per-row accepted-difference entry."
       },
       "public_contract": {
         "parity_required": true,
@@ -7375,7 +7606,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Deletion evidence is retained behind a consumer-floor watermark that never advances past the slowest consumer, is held for seated-but-silent members and backup chains, and counter deletion markers replicate delete-wins; the contract is public on the backup/compaction seams. Attachment and revision tombstone kinds do not exist because those families do not replicate (see PB-5028/PB-5030), and no pull-destination deletion policy exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -7397,7 +7629,9 @@
         "level": "critical",
         "description": "Premature tombstone cleanup can resurrect deleted records after reconnect or restore."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-019"
+      ]
     },
     {
       "id": "PB-5024",
@@ -7414,7 +7648,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Progress cursors, bounded links, anti-entropy repair after gaps, partition-blocked catch-up, and full-catch-up fallback below servable history are all focused-tested. Gap: no wait-for-change-vector operation with reached/timed-out outcomes — the cursor is observed, not awaited — and no bounded-lag or convergence default is claimed."
       },
       "public_contract": {
         "parity_required": true,
@@ -7453,7 +7688,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No external-destination configuration, delay, retry, forwarding, or progress-statistics machinery exists anywhere under src/replication or crates/; only the timeout/error distinction of ReplicationOutcome exists as a contract fact."
       },
       "public_contract": {
         "parity_required": true,
@@ -7492,7 +7728,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "The V1 shape is preserved and tested: the local publication completes first and the acknowledgement wait is a separate explicit step whose timeout is distinct from local commit failure, receipts name every contributing Region and Member while a local commit receipt carries none, and the levels (RegionalQuorum/GlobalQuorum/BackupAck) are served on the wire with BackupAck committing regionally first and never rolling back."
       },
       "public_contract": {
         "parity_required": true,
@@ -7514,7 +7751,9 @@
         "level": "critical",
         "description": "Conflating local receipt with replica acknowledgement is a direct data-loss and availability risk."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-020"
+      ]
     },
     {
       "id": "PB-5027",
@@ -7531,7 +7770,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No hub/sink roles, access registration, credential or certificate machinery, idle handling, or hub deletion protection exist anywhere under src/ or crates/."
       },
       "public_contract": {
         "parity_required": true,
@@ -7570,7 +7810,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "Attachments do not replicate: no attachment replication item, content streaming, or attachment mention exists in src/replication or terrabase-replication-core (the composed member carries documents only), and the old member lane exercises counters/time-series exclusively."
       },
       "public_contract": {
         "parity_required": true,
@@ -7608,7 +7849,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Counter and time-series family replication is real and focused-tested (additive counter merge, delete-wins, duplicate delivery merged once, rejoin preserving totals, whole-record LWW for time-series by recorded decision). Gap: it rides the superseded single-leader member plane (ADR 0018 D-8) — the leaderless composed member carries documents only — and no time-series-vs-document conflict case exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -7646,7 +7888,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "Revision storage exists locally (src/families/revisions.rs) and migration collapses to the newest version locally, but no revision or revision-tombstone replication path or rejoin-sensitive revision test exists anywhere."
       },
       "public_contract": {
         "parity_required": true,
@@ -7685,7 +7928,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Local progress is a journal-derived cursor observation that survives restart, is tenant-scoped, and refuses typed when closed. Gap: no wait-for-vector operation with reached/timed-out outcomes, no malformed/future-vector error cases, and compaction survival is covered only through the backup watermark and history-reclaim floor."
       },
       "public_contract": {
         "parity_required": true,
@@ -7724,7 +7968,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Health is reported separately from convergence at both the member seam and the public construction seam, with typed Responsive/Stale/Degraded/Unavailable statuses and bounded content-free conflict observations. Gap: the full V1 status vocabulary (assigned/active/unknown including the no-destination case) is absent, observation logs are in-memory and clear on restart, and there is no heartbeat/pending-count aggregation or cross-Region roll-up."
       },
       "public_contract": {
         "parity_required": true,
@@ -7763,7 +8008,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Restarted or rejoining members validate identity and storage format, resume from durable replication cursors or CRDT snapshot adoption, catch up without duplicating committed mutations, and a reopened cluster re-verifies every identity and serves converged state; expansion catch-up survives a full restart."
       },
       "public_contract": {
         "parity_required": true,
@@ -7785,7 +8031,9 @@
         "level": "critical",
         "description": "A rejoin that skips or repeats a cursor can lose mutations, resurrect tombstones, or duplicate externally observed events."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-021"
+      ]
     },
     {
       "id": "PB-5034",
@@ -7802,7 +8050,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "The V1 process-local active-active observations are reproduced on the leaderless planes: writes accepted during partition converge deterministically after healing, three-way isolated concurrent writes converge by causal merge, and the receipt is secret-safe and names its faults and limits. These remain process-local lanes; deployed-Region and metering qualification stays P7/PB-5046."
       },
       "public_contract": {
         "parity_required": true,
@@ -7824,7 +8073,9 @@
         "level": "critical",
         "description": "Process-local active-active tests do not prove regional durability or exactly-once external effects, so overclaiming them is unsafe."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-022"
+      ]
     },
     {
       "id": "PB-5035",
@@ -7841,7 +8092,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Six typed, content-free, tenant-scoped observation operations exist with focused member-seam tests and registered TBEP wire frames. Gap: no live host serves them (the wire test asserts the typed refusal until a host does) and there is no one-to-one mapping of the V1 Get*Command names."
       },
       "public_contract": {
         "parity_required": true,
@@ -7879,7 +8131,8 @@
       "v2": {
         "owner": "engine/sharding",
         "public_seam": "sharding",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Two-step deterministic routing (shard key to bucket to shard to owner at an epoch), seating validation, epoch-fenced view transitions, tenant isolation across shards, sharded query fan-out, and public V1-shaped document routing are focused-tested. V2 routing is server-side by architecture (no client request executor); prefixed routing and sticky ids are structurally refused and recorded as needing a new decision in src/sharding/mod.rs."
       },
       "public_contract": {
         "parity_required": true,
@@ -7900,7 +8153,9 @@
         "level": "critical",
         "description": "A routing mismatch can read or write the wrong shard and violate document identity or tenant isolation."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-023"
+      ]
     },
     {
       "id": "PB-5037",
@@ -7917,7 +8172,8 @@
       "v2": {
         "owner": "engine/sharding",
         "public_seam": "sharding",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Bucket identity is implemented and pinned: XXH64 into the fixed 2^20 space matching reference vectors, pure function of the shard key, exact table partitioning, canonical shard identities, and explicit public bucket moves. Gap: no per-bucket storage-size accounting (bytes or attachment stream size per bucket) — the V1 BucketStats contract has no V2 surface."
       },
       "public_contract": {
         "parity_required": true,
@@ -7956,7 +8212,8 @@
       "v2": {
         "owner": "engine/sharding",
         "public_seam": "sharding",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Bucket migration is public, V1-shaped, restartable, and safe: kill points recover to completion or clean rollback, streaming is restartable without double apply, cutover is idempotent across an interrupted seat at raised epochs, diverged publication journals refuse confirmation, and in-flight queries resolve correctly across cutover. Family-record/attachment-content movement and client optimistic-concurrency-after-move are not separately proven cases."
       },
       "public_contract": {
         "parity_required": true,
@@ -7978,7 +8235,9 @@
         "level": "critical",
         "description": "A partial bucket move can create two owners, no owner, stale conditional writes, or duplicate replicated data."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-024"
+      ]
     },
     {
       "id": "PB-5039",
@@ -7994,7 +8253,8 @@
       "v2": {
         "owner": "engine/sharding",
         "public_seam": "sharding",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The engine side exists: typed failover decision validation with exhaustive refusals (no declared loss, healthy shard, shrinking, stale identities, entering shards below the fencing epoch) and public loss assessment. Gap: no orchestrator-side observer loop, dynamic node distribution, or duplicate-record-change skip — the engine only validates Platform-issued decisions."
       },
       "public_contract": {
         "parity_required": true,
@@ -8032,7 +8292,8 @@
       "v2": {
         "owner": "engine/sharding",
         "public_seam": "sharding",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Shard-scoped recovery reporting and per-shard backup/restore rejoin are tested: the recovery report names every shard member and owner verdict, a shard-local commit is reported as shard-scoped never database success, and the lane reports the recovery window per shard after backup restore. Gap: no sharded external replication, per-shard backup-lag coordination, or compare-exchange tombstone cleanup tied to shard backup progress."
       },
       "public_contract": {
         "parity_required": true,
@@ -8071,7 +8332,8 @@
       "v2": {
         "owner": "engine/sharding",
         "public_seam": "sharding",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Sharded cluster transactions exist with honest outcomes: single-shard commits atomically, cross-shard transactions are explicitly limited (not atomic) and record the partial commit without claiming success, partial outcomes name unreached shards, and the lane refuses partially then completes after failover. Gap: V1 cross-shard atomic commit is explicitly not provided and no accepted-difference PD records that delta; no subscription-during-resharding behavior exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -8109,7 +8371,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "The acknowledgement-level contract exists end to end: RegionalQuorum/GlobalQuorum/BackupAck with receipts naming every contributing Region and Member, a local commit receipt carrying no region or member facts, and typed success/timeout/error outcomes for the two-Region healthy-link, member-loss-before-acknowledgement, and region-loss-after-acknowledgement scenarios, served on the TBEP wire with BackupAck ordering (regional first, never rolled back). Deployed-Region qualification and production timeout defaults remain P7 and unresolved owner decisions."
       },
       "public_contract": {
         "parity_required": true,
@@ -8131,7 +8394,9 @@
         "level": "critical",
         "description": "An unspecified acknowledgement level makes durability and visibility claims impossible to interpret."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-025"
+      ]
     },
     {
       "id": "PB-5043",
@@ -8148,7 +8413,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Convergence is a contract-defined state (CONVERGENCE_DEFINITION in src/replication/mod.rs) reported with member names, operation identity, and observation time; one-Region and two-Region healthy-link cases, delayed and reordered delivery, duplicate delivery, and secret-free Replication Receipts are all focused-tested on the lanes. No bounded-lag or synchronous-replication claim is made, and deployed-Region qualification is P7."
       },
       "public_contract": {
         "parity_required": true,
@@ -8170,7 +8436,9 @@
         "level": "critical",
         "description": "Without a defined convergence observation, callers cannot distinguish a healthy link from a converged operation."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-026"
+      ]
     },
     {
       "id": "PB-5044",
@@ -8187,7 +8455,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The machinery exists and is lane-tested: failure domains per member are validated topology facts, region loss after an acknowledged write states durable visibility and its recovery limit, the sharded lane measures per-shard RPO as the explicit data-loss window, and backup-restore rejoin reports the recovery window per shard. The row's own scope is the qualification matrix — deployed-Region fault evidence is P7, and the correlated-failure model is declared failure-domain strings only."
       },
       "public_contract": {
         "parity_required": true,
@@ -8227,7 +8496,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Isolated multi-Region writes, delayed and reordered replay, duplicate delivery, and deterministic conflict outcomes after reconnection are implemented and focused-tested, with content-free conflict records and receipts; the policy was selected by charter (CRDT causal merge with delete-wins, PD-2026-08-28-03; bounded-HLC LWW on the old member plane per ADR-0004 D-3), superseding this row's no-default note. Metering and external effects stay on PB-5046; deployed-Region qualification is P7."
       },
       "public_contract": {
         "parity_required": true,
@@ -8249,7 +8519,9 @@
         "level": "critical",
         "description": "An unqualified partition policy can silently overwrite divergent writes or expose conflicting values as settled."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-027"
+      ]
     },
     {
       "id": "PB-5046",
@@ -8266,7 +8538,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Duplicate operation identity and replay handling are implemented and focused-tested for database mutations across both planes and the LSM ledger. Gap: no external customer-effect or metering-boundary test exists anywhere — nothing under src/ or crates/ mentions metering — so the exactly-once external-effects boundary remains unproven."
       },
       "public_contract": {
         "parity_required": true,
@@ -8305,7 +8578,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Rejoin validates source identity and storage format, resumes from durable cursors or snapshot adoption, and shard recovery reports name every member and owner verdict with per-shard recovery windows. Gap: no typed Recovery Receipt at the plain replication rejoin seam (the shard recovery report and the restore receipt are the only receipt shapes) and no conflict-state validation before a Member becomes eligible for reads or acknowledgements."
       },
       "public_contract": {
         "parity_required": true,
@@ -8345,7 +8619,8 @@
       "v2": {
         "owner": "engine/sharding",
         "public_seam": "sharding",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "A three-Region, six-Member, two-shard lane over real durable engines proves owner-loss failover truthfully and deterministically, per-shard RPO after Region loss, partial cross-shard refusal completing after failover, and per-shard backup-restore rejoin windows, with shard-local success never reported as database success. Gap: no cross-Region placement, rebalancing, or resharding-triggering policy (the Platform supplies all tables and views; charter unresolved decision 3), and deployed-Region qualification is P7."
       },
       "public_contract": {
         "parity_required": true,
@@ -8383,7 +8658,8 @@
       "v2": {
         "owner": "engine/streaming",
         "public_seam": "streaming",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "The engine StreamStore implements streaming backpressure, ordering, and completion with focused passing tests (verified green by a targeted cargo run), and the P0 gap 'no wire contract/consumer over a transport' is materially closed: the TBEP backbone family and the C# host's SSE/WebSocket projections deliver the same frames against the real engine. No multi-lane or qualification claim is made."
       },
       "public_contract": {
         "parity_required": true,
@@ -8401,7 +8677,9 @@
         "level": "high",
         "description": "Unbounded buffering would threaten efficiency and recovery safety."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-028"
+      ]
     },
     {
       "id": "PB-6001",
@@ -8418,7 +8696,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Real behavior exists for all four operations (backup, restore, smuggler export/import, manifest-verified V1-to-V2 logical migration) with focused passing tests, but the contract's clause on which credentials/authorization checks reject or skip records has no behavior (local-filesystem only, no credentials anywhere), and the migration reads a synthetic V1 representation rather than real V1 exporter output; the contract facts themselves record that no recovery proof is claimed by this inventory row."
       },
       "public_contract": {
         "parity_required": true,
@@ -8457,7 +8736,8 @@
       "v2": {
         "owner": "engine/streaming",
         "public_seam": "streaming",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Document/counter/time-series/conflict/trigger change observables with V1-style selector surface, checkpoint replay, ordered delivery, and bounded slow-consumer drops are implemented and tested engine-side and over SSE/WebSocket with Last-Event-ID reconnect; the gap is that ChangeKind::Index/Operation/Database are selectable enum values with no producer (documented at src/streaming/mod.rs:1038), and the event shape is a V2 subset, not the full V1 shape."
       },
       "public_contract": {
         "parity_required": true,
@@ -8495,7 +8775,8 @@
       "v2": {
         "owner": "engine/subscriptions",
         "public_seam": "streaming",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "The engine seam implements bounded one-batch-then-ack subscriptions with an explicit terminal close status, and a typed wire contract now exists (backbone.subscribe with subscription_batch/subscription_closed frames served by SyncDeliveryHost over UDS), closing part of the P0 gap; still missing are heartbeats, SubscriptionOpeningStrategy/compression/buffer-size negotiation, CloseWhenNoDocsLeft/IgnoreSubscriberErrors, and distinct document-vs-revision batch payloads, and the engine-backed host routes backbone delivery to the sync-delivery host beside it."
       },
       "public_contract": {
         "parity_required": true,
@@ -8533,7 +8814,8 @@
       "v2": {
         "owner": "engine/subscriptions",
         "public_seam": "streaming",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Batch boundary recording before the wait, checkpoint advance only at the acknowledgement seam, verbatim resend of unacknowledged items, and identifiable at-least-once duplicates are implemented with focused passing tests, and backbone.acknowledge returns typed refusals for unknown/foreign/never-served sequences; the gap is checkpoint durability: the subscription registry is engine-lifetime, with no restart- or crash-durable subscription-state test, and no changed-subscription-state or database-deletion ack-failure paths."
       },
       "public_contract": {
         "parity_required": true,
@@ -8571,7 +8853,8 @@
       "v2": {
         "owner": "engine/subscriptions",
         "public_seam": "streaming",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Bounded ingress, disconnect/reconnect preserving the checkpoint, resending of unacknowledged items, and typed close reasons (subscription_closed on the wire, tagged PB-6005) are implemented and tested, including SSE reconnect resume and engine-process-loss closes in the C# host; the gap is that reconnect is in-process/single-engine only: no cross-member failover, worker takeover, or retry-timing behavior exists for subscriptions, and multi-region qualification is P7 scope."
       },
       "public_contract": {
         "parity_required": true,
@@ -8610,7 +8893,8 @@
       "v2": {
         "owner": "engine/subscriptions",
         "public_seam": "streaming",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Typed predicate dimensions (collection/document/prefix filters) with deterministic validation, drop reporting without checkpoint advance, and delivery beyond long filtered runs are implemented and tested; the gap is that no script execution or step budget, no projection criteria, and no revision subscriptions exist, so the V1 criteria and revision clauses are unmet."
       },
       "public_contract": {
         "parity_required": true,
@@ -8649,7 +8933,8 @@
       "v2": {
         "owner": "engine/streaming",
         "public_seam": "streaming",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Document streaming supports id/prefix/match/exclusion selectors with key-order preservation, the V1-style result shape, typed errors for missing documents and invalid selectors, and cursor continuation — all focused-tested; the gaps are that match is substring containment rather than V1 regex (src/streaming/sources.rs:623), and there is no transport-level document stream or sync/async consumer pair proving identical ordering and terminal behavior."
       },
       "public_contract": {
         "parity_required": true,
@@ -8686,7 +8971,8 @@
       "v2": {
         "owner": "engine/streaming",
         "public_seam": "streaming",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "One plan-order query document stream exists and honestly reports the index generation it used, reusing the bounded family readers; the gaps are that no projection variants, result-format/statistics parity, unsupported-format/staleness/timeout/partial-write error surface, or sharded stream merging exists, so most of the row's semantics are unmet."
       },
       "public_contract": {
         "parity_required": true,
@@ -8724,7 +9010,8 @@
       "v2": {
         "owner": "engine/streaming",
         "public_seam": "streaming",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Optional row: time-series stream ranges (document, series name, from/to bounds) preserve timestamp/tag/value ordering, and time-series change payloads round-trip segment summaries through replay and live delivery — both focused-tested; the gaps are no rollups, offsets, incremental series values, deleted-range or empty-range rules, missing-series errors, or cross-shard merge behavior."
       },
       "public_contract": {
         "parity_required": true,
@@ -8761,7 +9048,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "implemented",
+        "disposition": "Full, incremental, and snapshot backup kinds are implemented with content-derived manifests binding ordered names/lengths/SHA-256 digests, fail-closed chain verification (missing/reordered/truncated/corrupt links reject before any target), caller-pinned snapshot boundaries restored as-of that boundary, idempotent reruns, and bounded progress/skipped-item disclosure — all exercised by focused passing tests over local archives; per-kind encryption/compression lives at the scheduled-bundle layer (PB-6013) and provider destinations are PB-6012's gap, and no cloud/qualification claim is made."
       },
       "public_contract": {
         "parity_required": true,
@@ -8782,7 +9070,9 @@
         "level": "critical",
         "description": "Accepting an incomplete incremental chain can make a restore appear successful while omitting committed data."
       },
-      "proof_ids": []
+      "proof_ids": [
+        "P-029"
+      ]
     },
     {
       "id": "PB-6011",
@@ -8799,7 +9089,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Scheduling with full-before-incremental chaining, full rotation, missed-run policies, pause/resume, typed failures recorded in status, and per-run encrypted bundles with no secrets is implemented and tested on the public seam; the gaps are caller-driven tick cadences (no cron expression parsing or engine timers), no task identity/mentor/pinning, and no cluster-owned durable status."
       },
       "public_contract": {
         "parity_required": true,
@@ -8836,7 +9127,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Only a LocalFileSystem destination kind exists, with a real validate/probe split (path-traversal, root, and existing-file rejection; writability proof) — all focused-tested; no S3/Glacier/Azure/GCS/FTP providers, no upload/list/delete/retry contracts, and no direct-vs-staged upload modes exist (the P1 engine object-store tier is storage tiering, not a backup destination), so most of this row is unmet."
       },
       "public_contract": {
         "parity_required": true,
@@ -8874,7 +9166,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Bundle sealing/opening with compression, per-operation symmetric encryption, wrong-key and tampered-bytes fail-closed, nondeterministic sealing that always opens, and key material never entering artifacts or debug output are implemented and focused-tested; the gaps are that there is no encryption-mode/algorithm/key-size selection or key rotation, and the charter's key-management decision (PD-2026-08-27-01) is not yet bound to archive identity."
       },
       "public_contract": {
         "parity_required": true,
@@ -8911,7 +9204,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Retention with disabled state, minimum-age handling, whole-chain pruning that never removes the only chain, keeps the newest chain's bundles and young chains, fails closed on an invalid destination manifest, and runs after each scheduled run is implemented and heavily tested; the gap is local deletion only: no provider-specific deletion, missing-object, partial-deletion, or retry-state reporting exists."
       },
       "public_contract": {
         "parity_required": true,
@@ -8949,7 +9243,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Local recovery-point manifests with content-derived identity binding ordered archive names/lengths/SHA-256 digests, fail-closed discovery (path traversal, in-progress, unsealed orphans, forged archives, torn-publish repair), and identity-bound selection that fails before materializing a target are implemented and focused-tested on the public seam; the gaps are that no remote recovery-point discovery or ownership-locked staging of remote archives exists (provider manifests are PB-6012's gap) and the V2 record does not yet state the signature/object-lock/external-provider dispositions the contract demands."
       },
       "public_contract": {
         "parity_required": true,
@@ -8988,7 +9283,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Local restore selection (latest or named identity), publication-order incremental chain replay, pinned snapshot boundaries, typed refusal of non-empty or unrelated targets, fail-closed corruption handling, retry-after-failure, and post-restore reopen are implemented and focused-tested on the public seam; the gaps are no provider sources and no encryption-settings, max-read-rate, shard-settings, skip-indexes, or disable-ongoing-tasks options, so the selection-options clause is materially partial."
       },
       "public_contract": {
         "parity_required": true,
@@ -9025,7 +9321,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Single-job admission with typed concurrent-attempt rejection (also on the public seam), read throttling that limits reads without reordering or dropping records, cancellation leaving no usable partial recovery point, declared-bound refusal past the durable head, and idempotent torn-publish retry are implemented and tested; the gaps are no disabled/unhealthy-member admission (no member concept on this seam), no provider storage-error mapping, and throttling is not visible in any metrics surface."
       },
       "public_contract": {
         "parity_required": true,
@@ -9063,7 +9360,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Smuggler export/import exists as a manifest-bound, atomically published, version-checked local file artifact with family selection counts/digests, checksum-verified round trips, cancellation, and typed rejection of tampered manifests, digest mismatches, corrupt records, and unsupported versions — all focused-tested; the gaps are that only a local file artifact in a V2-native format exists (no stream or remote transfer modes) and there is no V1 package import, so the migration-comtract clause is only partially met."
       },
       "public_contract": {
         "parity_required": true,
@@ -9101,7 +9399,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Export/import selection over three coarse families (Documents, FamilyRecords, Tombstones) is implemented with exclusion of unselected families, typed rejection of selections the artifact does not carry, tombstones applied as engine deletes with retained evidence below the bound, and tenant isolation — all focused-tested; the gap is that there is no per-item-type selection (attachments/counters/time-series/identities/compare-exchange travel only inside FamilyRecords) and no indexes, subscriptions, conflicts, revisions, or database-record items, while this row explicitly excludes nothing."
       },
       "public_contract": {
         "parity_required": true,
@@ -9139,7 +9438,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Optional row: typed collection-rename transforms on import (with rejection of transforms targeting the reserved collection) and revision/tombstone policy controls on the migration seam are implemented and focused-tested; the gaps are that no transform-script execution, step budget, or execution context exists and there is no SkipRevisionCreation equivalent on the smuggler seam (revision policy exists only on the V1-to-V2 migration seam)."
       },
       "public_contract": {
         "parity_required": true,
@@ -9177,7 +9477,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Resume and idempotency are real and tested: a mid-transfer cancellation interrupts a live import, the retry resolves the durable prefix as duplicates, and the final state equals a single uninterrupted import; migration resumes from its last durable record, re-imports are idempotent, operation identities are stable, and loss/skipped items are reported without hiding them; the gaps are that interruption is proven by cancellation rather than a kill-point/crash of a live transfer process, and permission-skip reporting has no authorization surface to exercise (none exists anywhere in the engine)."
       },
       "public_contract": {
         "parity_required": true,
@@ -9215,7 +9516,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Legacy offline migration exists as a manifest-verified, versioned logical path: manifest validation before any write, unsupported-version rejection, writes only through the engine transaction seam, per-record durable resume, idempotency, explicit loss matrix, V1 change-vector provenance recording with fail-closed malformed vectors, and an explicit no-direct-V1-file-open claim — all focused-tested; the gaps are that the input is a synthetic 'terrabase-v1-export 1' fixture representation with no real V1 exporter output or version-specific migrators (Migrator_V2/V3 payloads) and no compression, encryption, batch-limit, journal, or timeout options."
       },
       "public_contract": {
         "parity_required": true,
@@ -9253,7 +9555,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No relational/SQL migration code exists anywhere under the tree (no provider matrix, schema discovery, relationship modes, key mapping, or patching — verified by repo-wide search). The row is not a named accepted difference: the charter's PD-2026-08-26-10 keeps optional gaps in parity scope, so it stays in scope unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -9291,7 +9594,8 @@
       "v2": {
         "owner": "engine/etl",
         "public_seam": "streaming",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No ETL configuration, transformation, loader, or process code exists (verified by repo-wide search for ETL identifiers). Not an accepted exclusion: the current GOAL.md decision register has no PD record excluding ETL (PD-2026-08-26-10 keeps optional gaps in parity scope), so the row stays in scope unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -9329,7 +9633,8 @@
       "v2": {
         "owner": "engine/etl",
         "public_seam": "streaming",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No ETL extract/enumerator or family-input checkpoint code exists (no document/tombstone/attachment-tombstone/counter/time-series ETL enumerators). Not an accepted exclusion: no charter PD record excludes ETL, so it stays in scope unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -9367,7 +9672,8 @@
       "v2": {
         "owner": "engine/etl",
         "public_seam": "streaming",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No ETL destination providers exist (no TerraBase/SQL/OLAP/Elasticsearch/Queue/Snowflake/EmbeddingsGeneration/GenAi ETL). Not an accepted exclusion: no charter PD record excludes ETL variants, so it stays in scope unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -9405,7 +9711,8 @@
       "v2": {
         "owner": "engine/etl",
         "public_seam": "streaming",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No ETL delivery, retry, dead-letter, health-state, or metrics code exists. Not an accepted exclusion: no charter PD record excludes ETL observability, so it stays in scope unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -9443,7 +9750,8 @@
       "v2": {
         "owner": "engine/etl",
         "public_seam": "streaming",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No queue ETL provider code exists (no Kafka, RabbitMQ, SQS, Azure Queue/Service Bus publishers, no CloudEvent converter). Not an accepted exclusion: no charter PD record excludes queue ETL, so it stays in scope unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -9481,7 +9789,8 @@
       "v2": {
         "owner": "engine/queue-sink",
         "public_seam": "streaming",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No queue-sink configuration or process code exists (no broker consumption, sink scripts, or checkpoint rules). Not an accepted exclusion: no charter PD record excludes queue sinks, so it stays in scope unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -9518,7 +9827,8 @@
       "v2": {
         "owner": "engine/queue-sink",
         "public_seam": "streaming",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No broker sink or dead-letter behavior exists. Not an accepted exclusion: no charter PD record excludes queue sinks, so it stays in scope unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -9555,7 +9865,8 @@
       "v2": {
         "owner": "adapter/platform",
         "public_seam": "Platform Adapter",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No typed connection-string records, provider validation, get/put/remove, dependency checks, or secret-redaction tests exist anywhere; the only destination kind is local and carries no credentials (the backup-layer key-secrecy tests are about encryption keys, not connection strings). Not an accepted exclusion — the row stays in scope unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -9593,7 +9904,8 @@
       "v2": {
         "owner": "adapter/platform",
         "public_seam": "Platform Adapter",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Real task controls exist on the engine seams — subscribe/subscription_status/disconnect_subscription/close_subscription with bounded-refusal and explicit terminal-status tests, and scheduler pause/resume/status with typed recorded failures — but there is no unified typed task inventory (list/enable/delete) covering backup, subscriptions, ETL, and queue sinks, and no transfer operation exists in the Platform adapter's PublicOperation registry (document/query/family/schema only)."
       },
       "public_contract": {
         "parity_required": true,
@@ -9631,7 +9943,8 @@
       "v2": {
         "owner": "engine/replication",
         "public_seam": "replication",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No failure-domain behavior or test ties transfer-owned checkpoints (subscription, ETL, queue-sink, backup) to member loss, responsibility transfer, replay, or rejoin: the subscription registry remains engine-lifetime and src/backup is single-engine; the P2/P5 leaderless coordinators, membership epochs, and expansion do not touch transfer consumers. Only replication-owned sharding-bucket streaming idempotency exists; multi-region scenario qualification is P7 regardless."
       },
       "public_contract": {
         "parity_required": true,
@@ -9670,7 +9983,8 @@
       "v2": {
         "owner": "engine/backup-import",
         "public_seam": "backup and import",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No sharded transfer path exists: src/sharding covers routing, query fan-out, and bucket migration only, and src/backup plus src/streaming subscriptions/smuggler are shard-unaware (no per-shard checkpoints, merged continuations, shard restore settings, or aggregate qualification). Not an accepted exclusion — the row stays in scope unimplemented."
       },
       "public_contract": {
         "parity_required": true,
@@ -9708,7 +10022,8 @@
       "v2": {
         "owner": "adapter/platform",
         "public_seam": "Platform Adapter",
-        "status": "in-progress"
+        "status": "in-progress",
+        "disposition": "Progress and status records exist and are focused-tested across the transfer seams — bounded progress disclosures with exact totals, skipped items reported without hiding loss, typed schedule failures in status, sealed-bundle runs reporting no secrets, restore receipts disclosing counts/duplicates/memory bound, and the migration loss matrix; a /v1/metrics endpoint surfaces stream drops in the C# host. The gaps are no rates/health/responsible-member fields, no typed public transfer status operation (PublicOperation carries document/query/family/schema only), and no protocol snapshot of status shapes."
       },
       "public_contract": {
         "parity_required": true,
@@ -9745,7 +10060,8 @@
       "v2": {
         "owner": "adapter/platform",
         "public_seam": "approved protocol adapter",
-        "status": "unresolved"
+        "status": "unresolved",
+        "disposition": "No transfer operation exists in the closed PublicOperation registry or the platform AuditOperation enum (document/query/family/schema only), and the engine deliberately has no authorization surface; the C# host's local gate (principal/tenant headers, 401 refusals, audit without credentials) is documented as context validation, not authentication/authorization, so actor-authorization, confirmation, and audit semantics for transfer operations are unproven. The contract facts explicitly state no transfer feature is excluded by this classification row, so it is not an accepted exclusion."
       },
       "public_contract": {
         "parity_required": true,

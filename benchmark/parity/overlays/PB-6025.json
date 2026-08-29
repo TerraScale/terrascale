@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-6025",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No ETL extract/enumerator or family-input checkpoint code exists (no document/tombstone/attachment-tombstone/counter/time-series ETL enumerators). Not an accepted exclusion: no charter PD record excludes ETL, so it stays in scope unimplemented."
 }

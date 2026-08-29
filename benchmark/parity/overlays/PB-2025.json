@@ -3,5 +3,6 @@
   "item_id": "PB-2025",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The engine keeps a typed, non-collapsed error taxonomy with durable idempotent resolution of unknown outcomes (focused-tested), cancellation is enforced at the ingest and query seams and on the wire (query.cancel, overload gate), and TBEP carries 22 typed error codes. Gap: no V1 exception-taxonomy mapping (DocumentDoesNotExist/DocumentConflict/BulkInsertAborted/AllTopologyNodesDown) on any client wire surface, and per-operation replay-safety declarations exist only as the engine-side retry_disposition, not an enumerated contract.",
   "previous_status": "unresolved"
 }

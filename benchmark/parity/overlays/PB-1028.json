@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-1028",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No operation-ID registry, state, listing, or kill surface for long-running operations exists, and no server-level operation controls; the closest behavior is the typed query.cancel operation with live/already_complete/unknown_query outcomes, which is the GAP-Q12 query-cancellation capability, not the V1 operations contract. Nothing implements the row's capability."
 }

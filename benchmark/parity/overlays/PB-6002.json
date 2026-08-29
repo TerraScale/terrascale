@@ -3,5 +3,6 @@
   "item_id": "PB-6002",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Document/counter/time-series/conflict/trigger change observables with V1-style selector surface, checkpoint replay, ordered delivery, and bounded slow-consumer drops are implemented and tested engine-side and over SSE/WebSocket with Last-Event-ID reconnect; the gap is that ChangeKind::Index/Operation/Database are selectable enum values with no producer (documented at src/streaming/mod.rs:1038), and the event shape is a V2 subset, not the full V1 shape.",
   "previous_status": "unresolved"
 }

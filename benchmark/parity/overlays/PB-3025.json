@@ -3,5 +3,6 @@
   "item_id": "PB-3025",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Paged snapshot reads with totals, forced snapshot creation with expected-version refusal, and revert (restoring value and attachment references, unknown references typed) are tested, with collection policies validated against V1 field shapes; revision includes in queries, collection statistics, single-revision get, and the deleted/orphaned-revision distinction beyond the bin page are absent, and revert keys on the V2 revision contract rather than a V1 change vector.",
   "previous_status": "unresolved"
 }

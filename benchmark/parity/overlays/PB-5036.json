@@ -1,7 +1,10 @@
 {
   "schema_version": "1.0",
   "item_id": "PB-5036",
-  "status": "in-progress",
-  "proof_ids": [],
-  "previous_status": "unresolved"
+  "status": "implemented",
+  "proof_ids": [
+    "P-023"
+  ],
+  "disposition": "Two-step deterministic routing (shard key to bucket to shard to owner at an epoch), seating validation, epoch-fenced view transitions, tenant isolation across shards, sharded query fan-out, and public V1-shaped document routing are focused-tested. V2 routing is server-side by architecture (no client request executor); prefixed routing and sticky ids are structurally refused and recorded as needing a new decision in src/sharding/mod.rs.",
+  "previous_status": "in-progress"
 }

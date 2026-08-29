@@ -3,5 +3,6 @@
   "item_id": "PB-4024",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "An exact cosine k-NN path exists (QueryStore::vector_search with threshold, candidate filtering, and typed validation; quantization and text-source auto-embedding are refused typed) with focused passing tests, and a typed TqlVectorPredicate lowers bound parameters to the request. Gaps: the general TQL grammar predicate is capability-gated (never lowered in a query), and approximate mode and multiple-vector behavior are unimplemented.",
   "previous_status": "unresolved"
 }

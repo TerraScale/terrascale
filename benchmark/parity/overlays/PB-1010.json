@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-1010",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No Content-Encoding handling exists: grep for gzip/zstd/Brotli/deflate/content-encoding finds no code and not even a compression dependency in any Cargo.toml. Request bodies are typed JSON or TBEP frames with no encoding negotiation, bounded decompression, or defined unsupported-encoding error."
 }

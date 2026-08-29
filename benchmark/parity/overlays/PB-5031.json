@@ -3,5 +3,6 @@
   "item_id": "PB-5031",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Local progress is a journal-derived cursor observation that survives restart, is tenant-scoped, and refuses typed when closed. Gap: no wait-for-vector operation with reached/timed-out outcomes, no malformed/future-vector error cases, and compaction survival is covered only through the backup watermark and history-reclaim floor.",
   "previous_status": "unresolved"
 }

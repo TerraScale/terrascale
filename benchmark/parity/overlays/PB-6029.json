@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-6029",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No queue-sink configuration or process code exists (no broker consumption, sink scripts, or checkpoint rules). Not an accepted exclusion: no charter PD record excludes queue sinks, so it stays in scope unimplemented."
 }

@@ -3,5 +3,6 @@
   "item_id": "PB-4025",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "QueryResult carries rows/family rows, matched totals, staleness report, index generation, includes, and statistics with focused tests. The V1 metadata set is incomplete (no index-name string, timestamp, or node tag) and the result kinds exclude map-reduce, facet, and suggestion outputs.",
   "previous_status": "unresolved"
 }

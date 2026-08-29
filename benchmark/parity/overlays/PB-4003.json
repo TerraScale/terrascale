@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4003",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "Or/Not/parentheses parse into the TQL AST but lowering fails closed with UnsupportedForPlanning, and the executable QueryCondition set is a flat conjunction only — no disjunction or negation is ever executed. This is a fail-closed stub, not behavior: no boolean precedence or negation semantics exist at the seam."
 }

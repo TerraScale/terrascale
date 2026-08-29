@@ -3,5 +3,6 @@
   "item_id": "PB-6015",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Local recovery-point manifests with content-derived identity binding ordered archive names/lengths/SHA-256 digests, fail-closed discovery (path traversal, in-progress, unsealed orphans, forged archives, torn-publish repair), and identity-bound selection that fails before materializing a target are implemented and focused-tested on the public seam; the gaps are that no remote recovery-point discovery or ownership-locked staging of remote archives exists (provider manifests are PB-6012's gap) and the V2 record does not yet state the signature/object-lock/external-provider dispositions the contract demands.",
   "previous_status": "unresolved"
 }

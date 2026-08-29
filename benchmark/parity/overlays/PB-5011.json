@@ -3,5 +3,6 @@
   "item_id": "PB-5011",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Only backup artifacts are encrypted: sealed schedule bundles open only with the right key, fail closed on tampering, and never leak key material. No encrypted pager, journal, or storage-at-rest path exists despite PD-2026-08-27-01 mandating encryption at rest, so encrypted-storage recovery is unproven.",
   "previous_status": "unresolved"
 }

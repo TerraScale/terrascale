@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4030",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No explanation options, result fields, or explain route exist anywhere (R53 in the mapping corpus is rejected as an unknown function and recorded only as a proposed accepted difference). Nothing to grade as behavior."
 }

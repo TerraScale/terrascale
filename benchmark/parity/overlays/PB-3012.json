@@ -3,5 +3,6 @@
   "item_id": "PB-3012",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The engine-local tombstone guard (a recorded tombstone newer than the writer's view rejects before any other answer) and retention floors that never advance past the slowest consumer are tested; sharded routing of counter groups and cross-member tombstone-cleaner coordination do not exist.",
   "previous_status": "unresolved"
 }

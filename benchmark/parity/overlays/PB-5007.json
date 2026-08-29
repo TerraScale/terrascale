@@ -1,6 +1,8 @@
 {
   "schema_version": "1.0",
   "item_id": "PB-5007",
-  "status": "unresolved",
-  "proof_ids": []
+  "status": "in-progress",
+  "proof_ids": [],
+  "disposition": "The LSM replaces the scratch subsystem with bounded memtables and immutable frozen segments, and rotation at both bounds plus MVCC-immutable segments are tested. Gap: no active-byte accounting, forced-flush-of-old-pages, or scratch read-back analogue, and no accepted-difference record names this row.",
+  "previous_status": "unresolved"
 }

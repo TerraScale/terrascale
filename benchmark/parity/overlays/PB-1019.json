@@ -1,6 +1,8 @@
 {
   "schema_version": "1.0",
   "item_id": "PB-1019",
-  "status": "unresolved",
-  "proof_ids": []
+  "status": "in-progress",
+  "proof_ids": [],
+  "disposition": "A versioned connection handshake now exists and is tested from both languages: TBEP negotiation_request/response selects the highest common wire version, fails closed with the typed protocol_version_mismatch before any operation frame, and intersects capabilities; the envelope also fails closed on unknown versions, and the C# client negotiates against the real engine. The V1-specific remainder is unimplemented: no per-operation version sets for the V1 TCP operation types (Drop/Subscription/Replication/Cluster/Heartbeats/Ping/TestConnection), no TcpConnectionStatus vocabulary, and no negotiated compression (charter-deferred until benchmarks justify it).",
+  "previous_status": "unresolved"
 }

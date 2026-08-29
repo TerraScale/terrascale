@@ -1,7 +1,10 @@
 {
   "schema_version": "1.0",
   "item_id": "PB-1012",
-  "status": "in-progress",
-  "proof_ids": [],
-  "previous_status": "unresolved"
+  "status": "implemented",
+  "proof_ids": [
+    "P-002"
+  ],
+  "disposition": "The streaming contract is implemented on both sides of the seam with focused tests: engine streams preserve ordering, honor cancellation without leaking locks or buffers, stay bounded under a non-draining consumer, and never block a commit behind a wedged consumer; the host's SSE/WebSocket backbone proves bounded queues with counted drops, exact delivery accounting, checkpointed reconnect, and explicit terminal lifecycle refusal. The framing is V2-native (SSE/WS plus TBEP backbone lanes) per PD-2026-08-28-02 rather than V1 HTTP stream framing, and the distinct long-lived contracts (changes, subscriptions, WebSocket) are separate tested surfaces.",
+  "previous_status": "in-progress"
 }

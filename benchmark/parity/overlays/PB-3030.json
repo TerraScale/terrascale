@@ -3,5 +3,6 @@
   "item_id": "PB-3030",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Expiry is enforced at read and staging with the retained index still rejecting stale writers (a concurrent conditional advance is structurally never un-done by expiry), and migration carries a CompareExchange fixture record; batch compare-exchange commands (one key per request today), an expiry cleanup job, and an expiry-vs-conditional-advance race test are absent.",
   "previous_status": "unresolved"
 }

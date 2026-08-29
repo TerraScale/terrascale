@@ -3,5 +3,6 @@
   "item_id": "PB-4045",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Dynamic queries create deterministic auto indexes with canonical names, prefer explicit equivalents, and produce identical results indexed or not, with a full lifecycle (widen/supersede/idle/retire) tested. Auto-index fields carry capability sets only — no spatial, vector, or suggestion options are derived from the query.",
   "previous_status": "unresolved"
 }

@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4043",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "The multi-map shape is validated (one common shape, unique sources), but StaticIndexDefinition is not registered through the engine catalog, so no multi-map index serves queries and a missing source map cannot drop or add a family in practice. Definition-validation only, not behavior."
 }

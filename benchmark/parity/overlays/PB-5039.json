@@ -3,5 +3,6 @@
   "item_id": "PB-5039",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The engine side exists: typed failover decision validation with exhaustive refusals (no declared loss, healthy shard, shrinking, stale identities, entering shards below the fencing epoch) and public loss assessment. Gap: no orchestrator-side observer loop, dynamic node distribution, or duplicate-record-change skip — the engine only validates Platform-issued decisions.",
   "previous_status": "unresolved"
 }

@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-1011",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No response-compression behavior exists in the host or the engine (no providers, no Accept-Encoding handling, no HTTPS gating). The TBEP negotiation capability set explicitly omits compression until benchmark receipts justify it, which is a charter deferral of frame compression, not an implementation of this row's HTTP response behavior."
 }

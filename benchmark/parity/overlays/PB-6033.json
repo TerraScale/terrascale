@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-6033",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No failure-domain behavior or test ties transfer-owned checkpoints (subscription, ETL, queue-sink, backup) to member loss, responsibility transfer, replay, or rejoin: the subscription registry remains engine-lifetime and src/backup is single-engine; the P2/P5 leaderless coordinators, membership epochs, and expansion do not touch transfer consumers. Only replication-owned sharding-bucket streaming idempotency exists; multi-region scenario qualification is P7 regardless."
 }

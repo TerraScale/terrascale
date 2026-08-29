@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-6023",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No relational/SQL migration code exists anywhere under the tree (no provider matrix, schema discovery, relationship modes, key mapping, or patching — verified by repo-wide search). The row is not a named accepted difference: the charter's PD-2026-08-26-10 keeps optional gaps in parity scope, so it stays in scope unimplemented."
 }

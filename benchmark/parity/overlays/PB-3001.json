@@ -3,5 +3,6 @@
   "item_id": "PB-3001",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Signed 64-bit increment/delete/one-many-group reads with missing-as-None, significant casing, tombstoned recreation failing closed, and cross-tenant refusal are tested; no change vector is returned with values, the V1 @counters document-metadata flag has no V2 counterpart, and no test asserts that a counter change creates no revision.",
   "previous_status": "unresolved"
 }

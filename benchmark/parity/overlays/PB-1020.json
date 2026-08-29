@@ -3,5 +3,6 @@
   "item_id": "PB-1020",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The V2 changes surface implements typed notifications across the V1 kind set (document/index/counter/time-series/operation/database plus conflict) with an explicit V1 parity-mapping table, committed-only visibility, in-order delivery with operation identity and storage sequence, tenant-scoped isolation, and checkpointed reconnect — all focused-tested. Heartbeat events and index-name filter refinement are recorded limits, authorization is engine tenant scope rather than V1 database scope, and the framing is SSE/WS plus TBEP backbone lanes rather than the V1 TCP wire.",
   "previous_status": "unresolved"
 }

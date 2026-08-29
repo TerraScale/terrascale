@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-6036",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No transfer operation exists in the closed PublicOperation registry or the platform AuditOperation enum (document/query/family/schema only), and the engine deliberately has no authorization surface; the C# host's local gate (principal/tenant headers, 401 refusals, audit without credentials) is documented as context validation, not authentication/authorization, so actor-authorization, confirmation, and audit semantics for transfer operations are unproven. The contract facts explicitly state no transfer feature is excluded by this classification row, so it is not an accepted exclusion."
 }

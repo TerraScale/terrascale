@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-1030",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No accepted debug-route disposition exists: parity/adjudications.json carries no decision for this row and no artifact accounts for the V1 debug-marked or debug-package routes beyond the contract text. V2 does expose no debug routes and the closed adapter provably cannot forward private control-plane operations, but the row demands a named accepted exclusion with proof, which neither the contract facts nor any charter PD currently provides."
 }

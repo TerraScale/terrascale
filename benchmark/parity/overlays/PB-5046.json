@@ -3,5 +3,6 @@
   "item_id": "PB-5046",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Duplicate operation identity and replay handling are implemented and focused-tested for database mutations across both planes and the LSM ledger. Gap: no external customer-effect or metering-boundary test exists anywhere — nothing under src/ or crates/ mentions metering — so the exactly-once external-effects boundary remains unproven.",
   "previous_status": "unresolved"
 }

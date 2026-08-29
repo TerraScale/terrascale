@@ -3,5 +3,6 @@
   "item_id": "PB-4050",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Spatial field encodings, V1 units (nautical-mile factors), precision quantization, and dynamic field tokens are implemented and pinned by foundation tests. It is not an index-definition option, and there is no geohash/quad-tree/bounding-box strategy selection, bounds, tree level, or cartesian type.",
   "previous_status": "unresolved"
 }

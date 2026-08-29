@@ -3,5 +3,6 @@
   "item_id": "PB-1033",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "The no-escape-hatch half is implemented and tested: the closed PublicOperation registry cannot express a raw route, arbitrary command, or generic transport, private control-plane operations are rejected, and the host sources are probe-tested to reach the engine only through the TBEP client with tenant isolation, audited refusals, and credential-free dispatch at the Platform seam. The acceptance half is unfinished: no charter PD names this row's Platform-only-SDK decision, TerraScale.DotNet/TypeScript live outside this tree so their Platform-only consumption is unverifiable here, and the Platform authorization/confirmation/secret-policy variants remain unused (PD-2026-08-26-11).",
   "previous_status": "unresolved"
 }

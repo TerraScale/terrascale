@@ -3,5 +3,6 @@
   "item_id": "PB-5021",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "V1 change-vector grammar is parsed for migration with provenance-only mapping, document conditionals answer a three-way outcome, and stamp-skew convergence is typed. Gap: V1 multi-entry vector comparison outcomes (AlreadyMerged/Update/Conflict over mixed, reordered, differently identified, differently sized vectors) are not reproduced — V2 replaces vectors with (version, sequence, HLC stamp) and Loro causal identity.",
   "previous_status": "unresolved"
 }

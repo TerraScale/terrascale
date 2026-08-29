@@ -3,5 +3,6 @@
   "item_id": "PB-4047",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "FieldIndexing/FieldStorage/AnalyzerName/IndexFieldOptions are validated and canonicalized into definition identity with tests, and term-vector modes round-trip V1 wire names in the analyzer foundation. Field options are not consumed by index building or projection (no stored-field projection path) and IndexFieldOptions carries no term-vector, spatial, or vector settings.",
   "previous_status": "unresolved"
 }

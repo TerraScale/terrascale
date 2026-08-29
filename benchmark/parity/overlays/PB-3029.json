@@ -3,5 +3,6 @@
   "item_id": "PB-3029",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Engine-local conditional semantics are implemented and tested (PutIfIndex/PutIfMissing/DeleteIfIndex against a monotonic index, stale index typed, deleted values hidden, keys validated); the row's cluster-wide scope is explicitly held open by the contract itself ('Ownership remains unresolved between engine and control plane'), and no oversized-key or concurrent-writer race test exists.",
   "previous_status": "unresolved"
 }

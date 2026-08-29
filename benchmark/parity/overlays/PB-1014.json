@@ -3,5 +3,6 @@
   "item_id": "PB-1014",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "A typed error adapter exists: host/TerraBase.Api/TypedApi.cs Failure/SchemaFailure map typed TBEP codes onto 400/401/403/409/410/422/500/501/502/503 with a {code,message} envelope, exercised by focused gate/session/supervision tests. The V1 {Url,Type,Message,Error} envelope shape, the 408-timeout, 425-TooEarly, and moved-database-410-with-cache-control mappings, and full client exception dispatch parity are absent (the C# client surfaces typed TbepException codes only).",
   "previous_status": "unresolved"
 }

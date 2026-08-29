@@ -3,5 +3,6 @@
   "item_id": "PB-4014",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "LIMIT/OFFSET with typed bounds, caps (MAX_PAGE_LIMIT=1024), capped/saturating totals, skipped accounting, and consistent sharded paging are implemented and focused-tested. The V1 'LIMIT offset, take' tuple form is absent — docs/tql/spec.md section 4.7 explicitly excludes the comma form (a proposed, not accepted, difference).",
   "previous_status": "unresolved"
 }

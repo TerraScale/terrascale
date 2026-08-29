@@ -3,5 +3,6 @@
   "item_id": "PB-5032",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Health is reported separately from convergence at both the member seam and the public construction seam, with typed Responsive/Stale/Degraded/Unavailable statuses and bounded content-free conflict observations. Gap: the full V1 status vocabulary (assigned/active/unknown including the no-destination case) is absent, observation logs are in-memory and clear on restart, and there is no heartbeat/pending-count aggregation or cross-Region roll-up.",
   "previous_status": "unresolved"
 }

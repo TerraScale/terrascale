@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4009",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No fuzzy, proximity, phrase, or boost execution anywhere; the gated registry functions fail closed. docs/tql/rql-mapping.md rows R44/R45 record fuzzy/proximity only as proposed accepted differences not yet accepted by the charter, so the row remains an open obligation."
 }

@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-5028",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "Attachments do not replicate: no attachment replication item, content streaming, or attachment mention exists in src/replication or terrabase-replication-core (the composed member carries documents only), and the old member lane exercises counters/time-series exclusively."
 }

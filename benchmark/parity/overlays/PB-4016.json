@@ -3,5 +3,6 @@
   "item_id": "PB-4016",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Document, counter, and time-series includes materialize through the family seam, bounded to the page, with a frozen include-clause contract on compiled plans — all focused-tested. Includes exist only on the typed spec (TQL include lowering fails closed), there is no session registration (sessions never run queries), and the sharded path does not merge includes.",
   "previous_status": "unresolved"
 }

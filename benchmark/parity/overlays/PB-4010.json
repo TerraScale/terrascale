@@ -3,5 +3,6 @@
   "item_id": "PB-4010",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Intersection-of-matches semantics are real and tested: the seam executes a conjunction of clauses as their intersection (the V1 Intersect meaning). There is no INTERSECT grammar surface (the registry rejects it as an unknown function) and no malformed-intersect error shape, so the row's grammar-level contract is unmet.",
   "previous_status": "unresolved"
 }

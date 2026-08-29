@@ -3,5 +3,6 @@
   "item_id": "PB-5041",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Sharded cluster transactions exist with honest outcomes: single-shard commits atomically, cross-shard transactions are explicitly limited (not atomic) and record the partial commit without claiming success, partial outcomes name unreached shards, and the lane refuses partially then completes after failover. Gap: V1 cross-shard atomic commit is explicitly not provided and no accepted-difference PD records that delta; no subscription-during-resharding behavior exists.",
   "previous_status": "unresolved"
 }

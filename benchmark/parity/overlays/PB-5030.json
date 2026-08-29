@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-5030",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "Revision storage exists locally (src/families/revisions.rs) and migration collapses to the newest version locally, but no revision or revision-tombstone replication path or rejoin-sensitive revision test exists anywhere."
 }

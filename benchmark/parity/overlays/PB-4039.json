@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4039",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "Streaming subscriptions select with a ChangeFilter selector, not the query parser; there is no subscription query grammar and none of V1's distinct/group-by/order-by rejection rules. No behavior for this row's capability exists."
 }

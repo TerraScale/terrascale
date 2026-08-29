@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-1017",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No node-selection or read-balance behavior exists at the client: the C# client targets a single endpoint, and there is no NodeSelector, session-stable selection, failure counter, or fastest-member logic anywhere in the tree. The engine-side read-level surface (local vs regional/global quorum reads with positions) is a different seam and does not implement this row's client selection policy."
 }

@@ -1,6 +1,8 @@
 {
   "schema_version": "1.0",
   "item_id": "PB-3027",
-  "status": "unresolved",
-  "proof_ids": []
+  "status": "in-progress",
+  "proof_ids": [],
+  "disposition": "Content-free conflict audit metadata exists and is tested (ConflictRecord carries tenant, operation identities, writers, clocks, and outcome; events never carry document contents), which serves the row's audit clause; the central revision-conflict states - resolved flags, revision tombstones, deleted revisions, conflict vectors - do not exist, and the conflict machinery sits on the superseded replication plane.",
+  "previous_status": "unresolved"
 }

@@ -3,5 +3,6 @@
   "item_id": "PB-5003",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Both backends carry format magic/version identity (FORMAT_MAGIC in src/storage/file.rs, the LSM manifest in src/storage/lsm/manifest.rs) and reject foreign or non-verifying locations with typed errors. Gap: only format version 1 exists — no version-transition or upgrade contract beyond reject.",
   "previous_status": "unresolved"
 }

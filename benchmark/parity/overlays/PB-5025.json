@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-5025",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No external-destination configuration, delay, retry, forwarding, or progress-statistics machinery exists anywhere under src/replication or crates/; only the timeout/error distinction of ReplicationOutcome exists as a contract fact."
 }

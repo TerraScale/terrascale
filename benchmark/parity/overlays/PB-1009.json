@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-1009",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "The host uses only framework-standard MapGet/MapPost/MapPut/MapDelete; the V1 method vocabulary (RESET, TRACE, HEAD, legacy Get), the CONNECT-to-GET WebSocket fallback, and CSRF-safe method classification are all absent. The only adjacent test refuses a plain GET on the WebSocket endpoint rather than exercising a method vocabulary."
 }

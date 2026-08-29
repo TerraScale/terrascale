@@ -3,5 +3,6 @@
   "item_id": "PB-6019",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Export/import selection over three coarse families (Documents, FamilyRecords, Tombstones) is implemented with exclusion of unselected families, typed rejection of selections the artifact does not carry, tombstones applied as engine deletes with retained evidence below the bound, and tenant isolation — all focused-tested; the gap is that there is no per-item-type selection (attachments/counters/time-series/identities/compare-exchange travel only inside FamilyRecords) and no indexes, subscriptions, conflicts, revisions, or database-record items, while this row explicitly excludes nothing.",
   "previous_status": "unresolved"
 }

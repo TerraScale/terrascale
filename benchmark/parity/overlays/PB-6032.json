@@ -3,5 +3,6 @@
   "item_id": "PB-6032",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Real task controls exist on the engine seams — subscribe/subscription_status/disconnect_subscription/close_subscription with bounded-refusal and explicit terminal-status tests, and scheduler pause/resume/status with typed recorded failures — but there is no unified typed task inventory (list/enable/delete) covering backup, subscriptions, ETL, and queue sinks, and no transfer operation exists in the Platform adapter's PublicOperation registry (document/query/family/schema only).",
   "previous_status": "unresolved"
 }

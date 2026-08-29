@@ -3,5 +3,6 @@
   "item_id": "PB-3036",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Validation is enforced at the engine put seam (violating write refused typed, nothing staged), collection-scoped policies reject malformed definitions and duplicated enums, on-demand validation reads work, and P3 added the three schema modes plus P4's schema.declare/status/validate over UDS; the rule set is a bounded subset (Required/FieldType/EnumValues/NumberRange/TextLength) - V1's references, conditionals, patternProperties, arrays, and additional-properties are rejected rather than supported, with no recorded charter decision and no V1 error-detail parity tests.",
   "previous_status": "unresolved"
 }

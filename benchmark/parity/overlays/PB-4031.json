@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4031",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No Highlight clause, fragment output, or field-requirements error exists; term-vector modes exist only in the unwired analyzer foundation (PB-4048). The row's highlighting capability is absent."
 }

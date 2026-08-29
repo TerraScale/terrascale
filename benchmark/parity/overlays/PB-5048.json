@@ -3,5 +3,6 @@
   "item_id": "PB-5048",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "A three-Region, six-Member, two-shard lane over real durable engines proves owner-loss failover truthfully and deterministically, per-shard RPO after Region loss, partial cross-shard refusal completing after failover, and per-shard backup-restore rejoin windows, with shard-local success never reported as database success. Gap: no cross-Region placement, rebalancing, or resharding-triggering policy (the Platform supplies all tables and views; charter unresolved decision 3), and deployed-Region qualification is P7.",
   "previous_status": "unresolved"
 }

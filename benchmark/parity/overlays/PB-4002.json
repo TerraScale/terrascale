@@ -3,5 +3,6 @@
   "item_id": "PB-4002",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "QuerySource selects collection or named-index sources (mutually exclusive), and FROM aliases are retained through WHERE/ORDER/SELECT/LOAD lowering with dedicated tests. Map-reduce source mode fails closed (GROUP BY is not lowered) and index-name sources reach the optimizer only through staleness-policy namespaces; note docs/tql/rql-mapping.md records 'from index' as only a PROPOSED accepted difference under PD-2026-08-26-09, not a charter-accepted one, so the row stays in scope.",
   "previous_status": "unresolved"
 }

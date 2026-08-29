@@ -3,5 +3,6 @@
   "item_id": "PB-3005",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Revision snapshots capture attachment references (name, content type, size, content digest) at snapshot time and revert re-puts references by digest exactly as V1 does, with stale-version snapshot refusal tested; no revision-scoped historical attachment-content (byte) read test exists and revision/attachment replication is absent (PB-3028).",
   "previous_status": "unresolved"
 }

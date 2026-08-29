@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4027",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No query-result cache, NoCaching, query-result tracking, WithTag, or before/after-query callbacks exist; sessions never run queries (NoTracking covers document loads only, src/session). None of the row's customization capabilities exist."
 }

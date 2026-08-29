@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-1003",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No generated inventory of V1 route attributes or method/template pairs exists anywhere in the tree; the 878/563/315 counts live only as prose in the contract's v1_evidence scope. The registry drift tests inventory the V2 TBEP operations against parity rows, which is a different catalog (V2 ops to PB rows, not V1 routes), so the row's required V1 route catalog artifact does not exist."
 }

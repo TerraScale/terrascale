@@ -3,5 +3,6 @@
   "item_id": "PB-6035",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Progress and status records exist and are focused-tested across the transfer seams — bounded progress disclosures with exact totals, skipped items reported without hiding loss, typed schedule failures in status, sealed-bundle runs reporting no secrets, restore receipts disclosing counts/duplicates/memory bound, and the migration loss matrix; a /v1/metrics endpoint surfaces stream drops in the C# host. The gaps are no rates/health/responsible-member fields, no typed public transfer status operation (PublicOperation carries document/query/family/schema only), and no protocol snapshot of status shapes.",
   "previous_status": "unresolved"
 }

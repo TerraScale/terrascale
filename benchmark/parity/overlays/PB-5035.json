@@ -3,5 +3,6 @@
   "item_id": "PB-5035",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Six typed, content-free, tenant-scoped observation operations exist with focused member-seam tests and registered TBEP wire frames. Gap: no live host serves them (the wire test asserts the typed refusal until a host does) and there is no one-to-one mapping of the V1 Get*Command names.",
   "previous_status": "unresolved"
 }

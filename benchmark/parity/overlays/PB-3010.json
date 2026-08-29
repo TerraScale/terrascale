@@ -3,5 +3,6 @@
   "item_id": "PB-3010",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Counter family queries are real: entry rows across documents, named restriction, predicate/ordering over entry fields, paging, includes matching direct reads, and index definitions accepting counters map sources with V1 identity spelling; no counter map/map-reduce index is maintained (family sources fail closed as index-less).",
   "previous_status": "unresolved"
 }

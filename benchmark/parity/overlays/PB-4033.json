@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "item_id": "PB-4033",
   "status": "unresolved",
-  "proof_ids": []
+  "proof_ids": [],
+  "disposition": "No First/Single/Any/Count/LongCount terminal operations exist at the query seam; results are full pages with matched totals (capped) and a truncation flag. The row's cardinality and exception semantics are absent as a distinct contract."
 }

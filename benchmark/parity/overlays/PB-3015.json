@@ -1,7 +1,10 @@
 {
   "schema_version": "1.0",
   "item_id": "PB-3015",
-  "status": "in-progress",
-  "proof_ids": [],
-  "previous_status": "unresolved"
+  "status": "implemented",
+  "proof_ids": [
+    "P-004"
+  ],
+  "disposition": "Overflow is a typed failure that never wraps, clamps, or commits a partial increment (checked_add, abort-before-staging), merged totals failing closed on overflow, malformed names/fields rejected at construction, and missing-document distinct from malformed/conflict errors; tests verified passing. V1's artificial-document target class has no V2 counterpart (no artificial documents exist in the model) and exception-identity mapping is adapter territory.",
+  "previous_status": "in-progress"
 }

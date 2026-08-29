@@ -3,5 +3,6 @@
   "item_id": "PB-3038",
   "status": "in-progress",
   "proof_ids": [],
+  "disposition": "Typed family tombstones exist with the guard outranking every other answer (stale local resurrection blocked, explicit clear unblocks), and replication retention floors prove cleanup waits for the slowest consumer with newest-evidence-only retention; tombstones carry kind/document/deletion-version/time but not V1's etags/change vectors/collection/flags, they are not recorded automatically on every family delete path, and no cross-member cleaner coordination test exists.",
   "previous_status": "unresolved"
 }
