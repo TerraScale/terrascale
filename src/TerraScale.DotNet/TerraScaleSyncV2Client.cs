@@ -207,7 +207,7 @@ public enum TerraScaleSyncV2DeltaPullKind
 
 /// <summary>The answer of one delta pull from the session's checkpoint.</summary>
 /// <param name="Kind">The outcome kind.</param>
-/// <param name="Codec">The payload codec (always <c>loro-delta/1</c> on a delta).</param>
+/// <param name="Codec">The payload codec (always <c>terrabase-native/1</c> on a delta).</param>
 /// <param name="Payload">The encoded delta bytes.</param>
 /// <param name="Next">The checkpoint after applying this batch.</param>
 /// <param name="Commits">How many journal commits the batch carries.</param>
@@ -223,7 +223,7 @@ public sealed record TerraScaleSyncV2DeltaPull(
     TerraScaleSyncV2Checkpoint? Floor);
 
 /// <summary>The answer of one snapshot pull: the full state and its checkpoint.</summary>
-/// <param name="Codec">The payload codec (always <c>loro-snapshot/1</c>).</param>
+/// <param name="Codec">The payload codec (always <c>terrabase-snapshot/1</c>).</param>
 /// <param name="Payload">The encoded snapshot bytes.</param>
 /// <param name="Checkpoint">The checkpoint the snapshot corresponds to.</param>
 public sealed record TerraScaleSyncV2SnapshotPull(
@@ -814,7 +814,7 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
                 // host sent none is the initial checkpoint).
                 return new TerraScaleSyncV2DeltaPull(
                     TerraScaleSyncV2DeltaPullKind.ResyncRequired,
-                    TerraScaleSyncV2PayloadCodec.LoroDelta1,
+                    TerraScaleSyncV2PayloadCodec.NativeDelta1,
                     [],
                     null,
                     0,
@@ -896,88 +896,88 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
         using (response!)
         using (var reader = new StreamReader(stream!, new UTF8Encoding(false)))
         {
-        var lines = new SyncV2BoundedLineReader(reader);
-        ulong? eventId = null;
-        var eventName = "message";
-        var data = new StringBuilder();
-        long dataBytes = 0;
-        while (true)
-        {
-            string? line;
-            try
+            var lines = new SyncV2BoundedLineReader(reader);
+            ulong? eventId = null;
+            var eventName = "message";
+            var data = new StringBuilder();
+            long dataBytes = 0;
+            while (true)
             {
-                line = await lines.ReadLineAsync(maxEvent, cancellationToken).ConfigureAwait(false);
-            }
-            catch (SyncV2OversizeEventException)
-            {
-                // A field line past the byte bound: bounded reading ends
-                // the stream on the oversize ladder; the live loop
-                // reconnects, bounded, or surfaces the typed failure.
-                EndStreamOnOversizeEvent();
-                yield break;
-            }
-            catch (Exception failure) when (failure is HttpRequestException or IOException or SocketException or ObjectDisposedException)
-            {
-                // The connection dropped: the stream ends and the live loop reconnects.
-                yield break;
-            }
-
-            if (line is null)
-            {
-                yield break;
-            }
-
-            if (line.Length == 0)
-            {
-                if (data.Length > 0)
+                string? line;
+                try
                 {
-                    // A well-formed event was delivered under the bound:
-                    // the oversize ladder and the backoff ladder both
-                    // restart from a stream that proves itself.
-                    oversizeEventAborts = 0;
-                    reconnectDelay = TimeSpan.Zero;
-                    yield return (eventId, eventName, data.ToString());
+                    line = await lines.ReadLineAsync(maxEvent, cancellationToken).ConfigureAwait(false);
                 }
-
-                eventId = null;
-                eventName = "message";
-                data.Clear();
-                dataBytes = 0;
-                continue;
-            }
-
-            if (line.StartsWith("id:", StringComparison.Ordinal))
-            {
-                if (ulong.TryParse(FieldValue(line, 3).Trim(), out var parsed))
+                catch (SyncV2OversizeEventException)
                 {
-                    eventId = parsed;
-                }
-            }
-            else if (line.StartsWith("event:", StringComparison.Ordinal))
-            {
-                eventName = FieldValue(line, 6);
-            }
-            else if (line.StartsWith("data:", StringComparison.Ordinal))
-            {
-                var value = FieldValue(line, 5);
-                if (data.Length > 0)
-                {
-                    _ = data.Append('\n');
-                    dataBytes++;
-                }
-
-                _ = data.Append(value);
-                dataBytes += Encoding.UTF8.GetByteCount(value);
-                if (dataBytes > maxEvent)
-                {
-                    // The accumulated event is past the byte bound: end
-                    // the stream on the oversize ladder instead of
-                    // buffering it without limit.
+                    // A field line past the byte bound: bounded reading ends
+                    // the stream on the oversize ladder; the live loop
+                    // reconnects, bounded, or surfaces the typed failure.
                     EndStreamOnOversizeEvent();
                     yield break;
                 }
+                catch (Exception failure) when (failure is HttpRequestException or IOException or SocketException or ObjectDisposedException)
+                {
+                    // The connection dropped: the stream ends and the live loop reconnects.
+                    yield break;
+                }
+
+                if (line is null)
+                {
+                    yield break;
+                }
+
+                if (line.Length == 0)
+                {
+                    if (data.Length > 0)
+                    {
+                        // A well-formed event was delivered under the bound:
+                        // the oversize ladder and the backoff ladder both
+                        // restart from a stream that proves itself.
+                        oversizeEventAborts = 0;
+                        reconnectDelay = TimeSpan.Zero;
+                        yield return (eventId, eventName, data.ToString());
+                    }
+
+                    eventId = null;
+                    eventName = "message";
+                    data.Clear();
+                    dataBytes = 0;
+                    continue;
+                }
+
+                if (line.StartsWith("id:", StringComparison.Ordinal))
+                {
+                    if (ulong.TryParse(FieldValue(line, 3).Trim(), out var parsed))
+                    {
+                        eventId = parsed;
+                    }
+                }
+                else if (line.StartsWith("event:", StringComparison.Ordinal))
+                {
+                    eventName = FieldValue(line, 6);
+                }
+                else if (line.StartsWith("data:", StringComparison.Ordinal))
+                {
+                    var value = FieldValue(line, 5);
+                    if (data.Length > 0)
+                    {
+                        _ = data.Append('\n');
+                        dataBytes++;
+                    }
+
+                    _ = data.Append(value);
+                    dataBytes += Encoding.UTF8.GetByteCount(value);
+                    if (dataBytes > maxEvent)
+                    {
+                        // The accumulated event is past the byte bound: end
+                        // the stream on the oversize ladder instead of
+                        // buffering it without limit.
+                        EndStreamOnOversizeEvent();
+                        yield break;
+                    }
+                }
             }
-        }
         }
     }
 
@@ -1234,8 +1234,8 @@ public sealed class TerraScaleSyncV2Session : IAsyncDisposable
 
     private static TerraScaleSyncV2PayloadCodec CodecOf(string name) => name switch
     {
-        "loro-delta/1" => TerraScaleSyncV2PayloadCodec.LoroDelta1,
-        "loro-snapshot/1" => TerraScaleSyncV2PayloadCodec.LoroSnapshot1,
+        "terrabase-native/1" => TerraScaleSyncV2PayloadCodec.NativeDelta1,
+        "terrabase-snapshot/1" => TerraScaleSyncV2PayloadCodec.NativeSnapshot1,
         var other => throw new TerraScaleSyncV2HostException(
             HttpStatusCode.InternalServerError,
             "host-failure",

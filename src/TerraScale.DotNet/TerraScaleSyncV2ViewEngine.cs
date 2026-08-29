@@ -26,6 +26,7 @@ public sealed class TerraScaleSyncV2ViewEngine
     private readonly object gate = new();
     private readonly Dictionary<TerraScaleViewIdentity, TerraScaleViewRow> rows = [];
     private readonly List<OptimisticLayer> optimisticLayers = [];
+    private readonly HashSet<string> completedMutations = new(StringComparer.Ordinal);
 
     private TerraScaleViewSessionState state = TerraScaleViewSessionState.Connecting;
     private TerraScaleViewId? viewId;
@@ -39,6 +40,7 @@ public sealed class TerraScaleSyncV2ViewEngine
     private long declaredLogicalByteBound;
     private long appliedLogicalBytes;
     private bool generationAdvanceExpected;
+    private bool online = true;
     private SnapshotAssembly? assembly;
 
     private sealed record OptimisticLayer(string IdempotencyId, List<TerraScaleViewResultOperation> Operations);
@@ -224,6 +226,32 @@ public sealed class TerraScaleSyncV2ViewEngine
             {
                 return optimisticLayers.Count;
             }
+        }
+    }
+
+    /// <summary>Whether online server-authoritative mutations may be started.</summary>
+    public bool IsOnline
+    {
+        get
+        {
+            lock (gate)
+            {
+                return online;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sets connectivity for the semantic engine. Disconnected clients may
+    /// continue to render cached results, but cannot queue or create durable
+    /// mutations; callers must retry the same idempotency identity online.
+    /// </summary>
+    /// <param name="connected">Whether the server connection is available.</param>
+    public void SetOnline(bool connected)
+    {
+        lock (gate)
+        {
+            online = connected;
         }
     }
 
@@ -464,8 +492,19 @@ public sealed class TerraScaleSyncV2ViewEngine
                     "The delta's view identity does not match the subscribed view.");
             }
 
-            if (delta.ToRevision <= appliedRevision && !generationChanged)
+            if (delta.ToRevision < appliedRevision && !generationChanged)
             {
+                DuplicateDeltasIgnored++;
+                return new TerraScaleViewDelivery(TerraScaleViewDeliveryOutcome.DuplicateDeltaIgnored, state);
+            }
+
+            if (delta.ToRevision == appliedRevision && !generationChanged)
+            {
+                if (!delta.ResultDigest.Equals(resultDigest))
+                {
+                    return Diverge();
+                }
+
                 DuplicateDeltasIgnored++;
                 return new TerraScaleViewDelivery(TerraScaleViewDeliveryOutcome.DuplicateDeltaIgnored, state);
             }
@@ -576,16 +615,25 @@ public sealed class TerraScaleSyncV2ViewEngine
                 TerraScaleViewSessionState.Resuming,
                 TerraScaleViewSessionState.Resetting);
 
+            if (newAuthorizationGeneration <= authorizationGeneration)
+            {
+                throw new TerraScaleViewProtocolException(
+                    TerraScaleViewProtocolError.InvalidAuthorization,
+                    $"The authorization generation {newAuthorizationGeneration} is not newer than {authorizationGeneration}.");
+            }
+
             authorizationGeneration = newAuthorizationGeneration;
             if (effect == TerraScaleViewAuthorizationEffect.SessionRevoked)
             {
                 checkpoint = null;
                 generationAdvanceExpected = false;
                 assembly = null;
+                optimisticLayers.Clear();
                 state = TerraScaleViewSessionState.Closing;
                 return new TerraScaleViewDelivery(TerraScaleViewDeliveryOutcome.SessionRevoked, state);
             }
 
+            optimisticLayers.Clear();
             generationAdvanceExpected = true;
             return new TerraScaleViewDelivery(TerraScaleViewDeliveryOutcome.ViewGenerationAdvanced, state);
         }
@@ -637,6 +685,7 @@ public sealed class TerraScaleSyncV2ViewEngine
                 TerraScaleViewSessionState.Resetting);
 
             checkpoint = null;
+            optimisticLayers.Clear();
             state = TerraScaleViewSessionState.Resetting;
             return new TerraScaleViewDelivery(TerraScaleViewDeliveryOutcome.CheckpointExpired, state);
         }
@@ -684,6 +733,13 @@ public sealed class TerraScaleSyncV2ViewEngine
         {
             RequireState("attach optimistic presentation", TerraScaleViewSessionState.Live);
 
+            if (!online)
+            {
+                throw new TerraScaleViewProtocolException(
+                    TerraScaleViewProtocolError.Offline,
+                    "Optimistic mutations are online-only and cannot be queued while disconnected.");
+            }
+
             if (string.IsNullOrWhiteSpace(idempotencyId) || Encoding.UTF8.GetByteCount(idempotencyId) > MaxIdempotencyKeyBytes)
             {
                 throw new TerraScaleViewProtocolException(
@@ -705,6 +761,17 @@ public sealed class TerraScaleSyncV2ViewEngine
                     $"The optimistic mutation {idempotencyId} is already in flight: one stable identity per mutation.");
             }
 
+            if (completedMutations.Contains(idempotencyId))
+            {
+                throw new TerraScaleViewProtocolException(
+                    TerraScaleViewProtocolError.InvalidOptimisticMutation,
+                    $"The optimistic mutation {idempotencyId} has already completed.");
+            }
+
+            // Validate the presentation before retaining it. A malformed
+            // optimistic layer must never silently disappear during replay.
+            _ = ApplyPresentation([.. rows.Values], [.. operations], lenient: false);
+
             optimisticLayers.Add(new OptimisticLayer(idempotencyId, [.. operations]));
             return Materialize(optimistic: true);
         }
@@ -725,6 +792,11 @@ public sealed class TerraScaleSyncV2ViewEngine
         {
             RequireState("resolve optimistic mutation", TerraScaleViewSessionState.Live);
 
+            if (completedMutations.Contains(idempotencyId))
+            {
+                return Materialize(optimistic: true);
+            }
+
             var index = optimisticLayers.FindIndex(layer => layer.IdempotencyId == idempotencyId);
             if (index < 0)
             {
@@ -734,6 +806,12 @@ public sealed class TerraScaleSyncV2ViewEngine
             }
 
             optimisticLayers.RemoveAt(index);
+            if (completedMutations.Count >= 1024)
+            {
+                completedMutations.Remove(completedMutations.First());
+            }
+
+            completedMutations.Add(idempotencyId);
             return Materialize(optimistic: true);
         }
     }
@@ -779,6 +857,7 @@ public sealed class TerraScaleSyncV2ViewEngine
     {
         DivergencesDetected++;
         checkpoint = null;
+        optimisticLayers.Clear();
         generationAdvanceExpected = false;
         assembly = null;
         state = TerraScaleViewSessionState.Resetting;
@@ -900,6 +979,13 @@ public sealed class TerraScaleSyncV2ViewEngine
                     "The reset result exceeds the declared row bound.");
             }
 
+            if (reset.Rows.Select(row => row.Identity).Distinct().Count() != reset.Rows.Count)
+            {
+                throw new TerraScaleViewProtocolException(
+                    TerraScaleViewProtocolError.MalformedDelta,
+                    "The reset result repeats a row identity.");
+            }
+
             var resetBytes = reset.Rows.Sum(LogicalBytes);
             if (resetBytes > declaredLogicalByteBound)
             {
@@ -917,8 +1003,11 @@ public sealed class TerraScaleSyncV2ViewEngine
         {
             if (mutation.Removed)
             {
-                projectedCount--;
-                projectedBytes -= LogicalBytes(rows[identity]);
+                if (rows.TryGetValue(identity, out var removed))
+                {
+                    projectedCount--;
+                    projectedBytes -= LogicalBytes(removed);
+                }
             }
             else if (rows.TryGetValue(identity, out var existing))
             {
@@ -970,7 +1059,10 @@ public sealed class TerraScaleSyncV2ViewEngine
             optimistic && optimisticLayers.Count > 0);
     }
 
-    private static List<TerraScaleViewRow> ApplyPresentation(List<TerraScaleViewRow> materialized, List<TerraScaleViewResultOperation> operations)
+    private static List<TerraScaleViewRow> ApplyPresentation(
+        List<TerraScaleViewRow> materialized,
+        List<TerraScaleViewResultOperation> operations,
+        bool lenient = true)
     {
         var rowsByKey = materialized.ToDictionary(row => row.Identity);
         foreach (var operation in operations)
@@ -981,12 +1073,22 @@ public sealed class TerraScaleSyncV2ViewEngine
                     rowsByKey.Clear();
                     foreach (var row in reset.Rows)
                     {
+                        if (!rowsByKey.TryAdd(row.Identity, row) && !lenient)
+                        {
+                            throw PresentationFailure("The optimistic reset repeats a row identity.");
+                        }
+
                         rowsByKey[row.Identity] = row;
                     }
 
                     break;
 
                 case TerraScaleViewInsert insert:
+                    if (rowsByKey.ContainsKey(insert.Identity) && !lenient)
+                    {
+                        throw PresentationFailure($"The optimistic insert targets existing identity {insert.Identity}.");
+                    }
+
                     rowsByKey[insert.Identity] = new TerraScaleViewRow(insert.Identity, insert.Position, insert.Value);
                     break;
 
@@ -995,38 +1097,71 @@ public sealed class TerraScaleSyncV2ViewEngine
                     {
                         rowsByKey[update.Identity] = new TerraScaleViewRow(update.Identity, updated.Position, update.Value);
                     }
+                    else if (!lenient)
+                    {
+                        throw PresentationFailure($"The optimistic update targets unknown identity {update.Identity}.");
+                    }
 
                     break;
 
                 case TerraScaleViewPatch patch:
                     if (rowsByKey.TryGetValue(patch.Identity, out var patched))
                     {
-                        var patchedValue = ApplyPatch(patched.Value, patch.Steps, lenient: true);
+                        var patchedValue = ApplyPatch(patched.Value, patch.Steps, lenient);
                         if (patchedValue is not null)
                         {
                             rowsByKey[patch.Identity] = new TerraScaleViewRow(patch.Identity, patched.Position, patchedValue.Value);
                         }
+                        else if (!lenient)
+                        {
+                            throw PresentationFailure($"The optimistic patch does not resolve on identity {patch.Identity}.");
+                        }
+                    }
+                    else if (!lenient)
+                    {
+                        throw PresentationFailure($"The optimistic patch targets unknown identity {patch.Identity}.");
                     }
 
                     break;
 
                 case TerraScaleViewRemove remove:
-                    rowsByKey.Remove(remove.Identity);
+                    if (!rowsByKey.Remove(remove.Identity) && !lenient)
+                    {
+                        throw PresentationFailure($"The optimistic remove targets unknown identity {remove.Identity}.");
+                    }
+
                     break;
 
                 case TerraScaleViewMove move:
                     if (rowsByKey.TryGetValue(move.Identity, out var moved))
                     {
+                        if (!lenient && moved.Position.CompareTo(move.OldPosition) != 0)
+                        {
+                            throw PresentationFailure($"The optimistic move has an unprovable old position for identity {move.Identity}.");
+                        }
+
                         rowsByKey[move.Identity] = new TerraScaleViewRow(move.Identity, move.NewPosition, moved.Value);
+                    }
+                    else if (!lenient)
+                    {
+                        throw PresentationFailure($"The optimistic move targets unknown identity {move.Identity}.");
                     }
 
                     break;
+            }
+
+            if (!lenient && (rowsByKey.Count > 10_000 || rowsByKey.Values.Sum(LogicalBytes) > 64 * 1024 * 1024))
+            {
+                throw PresentationFailure("The optimistic presentation exceeds the bounded result budget.");
             }
         }
 
         var result = new List<TerraScaleViewRow>(rowsByKey.Values);
         result.Sort(CompareRows);
         return result;
+
+        static TerraScaleViewProtocolException PresentationFailure(string reason) =>
+            new(TerraScaleViewProtocolError.InvalidOptimisticMutation, reason);
     }
 
     /// <summary>Applies canonical patch steps to a cloned value. Returns <c>null</c> when a path does not resolve.</summary>

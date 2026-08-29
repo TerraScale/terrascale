@@ -209,12 +209,31 @@ public sealed class TerraScaleSyncV2ViewEngineTests
     {
         var engine = LiveEngine(Row("a", "01", """{"name":"alpha"}"""));
 
-        var duplicate = engine.ApplyResultDelta(Delta(10, [new TerraScaleViewRemove(Id("a"))], fromRevision: 9, generation: 1, digest: "digest-9", checkpoint: "checkpoint-9"));
+        var duplicate = engine.ApplyResultDelta(Delta(10, [new TerraScaleViewRemove(Id("a"))], fromRevision: 9, generation: 1, digest: "digest-10", checkpoint: "checkpoint-10"));
 
         await Assert.That(duplicate.Outcome).IsEqualTo(TerraScaleViewDeliveryOutcome.DuplicateDeltaIgnored);
         await Assert.That(engine.DuplicateDeltasIgnored).IsEqualTo(1ul);
         await Assert.That(engine.CurrentView!.Rows.Count).IsEqualTo(1);
         await Assert.That(engine.Checkpoint!.Token).IsEqualTo("checkpoint-10");
+    }
+
+    /// <summary>A duplicate revision with a different complete-result digest is divergence, not a harmless replay.</summary>
+    [Test]
+    public async Task DuplicateRevisionWithDigestMismatchRequiresReset()
+    {
+        var engine = LiveEngine(Row("a", "01", """{"name":"alpha"}"""));
+
+        var diverged = engine.ApplyResultDelta(Delta(
+            10,
+            [new TerraScaleViewRemove(Id("a"))],
+            fromRevision: 9,
+            generation: 1,
+            digest: "different-result",
+            checkpoint: "checkpoint-other"));
+
+        await Assert.That(diverged.Outcome).IsEqualTo(TerraScaleViewDeliveryOutcome.ViewDiverged);
+        await Assert.That(engine.State).IsEqualTo(TerraScaleViewSessionState.Resetting);
+        await Assert.That(engine.Checkpoint).IsNull();
     }
 
     /// <summary>A from_revision gap applies nothing: resume or reset is required.</summary>
@@ -557,6 +576,37 @@ public sealed class TerraScaleSyncV2ViewEngineTests
 
         var unknown = await Rejects(() => engine.ResolveMutationOutcome("mutation-missing", accepted: true));
         await Assert.That(unknown.Error).IsEqualTo(TerraScaleViewProtocolError.InvalidOptimisticMutation);
+    }
+
+    /// <summary>Disconnected views retain presentation state but refuse new durable optimistic mutations.</summary>
+    [Test]
+    public async Task DisconnectedViewRefusesOptimisticMutationWithoutQueueing()
+    {
+        var engine = LiveEngine(Row("a", "01", """{"name":"alpha"}"""));
+        engine.SetOnline(false);
+
+        var refused = await Rejects(() => engine.AttachOptimisticPresentation(
+            "mutation-offline",
+            [new TerraScaleViewUpdate(Id("a"), Json("""{"name":"offline"}"""))]));
+
+        await Assert.That(refused.Error).IsEqualTo(TerraScaleViewProtocolError.Offline);
+        await Assert.That(engine.OptimisticMutationsPending).IsEqualTo(0);
+        await Assert.That(engine.AuthoritativeView!.Rows[0].Value.GetProperty("name").GetString()).IsEqualTo("alpha");
+    }
+
+    /// <summary>Completed mutation identities cannot be attached again and repeated outcomes are idempotent.</summary>
+    [Test]
+    public async Task CompletedOptimisticMutationIdentityCannotBeReused()
+    {
+        var engine = LiveEngine(Row("a", "01", """{"name":"alpha"}"""));
+        _ = engine.AttachOptimisticPresentation("mutation-completed", [new TerraScaleViewRemove(Id("a"))]);
+        _ = engine.ResolveMutationOutcome("mutation-completed", accepted: false);
+        _ = engine.ResolveMutationOutcome("mutation-completed", accepted: true);
+
+        var refused = await Rejects(() => engine.AttachOptimisticPresentation(
+            "mutation-completed",
+            [new TerraScaleViewRemove(Id("a"))]));
+        await Assert.That(refused.Error).IsEqualTo(TerraScaleViewProtocolError.InvalidOptimisticMutation);
     }
 
     /// <summary>The close handshake refuses new view work in Closing and terminates in Closed.</summary>

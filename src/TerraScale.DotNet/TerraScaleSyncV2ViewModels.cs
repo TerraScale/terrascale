@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 
 namespace TerraScale.DotNet;
@@ -80,6 +81,12 @@ public enum TerraScaleViewProtocolError
 
     /// <summary>The optimistic presentation identity is not usable: empty, over its bound, duplicated while in flight, or unknown on completion.</summary>
     InvalidOptimisticMutation,
+
+    /// <summary>An optimistic mutation was attempted while disconnected.</summary>
+    Offline,
+
+    /// <summary>An authorization generation was stale or malformed.</summary>
+    InvalidAuthorization,
 }
 
 /// <summary>The typed fail-closed rejection of the client-side view engine.</summary>
@@ -108,6 +115,8 @@ public sealed class TerraScaleViewProtocolException : Exception
         TerraScaleViewProtocolError.MalformedSnapshot => "malformed_snapshot",
         TerraScaleViewProtocolError.MalformedDelta => "malformed_delta",
         TerraScaleViewProtocolError.InvalidOptimisticMutation => "invalid_optimistic_mutation",
+        TerraScaleViewProtocolError.Offline => "offline",
+        TerraScaleViewProtocolError.InvalidAuthorization => "invalid_authorization",
         _ => "wrong_state",
     };
 }
@@ -149,7 +158,7 @@ public sealed record TerraScaleViewIdentity
     /// <param name="incarnation">The document incarnation: bumped on recreate or restore.</param>
     public TerraScaleViewIdentity(string documentId, ulong incarnation)
     {
-        if (string.IsNullOrWhiteSpace(documentId))
+        if (string.IsNullOrWhiteSpace(documentId) || Encoding.UTF8.GetByteCount(documentId) > 256)
         {
             throw new ArgumentException("The document identity must not be empty.", nameof(documentId));
         }
@@ -179,7 +188,7 @@ public sealed record TerraScaleViewPosition : IComparable<TerraScaleViewPosition
     /// <param name="key">The opaque canonical sort key.</param>
     public TerraScaleViewPosition(string key)
     {
-        if (string.IsNullOrEmpty(key))
+        if (string.IsNullOrEmpty(key) || Encoding.UTF8.GetByteCount(key) > 256)
         {
             throw new ArgumentException("The position key must not be empty.", nameof(key));
         }
@@ -211,7 +220,7 @@ public sealed record TerraScaleViewDigest
     /// <param name="value">The opaque digest value.</param>
     public TerraScaleViewDigest(string value)
     {
-        if (string.IsNullOrWhiteSpace(value))
+        if (string.IsNullOrWhiteSpace(value) || Encoding.UTF8.GetByteCount(value) > 256)
         {
             throw new ArgumentException("The digest must not be empty.", nameof(value));
         }
@@ -237,7 +246,7 @@ public sealed record TerraScaleViewCausalCut
     /// <param name="token">The opaque public causal session token.</param>
     public TerraScaleViewCausalCut(string token)
     {
-        if (string.IsNullOrWhiteSpace(token))
+        if (string.IsNullOrWhiteSpace(token) || Encoding.UTF8.GetByteCount(token) > 4096)
         {
             throw new ArgumentException("The causal cut token must not be empty.", nameof(token));
         }
@@ -252,7 +261,7 @@ public sealed record TerraScaleViewCausalCut
 /// <summary>
 /// An opaque, versioned, integrity-protected view checkpoint (ADR-0024).
 /// It is an authenticated capability to <i>request</i> resume — never an
-/// authorization grant, never a Loro payload, and never a Region
+/// authorization grant, never a native storage payload, and never a Region
 /// replication vector. The client persists it only after atomically
 /// applying and validating the corresponding snapshot or delta.
 /// </summary>
@@ -262,7 +271,7 @@ public sealed record TerraScaleViewCheckpoint
     /// <param name="token">The opaque public checkpoint token.</param>
     public TerraScaleViewCheckpoint(string token)
     {
-        if (string.IsNullOrWhiteSpace(token))
+        if (string.IsNullOrWhiteSpace(token) || Encoding.UTF8.GetByteCount(token) > 16 * 1024)
         {
             throw new ArgumentException("The checkpoint token must not be empty.", nameof(token));
         }
@@ -300,14 +309,29 @@ public sealed record TerraScaleViewPatchStep
     /// <param name="value">The replacement value, when the kind is <c>Replace</c>.</param>
     public TerraScaleViewPatchStep(string path, TerraScaleViewPatchStepKind kind, JsonElement? value = null)
     {
-        if (string.IsNullOrWhiteSpace(path))
+        if (string.IsNullOrWhiteSpace(path) || Encoding.UTF8.GetByteCount(path) > 256)
         {
             throw new ArgumentException("The patch path must not be empty.", nameof(path));
         }
 
+        if (!Enum.IsDefined(kind))
+        {
+            throw new ArgumentOutOfRangeException(nameof(kind));
+        }
+
+        if (kind == TerraScaleViewPatchStepKind.Replace && value is null)
+        {
+            throw new ArgumentException("A replace patch step requires a value.", nameof(value));
+        }
+
+        if (value is { } element && Encoding.UTF8.GetByteCount(element.GetRawText()) > 64 * 1024)
+        {
+            throw new ArgumentException("The replacement value exceeds the 64 KiB bound.", nameof(value));
+        }
+
         Path = path;
         Kind = kind;
-        Value = value is { } element ? TerraScaleViewJson.Clone(element) : null;
+        Value = value is { } replacement ? TerraScaleViewJson.Clone(replacement) : null;
     }
 
     /// <summary>The canonical slash-separated path.</summary>
@@ -411,7 +435,17 @@ public sealed record TerraScaleViewPatch : TerraScaleViewResultOperation
     public TerraScaleViewPatch(TerraScaleViewIdentity identity, IReadOnlyList<TerraScaleViewPatchStep> steps)
     {
         Identity = identity ?? throw new ArgumentNullException(nameof(identity));
-        Steps = steps ?? throw new ArgumentNullException(nameof(steps));
+        if (steps is null)
+        {
+            throw new ArgumentNullException(nameof(steps));
+        }
+
+        if (steps.Count is 0 or > 1024)
+        {
+            throw new ArgumentOutOfRangeException(nameof(steps), "A patch must contain 1-1024 steps.");
+        }
+
+        Steps = [.. steps];
     }
 
     /// <inheritdoc />
@@ -479,7 +513,17 @@ public sealed record TerraScaleViewReset : TerraScaleViewResultOperation
     /// <param name="rows">The complete replacement result, in canonical order.</param>
     public TerraScaleViewReset(IReadOnlyList<TerraScaleViewRow> rows)
     {
-        Rows = rows ?? throw new ArgumentNullException(nameof(rows));
+        if (rows is null)
+        {
+            throw new ArgumentNullException(nameof(rows));
+        }
+
+        if (rows.Count > 10_000)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rows), "A reset is limited to 10000 rows.");
+        }
+
+        Rows = [.. rows];
     }
 
     /// <inheritdoc />
@@ -500,6 +544,11 @@ public sealed record TerraScaleViewRow
     {
         Identity = identity ?? throw new ArgumentNullException(nameof(identity));
         Position = position ?? throw new ArgumentNullException(nameof(position));
+        if (Encoding.UTF8.GetByteCount(value.GetRawText()) > 64 * 1024)
+        {
+            throw new ArgumentException("The row value exceeds the 64 KiB bound.", nameof(value));
+        }
+
         Value = TerraScaleViewJson.Clone(value);
     }
 
@@ -542,17 +591,17 @@ public sealed record TerraScaleViewSnapshotBegin
     {
         ViewId = viewId ?? throw new ArgumentNullException(nameof(viewId));
         CausalCut = causalCut ?? throw new ArgumentNullException(nameof(causalCut));
-        if (string.IsNullOrWhiteSpace(resultShape))
+        if (string.IsNullOrWhiteSpace(resultShape) || Encoding.UTF8.GetByteCount(resultShape) > 256)
         {
             throw new ArgumentException("The result shape must not be empty.", nameof(resultShape));
         }
 
-        if (declaredRowBound <= 0)
+        if (declaredRowBound is <= 0 or > 10_000)
         {
             throw new ArgumentOutOfRangeException(nameof(declaredRowBound), "The declared row bound must be positive.");
         }
 
-        if (declaredByteBound <= 0)
+        if (declaredByteBound is <= 0 or > 64 * 1024 * 1024)
         {
             throw new ArgumentOutOfRangeException(nameof(declaredByteBound), "The declared byte bound must be positive.");
         }
@@ -609,14 +658,14 @@ public sealed record TerraScaleViewSnapshotChunk
             throw new ArgumentOutOfRangeException(nameof(chunkOrdinal), "The chunk ordinal is one-based.");
         }
 
-        if (string.IsNullOrWhiteSpace(chunkHash))
+        if (string.IsNullOrWhiteSpace(chunkHash) || Encoding.UTF8.GetByteCount(chunkHash) > 256)
         {
             throw new ArgumentException("The chunk hash must not be empty.", nameof(chunkHash));
         }
 
         ViewGeneration = viewGeneration;
         ChunkOrdinal = chunkOrdinal;
-        Rows = rows ?? throw new ArgumentNullException(nameof(rows));
+        Rows = rows is null ? throw new ArgumentNullException(nameof(rows)) : [.. rows];
         ChunkHash = chunkHash;
     }
 
@@ -695,7 +744,17 @@ public sealed record TerraScaleViewResultDelta
     {
         ViewId = viewId ?? throw new ArgumentNullException(nameof(viewId));
         CausalCut = causalCut ?? throw new ArgumentNullException(nameof(causalCut));
-        Operations = operations ?? throw new ArgumentNullException(nameof(operations));
+        if (operations is null)
+        {
+            throw new ArgumentNullException(nameof(operations));
+        }
+
+        if (operations.Count > 1024)
+        {
+            throw new ArgumentOutOfRangeException(nameof(operations), "A result delta is limited to 1024 operations.");
+        }
+
+        Operations = [.. operations];
         ResultDigest = resultDigest ?? throw new ArgumentNullException(nameof(resultDigest));
         Checkpoint = checkpoint ?? throw new ArgumentNullException(nameof(checkpoint));
         ViewGeneration = viewGeneration;

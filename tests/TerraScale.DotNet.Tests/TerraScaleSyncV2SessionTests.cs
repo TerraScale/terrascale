@@ -71,7 +71,7 @@ public sealed class TerraScaleSyncV2SessionTests
         var serverCheckpoint = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, serverCheckpoint, TerraScaleSyncV2Checkpoint.Initial);
         host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(
-            TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [1, 2, 3, 4], serverCheckpoint);
+            TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [1, 2, 3, 4], serverCheckpoint);
         using var http = CreateClient(host);
         await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
         _ = await session.SetupAsync();
@@ -80,7 +80,7 @@ public sealed class TerraScaleSyncV2SessionTests
         var snapshot = await session.PullSnapshotAsync();
         _ = await host.NextRequestAsync();
 
-        await Assert.That(snapshot.Codec).IsEqualTo(TerraScaleSyncV2PayloadCodec.LoroSnapshot1);
+        await Assert.That(snapshot.Codec).IsEqualTo(TerraScaleSyncV2PayloadCodec.NativeSnapshot1);
         await Assert.That(snapshot.Payload.ToArray()).IsEquivalentTo((byte[])[1, 2, 3, 4]);
         await Assert.That(session.State.Checkpoint).IsEqualTo(serverCheckpoint);
         await Assert.That(session.State.DeltasApplied).IsEqualTo(0ul);
@@ -100,17 +100,17 @@ public sealed class TerraScaleSyncV2SessionTests
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 9)], 4);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [9, 9], start);
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [9, 9], start);
         host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(
             TerraScaleSyncV2DeltaPullKind.Delta,
-            TerraScaleSyncV2PayloadCodec.LoroDelta1,
+            TerraScaleSyncV2PayloadCodec.NativeDelta1,
             [0xaa, 0xbb],
             next,
             Commits: 2,
             SingleCommitOversize: false,
             Floor: null));
         host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(
-            TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], start, 0, false, null));
+            TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.NativeDelta1, [], start, 0, false, null));
         using var http = CreateClient(host);
         await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
 
@@ -163,9 +163,9 @@ public sealed class TerraScaleSyncV2SessionTests
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 9)], 4);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [9], start);
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x01], next, 1, false, null));
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x01], next, 1, false, null));
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [9], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.NativeDelta1, [0x01], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.NativeDelta1, [0x01], next, 1, false, null));
         using var http = CreateClient(host);
         await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
         var updates = session.UpdatesAsync().GetAsyncEnumerator();
@@ -200,10 +200,10 @@ public sealed class TerraScaleSyncV2SessionTests
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         var current = TerraScaleSyncV2Checkpoint.Create([(1ul, 40)], 22);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [7, 7, 7], current);
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [7, 7, 7], current);
         host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(
             TerraScaleSyncV2DeltaPullKind.ResyncRequired,
-            TerraScaleSyncV2PayloadCodec.LoroDelta1,
+            TerraScaleSyncV2PayloadCodec.NativeDelta1,
             [],
             null!,
             0,
@@ -315,8 +315,8 @@ public sealed class TerraScaleSyncV2SessionTests
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 8)], 4);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [5], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.NativeDelta1, [0x11], next, 1, false, null));
         using var http = CreateClient(host);
         await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders")
         {
@@ -358,8 +358,8 @@ public sealed class TerraScaleSyncV2SessionTests
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 8)], 4);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [5], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.NativeDelta1, [0x11], next, 1, false, null));
         using var http = CreateClient(host);
         await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
         var updates = session.UpdatesAsync().GetAsyncEnumerator();
@@ -377,7 +377,7 @@ public sealed class TerraScaleSyncV2SessionTests
         // The host answers 410 on the next delta: the session is gone, so it re-opens and resumes.
         host.Script.SessionEnded = true;
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(8ul, next, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.NativeDelta1, [], next, 0, false, null));
         var recovery = updates.MoveNextAsync().AsTask();
         await first.TriggerAsync(6, "orders", 5, "op-5");
         await Task.Delay(500);
@@ -398,9 +398,9 @@ public sealed class TerraScaleSyncV2SessionTests
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 8)], 4);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [5], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.NativeDelta1, [0x11], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.NativeDelta1, [], next, 0, false, null));
         host.Script.StreamRefusalsRemaining = 1;
         using var http = CreateClient(host);
         await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders")
@@ -435,11 +435,11 @@ public sealed class TerraScaleSyncV2SessionTests
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 8)], 4);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x12], next, 1, false, null));
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [5], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.NativeDelta1, [0x11], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.NativeDelta1, [], next, 0, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.NativeDelta1, [0x12], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.NativeDelta1, [], next, 0, false, null));
         using var http = CreateClient(host);
         await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
         var updates = session.UpdatesAsync().GetAsyncEnumerator();
@@ -479,9 +479,9 @@ public sealed class TerraScaleSyncV2SessionTests
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 8)], 4);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [5], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.NativeDelta1, [0x11], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.NativeDelta1, [], next, 0, false, null));
         using var http = CreateClient(host);
         await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
         var updates = session.UpdatesAsync().GetAsyncEnumerator();
@@ -530,9 +530,9 @@ public sealed class TerraScaleSyncV2SessionTests
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 8)], 4);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [5], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.NativeDelta1, [0x11], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.NativeDelta1, [], next, 0, false, null));
         using var http = CreateClient(host);
         await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders")
         {
@@ -576,7 +576,7 @@ public sealed class TerraScaleSyncV2SessionTests
         using var host = await LoopbackSyncV2Host.StartAsync();
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [5], start);
         host.Script.OversizeEveryStream = true;
         using var http = CreateClient(host);
         await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders")
@@ -615,9 +615,9 @@ public sealed class TerraScaleSyncV2SessionTests
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         var next = TerraScaleSyncV2Checkpoint.Create([(1ul, 8)], 4);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.LoroDelta1, [0x11], next, 1, false, null));
-        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.LoroDelta1, [], next, 0, false, null));
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [5], start);
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.Delta, TerraScaleSyncV2PayloadCodec.NativeDelta1, [0x11], next, 1, false, null));
+        host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(TerraScaleSyncV2DeltaPullKind.UpToDate, TerraScaleSyncV2PayloadCodec.NativeDelta1, [], next, 0, false, null));
         using var http = CreateClient(host);
         await using var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders")
         {
@@ -706,7 +706,7 @@ public sealed class TerraScaleSyncV2SessionTests
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, TerraScaleSyncV2Checkpoint.Initial, TerraScaleSyncV2Checkpoint.Initial);
         host.Script.DeltaAnswers.Enqueue(new TerraScaleSyncV2DeltaPull(
             TerraScaleSyncV2DeltaPullKind.ResyncRequired,
-            TerraScaleSyncV2PayloadCodec.LoroDelta1,
+            TerraScaleSyncV2PayloadCodec.NativeDelta1,
             [],
             null!,
             0,
@@ -796,7 +796,7 @@ public sealed class TerraScaleSyncV2SessionTests
         using var host = await LoopbackSyncV2Host.StartAsync();
         var start = TerraScaleSyncV2Checkpoint.Create([(1ul, 6)], 3);
         host.Script.SetupAnswer = new TerraScaleSyncV2SessionAccepted(7ul, start, TerraScaleSyncV2Checkpoint.Initial);
-        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [5], start);
+        host.Script.SnapshotAnswer = new TerraScaleSyncV2SnapshotPull(TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [5], start);
         using var http = CreateClient(host);
         var session = CreateSyncClient(http).CreateSession(new TerraScaleSyncV2SessionOptions("orders"));
         var updates = session.UpdatesAsync().GetAsyncEnumerator();
@@ -1164,7 +1164,7 @@ public sealed class LoopbackSyncV2Host : IDisposable
                 await WriteJsonAsync(stream, "200 OK", new
                 {
                     sessionId = SessionId(request.Path),
-                    payloadCodec = "loro-delta/1",
+                    payloadCodec = "terrabase-native/1",
                     payload = Convert.ToBase64String(Array.Empty<byte>()),
                     next = Convert.ToBase64String(from),
                     commits = 0u,
@@ -1190,7 +1190,7 @@ public sealed class LoopbackSyncV2Host : IDisposable
             await WriteJsonAsync(stream, "200 OK", new
             {
                 sessionId = SessionId(request.Path),
-                payloadCodec = "loro-delta/1",
+                payloadCodec = "terrabase-native/1",
                 payload = Convert.ToBase64String(answer.Payload),
                 next = Convert.ToBase64String(answer.Next!.ToBytes()),
                 commits = answer.Commits,
@@ -1212,11 +1212,11 @@ public sealed class LoopbackSyncV2Host : IDisposable
             }
 
             var snapshot = this.Script.SnapshotAnswer ?? new TerraScaleSyncV2SnapshotPull(
-                TerraScaleSyncV2PayloadCodec.LoroSnapshot1, [], TerraScaleSyncV2Checkpoint.Initial);
+                TerraScaleSyncV2PayloadCodec.NativeSnapshot1, [], TerraScaleSyncV2Checkpoint.Initial);
             await WriteJsonAsync(stream, "200 OK", new
             {
                 sessionId = SessionId(request.Path),
-                payloadCodec = "loro-snapshot/1",
+                payloadCodec = "terrabase-snapshot/1",
                 payload = Convert.ToBase64String(snapshot.Payload),
                 checkpoint = Convert.ToBase64String(snapshot.Checkpoint.ToBytes()),
             });

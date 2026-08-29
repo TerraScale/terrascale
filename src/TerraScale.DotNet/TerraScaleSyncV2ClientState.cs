@@ -116,7 +116,7 @@ public sealed class TerraScaleSyncV2ClientState
     }
 
     /// <summary>Adopts one full-state answer: the snapshot replaces the session's position.</summary>
-    /// <param name="codec">The payload codec (always <c>loro-snapshot/1</c>).</param>
+    /// <param name="codec">The payload codec (always <c>terrabase-snapshot/1</c>).</param>
     /// <param name="payload">The encoded snapshot bytes.</param>
     /// <param name="adopted">The checkpoint the snapshot corresponds to.</param>
     public void AdoptSnapshot(TerraScaleSyncV2PayloadCodec codec, ReadOnlyMemory<byte> payload, TerraScaleSyncV2Checkpoint adopted)

@@ -164,11 +164,11 @@ public enum TerraScaleSyncV2FrameKind
 /// <summary>The payload codec identity of a delivery frame: the only places byte payloads ride the protocol.</summary>
 public enum TerraScaleSyncV2PayloadCodec
 {
-    /// <summary>A Loro update-range delta export, codec version 1 (<c>loro-delta/1</c>).</summary>
-    LoroDelta1 = 1,
+    /// <summary>A native update-range delta export, codec version 1 (<c>terrabase-native/1</c>).</summary>
+    NativeDelta1 = 3,
 
-    /// <summary>A Loro snapshot export, codec version 1 (<c>loro-snapshot/1</c>).</summary>
-    LoroSnapshot1 = 2,
+    /// <summary>A native snapshot export, codec version 1 (<c>terrabase-snapshot/1</c>).</summary>
+    NativeSnapshot1 = 4,
 }
 
 /// <summary>The closed fatal-error vocabulary shared by error frames and mutation rejections.</summary>
@@ -296,15 +296,15 @@ public readonly struct TerraScaleSyncV2IdempotencyKey : IEquatable<TerraScaleSyn
     public override string ToString() => Value ?? string.Empty;
 }
 
-/// <summary>One version-vector end pair of a checkpoint.</summary>
+/// <summary>One native causal-position end pair of a checkpoint.</summary>
 /// <param name="Peer">The writer peer the pair names.</param>
 /// <param name="End">The end counter the session holds for the peer.</param>
-public readonly record struct TerraScaleSyncV2VersionEnd(ulong Peer, int End);
+public readonly record struct TerraScaleSyncV2VersionEnd(ulong Peer, ulong End);
 
 /// <summary>
 /// The durable resumption identity of one sync session: the version-vector
 /// end pairs plus the storage sequence the session has absorbed. The
-/// encoding is versioned (byte <c>1</c>), little-endian, and fails closed
+/// encoding is versioned (byte <c>2</c>), little-endian, and fails closed
 /// on unknown versions and truncation.
 /// </summary>
 public sealed record TerraScaleSyncV2Checkpoint(
@@ -321,7 +321,7 @@ public sealed record TerraScaleSyncV2Checkpoint(
     /// <param name="storageSequence">The absorbed storage sequence.</param>
     /// <returns>The canonical checkpoint.</returns>
     public static TerraScaleSyncV2Checkpoint Create(IEnumerable<(ulong Peer, int End)> ends, ulong storageSequence) => new(
-        ends.Select(end => new TerraScaleSyncV2VersionEnd(end.Peer, end.End))
+        ends.Select(end => new TerraScaleSyncV2VersionEnd(end.Peer, checked((ulong)end.End)))
             .OrderBy(end => end.Peer)
             .DistinctBy(end => end.Peer)
             .ToArray(),
@@ -330,7 +330,7 @@ public sealed record TerraScaleSyncV2Checkpoint(
     /// <summary>The end entry for a peer, or <c>null</c> when the checkpoint holds no operation of that peer.</summary>
     /// <param name="peer">The peer.</param>
     /// <returns>The end counter, or <c>null</c>.</returns>
-    public int? EndFor(ulong peer)
+    public ulong? EndFor(ulong peer)
     {
         foreach (var end in Ends)
         {
@@ -365,9 +365,9 @@ public sealed record TerraScaleSyncV2Checkpoint(
 
         return TotalEnd(Ends).CompareTo(TotalEnd(other.Ends));
 
-        static long TotalEnd(IReadOnlyList<TerraScaleSyncV2VersionEnd> ends)
+        static ulong TotalEnd(IReadOnlyList<TerraScaleSyncV2VersionEnd> ends)
         {
-            var total = 0L;
+            var total = 0UL;
             foreach (var end in ends)
             {
                 total += end.End;
@@ -386,16 +386,16 @@ public sealed record TerraScaleSyncV2Checkpoint(
     /// <returns>The encoded checkpoint.</returns>
     public byte[] ToBytes()
     {
-        var bytes = new byte[13 + (Ends.Count * 12)];
-        bytes[0] = 1;
+        var bytes = new byte[13 + (Ends.Count * 16)];
+        bytes[0] = 2;
         BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(1, 8), StorageSequence);
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(9, 4), (uint)Ends.Count);
         var offset = 13;
         foreach (var end in Ends)
         {
             BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(offset, 8), end.Peer);
-            BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(offset + 8, 4), end.End);
-            offset += 12;
+            BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(offset + 8, 8), end.End);
+            offset += 16;
         }
 
         return bytes;
@@ -407,7 +407,7 @@ public sealed record TerraScaleSyncV2Checkpoint(
     /// <exception cref="TerraScaleSyncV2ProtocolException">The encoding is not a v1 checkpoint or is truncated.</exception>
     public static TerraScaleSyncV2Checkpoint FromBytes(ReadOnlySpan<byte> bytes)
     {
-        if (bytes.IsEmpty || bytes[0] != 1)
+        if (bytes.IsEmpty || bytes[0] != 2)
         {
             throw new TerraScaleSyncV2ProtocolException(
                 TerraScaleSyncV2ProtocolError.MalformedFrame,
@@ -428,7 +428,7 @@ public sealed record TerraScaleSyncV2Checkpoint(
         // typed truncation, never an untyped capacity failure or an
         // overflowed truncation check. The bound also proves the count
         // fits int (a span's length already does).
-        if (count > (ulong)((bytes.Length - 13L) / 12L))
+        if (count > (ulong)((bytes.Length - 13L) / 16L))
         {
             throw new TerraScaleSyncV2ProtocolException(
                 TerraScaleSyncV2ProtocolError.MalformedFrame,
@@ -441,8 +441,8 @@ public sealed record TerraScaleSyncV2Checkpoint(
         {
             ends.Add(new TerraScaleSyncV2VersionEnd(
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset, 8)),
-                BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(offset + 8, 4))));
-            offset += 12;
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 8, 8))));
+            offset += 16;
         }
 
         return new TerraScaleSyncV2Checkpoint(ends.ToArray(), storageSequence);
@@ -710,125 +710,125 @@ public abstract record TerraScaleSyncV2Body
         switch (kind)
         {
             case TerraScaleSyncV2FrameKind.SessionSetup:
-            {
-                var collections = reader.ReadStrings();
-                var resume = reader.ReadUInt8() switch
                 {
-                    0 => null,
-                    1 => reader.ReadCheckpoint(),
-                    _ => throw Malformed("unknown resume flag"),
-                };
-                return new TerraScaleSyncV2SessionSetupBody(collections, resume);
-            }
+                    var collections = reader.ReadStrings();
+                    var resume = reader.ReadUInt8() switch
+                    {
+                        0 => null,
+                        1 => reader.ReadCheckpoint(),
+                        _ => throw Malformed("unknown resume flag"),
+                    };
+                    return new TerraScaleSyncV2SessionSetupBody(collections, resume);
+                }
 
             case TerraScaleSyncV2FrameKind.SessionAccepted:
-            {
-                var session = reader.ReadUInt64();
-                var server = reader.ReadCheckpoint();
-                var collections = reader.ReadStrings();
-                return new TerraScaleSyncV2SessionAcceptedBody(session, server, collections);
-            }
+                {
+                    var session = reader.ReadUInt64();
+                    var server = reader.ReadCheckpoint();
+                    var collections = reader.ReadStrings();
+                    return new TerraScaleSyncV2SessionAcceptedBody(session, server, collections);
+                }
 
             case TerraScaleSyncV2FrameKind.SubscriptionModify:
-            {
-                var add = reader.ReadStrings();
-                var remove = reader.ReadStrings();
-                return new TerraScaleSyncV2SubscriptionModifyBody(add, remove);
-            }
+                {
+                    var add = reader.ReadStrings();
+                    var remove = reader.ReadStrings();
+                    return new TerraScaleSyncV2SubscriptionModifyBody(add, remove);
+                }
 
             case TerraScaleSyncV2FrameKind.SubscriptionChanged:
-            {
-                var active = reader.ReadStrings();
-                return new TerraScaleSyncV2SubscriptionChangedBody(active);
-            }
+                {
+                    var active = reader.ReadStrings();
+                    return new TerraScaleSyncV2SubscriptionChangedBody(active);
+                }
 
             case TerraScaleSyncV2FrameKind.CheckpointAck:
-            {
-                return new TerraScaleSyncV2CheckpointAckBody(reader.ReadCheckpoint());
-            }
+                {
+                    return new TerraScaleSyncV2CheckpointAckBody(reader.ReadCheckpoint());
+                }
 
             case TerraScaleSyncV2FrameKind.Heartbeat:
-            {
-                return new TerraScaleSyncV2HeartbeatBody();
-            }
+                {
+                    return new TerraScaleSyncV2HeartbeatBody();
+                }
 
             case TerraScaleSyncV2FrameKind.DeltaBatch:
-            {
-                var codec = reader.ReadPayloadCodec();
-                var payload = reader.ReadPayload();
-                var next = reader.ReadCheckpoint();
-                var withinBudget = reader.ReadUInt8() != 0;
-                var oversize = reader.ReadUInt8() != 0;
-                var commits = reader.ReadUInt64();
-                return new TerraScaleSyncV2DeltaBatchBody(codec, payload, next, withinBudget, oversize, commits);
-            }
+                {
+                    var codec = reader.ReadPayloadCodec();
+                    var payload = reader.ReadPayload();
+                    var next = reader.ReadCheckpoint();
+                    var withinBudget = reader.ReadUInt8() != 0;
+                    var oversize = reader.ReadUInt8() != 0;
+                    var commits = reader.ReadUInt64();
+                    return new TerraScaleSyncV2DeltaBatchBody(codec, payload, next, withinBudget, oversize, commits);
+                }
 
             case TerraScaleSyncV2FrameKind.SnapshotAnswer:
-            {
-                var codec = reader.ReadPayloadCodec();
-                var payload = reader.ReadPayload();
-                var checkpoint = reader.ReadCheckpoint();
-                return new TerraScaleSyncV2SnapshotAnswerBody(codec, payload, checkpoint);
-            }
+                {
+                    var codec = reader.ReadPayloadCodec();
+                    var payload = reader.ReadPayload();
+                    var checkpoint = reader.ReadCheckpoint();
+                    return new TerraScaleSyncV2SnapshotAnswerBody(codec, payload, checkpoint);
+                }
 
             case TerraScaleSyncV2FrameKind.Trigger:
-            {
-                var collection = reader.ReadString(TerraScaleSyncV2Protocol.MaxTriggerIdentBytes);
-                var sequence = reader.ReadUInt64();
-                var operationId = reader.ReadString(TerraScaleSyncV2Protocol.MaxTriggerIdentBytes);
-                return new TerraScaleSyncV2TriggerBody(collection, sequence, operationId);
-            }
+                {
+                    var collection = reader.ReadString(TerraScaleSyncV2Protocol.MaxTriggerIdentBytes);
+                    var sequence = reader.ReadUInt64();
+                    var operationId = reader.ReadString(TerraScaleSyncV2Protocol.MaxTriggerIdentBytes);
+                    return new TerraScaleSyncV2TriggerBody(collection, sequence, operationId);
+                }
 
             case TerraScaleSyncV2FrameKind.ResyncRequired:
-            {
-                var floor = reader.ReadCheckpoint();
-                var reason = reader.ReadResyncReason();
-                return new TerraScaleSyncV2ResyncRequiredBody(floor, reason);
-            }
+                {
+                    var floor = reader.ReadCheckpoint();
+                    var reason = reader.ReadResyncReason();
+                    return new TerraScaleSyncV2ResyncRequiredBody(floor, reason);
+                }
 
             case TerraScaleSyncV2FrameKind.RegionRouteChange:
-            {
-                return new TerraScaleSyncV2RegionRouteChangeBody(
-                    reader.ReadString(TerraScaleSyncV2Protocol.MaxIdentBytes));
-            }
+                {
+                    return new TerraScaleSyncV2RegionRouteChangeBody(
+                        reader.ReadString(TerraScaleSyncV2Protocol.MaxIdentBytes));
+                }
 
             case TerraScaleSyncV2FrameKind.Error:
-            {
-                var errorCode = reader.ReadErrorCode();
-                var detail = reader.ReadUInt8() switch
                 {
-                    0 => null,
-                    1 => reader.ReadString(TerraScaleSyncV2Protocol.MaxDetailBytes),
-                    _ => throw Malformed("unknown detail flag"),
-                };
-                return new TerraScaleSyncV2ErrorBody(errorCode, detail);
-            }
+                    var errorCode = reader.ReadErrorCode();
+                    var detail = reader.ReadUInt8() switch
+                    {
+                        0 => null,
+                        1 => reader.ReadString(TerraScaleSyncV2Protocol.MaxDetailBytes),
+                        _ => throw Malformed("unknown detail flag"),
+                    };
+                    return new TerraScaleSyncV2ErrorBody(errorCode, detail);
+                }
 
             case TerraScaleSyncV2FrameKind.MutationRequest:
-            {
-                var collection = reader.ReadString(TerraScaleSyncV2Protocol.MaxIdentBytes);
-                var document = reader.ReadString(TerraScaleSyncV2Protocol.MaxIdentBytes);
-                var write = reader.ReadUInt8() switch
                 {
-                    1 => (TerraScaleSyncV2DocumentWrite)new TerraScaleSyncV2DocumentWrite.Put(ReadFields(ref reader)),
-                    2 => new TerraScaleSyncV2DocumentWrite.Delete(),
-                    _ => throw Malformed("unknown write tag"),
-                };
-                return new TerraScaleSyncV2MutationRequestBody(collection, document, write);
-            }
+                    var collection = reader.ReadString(TerraScaleSyncV2Protocol.MaxIdentBytes);
+                    var document = reader.ReadString(TerraScaleSyncV2Protocol.MaxIdentBytes);
+                    var write = reader.ReadUInt8() switch
+                    {
+                        1 => (TerraScaleSyncV2DocumentWrite)new TerraScaleSyncV2DocumentWrite.Put(ReadFields(ref reader)),
+                        2 => new TerraScaleSyncV2DocumentWrite.Delete(),
+                        _ => throw Malformed("unknown write tag"),
+                    };
+                    return new TerraScaleSyncV2MutationRequestBody(collection, document, write);
+                }
 
             case TerraScaleSyncV2FrameKind.MutationAck:
-            {
-                var outcome = reader.ReadUInt8() switch
                 {
-                    1 => (TerraScaleSyncV2MutationOutcome)new TerraScaleSyncV2MutationApplied(
-                        reader.ReadUInt64(),
-                        reader.ReadString(TerraScaleSyncV2Protocol.MaxKeyBytes)),
-                    2 => new TerraScaleSyncV2MutationRejected(reader.ReadErrorCode()),
-                    _ => throw Malformed("unknown outcome tag"),
-                };
-                return new TerraScaleSyncV2MutationAckBody(outcome);
-            }
+                    var outcome = reader.ReadUInt8() switch
+                    {
+                        1 => (TerraScaleSyncV2MutationOutcome)new TerraScaleSyncV2MutationApplied(
+                            reader.ReadUInt64(),
+                            reader.ReadString(TerraScaleSyncV2Protocol.MaxKeyBytes)),
+                        2 => new TerraScaleSyncV2MutationRejected(reader.ReadErrorCode()),
+                        _ => throw Malformed("unknown outcome tag"),
+                    };
+                    return new TerraScaleSyncV2MutationAckBody(outcome);
+                }
 
             default:
                 throw Malformed("unknown frame kind");
@@ -1033,7 +1033,7 @@ public sealed record TerraScaleSyncV2HeartbeatBody : TerraScaleSyncV2Body
 }
 
 /// <summary>One byte-budgeted delta batch.</summary>
-/// <param name="Codec">The payload codec: always <see cref="TerraScaleSyncV2PayloadCodec.LoroDelta1"/>.</param>
+/// <param name="Codec">The payload codec: always <see cref="TerraScaleSyncV2PayloadCodec.NativeDelta1"/>.</param>
 /// <param name="Payload">The encoded delta bytes (opaque at the protocol layer; never re-encoded).</param>
 /// <param name="Next">The checkpoint after applying this batch.</param>
 /// <param name="WithinBudget">Whether the batch fits the configured byte budget.</param>
@@ -1067,9 +1067,9 @@ public sealed record TerraScaleSyncV2DeltaBatchBody(
     /// <inheritdoc />
     protected override void Validate()
     {
-        if (Codec != TerraScaleSyncV2PayloadCodec.LoroDelta1)
+        if (Codec != TerraScaleSyncV2PayloadCodec.NativeDelta1)
         {
-            throw Malformed("a delta batch carries the loro-delta/1 codec only");
+            throw Malformed("a delta batch carries the terrabase-native/1 codec only");
         }
 
         if (Payload.Length > TerraScaleSyncV2Protocol.MaxPayloadBytes)
@@ -1099,7 +1099,7 @@ public sealed record TerraScaleSyncV2DeltaBatchBody(
 }
 
 /// <summary>One full-state answer (initial sync or forced resync).</summary>
-/// <param name="Codec">The payload codec: always <see cref="TerraScaleSyncV2PayloadCodec.LoroSnapshot1"/>.</param>
+/// <param name="Codec">The payload codec: always <see cref="TerraScaleSyncV2PayloadCodec.NativeSnapshot1"/>.</param>
 /// <param name="Payload">The encoded snapshot bytes (opaque at the protocol layer; never re-encoded).</param>
 /// <param name="Checkpoint">The checkpoint the snapshot corresponds to.</param>
 public sealed record TerraScaleSyncV2SnapshotAnswerBody(
@@ -1124,9 +1124,9 @@ public sealed record TerraScaleSyncV2SnapshotAnswerBody(
     /// <inheritdoc />
     protected override void Validate()
     {
-        if (Codec != TerraScaleSyncV2PayloadCodec.LoroSnapshot1)
+        if (Codec != TerraScaleSyncV2PayloadCodec.NativeSnapshot1)
         {
-            throw Malformed("a snapshot answer carries the loro-snapshot/1 codec only");
+            throw Malformed("a snapshot answer carries the terrabase-snapshot/1 codec only");
         }
 
         if (Payload.Length > TerraScaleSyncV2Protocol.MaxPayloadBytes)

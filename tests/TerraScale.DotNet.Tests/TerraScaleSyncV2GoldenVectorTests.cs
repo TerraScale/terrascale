@@ -57,7 +57,7 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
             using var document = JsonDocument.Parse(await File.ReadAllTextAsync(file.Path));
             var root = document.RootElement;
             await Assert.That(root.GetProperty("schema").GetString())
-                .IsEqualTo("terrascale.sync.v2/vector-corpus@1");
+                .IsEqualTo("terrascale.sync.v2/vector-corpus@2");
             await Assert.That(root.GetProperty("protocol").GetString()).IsEqualTo("terrascale.sync.v2");
             await Assert.That(root.GetProperty("protocol_version").GetInt32()).IsEqualTo(2);
             await Assert.That(root.GetProperty("category").GetString()).IsEqualTo(file.Category);
@@ -352,13 +352,13 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
             [(1ul, 9)],
             storageSequence: 42);
         var bytes = checkpoint.ToBytes();
-        await Assert.That(bytes[0]).IsEqualTo((byte)1);
+        await Assert.That(bytes[0]).IsEqualTo((byte)2);
         var decoded = TerraScaleSyncV2Checkpoint.FromBytes(bytes);
         await Assert.That(decoded).IsEqualTo(checkpoint);
 
         var canonical = TerraScaleSyncV2Checkpoint.Create([(2ul, 4), (1ul, 7), (1ul, 3)], 5);
         await Assert.That(canonical.Ends.Select(end => (end.Peer, end.End)).ToArray())
-            .IsEquivalentTo([(1ul, 7), (2ul, 4)]);
+            .IsEquivalentTo([(1ul, 7ul), (2ul, 4ul)]);
 
         var failure = Assert.Throws<TerraScaleSyncV2ProtocolException>(() => TerraScaleSyncV2Checkpoint.FromBytes([2]));
         await Assert.That(failure.Error).IsEqualTo(TerraScaleSyncV2ProtocolError.MalformedFrame);
@@ -377,7 +377,7 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
         static byte[] Crafted(uint count, int length = 17)
         {
             var bytes = new byte[length];
-            bytes[0] = 1;
+            bytes[0] = 2;
             BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(9, 4), count);
             return bytes;
         }
@@ -581,15 +581,15 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
         }
 
         var ends = value.GetProperty("ends").EnumerateArray()
-            .Select(pair => (pair[0].GetUInt64(), pair[1].GetInt32()))
+            .Select(pair => (pair[0].GetUInt64(), checked((int)pair[1].GetUInt64())))
             .ToArray();
         return TerraScaleSyncV2Checkpoint.Create(ends, value.GetProperty("storage_sequence").GetUInt64());
     }
 
     private static TerraScaleSyncV2PayloadCodec Codec(JsonElement value) => value.GetString() switch
     {
-        "loro-delta/1" => TerraScaleSyncV2PayloadCodec.LoroDelta1,
-        "loro-snapshot/1" => TerraScaleSyncV2PayloadCodec.LoroSnapshot1,
+        "terrabase-native/1" => TerraScaleSyncV2PayloadCodec.NativeDelta1,
+        "terrabase-snapshot/1" => TerraScaleSyncV2PayloadCodec.NativeSnapshot1,
         var other => throw new InvalidOperationException($"unknown payload codec {other}"),
     };
 
