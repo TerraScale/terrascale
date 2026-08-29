@@ -5,10 +5,8 @@
 //! moves one collection between [`SchemaVersion`](crate::families::SchemaVersion)
 //! identities (CONTEXT: Schema Migration): a forward-only version step, a
 //! closed list of declarative field transforms, and the target schema the
-//! collection validates under afterwards. It is a different concept from the
-//! V1-to-V2 Logical Migration (`src/migration/`), which moves data between
-//! engines under a manifest-verified transfer contract; no terminology is
-//! shared.
+//! collection validates under afterwards. It moves one collection inside this
+//! engine only; TerraBaseV2 has no cross-engine data transfer contract.
 //!
 //! The style is declarative-first, and the programmatic escape is the
 //! engine's own typed document seam, never an embedded interpreter: the
