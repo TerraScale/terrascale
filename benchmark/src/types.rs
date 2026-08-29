@@ -304,7 +304,11 @@ impl ReadSnapshot {
         &self.tenant
     }
 
-    pub(crate) fn sequence(&self) -> StorageSequence {
+    /// Returns the storage sequence this snapshot observed — the
+    /// replication position a read receipt reports (P4's read-level
+    /// surface).
+    #[must_use]
+    pub fn sequence(&self) -> StorageSequence {
         self.sequence
     }
 

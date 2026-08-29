@@ -527,3 +527,55 @@ Receipts: `cargo test -p terrabase-tbep` all suites green (7
 engine-host UDS rows); `cargo test -p terrabase-v2 --lib` 1076/1076;
 clippy `-D warnings` and fmt clean on both crates.
 `scripts/check.sh` not run (AC-12).
+
+## 15. P4 landing 4 (2026-08-29): the frozen typed surface — acknowledgement levels, read levels, cluster mode
+
+The registry took its first minor bump (1.0 → 1.1, ADD-only per the
+protocol contract's versioning rule): the six error codes P4 froze by
+name (`overloaded` 17, `protocol_version_mismatch` 18,
+`backup_cluster_read_only` 19, `backup_cluster_immutable` 20,
+`cold_tier_unavailable` 21, `frontier_unreachable` 22), the
+`acknowledgement` enum (`regional_quorum` | `global_quorum`;
+`backup_ack` lands with P5's machinery), the `read_level` enum (`local`
+| `regional_quorum_read` — the name frozen in the leaderless contract
+§4 — | `global_quorum_read`), and the `cluster_mode` enum (`standalone`
+| `active` | `backup`). Optional ADD-only fields: `ack` on the write
+and delete requests, `acknowledgement` on the commit receipt, `level`
++ `position` on the read and query request/response pairs, and
+`cluster_mode` on the topology response. `tbep-gen` regenerated both
+language bindings; the golden corpus regenerated (the positional-array
+arity grew — the adversarial arity rows updated to match) and the
+document-frames scenario now exercises a `global_quorum` write and a
+`regional_quorum_read` read.
+
+The engine-backed host serves the new surface honestly: one standalone
+member IS its region's quorum, so a local durable commit satisfies both
+acknowledgement levels (the receipt names which it achieved); every
+read level observes this member's state directly and the read/query
+responses name the storage sequence their snapshot observed — the
+replication position a client measures lag against
+(`ReadSnapshot::sequence` surfaced publicly for it). `topology.read`
+stopped refusing: it answers the honest standalone mode (local UDS
+binding, the subsystems this host serves, no engine topology,
+`cluster_mode: standalone`) — the cluster-mode vocabulary exists on the
+wire before P5 admits peers.
+
+Proven: 9 engine-host UDS rows (a new one asserting the global-quorum
+receipt, the regional default, read positions at or past the write's
+sequence, the query position, and the standalone topology answer);
+`terrabase-v2` 1076/1076; the C# spine asserts the receipt's
+acknowledgement and the read's position against the real Engine
+(Api 88/88, Protocol 19/19 over the regenerated corpus).
+
+Still open in P4: the family plane (the `terrabase.family-request/1`
+codec is still a registry name only — no host serves family frames),
+tier administration (no registry operations exist yet; the engine's
+tier/ mover surfaces are crate-private), capability/version negotiation
+(`wire_version` stays a fail-closed constant), the dedicated
+`Overloaded` control loop, client batching, reconnect/resume, and the
+QUIC/TLS binding (quinn/rustls live only in
+`terrabase-member-transport` today).
+
+Receipts: `cargo test -p terrabase-tbep` 11 suites green; clippy
+`-D warnings` and fmt clean on both crates; dotnet Api 88/88 and
+Protocol 19/19. `scripts/check.sh` not run (AC-12).

@@ -29,6 +29,7 @@ use terrabase_tbep::TbepFrame;
 use terrabase_tbep::TbepValue;
 use terrabase_tbep::envelope::envelope_overhead;
 use terrabase_tbep::envelope::stream_wire_bytes;
+use terrabase_tbep::generated::Acknowledgement;
 use terrabase_tbep::generated::AdminStatusRequest;
 use terrabase_tbep::generated::BUDGETS;
 use terrabase_tbep::generated::BackboneSubscribeRequest;
@@ -38,6 +39,7 @@ use terrabase_tbep::generated::DocumentReadRequest;
 use terrabase_tbep::generated::DocumentWriteRequest;
 use terrabase_tbep::generated::ExpectedVersion;
 use terrabase_tbep::generated::QueryCancelRequest;
+use terrabase_tbep::generated::ReadLevel;
 use terrabase_tbep::generated::ShutdownReason;
 use terrabase_tbep::generated::SubscriptionStart;
 use terrabase_tbep::generated::SupervisionHealthRequest;
@@ -310,6 +312,7 @@ fn build_corpus() -> Vec<(String, Value)> {
             },
             expected: ExpectedVersion::Exact(7),
             operation_id: "op-01".into(),
+            ack: Some(Acknowledgement::GlobalQuorum),
         },
         2,
         0,
@@ -327,7 +330,11 @@ fn build_corpus() -> Vec<(String, Value)> {
             "frames": [
                 scenario_frame("DocumentReadRequest",
                     &TbepFrame::seal(
-                        DocumentReadRequest { collection: "orders".into(), document: "d-01".into() },
+                        DocumentReadRequest {
+                            collection: "orders".into(),
+                            document: "d-01".into(),
+                            level: Some(ReadLevel::RegionalQuorumRead),
+                        },
                         3, 0, None).expect("seals")),
                 scenario_frame("DocumentWriteRequest", &write),
             ],
@@ -480,6 +487,7 @@ fn build_corpus() -> Vec<(String, Value)> {
             },
             expected: ExpectedVersion::Any,
             operation_id: "op-03".into(),
+            ack: None,
         },
         12,
         0,

@@ -1,6 +1,6 @@
 {
   "identity": "terrabase.engine.protocol",
-  "registry_version": "1.0",
+  "registry_version": "1.1",
   "wire_version": 1,
   "max_frame_bytes": 16777216,
   "stream_length_prefix_bytes": 4,
@@ -136,6 +136,30 @@
     {
       "code": 16,
       "name": "frame_too_large"
+    },
+    {
+      "code": 17,
+      "name": "overloaded"
+    },
+    {
+      "code": 18,
+      "name": "protocol_version_mismatch"
+    },
+    {
+      "code": 19,
+      "name": "backup_cluster_read_only"
+    },
+    {
+      "code": 20,
+      "name": "backup_cluster_immutable"
+    },
+    {
+      "code": 21,
+      "name": "cold_tier_unavailable"
+    },
+    {
+      "code": 22,
+      "name": "frontier_unreachable"
     }
   ],
   "enums": [
@@ -206,6 +230,72 @@
         {
           "name": "frame_too_large",
           "code": 16
+        },
+        {
+          "name": "overloaded",
+          "code": 17
+        },
+        {
+          "name": "protocol_version_mismatch",
+          "code": 18
+        },
+        {
+          "name": "backup_cluster_read_only",
+          "code": 19
+        },
+        {
+          "name": "backup_cluster_immutable",
+          "code": 20
+        },
+        {
+          "name": "cold_tier_unavailable",
+          "code": 21
+        },
+        {
+          "name": "frontier_unreachable",
+          "code": 22
+        }
+      ]
+    },
+    {
+      "name": "acknowledgement",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "regional_quorum"
+        },
+        {
+          "name": "global_quorum"
+        }
+      ]
+    },
+    {
+      "name": "read_level",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "local"
+        },
+        {
+          "name": "regional_quorum_read"
+        },
+        {
+          "name": "global_quorum_read"
+        }
+      ]
+    },
+    {
+      "name": "cluster_mode",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "standalone"
+        },
+        {
+          "name": "active"
+        },
+        {
+          "name": "backup"
         }
       ]
     },
@@ -678,6 +768,11 @@
           "name": "operation_id",
           "type": "str",
           "bound": 128
+        },
+        {
+          "name": "acknowledgement",
+          "type": "acknowledgement",
+          "optional": true
         }
       ]
     },
@@ -1216,6 +1311,11 @@
             "name": "document",
             "type": "str",
             "bound": 64
+          },
+          {
+            "name": "level",
+            "type": "read_level",
+            "optional": true
           }
         ]
       },
@@ -1230,6 +1330,11 @@
           {
             "name": "document",
             "type": "document_body",
+            "optional": true
+          },
+          {
+            "name": "position",
+            "type": "u64",
             "optional": true
           }
         ]
@@ -1261,6 +1366,11 @@
             "name": "operation_id",
             "type": "str",
             "bound": 128
+          },
+          {
+            "name": "ack",
+            "type": "acknowledgement",
+            "optional": true
           }
         ]
       },
@@ -1306,6 +1416,11 @@
             "name": "operation_id",
             "type": "str",
             "bound": 128
+          },
+          {
+            "name": "ack",
+            "type": "acknowledgement",
+            "optional": true
           }
         ]
       },
@@ -1344,6 +1459,11 @@
           {
             "name": "max_items",
             "type": "u32"
+          },
+          {
+            "name": "level",
+            "type": "read_level",
+            "optional": true
           }
         ]
       },
@@ -1362,6 +1482,11 @@
           {
             "name": "terminal",
             "type": "query_terminal"
+          },
+          {
+            "name": "position",
+            "type": "u64",
+            "optional": true
           }
         ]
       }
@@ -1885,6 +2010,11 @@
           {
             "name": "engine_topology_available",
             "type": "bool"
+          },
+          {
+            "name": "cluster_mode",
+            "type": "cluster_mode",
+            "optional": true
           }
         ]
       }

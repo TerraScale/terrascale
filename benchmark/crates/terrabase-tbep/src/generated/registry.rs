@@ -4,14 +4,14 @@
 // file byte-for-byte against regeneration.
 // The generated TBEP registry and frame bindings.
 //
-// Schema identity `terrabase.engine.protocol` version `1.0`.
+// Schema identity `terrabase.engine.protocol` version `1.1`.
 use crate::codec::TbepValue;
 use serde::ser::SerializeTuple as _;
 
 /// The protocol identity string.
 pub const IDENTITY: &str = "terrabase.engine.protocol";
 /// The registry version (additive changes bump the minor).
-pub const REGISTRY_VERSION: &str = "1.0";
+pub const REGISTRY_VERSION: &str = "1.1";
 /// The wire version every frame carries; unknown versions fail closed.
 pub const WIRE_VERSION: u8 = 1;
 /// The decode bound: larger frames are rejected before any field parses.
@@ -93,6 +93,18 @@ pub enum ErrorCode {
     ShuttingDown,
     /// The `frame_too_large` row (code 16).
     FrameTooLarge,
+    /// The `overloaded` row (code 17).
+    Overloaded,
+    /// The `protocol_version_mismatch` row (code 18).
+    ProtocolVersionMismatch,
+    /// The `backup_cluster_read_only` row (code 19).
+    BackupClusterReadOnly,
+    /// The `backup_cluster_immutable` row (code 20).
+    BackupClusterImmutable,
+    /// The `cold_tier_unavailable` row (code 21).
+    ColdTierUnavailable,
+    /// The `frontier_unreachable` row (code 22).
+    FrontierUnreachable,
 }
 
 impl ErrorCode {
@@ -116,6 +128,12 @@ impl ErrorCode {
             Self::CheckpointRefused => 14,
             Self::ShuttingDown => 15,
             Self::FrameTooLarge => 16,
+            Self::Overloaded => 17,
+            Self::ProtocolVersionMismatch => 18,
+            Self::BackupClusterReadOnly => 19,
+            Self::BackupClusterImmutable => 20,
+            Self::ColdTierUnavailable => 21,
+            Self::FrontierUnreachable => 22,
         }
     }
 
@@ -142,6 +160,12 @@ impl ErrorCode {
             14 => Some(Self::CheckpointRefused),
             15 => Some(Self::ShuttingDown),
             16 => Some(Self::FrameTooLarge),
+            17 => Some(Self::Overloaded),
+            18 => Some(Self::ProtocolVersionMismatch),
+            19 => Some(Self::BackupClusterReadOnly),
+            20 => Some(Self::BackupClusterImmutable),
+            21 => Some(Self::ColdTierUnavailable),
+            22 => Some(Self::FrontierUnreachable),
             _ => None,
         }
     }
@@ -228,6 +252,36 @@ impl serde::Serialize for ErrorCode {
             Self::FrameTooLarge => {
                 let mut tuple = serializer.serialize_tuple(1)?;
                 tuple.serialize_element(&16u16)?;
+                tuple.end()
+            }
+            Self::Overloaded => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&17u16)?;
+                tuple.end()
+            }
+            Self::ProtocolVersionMismatch => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&18u16)?;
+                tuple.end()
+            }
+            Self::BackupClusterReadOnly => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&19u16)?;
+                tuple.end()
+            }
+            Self::BackupClusterImmutable => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&20u16)?;
+                tuple.end()
+            }
+            Self::ColdTierUnavailable => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&21u16)?;
+                tuple.end()
+            }
+            Self::FrontierUnreachable => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&22u16)?;
                 tuple.end()
             }
         }
@@ -343,7 +397,322 @@ impl<'de> serde::Deserialize<'de> for ErrorCode {
                         }
                         Ok(ErrorCode::FrameTooLarge)
                     }
+                    17 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ErrorCode::Overloaded)
+                    }
+                    18 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ErrorCode::ProtocolVersionMismatch)
+                    }
+                    19 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ErrorCode::BackupClusterReadOnly)
+                    }
+                    20 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ErrorCode::BackupClusterImmutable)
+                    }
+                    21 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ErrorCode::ColdTierUnavailable)
+                    }
+                    22 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ErrorCode::FrontierUnreachable)
+                    }
                     _ => Err(serde::de::Error::custom("unknown error_code code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `acknowledgement` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Acknowledgement {
+    /// The `regional_quorum` row (code 1).
+    RegionalQuorum,
+    /// The `global_quorum` row (code 2).
+    GlobalQuorum,
+}
+
+impl Acknowledgement {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::RegionalQuorum => 1,
+            Self::GlobalQuorum => 2,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::RegionalQuorum),
+            2 => Some(Self::GlobalQuorum),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for Acknowledgement {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::RegionalQuorum => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::GlobalQuorum => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Acknowledgement {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Acknowledgement;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a acknowledgement array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(Acknowledgement::RegionalQuorum)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(Acknowledgement::GlobalQuorum)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown acknowledgement code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `read_level` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ReadLevel {
+    /// The `local` row (code 1).
+    Local,
+    /// The `regional_quorum_read` row (code 2).
+    RegionalQuorumRead,
+    /// The `global_quorum_read` row (code 3).
+    GlobalQuorumRead,
+}
+
+impl ReadLevel {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Local => 1,
+            Self::RegionalQuorumRead => 2,
+            Self::GlobalQuorumRead => 3,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::Local),
+            2 => Some(Self::RegionalQuorumRead),
+            3 => Some(Self::GlobalQuorumRead),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for ReadLevel {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Local => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::RegionalQuorumRead => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+            Self::GlobalQuorumRead => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&3u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ReadLevel {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ReadLevel;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a read_level array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ReadLevel::Local)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ReadLevel::RegionalQuorumRead)
+                    }
+                    3 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ReadLevel::GlobalQuorumRead)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown read_level code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `cluster_mode` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ClusterMode {
+    /// The `standalone` row (code 1).
+    Standalone,
+    /// The `active` row (code 2).
+    Active,
+    /// The `backup` row (code 3).
+    Backup,
+}
+
+impl ClusterMode {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Standalone => 1,
+            Self::Active => 2,
+            Self::Backup => 3,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::Standalone),
+            2 => Some(Self::Active),
+            3 => Some(Self::Backup),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for ClusterMode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Standalone => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::Active => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+            Self::Backup => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&3u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ClusterMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ClusterMode;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a cluster_mode array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ClusterMode::Standalone)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ClusterMode::Active)
+                    }
+                    3 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(ClusterMode::Backup)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown cluster_mode code")),
                 }
             }
         }
@@ -2891,14 +3260,17 @@ pub struct CommitReceipt {
     pub version: u64,
     /// The `operation_id` field.
     pub operation_id: String,
+    /// The `acknowledgement` field.
+    pub acknowledgement: Option<Acknowledgement>,
 }
 
 impl serde::Serialize for CommitReceipt {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut tuple = serializer.serialize_tuple(3)?;
+        let mut tuple = serializer.serialize_tuple(4)?;
         tuple.serialize_element(&self.sequence)?;
         tuple.serialize_element(&self.version)?;
         tuple.serialize_element(&self.operation_id.as_str())?;
+        tuple.serialize_element(&self.acknowledgement.as_ref())?;
         tuple.end()
     }
 }
@@ -2909,7 +3281,7 @@ impl<'de> serde::Deserialize<'de> for CommitReceipt {
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = CommitReceipt;
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a commit_receipt array of 3 fields")
+                formatter.write_str("a commit_receipt array of 4 fields")
             }
             fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 let sequence = seq
@@ -2921,13 +3293,17 @@ impl<'de> serde::Deserialize<'de> for CommitReceipt {
                 let operation_id = seq
                     .next_element::<String>()?
                     .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let acknowledgement = seq
+                    .next_element::<Option<Acknowledgement>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
                 if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                    return Err(serde::de::Error::invalid_length(3, &self));
+                    return Err(serde::de::Error::invalid_length(4, &self));
                 }
                 Ok(Self::Value {
                     sequence,
                     version,
                     operation_id,
+                    acknowledgement,
                 })
             }
         }
@@ -4123,13 +4499,16 @@ pub struct DocumentReadRequest {
     pub collection: String,
     /// The `document` field.
     pub document: String,
+    /// The `level` field.
+    pub level: Option<ReadLevel>,
 }
 
 impl serde::Serialize for DocumentReadRequest {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut tuple = serializer.serialize_tuple(2)?;
+        let mut tuple = serializer.serialize_tuple(3)?;
         tuple.serialize_element(&self.collection.as_str())?;
         tuple.serialize_element(&self.document.as_str())?;
+        tuple.serialize_element(&self.level.as_ref())?;
         tuple.end()
     }
 }
@@ -4140,7 +4519,7 @@ impl<'de> serde::Deserialize<'de> for DocumentReadRequest {
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = DocumentReadRequest;
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a document_read_request array of 2 fields")
+                formatter.write_str("a document_read_request array of 3 fields")
             }
             fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 let collection = seq
@@ -4149,12 +4528,16 @@ impl<'de> serde::Deserialize<'de> for DocumentReadRequest {
                 let document = seq
                     .next_element::<String>()?
                     .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let level = seq
+                    .next_element::<Option<ReadLevel>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
                 if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                    return Err(serde::de::Error::invalid_length(2, &self));
+                    return Err(serde::de::Error::invalid_length(3, &self));
                 }
                 Ok(Self::Value {
                     collection,
                     document,
+                    level,
                 })
             }
         }
@@ -4178,13 +4561,16 @@ pub struct DocumentReadResponse {
     pub found: bool,
     /// The `document` field.
     pub document: Option<DocumentBody>,
+    /// The `position` field.
+    pub position: Option<u64>,
 }
 
 impl serde::Serialize for DocumentReadResponse {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut tuple = serializer.serialize_tuple(2)?;
+        let mut tuple = serializer.serialize_tuple(3)?;
         tuple.serialize_element(&self.found)?;
         tuple.serialize_element(&self.document.as_ref())?;
+        tuple.serialize_element(&self.position.as_ref())?;
         tuple.end()
     }
 }
@@ -4195,7 +4581,7 @@ impl<'de> serde::Deserialize<'de> for DocumentReadResponse {
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = DocumentReadResponse;
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a document_read_response array of 2 fields")
+                formatter.write_str("a document_read_response array of 3 fields")
             }
             fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 let found = seq
@@ -4204,12 +4590,16 @@ impl<'de> serde::Deserialize<'de> for DocumentReadResponse {
                 let document = seq
                     .next_element::<Option<DocumentBody>>()?
                     .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let position = seq
+                    .next_element::<Option<u64>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
                 if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                    return Err(serde::de::Error::invalid_length(2, &self));
+                    return Err(serde::de::Error::invalid_length(3, &self));
                 }
                 Ok(Self::Value {
                     found,
                     document,
+                    position,
                 })
             }
         }
@@ -4234,14 +4624,17 @@ pub struct DocumentWriteRequest {
     pub expected: ExpectedVersion,
     /// The `operation_id` field.
     pub operation_id: String,
+    /// The `ack` field.
+    pub ack: Option<Acknowledgement>,
 }
 
 impl serde::Serialize for DocumentWriteRequest {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut tuple = serializer.serialize_tuple(3)?;
+        let mut tuple = serializer.serialize_tuple(4)?;
         tuple.serialize_element(&self.document)?;
         tuple.serialize_element(&self.expected)?;
         tuple.serialize_element(&self.operation_id.as_str())?;
+        tuple.serialize_element(&self.ack.as_ref())?;
         tuple.end()
     }
 }
@@ -4252,7 +4645,7 @@ impl<'de> serde::Deserialize<'de> for DocumentWriteRequest {
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = DocumentWriteRequest;
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a document_write_request array of 3 fields")
+                formatter.write_str("a document_write_request array of 4 fields")
             }
             fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 let document = seq
@@ -4264,13 +4657,17 @@ impl<'de> serde::Deserialize<'de> for DocumentWriteRequest {
                 let operation_id = seq
                     .next_element::<String>()?
                     .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let ack = seq
+                    .next_element::<Option<Acknowledgement>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
                 if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                    return Err(serde::de::Error::invalid_length(3, &self));
+                    return Err(serde::de::Error::invalid_length(4, &self));
                 }
                 Ok(Self::Value {
                     document,
                     expected,
                     operation_id,
+                    ack,
                 })
             }
         }
@@ -4344,15 +4741,18 @@ pub struct DocumentDeleteRequest {
     pub expected: ExpectedVersion,
     /// The `operation_id` field.
     pub operation_id: String,
+    /// The `ack` field.
+    pub ack: Option<Acknowledgement>,
 }
 
 impl serde::Serialize for DocumentDeleteRequest {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut tuple = serializer.serialize_tuple(4)?;
+        let mut tuple = serializer.serialize_tuple(5)?;
         tuple.serialize_element(&self.collection.as_str())?;
         tuple.serialize_element(&self.document.as_str())?;
         tuple.serialize_element(&self.expected)?;
         tuple.serialize_element(&self.operation_id.as_str())?;
+        tuple.serialize_element(&self.ack.as_ref())?;
         tuple.end()
     }
 }
@@ -4363,7 +4763,7 @@ impl<'de> serde::Deserialize<'de> for DocumentDeleteRequest {
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = DocumentDeleteRequest;
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a document_delete_request array of 4 fields")
+                formatter.write_str("a document_delete_request array of 5 fields")
             }
             fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 let collection = seq
@@ -4378,14 +4778,18 @@ impl<'de> serde::Deserialize<'de> for DocumentDeleteRequest {
                 let operation_id = seq
                     .next_element::<String>()?
                     .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let ack = seq
+                    .next_element::<Option<Acknowledgement>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
                 if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                    return Err(serde::de::Error::invalid_length(4, &self));
+                    return Err(serde::de::Error::invalid_length(5, &self));
                 }
                 Ok(Self::Value {
                     collection,
                     document,
                     expected,
                     operation_id,
+                    ack,
                 })
             }
         }
@@ -4459,14 +4863,17 @@ pub struct QueryExecuteRequest {
     pub text: String,
     /// The `max_items` field.
     pub max_items: u32,
+    /// The `level` field.
+    pub level: Option<ReadLevel>,
 }
 
 impl serde::Serialize for QueryExecuteRequest {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut tuple = serializer.serialize_tuple(3)?;
+        let mut tuple = serializer.serialize_tuple(4)?;
         tuple.serialize_element(&self.query_id)?;
         tuple.serialize_element(&self.text.as_str())?;
         tuple.serialize_element(&self.max_items)?;
+        tuple.serialize_element(&self.level.as_ref())?;
         tuple.end()
     }
 }
@@ -4477,7 +4884,7 @@ impl<'de> serde::Deserialize<'de> for QueryExecuteRequest {
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = QueryExecuteRequest;
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a query_execute_request array of 3 fields")
+                formatter.write_str("a query_execute_request array of 4 fields")
             }
             fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 let query_id = seq
@@ -4489,13 +4896,17 @@ impl<'de> serde::Deserialize<'de> for QueryExecuteRequest {
                 let max_items = seq
                     .next_element::<u32>()?
                     .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let level = seq
+                    .next_element::<Option<ReadLevel>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
                 if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                    return Err(serde::de::Error::invalid_length(3, &self));
+                    return Err(serde::de::Error::invalid_length(4, &self));
                 }
                 Ok(Self::Value {
                     query_id,
                     text,
                     max_items,
+                    level,
                 })
             }
         }
@@ -4520,14 +4931,17 @@ pub struct QueryExecuteResponse {
     pub count: u32,
     /// The `terminal` field.
     pub terminal: QueryTerminal,
+    /// The `position` field.
+    pub position: Option<u64>,
 }
 
 impl serde::Serialize for QueryExecuteResponse {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut tuple = serializer.serialize_tuple(3)?;
+        let mut tuple = serializer.serialize_tuple(4)?;
         tuple.serialize_element(&self.documents.as_slice())?;
         tuple.serialize_element(&self.count)?;
         tuple.serialize_element(&self.terminal)?;
+        tuple.serialize_element(&self.position.as_ref())?;
         tuple.end()
     }
 }
@@ -4538,7 +4952,7 @@ impl<'de> serde::Deserialize<'de> for QueryExecuteResponse {
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = QueryExecuteResponse;
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a query_execute_response array of 3 fields")
+                formatter.write_str("a query_execute_response array of 4 fields")
             }
             fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 let documents = seq
@@ -4550,13 +4964,17 @@ impl<'de> serde::Deserialize<'de> for QueryExecuteResponse {
                 let terminal = seq
                     .next_element::<QueryTerminal>()?
                     .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let position = seq
+                    .next_element::<Option<u64>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
                 if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                    return Err(serde::de::Error::invalid_length(3, &self));
+                    return Err(serde::de::Error::invalid_length(4, &self));
                 }
                 Ok(Self::Value {
                     documents,
                     count,
                     terminal,
+                    position,
                 })
             }
         }
@@ -5976,14 +6394,17 @@ pub struct TopologyReadResponse {
     pub subsystems: Vec<String>,
     /// The `engine_topology_available` field.
     pub engine_topology_available: bool,
+    /// The `cluster_mode` field.
+    pub cluster_mode: Option<ClusterMode>,
 }
 
 impl serde::Serialize for TopologyReadResponse {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut tuple = serializer.serialize_tuple(3)?;
+        let mut tuple = serializer.serialize_tuple(4)?;
         tuple.serialize_element(&self.binding)?;
         tuple.serialize_element(&self.subsystems.as_slice())?;
         tuple.serialize_element(&self.engine_topology_available)?;
+        tuple.serialize_element(&self.cluster_mode.as_ref())?;
         tuple.end()
     }
 }
@@ -5994,7 +6415,7 @@ impl<'de> serde::Deserialize<'de> for TopologyReadResponse {
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = TopologyReadResponse;
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a topology_read_response array of 3 fields")
+                formatter.write_str("a topology_read_response array of 4 fields")
             }
             fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 let binding = seq
@@ -6006,13 +6427,17 @@ impl<'de> serde::Deserialize<'de> for TopologyReadResponse {
                 let engine_topology_available = seq
                     .next_element::<bool>()?
                     .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let cluster_mode = seq
+                    .next_element::<Option<ClusterMode>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
                 if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                    return Err(serde::de::Error::invalid_length(3, &self));
+                    return Err(serde::de::Error::invalid_length(4, &self));
                 }
                 Ok(Self::Value {
                     binding,
                     subsystems,
                     engine_topology_available,
+                    cluster_mode,
                 })
             }
         }

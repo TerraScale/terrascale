@@ -105,6 +105,11 @@ public sealed class EngineSpineTests
             await Assert.That(read.Found).IsTrue();
             await Assert.That(read.Document!.Version).IsEqualTo(1ul);
             await Assert.That(read.Document.Body).IsEqualTo(Order().Body);
+
+            // The P4 typed surface: the receipt names its acknowledgement
+            // level, and the read names the position it observed.
+            await Assert.That(receipt.Acknowledgement).IsEqualTo(Acknowledgement.RegionalQuorum());
+            await Assert.That(read.Position).IsNotNull();
         }
         finally
         {

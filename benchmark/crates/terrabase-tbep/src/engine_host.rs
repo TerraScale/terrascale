@@ -186,13 +186,14 @@ impl EngineHost {
         &self,
         tenant: &TenantId,
         document: &DocumentId,
-    ) -> Result<Option<Document>, HostingError> {
+    ) -> Result<(Option<Document>, u64), HostingError> {
         let operation = self.next_read_operation()?;
         let scope = self.engine.scope_for(tenant);
         let snapshot = self
             .engine
             .read_snapshot(&scope)
             .map_err(|_| HostingError::EngineFailure("the snapshot is unavailable".into()))?;
+        let position = snapshot.sequence().get();
         let transaction = self
             .engine
             .begin(&scope, snapshot, operation)
@@ -201,7 +202,7 @@ impl EngineHost {
             .read(document)
             .map_err(|_| HostingError::EngineFailure("the read failed".into()))?;
         drop(transaction);
-        Ok(found)
+        Ok((found, position))
     }
 
     /// Commits one mutation through the engine's transaction path and
@@ -211,6 +212,7 @@ impl EngineHost {
         tenant: &TenantId,
         operation: &str,
         stage: impl FnOnce(&mut terrabase_v2::engine::Transaction<'_>) -> Result<(), HostingError>,
+        ack: crate::generated::Acknowledgement,
         idempotency_key: &str,
     ) -> Result<WriteOutcome, HostingError> {
         // The envelope's idempotency key is the operation identity:
@@ -237,6 +239,9 @@ impl EngineHost {
                 // Replaced by the published version at the call site.
                 version: 0,
                 operation_id: receipt.operation_id().as_str().to_owned(),
+                // One standalone member IS its region's quorum: the
+                // local durable commit satisfies both levels.
+                acknowledgement: Some(ack),
             })),
             CommitOutcome::Rejected(_) => Ok(WriteOutcome::Conflict),
             // An uncertain commit resolves by identity on retry; the
@@ -271,14 +276,17 @@ impl TbepHost for EngineHost {
             .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
         let document = DocumentId::try_new(request.document.as_str())
             .map_err(|_| HostingError::Invalid("the document identifier is not valid".into()))?;
-        let found = self.read_body(&tenant, &document)?;
+        let (found, position) = self.read_body(&tenant, &document)?;
         let document = found.map(|found| DocumentBody {
             id: found.id().as_str().to_owned(),
             collection: found.collection().as_str().to_owned(),
             version: found.metadata().version(),
             body: to_wire_value(found.value()),
         });
-        Ok(DocumentReadResponse { found: document.is_some(), document })
+        // Every read level observes this member's state directly: the
+        // snapshot's sequence is the replication position the client
+        // measures lag against.
+        Ok(DocumentReadResponse { found: document.is_some(), document, position: Some(position) })
     }
 
     fn document_write(
@@ -304,6 +312,7 @@ impl TbepHost for EngineHost {
                     )
                     .map_err(|_| HostingError::Refused("the document was not admissible".into()))
             },
+            request.ack.unwrap_or(crate::generated::Acknowledgement::RegionalQuorum),
             idempotency_key,
         )?;
         // The wire's receipt carries the document's published version —
@@ -312,6 +321,7 @@ impl TbepHost for EngineHost {
             WriteOutcome::Committed(mut receipt) => {
                 let version = self
                     .read_body(&tenant, &document)?
+                    .0
                     .map_or(1, |found| found.metadata().version());
                 receipt.version = version;
                 WriteOutcome::Committed(receipt)
@@ -342,6 +352,7 @@ impl TbepHost for EngineHost {
                     .delete(document.clone(), expected)
                     .map_err(|_| HostingError::Refused("the document was not admissible".into()))
             },
+            request.ack.unwrap_or(crate::generated::Acknowledgement::RegionalQuorum),
             idempotency_key,
         )?;
         Ok(DocumentDeleteResponse { outcome })
@@ -397,6 +408,9 @@ impl TbepHost for EngineHost {
             count: u32::try_from(result.matched()).unwrap_or(u32::MAX),
             documents,
             terminal,
+            // The snapshot the query observed — the read position every
+            // level shares on this member.
+            position: Some(snapshot.sequence().get()),
         })
     }
 
@@ -526,9 +540,22 @@ impl TbepHost for EngineHost {
         &self,
         _tenant: &str,
     ) -> Result<crate::generated::TopologyReadResponse, HostingError> {
-        Err(HostingError::Refused(
-            "topology_read is served by the cluster-mode landing (P5)".into(),
-        ))
+        self.count_frame();
+        // Honest standalone answer: this member serves every subsystem
+        // it hosts over one local binding; no cluster topology exists
+        // until the cluster-mode landing admits peers.
+        Ok(crate::generated::TopologyReadResponse {
+            binding: crate::generated::BindingKind::LocalUds,
+            subsystems: vec![
+                "documents".into(),
+                "query".into(),
+                "schema".into(),
+                "supervision".into(),
+                "topology".into(),
+            ],
+            engine_topology_available: false,
+            cluster_mode: Some(crate::generated::ClusterMode::Standalone),
+        })
     }
 
     fn schema_declare(

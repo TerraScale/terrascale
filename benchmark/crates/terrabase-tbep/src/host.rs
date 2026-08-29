@@ -1062,6 +1062,8 @@ impl TbepHost for SyncDeliveryHost {
             sequence,
             version: sequence,
             operation_id: idempotency_key.to_string(),
+            // The journal's single-member commit is its regional quorum.
+            acknowledgement: Some(crate::generated::Acknowledgement::RegionalQuorum),
         };
         scope.record_applied(idempotency_key.to_string(), receipt.clone());
         let record = JournalRecord {
@@ -1132,6 +1134,7 @@ impl TbepHost for SyncDeliveryHost {
             binding: crate::generated::BindingKind::LocalUds,
             subsystems: vec!["sync-delivery".into(), "backbone".into(), "supervision".into()],
             engine_topology_available: false,
+            cluster_mode: Some(crate::generated::ClusterMode::Standalone),
         })
     }
 
@@ -1559,7 +1562,11 @@ mod tests {
         let error = host
             .document_read(
                 "tenant-a",
-                &DocumentReadRequest { collection: "orders".into(), document: "d".into() },
+                &DocumentReadRequest {
+                    collection: "orders".into(),
+                    document: "d".into(),
+                    level: None,
+                },
             )
             .unwrap_err();
         assert!(

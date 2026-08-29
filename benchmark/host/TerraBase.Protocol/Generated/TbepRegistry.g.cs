@@ -13,7 +13,7 @@ public static partial class TbepRegistry
     /// <summary>The protocol identity.</summary>
     public const string Identity = "terrabase.engine.protocol";
     /// <summary>The registry version.</summary>
-    public const string RegistryVersion = "1.0";
+    public const string RegistryVersion = "1.1";
     /// <summary>The wire version; unknown versions fail closed.</summary>
     public const byte WireVersion = 1;
     /// <summary>The decode bound in bytes before any field parses.</summary>
@@ -107,6 +107,18 @@ public sealed class ErrorCode : IEquatable<ErrorCode>
     public static ErrorCode ShuttingDown() => new() { Variant = "ShuttingDown", Tag = (ushort)15 };
     /// <summary>The `frame_too_large` variant.</summary>
     public static ErrorCode FrameTooLarge() => new() { Variant = "FrameTooLarge", Tag = (ushort)16 };
+    /// <summary>The `overloaded` variant.</summary>
+    public static ErrorCode Overloaded() => new() { Variant = "Overloaded", Tag = (ushort)17 };
+    /// <summary>The `protocol_version_mismatch` variant.</summary>
+    public static ErrorCode ProtocolVersionMismatch() => new() { Variant = "ProtocolVersionMismatch", Tag = (ushort)18 };
+    /// <summary>The `backup_cluster_read_only` variant.</summary>
+    public static ErrorCode BackupClusterReadOnly() => new() { Variant = "BackupClusterReadOnly", Tag = (ushort)19 };
+    /// <summary>The `backup_cluster_immutable` variant.</summary>
+    public static ErrorCode BackupClusterImmutable() => new() { Variant = "BackupClusterImmutable", Tag = (ushort)20 };
+    /// <summary>The `cold_tier_unavailable` variant.</summary>
+    public static ErrorCode ColdTierUnavailable() => new() { Variant = "ColdTierUnavailable", Tag = (ushort)21 };
+    /// <summary>The `frontier_unreachable` variant.</summary>
+    public static ErrorCode FrontierUnreachable() => new() { Variant = "FrontierUnreachable", Tag = (ushort)22 };
 
     /// <inheritdoc/>
     public bool Equals(ErrorCode? other) =>
@@ -259,6 +271,54 @@ public sealed class ErrorCodeFormatter : IMessagePackFormatter<ErrorCode?>
             }
             return new ErrorCode { Variant = "FrameTooLarge", Tag = tag };
         }
+        if (tag == (ushort)17)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Overloaded carries no payload");
+            }
+            return new ErrorCode { Variant = "Overloaded", Tag = tag };
+        }
+        if (tag == (ushort)18)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("ProtocolVersionMismatch carries no payload");
+            }
+            return new ErrorCode { Variant = "ProtocolVersionMismatch", Tag = tag };
+        }
+        if (tag == (ushort)19)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("BackupClusterReadOnly carries no payload");
+            }
+            return new ErrorCode { Variant = "BackupClusterReadOnly", Tag = tag };
+        }
+        if (tag == (ushort)20)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("BackupClusterImmutable carries no payload");
+            }
+            return new ErrorCode { Variant = "BackupClusterImmutable", Tag = tag };
+        }
+        if (tag == (ushort)21)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("ColdTierUnavailable carries no payload");
+            }
+            return new ErrorCode { Variant = "ColdTierUnavailable", Tag = tag };
+        }
+        if (tag == (ushort)22)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("FrontierUnreachable carries no payload");
+            }
+            return new ErrorCode { Variant = "FrontierUnreachable", Tag = tag };
+        }
         throw TbepWire.FormatException("unknown ErrorCode tag");
     }
 
@@ -335,8 +395,306 @@ public sealed class ErrorCodeFormatter : IMessagePackFormatter<ErrorCode?>
                 writer.WriteArrayHeader(1);
                 writer.Write((ushort)16);
                 return;
+            case "Overloaded":
+                writer.WriteArrayHeader(1);
+                writer.Write((ushort)17);
+                return;
+            case "ProtocolVersionMismatch":
+                writer.WriteArrayHeader(1);
+                writer.Write((ushort)18);
+                return;
+            case "BackupClusterReadOnly":
+                writer.WriteArrayHeader(1);
+                writer.Write((ushort)19);
+                return;
+            case "BackupClusterImmutable":
+                writer.WriteArrayHeader(1);
+                writer.Write((ushort)20);
+                return;
+            case "ColdTierUnavailable":
+                writer.WriteArrayHeader(1);
+                writer.Write((ushort)21);
+                return;
+            case "FrontierUnreachable":
+                writer.WriteArrayHeader(1);
+                writer.Write((ushort)22);
+                return;
             default:
                 throw TbepWire.FormatException("unknown ErrorCode variant");
+        }
+    }
+}
+
+/// <summary>The generated `acknowledgement` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(AcknowledgementFormatter))]
+public sealed class Acknowledgement : IEquatable<Acknowledgement>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `regional_quorum` variant.</summary>
+    public static Acknowledgement RegionalQuorum() => new() { Variant = "RegionalQuorum", Tag = (byte)1 };
+    /// <summary>The `global_quorum` variant.</summary>
+    public static Acknowledgement GlobalQuorum() => new() { Variant = "GlobalQuorum", Tag = (byte)2 };
+
+    /// <inheritdoc/>
+    public bool Equals(Acknowledgement? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as Acknowledgement);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="Acknowledgement"/>.</summary>
+public sealed class AcknowledgementFormatter : IMessagePackFormatter<Acknowledgement?>
+{
+    /// <inheritdoc/>
+    public Acknowledgement? Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            return null;
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("RegionalQuorum carries no payload");
+            }
+            return new Acknowledgement { Variant = "RegionalQuorum", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("GlobalQuorum carries no payload");
+            }
+            return new Acknowledgement { Variant = "GlobalQuorum", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown Acknowledgement tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, Acknowledgement? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            writer.WriteNil();
+            return;
+        }
+        switch (value.Variant)
+        {
+            case "RegionalQuorum":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "GlobalQuorum":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown Acknowledgement variant");
+        }
+    }
+}
+
+/// <summary>The generated `read_level` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(ReadLevelFormatter))]
+public sealed class ReadLevel : IEquatable<ReadLevel>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `local` variant.</summary>
+    public static ReadLevel Local() => new() { Variant = "Local", Tag = (byte)1 };
+    /// <summary>The `regional_quorum_read` variant.</summary>
+    public static ReadLevel RegionalQuorumRead() => new() { Variant = "RegionalQuorumRead", Tag = (byte)2 };
+    /// <summary>The `global_quorum_read` variant.</summary>
+    public static ReadLevel GlobalQuorumRead() => new() { Variant = "GlobalQuorumRead", Tag = (byte)3 };
+
+    /// <inheritdoc/>
+    public bool Equals(ReadLevel? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ReadLevel);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="ReadLevel"/>.</summary>
+public sealed class ReadLevelFormatter : IMessagePackFormatter<ReadLevel?>
+{
+    /// <inheritdoc/>
+    public ReadLevel? Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            return null;
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Local carries no payload");
+            }
+            return new ReadLevel { Variant = "Local", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("RegionalQuorumRead carries no payload");
+            }
+            return new ReadLevel { Variant = "RegionalQuorumRead", Tag = tag };
+        }
+        if (tag == (byte)3)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("GlobalQuorumRead carries no payload");
+            }
+            return new ReadLevel { Variant = "GlobalQuorumRead", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown ReadLevel tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, ReadLevel? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            writer.WriteNil();
+            return;
+        }
+        switch (value.Variant)
+        {
+            case "Local":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "RegionalQuorumRead":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            case "GlobalQuorumRead":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)3);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown ReadLevel variant");
+        }
+    }
+}
+
+/// <summary>The generated `cluster_mode` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(ClusterModeFormatter))]
+public sealed class ClusterMode : IEquatable<ClusterMode>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `standalone` variant.</summary>
+    public static ClusterMode Standalone() => new() { Variant = "Standalone", Tag = (byte)1 };
+    /// <summary>The `active` variant.</summary>
+    public static ClusterMode Active() => new() { Variant = "Active", Tag = (byte)2 };
+    /// <summary>The `backup` variant.</summary>
+    public static ClusterMode Backup() => new() { Variant = "Backup", Tag = (byte)3 };
+
+    /// <inheritdoc/>
+    public bool Equals(ClusterMode? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as ClusterMode);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="ClusterMode"/>.</summary>
+public sealed class ClusterModeFormatter : IMessagePackFormatter<ClusterMode?>
+{
+    /// <inheritdoc/>
+    public ClusterMode? Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            return null;
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Standalone carries no payload");
+            }
+            return new ClusterMode { Variant = "Standalone", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Active carries no payload");
+            }
+            return new ClusterMode { Variant = "Active", Tag = tag };
+        }
+        if (tag == (byte)3)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Backup carries no payload");
+            }
+            return new ClusterMode { Variant = "Backup", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown ClusterMode tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, ClusterMode? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            writer.WriteNil();
+            return;
+        }
+        switch (value.Variant)
+        {
+            case "Standalone":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "Active":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            case "Backup":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)3);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown ClusterMode variant");
         }
     }
 }
@@ -2788,12 +3146,16 @@ public sealed class CommitReceipt : IEquatable<CommitReceipt>
     /// <summary>The `operation_id` field.</summary>
     [Key(2)]
     public required string OperationId { get; init; }
+    /// <summary>The `acknowledgement` field.</summary>
+    [Key(3)]
+    public Acknowledgement? Acknowledgement { get; init; }
 
     /// <inheritdoc/>
     public bool Equals(CommitReceipt? other) => other is not null
         && TbepRegistry.FieldEquals(Sequence, other.Sequence)
         && TbepRegistry.FieldEquals(Version, other.Version)
-        && TbepRegistry.FieldEquals(OperationId, other.OperationId);
+        && TbepRegistry.FieldEquals(OperationId, other.OperationId)
+        && TbepRegistry.FieldEquals(Acknowledgement, other.Acknowledgement);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => Equals(obj as CommitReceipt);
@@ -2801,7 +3163,7 @@ public sealed class CommitReceipt : IEquatable<CommitReceipt>
     /// <inheritdoc/>
     public override int GetHashCode()
     {
-        return System.HashCode.Combine(Sequence, Version, OperationId);
+        return System.HashCode.Combine(Sequence, Version, OperationId, Acknowledgement);
     }
 }
 
@@ -3501,11 +3863,15 @@ public sealed class DocumentReadRequest : IEquatable<DocumentReadRequest>
     /// <summary>The `document` field.</summary>
     [Key(1)]
     public required string Document { get; init; }
+    /// <summary>The `level` field.</summary>
+    [Key(2)]
+    public ReadLevel? Level { get; init; }
 
     /// <inheritdoc/>
     public bool Equals(DocumentReadRequest? other) => other is not null
         && TbepRegistry.FieldEquals(Collection, other.Collection)
-        && TbepRegistry.FieldEquals(Document, other.Document);
+        && TbepRegistry.FieldEquals(Document, other.Document)
+        && TbepRegistry.FieldEquals(Level, other.Level);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => Equals(obj as DocumentReadRequest);
@@ -3513,7 +3879,7 @@ public sealed class DocumentReadRequest : IEquatable<DocumentReadRequest>
     /// <inheritdoc/>
     public override int GetHashCode()
     {
-        return System.HashCode.Combine(Collection, Document);
+        return System.HashCode.Combine(Collection, Document, Level);
     }
 }
 
@@ -3527,11 +3893,15 @@ public sealed class DocumentReadResponse : IEquatable<DocumentReadResponse>
     /// <summary>The `document` field.</summary>
     [Key(1)]
     public DocumentBody? Document { get; init; }
+    /// <summary>The `position` field.</summary>
+    [Key(2)]
+    public ulong? Position { get; init; }
 
     /// <inheritdoc/>
     public bool Equals(DocumentReadResponse? other) => other is not null
         && TbepRegistry.FieldEquals(Found, other.Found)
-        && TbepRegistry.FieldEquals(Document, other.Document);
+        && TbepRegistry.FieldEquals(Document, other.Document)
+        && TbepRegistry.FieldEquals(Position, other.Position);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => Equals(obj as DocumentReadResponse);
@@ -3539,7 +3909,7 @@ public sealed class DocumentReadResponse : IEquatable<DocumentReadResponse>
     /// <inheritdoc/>
     public override int GetHashCode()
     {
-        return System.HashCode.Combine(Found, Document);
+        return System.HashCode.Combine(Found, Document, Position);
     }
 }
 
@@ -3556,12 +3926,16 @@ public sealed class DocumentWriteRequest : IEquatable<DocumentWriteRequest>
     /// <summary>The `operation_id` field.</summary>
     [Key(2)]
     public required string OperationId { get; init; }
+    /// <summary>The `ack` field.</summary>
+    [Key(3)]
+    public Acknowledgement? Ack { get; init; }
 
     /// <inheritdoc/>
     public bool Equals(DocumentWriteRequest? other) => other is not null
         && TbepRegistry.FieldEquals(Document, other.Document)
         && TbepRegistry.FieldEquals(Expected, other.Expected)
-        && TbepRegistry.FieldEquals(OperationId, other.OperationId);
+        && TbepRegistry.FieldEquals(OperationId, other.OperationId)
+        && TbepRegistry.FieldEquals(Ack, other.Ack);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => Equals(obj as DocumentWriteRequest);
@@ -3569,7 +3943,7 @@ public sealed class DocumentWriteRequest : IEquatable<DocumentWriteRequest>
     /// <inheritdoc/>
     public override int GetHashCode()
     {
-        return System.HashCode.Combine(Document, Expected, OperationId);
+        return System.HashCode.Combine(Document, Expected, OperationId, Ack);
     }
 }
 
@@ -3611,13 +3985,17 @@ public sealed class DocumentDeleteRequest : IEquatable<DocumentDeleteRequest>
     /// <summary>The `operation_id` field.</summary>
     [Key(3)]
     public required string OperationId { get; init; }
+    /// <summary>The `ack` field.</summary>
+    [Key(4)]
+    public Acknowledgement? Ack { get; init; }
 
     /// <inheritdoc/>
     public bool Equals(DocumentDeleteRequest? other) => other is not null
         && TbepRegistry.FieldEquals(Collection, other.Collection)
         && TbepRegistry.FieldEquals(Document, other.Document)
         && TbepRegistry.FieldEquals(Expected, other.Expected)
-        && TbepRegistry.FieldEquals(OperationId, other.OperationId);
+        && TbepRegistry.FieldEquals(OperationId, other.OperationId)
+        && TbepRegistry.FieldEquals(Ack, other.Ack);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => Equals(obj as DocumentDeleteRequest);
@@ -3625,7 +4003,7 @@ public sealed class DocumentDeleteRequest : IEquatable<DocumentDeleteRequest>
     /// <inheritdoc/>
     public override int GetHashCode()
     {
-        return System.HashCode.Combine(Collection, Document, Expected, OperationId);
+        return System.HashCode.Combine(Collection, Document, Expected, OperationId, Ack);
     }
 }
 
@@ -3664,12 +4042,16 @@ public sealed class QueryExecuteRequest : IEquatable<QueryExecuteRequest>
     /// <summary>The `max_items` field.</summary>
     [Key(2)]
     public required uint MaxItems { get; init; }
+    /// <summary>The `level` field.</summary>
+    [Key(3)]
+    public ReadLevel? Level { get; init; }
 
     /// <inheritdoc/>
     public bool Equals(QueryExecuteRequest? other) => other is not null
         && TbepRegistry.FieldEquals(QueryId, other.QueryId)
         && TbepRegistry.FieldEquals(Text, other.Text)
-        && TbepRegistry.FieldEquals(MaxItems, other.MaxItems);
+        && TbepRegistry.FieldEquals(MaxItems, other.MaxItems)
+        && TbepRegistry.FieldEquals(Level, other.Level);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => Equals(obj as QueryExecuteRequest);
@@ -3677,7 +4059,7 @@ public sealed class QueryExecuteRequest : IEquatable<QueryExecuteRequest>
     /// <inheritdoc/>
     public override int GetHashCode()
     {
-        return System.HashCode.Combine(QueryId, Text, MaxItems);
+        return System.HashCode.Combine(QueryId, Text, MaxItems, Level);
     }
 }
 
@@ -3694,12 +4076,16 @@ public sealed class QueryExecuteResponse : IEquatable<QueryExecuteResponse>
     /// <summary>The `terminal` field.</summary>
     [Key(2)]
     public required QueryTerminal Terminal { get; init; }
+    /// <summary>The `position` field.</summary>
+    [Key(3)]
+    public ulong? Position { get; init; }
 
     /// <inheritdoc/>
     public bool Equals(QueryExecuteResponse? other) => other is not null
         && TbepRegistry.FieldEquals(Documents, other.Documents)
         && TbepRegistry.FieldEquals(Count, other.Count)
-        && TbepRegistry.FieldEquals(Terminal, other.Terminal);
+        && TbepRegistry.FieldEquals(Terminal, other.Terminal)
+        && TbepRegistry.FieldEquals(Position, other.Position);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => Equals(obj as QueryExecuteResponse);
@@ -3707,7 +4093,7 @@ public sealed class QueryExecuteResponse : IEquatable<QueryExecuteResponse>
     /// <inheritdoc/>
     public override int GetHashCode()
     {
-        return System.HashCode.Combine(Documents, Count, Terminal);
+        return System.HashCode.Combine(Documents, Count, Terminal, Position);
     }
 }
 
@@ -4391,12 +4777,16 @@ public sealed class TopologyReadResponse : IEquatable<TopologyReadResponse>
     /// <summary>The `engine_topology_available` field.</summary>
     [Key(2)]
     public required bool EngineTopologyAvailable { get; init; }
+    /// <summary>The `cluster_mode` field.</summary>
+    [Key(3)]
+    public ClusterMode? ClusterMode { get; init; }
 
     /// <inheritdoc/>
     public bool Equals(TopologyReadResponse? other) => other is not null
         && TbepRegistry.FieldEquals(Binding, other.Binding)
         && TbepRegistry.FieldEquals(Subsystems, other.Subsystems)
-        && TbepRegistry.FieldEquals(EngineTopologyAvailable, other.EngineTopologyAvailable);
+        && TbepRegistry.FieldEquals(EngineTopologyAvailable, other.EngineTopologyAvailable)
+        && TbepRegistry.FieldEquals(ClusterMode, other.ClusterMode);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => Equals(obj as TopologyReadResponse);
@@ -4404,7 +4794,7 @@ public sealed class TopologyReadResponse : IEquatable<TopologyReadResponse>
     /// <inheritdoc/>
     public override int GetHashCode()
     {
-        return System.HashCode.Combine(Binding, Subsystems, EngineTopologyAvailable);
+        return System.HashCode.Combine(Binding, Subsystems, EngineTopologyAvailable, ClusterMode);
     }
 }
 

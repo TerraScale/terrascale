@@ -375,7 +375,11 @@ mod tests {
 
     #[test]
     fn body_decode_rejects_trailing_bytes() {
-        let body = DocumentReadRequest { collection: "orders".into(), document: "d-01".into() };
+        let body = DocumentReadRequest {
+            collection: "orders".into(),
+            document: "d-01".into(),
+            level: None,
+        };
         let mut wire = encode_body(&body).expect("encodes");
         wire.push(0x77);
         let error = decode_body::<DocumentReadRequest>(&wire).unwrap_err();
@@ -392,7 +396,11 @@ mod tests {
 
     #[test]
     fn body_decode_rejects_extra_array_elements() {
-        let body = DocumentReadRequest { collection: "orders".into(), document: "d-01".into() };
+        let body = DocumentReadRequest {
+            collection: "orders".into(),
+            document: "d-01".into(),
+            level: None,
+        };
         let mut wire = encode_body(&body).expect("encodes");
         // fixarray(2) -> fixarray(3) with one extra element appended.
         wire[0] = 0x93;
@@ -411,7 +419,7 @@ mod tests {
 
     #[test]
     fn body_decode_accepts_nil_only_where_optional() {
-        let body = DocumentReadResponse { found: false, document: None };
+        let body = DocumentReadResponse { found: false, document: None, position: None };
         let wire = encode_body(&body).expect("encodes");
         let decoded = decode_body::<DocumentReadResponse>(&wire).expect("decodes");
         assert_eq!(decoded, body);
@@ -435,7 +443,8 @@ mod tests {
 
     #[test]
     fn body_validate_enforces_string_bounds() {
-        let body = DocumentReadRequest { collection: "x".repeat(65), document: "d".into() };
+        let body =
+            DocumentReadRequest { collection: "x".repeat(65), document: "d".into(), level: None };
         let error = encode_body(&body).unwrap_err();
         assert!(matches!(error, BodyError::StringTooLong { field: "collection", bound: 64 }));
     }

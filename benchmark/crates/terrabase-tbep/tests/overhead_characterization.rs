@@ -126,7 +126,11 @@ fn every_registry_kind_overhead_stays_within_the_fixed_bound() {
         (
             "operation",
             TbepFrame::seal(
-                DocumentReadRequest { collection: "orders".into(), document: "d-000042".into() },
+                DocumentReadRequest {
+                    collection: "orders".into(),
+                    document: "d-000042".into(),
+                    level: None,
+                },
                 maximal_identities,
                 u64::MAX,
                 None,

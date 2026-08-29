@@ -139,8 +139,10 @@ fn the_socket_file_is_owner_only() {
 #[test]
 fn tenant_scoped_operations_require_the_channel_binding() {
     let mut fixture = Fixture::bind("unbound");
-    let answer = fixture
-        .call(DocumentReadRequest { collection: "orders".into(), document: "d-01".into() }, None);
+    let answer = fixture.call(
+        DocumentReadRequest { collection: "orders".into(), document: "d-01".into(), level: None },
+        None,
+    );
     match answer.body() {
         TbepBody::Error(error) => {
             assert_eq!(error.code, terrabase_tbep::generated::ErrorCode::UnboundChannel);

@@ -119,6 +119,7 @@ fn the_engine_serves_the_document_spine_over_uds() {
             },
             expected: ExpectedVersion::Absent,
             operation_id: "op-write-1".into(),
+            ack: None,
         },
         Some(&key),
     );
@@ -133,7 +134,11 @@ fn the_engine_serves_the_document_spine_over_uds() {
 
     // Read: the published body and version.
     let answer = fixture.call(
-        DocumentReadRequest { collection: "orders".into(), document: "order-1".into() },
+        DocumentReadRequest {
+            collection: "orders".into(),
+            document: "order-1".into(),
+            level: None,
+        },
         None,
     );
     let TbepBody::DocumentReadResponse(response) = answer.body() else {
@@ -155,6 +160,7 @@ fn the_engine_serves_the_document_spine_over_uds() {
             },
             expected: ExpectedVersion::Absent,
             operation_id: "op-write-1".into(),
+            ack: None,
         },
         Some(&key),
     );
@@ -176,6 +182,7 @@ fn the_engine_serves_the_document_spine_over_uds() {
             },
             expected: ExpectedVersion::Absent,
             operation_id: "op-write-2".into(),
+            ack: None,
         },
         Some(&IdempotencyKey::new("op-write-2").expect("valid key")),
     );
@@ -188,7 +195,11 @@ fn the_engine_serves_the_document_spine_over_uds() {
     fixture.reconnect();
     fixture.bind_channel("tenant-b");
     let answer = fixture.call(
-        DocumentReadRequest { collection: "orders".into(), document: "order-1".into() },
+        DocumentReadRequest {
+            collection: "orders".into(),
+            document: "order-1".into(),
+            level: None,
+        },
         None,
     );
     let TbepBody::DocumentReadResponse(response) = answer.body() else {
@@ -196,14 +207,43 @@ fn the_engine_serves_the_document_spine_over_uds() {
     };
     assert!(!response.found, "the document does not cross tenants");
 
+    // The restart durability row continues in its own test below.
+    drop(fixture);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_committed_body_survives_a_full_restart() {
+    let dir = location("restart");
+    let mut fixture = Fixture::bind("restart", &dir, 1);
+    fixture.bind_channel("tenant-a");
+    let key = IdempotencyKey::new("op-restart-1").expect("valid key");
+    let answer = fixture.call(
+        DocumentWriteRequest {
+            document: DocumentPut {
+                id: "order-1".into(),
+                collection: "orders".into(),
+                body: order_body(),
+            },
+            expected: ExpectedVersion::Absent,
+            operation_id: "op-restart-1".into(),
+            ack: None,
+        },
+        Some(&key),
+    );
+    assert!(matches!(answer.body(), TbepBody::DocumentWriteResponse(_)));
     drop(fixture);
 
-    // Durability across a server restart: a fresh host over the same
-    // durable location serves the committed body.
-    let mut reopened = Fixture::bind("spine-restart", &dir, 2);
+    // A fresh host over the same durable location serves the committed
+    // body.
+    let mut reopened = Fixture::bind("restart-reopened", &dir, 2);
     reopened.bind_channel("tenant-a");
     let answer = reopened.call(
-        DocumentReadRequest { collection: "orders".into(), document: "order-1".into() },
+        DocumentReadRequest {
+            collection: "orders".into(),
+            document: "order-1".into(),
+            level: None,
+        },
         None,
     );
     let TbepBody::DocumentReadResponse(response) = answer.body() else {
@@ -230,6 +270,7 @@ fn the_engine_serves_deletes_with_outcomes() {
         },
         expected: ExpectedVersion::Any,
         operation_id: "op-del-1".into(),
+        ack: None,
     };
     let answer = fixture.call(write, Some(&IdempotencyKey::new("op-del-1").expect("valid key")));
     assert!(matches!(answer.body(), TbepBody::DocumentWriteResponse(_)));
@@ -242,6 +283,7 @@ fn the_engine_serves_deletes_with_outcomes() {
             document: "order-9".into(),
             expected: ExpectedVersion::Exact(1),
             operation_id: "op-del-2".into(),
+            ack: None,
         },
         Some(&key),
     );
@@ -252,7 +294,11 @@ fn the_engine_serves_deletes_with_outcomes() {
 
     // The read no longer finds it.
     let answer = fixture.call(
-        DocumentReadRequest { collection: "orders".into(), document: "order-9".into() },
+        DocumentReadRequest {
+            collection: "orders".into(),
+            document: "order-9".into(),
+            level: None,
+        },
         None,
     );
     let TbepBody::DocumentReadResponse(response) = answer.body() else {
@@ -267,6 +313,7 @@ fn the_engine_serves_deletes_with_outcomes() {
             document: "order-9".into(),
             expected: ExpectedVersion::Exact(1),
             operation_id: "op-del-2".into(),
+            ack: None,
         },
         Some(&key),
     );
@@ -319,6 +366,7 @@ fn the_engine_serves_v1_queries_over_uds() {
                 },
                 expected: ExpectedVersion::Absent,
                 operation_id: format!("op-q-{index}"),
+                ack: None,
             },
             Some(&IdempotencyKey::new(&format!("op-q-{index}")).expect("valid key")),
         );
@@ -327,7 +375,12 @@ fn the_engine_serves_v1_queries_over_uds() {
 
     // The full scan serves every matched document, complete.
     let answer = fixture.call(
-        QueryExecuteRequest { query_id: 1, text: "from orders".into(), max_items: 256 },
+        QueryExecuteRequest {
+            query_id: 1,
+            text: "from orders".into(),
+            max_items: 256,
+            level: None,
+        },
         None,
     );
     let TbepBody::QueryExecuteResponse(response) = answer.body() else {
@@ -340,8 +393,10 @@ fn the_engine_serves_v1_queries_over_uds() {
 
     // A page below the matched count is truncated, and still names the
     // total.
-    let answer = fixture
-        .call(QueryExecuteRequest { query_id: 2, text: "from orders".into(), max_items: 2 }, None);
+    let answer = fixture.call(
+        QueryExecuteRequest { query_id: 2, text: "from orders".into(), max_items: 2, level: None },
+        None,
+    );
     let TbepBody::QueryExecuteResponse(response) = answer.body() else {
         panic!("the paged query answered");
     };
@@ -355,6 +410,7 @@ fn the_engine_serves_v1_queries_over_uds() {
             query_id: 3,
             text: "from orders where quantity = 2".into(),
             max_items: 256,
+            level: None,
         },
         None,
     );
@@ -432,6 +488,7 @@ fn the_engine_serves_schema_declare_status_and_enforcement() {
             },
             expected: ExpectedVersion::Absent,
             operation_id: "op-schema-2".into(),
+            ack: None,
         },
         Some(&IdempotencyKey::new("op-schema-2").expect("valid key")),
     );
@@ -449,6 +506,7 @@ fn the_engine_serves_schema_declare_status_and_enforcement() {
             },
             expected: ExpectedVersion::Absent,
             operation_id: "op-schema-3".into(),
+            ack: None,
         },
         Some(&IdempotencyKey::new("op-schema-3").expect("valid key")),
     );
@@ -458,7 +516,11 @@ fn the_engine_serves_schema_declare_status_and_enforcement() {
         answer.kind()
     );
     let answer = fixture.call(
-        DocumentReadRequest { collection: "orders".into(), document: "order-bad".into() },
+        DocumentReadRequest {
+            collection: "orders".into(),
+            document: "order-bad".into(),
+            level: None,
+        },
         None,
     );
     let TbepBody::DocumentReadResponse(response) = answer.body() else {
@@ -551,10 +613,94 @@ fn schema_clearing_returns_the_collection_to_schema_free() {
             },
             expected: ExpectedVersion::Absent,
             operation_id: "op-clear-3".into(),
+            ack: None,
         },
         Some(&IdempotencyKey::new("op-clear-3").expect("valid key")),
     );
     assert!(matches!(answer.body(), TbepBody::DocumentWriteResponse(_)));
+
+    drop(fixture);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_engine_serves_acknowledgement_levels_read_levels_and_cluster_mode() {
+    use terrabase_tbep::generated::{Acknowledgement, ClusterMode, ReadLevel, TopologyReadRequest};
+
+    let dir = location("levels");
+    let mut fixture = Fixture::bind("levels", &dir, 1);
+    fixture.bind_channel("tenant-a");
+
+    // A write with an explicit global-quorum acknowledgement names it in
+    // the receipt; one without carries the regional default.
+    let write = |id: &str, ack: Option<Acknowledgement>| DocumentWriteRequest {
+        document: DocumentPut { id: id.into(), collection: "orders".into(), body: order_body() },
+        expected: ExpectedVersion::Absent,
+        operation_id: format!("op-level-{id}"),
+        ack,
+    };
+    let answer = fixture.call(
+        write("a", Some(Acknowledgement::GlobalQuorum)),
+        Some(&IdempotencyKey::new("op-level-a").expect("valid key")),
+    );
+    let TbepBody::DocumentWriteResponse(response) = answer.body() else {
+        panic!("the global write answered");
+    };
+    let WriteOutcome::Committed(receipt) = &response.outcome else {
+        panic!("the global write commits");
+    };
+    assert_eq!(receipt.acknowledgement, Some(Acknowledgement::GlobalQuorum));
+
+    let answer = fixture
+        .call(write("b", None), Some(&IdempotencyKey::new("op-level-b").expect("valid key")));
+    let TbepBody::DocumentWriteResponse(response) = answer.body() else {
+        panic!("the default write answered");
+    };
+    let WriteOutcome::Committed(receipt) = &response.outcome else {
+        panic!("the default write commits");
+    };
+    assert_eq!(receipt.acknowledgement, Some(Acknowledgement::RegionalQuorum));
+
+    // Reads name the position they observed, at every level.
+    let answer = fixture.call(
+        DocumentReadRequest {
+            collection: "orders".into(),
+            document: "a".into(),
+            level: Some(ReadLevel::RegionalQuorumRead),
+        },
+        None,
+    );
+    let TbepBody::DocumentReadResponse(response) = answer.body() else {
+        panic!("the leveled read answered");
+    };
+    assert!(response.found);
+    let position = response.position.expect("the read names its position");
+    assert!(position >= receipt.sequence, "the position is at least the write's");
+
+    // Queries name the snapshot position too.
+    let answer = fixture.call(
+        terrabase_tbep::generated::QueryExecuteRequest {
+            query_id: 1,
+            text: "from orders".into(),
+            max_items: 16,
+            level: Some(ReadLevel::GlobalQuorumRead),
+        },
+        None,
+    );
+    let TbepBody::QueryExecuteResponse(response) = answer.body() else {
+        panic!("the leveled query answered");
+    };
+    assert_eq!(response.count, 2);
+    assert!(response.position.is_some());
+
+    // Topology answers the honest standalone mode.
+    let answer = fixture.call(TopologyReadRequest {}, None);
+    let TbepBody::TopologyReadResponse(response) = answer.body() else {
+        panic!("the topology answered, got {:?}", answer.kind());
+    };
+    assert_eq!(response.cluster_mode, Some(ClusterMode::Standalone));
+    assert!(!response.engine_topology_available);
+    assert!(response.subsystems.contains(&"documents".to_owned()));
 
     drop(fixture);
     let _ = std::fs::remove_dir_all(&dir);

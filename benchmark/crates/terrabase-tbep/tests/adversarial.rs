@@ -170,6 +170,7 @@ fn idempotency_pairing_fails_closed_both_ways() {
             },
             expected: ExpectedVersion::Absent,
             operation_id: "op-01".into(),
+            ack: None,
         },
         1,
         0,
@@ -178,7 +179,7 @@ fn idempotency_pairing_fails_closed_both_ways() {
     assert!(matches!(unkeyed.unwrap_err(), EnvelopeError::IdempotencyPairing(_)));
     // A read frame with a key refuses to seal.
     let keyed_read = TbepFrame::seal(
-        DocumentReadRequest { collection: "orders".into(), document: "d-01".into() },
+        DocumentReadRequest { collection: "orders".into(), document: "d-01".into(), level: None },
         2,
         0,
         Some(&key),
@@ -197,6 +198,7 @@ fn idempotency_pairing_fails_closed_both_ways() {
             },
             expected: ExpectedVersion::Absent,
             operation_id: "op-01".into(),
+            ack: None,
         },
         1,
         0,
@@ -221,13 +223,14 @@ fn bodies_are_positional_arrays_never_maps() {
     let map = [0x81, 0x01, 0x02];
     assert!(decode_body::<DocumentReadRequest>(&map).is_err());
     // nil where a required field belongs.
-    let nil_body = [0x92, 0xc0, 0xc0];
+    let nil_body = [0x93, 0xc0, 0xc0, 0xc0];
     assert!(decode_body::<DocumentReadRequest>(&nil_body).is_err());
     // Extra array elements beyond the declared arity.
-    let body = DocumentReadRequest { collection: "orders".into(), document: "d-01".into() };
+    let body =
+        DocumentReadRequest { collection: "orders".into(), document: "d-01".into(), level: None };
     let mut wide = encode_body(&body).expect("encodes");
-    assert_eq!(wide[0], 0x92);
-    wide[0] = 0x93;
+    assert_eq!(wide[0], 0x93);
+    wide[0] = 0x94;
     wide.push(0xc0);
     assert!(decode_body::<DocumentReadRequest>(&wide).is_err());
     // Unknown enum tag inside a typed body.
@@ -243,7 +246,8 @@ fn bodies_are_positional_arrays_never_maps() {
 
 #[test]
 fn bounds_violations_fail_closed_before_bytes_exist() {
-    let over_long = DocumentReadRequest { collection: "c".repeat(65), document: "d".into() };
+    let over_long =
+        DocumentReadRequest { collection: "c".repeat(65), document: "d".into(), level: None };
     assert!(encode_body(&over_long).is_err());
     let hostile_list = BackboneSubscribeRequest {
         subscription_id: 1,

@@ -456,7 +456,11 @@ mod tests {
 
     #[test]
     fn envelope_round_trips_and_is_deterministic() {
-        let body = DocumentReadRequest { collection: "orders".into(), document: "d-01".into() };
+        let body = DocumentReadRequest {
+            collection: "orders".into(),
+            document: "d-01".into(),
+            level: None,
+        };
         let frame = TbepFrame::seal(body, 11, 7, None).expect("seals");
         let first = frame.to_bytes();
         assert_eq!(frame.to_bytes(), first);
@@ -477,13 +481,18 @@ mod tests {
             },
             expected: ExpectedVersion::Absent,
             operation_id: "op-01".into(),
+            ack: None,
         };
         let unkeyed = TbepFrame::seal(body.clone(), 1, 0, None).unwrap_err();
         assert!(matches!(unkeyed, EnvelopeError::IdempotencyPairing(_)));
         let key = IdempotencyKey::new("retry-01").expect("key");
         let frame = TbepFrame::seal(body, 1, 0, Some(&key)).expect("seals");
         let read = TbepFrame::seal(
-            DocumentReadRequest { collection: "orders".into(), document: "d-01".into() },
+            DocumentReadRequest {
+                collection: "orders".into(),
+                document: "d-01".into(),
+                level: None,
+            },
             2,
             0,
             Some(&key),
@@ -557,7 +566,7 @@ mod tests {
     #[test]
     fn stream_round_trip_and_clean_eof() {
         let frame = TbepFrame::seal(
-            DocumentReadRequest { collection: "orders".into(), document: "d".into() },
+            DocumentReadRequest { collection: "orders".into(), document: "d".into(), level: None },
             3,
             2,
             None,
