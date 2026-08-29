@@ -131,8 +131,8 @@ Public families may include:
 - Organizations, Projects, membership, and credentials;
 - database lifecycle, placement, environment, repository, document, TQL, and
   schema operations;
-- backup, restore, PITR, export, and import;
-- usage, billing, notifications, and queue operations;
+- backup, restore, PITR, and export;
+- usage, billing, and notifications;
 - reactive subscriptions; and
 - role-protected administration.
 
@@ -150,8 +150,8 @@ Customers create native databases through public Database API operations. A
 small database begins with one logical Partition. The API does not ask
 customers to choose physical shard count or Members.
 
-Environments, when enabled, are native engine-enforced scopes. They are not
-collection-name prefixes inside one shared RavenDB database.
+Environments, when enabled, are native engine-enforced scopes. They are never
+implemented through caller-controlled collection-name prefixes.
 
 The SDK sends public ULID identities and placement choices. It never constructs
 physical storage names.

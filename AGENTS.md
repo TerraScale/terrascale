@@ -1,3 +1,4 @@
+AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 # TerraScale .NET SDK rules
 
 Read the workspace `../GOAL.md` and root `../AGENTS.md` before changing a
