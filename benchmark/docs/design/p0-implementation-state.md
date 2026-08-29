@@ -287,3 +287,24 @@ and only a valid frontier cut shallow-exports.
 Receipts: `terrabase-replication-core` 19/19 (8 convergence + 11
 composed); clippy `-D warnings` and fmt clean. `scripts/check.sh` not
 run (AC-12).
+
+## 8. P2 landing 5 (2026-08-29): the quorum read with repair
+
+The leaderless read path (contract §4 + §6) landed:
+`quorum_read_with_repair` accepts a read at ANY active Member, merges
+the reader causally with the other eligible reachable Members of its
+Region (the merged Loro frontier IS the read's view), returns the
+merged document body immediately, and repairs the Members observed
+behind in the same exchange — their engines reconciled too, the repair
+report naming them. Below the Region's majority the read is
+typed-refused (`ReadQuorumNotReached`).
+
+Proven: a reader holding a write its regional peer lacks serves the
+merged view AND the peer's engine serves the document after the read;
+a write in a foreign Region stays invisible to the regional quorum
+(the level discipline); a repeated read at the settled frontier
+repairs nothing; a lone Member cannot quorum-read.
+
+Receipts: `terrabase-replication-core` 21/21 (8 convergence + 13
+composed); clippy `-D warnings` and fmt clean. `scripts/check.sh` not
+run (AC-12).

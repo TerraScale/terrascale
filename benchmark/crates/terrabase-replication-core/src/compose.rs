@@ -55,6 +55,9 @@ pub enum ComposeError {
     /// instead (the mesh answer); the compaction guard lands with the
     /// transport wiring.
     SnapshotAdoptionWouldDropOwnOps,
+    /// Fewer than the Region's majority of eligible Members were
+    /// reachable for a quorum read.
+    ReadQuorumNotReached,
 }
 
 /// One leaderless write in the composed vocabulary: the operation
@@ -816,4 +819,90 @@ fn accept_on(
         }
         ComposedWrite::Delete { operation, document } => member.accept_delete(operation, document),
     }
+}
+
+/// What one quorum read repaired: the Members observed behind the
+/// merged frontier that received the missing deltas.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ReadRepairReport {
+    repaired: Vec<MemberId>,
+}
+
+impl ReadRepairReport {
+    /// Returns the Members repaired during the read, in canonical
+    /// order.
+    #[must_use]
+    pub fn repaired(&self) -> &[MemberId] {
+        &self.repaired
+    }
+}
+
+/// Serves one leaderless quorum read with repair (contract §4 + §6).
+///
+/// Any active Member accepts the read: the reader merges causally with
+/// the other eligible reachable Members of its Region — the merged
+/// Loro frontier IS the read's view — and returns the merged document
+/// body immediately. Members observed behind the merged frontier are
+/// repaired in the same exchange (their engines reconciled too);
+/// repair never gates the read's own result.
+///
+/// # Errors
+///
+/// Returns [`ComposeError::ReadQuorumNotReached`] when fewer than the
+/// Region's majority of eligible Members are reachable, and the typed
+/// compose failures of the exchange otherwise.
+pub fn quorum_read_with_repair(
+    set: &ReplicaSet,
+    reading: &MemberId,
+    members: &mut [ComposedMember],
+    document: &str,
+) -> Result<(Option<BTreeMap<String, DocumentValue>>, ReadRepairReport), ComposeError> {
+    let Some(region) = set.region_of(reading) else {
+        return Err(ComposeError::InvalidIdentifier);
+    };
+    let reader_index = members
+        .iter()
+        .position(|member| member.member_id() == reading)
+        .ok_or(ComposeError::InvalidIdentifier)?;
+    // The regional quorum: reader plus every other seated regional
+    // Member present in the reachable set.
+    let regional: Vec<usize> = (0..members.len())
+        .filter(|&index| {
+            index != reader_index
+                && set.region_of(members[index].member_id()) == Some(region.clone())
+        })
+        .collect();
+    let reachable = regional.len() + 1;
+    if reachable < set.regional_threshold(&region) {
+        return Err(ComposeError::ReadQuorumNotReached);
+    }
+    let before: Vec<ReplicaFrontier> =
+        regional.iter().map(|&index| members[index].frontier()).collect();
+    // The merge: the reader exchanges with each regional peer. The
+    // bounded, coalesced repair queue is the transport's landing; this
+    // in-process exchange is its semantics.
+    for &peer_index in &regional {
+        if peer_index < reader_index {
+            let (_, high) = members.split_at_mut(peer_index);
+            let (peer, readers) = high.split_at_mut(1);
+            readers[reader_index - peer_index - 1].anti_entropy_with(&mut peer[0])?;
+        } else {
+            let (low, high) = members.split_at_mut(reader_index + 1);
+            low[reader_index].anti_entropy_with(&mut high[peer_index - reader_index - 1])?;
+        }
+    }
+    // The merged view, returned immediately.
+    let reader = &members[reader_index];
+    let merged = crdt_documents(&reader.merged_state())?;
+    let body = merged.get(document).cloned();
+    // The repair report: every regional Member whose frontier the read
+    // moved was behind the merged frontier and is now repaired.
+    let mut repaired: Vec<MemberId> = Vec::new();
+    for (position, &index) in regional.iter().enumerate() {
+        if members[index].frontier() != before[position] {
+            repaired.push(members[index].member_id().clone());
+        }
+    }
+    repaired.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    Ok((body, ReadRepairReport { repaired }))
 }

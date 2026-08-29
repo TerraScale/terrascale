@@ -490,3 +490,85 @@ fn guarded_compaction_waits_for_the_live_set_and_adoption_refuses_own_ops() {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+#[test]
+fn a_quorum_read_returns_the_merged_view_and_repairs_the_behind() {
+    use terrabase_replication_core::{ReadRepairReport, quorum_read_with_repair};
+    use terrabase_v2::replication::MemberId;
+
+    let (set, mut members, dirs) = three_region_members("read");
+    // a2 (the reader) holds order-1; a1 holds nothing; g1 in another
+    // Region holds order-2 that the alpha quorum cannot see.
+    let (alpha, _rest) = members.split_at_mut(2);
+    let a2 = &mut alpha[1];
+    a2.accept_put("op-a2", "order-1", &body("from-a2")).expect("a2 writes");
+    let (gamma, _rest) = members.split_at_mut(6);
+    gamma[4].accept_put("op-g1", "order-2", &body("from-g1")).expect("g1 writes");
+
+    // The quorum read through a2: it merges with its regional peer a1,
+    // returns the merged view immediately, and repairs a1 (observed
+    // behind with nothing). The gamma Region's write is invisible to
+    // the regional quorum — the level discipline of the read.
+    let (view, report) = quorum_read_with_repair(
+        &set,
+        &MemberId::try_new("a2").expect("valid member"),
+        &mut members,
+        "order-1",
+    )
+    .expect("the quorum read serves");
+    assert_eq!(view, Some(body("from-a2")));
+    assert_eq!(report.repaired(), [MemberId::try_new("a1").expect("valid member")].as_slice());
+    // The repaired Member's engine now serves the document too.
+    assert_eq!(members[0].visible("order-1"), Ok(Some(body("from-a2"))));
+
+    let (gamma_view, _) = quorum_read_with_repair(
+        &set,
+        &MemberId::try_new("g1").expect("valid member"),
+        &mut members,
+        "order-2",
+    )
+    .expect("the gamma read serves");
+    assert_eq!(gamma_view, Some(body("from-g1")));
+
+    // A second read at the settled frontier repairs nothing.
+    let (_, again) = quorum_read_with_repair(
+        &set,
+        &MemberId::try_new("a2").expect("valid member"),
+        &mut members,
+        "order-1",
+    )
+    .expect("serves again");
+    assert_eq!(again, ReadRepairReport::default());
+
+    for member in members.drain(..) {
+        member.shutdown().expect("closes");
+    }
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn a_quorum_read_without_a_regional_majority_is_refused() {
+    use terrabase_replication_core::{ComposeError, quorum_read_with_repair};
+    use terrabase_v2::replication::MemberId;
+
+    let (set, mut members, dirs) = three_region_members("read-min");
+    // Only a1 is reachable: one of two alpha voters is not a majority.
+    let (single, _rest) = members.split_at_mut(1);
+    let error = quorum_read_with_repair(
+        &set,
+        &MemberId::try_new("a1").expect("valid member"),
+        single,
+        "order-1",
+    )
+    .expect_err("no regional majority");
+    assert_eq!(error, ComposeError::ReadQuorumNotReached);
+
+    for member in members.drain(..) {
+        member.shutdown().expect("closes");
+    }
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
