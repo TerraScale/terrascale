@@ -1,0 +1,197 @@
+{
+  "corpus": "terrascale.sync.v2",
+  "harness": "terrabase-sync-conformance/0.1.0",
+  "manifest": {
+    "status": "verified"
+  },
+  "protocol": "terrascale.sync.v2",
+  "protocol_version": 2,
+  "schema": "terrascale.sync.v2/conformance-report@1",
+  "summary": {
+    "checks_failed": 0,
+    "checks_passed": 257,
+    "checks_total": 257,
+    "problems": [],
+    "status": "pass",
+    "vectors_failed": 0,
+    "vectors_passed": 9,
+    "vectors_total": 9
+  },
+  "vectors": [
+    {
+      "aborted": false,
+      "category": "checkpoint-resume",
+      "checks": {
+        "apply_completes": 1,
+        "budget_class_matches": 1,
+        "budget_payload_accounting": 1,
+        "budget_within_budget": 1,
+        "corpus_protocol_identity": 1,
+        "corpus_schema_identity": 1,
+        "frame_decode_roundtrip": 2,
+        "frame_digest_verifies": 2,
+        "frame_encode_bytes_exact": 2,
+        "frame_envelope_identity": 2,
+        "manifest_entry_matches": 1,
+        "serve_frame_bytes_exact": 1,
+        "serve_frame_matches_description": 1
+      },
+      "failures": [],
+      "file": "checkpoint-resume.json",
+      "status": "pass"
+    },
+    {
+      "aborted": false,
+      "category": "fresh-session",
+      "checks": {
+        "budget_class_matches": 1,
+        "budget_payload_accounting": 1,
+        "budget_within_budget": 1,
+        "corpus_protocol_identity": 1,
+        "corpus_schema_identity": 1,
+        "frame_decode_roundtrip": 4,
+        "frame_digest_verifies": 4,
+        "frame_encode_bytes_exact": 4,
+        "frame_envelope_identity": 4,
+        "manifest_entry_matches": 1,
+        "serve_frame_bytes_exact": 1
+      },
+      "failures": [],
+      "file": "fresh-session.json",
+      "status": "pass"
+    },
+    {
+      "aborted": false,
+      "category": "malformed-frame-rejection",
+      "checks": {
+        "corpus_protocol_identity": 1,
+        "corpus_schema_identity": 1,
+        "decode_rejects_typed_error": 10,
+        "manifest_entry_matches": 1
+      },
+      "failures": [],
+      "file": "malformed-frame-rejection.json",
+      "status": "pass"
+    },
+    {
+      "aborted": false,
+      "category": "reconnect-replay",
+      "checks": {
+        "corpus_protocol_identity": 1,
+        "corpus_schema_identity": 1,
+        "frame_decode_roundtrip": 1,
+        "frame_digest_verifies": 1,
+        "frame_encode_bytes_exact": 1,
+        "frame_envelope_identity": 1,
+        "manifest_entry_matches": 1,
+        "serve_frame_bytes_exact": 3,
+        "serve_frame_matches_description": 2
+      },
+      "failures": [],
+      "file": "reconnect-replay.json",
+      "status": "pass"
+    },
+    {
+      "aborted": false,
+      "category": "region-route-change",
+      "checks": {
+        "corpus_protocol_identity": 1,
+        "corpus_schema_identity": 1,
+        "frame_decode_roundtrip": 2,
+        "frame_digest_verifies": 2,
+        "frame_encode_bytes_exact": 2,
+        "frame_envelope_identity": 2,
+        "manifest_entry_matches": 1
+      },
+      "failures": [],
+      "file": "region-route-change.json",
+      "status": "pass"
+    },
+    {
+      "aborted": false,
+      "category": "repeated-change-delta",
+      "checks": {
+        "apply_completes": 8,
+        "budget_bytes_per_delivered_change": 1,
+        "budget_class_matches": 1,
+        "budget_delta_below_snapshot": 1,
+        "budget_payload_accounting": 1,
+        "budget_within_budget": 1,
+        "corpus_protocol_identity": 1,
+        "corpus_schema_identity": 1,
+        "frame_decode_roundtrip": 1,
+        "frame_digest_verifies": 1,
+        "frame_encode_bytes_exact": 1,
+        "frame_envelope_identity": 1,
+        "manifest_entry_matches": 1,
+        "serve_frame_bytes_exact": 1,
+        "serve_frame_matches_description": 1
+      },
+      "failures": [],
+      "file": "repeated-change-delta.json",
+      "status": "pass"
+    },
+    {
+      "aborted": false,
+      "category": "resync-required",
+      "checks": {
+        "apply_completes": 34,
+        "corpus_protocol_identity": 1,
+        "corpus_schema_identity": 1,
+        "frame_decode_roundtrip": 1,
+        "frame_digest_verifies": 1,
+        "frame_encode_bytes_exact": 1,
+        "frame_envelope_identity": 1,
+        "manifest_entry_matches": 1,
+        "serve_frame_bytes_exact": 2,
+        "serve_frame_matches_description": 1
+      },
+      "failures": [],
+      "file": "resync-required.json",
+      "status": "pass"
+    },
+    {
+      "aborted": false,
+      "category": "slow-consumer",
+      "checks": {
+        "apply_completes": 25,
+        "budget_bytes_per_delivered_change": 1,
+        "budget_class_matches": 13,
+        "budget_payload_accounting": 13,
+        "budget_within_budget": 13,
+        "corpus_protocol_identity": 1,
+        "corpus_schema_identity": 1,
+        "manifest_entry_matches": 1,
+        "serve_frame_bytes_exact": 13,
+        "serve_frame_matches_description": 13
+      },
+      "failures": [],
+      "file": "slow-consumer.json",
+      "status": "pass"
+    },
+    {
+      "aborted": false,
+      "category": "trigger-notification",
+      "checks": {
+        "apply_completes": 2,
+        "budget_class_matches": 1,
+        "budget_payload_accounting": 1,
+        "budget_within_budget": 1,
+        "corpus_protocol_identity": 1,
+        "corpus_schema_identity": 1,
+        "frame_decode_roundtrip": 2,
+        "frame_digest_verifies": 2,
+        "frame_encode_bytes_exact": 2,
+        "frame_envelope_identity": 2,
+        "manifest_entry_matches": 1,
+        "serve_frame_bytes_exact": 2,
+        "serve_frame_matches_description": 1,
+        "trigger_content_free": 1,
+        "trigger_within_budget": 1
+      },
+      "failures": [],
+      "file": "trigger-notification.json",
+      "status": "pass"
+    }
+  ]
+}
