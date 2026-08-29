@@ -70,6 +70,7 @@ public sealed class SyncGoldenVectorTests
 
         var (snapshot, snapshotBody) = await HostHarness.SendAsync(caller, $"/v1/sync/sessions/{sessionId}/snapshot", body: new { }, method: "POST");
         await Assert.That(snapshot).IsEqualTo(200);
+        // Legacy Loro-era codec identifier: mirrors current engine behavior and flips only with the engine-side native codec migration (ADR 0022/0024; see README).
         await Assert.That(snapshotBody.RootElement.GetProperty("payloadCodec").GetString()).IsEqualTo("loro-snapshot/1");
         await Assert.That(Convert.FromBase64String(snapshotBody.RootElement.GetProperty("payload").GetString()!).Length).IsGreaterThan(0);
 

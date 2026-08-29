@@ -565,6 +565,7 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                             new SyncDeltaPullResponse
                             {
                                 SessionId = body.SessionId,
+                                // Legacy Loro-era codec identifier: mirrors current engine behavior and flips only with the engine-side native codec migration (ADR 0022/0024; see README).
                                 PayloadCodec = "loro-delta/1",
                                 Payload = [],
                                 Next = CheckpointOf(commits),
@@ -599,6 +600,7 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                         new SyncSnapshotPullResponse
                         {
                             SessionId = body.SessionId,
+                            // Legacy Loro-era codec identifier: mirrors current engine behavior and flips only with the engine-side native codec migration (ADR 0022/0024; see README).
                             PayloadCodec = "loro-snapshot/1",
                             Payload = [1, 2, 3],
                             Checkpoint = CheckpointOf(commits),

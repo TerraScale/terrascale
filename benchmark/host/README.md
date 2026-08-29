@@ -5,6 +5,18 @@
 > network links and authenticates through Dashboard OIDC, introspection, and
 > typed authorization grants. The UDS host and trusted context headers below
 > must be removed after contract migration and must not become public.
+>
+> Per `../GOAL.md` P6, this whole lane migrates to `TerraScale.Database` (the
+> sole TBEP gateway); nothing here is the product host. Until then it remains
+> the active CI cross-language conformance lane and still mirrors the engine's
+> legacy Loro-era payload codecs (`loro-delta/1`, `loro-snapshot/1`) as
+> current behavior: the generated registry is produced from
+> `crates/terrabase-tbep/schema/tbep-registry.json` (drift-checked), and the
+> sync-session tests replay the corpus copied from
+> `crates/terrabase-sync-core/vectors/`. Those identifiers leave this lane
+> only by regenerating from the schema owner when the engine migrates to the
+> native codecs of ADR 0022/0024 — never by editing the generated file or the
+> assertions ahead of the engine.
 
 The database's external surface, in C# per the workspace stack policy
 (charter PD-2026-08-26-01/02; ADR 0005): an ASP.NET Core host that is a
