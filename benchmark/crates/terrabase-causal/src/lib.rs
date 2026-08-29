@@ -845,6 +845,155 @@ pub trait CanonicalEncode {
     }
 }
 
+/// Limits applied by the strict native causal decoder.
+///
+/// Limits are checked before a collection is allocated. `max_gap_count` and
+/// `max_interval_count` are both enforced as aliases for callers that use
+/// either the causal or interval terminology. The same applies to the two
+/// byte limits. This makes the resource contract explicit at each boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DecodeLimits {
+    /// Maximum complete encoded value length.
+    pub max_bytes: usize,
+    /// Maximum actor entries in a causal context or frontier.
+    pub max_actors: usize,
+    /// Compatibility alias for the context actor limit.
+    pub max_context_actors: usize,
+    /// Maximum intervals for one actor.
+    pub max_intervals_per_actor: usize,
+    /// Compatibility alias for the complete interval limit.
+    pub max_intervals: usize,
+    /// Maximum intervals across the complete value.
+    pub max_interval_count: usize,
+    /// Maximum interval bytes across the complete value.
+    pub max_interval_bytes: usize,
+    /// Maximum gap entries (alias of `max_interval_count`).
+    pub max_gap_count: usize,
+    /// Maximum encoded gap bytes (alias of `max_interval_bytes`).
+    pub max_gap_bytes: usize,
+}
+
+impl Default for DecodeLimits {
+    fn default() -> Self {
+        Self {
+            max_bytes: 1 << 20,
+            max_actors: 4096,
+            max_context_actors: 4096,
+            max_intervals_per_actor: 4096,
+            max_intervals: 16_384,
+            max_interval_count: 16_384,
+            max_interval_bytes: 1 << 20,
+            max_gap_count: 16_384,
+            max_gap_bytes: 1 << 20,
+        }
+    }
+}
+
+impl DecodeLimits {
+    fn actor_limit(self) -> usize {
+        self.max_actors.min(self.max_context_actors)
+    }
+
+    fn interval_limit(self) -> usize {
+        self.max_interval_count.min(self.max_intervals).min(self.max_gap_count)
+    }
+
+    fn interval_byte_limit(self) -> usize {
+        self.max_interval_bytes.min(self.max_gap_bytes)
+    }
+}
+
+/// A malformed, non-canonical, or over-budget causal value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DecodeError {
+    /// The input ended before a field was complete.
+    UnexpectedEof,
+    /// An unsigned LEB128 value overflowed or was not minimal.
+    InvalidLeb128,
+    /// A fixed-width field was not valid for its type.
+    InvalidValue,
+    /// A reserved zero identity was encountered.
+    ZeroReserved,
+    /// An interval was empty, reversed, or overlapped its predecessor.
+    InvalidInterval,
+    /// The codec major version is not supported.
+    UnsupportedVersion,
+    /// The input was not in canonical normalized form.
+    NonCanonical,
+    /// Canonical map or interval ordering was violated.
+    NonCanonicalOrdering,
+    /// The value exceeded a configured count or byte limit.
+    LimitExceeded,
+    /// Bytes remained after the complete value.
+    TrailingBytes,
+}
+
+impl fmt::Display for DecodeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::UnexpectedEof => "causal bytes ended early",
+            Self::InvalidLeb128 => "invalid or non-minimal unsigned LEB128",
+            Self::InvalidValue => "invalid causal value",
+            Self::ZeroReserved => "zero is reserved",
+            Self::InvalidInterval => "invalid causal interval",
+            Self::UnsupportedVersion => "unsupported causal codec version",
+            Self::NonCanonical => "causal value is not canonical",
+            Self::NonCanonicalOrdering => "causal entries are not canonically ordered",
+            Self::LimitExceeded => "causal decode limit exceeded",
+            Self::TrailingBytes => "causal bytes have a trailing suffix",
+        })
+    }
+}
+
+impl std::error::Error for DecodeError {}
+
+/// Decodes one exact canonical value using the default resource limits.
+pub trait CanonicalDecode: Sized {
+    /// Decodes one exact canonical value with explicit bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecodeError`] for malformed, non-canonical, trailing, or
+    /// over-budget input.
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError>;
+
+    /// Decodes one exact canonical value with default bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecodeError`] for malformed, non-canonical, trailing, or
+    /// over-budget input.
+    fn decode_canonical(input: &[u8]) -> Result<Self, DecodeError> {
+        Self::decode_canonical_with_limits(input, DecodeLimits::default())
+    }
+}
+
+/// Decodes one exact canonical value with default bounds.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] for malformed, non-canonical, trailing, or
+/// over-budget input.
+pub fn decode_canonical<T: CanonicalDecode>(input: &[u8]) -> Result<T, DecodeError> {
+    T::decode_canonical(input)
+}
+
+/// Decodes one exact canonical value with explicit bounds.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] for malformed, non-canonical, trailing, or
+/// over-budget input.
+pub fn decode_canonical_with_limits<T: CanonicalDecode>(
+    input: &[u8],
+    limits: DecodeLimits,
+) -> Result<T, DecodeError> {
+    T::decode_canonical_with_limits(input, limits)
+}
+
 fn encode_u64(mut value: u64, output: &mut Vec<u8>) {
     loop {
         let mut byte = (value & 0x7f) as u8;
@@ -859,10 +1008,95 @@ fn encode_u64(mut value: u64, output: &mut Vec<u8>) {
     }
 }
 
+// Actor keys are compared as encoded bytes in maps and Merkle keys. A fixed
+// big-endian epoch preserves the numeric order (notably 255 before 256),
+// while ordinary protocol integers retain minimal LEB128 below.
+fn encode_actor_epoch(value: u64, output: &mut Vec<u8>) {
+    output.extend_from_slice(&value.to_be_bytes());
+}
+
+#[derive(Clone, Copy)]
+struct Reader<'a> {
+    input: &'a [u8],
+    offset: usize,
+    limits: DecodeLimits,
+    interval_count: usize,
+    interval_bytes: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn new(input: &'a [u8], limits: DecodeLimits) -> Result<Self, DecodeError> {
+        if input.len() > limits.max_bytes {
+            return Err(DecodeError::LimitExceeded);
+        }
+        Ok(Self { input, offset: 0, limits, interval_count: 0, interval_bytes: 0 })
+    }
+
+    fn byte(&mut self) -> Result<u8, DecodeError> {
+        let byte = *self.input.get(self.offset).ok_or(DecodeError::UnexpectedEof)?;
+        self.offset += 1;
+        Ok(byte)
+    }
+
+    fn fixed<const N: usize>(&mut self) -> Result<[u8; N], DecodeError> {
+        let end = self.offset.checked_add(N).ok_or(DecodeError::LimitExceeded)?;
+        let bytes = self.input.get(self.offset..end).ok_or(DecodeError::UnexpectedEof)?;
+        self.offset = end;
+        bytes.try_into().map_err(|_| DecodeError::UnexpectedEof)
+    }
+
+    fn leb_u64(&mut self) -> Result<u64, DecodeError> {
+        let mut value = 0_u64;
+        for index in 0..10 {
+            let byte = self.byte()?;
+            let payload = u64::from(byte & 0x7f);
+            if index == 9 && (byte & 0x7e) != 0 {
+                return Err(DecodeError::InvalidLeb128);
+            }
+            value |= payload.checked_shl(index * 7).ok_or(DecodeError::InvalidLeb128)?;
+            if byte & 0x80 == 0 {
+                if index > 0 && payload == 0 {
+                    return Err(DecodeError::InvalidLeb128);
+                }
+                return Ok(value);
+            }
+        }
+        Err(DecodeError::InvalidLeb128)
+    }
+
+    fn actor_epoch(&mut self) -> Result<u64, DecodeError> {
+        Ok(u64::from_be_bytes(self.fixed()?))
+    }
+
+    fn done(&self) -> bool {
+        self.offset == self.input.len()
+    }
+
+    fn interval(&mut self) -> Result<CounterInterval, DecodeError> {
+        self.interval_count =
+            self.interval_count.checked_add(1).ok_or(DecodeError::LimitExceeded)?;
+        if self.interval_count > self.limits.interval_limit() {
+            return Err(DecodeError::LimitExceeded);
+        }
+        let before = self.offset;
+        let first = self.leb_u64()?;
+        let last = self.leb_u64()?;
+        let consumed = self.offset.checked_sub(before).ok_or(DecodeError::LimitExceeded)?;
+        self.interval_bytes =
+            self.interval_bytes.checked_add(consumed).ok_or(DecodeError::LimitExceeded)?;
+        if self.interval_bytes > self.limits.interval_byte_limit() {
+            return Err(DecodeError::LimitExceeded);
+        }
+        CounterInterval::new(first, last).map_err(|error| match error {
+            IntervalError::ZeroReserved | IntervalError::Reversed => DecodeError::InvalidInterval,
+        })
+    }
+}
+
 impl CanonicalEncode for ActorId {
     fn encode_canonical(&self, output: &mut Vec<u8>) {
         output.extend_from_slice(self.replica.as_bytes());
-        encode_u64(self.epoch.get(), output);
+        encode_actor_epoch(self.epoch.get(), output);
     }
 }
 
@@ -898,6 +1132,533 @@ impl CanonicalEncode for CausalContext {
         }
     }
 }
+
+impl CanonicalEncode for TenantId {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        output.extend_from_slice(self.as_bytes());
+    }
+}
+
+impl CanonicalEncode for DatabaseId {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        output.extend_from_slice(self.as_bytes());
+    }
+}
+
+impl CanonicalEncode for ReplicaId {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        output.extend_from_slice(self.as_bytes());
+    }
+}
+
+impl CanonicalEncode for PartitionId {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        encode_u64(self.get(), output);
+    }
+}
+
+impl CanonicalEncode for ReplicaEpoch {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        encode_u64(self.get(), output);
+    }
+}
+
+impl CanonicalEncode for OriginCounter {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        encode_u64(self.get(), output);
+    }
+}
+
+impl CanonicalEncode for MutationOrdinal {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        encode_u64(u64::from(self.get()), output);
+    }
+}
+
+impl CanonicalEncode for CounterInterval {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        encode_u64(self.first, output);
+        encode_u64(self.last, output);
+    }
+}
+
+impl CanonicalEncode for ActorProgress {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        encode_u64(self.through, output);
+        encode_u64(self.intervals.len() as u64, output);
+        for interval in &self.intervals {
+            interval.encode_canonical(output);
+        }
+    }
+}
+
+impl CanonicalEncode for StableFrontier {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        output.push(CODEC_VERSION);
+        encode_u64(self.0.len() as u64, output);
+        for (actor, through) in &self.0 {
+            actor.encode_canonical(output);
+            encode_u64(*through, output);
+        }
+    }
+}
+
+impl CanonicalEncode for MutationTag {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        self.commit.encode_canonical(output);
+        encode_u64(u64::from(self.ordinal.get()), output);
+    }
+}
+
+impl CanonicalEncode for DottedVersion {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        output.push(CODEC_VERSION);
+        self.context.encode_canonical(output);
+        self.dot.encode_canonical(output);
+    }
+}
+
+impl CanonicalEncode for HlcTimestamp {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        encode_u64(self.physical_unix_millis, output);
+        encode_u64(u64::from(self.logical), output);
+    }
+}
+
+impl CanonicalEncode for ActorLifecycle {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        output.push(CODEC_VERSION);
+        encode_u64(self.latest.len() as u64, output);
+        for (replica, epoch) in &self.latest {
+            replica.encode_canonical(output);
+            encode_actor_epoch(epoch.get(), output);
+        }
+        encode_u64(self.active.len() as u64, output);
+        for actor in &self.active {
+            actor.encode_canonical(output);
+        }
+        encode_u64(self.retired.len() as u64, output);
+        for (actor, counter) in &self.retired {
+            actor.encode_canonical(output);
+            encode_u64(counter.get(), output);
+        }
+    }
+}
+
+fn finish<T>(reader: Reader<'_>, value: T) -> Result<T, DecodeError> {
+    if reader.done() { Ok(value) } else { Err(DecodeError::TrailingBytes) }
+}
+
+fn read_actor(reader: &mut Reader<'_>) -> Result<ActorId, DecodeError> {
+    let replica = ReplicaId::from_bytes(reader.fixed()?);
+    let epoch = ReplicaEpoch::new(reader.actor_epoch()?).map_err(|_| DecodeError::ZeroReserved)?;
+    Ok(ActorId::new(replica, epoch))
+}
+
+fn read_progress(reader: &mut Reader<'_>) -> Result<ActorProgress, DecodeError> {
+    let through = reader.leb_u64()?;
+    let count = reader.leb_u64()?;
+    let count = usize::try_from(count).map_err(|_| DecodeError::LimitExceeded)?;
+    if count > reader.limits.max_intervals_per_actor || count > reader.limits.interval_limit() {
+        return Err(DecodeError::LimitExceeded);
+    }
+    if through == 0 && count == 0 {
+        return Ok(ActorProgress::new());
+    }
+    let mut intervals = Vec::with_capacity(count);
+    let mut previous = None;
+    for _ in 0..count {
+        let interval = reader.interval()?;
+        if interval.first() <= through
+            || previous.is_some_and(|last: u64| interval.first() <= last.saturating_add(1))
+        {
+            return Err(DecodeError::NonCanonicalOrdering);
+        }
+        previous = Some(interval.last());
+        intervals.push(interval);
+    }
+    Ok(ActorProgress { through, intervals })
+}
+
+fn read_context(reader: &mut Reader<'_>) -> Result<CausalContext, DecodeError> {
+    if reader.byte()? != CODEC_VERSION {
+        return Err(DecodeError::UnsupportedVersion);
+    }
+    let count = usize::try_from(reader.leb_u64()?).map_err(|_| DecodeError::LimitExceeded)?;
+    if count > reader.limits.actor_limit() {
+        return Err(DecodeError::LimitExceeded);
+    }
+    let mut context = CausalContext::new();
+    let mut previous = None;
+    for _ in 0..count {
+        let actor = read_actor(reader)?;
+        if previous.is_some_and(|previous| previous >= actor) {
+            return Err(DecodeError::NonCanonicalOrdering);
+        }
+        previous = Some(actor);
+        let progress = read_progress(reader)?;
+        if progress.through == 0 && progress.intervals.is_empty() {
+            return Err(DecodeError::NonCanonical);
+        }
+        context.insert_progress(actor, &progress);
+    }
+    Ok(context)
+}
+
+impl CanonicalDecode for TenantId {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let value = TenantId::from_bytes(reader.fixed()?);
+        finish(reader, value)
+    }
+}
+
+impl CanonicalDecode for DatabaseId {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let value = DatabaseId::from_bytes(reader.fixed()?);
+        finish(reader, value)
+    }
+}
+
+impl CanonicalDecode for ReplicaId {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let value = ReplicaId::from_bytes(reader.fixed()?);
+        finish(reader, value)
+    }
+}
+
+impl CanonicalDecode for PartitionId {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let value = PartitionId::new(reader.leb_u64()?);
+        finish(reader, value)
+    }
+}
+
+impl CanonicalDecode for ReplicaEpoch {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let value = ReplicaEpoch::new(reader.leb_u64()?).map_err(|_| DecodeError::ZeroReserved)?;
+        finish(reader, value)
+    }
+}
+
+impl CanonicalDecode for OriginCounter {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let value = OriginCounter::new(reader.leb_u64()?).map_err(|_| DecodeError::ZeroReserved)?;
+        finish(reader, value)
+    }
+}
+
+impl CanonicalDecode for MutationOrdinal {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let value = MutationOrdinal::new(
+            u32::try_from(reader.leb_u64()?).map_err(|_| DecodeError::InvalidValue)?,
+        );
+        finish(reader, value)
+    }
+}
+
+impl CanonicalDecode for ActorId {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let value = read_actor(&mut reader)?;
+        finish(reader, value)
+    }
+}
+
+impl CanonicalDecode for Dot {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let actor = read_actor(&mut reader)?;
+        let counter =
+            OriginCounter::new(reader.leb_u64()?).map_err(|_| DecodeError::ZeroReserved)?;
+        finish(reader, Dot::new(actor, counter))
+    }
+}
+
+impl CanonicalDecode for CommitId {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        if reader.byte()? != CODEC_VERSION {
+            return Err(DecodeError::UnsupportedVersion);
+        }
+        let database = DatabaseId::from_bytes(reader.fixed()?);
+        let partition = PartitionId::new(reader.leb_u64()?);
+        let actor = read_actor(&mut reader)?;
+        let counter =
+            OriginCounter::new(reader.leb_u64()?).map_err(|_| DecodeError::ZeroReserved)?;
+        finish(reader, CommitId::new(database, partition, actor, counter))
+    }
+}
+
+impl CanonicalDecode for CounterInterval {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let value = reader.interval()?;
+        finish(reader, value)
+    }
+}
+
+impl CanonicalDecode for ActorProgress {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let value = read_progress(&mut reader)?;
+        finish(reader, value)
+    }
+}
+
+impl CanonicalDecode for CausalContext {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let value = read_context(&mut reader)?;
+        finish(reader, value)
+    }
+}
+
+impl CanonicalDecode for StableFrontier {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        if reader.byte()? != CODEC_VERSION {
+            return Err(DecodeError::UnsupportedVersion);
+        }
+        let count = usize::try_from(reader.leb_u64()?).map_err(|_| DecodeError::LimitExceeded)?;
+        if count > reader.limits.actor_limit() {
+            return Err(DecodeError::LimitExceeded);
+        }
+        let mut frontier = BTreeMap::new();
+        let mut previous = None;
+        for _ in 0..count {
+            let actor = read_actor(&mut reader)?;
+            if previous.is_some_and(|previous| previous >= actor) {
+                return Err(DecodeError::NonCanonicalOrdering);
+            }
+            previous = Some(actor);
+            frontier.insert(actor, reader.leb_u64()?);
+        }
+        finish(reader, StableFrontier(frontier))
+    }
+}
+
+impl CanonicalDecode for MutationTag {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        if reader.byte()? != CODEC_VERSION {
+            return Err(DecodeError::UnsupportedVersion);
+        }
+        let database = DatabaseId::from_bytes(reader.fixed()?);
+        let partition = PartitionId::new(reader.leb_u64()?);
+        let actor = read_actor(&mut reader)?;
+        let counter =
+            OriginCounter::new(reader.leb_u64()?).map_err(|_| DecodeError::ZeroReserved)?;
+        let ordinal = MutationOrdinal::new(
+            u32::try_from(reader.leb_u64()?).map_err(|_| DecodeError::InvalidValue)?,
+        );
+        finish(
+            reader,
+            MutationTag::new(CommitId::new(database, partition, actor, counter), ordinal),
+        )
+    }
+}
+
+impl CanonicalDecode for DottedVersion {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        if reader.byte()? != CODEC_VERSION {
+            return Err(DecodeError::UnsupportedVersion);
+        }
+        let context = read_context(&mut reader)?;
+        let actor = read_actor(&mut reader)?;
+        let counter =
+            OriginCounter::new(reader.leb_u64()?).map_err(|_| DecodeError::ZeroReserved)?;
+        finish(reader, DottedVersion::new(context, Dot::new(actor, counter)))
+    }
+}
+
+impl CanonicalDecode for HlcTimestamp {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        let physical = reader.leb_u64()?;
+        let logical = u32::try_from(reader.leb_u64()?).map_err(|_| DecodeError::InvalidValue)?;
+        finish(reader, HlcTimestamp::new(physical, logical))
+    }
+}
+
+impl CanonicalDecode for ActorLifecycle {
+    fn decode_canonical_with_limits(
+        input: &[u8],
+        limits: DecodeLimits,
+    ) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(input, limits)?;
+        if reader.byte()? != CODEC_VERSION {
+            return Err(DecodeError::UnsupportedVersion);
+        }
+        let latest_count =
+            usize::try_from(reader.leb_u64()?).map_err(|_| DecodeError::LimitExceeded)?;
+        if latest_count > reader.limits.actor_limit() {
+            return Err(DecodeError::LimitExceeded);
+        }
+        let mut latest = BTreeMap::new();
+        let mut previous_replica = None;
+        for _ in 0..latest_count {
+            let replica = ReplicaId::from_bytes(reader.fixed()?);
+            if previous_replica.is_some_and(|previous| previous >= replica) {
+                return Err(DecodeError::NonCanonicalOrdering);
+            }
+            previous_replica = Some(replica);
+            let epoch =
+                ReplicaEpoch::new(reader.actor_epoch()?).map_err(|_| DecodeError::ZeroReserved)?;
+            latest.insert(replica, epoch);
+        }
+        let active_count =
+            usize::try_from(reader.leb_u64()?).map_err(|_| DecodeError::LimitExceeded)?;
+        if active_count > reader.limits.actor_limit() {
+            return Err(DecodeError::LimitExceeded);
+        }
+        let mut active = BTreeSet::new();
+        let mut previous_actor = None;
+        for _ in 0..active_count {
+            let actor = read_actor(&mut reader)?;
+            if previous_actor.is_some_and(|previous| previous >= actor) {
+                return Err(DecodeError::NonCanonicalOrdering);
+            }
+            previous_actor = Some(actor);
+            if latest.get(&actor.replica()) != Some(&actor.epoch()) {
+                return Err(DecodeError::InvalidValue);
+            }
+            active.insert(actor);
+        }
+        let retired_count =
+            usize::try_from(reader.leb_u64()?).map_err(|_| DecodeError::LimitExceeded)?;
+        if retired_count > reader.limits.actor_limit() {
+            return Err(DecodeError::LimitExceeded);
+        }
+        let mut retired = BTreeMap::new();
+        previous_actor = None;
+        for _ in 0..retired_count {
+            let actor = read_actor(&mut reader)?;
+            if previous_actor.is_some_and(|previous| previous >= actor) {
+                return Err(DecodeError::NonCanonicalOrdering);
+            }
+            previous_actor = Some(actor);
+            if latest.get(&actor.replica()).is_none_or(|epoch| *epoch < actor.epoch()) {
+                return Err(DecodeError::InvalidValue);
+            }
+            if active.contains(&actor) {
+                return Err(DecodeError::InvalidValue);
+            }
+            let counter =
+                OriginCounter::new(reader.leb_u64()?).map_err(|_| DecodeError::ZeroReserved)?;
+            retired.insert(actor, counter);
+        }
+        finish(reader, ActorLifecycle { latest, active, retired })
+    }
+}
+
+macro_rules! inherent_decode {
+    ($($type:ty),+ $(,)?) => {
+        $(impl $type {
+            /// Decodes one exact canonical value with default bounds.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`DecodeError`] for malformed, non-canonical,
+            /// trailing, or over-budget input.
+            pub fn decode_canonical(input: &[u8]) -> Result<Self, DecodeError> {
+                <Self as CanonicalDecode>::decode_canonical(input)
+            }
+
+            /// Decodes one exact canonical value with explicit bounds.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`DecodeError`] for malformed, non-canonical,
+            /// trailing, or over-budget input.
+            pub fn decode_canonical_with_limits(
+                input: &[u8],
+                limits: DecodeLimits,
+            ) -> Result<Self, DecodeError> {
+                <Self as CanonicalDecode>::decode_canonical_with_limits(input, limits)
+            }
+        })+
+    };
+}
+
+inherent_decode!(
+    TenantId,
+    DatabaseId,
+    ReplicaId,
+    PartitionId,
+    ReplicaEpoch,
+    OriginCounter,
+    MutationOrdinal,
+    ActorId,
+    Dot,
+    CommitId,
+    CounterInterval,
+    ActorProgress,
+    CausalContext,
+    StableFrontier,
+    MutationTag,
+    DottedVersion,
+    HlcTimestamp,
+    ActorLifecycle,
+);
 
 /// Computes BLAKE3-256 over a domain-separated canonical value.
 ///
@@ -1101,7 +1862,7 @@ mod tests {
             base.canonical_bytes(),
             vec![
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 7, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-                2, 2, 2, 2, 2, 2, 3, 4,
+                2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 3, 4,
             ]
         );
         assert_ne!(base.canonical_bytes(), changed.canonical_bytes());
@@ -1112,11 +1873,158 @@ mod tests {
         assert_eq!(
             canonical_hash("commit", &base).unwrap(),
             [
-                0x0e, 0x0c, 0xcb, 0x9a, 0x62, 0x77, 0x06, 0x76, 0x65, 0xfb, 0xb3, 0xff, 0xac, 0xec,
-                0x16, 0xe8, 0x93, 0x11, 0x25, 0x73, 0x19, 0xdf, 0x05, 0x09, 0x24, 0x9d, 0xbe, 0x50,
-                0xe5, 0x08, 0x3b, 0xfd,
+                0x5c, 0x35, 0x81, 0x7d, 0x47, 0xd5, 0x62, 0x93, 0x3e, 0x66, 0x31, 0x01, 0x7d, 0x4b,
+                0xee, 0x22, 0x66, 0xb1, 0x44, 0x76, 0x49, 0x9f, 0xc0, 0xba, 0x9d, 0xac, 0x81, 0x1e,
+                0x80, 0xca, 0x7d, 0x4f,
             ]
         );
         assert_eq!(canonical_hash("", &base), Err(HashError::InvalidDomain));
+    }
+
+    #[test]
+    fn actor_encoded_order_handles_epoch_boundary() {
+        let before = actor(1, 255);
+        let after = actor(1, 256);
+        assert!(before.canonical_bytes() < after.canonical_bytes());
+        assert_eq!(ActorId::decode_canonical(&before.canonical_bytes()), Ok(before));
+        assert_eq!(ActorId::decode_canonical(&after.canonical_bytes()), Ok(after));
+    }
+
+    #[test]
+    fn all_native_causal_values_round_trip_strictly() {
+        let a = actor(1, 256);
+        let d = dot(a, 9);
+        let commit = CommitId::new(
+            DatabaseId::from_bytes([4; 16]),
+            PartitionId::new(12),
+            a,
+            OriginCounter::new(9).unwrap(),
+        );
+        let mut progress = ActorProgress::new();
+        progress.insert_interval(CounterInterval::new(3, 4).unwrap());
+        progress.insert_interval(CounterInterval::new(8, 9).unwrap());
+        let mut context = CausalContext::new();
+        context.insert_progress(a, &progress);
+        let values = [
+            (
+                CounterInterval::new(3, 4).unwrap().canonical_bytes(),
+                CounterInterval::decode_canonical(
+                    &CounterInterval::new(3, 4).unwrap().canonical_bytes(),
+                )
+                .unwrap()
+                .canonical_bytes(),
+            ),
+            (
+                progress.canonical_bytes(),
+                ActorProgress::decode_canonical(&progress.canonical_bytes())
+                    .unwrap()
+                    .canonical_bytes(),
+            ),
+            (
+                context.canonical_bytes(),
+                CausalContext::decode_canonical(&context.canonical_bytes())
+                    .unwrap()
+                    .canonical_bytes(),
+            ),
+            (
+                commit.canonical_bytes(),
+                CommitId::decode_canonical(&commit.canonical_bytes()).unwrap().canonical_bytes(),
+            ),
+            (
+                d.canonical_bytes(),
+                Dot::decode_canonical(&d.canonical_bytes()).unwrap().canonical_bytes(),
+            ),
+            (
+                MutationTag::new(commit, MutationOrdinal::new(7)).canonical_bytes(),
+                MutationTag::decode_canonical(
+                    &MutationTag::new(commit, MutationOrdinal::new(7)).canonical_bytes(),
+                )
+                .unwrap()
+                .canonical_bytes(),
+            ),
+            (
+                DottedVersion::new(context.clone(), d).canonical_bytes(),
+                DottedVersion::decode_canonical(
+                    &DottedVersion::new(context.clone(), d).canonical_bytes(),
+                )
+                .unwrap()
+                .canonical_bytes(),
+            ),
+            (
+                HlcTimestamp::new(77, 3).canonical_bytes(),
+                HlcTimestamp::decode_canonical(&HlcTimestamp::new(77, 3).canonical_bytes())
+                    .unwrap()
+                    .canonical_bytes(),
+            ),
+        ];
+        for (encoded, reencoded) in values {
+            assert_eq!(encoded, reencoded);
+        }
+    }
+
+    #[test]
+    fn strict_decoder_rejects_adversarial_forms_and_budgets() {
+        let actor = actor(2, 1);
+        let mut context = CausalContext::new();
+        context.insert(dot(actor, 1));
+        let encoded = context.canonical_bytes();
+        let mut trailing = encoded.clone();
+        trailing.push(0);
+        assert_eq!(CausalContext::decode_canonical(&trailing), Err(DecodeError::TrailingBytes));
+
+        // The count 1 encoded with an unnecessary continuation byte is not
+        // accepted, even though it would otherwise fit every collection bound.
+        assert_eq!(
+            CausalContext::decode_canonical(&[CODEC_VERSION, 0x81, 0x00]),
+            Err(DecodeError::InvalidLeb128)
+        );
+
+        let mut sparse = ActorProgress::new();
+        sparse.insert_interval(CounterInterval::new(2, 2).unwrap());
+        let limits = DecodeLimits { max_gap_count: 0, ..DecodeLimits::default() };
+        assert_eq!(
+            ActorProgress::decode_canonical_with_limits(&sparse.canonical_bytes(), limits),
+            Err(DecodeError::LimitExceeded)
+        );
+
+        let limits = DecodeLimits { max_gap_bytes: 1, ..DecodeLimits::default() };
+        assert_eq!(
+            ActorProgress::decode_canonical_with_limits(&sparse.canonical_bytes(), limits),
+            Err(DecodeError::LimitExceeded)
+        );
+    }
+
+    #[test]
+    fn frontier_and_actor_lifecycle_have_strict_round_trips() {
+        let replica = ReplicaId::from_bytes([8; 16]);
+        let first = ActorId::new(replica, ReplicaEpoch::new(1).unwrap());
+        let second = ActorId::new(replica, ReplicaEpoch::new(2).unwrap());
+        let frontier = StableFrontier::required([first]);
+        assert_eq!(
+            StableFrontier::decode_canonical(&frontier.canonical_bytes())
+                .unwrap()
+                .canonical_bytes(),
+            frontier.canonical_bytes()
+        );
+        let mut lifecycle = ActorLifecycle::default();
+        lifecycle.register(first).unwrap();
+        lifecycle
+            .retire(
+                first,
+                OriginCounter::new(3).unwrap(),
+                &StableFrontier::from_attestations([(first, {
+                    let mut progress = ActorProgress::new();
+                    progress.insert_interval(CounterInterval::new(1, 3).unwrap());
+                    progress
+                })]),
+            )
+            .unwrap();
+        lifecycle.register(second).unwrap();
+        assert_eq!(
+            ActorLifecycle::decode_canonical(&lifecycle.canonical_bytes())
+                .unwrap()
+                .canonical_bytes(),
+            lifecycle.canonical_bytes()
+        );
     }
 }
