@@ -61,9 +61,21 @@ export type TerraScaleRequestMetricRecorder = (metric: TerraScaleRequestMetric) 
 export class TerraScaleHttp {
   readonly config: ResolvedTerraScaleRuntimeConfig;
   readonly #sessionConsistencyTokens = new Map<string, string>();
+  readonly #fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  readonly #accessToken: TerraScaleRuntimeConfig["accessToken"];
+  readonly #idempotencyKeyFactory: TerraScaleRuntimeConfig["idempotencyKeyFactory"];
+  readonly #requestMetricRecorder: TerraScaleRuntimeConfig["requestMetricRecorder"];
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.config = resolveRuntimeConfig(config);
+    const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);
+    if (fetchHandler === undefined) {
+      throw new TypeError("TerraScaleClient requires a fetch implementation.");
+    }
+    this.#fetch = fetchHandler;
+    this.#accessToken = config.accessToken;
+    this.#idempotencyKeyFactory = config.idempotencyKeyFactory;
+    this.#requestMetricRecorder = config.requestMetricRecorder;
   }
 
   async request<TResponse, TBody = unknown>(
@@ -97,7 +109,7 @@ export class TerraScaleHttp {
 
           const request = new Request(url, requestInit);
           fetchStarted = true;
-          const response = await this.config.fetch(request);
+          const response = await this.#fetch(request);
           responseReceived = true;
           const body = await readResponseBody(response);
           this.recordRequestMetric(base, options.routeName, response.status, performance.now() - startedAt);
@@ -172,7 +184,8 @@ export class TerraScaleHttp {
     options: TerraScaleRequestOptions<TBody>,
     idempotencyKey: string | undefined,
   ): Promise<Headers> {
-    const headers = new Headers(this.config.defaultHeaders);
+    validateInternalHeaders(options.headers);
+    const headers = new Headers();
 
     headers.set("accept", headers.get("accept") ?? "application/json");
     if (this.config.projectId !== undefined) {
@@ -197,7 +210,7 @@ export class TerraScaleHttp {
       );
     }
 
-    const token = await resolveAccessToken(this.config.accessToken);
+    const token = await resolveAccessToken(this.#accessToken);
 
     if (token !== undefined && token.length > 0) {
       headers.set("authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
@@ -221,7 +234,7 @@ export class TerraScaleHttp {
       return undefined;
     }
 
-    const key = options.idempotencyKey ?? this.config.idempotencyKeyFactory?.();
+    const key = options.idempotencyKey ?? this.#idempotencyKeyFactory?.();
     if (key === undefined) {
       return undefined;
     }
@@ -289,9 +302,29 @@ export class TerraScaleHttp {
     durationMs: number,
   ): void {
     try {
-      this.config.requestMetricRecorder?.({ base, routeName, status, durationMs });
+      this.#requestMetricRecorder?.({ base, routeName, status, durationMs });
     } catch {
       return;
+    }
+  }
+}
+
+const internalHeaderNames = new Set([
+  "if-match",
+  "x-terrascale-allow-stale",
+  "x-terrascale-delete-confirmation",
+]);
+
+function validateInternalHeaders(headers: HeadersInit | undefined): void {
+  if (headers === undefined) {
+    return;
+  }
+
+  for (const [name] of new Headers(headers).entries()) {
+    if (!internalHeaderNames.has(name)) {
+      throw new TypeError(
+        `Header "${name}" is not configurable; use the named TerraScale SDK operation option instead.`,
+      );
     }
   }
 }
@@ -388,8 +421,13 @@ type ParsedBody =
   | { readonly ok: false; readonly errorMessage: string; readonly raw: string };
 
 function buildUrl(baseUrl: string, path: string, query: QueryRecord | undefined): URL {
+  const normalizedPath = path.replace(/^\/+/, "");
+  if (!/^api\/v1(?:\/|$)/u.test(normalizedPath)) {
+    throw new TypeError("TerraScale SDK requests are limited to the public /api/v1 contract.");
+  }
+
   const base = new URL(`${baseUrl}/`);
-  const url = new URL(path.replace(/^\/+/, ""), base);
+  const url = new URL(normalizedPath, base);
   if (url.origin !== base.origin) {
     throw new TypeError("TerraScaleClient request paths cannot escape the configured origin.");
   }

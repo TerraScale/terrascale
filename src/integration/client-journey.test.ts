@@ -28,7 +28,7 @@ describe("SDK client journey", { skip: skipReason }, () => {
     const client = createTerraScaleClient({
       apiBaseUrl: apiBaseUrl!,
       projectId: projectId!,
-      defaultHeaders: { "x-terrascale-auth-key": apiKey! },
+      accessToken: apiKey!,
     });
     let repositoryId: Ulid | undefined;
 

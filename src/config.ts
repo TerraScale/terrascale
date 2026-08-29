@@ -15,7 +15,6 @@ export type TerraScaleRuntimeConfig = {
   readonly apiBaseUrl?: string;
   readonly projectId?: ProjectId;
   readonly accessToken?: AccessTokenProvider;
-  readonly defaultHeaders?: HeadersInit;
   readonly fetch?: FetchLike;
   readonly requestMetricRecorder?: TerraScaleRequestMetricRecorder;
   readonly idempotencyKeyFactory?: (() => string) | undefined;
@@ -30,11 +29,6 @@ export type TerraScaleRuntimeConfig = {
 export type ResolvedTerraScaleRuntimeConfig = {
   readonly apiBaseUrl: string;
   readonly projectId?: ProjectId;
-  readonly accessToken?: AccessTokenProvider;
-  readonly defaultHeaders?: HeadersInit;
-  readonly fetch: FetchLike;
-  readonly requestMetricRecorder?: TerraScaleRequestMetricRecorder;
-  readonly idempotencyKeyFactory?: (() => string) | undefined;
   readonly preferredRegion?: string | undefined;
   readonly regionAffinity: "failover" | "strict";
   readonly sessionConsistency: "automatic" | "none";
@@ -46,8 +40,12 @@ export type ResolvedTerraScaleRuntimeConfig = {
 export function resolveRuntimeConfig(
   config: TerraScaleRuntimeConfig,
 ): ResolvedTerraScaleRuntimeConfig {
-  if (config.sqlite !== undefined && config.fetch === undefined) {
-    throw new TypeError("SQLite mode is Node-only; use the @terrascale/sdk/local entrypoint.");
+  if (Object.hasOwn(config, "defaultHeaders")) {
+    throw new TypeError("defaultHeaders is not supported; use the named credential and routing options.");
+  }
+
+  if (config.sqlite !== undefined && !isLocalRuntimeConfig(config)) {
+    throw new TypeError("SQLite mode is only available through the @terrascale/sdk/local entrypoint.");
   }
   const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);
 
@@ -85,15 +83,19 @@ export function resolveRuntimeConfig(
     : globalApiBaseUrl;
 
   return {
-    ...config,
     apiBaseUrl,
-    fetch: fetchHandler,
+    ...(config.projectId === undefined ? {} : { projectId: config.projectId }),
     preferredRegion,
     regionAffinity,
     sessionConsistency,
     maxRetryAttempts,
     retryDelayMs,
+    ...(config.sqlite === undefined ? {} : { sqlite: config.sqlite }),
   };
+}
+
+function isLocalRuntimeConfig(config: TerraScaleRuntimeConfig): boolean {
+  return config.apiBaseUrl === "http://terrascale.local" && config.fetch !== undefined;
 }
 
 export async function resolveAccessToken(
@@ -113,7 +115,22 @@ function normalizeBaseUrl(baseUrl: string): string {
     throw new TypeError("TerraScaleClient base URLs cannot be empty.");
   }
 
-  return trimmed.replace(/\/+$/, "");
+  const normalized = trimmed.replace(/\/+$/, "");
+  let url: URL;
+  try {
+    url = new URL(`${normalized}/`);
+  } catch {
+    // Preserve request-time transport errors for malformed URLs.
+    return normalized;
+  }
+  if (
+    /(?:^|[.-])(?:tbep|terrabase)(?:[.-]|$)/iu.test(url.hostname) ||
+    /(?:^|\/)(?:tbep|terrabase)(?:\/|$)/iu.test(url.pathname)
+  ) {
+    throw new TypeError("TerraScale SDK clients may target only the public API, not TBEP or TerraBase.");
+  }
+
+  return normalized;
 }
 
 function normalizeRegion(region: string | undefined): string | undefined {

@@ -55,7 +55,6 @@ describe("TerraScaleHttp request policy", () => {
       apiBaseUrl: "https://api.terrascale.test",
       projectId: "project" as never,
       accessToken: "configured",
-      defaultHeaders: { authorization: "Bearer configured" },
       fetch: async input => {
         captured = input instanceof Request ? input : new Request(input);
         return Response.json({});
@@ -66,15 +65,61 @@ describe("TerraScaleHttp request policy", () => {
       method: "GET",
       path: "/api/v1/regions",
       routeName: "regions.list",
-      headers: {
-        "x-terrascale-project-id": "request-project",
-      },
     });
 
     assert.equal(result.ok, true);
     assert.ok(captured);
     assert.equal(captured.headers.get("authorization"), "Bearer configured");
-    assert.equal(captured.headers.get("x-terrascale-project-id"), "request-project");
+    assert.equal(captured.headers.get("x-terrascale-project-id"), "project");
+  });
+
+  test("uses the named access-token credential option", async () => {
+    let captured: Request | undefined;
+    const http = new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      accessToken: "project-token",
+      fetch: async input => {
+        captured = input instanceof Request ? input : new Request(input);
+        return Response.json({});
+      },
+    });
+
+    const result = await http.request({
+      method: "GET",
+      path: "/api/v1/regions",
+      routeName: "regions.list",
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(captured?.headers.get("authorization"), "Bearer project-token");
+  });
+
+  test("rejects caller-selected headers before resolving credentials or sending a request", async () => {
+    let fetches = 0;
+    let credentialsResolved = 0;
+    const http = new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      accessToken: () => {
+        credentialsResolved++;
+        return "secret";
+      },
+      fetch: async () => {
+        fetches++;
+        return Response.json({});
+      },
+    });
+
+    const result = await http.request({
+      method: "GET",
+      path: "/api/v1/regions",
+      routeName: "regions.list",
+      headers: { authorization: "Bearer caller-selected" },
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.kind, "transport");
+    assert.equal(credentialsResolved, 0);
+    assert.equal(fetches, 0);
   });
 
   test("returns preparation failures and isolates per-client metric recorders", async () => {
