@@ -8,7 +8,8 @@ superseded_by: ADR-0019
 > Superseded on 2026-08-29 by the workspace `GOAL.md` and ADR 0019. Public
 > TypeScript and .NET clients use TerraScale APIs. The independent C#/.NET
 > `TerraScale.Database` service is the sole QUIC TBEP client. UDS is not a
-> supported target binding. This record remains unchanged below as historical
+> supported target binding. ADR 0025 supersedes this record's codec-selection
+> clause with generated FlatBuffers. The body remains unchanged as historical
 > evidence.
 
 Parent record of charter PD-2026-08-28-02, 2026-08-28, accepted on user

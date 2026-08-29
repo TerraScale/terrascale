@@ -7,7 +7,8 @@ superseded_by: ADR-0019
 
 > Superseded on 2026-08-29 by the workspace `GOAL.md` and ADR 0019.
 > C# hosts no longer belong in this repository, TBEP is QUIC-only, Loro is
-> removed, and NATS is optional control infrastructure. This record remains
+> removed, NATS is optional control infrastructure, and ADR 0025 selects
+> generated FlatBuffers for current binary protocols. This record remains
 > unchanged below as historical evidence.
 
 Parent record of workspace decisions PD-2026-08-26-01 and

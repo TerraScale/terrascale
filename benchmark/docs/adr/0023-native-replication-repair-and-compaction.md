@@ -495,6 +495,32 @@ affected Partition fails closed and requires recovery authority.
 No external broker stores an authoritative replication queue. NATS may
 advertise routes or configuration hints behind a replaceable adapter.
 
+## Performance qualification
+
+Decision-grade replication benchmarks start only after the tested topology and
+fault path pass their deterministic convergence, durability, recovery,
+membership, corruption, resource-bound, and tenant-isolation gates on the exact
+candidate source.
+
+The benchmark matrix covers one, two, three, and twenty Regions; steady-state
+live push; bounded WAN delay, loss, reordering, and bandwidth; one-minute and
+one-hour outages; backlog catch-up; anti-entropy repair; snapshot bootstrap;
+Region loss; and rejoin. Receipts record origin-to-remote `stored`, `applied`,
+and `verified` p50/p95/p99 latency, steady-state and catch-up throughput,
+convergence time, bytes, CPU, allocations, copies, backlog growth, and
+foreground interference.
+
+No replication performance change may regress against the best approved valid
+baseline for the same topology and fault shape. Optimization continues while a
+measured bottleneck remains. It cannot weaken RF=2 durability, causal or
+materialized verification, fairness, bounded queues, backpressure, repair, or
+recovery to improve a timing.
+
+The live path adds no avoidable broker hop, poll interval, re-encoding pass,
+copy, durability wait, or acknowledgement. Batching, compression, lane
+scheduling, and credit windows are calibrated from end-to-end throughput and
+tail-latency receipts rather than throughput alone.
+
 ## Required evidence
 
 Before P3 exits, deterministic and crash tests must cover:

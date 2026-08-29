@@ -37,6 +37,9 @@ contract. ADR 0023 fixes RF=2 partial-write recovery, replication, repair,
 snapshot, membership, and stable-frontier behavior. ADR 0024 fixes the
 reactive query-view and checkpoint state machine. They are normative under the
 workspace goal and cannot be replaced by implementation-local choices.
+ADR 0025 fixes generated FlatBuffers schemas, bindings, verification,
+conformance, and measured performance gates for TBEP and public reactive
+frames.
 
 ### Active placement and writes
 
@@ -86,7 +89,7 @@ catch-up and authorized snapshots are the correctness path.
 ### Service boundary
 
 `TerraScale.Database` is an independent C#/.NET 10 ASP.NET Core service and
-the sole TBEP gateway. TBEP uses generated bounded MessagePack contracts over
+the sole TBEP gateway. TBEP uses generated bounded FlatBuffers contracts over
 QUIC with mTLS and workload identity, including same-host loopback. UDS and an
 in-process C ABI are not supported service transports.
 
@@ -123,10 +126,14 @@ sync, usage, or billing outcomes.
 - Existing Loro, UDS, leader, range-owner, old checkpoint, and NATS-dependent
   code is migration debt.
 - Existing Proof IDs for those paths do not qualify their replacements.
-- Generated Rust/C# TBEP schemas and golden vectors need one owner and
+- One checked-in TBEP `.fbs` schema generates Rust and C# bindings with pinned
+  tooling, a drift gate, structural verification, golden vectors, and
   bidirectional conformance tests.
 - CRDT property tests and deterministic distributed simulation become release
   gates.
 - TerraBase.Benchmark remains the only source for performance comparisons.
+  Decision-grade comparison begins only after the relevant V2 correctness
+  gates pass. PostgreSQL non-inferiority, the two-times RavenDB target, and
+  multi-Region replication and sync baselines follow ADR 0003 and ADR 0025.
 - ADRs 0004, 0005, 0008, 0011, 0012, 0013, 0014, and 0018 are superseded where
   they conflict with this record and the workspace goal.

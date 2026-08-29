@@ -467,10 +467,12 @@ for commits, request digests, causal summaries, Merkle nodes, snapshot chunks,
 and manifests. Each domain has a fixed ASCII prefix and codec major version.
 A checksum proves identity and corruption detection, not authorization.
 
-MessagePack remains the bounded control envelope for TBEP. Native CRDT and
-snapshot bytes are opaque length-bounded payloads inside that envelope. A
-payload is validated against its declared native codec before any progress
-acknowledgement.
+Generated FlatBuffers tables are the bounded control envelope for TBEP. The
+decoder verifies the outer length, file and schema identity, version and
+feature bits, table offsets, vectors, strings, unions, and configured resource
+limits before field access. Native CRDT and snapshot bytes are opaque
+length-bounded vectors inside that envelope. A payload is validated against its
+declared native codec before any progress acknowledgement.
 
 Compression occurs after canonical encoding. The receiver authenticates the
 frame, enforces compressed and declared uncompressed bounds, decompresses into

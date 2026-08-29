@@ -416,8 +416,10 @@ not required to enforce the immediate bound.
 
 ## Public and TBEP protocol states
 
-The public WebSocket uses bounded MessagePack frames over TLS. Its logical
-session states are:
+The public WebSocket uses bounded generated FlatBuffers frames over TLS. A
+decoder verifies the outer length, file and schema identity, version and
+feature bits, offsets, vectors, strings, unions, and resource limits before
+field access. Its logical session states are:
 
 ```text
 Connecting
@@ -498,10 +500,27 @@ Before P5 exits, tests and deterministic simulation must cover:
 - slow, hostile, and non-acknowledging clients;
 - one hundred thousand active subscriptions under measured tenant isolation;
 - API process loss and replacement with no sticky session dependency;
-- malformed MessagePack, length, nesting, compression, state, and allocation
-  fuzzing; and
+- malformed FlatBuffers offsets, vectors, strings, unions, lengths, nesting,
+  compression, state, and allocation fuzzing; and
 - identical final query results and result digests across TypeScript, .NET,
   Rust, and every selected Region.
+
+Decision-grade sync benchmarks begin only after the corresponding query,
+authorization, reconnect, reset, and convergence scenarios pass on the exact
+candidate source. GRU, SFO, and FRA runs cover concurrent writes, WAN delay and
+loss, Region failure, cross-Region reconnect, retained catch-up, snapshot
+reset, authorization changes, slow consumers, top-k movement, fan-out, and one
+hundred thousand subscriptions where the qualified environment supports it.
+Receipts record commit-to-authorized-view-visible p50/p95/p99 latency, snapshot
+and patch throughput, bytes, CPU, allocations, copies, reset rate, backlog,
+convergence time, and foreground interference. No sync performance change may
+regress against the best approved valid baseline for the same topology and
+fault shape.
+
+The live path is event-driven and adds no avoidable poll interval, broker hop,
+re-encoding pass, copy, or acknowledgement. Coalescing and batching must improve
+an end-to-end receipt without regressing tail latency, reset frequency,
+authorization-change delivery, or foreground isolation.
 
 The core qualification invariant is:
 
