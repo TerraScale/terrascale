@@ -1,146 +1,160 @@
-AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
-# TerraScale .NET SDK Instructions
+# TerraScale .NET SDK rules
 
-## Project Scope
+Read the workspace `../GOAL.md` and root `../AGENTS.md` before changing a
+public contract.
 
-- Workspace local-development invariant: in the DevHost-managed GRU/SFO/FRA RF=1 lab, Authentication and the product Dashboard keep fixed tailnet HTTPS URLs on ports `18445` and `18446` from startup. SDK examples and tests must not replace those URLs with loopback-only or floating endpoints. Canonical product Dashboard rule: `https://terrascale-dev.tail057f.ts.net:18446/` is the workspace's canonical product Dashboard URL and must work correctly whenever the DevHost lab is converged (it serves the product Dashboard through Tailscale Serve port `18446` proxying `127.0.0.1:18672`; an unauthenticated request redirects to `/login`, which must return HTTP 200). A 502 is acceptable only inside the convergence window after a service (re)start or re-attestation; never leave that URL broken outside the window, and verify it before handing off any change that affects these surfaces. A scheduled check verifies this URL every 30 minutes and reports or recovers failures.
+## Repository role
 
-- This repository is the official C#/.NET client SDK for TerraScale.
-- Optimize for excellent developer experience: discoverable APIs, predictable names, strong typing, minimal setup, clear errors, and good IntelliSense documentation.
-- The SDK must be safe for library consumers: no process-wide mutable state, no hidden background work unless explicitly configured, no console output, and no ambient service discovery.
-- Keep the package focused. Do not add server components, dashboards, CLIs, workers, database engines, or internal service clients unless explicitly requested.
+This repository owns the official .NET 10 customer SDK and the separate
+`TerraScale.EntityFrameworkCore` package. It includes:
 
-## Workspace Rules
+- named typed customer and administration operations;
+- the public .NET reactive client and local result cache;
+- reversible optimistic presentation for online mutations;
+- the native `terrascale.sync.v2` implementation and conformance harness; and
+- safe `HttpClient` and dependency-injection integration.
 
-- C# project naming (`TerraScale.` prefix), versioning (`net10.0`, latest C# preview), serialization (`System.Text.Json` only; no `Newtonsoft.Json`), logging (ZLogger + `LoggerMessage` source gens), and testing (no mocks/stubs/fakes — integration/e2e only) follow the workspace root `AGENTS.md`.
+It does not own a server, Dashboard business logic, identity policy, payment
+state, TerraBase adapter, TBEP client, NATS client, CLI, or control-plane
+operation.
 
-## Root Cause Fixes
+## Service boundaries
 
-- Applies the workspace root-cause rule; for this repo, "contract" means the SDK/API contract, DTO shape, and client options.
+- Dashboard owns Better Auth, Organizations, Projects, Users, Payments, HTTP
+  MCP, and those public product routes.
+- The independent C#/.NET 10 `TerraScale.Database` ASP.NET Core service owns
+  public database and reactive routes and is the sole QUIC TBEP gateway.
+- Public clients may use one customer API origin while edge routing selects the
+  owning runtime.
+- This SDK treats both services as external versioned public APIs.
 
-## Parallel Delivery and Contract Order
+Do not reference Dashboard, Database API, Authentication, TerraBase, or other
+server projects. Do not open TerraBase sessions or use private service
+contracts.
 
-- Claim a file or cohesive feature slice before editing it. Parallel agents must use disjoint write ownership; do not overwrite, reformat, or fold in another agent's uncommitted work without coordinating with its owner.
-- For a new or changed public capability, establish the public REST contract in
-  `TerraScale.Dashboard.Api`, `TerraScale.Database`, or Authentication first,
-  then implement the SDK's typed client and source-generated JSON contracts
-  against that contract. Do not invent SDK-only routes, DTO fields, headers, or
-  server behavior.
-- A public SDK change is not evidenced by compilation alone: verify the typed
-  client call, source-generated request/response metadata, and real public API
-  E2E success and failure paths. Record the owning API project and the exact
-  cross-repository commits or outstanding dependency in the handoff.
-- Keep live-service tests environment-gated when an endpoint or credentials are unavailable locally. A skipped, correctly gated real-API test is acceptable; a mock, fake, direct server reference, or weakened assertion is not a substitute.
-- Treat credentials, one-time secrets, tokens, connection strings, and raw sensitive response bodies as secrets: use local environment configuration, never commit them, and redact them from fixtures, test output, logs, commit messages, and cross-repo reports.
-- In a shared checkout, an ownership claim names the exact paths and public behavior
-  being changed. Review working and staged diffs and stage only those paths with
-  explicit `git add <path>`; never use broad staging, index cleanup, reset, or a
-  repository-wide formatter that could capture another task's changes.
-- Real public-API E2E and environment-affecting contract validation run in an
-  exclusive lane for the endpoint, tenant/project/database fixtures, and credentials
-  they use. Do not concurrently create, mutate, delete, or recover the same fixture;
-  include the lane and redacted result in handoff.
+`TerraScale.Database` may use named `TerraScale.DotNet` operations for
+Dashboard authorization where standard maintained .NET OIDC or OAuth handlers
+do not apply. That use does not make this SDK an internal client and does not
+permit a raw request escape hatch.
 
-## API Boundary
+## Public contract work
 
-- The SDK must interact only with versioned public HTTP endpoints implemented
-  by the Dashboard full-stack repository (`TerraScale.Dashboard.Api` and
-  `TerraScale.Database`) and the public Authentication service.
-- Architecture decision D-008 makes the SDK scope full public-API management
-  parity, including database, repository, document, schema, query, billing,
-  project, project database, environment, usage, notification, backup, restore,
-  project auth API-key, and project machine-to-machine credential-management
-  endpoints under `/api/v1`.
-- Credential-management support is allowed only through the public API. API-key and M2M create or rotate responses may surface secret values only in the creation or rotation response that the API returns; list, get, delete, revoke, docs, samples, tests, and logs must not hard-code or re-surface those secret values.
-- M2M token exchange must be constructible without pre-configured API-key or bearer-token authentication and must not attach unrelated auth headers to the anonymous token request. It may send OAuth client credentials through the endpoint-supported JSON body, form body, or HTTP Basic credential path.
-- Do not call account, user, organization-management, invitation, auth-provider, search, audit, admin, health, internal RPC, MagicOnion, or service-to-service endpoints from this SDK unless a later architecture decision explicitly adds them to the public SDK scope.
-- Authentication for authenticated API calls is caller-provided. Accept API keys or bearer tokens through SDK options or per-request context and attach them only to authenticated public API calls.
-- Do not reference Dashboard server projects, `TerraScale.InternalRpc`,
-  Authentication, TerraBase, or other server/internal projects as project
-  references. Treat TerraScale as an external HTTP API.
-- Do not open TerraBase sessions or connect directly to storage. Treat the
-  Dashboard public API and Authentication service as the only server boundary.
+Land the owning public REST, WebSocket, or SSE contract before the SDK
+operation. Do not invent a route, DTO, header, field, error, or server behavior.
 
-## Entity Framework Core Integration
+Verify:
 
-- TerraScale Entity Framework Core support must live in a separate `src/TerraScale.EntityFrameworkCore` project/package. Do not add EF Core package references to the base `src/TerraScale.DotNet` SDK project unless the user explicitly changes this boundary.
-- The EF Core project must use `TerraScale.DotNet` as its HTTP transport and must only call the allowed public `/api/v1` database/repository endpoints. It must not reference TerraScale server projects, TerraBase client packages, or private service contracts.
-- Treat the EF Core project as the TerraScale EF provider/source package: expose discoverable `DbContext`/DI integration, use EF Core model metadata for repository names and keys, keep all TerraScale I/O async and cancellation-aware, and test entity mapping plus document create/read/update/delete/query behavior.
-- Keep EF Core integration tests in a separate `tests/TerraScale.EntityFrameworkCore.Tests` project so provider/source behavior is verified independently from the base SDK tests.
+- method or protocol message;
+- versioned path or endpoint;
+- operation identity;
+- parameters and requiredness;
+- media types;
+- field names, types, and nullability;
+- security scheme and scope;
+- success, error, and partial outcome;
+- idempotency and retry;
+- pagination or checkpoint semantics; and
+- generated contract and route-manifest parity.
 
-## SDK Design
+Use `HttpClient` and source-generated `System.Text.Json` metadata. No
+`Newtonsoft.Json`, reflection workaround, generic request method, arbitrary
+path, or arbitrary header.
 
-- Use `HttpClient` as the transport and support `IHttpClientFactory`/dependency injection with `AddTerraScaleClient(...)`.
-- Provide a simple default entry point such as `TerraScaleClient`, then organize focused sub-clients for databases, repositories, collections, entities, queries, schema, placement, and SQL.
-- Make all network APIs asynchronous and suffix them with `Async`.
-- Every async method must accept a `CancellationToken`, with `CancellationToken cancellationToken = default` only on public convenience overloads.
-- Return strongly typed request and response models. Prefer immutable records for DTOs and options.
-- Prefer source-generated `System.Text.Json` metadata.
-- Model API errors explicitly with a typed SDK exception or result type that preserves status code, error code, message, request ID, response body when safe, and retryability.
-- Preserve response headers that matter to clients, including request IDs, route-affinity headers, pagination cursors, rate-limit headers, and retry-after values.
-- Keep APIs composable. Expose raw response metadata when useful without forcing callers into low-level HTTP code.
+Return typed immutable models. Preserve safe request IDs, retry guidance,
+pagination, routing, rate limits, and response metadata.
 
-## Async, Parallel, and Resilience
+## Reactive client
 
-- The SDK must be async-first end to end. Do not block on tasks with `.Result`, `.Wait()`, `GetAwaiter().GetResult()`, or sync-over-async wrappers.
-- Support parallel caller usage. Client instances must be thread-safe after construction and safe to reuse as singletons.
-- Do not serialize independent network work inside the SDK unless correctness requires it.
-- Provide batch and pagination helpers that use bounded concurrency, backpressure, and cancellation-aware fan-out.
-- Use `IAsyncEnumerable<T>` for streaming paginated reads, with clear methods for materializing pages or all results.
-- Use modern .NET resilience primitives or `Microsoft.Extensions.Http.Resilience` for retries, timeouts, and transient failure handling. Retries must be opt-in or configured conservatively, respect idempotency, and honor `Retry-After`.
-- Always dispose owned resources, but never dispose caller-owned `HttpClient` instances.
+- Every durable mutation reaches the server.
+- Do not add offline durable writes, an offline queue, local CRDT actors, or
+  later merge.
+- A connected client may apply reversible optimistic presentation with one
+  stable idempotency identity.
+- Clients subscribe to bounded typed TQL queries and receive authorized result
+  snapshots, insert, update, patch, remove, move, or reset.
+- Checkpoints are opaque authorized-view positions, not Loro payloads or Region
+  replication vectors.
+- Realtime WebSocket delivery is the fast path. Resume and snapshot bootstrap
+  are the correctness path.
+- Auth expiry, permission change, Region movement, slow consumer, reconnect,
+  and history expiry are required state-machine cases.
+- The old Loro-era server-ack-only v2 client and corpus are migration evidence,
+  not the current target.
 
-## Developer Experience
+Rust, TypeScript, and .NET must pass one semantic corpus and generated
+MessagePack vectors before current v2 conformance is claimed.
 
-- Keep names short, consistent, and TerraScale-specific. Avoid leaking HTTP implementation details into the common path.
-- Make the easy path obvious: configure base URL and token/API key, create a client, call a database or repository method.
-- Provide XML documentation on public APIs.
-- Include analyzers and nullable reference types. Treat warnings as errors.
-- Validate options at construction time and fail with actionable messages.
-- Make advanced configuration available without making basic usage verbose.
-- Avoid surprising defaults. Network timeouts, retries, serialization options, and concurrency limits must be explicit in options or clearly documented defaults.
+## Entity Framework Core
 
-## Testing and Verification
+EF Core support stays in `src/TerraScale.EntityFrameworkCore`. It uses this
+SDK and public Database API operations. It cannot reference TerraBase or server
+projects.
 
-- Maintain TUnit end-to-end coverage for every feature and function in this repository. Each feature/function must have at least one success-path E2E test and at least one failure-path E2E test; public E2E flows may cover internal helpers only when the exercised behavior is the same as the direct helper behavior.
-- Integration and E2E tests must target the real `TerraScale.Database` and
-  Dashboard public database/repository endpoints when credentials and endpoint
-  configuration are available.
-- If real API credentials or endpoints are unavailable in the default developer environment, keep the E2E tests environment-gated rather than replacing the API with a stand-in.
-- Build with all CPU cores, for example `dotnet build -m`.
+Expose async, cancellation-aware `DbContext` integration. Map EF model
+metadata to public database, environment, repository, key, schema, and query
+contracts. Keep provider tests separate from base SDK tests.
 
-### TUnit best practices
+## Async, retry, and resources
 
-- Always `await Assert.That(...)` (un-awaited assertions pass silently). `Assert.Throws<T>`/`Assert.ThrowsAsync<T>` are valid TUnit — do not convert to fluent `.Throws<T>()`.
-- Dispose owned `HttpClient` and other `IDisposable`s; SDK clients must not dispose caller-owned `HttpClient` instances passed in.
-- Gate real-API E2E tests with a `SkipAttribute` (`ShouldSkip`) keyed off env config so they run when the API is reachable and skip cleanly otherwise.
+- APIs are asynchronous and cancellation-aware.
+- Never block with `.Result`, `.Wait()`, or sync-over-async.
+- SDK clients are thread-safe after construction.
+- Do not serialize independent caller work without a correctness reason.
+- Use bounded concurrency and backpressure for batches and pagination.
+- Use `IAsyncEnumerable<T>` for streaming results.
+- Never dispose a caller-owned `HttpClient`.
+- Retry only documented transient failures that are safe to repeat.
+- Mutations require stable idempotency before retry.
+- Respect deadlines, cancellation, `Retry-After`, and overload.
+- Do not retry validation, authentication, authorization, or deterministic
+  conflict failures automatically.
 
-## Branch and Git Workflow
+## Developer experience
 
-Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies in full:
+- Use discoverable TerraScale-specific names and immutable records.
+- Validate options at construction with actionable errors.
+- Keep timeouts, retry, concurrency, and buffer limits explicit.
+- Provide XML documentation for public APIs.
+- Enable nullable reference types, analyzers, and warnings as errors.
+- Do not emit console output or use process-wide mutable state.
+- Hidden background work is forbidden unless an explicitly owned reactive
+  object starts and disposes it.
 
-- **Before work:** `git fetch` + `git pull --ff-only origin develop`.
-- **Default:** implement on `develop`, **commit often** on substantial coherent changes, and **push directly to `origin/develop`**. Do not open pull requests for day-to-day work.
-- **Do not** create feature branches or worktrees unless the user explicitly asks; when used, branch and worktree are always paired, and finished work lands back on `develop`.
-- Pushes to `develop` intentionally trigger no Forgejo actions or checks; DevHost supplies validation.
-- `main` is for release/promotion only. PRs never build, store, sign, publish, or promote SDK candidates, regardless of source branch or artifact/tree match. This SDK workflow fails closed until `TerraScale.Orchestrator` provides a trusted post-merge candidate with verified provenance for the `develop` → `main` promotion path.
-- PR validation is scheduled only on `terrascale-untrusted`. `TerraScale.Orchestrator` must provision that label as an isolated, unprivileged runner with no secrets, credentials, host mounts, or shared package/build cache; this workflow does not attest those properties. If the label is unavailable, validation must remain unscheduled rather than falling back to `terrascale-builder`.
-- Immediately before commit and again before push, check `git status`, review the
-  owned-path diff, and `git fetch origin`. If `origin/develop` moved, the checkout
-  is dirty, or a shared-checkout/index lease conflicts, stop and coordinate rather
-  than staging or pushing through it. Handoff identifies owned paths, commit,
-  validation results, owning API dependency commits, and known gaps.
+## Testing
+
+- Use TUnit and await every assertion.
+- Product integration and end-to-end tests target real public services. Do not
+  replace them with mocks, fakes, direct server references, or in-memory
+  substitutes.
+- Keep unavailable live tests environment-gated and report them as skipped.
+- Every public operation needs success and expected-failure coverage.
+- Reactive work needs generated schema checks, semantic conformance, connection
+  drop, duplicate, reorder, auth expiry, permission change, Region movement,
+  slow consumer, and tenant isolation cases.
+- Build with all CPU cores.
+- Preserve secrets and real tenant data through environment configuration and
+  redacted output.
+
+The fixed DevHost URLs for Better Auth and Dashboard remain `18445` and
+`18446`. The new Database API needs a fixed route before live SDK tests depend
+on it.
+
+## Git and collaboration
+
+- Before the first write on `develop`, fetch and fast-forward from
+  `origin/develop`.
+- Claim exact paths, inspect status before every write and stage, and preserve
+  unrelated work.
+- Stage named paths only.
+- Commit coherent changes often and push directly to `origin/develop`.
+- Fetch before push and stop if the remote moved.
+- Do not create a feature branch, worktree, pull request, release, deployment,
+  or live external mutation unless explicitly requested.
+- Keep credentials, tokens, private endpoints, raw remote errors, customer
+  payloads, and unredacted logs out of source, tests, output, commits, and
+  reports.
 
 ## Agent skills
 
-### Issue tracker
-
-Issues are tracked in this repository's Forgejo project. Prefer the configured Forgejo MCP server and fall back to `fj`. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-The tracker uses the five default triage labels. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-This repository uses the single-context domain-doc layout. See `docs/agents/domain.md`.
+See `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, and
+`docs/agents/domain.md`.

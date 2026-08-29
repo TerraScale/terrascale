@@ -1,5 +1,11 @@
 # The native `terrascale.sync.v2` sync client (SE-10)
 
+> Legacy Loro-era implementation record. This client and corpus do not qualify
+> the accepted replacement. Current v2 requires authorized TQL query results,
+> reversible optimistic presentation for online writes, view checkpoints,
+> permission-driven removals, Region movement, bounded backpressure, and one
+> new semantic corpus shared with Rust and TypeScript.
+
 Status: implementation record for the SE-10 packet
 (TerraScale/TerraScale.DotNet#9), 2026-08-27, updated by repair loop 1
 (same day: typed decode bounds, live-loop resilience, and host-surface

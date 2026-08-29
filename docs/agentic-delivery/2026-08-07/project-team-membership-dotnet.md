@@ -1,9 +1,10 @@
 # Project team membership .NET SDK delivery
 
 > Archival record: this evidence names the pre-extraction Platform ownership.
-> Current public endpoint ownership is `TerraScale.Dashboard.Api` and
-> `TerraScale.Database` in `TerraScale.Dashboard`; the historical source and
-> results below are retained unchanged.
+> Current membership endpoint ownership is the full-stack
+> `TerraScale.Dashboard` project. Database and reactive endpoint ownership is
+> the independent `TerraScale.Database` service.
+> The historical source and results below are retained unchanged.
 
 | Contract surface | Producer | Consumer | Landing order | Compatibility validation |
 | --- | --- | --- | --- | --- |
