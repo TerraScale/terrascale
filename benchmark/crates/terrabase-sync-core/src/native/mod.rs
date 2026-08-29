@@ -258,6 +258,88 @@ impl ResultDelta {
     }
 }
 
+/// One record that entered scope because the subscription widened.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScopedItem {
+    /// The record's current authorized projection. The expansion path is
+    /// skip-free precisely because it consumes current values, never a
+    /// suffix of the mutation log behind the old checkpoint.
+    pub item: ResultItem,
+    /// Destination position in the ordered result, with the same semantics
+    /// as the `position` field of [`ResultOperation::Insert`]: positions
+    /// apply in order against the result as it stands after removals and
+    /// earlier inserts. Ignored when the identity already exists — an
+    /// existing record is updated in place.
+    pub position: usize,
+    /// Causal position of the record's most recent mutation relative to the
+    /// old checkpoint's scan frontier. May precede that frontier; such
+    /// records are exactly the ones an older cursor would scan past, and
+    /// they are delivered like every other record.
+    pub last_mutation_position: u64,
+}
+
+/// Inputs of one subscription expansion into a new view generation.
+#[derive(Clone, Debug)]
+pub struct ExpansionRequest {
+    /// View generation of the widened subscription. Must strictly exceed the
+    /// view's current generation.
+    pub next_view_generation: u64,
+    /// Authorization generation of the widened scope. Must not move
+    /// backwards: it advances when the expansion is itself a policy, role,
+    /// or relationship change, and stays equal for a pure query widening.
+    pub authorization_generation: u64,
+    /// Records that entered scope with their current authorized
+    /// projections. Identities already present are updated in place; new
+    /// identities are inserted at the supplied positions. Duplicate
+    /// identities inside this list are refused.
+    pub newly_visible: Vec<ScopedItem>,
+    /// Identities that left the authorized scope concurrently with the
+    /// widening. Emitted as removals in the old view generation before it
+    /// advances whenever the authorized diff stays bounded; carried by the
+    /// replacement snapshot otherwise. An identity listed here and also in
+    /// `newly_visible` is removed first and then reinserted — the widened
+    /// scope wins.
+    pub no_longer_visible: Vec<String>,
+    /// The causal position the old checkpoint's cursor scanned through.
+    /// Declared so callers and tests can name the skip class (records whose
+    /// mutations precede this frontier); the expansion path never filters
+    /// by it.
+    pub scan_frontier: u64,
+    /// Retained-history generation bound into the new checkpoints.
+    pub retention_generation: u64,
+    /// Expiry bound into the new checkpoints.
+    pub expires_at: u64,
+}
+
+/// How a widened subscription advances the view generation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GenerationAdvance {
+    /// A bounded authorized diff onto the new generation. Removals have
+    /// already landed in the old generation, and every newly visible record
+    /// — including those whose mutations precede the old checkpoint —
+    /// appears as an insert or update.
+    Diff(ResultDelta),
+    /// The authorized diff was not bounded, so a fresh authorized snapshot
+    /// replaces the result. `Reset` is a correct bounded fallback; the
+    /// engine never emits a guessed partial patch.
+    Reset(Snapshot),
+}
+
+/// What one subscription expansion delivers, in wire order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExpansionDelivery {
+    /// Authorization generation of the new view generation.
+    pub authorization_generation: u64,
+    /// Removals for items that left the authorized scope, delivered as a
+    /// delta in the **old** view generation so permission loss is observed
+    /// before the generation advances. `None` when there is nothing to
+    /// remove, or when the diff is unbounded and the replacement snapshot
+    /// carries the removals atomically.
+    pub removals: Option<ResultDelta>,
+    /// The new view generation as a bounded diff or a fresh snapshot.
+    pub advance: GenerationAdvance,
+}
+
 /// A bounded result-view state machine.
 #[derive(Clone, Debug)]
 pub struct ViewState {
@@ -390,6 +472,256 @@ impl ViewState {
             }
         }
         self.install_snapshot_with_authorization(replacement, next_authorization_generation);
+        Ok(())
+    }
+
+    /// Widens the subscription into a new view generation.
+    ///
+    /// The widened scope's newly visible records — including every record
+    /// whose mutations precede the old checkpoint's scan frontier — are
+    /// computed from their **current** authorized values, so an older
+    /// cursor can never cause a skip. When the authorized diff is bounded
+    /// it is delivered as a delta in the new generation through the
+    /// coalescing queue; when it is not (operation bound exceeded, or the
+    /// queue's backlog bounds trip), the queue's coalesced form — a fresh
+    /// snapshot — is delivered instead. Concurrently revoked identities
+    /// are emitted as removals in the old generation before it advances,
+    /// whenever the removals themselves fit a bounded delta.
+    ///
+    /// The authoritative state advances to the new generation and the
+    /// final authorized result regardless of which delivery shape the
+    /// queue chose.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewError::InvalidCheckpoint`] when the view has not
+    /// bootstrapped, [`ViewError::StaleGeneration`] or
+    /// [`ViewError::StaleAuthorization`] for non-advancing generations,
+    /// and [`ViewError::InvalidSnapshot`] for contradictory inputs
+    /// (duplicate scoped identities, malformed positions, or values
+    /// outside the configured bounds).
+    #[allow(clippy::too_many_lines)]
+    pub fn expand_subscription(
+        &mut self,
+        request: &ExpansionRequest,
+        queue: &mut DeliveryQueue,
+    ) -> Result<ExpansionDelivery, ViewError> {
+        if self.checkpoint.is_none() {
+            return Err(ViewError::InvalidCheckpoint);
+        }
+        if request.next_view_generation <= self.view_generation {
+            return Err(ViewError::StaleGeneration);
+        }
+        if request.authorization_generation < self.authorization_generation {
+            return Err(ViewError::StaleAuthorization);
+        }
+        let scoped_identities = request
+            .newly_visible
+            .iter()
+            .map(|scoped| scoped.item.identity.as_str())
+            .collect::<BTreeSet<_>>();
+        if scoped_identities.len() != request.newly_visible.len() {
+            return Err(ViewError::InvalidSnapshot);
+        }
+
+        // Removals are authoritative in the old generation first, exactly
+        // like `transition_authorization`.
+        let mut after_removals = self.items.clone();
+        let mut removal_ops = Vec::new();
+        for identity in &request.no_longer_visible {
+            if let Some(index) = after_removals.iter().position(|item| &item.identity == identity) {
+                after_removals.remove(index);
+                removal_ops.push(ResultOperation::Remove { identity: identity.clone() });
+            }
+        }
+
+        // The diff is built from current authorized values: an identity
+        // already in scope is updated in place, a new one is inserted.
+        let mut advance_ops = Vec::with_capacity(request.newly_visible.len());
+        for scoped in &request.newly_visible {
+            if after_removals.iter().any(|item| item.identity == scoped.item.identity) {
+                advance_ops.push(ResultOperation::Update {
+                    identity: scoped.item.identity.clone(),
+                    value: scoped.item.value.clone(),
+                });
+            } else {
+                advance_ops.push(ResultOperation::Insert {
+                    identity: scoped.item.identity.clone(),
+                    position: scoped.position,
+                    value: scoped.item.value.clone(),
+                });
+            }
+        }
+
+        // Compute the final authorized result under the item and value
+        // bounds; the operation bound is judged separately below so an
+        // unbounded diff degrades to a snapshot instead of an error.
+        let compute_limits = Limits { max_operations: usize::MAX, ..self.limits };
+        let mut final_items = after_removals.clone();
+        apply_operations(&mut final_items, &advance_ops, compute_limits)
+            .map_err(|()| ViewError::InvalidSnapshot)?;
+        // Skip-free by construction, guarded unconditionally (never only
+        // for post-frontier records) so a future position filter cannot
+        // reintroduce the skip class.
+        for scoped in &request.newly_visible {
+            if !final_items.iter().any(|item| item.identity == scoped.item.identity) {
+                return Err(ViewError::InvalidSnapshot);
+            }
+        }
+
+        let bounded = removal_ops.len() <= self.limits.max_operations
+            && advance_ops.len() <= self.limits.max_operations;
+        let removal_revision =
+            if removal_ops.is_empty() { self.revision } else { self.revision + 1 };
+        let expansion_snapshot = Snapshot::new(
+            request.next_view_generation,
+            request.authorization_generation,
+            removal_revision + 1,
+            final_items.clone(),
+            request.retention_generation,
+            request.expires_at,
+        );
+
+        let (removals, advance) = if bounded {
+            // Removals ride the tail of the old generation's stream; the
+            // coalescing machinery then decides the advance's shape.
+            let removals = (!removal_ops.is_empty()).then(|| {
+                ResultDelta::new(
+                    self.view_generation,
+                    self.revision,
+                    removal_revision,
+                    removal_ops,
+                    &after_removals,
+                    request.retention_generation,
+                    request.expires_at,
+                )
+            });
+            if let Some(removals) = &removals {
+                queue.push(removals.clone(), expansion_snapshot.clone());
+            }
+            let advance_delta = ResultDelta::new(
+                request.next_view_generation,
+                removal_revision,
+                removal_revision + 1,
+                advance_ops,
+                &final_items,
+                request.retention_generation,
+                request.expires_at,
+            );
+            let advance = match queue.push(advance_delta.clone(), expansion_snapshot.clone()) {
+                QueueOutcome::Queued => GenerationAdvance::Diff(advance_delta),
+                QueueOutcome::CoalescedReset => GenerationAdvance::Reset(expansion_snapshot),
+            };
+            (removals, advance)
+        } else {
+            // Unbounded: never a guessed partial patch. The snapshot
+            // subsumes the removals atomically.
+            queue.replace_with_snapshot(expansion_snapshot.clone());
+            (None, GenerationAdvance::Reset(expansion_snapshot))
+        };
+
+        // The authoritative result advances regardless of delivery shape.
+        self.authorization_generation = request.authorization_generation;
+        self.view_generation = request.next_view_generation;
+        self.revision = removal_revision + 1;
+        self.items = final_items;
+        self.digest = digest_items(&self.items);
+        self.checkpoint = Some(match &advance {
+            GenerationAdvance::Diff(delta) => delta.checkpoint.clone(),
+            GenerationAdvance::Reset(snapshot) => snapshot.checkpoint.clone(),
+        });
+        Ok(ExpansionDelivery {
+            authorization_generation: request.authorization_generation,
+            removals,
+            advance,
+        })
+    }
+
+    /// Applies a produced expansion delivery in wire order: removals in the
+    /// old view generation first, then the generation advance as a bounded
+    /// diff or a fresh snapshot. Replaying an already-applied delivery is a
+    /// typed refusal, never a re-application.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewError`] when the removals delta does not apply to the
+    /// current state, when the advance does not strictly advance the
+    /// generation or continue the current revision, when the resulting
+    /// digest does not validate, or when the delivery would move the
+    /// authorization generation backwards.
+    pub fn apply_expansion(&mut self, delivery: &ExpansionDelivery) -> Result<(), ViewError> {
+        if delivery.authorization_generation < self.authorization_generation {
+            return Err(ViewError::StaleAuthorization);
+        }
+        if let Some(removals) = &delivery.removals {
+            match self.apply_delta(removals) {
+                ApplyOutcome::Applied | ApplyOutcome::Duplicate => {}
+                ApplyOutcome::Gap { .. } => return Err(ViewError::StaleRevision),
+                ApplyOutcome::ResetRequired(reason) => {
+                    return Err(match reason {
+                        ResetReason::GenerationChanged => ViewError::GenerationChanged,
+                        ResetReason::ViewDiverged => ViewError::DigestMismatch,
+                        ResetReason::Oversized => ViewError::Oversized,
+                        ResetReason::InvalidOperations => ViewError::InvalidSnapshot,
+                        _ => ViewError::InvalidCheckpoint,
+                    });
+                }
+            }
+        }
+        match &delivery.advance {
+            GenerationAdvance::Diff(delta) => {
+                self.apply_generation_advance(delta, delivery.authorization_generation)
+            }
+            GenerationAdvance::Reset(snapshot) => {
+                if snapshot.authorization_generation != delivery.authorization_generation {
+                    return Err(ViewError::GenerationChanged);
+                }
+                self.reset(snapshot.clone())?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Applies a diff whose view generation strictly advances the current
+    /// one, continuing exactly from the current revision.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewError`] when the generation does not strictly advance,
+    /// the revision does not continue, the operations exceed bounds or do
+    /// not apply, the resulting digest does not validate, or the delta's
+    /// checkpoint does not match its own fields.
+    pub fn apply_generation_advance(
+        &mut self,
+        delta: &ResultDelta,
+        next_authorization_generation: u64,
+    ) -> Result<(), ViewError> {
+        if delta.view_generation <= self.view_generation {
+            return Err(ViewError::StaleGeneration);
+        }
+        if delta.from_revision != self.revision || delta.to_revision <= delta.from_revision {
+            return Err(ViewError::StaleRevision);
+        }
+        if delta.operations.len() > self.limits.max_operations {
+            return Err(ViewError::Oversized);
+        }
+        let mut candidate = self.items.clone();
+        apply_operations(&mut candidate, &delta.operations, self.limits)
+            .map_err(|()| ViewError::InvalidSnapshot)?;
+        if digest_items(&candidate) != delta.result_digest {
+            return Err(ViewError::DigestMismatch);
+        }
+        if delta.checkpoint.view_generation != delta.view_generation
+            || delta.checkpoint.revision != delta.to_revision
+        {
+            return Err(ViewError::InvalidCheckpoint);
+        }
+        self.view_generation = delta.view_generation;
+        self.authorization_generation = next_authorization_generation;
+        self.items = candidate;
+        self.revision = delta.to_revision;
+        self.digest = delta.result_digest;
+        self.checkpoint = Some(delta.checkpoint.clone());
         Ok(())
     }
 
@@ -774,6 +1106,16 @@ impl DeliveryQueue {
         let delta = self.pending.pop_front()?;
         self.bytes = self.bytes.saturating_sub(estimate_delta_bytes(&delta));
         Some(QueuedDelivery::Delta(delta))
+    }
+
+    /// Installs a reset snapshot as the queue's sole delivery without a
+    /// delta to attempt first: the terminal coalesced form, used when an
+    /// authorized diff is unbounded and a snapshot must replace the
+    /// backlog directly.
+    pub fn replace_with_snapshot(&mut self, snapshot: Snapshot) {
+        self.pending.clear();
+        self.bytes = 0;
+        self.reset = Some(snapshot);
     }
 
     /// Number of retained deliveries (zero or one after coalescing).
@@ -1198,5 +1540,65 @@ mod tests {
         let delta = ResultDelta::new(2, 0, 1, vec![], &base, 1, 100);
         assert_eq!(queue.push(delta, snapshot(2, 2, 1, &["a"], 100)), QueueOutcome::CoalescedReset);
         assert!(matches!(queue.pop(), Some(QueuedDelivery::Reset(_))));
+    }
+
+    fn scoped(name: &str, position: usize, last_mutation_position: u64) -> ScopedItem {
+        ScopedItem {
+            item: ResultItem::new(name, value("v", name)),
+            position,
+            last_mutation_position,
+        }
+    }
+
+    fn request(next: u64, newly_visible: Vec<ScopedItem>) -> ExpansionRequest {
+        ExpansionRequest {
+            next_view_generation: next,
+            authorization_generation: 1,
+            newly_visible,
+            no_longer_visible: Vec::new(),
+            scan_frontier: 100,
+            retention_generation: 1,
+            expires_at: 100,
+        }
+    }
+
+    #[test]
+    fn expansion_input_validation() {
+        let mut state = ViewState::new(Limits::default());
+        let mut queue = DeliveryQueue::new(8, 1 << 20);
+        assert_eq!(
+            state.expand_subscription(&request(1, vec![]), &mut queue),
+            Err(ViewError::InvalidCheckpoint)
+        );
+        state.bootstrap(snapshot(1, 1, 0, &["a"], 100)).unwrap();
+        assert_eq!(
+            state.expand_subscription(&request(1, vec![scoped("n", 0, 5)]), &mut queue),
+            Err(ViewError::StaleGeneration)
+        );
+        assert_eq!(
+            state.expand_subscription(&request(0, vec![scoped("n", 0, 5)]), &mut queue),
+            Err(ViewError::StaleGeneration)
+        );
+        let mut backwards = request(2, vec![scoped("n", 0, 5)]);
+        backwards.authorization_generation = 0;
+        assert_eq!(
+            state.expand_subscription(&backwards, &mut queue),
+            Err(ViewError::StaleAuthorization)
+        );
+        assert_eq!(
+            state.expand_subscription(
+                &request(2, vec![scoped("n", 0, 5), scoped("n", 1, 6)]),
+                &mut queue
+            ),
+            Err(ViewError::InvalidSnapshot)
+        );
+        assert_eq!(
+            state.expand_subscription(&request(2, vec![scoped("n", 9, 5)]), &mut queue),
+            Err(ViewError::InvalidSnapshot)
+        );
+        // Nothing above mutated the view: it is still the bootstrapped
+        // generation and revision.
+        assert_eq!(state.view_generation(), 1);
+        assert_eq!(state.revision(), 0);
     }
 }

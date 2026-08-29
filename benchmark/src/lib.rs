@@ -21,6 +21,7 @@ pub mod families;
 pub mod index;
 pub mod operations;
 pub mod query;
+pub mod regions;
 pub mod relationships;
 pub mod replication;
 pub mod session;
@@ -74,6 +75,9 @@ pub use query::{
     MAX_BULK_DETAILS, MAX_BULK_PAGE_DOCUMENTS, PatchByQueryRequest, QueryError, QueryOrdering,
     QueryPaging, QueryPlan, QueryPredicate, QueryProjection, QueryResult, QuerySource, QuerySpec,
     QueryStore, StalenessPolicy, TimeSeriesInclude,
+};
+pub use regions::{
+    REGION_CEILING, RegionAdmissionError, RegionCatalog, RegionCode, RegionCodeError,
 };
 pub use replication::{
     AcknowledgementLevel, AcknowledgementReport, ConflictRecord, Convergence, MemberId, RegionId,
