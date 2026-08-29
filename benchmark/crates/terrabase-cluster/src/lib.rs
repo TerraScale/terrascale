@@ -9,8 +9,10 @@
 //! plane here carries the typed semantics, and the live-server rows
 //! are recorded unrun where no broker runs).
 
+pub mod host;
 pub mod identity;
 pub mod member;
 
+pub use host::{ClusterError, ClusterHost, ClusterWriteRefusal, MemberSpec};
 pub use identity::{ClusterIdentity, ClusterMode, IdentityError};
 pub use member::{ClusterMember, MemberError, MutationRefusal};

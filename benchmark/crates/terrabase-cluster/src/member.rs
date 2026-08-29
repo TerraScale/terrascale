@@ -21,7 +21,7 @@ use crate::identity::{ClusterIdentity, ClusterMode, IdentityError};
 pub struct ClusterMember {
     identity: ClusterIdentity,
     location: PathBuf,
-    member: ComposedMember,
+    member: Option<ComposedMember>,
 }
 
 /// The typed refusal a client mutation meets on a backup member —
@@ -55,7 +55,7 @@ impl ClusterMember {
         let state = location.join("state");
         let member = ComposedMember::open(member_name, &state, tenant_name)
             .map_err(|_| MemberError::StateUnavailable)?;
-        Ok(Self { identity, location: location.to_path_buf(), member })
+        Ok(Self { identity, location: location.to_path_buf(), member: Some(member) })
     }
 
     /// Creates a cluster's FIRST member: the identity is created with
@@ -80,7 +80,7 @@ impl ClusterMember {
         let state = location.join("state");
         let member = ComposedMember::open(member_name, &state, tenant_name)
             .map_err(|_| MemberError::StateUnavailable)?;
-        Ok(Self { identity, location: location.to_path_buf(), member })
+        Ok(Self { identity, location: location.to_path_buf(), member: Some(member) })
     }
 
     /// The verified identity.
@@ -102,10 +102,11 @@ impl ClusterMember {
     }
 
     /// The member's replication position: its engine's storage
-    /// sequence.
+    /// sequence (zero while the composed state is lent to a
+    /// coordinator — positions are read outside coordinator calls).
     #[must_use]
     pub fn position(&self) -> u64 {
-        self.member.position()
+        self.member.as_ref().map_or(0, ComposedMember::position)
     }
 
     /// Accepts one client write through the composed state — or refuses
@@ -128,7 +129,9 @@ impl ClusterMember {
                 position: self.position(),
             }));
         }
-        self.member.accept_put(operation, document, body).map_err(|_| MemberError::StateRefused)
+        self.composed_mut()
+            .accept_put(operation, document, body)
+            .map_err(|_| MemberError::StateRefused)
     }
 
     /// Accepts one replicated write — the ONLY write path a backup
@@ -143,7 +146,34 @@ impl ClusterMember {
         document: &str,
         body: &std::collections::BTreeMap<String, terrabase_v2::types::DocumentValue>,
     ) -> Result<terrabase_v2::CommitReceipt, MemberError> {
-        self.member.accept_put(operation, document, body).map_err(|_| MemberError::StateRefused)
+        self.composed_mut()
+            .accept_put(operation, document, body)
+            .map_err(|_| MemberError::StateRefused)
+    }
+
+    /// Lends the underlying composed member — the coordinators take
+    /// `&mut [ComposedMember]`, and the cluster host drives them.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the composed state is already lent out — the
+    /// cluster host's take/return discipline prevents that.
+    pub fn composed_mut(&mut self) -> &mut ComposedMember {
+        self.member.as_mut().expect("the composed state is present")
+    }
+
+    /// Takes the composed state out for one coordinator call.
+    ///
+    /// # Panics
+    ///
+    /// Panics only on a double take — the cluster host's discipline.
+    pub(crate) fn take_composed(&mut self) -> ComposedMember {
+        self.member.take().expect("the composed state is present")
+    }
+
+    /// Returns the composed state after one coordinator call.
+    pub(crate) fn return_composed(&mut self, member: ComposedMember) {
+        self.member = Some(member);
     }
 
     /// Reads one document through the composed state. Both modes read:
@@ -160,7 +190,7 @@ impl ClusterMember {
         Option<std::collections::BTreeMap<String, terrabase_v2::types::DocumentValue>>,
         MemberError,
     > {
-        self.member.visible(document).map_err(|_| MemberError::StateRefused)
+        self.composed_mut().visible(document).map_err(|_| MemberError::StateRefused)
     }
 }
 

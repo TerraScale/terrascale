@@ -902,3 +902,41 @@ live-server rows recorded unrun; one-step expansion and catch-up.
 Receipts: `cargo test -p terrabase-cluster` 7/7; replication-core and
 engine suites green (1080/1080 lib); clippy `-D warnings` and fmt
 clean on the three touched crates. `scripts/check.sh` not run (AC-12).
+
+## 24. P5 landing 2 (2026-08-29): the multi-member cluster host
+
+`ClusterHost` (crates/terrabase-cluster/host.rs) is the in-process
+cluster: N durable members under one verified identity and one replica
+set. Creation is one step — the identity pinned at the root, one
+member per spec at `<root>/members/<name>` (each carrying the same
+pinned identity record so every start verifies locally), and the
+epoch-1 replica set of the spec's Regions. The composed members live
+in one canonical-order vector (a take/return discipline lends the
+contiguous `&mut [ComposedMember]` the P2 coordinators drive), with
+the member ids beside them.
+
+Client operations: `client_write` at ANY member fans through
+`coordinate_composed_write` at the requested level — the receipt names
+the epoch, the accepting member, and every contributing member — and
+`client_read` at any member repairs through
+`quorum_read_with_repair`. A backup cluster refuses every client
+write at the door with the typed read-only refusal carrying the
+LOWEST member position (what a last-resort reader would see), while
+both modes read. `step_epoch` walks membership through the P2 epoch
+coordinator with the overlapping-quorum precondition. Reopen verifies
+the identity and serves the converged state.
+
+Proven: eleven rows across the crate — the earlier seven plus
+one-step creation answering the regional quorum and every member
+serving the converged document; the backup refusing with the lowest
+position attached while reads answer; the reopen serving the converged
+state; and the membership step through an overlapping epoch-2
+(dropping a voter) with writes still committing under it.
+
+Next: the TBEP serving of the cluster host (the typed
+`backup_cluster_read_only` error on the wire, topology past
+`Standalone`), then the backup membership shape and `backup_ack`, the
+NATS control-plane semantics, and expansion/catch-up.
+
+Receipts: `cargo test -p terrabase-cluster` 11/11; clippy `-D
+warnings` and fmt clean. `scripts/check.sh` not run (AC-12).
