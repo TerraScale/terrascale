@@ -1,8 +1,14 @@
 ---
-status: accepted
+status: superseded
+superseded_by: ADR-0019
 ---
 
 # ADR 0014: Active-active Loro convergence, CRDT-aware schemas, NATS cluster control
+
+> Superseded on 2026-08-29 by the workspace `GOAL.md` and ADR 0019. Loro is
+> removed, causal and CRDT semantics are TerraBase-native, NATS is optional,
+> and membership correctness lives in durable engine state. This record
+> remains unchanged below as historical evidence.
 
 Parent record of charter PD-2026-08-28-03, 2026-08-28, accepted on user
 instruction.

@@ -1,5 +1,10 @@
 # GAP-D10: the engine-side bulk-insert ingestion stream
 
+> Historical implementation packet. UDS references below describe version 1
+> TBEP. Current bulk ingest must use the independent
+> `TerraScale.Database` service and QUIC protocol 2 from
+> `docs/sync/tbep.md`.
+
 Status: decision record for Forgejo ticket TerraBaseV2#61 (GAP-D10), recorded
 2026-08-27 against the `fleet/gapd10-2` worktree of `develop` @ `d7d8563`.
 

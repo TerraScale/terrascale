@@ -1,5 +1,8 @@
 # SE-02 V1-parity conflict mapping draft
 
+> Historical Loro mapping. Native field CRDT defaults, delete policies, and
+> coordinated invariants now follow the workspace `GOAL.md` and ADR 0019.
+
 Status: draft for the SE wave (owner: SE-02; dispositions land through
 WS-PARITY, never here). V1 source identity: TerraBase at commit
 `fa99b9257776dbe625e6a2388c74c9ce916637ee` (the pinned V1 checkout).

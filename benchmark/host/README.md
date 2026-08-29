@@ -1,5 +1,11 @@
 # TerraBaseV2 API host (C#)
 
+> Migration-source documentation. The supported target host is the independent
+> C#/.NET 10 `TerraScale.Database` service. It uses QUIC TBEP on loopback and
+> network links and authenticates through Dashboard OIDC, introspection, and
+> typed authorization grants. The UDS host and trusted context headers below
+> must be removed after contract migration and must not become public.
+
 The database's external surface, in C# per the workspace stack policy
 (charter PD-2026-08-26-01/02; ADR 0005): an ASP.NET Core host that is a
 TBEP **client** of the Rust engine process over the required

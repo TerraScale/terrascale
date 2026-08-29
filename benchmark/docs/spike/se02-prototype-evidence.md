@@ -1,5 +1,8 @@
 # SE-02 spike evidence: Loro prototype receipts
 
+> Historical Loro benchmark evidence. It may inform comparison workloads but
+> cannot qualify the TerraBase-native CRDT or reactive-sync replacement.
+
 An identical copy sits at `docs/evidence/spike/se02-prototype-evidence.md`;
 the repository's evidence policy keeps `docs/evidence/*` untracked until the
 integrator publishes reviewed receipts, so this tracked copy is the

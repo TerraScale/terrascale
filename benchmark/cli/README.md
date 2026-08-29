@@ -1,5 +1,10 @@
 # TerraBaseV2 operator CLI (C#)
 
+> Migration-source documentation. The C# CLI and direct UDS mode below are not
+> part of the target TerraBaseV2 boundary. Operator behavior must move to an
+> authorized typed public or operations contract. No CLI may bypass
+> `TerraScale.Database` or open a direct customer TBEP path.
+
 The database's operator CLI, in C# per the workspace stack policy
 (charter PD-2026-08-26-01/02; ADR 0005): status (engine + topology
 summary in the exact replication vocabulary), document

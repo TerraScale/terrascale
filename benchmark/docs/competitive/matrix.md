@@ -1,5 +1,12 @@
 # CP-01 — Competitive parity matrix: InstantDB and Convex
 
+> Architecture update, 2026-08-29: rows that cite server-ack-only clients,
+> Loro, UDS, repository-local C# hosts, or the former Platform ownership are
+> stale dispositions. The current goal requires reversible optimistic
+> presentation, online server writes, a native reactive engine, and the
+> independent `TerraScale.Database` boundary. Those rows must be requalified
+> before they support a parity claim.
+
 Status: competitive parity matrix for ticket TerraScale/TerraBaseV2#29
 (CP-01), implementing charter PD-2026-08-26-06 (competitive objective:
 match and exceed InstantDB and Convex) with the agent-readiness dimension

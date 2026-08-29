@@ -1,5 +1,9 @@
 # PS-02 query/index parity sweep: PB-4000..PB-4062
 
+> Historical parity sweep. UDS and local-host boundary claims are superseded
+> by the independent `TerraScale.Database` and QUIC protocol 2 architecture.
+> Query evidence remains useful, but affected V2 dispositions are reopened.
+
 Status: row-by-row verification note for Forgejo ticket TerraBaseV2#54
 (PS-02), recorded 2026-08-26 against the current `develop` tree.
 Documentation only: no parity status, disposition, Proof ID, overlay,

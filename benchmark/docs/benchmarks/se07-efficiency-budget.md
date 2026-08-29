@@ -1,5 +1,9 @@
 # SE-07 written efficiency budget: multi-region efficiency pass
 
+> Historical efficiency budget. UDS and Loro measurements are baselines only.
+> Current release budgets must cover native CRDT commits, direct Region QUIC,
+> QUIC TBEP on loopback, authorized reactive queries, and tenant isolation.
+
 Status: the written budget that precedes the SE-07 implementation
 (ticket TerraScale/TerraBaseV2#9; charter PD-2026-08-26-03
 benchmark-mandatory, PD-2026-08-26-05 D4 native sync-path budgets,

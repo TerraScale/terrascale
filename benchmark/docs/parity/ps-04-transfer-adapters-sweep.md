@@ -1,5 +1,9 @@
 # PS-04 — Replication, streaming/transfer, and adapters parity sweep + exclusion records
 
+> Historical parity sweep. Its Loro, UDS, leader, C# host, and old Platform
+> boundary dispositions are reopened by ADR 0019. V1 citations remain
+> evidence; V2 target and status claims must be re-dispositioned.
+
 Status: sweep record for ticket TerraScale/TerraBaseV2#56 (PS-04, wave PS of
 `docs/specs/2026-08-26-terrabase-v2-gap-closure-tickets.md`). Documentation only.
 Row-by-row verification of 99 parity rows against the tree at `develop`

@@ -1,5 +1,9 @@
 # SE-14 TBEP binding receipt (protocol-doc record): the UDS binding, byte accounting, and the binding-split decision record
 
+> Historical version 1 evidence. UDS is not a supported target transport.
+> Protocol 2 requires QUIC even on loopback. These measurements cannot qualify
+> the replacement contract in `docs/sync/tbep.md`.
+
 No public claim: engineering evidence only. The timing rows below are
 local timings on one machine under one run; no latency, throughput, or
 comparison statement may be derived from them without a Benchmark

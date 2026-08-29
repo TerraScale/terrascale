@@ -1,8 +1,14 @@
 ---
-status: accepted
+status: superseded
+superseded_by: ADR-0019
 ---
 
 # ADR 0012: Sync-engine bandwidth, the NATS role, and trigger events
+
+> Superseded on 2026-08-29 by the workspace `GOAL.md` and ADR 0019.
+> Bandwidth budgets remain valid goals. NATS is now optional, and the client
+> plane directly streams authorized result deltas with checkpoint recovery.
+> This record remains unchanged below as historical evidence.
 
 Parent record of charter PD-2026-08-26-13, 2026-08-26, accepted on user
 instruction.

@@ -1,5 +1,9 @@
 # SE-02 decision record: Loro as the sync core — GO
 
+> Superseded decision record. The 2026-08-29 owner decision removes Loro from
+> architecture, persistence, replication, sync, SDKs, and supported formats.
+> This spike remains benchmark and migration evidence only.
+
 Status: builder decision record for the SE-02 spike (ticket #4). Not an
 ADR: acceptance is the parent's, and this record resolves no parity row
 and makes no performance claim (PD-2026-08-26-03; PD-2026-08-26-05 D5:

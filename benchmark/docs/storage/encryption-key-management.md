@@ -1,5 +1,10 @@
 # Encryption-at-rest key management decision record (GAP-S2, ticket #82)
 
+> Transport boundary correction, 2026-08-29: current architecture uses QUIC
+> with mTLS between `TerraScale.Database` and TerraBaseV2, including
+> loopback. The unauthenticated UDS key-delivery assumptions below are
+> superseded and must not be implemented.
+
 Status: **PROPOSED for parent ratification** — this is the
 parent-commissioned, decision-only packet that unblocks the #82
 implementation. Nothing here is implemented, nothing here changes the

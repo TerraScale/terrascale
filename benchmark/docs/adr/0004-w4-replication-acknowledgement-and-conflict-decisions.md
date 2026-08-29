@@ -1,8 +1,14 @@
 ---
-status: accepted
+status: superseded
+superseded_by: ADR-0019
 ---
 
 # ADR 0004: W4 replication, acknowledgement, and conflict decisions
+
+> Superseded on 2026-08-29 by the workspace `GOAL.md` and ADR 0019.
+> Single range leaders, the old acknowledgement lattice, and document-wide
+> LWW are not current architecture. This record remains unchanged below as
+> historical evidence.
 
 Parent adjudication of the W4 design contract's D-1..D-4 records,
 2026-08-24.

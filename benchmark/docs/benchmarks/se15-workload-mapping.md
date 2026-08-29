@@ -1,5 +1,10 @@
 # SE-15 workload mapping: TerraBaseV2 against PostgreSQL
 
+> Historical workload mapping. TBEP UDS and Loro workloads remain useful
+> migration baselines, but they cannot qualify protocol 2, native CRDT
+> replication, or the independent Database API. New comparable slots are
+> required before a replacement performance claim.
+
 Status: the comparable-workload mapping mandated by charter
 PD-2026-08-26-03 D2 (PostgreSQL reference baseline) for ticket
 TerraScale/TerraBaseV2#23. Every workload's two sides, both sides'

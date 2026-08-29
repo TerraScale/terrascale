@@ -1,8 +1,14 @@
 ---
-status: accepted
+status: superseded
+superseded_by: ADR-0019
 ---
 
 # ADR 0008: The native sync engine
+
+> Superseded on 2026-08-29 by the workspace `GOAL.md` and ADR 0019.
+> Engine-native reactive sync remains required, but Loro and the old
+> notification-only client design do not. This record remains unchanged below
+> as historical evidence.
 
 Parent record of charter PD-2026-08-26-05, 2026-08-26, accepted on user
 instruction.

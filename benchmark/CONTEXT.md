@@ -1,387 +1,410 @@
 # TerraBaseV2 language
 
-This glossary names the concepts used to compare TerraBaseV2 with TerraBase
-V1 and to describe evidence for a multi-region database. It contains terms,
-not implementation instructions.
-
-## Parity and evidence
-
-**V1 Parity Item**:
-A capability or externally observable contract that TerraBase V1 exposes and
-TerraBaseV2 must account for. A parity item may be implemented, deliberately
-omitted with an accepted reason, or still unresolved.
-_Avoid_: feature, checkbox, port
-
-**Parity Matrix**:
-The versioned record that maps each V1 Parity Item to V1 evidence, V2
-ownership and status, contract semantics, Proof IDs, impact, and risk.
-_Avoid_: feature list, coverage table
-
-**Proof ID**:
-A stable identifier for an artifact that supports a claim, such as a test,
-review, migration record, or benchmark result.
-_Avoid_: link, screenshot, confidence
-
-**Acknowledgement Level**:
-The strongest state a region or member has confirmed for a replicated record.
-The level is part of the public contract and is distinct from local receipt.
-_Avoid_: consistency mode, delivery status
-
-**Recovery Receipt**:
-A secret-safe record showing what recovery scenario ran, which exact source
-and data identity it used, what durability result it produced, and what limits
-remain.
-_Avoid_: restore log, backup proof
-
-**Benchmark Receipt**:
-A secret-safe record of a comparable performance run, including exact source,
-workload, environment, statistical result, validity, and baseline relation.
-_Avoid_: speed result, timing, benchmark number
-
-**Claim**:
-A statement about parity, correctness, durability, multi-region behavior, or
-performance that requires a matching Proof ID before it is presented as fact.
-_Avoid_: assertion, promise, guarantee
-
-## Topology and replication
-
-**Region**:
-A named failure and latency domain that participates in a TerraBaseV2
-deployment.
-_Avoid_: zone, site, cluster
-
-**Member**:
-A database participant identified within a Region and the deployment's
-membership view.
-_Avoid_: node, replica, server
-
-**Convergence**:
-The condition in which members have reached the contract-defined state for a
-replicated operation and the associated acknowledgement level is observable.
-_Avoid_: eventual consistency, sync, caught up
-
-**Replication Receipt**:
-A secret-safe record that proves a replicated operation's acknowledgement,
-member observations, and convergence outcome for a defined scenario.
-_Avoid_: replication log, sync result
-
-**Failure Domain**:
-A set of resources whose correlated loss is treated as one failure in a
-qualification scenario.
-_Avoid_: availability zone, outage bucket
-
-**Leaderless**:
-The active-database property that every active Member of a shard replica
-set holds the same write, read, replication, repair, and recovery role,
-with no elected or appointed master, leader, primary, or permanent
-coordinator anywhere in the cluster.
-_Avoid_: decentralized (vague), peer-to-peer (wrong connotation)
-
-**Request Coordinator**:
-The accepting Member that validates one operation, fans it to the
-versioned replica set, and collects the requested acknowledgement — for
-that request only. It owns no shard, lease, or authority over later
-operations.
-_Avoid_: leader, coordinator node, primary, master
-
-**Active Cluster**:
-A cluster whose immutable identity records mode `active`; it accepts
-client writes subject to its quorums and contributes voting Members.
-_Avoid_: primary cluster, main cluster
-
-**Backup Cluster**:
-A cluster whose immutable identity records mode `backup`; it accepts
-replication, snapshot, catch-up, and tier data, serves last-resort
-reads with position and lag, and can never become active. Never a
-promotable standby.
-_Avoid_: standby, secondary cluster, disaster-recovery replica
-
-**BackupAck**:
-The optional acknowledgement level proving durable apply by two of the
-configured backup cluster's three HDD Members, requested after the
-regional or global level succeeds. A timeout reports a partial outcome
-and never erases the committed write.
-_Avoid_: backup quorum, backup vote
-
-**BackupClusterReadOnly**:
-The typed error returned by a backup cluster for every client database
-mutation. Distinct from `BackupClusterImmutable` (mode-change refusal).
-_Avoid_: read-only mode flag
-
-## Storage tiers
-
-**Storage Tier**:
-One of the two storage classes: Tier 1 (NVMe SSD — WAL, mutable and
-frozen segments, hot immutable segments, manifests, indexes, active
-CRDT state, cache) and Tier 2 (S3-compatible object storage —
-encrypted, immutable, checksum-addressed cold segments and
-checkpoints).
-_Avoid_: hot/cold disk, cache level
-
-**Storage Tier Mover**:
-The bounded engine service that demotes and promotes immutable segments
-or key ranges between tiers under versioned, explainable, receipt-backed
-policy. It moves ranges, never one object per document.
-_Avoid_: offloader, archival job, cache evictor
-
-**Tier Move Policy**:
-The versioned policy object (inherited cluster -> tenant -> database ->
-collection) combining quotas, age, heat, locality, refetch cost, pins,
-schedules, budgets, hysteresis, and adaptive headroom that governs mover
-decisions. The most specific policy wins.
-_Avoid_: tiering rule, eviction config
-
-**Tier Move Receipt**:
-The per-run record of a mover decision: policy version, reasons,
-source and target tiers, segment and manifest identities, bytes,
-requests, cache effect, budgets, failures, and retry state.
-_Avoid_: mover log, tiering event
-
-## Sharding
-
-**Shard**:
-The unit of data distribution and ownership: a set of buckets owned by
-exactly one Member as one owned data range in the TopologyView, with one
-ownership epoch, replicated as a unit under ADR-0004. A shard is a range
-and its stable identity, never a separate database or process.
-_Avoid_: shard database, node (a Member is the participant; a shard is
-data), partition (a shard's bucket set may be non-contiguous),
-replica set (replication follows ADR-0004's range ownership, not
-per-shard election)
-
-**Bucket**:
-The permanent routing identity of a document, derived from its Shard Key
-hash into the fixed [0, 2^20) space. A bucket belongs to exactly one
-shard at any epoch; it is the unit of migration and of bucket-scoped
-storage accounting. Its value is a pure function of the shard key and
-never changes.
-_Avoid_: slot, vbucket, chunk (migration moves whole buckets; there is
-no smaller chunk), range (a range is a set of buckets — saying "range"
-for one bucket blurs the Bucket Range term), hash (the bucket is the
-reduced value, not the hash itself)
-
-**Shard Key**:
-The document attribute(s) whose hash determines the document's Bucket;
-the document identity, lowercased, by default. Declared per collection
-through a typed operation; changing a collection's shard key is a
-migration-scale decision, never a silent reroute.
-_Avoid_: partition key, routing key (routing is the two-step lookup
-shard key -> bucket -> shard; calling the key "routing" hides the bucket
-step), primary key (the identity is the default shard key, not the
-definition)
-
-**Bucket Range**:
-One entry of the bucket-range table: a contiguous [start, end) interval
-of buckets mapped to one Shard, such that the table partitions
-[0, 2^20) exactly with adjacent-same-shard entries merged.
-_Avoid_: shard range (the range belongs to the table, not the shard's
-identity; a shard may own several disjoint ranges), slot range
-
-**Bucket Migration**:
-The explicit, idempotent, restartable engine operation that moves one
-Bucket from a source Shard to a destination Shard through the replication
-plane, ending in a bucket-range ownership transfer with raised epochs.
-Its progress is observable (source, destination, resolved records).
-_Avoid_: resharding (the Platform-level activity of many migrations plus
-table changes; a single migration is the engine operation), rebalance
-(a Platform policy decision, not an engine operation), move chunk
-
-## Sync engine and engine protocol
-
-**Sync Engine**:
-The single state-machine core that drives client sessions, transitions,
-checkpoints, acknowledgements, and delta delivery. One engine owns the
-server delivery side; clients implement the Sync Protocol natively in
-their own language (PD-2026-08-26-12).
-_Avoid_: replication layer, client cache, poller
-
-**Sync Session**:
-A resumable client conversation with the Sync Engine, identified by a
-Sync Checkpoint and carried over Sync Protocol frames.
-_Avoid_: WebSocket connection, changes subscription
-
-**Sync Protocol**:
-The versioned client-channel wire vocabulary (terrascale.sync.v2) spoken
-between client Sync Sessions and the serving host.
-_Avoid_: sync engine, TBEP, wire format
-
-**Sync Frame**:
-One typed, versioned envelope unit of the Sync Protocol or TBEP, carrying
-correlation and causation identity, an idempotency key where mutation is
-possible, and a content digest.
-_Avoid_: message, packet, event
-
-**Change Event Backbone**:
-The engine's public, journal-backed change-event surface that replays
-ordered change events from any checkpoint to authorized consumers.
-_Avoid_: event bus, notification center, changes API
-
-**Change Notification**:
-The small, typed, content-free trigger event the Sync Engine emits on
-commit publication to tell a Sync Session or backbone consumer that new
-change data is available; the consumer then pulls delta batches from
-its checkpoint (PD-2026-08-26-13). It never carries document data and
-never blocks a commit.
-_Avoid_: push update, invalidation message, wake-up ping, polling
-
-**Sync Checkpoint**:
-The durable resumption identity of a Sync Session, from which
-unacknowledged delivery resumes after reconnect.
-_Avoid_: cursor, offset (a ReplicationCursor is a member catch-up concept)
-
-**TerraBase Engine Protocol (TBEP)**:
-The custom process-to-process wire protocol between the Rust engine
-process and C# hosts: typed MessagePack frames over Unix-domain sockets
-(same host) or QUIC with mTLS (networked). It is not the client Sync
-Protocol.
-_Avoid_: C ABI boundary, gRPC service, internal API
-
-**Operations Studio**:
-The database's own Vinext operations UI for documents, queries, indexes,
-families, topology, and live views — the V2 successor to V1 Studio as
-the parity-reference consumer.
-_Avoid_: dashboard, admin panel, Studio SPA
-
-**Live View**:
-A studio page region updated by change-event-backbone delivery through
-the API host's subscription endpoints rather than polling.
-_Avoid_: Sync Session (a client-channel concept), live query, stream
-
-## Boundaries and clients
-
-**Platform Adapter**:
-The approved typed integration through which Platform clients access public
-database capabilities. It carries authorization, tenant isolation,
-confirmation, audit, and secret-handling rules at the owned seam.
-_Avoid_: SDK bridge, HTTP proxy, generic gateway
-
-**Protocol Adapter**:
-A typed adapter for an approved public client or wire contract. It does not
-grant access to private control-plane operations or a generic HTTP escape
-hatch.
-_Avoid_: endpoint, transport shim, API wrapper
-
-**Engine**:
-The database-owned behavior for documents, transactions, queries, indexes,
-families, streaming, replication, backup, import, storage, and recovery.
-_Avoid_: backend, service, server layer
-
-**Control Plane**:
-The Platform-owned concerns of provisioning, tenant onboarding, billing,
-routing, lifecycle, and external authentication policy.
-_Avoid_: admin API, management engine
-
-**Public Seam**:
-A named interface at which a capability can be implemented and verified
-without exposing private implementation details.
-_Avoid_: module boundary, endpoint surface
-
-## Query language
-
-**TQL**:
-TerraBaseV2's canonical query language: an SQL-familiar,
-document-native surface for schema-optional documents, informed by
-V1's RQL, that parses to a typed, versioned AST with no arbitrary
-code execution in the language.
-_Avoid_: query syntax, SQL dialect, RQL (that is V1's language), TerraQuery
-
-**TQL AST**:
-The typed, versioned parse artifact every TQL text lowers to against
-the query seam: a closed node set carrying source spans and the TQL
-Grammar Version, with validated identifiers, resolved aliases, and
-parameter binding slots — never unvalidated strings or executable
-code.
-_Avoid_: parse tree, query object, syntax tree
-
-**TQL Grammar Version**:
-The `tql/MAJOR.MINOR` identity carried by every parsed TQL artifact —
-parse input, AST, serialized frames, stored queries, vectors, and
-error payloads. Unknown or missing versions fail closed; additive
-grammar changes bump the minor and breaking changes bump the major.
-_Avoid_: language version, dialect tag, schema version (a Document
-Schema concept)
-
-## Indexing and query planning
-
-**Auto-Index**:
-An index the Query Optimizer creates, widens, supersedes, or retires
-automatically to serve dynamic queries, named deterministically from the
-query shape under the reserved `Auto/` namespace and owned by the
-engine, never by a user operation. Explicit indexes take precedence
-where equivalent; Auto-Index lifecycle changes never weaken durability
-or correctness.
-_Avoid_: dynamic index (a query is dynamic; an index is auto),
-automatic index, ad-hoc index, managed index
-
-**Query Optimizer**:
-The engine component that selects the serving index for every dynamic
-query — choosing an explicit index when one equivalently serves,
-otherwise selecting or creating an Auto-Index — and records its
-reasoning in an Index Selection Record. It does not name the
-storage-level match planning inside one index evaluation.
-_Avoid_: query planner (reserved for the AST-to-plan stage),
-query engine, index chooser, Corax optimizer (a V1 storage-level term)
-
-**Index Selection Record**:
-The bounded, recorded outcome of one selection: the candidates
-considered, each candidate's verdict, the tie-break rules applied, the
-chosen index or creation event, and the staleness basis of the answer.
-A query served by a worse-than-available index must carry its reason
-here. It is engine state queryable through a typed operation, not a log
-line and not a debug flag.
-_Avoid_: explain plan, query plan, debug explain, selection log
-
-## Data and migration
-
-**Logical Migration**:
-A V1-to-V2 data transformation whose input and output are checked against a
-manifest, without claiming that V1 files can be opened directly by V2.
-_Avoid_: file compatibility, in-place upgrade
-
-**Document Schema**:
-An optional, typed, versioned validation contract declared per collection
-and enforced on write. Schema-free documents remain valid V2 behavior;
-adopting a schema never changes a collection's stored model.
-_Avoid_: table definition, JSON schema, model
-
-**Schema Version**:
-The recorded version identity of a Document Schema under which a
-collection's documents are validated.
-_Avoid_: schema revision (a Data Family concept), format version
-
-**Schema Migration**:
-An explicit, idempotent engine contract that moves a collection between
-Schema Versions with manifest, checksum, count, and rollback-limit
-evidence. Distinct from Logical Migration.
-_Avoid_: Logical Migration, upgrade script, reindex
-
-**Storage Format**:
-The durable representation governed by V2's compatibility and recovery
-contract.
-_Avoid_: file layout, serialization detail
-
-**Recovery Boundary**:
-The point at which a recovery scenario must report durability and data-loss
-limits before any result can support a release claim.
-_Avoid_: restore point, checkpoint
-
-**Data Family**:
-A V1-named group of related data capabilities whose parity obligations are
-tracked together while each public contract remains explicit.
-_Avoid_: collection type, feature bucket
-
-## Evidence language
-
-**Current**:
-The exact source identity or artifact selected for a claim, recorded without
-implying that the claim has passed.
-_Avoid_: latest, stable
-
-**Qualified**:
-Supported by the required evidence for its stated scenario, scope, and
-assumptions.
-_Avoid_: production-ready, proven everywhere
-
-**Unresolved**:
-Known work or a decision that has no accepted disposition yet.
-_Avoid_: future enhancement, maybe
+This glossary defines current TerraBaseV2 terms. It is not an implementation
+status report. The workspace charter at `../GOAL.md` resolves conflicts.
+
+## Evidence
+
+**V1 Parity Item**
+
+A capability or observable contract from TerraBase V1 that V2 must implement,
+omit through an accepted disposition, or keep unresolved.
+
+Avoid: feature checkbox.
+
+**Parity Matrix**
+
+The versioned record connecting each V1 Parity Item to V1 evidence, V2 status,
+ownership, contract semantics, Proof IDs, impact, and risk.
+
+Avoid: feature list.
+
+**Proof ID**
+
+A stable identifier for evidence supporting one bounded claim.
+
+Avoid: link, screenshot, confidence.
+
+**Recovery Receipt**
+
+A secret-safe record of an exact recovery scenario, source and data identity,
+durability outcome, and known limits.
+
+Avoid: restore log.
+
+**Replication Receipt**
+
+A secret-safe record of an exact mutation, requested acknowledgement,
+Member observations, fault schedule, and convergence result.
+
+Avoid: replication log.
+
+**Benchmark Receipt**
+
+A secret-safe result from the first-party benchmark harness. It records exact
+source, workload, environment, statistical validity, baseline relation, and
+known limits.
+
+Avoid: local timing.
+
+**Claim**
+
+A statement about behavior, durability, correctness, scale, availability, or
+performance that requires the matching evidence before publication.
+
+Avoid: promise without a Proof ID.
+
+**Current**
+
+The exact selected source or artifact. It does not imply qualification.
+
+Avoid: latest, stable.
+
+**Qualified**
+
+Supported by the required evidence for the stated scenario and assumptions.
+
+Avoid: proven everywhere, production-ready without scope.
+
+**Unresolved**
+
+Known work or a decision without an accepted disposition.
+
+Avoid: future enhancement.
+
+## Placement and replication
+
+**Region**
+
+A named failure, residency, and latency domain in the TerraScale catalog.
+A database owner selects one through twenty active Regions.
+
+Avoid: primary Region, standby Region.
+
+**Member**
+
+A TerraBase engine participant with a `ReplicaId` and `ReplicaEpoch` seated
+in one or more Partition replica sets.
+
+Avoid: permanent shard owner, leader.
+
+**Selected Active Region**
+
+A customer-selected Region that stores every logical Partition of the database
+and accepts reads and writes while its local replica set is healthy.
+
+Avoid: primary, home Region.
+
+**Request Coordinator**
+
+The Member that accepts one operation, validates the current replica-set epoch,
+mints or reuses its `CommitId`, sends it to eligible Members, and collects the
+requested acknowledgements. It has no lease or authority over later requests.
+
+Avoid: leader, master, coordinator Member.
+
+**Leaderless**
+
+Every active Member has the same normal write, read, replication, repair, and
+recovery role. There is no permanent leader, primary, shard owner, or redirect
+for ordinary data work.
+
+Avoid: coordination-free.
+
+**RegionalDurable**
+
+The default production write result. Both active Members for the Partition in
+the accepting Region durably commit the same `CommitId` under the same epoch.
+No WAN acknowledgement is required.
+
+Avoid: local receipt, one-WAL success.
+
+**GlobalDurable**
+
+An explicit WAN-bound result. `RegionalDurable` succeeds in every selected
+active Region. With at least two selected Regions, the acknowledged write
+survives complete loss of one selected Region.
+
+Avoid: default durability, eventual replication.
+
+**BackupDurable**
+
+An optional additional receipt available only when immutable backup is
+enabled. It follows the requested active acknowledgement and never rolls back
+an already committed active write.
+
+Avoid: active quorum vote.
+
+**Convergence**
+
+Members that hold the same accepted commit set produce identical canonical
+CRDT state, materialized documents, and indexes under the applicable causal
+cut.
+
+Avoid: connected, caught up.
+
+**Anti-Entropy**
+
+The durable repair process that compares causal progress, requests missing
+commit ranges or snapshots, and resumes after interruption. Live push is the
+fast path; anti-entropy is the repair path.
+
+Avoid: broker replay.
+
+**Merkle Verification**
+
+Independent comparison of causal and materialized hashes to locate divergent
+Partition ranges and verify repair.
+
+Avoid: version-vector replacement.
+
+## Identity and causality
+
+**CommitId**
+
+The immutable server-issued identity
+`DatabaseId, PartitionId, ReplicaId, ReplicaEpoch, OriginCounter`.
+One commit may contain several canonical mutations within one Partition.
+
+Avoid: UUID per field, client operation identity.
+
+**Client Idempotency Identity**
+
+A bounded caller identity used to return the same logical mutation outcome
+after retry. It never becomes a permanent replication actor.
+
+Avoid: client replica ID.
+
+**Dotted Version Vector**
+
+Partition-scoped causal metadata that records stable server-actor prefixes and
+specific dots or gaps. It distinguishes domination from concurrency.
+
+Avoid: global database vector, client checkpoint.
+
+**Hybrid Logical Clock**
+
+Physical and logical time metadata used after causal comparison and within a
+bounded future-skew policy. It is not a global correctness clock.
+
+Avoid: wall-clock last-write-wins.
+
+**Replication Frontier**
+
+The contiguous prefixes and out-of-order gaps a Member durably holds for one
+Partition. It drives missing-range transfer and stable-frontier calculation.
+
+Avoid: subscription checkpoint.
+
+**Stable Frontier**
+
+The causal position past which membership, snapshots, active replicas, optional
+backup, PITR, audit, and client-retention pins permit safe summarization or
+collection.
+
+Avoid: transport acknowledgement.
+
+## Sharding and storage
+
+**Bucket**
+
+One value in the stable `2^20` routing space. A Shard Key maps a document to a
+Bucket. Rebalancing does not change the Bucket identity.
+
+Avoid: physical Member.
+
+**Shard Key**
+
+The document attributes whose hash selects a Bucket. The document identity is
+the default. Changing it is an explicit migration.
+
+Avoid: primary key.
+
+**Logical Partition**
+
+A group of Bucket ranges with independent WAL, actor counters, causal state,
+replication progress, snapshots, anti-entropy hashes, resource accounting, and
+migration state. It is a logical unit, not a process or permanent Member
+owner.
+
+Avoid: shard leader, node.
+
+**Partition Split**
+
+An idempotent migration that moves whole Bucket ranges into a new logical
+Partition while preserving document identity, commit identity, causal history,
+and safe routing epochs.
+
+Avoid: hot-shard leader move.
+
+**Storage Tier**
+
+An active storage class. Tier 1 contains WAL, mutable state, indexes, hot
+segments, manifests, and caches on NVMe. Tier 2 contains encrypted,
+checksum-addressed immutable cold ranges in S3-compatible object storage.
+
+Avoid: backup. Tier 2 is active storage.
+
+**Storage Tier Mover**
+
+The bounded engine service that promotes or demotes immutable ranges under
+tenant-aware policy, budgets, hysteresis, and fallback proof.
+
+Avoid: per-document offloader.
+
+**Immutable Backup**
+
+An optional read-only, non-voting copy outside the active Region set. It never
+accepts customer writes and cannot be promoted in place. Restore creates a new
+active identity.
+
+Avoid: standby, secondary Region.
+
+**Logical Migration**
+
+A manifest-verified V1 to V2 data transformation. V2 does not open V1 files or
+claim V1 wire compatibility.
+
+Avoid: in-place upgrade.
+
+## Replication and client sync
+
+**Replication Plane**
+
+Trusted Member-to-Member exchange of native delta CRDT commits, causal
+frontiers, acknowledgements, snapshots, and repair data over engine-owned QUIC.
+
+Avoid: public client stream, NATS.
+
+**Client Sync Plane**
+
+Authorized server-to-client delivery of query results, patches, resets,
+optimistic outcomes, causal session tokens, and view checkpoints.
+
+Avoid: raw replication stream.
+
+**Reactive Subscription**
+
+A bounded typed TQL query whose data, index-range, and authorization
+dependencies the engine tracks. The result may be incrementally patched or
+reset from a new snapshot.
+
+Avoid: collection change feed.
+
+**View Generation**
+
+The identity of one normalized query, projection, principal, and authorization
+generation. Query or authorization changes create a new generation.
+
+Avoid: database version.
+
+**View Checkpoint**
+
+An opaque, integrity-protected resume token bound to tenant, database,
+principal, authorization generation, query, projection, view generation,
+result revision, sparse Partition positions, and retention generation. It
+means the client applied one authorized view, not every database mutation.
+
+Avoid: version vector, log offset.
+
+**Causal Session Token**
+
+A sparse set of dependencies for Partitions touched by one client session. A
+client may present it after moving Regions to request read-your-writes or
+monotonic reads.
+
+Avoid: replication actor.
+
+**Optimistic Presentation**
+
+A reversible client-side UI patch while a server mutation is in flight. It is
+not durable, receives no `CommitId`, and does not advance causal state.
+
+Avoid: offline CRDT mutation.
+
+**Reset**
+
+The correct bounded fallback when incremental result maintenance is unsafe,
+too expensive, expired, or invalidated by a generation change.
+
+Avoid: sync failure.
+
+## Protocol and product boundaries
+
+**TerraBase Engine Protocol**
+
+TBEP is the private typed protocol between TerraBaseV2 and the independent
+C#/.NET `TerraScale.Database` API. It uses generated MessagePack contracts
+over QUIC with mTLS and workload identity, including same-host loopback.
+
+Avoid: UDS, C ABI, public API, client sync protocol.
+
+**TerraScale.Database**
+
+The horizontally scalable C#/.NET 10 ASP.NET Core public database API and sole
+TBEP gateway. It authenticates through Dashboard OIDC and OAuth contracts,
+obtains typed authorization grants, issues bounded engine context, and owns no
+identity or payment policy.
+
+Avoid: Dashboard backend, Rust host.
+
+**PrincipalContext**
+
+A short-lived private engine context issued by `TerraScale.Database` from a
+verified Dashboard authorization grant. It binds tenant, Project, database,
+actions, claims, policy generation, audience, expiry, and Database API workload
+identity.
+
+Avoid: public bearer token, authorization bypass.
+
+**Operations Studio**
+
+TerraBaseV2's internal Vinext UI for documents, queries, indexes, families,
+topology, and live engine views.
+
+Avoid: customer Dashboard.
+
+**Control Plane**
+
+Orchestrator-owned topology, placement intent, Member identity allocation,
+workload scheduling, certificates, capacity, repair orchestration, and
+delivery. It is outside the normal database write path.
+
+Avoid: mutation authority.
+
+## Query and schema
+
+**TQL**
+
+TerraBaseV2's SQL-familiar, document-native query language. It parses to a
+typed versioned AST and permits no arbitrary code execution.
+
+Avoid: RQL, SQL wire protocol.
+
+**Auto-Index**
+
+An engine-created index selected, widened, superseded, or retired for dynamic
+queries. Explicit indexes take precedence when equivalent.
+
+Avoid: customer-required index.
+
+**Index Selection Record**
+
+The bounded recorded explanation of candidates, verdicts, tie breaks, selected
+index, staleness basis, or Auto-Index creation.
+
+Avoid: debug log.
+
+**Document Schema**
+
+An optional typed versioned validation contract for a collection. Documents
+remain schema-free by default.
+
+Avoid: mandatory table definition.
+
+**Schema Migration**
+
+An explicit, idempotent, resumable move between Document Schema versions with
+recovery evidence.
+
+Avoid: V1 Logical Migration.

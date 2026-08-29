@@ -1,5 +1,10 @@
 # P0 contract: CRDT-aware schema modes, merge rules, delete-wins, shadow delete
 
+> Superseded Loro-era implementation contract. Schema-free, validated, and
+> strict modes remain useful inputs, but native CRDT kinds, scalar defaults,
+> deletion, quarantine, collection, and coordinated invariants now follow ADR
+> 0019 and the workspace `GOAL.md`.
+
 Status: frozen by the P0 contract pass, 2026-08-28. Governs P2/P3
 implementation and AC-10 merge scenarios. Parents: ADR 0014
 (D-2/D-3/D-6/D-7), charter PD-2026-08-28-03. Builds on the SM-02 schema

@@ -1,8 +1,14 @@
 ---
-status: accepted
+status: superseded
+superseded_by: ADR-0019
 ---
 
 # ADR 0011: Sharding as owned ranges over the bucket-range table
+
+> Superseded on 2026-08-29 by the workspace `GOAL.md` and ADR 0019.
+> Stable Buckets survive, but a logical Partition has no owning Member or
+> permanent leader. This record remains unchanged below as historical
+> evidence.
 
 Proposed by SH-01 (`TerraScale/TerraBaseV2#47`), 2026-08-26, under
 charter PD-2026-08-26-10 D3; accepted by the parent the same day on

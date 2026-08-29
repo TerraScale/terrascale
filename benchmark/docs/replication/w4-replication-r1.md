@@ -1,5 +1,8 @@
 # W4-REPLICATION R-1 implementation record
 
+> Historical single-owner replication record. It does not qualify the native
+> leaderless causal plane required by ADR 0019.
+
 Status: implementation record for phase R-1 of the W4-REPLICATION packet,
 2026-08-24. Authority: `docs/design/w4-transfer-replication-contract.md`
 ("Replication and multi-region contract", "Public type ownership",

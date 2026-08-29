@@ -1,5 +1,11 @@
 # P0 contract: leaderless replication, acknowledgement, and repair
 
+> Superseded implementation contract. ADR 0019 and the workspace `GOAL.md`
+> now define native `CommitId`, Partition-scoped DVVs, RF=2/2
+> `RegionalDurable`, all-selected-Region `GlobalDurable`, anti-entropy, and
+> separate causal and materialized Merkle verification. Do not extend the
+> Loro-era rules below.
+
 Status: frozen by the P0 contract pass, 2026-08-28. Governs P2
 implementation and AC-10 qualification. Parents: ADR 0018 (leaderless),
 ADR 0014 D-1/D-5/D-6 (active-active, quorums, merge), charter

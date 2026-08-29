@@ -1,8 +1,13 @@
 ---
-status: accepted
+status: superseded
+superseded_by: ADR-0019
 ---
 
 # ADR 0018: Leaderless, masterless active database
+
+> Superseded on 2026-08-29 by ADR 0019. The leaderless decision survives, but
+> the Loro, NATS, quorum-name, client-boundary, and placement details below do
+> not. This record remains unchanged below as historical evidence.
 
 Parent record of charter PD-2026-08-28-07, 2026-08-28, accepted on user
 instruction.

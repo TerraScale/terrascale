@@ -1,5 +1,9 @@
 # SH-05 coordination record: sharded failover, cluster transactions, recovery
 
+> Historical coordination record. Leader failover and range ownership are
+> superseded. Coordinated invariants and recovery now use the request-scoped
+> native model in the workspace `GOAL.md` and ADR 0019.
+
 Status: proposed record for SH-05 (`TerraScale/TerraBaseV2#51`), 2026-08-26.
 Authority: charter PD-2026-08-26-10 D3, ADR 0004 (D-1/D-2), ADR 0011
 (D1/D3/D4), and `docs/sharding/dispositions.md` (SH-01's row mapping put

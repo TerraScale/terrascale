@@ -1,5 +1,10 @@
 # P0 contract: TBEP compatibility rules
 
+> Superseded version 1 contract. Current TBEP is
+> `terrabase.engine.protocol/2`, generated MessagePack over QUIC with mTLS,
+> including loopback. See `docs/sync/tbep.md`. UDS and repository-local C#
+> hosts below are migration history.
+
 Status: frozen by the P0 contract pass, 2026-08-28. Governs P4
 implementation and the cross-language conformance suites. Parents: ADR
 0013 (server/client/bindings/efficiency), ADR 0018 D-1 (no leadership

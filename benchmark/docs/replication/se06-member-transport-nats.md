@@ -1,5 +1,9 @@
 # SE-06 implementation record: member transport on engine-owned lanes; NATS as KV/config/discovery only
 
+> Historical implementation record. The engine-owned QUIC work may be reused,
+> but the leader, range-owner, LWW, old acknowledgement, and mandatory NATS
+> assumptions below are superseded by ADR 0019 and the workspace `GOAL.md`.
+
 Status: implementation record for ticket SE-06 (TerraBaseV2 issue #8),
 2026-08-26. Authority: charter PD-2026-08-26-13 D2 (parent record ADR
 0012), the Orchestrator NATS spec's separation rules

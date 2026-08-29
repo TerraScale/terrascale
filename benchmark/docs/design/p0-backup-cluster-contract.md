@@ -1,5 +1,10 @@
 # P0 contract: immutable backup clusters and backup-last routing
 
+> Historical P0 implementation contract. Backup remains immutable, read-only,
+> non-voting, and optional. Current placement, acknowledgement, retention, and
+> qualification rules live in the workspace `GOAL.md`; the old phase and
+> fixed-shape language below does not override it.
+
 Status: frozen by the P0 contract pass, 2026-08-28. Governs P2/P5
 implementation and AC-10/AC-11 backup evidence. Parents: ADR 0017
 (D-4..D-8), ADR 0018 D-7.

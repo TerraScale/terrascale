@@ -1,5 +1,8 @@
 # W4-REPLICATION R-3 implementation record
 
+> Historical single-owner replication record. It does not qualify the native
+> leaderless causal plane required by ADR 0019.
+
 Status: implementation record for phase R-3 (final) of the W4-REPLICATION
 packet, 2026-08-24. Authority: `docs/design/w4-transfer-replication-contract.md`
 ("Three-Region synthetic fault lane", "Public type ownership", "Checks and

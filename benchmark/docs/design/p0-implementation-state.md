@@ -1,5 +1,10 @@
 # P0 implementation-state record
 
+> Historical source audit. This file records what landed under the former
+> phase plan. It is not current architecture or qualification. Loro, UDS,
+> repository-local C# hosts, range ownership, old acknowledgement names, and
+> mandatory NATS work described below are migration debt under ADR 0019.
+
 Status: recorded 2026-08-28 by the P0 truthfulness pass at base
 `911197e`. Three read-only audits (replication vs the leaderless
 target, storage vs the LSM target, TBEP/C# vs the serving-product

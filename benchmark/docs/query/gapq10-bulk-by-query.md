@@ -1,5 +1,9 @@
 # GAP-Q10: patch-by-query and delete-by-query (the query-to-write bridge)
 
+> Historical implementation packet. UDS references below describe version 1
+> TBEP. Current bulk query operations must use authorized, bounded public
+> operations through `TerraScale.Database` and QUIC protocol 2.
+
 Status: decision record for Forgejo ticket TerraBaseV2#65 (GAP-Q10), recorded
 2026-08-27 against the `fleet/gapq10-2` worktree of `develop` @ `1526cfd`.
 

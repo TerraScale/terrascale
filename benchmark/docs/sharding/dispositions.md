@@ -1,5 +1,10 @@
 # Sharding parity dispositions
 
+> Historical dispositions based on ADR 0011. Reopen every row that assumes a
+> single owning Member, leader failover, ownership fencing, or a fixed
+> 128-shard production claim. Current sharding follows
+> `docs/sharding/model.md`.
+
 Status: proposed disposition record for SH-01 (`TerraScale/TerraBaseV2#47`),
 2026-08-26. Authority: charter PD-2026-08-26-10 D3/D5, ADR-0004,
 `docs/sharding/model.md`, and ADR 0011 (proposed). These are

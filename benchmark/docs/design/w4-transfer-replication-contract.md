@@ -1,5 +1,9 @@
 # W4 transfer and replication contract: streaming, replication, backup/import, and logical migration
 
+> Superseded transfer and replication contract. V1 evidence and logical
+> migration inputs remain useful. Single range leaders, old acknowledgement
+> levels, and ownership transfer are not current architecture.
+
 Status: proposed design contract for W4, recorded 2026-08-24. Parent
 adjudication of the decision records in this document is required before any
 W4 behavior packet is dispatched.

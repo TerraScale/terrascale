@@ -1,8 +1,14 @@
 ---
-status: accepted
+status: superseded
+superseded_by: ADR-0019
 ---
 
 # ADR 0005: Workspace stack policy, the TerraBase Engine Protocol, and the unified sync engine
+
+> Superseded on 2026-08-29 by the workspace `GOAL.md` and ADR 0019.
+> C# hosts no longer belong in this repository, TBEP is QUIC-only, Loro is
+> removed, and NATS is optional control infrastructure. This record remains
+> unchanged below as historical evidence.
 
 Parent record of workspace decisions PD-2026-08-26-01 and
 PD-2026-08-26-02, 2026-08-26, accepted on user instruction.

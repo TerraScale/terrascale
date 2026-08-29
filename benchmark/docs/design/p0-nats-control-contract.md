@@ -1,5 +1,10 @@
 # P0 contract: NATS control-plane subjects and boundaries
 
+> Superseded implementation contract. NATS is optional and replaceable under
+> ADR 0019. It may help with configuration or discovery, but TerraBase
+> correctness and membership cannot require the subjects or request/reply
+> behavior below.
+
 Status: frozen by the P0 contract pass, 2026-08-28. Governs P5
 implementation. Parents: ADR 0014 D-4, ADR 0012 (NATS role), charter
 PD-2026-08-28-03. Extends `crates/terrabase-member-transport/src/nats_usage.rs`

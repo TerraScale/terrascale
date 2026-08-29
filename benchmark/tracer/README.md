@@ -1,5 +1,10 @@
 # The SE-11 end-to-end client live-update tracer
 
+> Historical Loro-era tracer. It does not qualify the replacement reactive
+> sync contract. A current tracer must use `TerraScale.Database`, public
+> authentication, authorized query subscriptions, optimistic reconciliation,
+> view checkpoints, and the new Rust/TypeScript/.NET conformance corpus.
+
 The capstone demonstrable (ticket #13): a commit lands on the engine,
 the backbone fans it out, the engine's Loro delivery layer
 materializes it, the C# host forwards it over `terrascale.sync.v2`,

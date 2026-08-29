@@ -1,5 +1,9 @@
 # P6 parity disposition pass
 
+> Historical phase record. Any disposition depending on Loro, UDS,
+> repository-local C# hosts, leader or range ownership, mandatory NATS, or the
+> former auth boundary is reopened under ADR 0019.
+
 Status: recorded 2026-08-29 by the P6 pass at develop `5c041b8`.
 Machine-readable record: `parity/overlays/PB-*.json` (status,
 disposition, proof IDs) and `parity/proofs.json` (the Proof ID
