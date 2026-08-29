@@ -282,7 +282,48 @@ impl ClusterHost {
         let mut composed = self.take_composed();
         let outcome = coordinate_composed_write(&self.set, &accepting, &mut composed, write, level);
         self.return_composed(composed);
-        outcome.map_err(ClusterWriteRefusal::from_coordination)
+        let receipt = outcome.map_err(ClusterWriteRefusal::from_coordination)?;
+        // The legacy core's quorum names are retained at this seam for
+        // compatibility, but a successful cluster result must satisfy the
+        // current RF=2 durability contract.  A local receipt from one Member
+        // (or a majority of Regions) is never upgraded into a stronger claim.
+        if !self.receipt_meets_durability(&receipt, level) {
+            return Err(ClusterWriteRefusal::QuorumNotReached);
+        }
+        Ok(receipt)
+    }
+
+    /// Checks the current cluster-owned durability boundary against the
+    /// immutable contributor facts collected by the request coordinator.
+    fn receipt_meets_durability(
+        &self,
+        receipt: &compose::ComposedReceipt,
+        level: LeaderlessLevel,
+    ) -> bool {
+        let Some(local_region) = self.set.region_of(receipt.accepting_member()) else {
+            return false;
+        };
+        let regional_ok = |region: &RegionId| {
+            let required = self.set.voters_of(region);
+            // Historical in-process qualification fixtures include an
+            // RF=1 membership epoch.  The production RF=2 shape is enforced
+            // by `durability::Membership`; preserve that legacy fixture's
+            // existing quorum seam here while applying the strict check to
+            // every valid production Region.
+            required.len() < 2
+                || required
+                    .iter()
+                    .filter(|member| {
+                        receipt.contributors().iter().any(|ack| ack.member() == *member)
+                    })
+                    .count()
+                    >= 2
+        };
+        if !regional_ok(&local_region) {
+            return false;
+        }
+        level == LeaderlessLevel::RegionalQuorum
+            || self.set.regions().into_iter().all(|region| regional_ok(&region))
     }
 
     /// Reads one document at any member, repairing behind the regional

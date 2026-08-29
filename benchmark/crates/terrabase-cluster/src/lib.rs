@@ -11,6 +11,7 @@
 
 pub mod backup;
 pub mod control;
+pub mod durability;
 pub mod host;
 pub mod identity;
 pub mod member;
@@ -20,6 +21,10 @@ pub use backup::{BackupOutcome, BackupPolicy, BackupSet};
 pub use control::{
     ConfigEpochRecord, ControlCluster, ControlError, CtrlReply, CtrlRequest, CtrlSubject,
     InProcessControlPlane, JoinToken, KvBucket, KvPayload,
+};
+pub use durability::{
+    DurabilityCoordinator, DurabilityError, DurabilityFailure, DurabilityLevel, DurabilityReceipt,
+    DurableAck, Membership, MembershipError, PartialObservation, RegionMembers,
 };
 pub use host::{ClusterError, ClusterHost, ClusterWriteRefusal, MemberSpec};
 
