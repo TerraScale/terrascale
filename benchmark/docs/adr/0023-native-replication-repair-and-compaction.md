@@ -446,6 +446,10 @@ Membership is a durable versioned state machine in the coordinated lane. A
 configuration names selected Regions, active and joining seats per Partition,
 replica ULIDs, actor epochs, and a placement generation.
 
+Every Region value is the registered uppercase airport `RegionCode` from ADR
+0033. Membership, replication, snapshots, checkpoints, TBEP, and receipts never
+store an OCI Region name, provider alias, or Region ULID.
+
 ### Add or replace
 
 1. The old quorum records a joint configuration containing the new seat.

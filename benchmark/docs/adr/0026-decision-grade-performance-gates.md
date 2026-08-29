@@ -172,6 +172,11 @@ Receipts separately measure:
 - bytes, copies, allocations, CPU, and foreground interference; and
 - clock synchronization uncertainty for cross-Region timestamps.
 
+Benchmark domain fields and customer-facing evidence use only the registered
+airport `RegionCode`. Infrastructure metadata may record an OCI target only in
+the Orchestrator-owned provider appendix; it never changes or aliases the
+benchmark Region identity, including `SFO`.
+
 Direct fanout runs in parallel to every selected Region. Topology-specific
 budgets are frozen before optimization and include both an absolute SLO and a
 protocol-overhead limit above the measured QUIC RTT and durability floor. They

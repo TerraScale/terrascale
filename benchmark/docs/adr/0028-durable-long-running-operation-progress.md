@@ -34,6 +34,7 @@ Operation {
     project_ulid
     database_ulid?
     target_ulids[]
+    target_region_codes[]
     requested_by_principal
     client_request_ulid
     state
@@ -54,6 +55,11 @@ Operation {
     placement_generation?
 }
 ```
+
+`target_region_codes` contains only registered uppercase airport codes under
+ADR 0033. Region operations never encode a Region as a ULID, OCI name, or
+provider alias. OCI placement details remain inside the Orchestrator adapter
+and internal deployment evidence.
 
 The closed states are `Queued`, `Running`, `Waiting`, `CancelRequested`,
 `Succeeded`, `Failed`, and `Canceled`. Only the last three are terminal. A

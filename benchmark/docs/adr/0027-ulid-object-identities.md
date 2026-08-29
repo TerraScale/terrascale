@@ -8,12 +8,17 @@ authority: ../../../GOAL.md
 
 ## Decision
 
-Every TerraBase-owned entity identity is a ULID. This includes cluster, tenant,
-Project, database, collection instance, document, document incarnation,
-relationship edge, Member,
-replica, logical Partition, schema catalog entry, index instance, view plan,
-subscription, commit, snapshot, backup, restore, long-running operation, client
-request, correlation, and causation identities.
+Every TerraBase-owned entity identity except a Region is a ULID. This includes
+cluster, tenant, Project, database, collection instance, document, document
+incarnation, relationship edge, Member, replica, logical Partition, schema
+catalog entry, index instance, view plan, subscription, commit, snapshot,
+backup, restore, long-running operation, client request, correlation, and
+causation identities.
+
+A Region has no ULID. Its internal and public identity is a strict uppercase
+three-letter airport `RegionCode`. Provider-specific Region names and resource
+identifiers are typed Orchestrator adapter configuration and never enter
+TerraBase keys, placement state, protocols, checkpoints, or customer receipts.
 
 TerraBase does not mint UUIDs, GUIDs, integer entity IDs, or arbitrary string
 entity IDs. The coordinated greenfield break deletes old identity formats and
@@ -21,7 +26,7 @@ compatibility readers; there is no customer-data migration.
 
 The following are not entity IDs and retain their domain-appropriate type:
 
-- Region codes, collection names, field paths, and public route names;
+- collection names, field paths, and public route names;
 - causal counters, mutation ordinals, message sequences, versions, epochs,
   bucket numbers, offsets, lengths, and quantities;
 - BLAKE3 content digests, Merkle roots, schema digests, and definition digests;
@@ -107,3 +112,8 @@ and FlatBuffers representation, storage-key ordering, hash-to-bucket placement,
 and concurrent generation in every supported runtime. Dependency upgrades must
 pass this corpus and the identity lookup, insert, index, WAL, and protocol
 benchmarks.
+
+A separate Region boundary corpus accepts only registered uppercase airport
+`RegionCode` values. It proves that engine state, TBEP, public APIs, SDKs,
+checkpoints, placement contracts, logs, and customer receipts never substitute
+an OCI Region name or `SJC` for `SFO`.
