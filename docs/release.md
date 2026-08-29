@@ -39,8 +39,9 @@ build before testing or packing; do not rely on artifacts from another job.
 
 Release admission runs strict OpenAPI drift validation. The normal-CI debt
 baseline does not permit promotion: unresolved entries stop production release
-until the full-stack Vinext `TerraScale.Dashboard` application publishes the
-matching typed schemas.
+until the owning service publishes the matching typed schemas. Dashboard owns
+identity and product routes; the independent `TerraScale.Database` service
+owns database and reactive routes.
 It also regenerates and compares the committed comprehensive OpenAPI descriptor;
 operation IDs, parameters, request contracts, and every 2xx response shape must
 match the reviewed pin before the trusted candidate can be created.
@@ -48,7 +49,8 @@ match the reviewed pin before the trusted candidate can be created.
 ## Publish
 
 Normal releases merge the protected `develop` to `main` promotion PR. Only the
-protected post-merge `main` workflow validates the Dashboard OpenAPI contract fixture,
+protected post-merge `main` workflow validates the consolidated public
+OpenAPI contract fixture,
 confirms the committed SDK version is not yet present on the public npm registry,
 packages the candidate, and uploads it to the candidate store. This is an
 availability preflight, not a reservation. The promotion job depends on that

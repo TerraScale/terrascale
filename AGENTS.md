@@ -1,146 +1,165 @@
-# TerraScale TypeScript Instructions
+# TerraScale TypeScript SDK rules
 
-## Repository Role
+Read the workspace `../GOAL.md` and root `../AGENTS.md` before changing a
+public contract.
 
-- Workspace local-development invariant: in the DevHost-managed GRU/SFO/FRA RF=1 lab, Authentication and the product Dashboard keep fixed tailnet HTTPS URLs on ports `18445` and `18446` from startup. Integration tests consume those stable public base URLs and must not replace them with loopback-only or floating endpoints. Canonical product Dashboard rule: `https://terrascale-dev.tail057f.ts.net:18446/` is the workspace's canonical product Dashboard URL and must work correctly whenever the DevHost lab is converged (it serves the product Dashboard through Tailscale Serve port `18446` proxying `127.0.0.1:18672`; an unauthenticated request redirects to `/login`, which must return HTTP 200). A 502 is acceptable only inside the convergence window after a service (re)start or re-attestation; never leave that URL broken outside the window, and verify it before handing off any change that affects these surfaces. A scheduled check verifies this URL every 30 minutes and reports or recovers failures.
+## Repository role
 
-- This repository owns the public TerraScale TypeScript SDK package,
-  `@terrascale/sdk`.
-- Keep it npm-only. Commit `package.json` and `package-lock.json`; do not add
-  pnpm, yarn, bun, corepack, or alternate lockfiles.
-- The SDK must consume TerraScale only through public versioned REST APIs and,
-  where contracted, public versioned WebSocket or SSE protocols. Do not add
-  MagicOnion, direct TerraBase access, Dashboard private contracts, private
-  protocols, or service-internal shortcuts.
-- Public customer APIs live under the root entrypoint. Role-protected platform
-  administration is exported through an explicit public `admin` entrypoint;
-  private Dashboard business contracts are prohibited.
-- The SDK exports no Dashboard-named entrypoint, method, DTO, or route. Dashboard
-  is a full-stack consumer that composes typed, Dashboard-agnostic public product
-  operations locally; the SDK is its sole TerraScale data-access boundary and
-  gives it no special identity, header, authorization, or tenant bypass beyond
-  what any external user receives.
+This repository owns the public `@terrascale/sdk` package:
 
-## Parallel Delivery and Public Contracts
+- typed customer and administration operations;
+- the public TypeScript reactive client and local result cache;
+- reversible optimistic presentation for online mutations;
+- the native `terrascale.sync.v2` implementation and conformance harness;
+- a public server-only Better Auth database adapter; and
+- contract drift and compatibility gates.
 
-- Claim clear ownership before editing: each agent owns a bounded file/module
-  slice. Inspect the worktree first, coordinate any shared contract, export, or
-  generated-file change, and do not overwrite or reformat another agent's work.
-- Concurrent writers use explicit file ownership and explicit `git add` paths;
-  the integration owner alone resolves shared export or generated-file conflicts.
-- DevHost integration work requires an exclusive fixture lease covering its
-  tenant, project, database, and credentials; record only redacted fixture
-  identifiers in coordination and handoff notes.
-- Implement public capabilities contract-first. For REST, land the full-stack
-  TerraScale.Dashboard Vinext public versioned REST contract, route manifest,
-  and OpenAPI surface first (and the separate Authentication
-  contract for identity routes);
-  for contracted public realtime APIs, land the versioned WebSocket or SSE
-  protocol and schema contract first. Then add the matching typed SDK DTOs and
-  operation, followed
-  by consumers, docs, and adapters. Never invent an SDK-only route, protocol,
-  or contract to unblock a consumer.
-- Every typed public SDK operation needs proof at the public boundary. For
-  versioned REST, verify its OpenAPI and route-manifest mapping have not
-  drifted; for contracted WebSocket or SSE, verify the versioned protocol,
-  event/message schemas, handshake or
-  subscription semantics, and compatibility behavior have not drifted. Show
-  DevHost live success and expected-failure evidence for its
-  authorization/validation path when the required environment is available.
-- Treat the SDK operation and its public contract as one unit. For versioned
-  REST, before merge gate exact method, path, parameter
-  location/name/requiredness, request and response media types, status/error
-  shapes, operation identity, and DTO field/nullability parity against OpenAPI
-  and the route manifest. For contracted WebSocket/SSE, gate the versioned
-  endpoint and protocol/schema identity,
-  connection/authentication and subscription semantics, event/message and
-  error shapes, reconnect/resume behavior where specified, and DTO
-  field/nullability parity. Do not represent realtime APIs as REST or accept a
-  passing TypeScript build as evidence that either public surface agrees.
-- Transport stays typed end-to-end: each public operation must use the SDK's
-  typed operation/client path and typed request/response models. Do not add
-  raw `fetch`, generic request helpers, stringly route construction, untyped
-  JSON casts, arbitrary headers, or per-consumer transport escape hatches.
-- MCP adapters may compose and expose only typed SDK operations. Do not add a
-  generic request method, arbitrary path/body forwarding, or another escape
-  hatch that bypasses the public typed contract.
+It does not own a public server, Dashboard-only business contract, identity
+policy, payment state machine, TerraBase adapter, TBEP client, NATS client, or
+private control-plane operation.
 
-## Retry, Idempotency, and Compatibility
+## Service ownership
 
-- Classify each operation before adding automatic retry. Retry only documented
-  transient failures for operations that are safe to repeat; respect server
-  retry guidance and cancellation/deadline signals. Never retry validation,
-  authentication, authorization, or other deterministic client failures.
-- Mutations are not implicitly retryable. A retryable create or command needs
-  a documented public idempotency contract, a caller-supplied or explicitly
-  generated idempotency key with stable reuse for the logical attempt, and
-  evidence that duplicate delivery preserves the documented result.
-- Preserve compatibility for supported SDK consumers: make additive changes by
-  default, keep serialized field names and optionality stable, and avoid
-  changing exported behavior, error semantics, or defaults without a versioned
-  public API and release plan. Coordinate any removal, rename, or narrowing
-  with the Dashboard backend contract owner before implementation.
+- Dashboard is one full-stack Vinext TypeScript app. It owns Better Auth,
+  Organizations, Projects, Users, Payments, HTTP MCP, and those public product
+  routes.
+- `TerraScale.Database` is a separate C#/.NET 10 ASP.NET Core service. It owns
+  public database, query, placement, backup, usage, and reactive routes and is
+  the sole TBEP gateway.
+- Dashboard uses this SDK exactly as an external customer does. It receives no
+  private entrypoint, header, identity, tenant bypass, direct database access,
+  or in-process transport.
+
+The SDK may present one customer-facing base URL while edge routing sends typed
+paths to their owning service. One public origin does not merge runtime
+ownership.
+
+## Entrypoints
+
+- The root entrypoint contains ordinary customer operations.
+- The `admin` entrypoint contains typed role-protected public administration.
+- A named server-only `better-auth` entrypoint contains the Better Auth
+  database adapter and must be excluded from browser bundles.
+- Local development support stays explicitly opt-in under its named entrypoint.
+- Do not add Dashboard-named or generic request entrypoints.
+
+## Better Auth adapter
+
+The adapter is public and supported for Dashboard and customer applications.
+It implements the pinned Better Auth adapter contract through named typed
+Database API operations only.
+
+It must:
+
+- run only on the server;
+- prevent credentials from entering browser output;
+- use named unique insert, compare-and-swap, one-time consume, pagination,
+  bounded transaction, index, and migration operations;
+- preserve Better Auth transaction and error semantics;
+- use explicit idempotency for retryable mutations;
+- pass maintained Better Auth adapter tests when available;
+- pin supported core and plugin versions; and
+- publish compatibility and license evidence.
+
+It cannot use raw `fetch`, a generic SDK request, direct TerraBase, TBEP,
+Dashboard private routes, or an in-process shortcut.
+
+## Reactive client
+
+- Every durable mutation reaches the server. Do not add offline durable writes,
+  an offline mutation queue, local CRDT actors, or later merge.
+- A connected client may apply a reversible optimistic presentation associated
+  with one stable idempotency identity.
+- Clients subscribe to typed bounded TQL queries and receive authorized result
+  snapshots, insert, update, patch, remove, move, or reset operations.
+- Public checkpoints are opaque authorized-view positions. They are not Loro
+  frontiers or Region replication vectors.
+- Realtime WebSocket delivery is the fast path. Checkpoint resume and snapshot
+  bootstrap are the correctness path.
+- Permission change, auth expiry, Region movement, slow consumer, reconnect,
+  and expired history are required state-machine cases.
+- Loro payloads and the old server-ack-only sync v2 corpus are legacy and must
+  not be extended as current conformance.
+
+## Public contracts
+
+Implement contract-first. The owning service publishes the versioned REST,
+WebSocket, or SSE schema before the SDK operation lands.
+
+For each operation verify:
+
+- method or protocol message identity;
+- versioned path or endpoint;
+- parameter name, location, and requiredness;
+- request and response media type;
+- field names, types, and nullability;
+- security scheme and scope;
+- success, error, partial outcome, and retry semantics;
+- idempotency behavior;
+- pagination or checkpoint behavior; and
+- route-manifest and generated-contract parity.
+
+Do not invent an SDK-only route, DTO, header, protocol frame, or server
+behavior. A typed build without contract parity is not evidence.
+
+Transport stays typed. Do not add raw `fetch`, arbitrary paths, untyped JSON
+casts, generic request helpers, custom headers, or consumer-specific escape
+hatches for TerraScale data.
+
+## Retry and compatibility
+
+- Retry only documented transient failures that are safe to repeat.
+- Mutations require a stable idempotency contract before retry.
+- Respect cancellation, deadlines, `Retry-After`, and server overload.
+- Never retry validation, authentication, authorization, or deterministic
+  conflict failures automatically.
+- Preserve supported public compatibility. Breaking behavior needs a versioned
+  contract and release plan.
+- A direct backend cutover does not authorize breaking all `/api/v1` routes.
 
 ## Testing
 
-- TypeScript SDK tests follow the workspace no-mocks rule (root `AGENTS.md`).
-- Integration tests run against DevHost-emitted `TERRASCALE_API_BASE_URL` and
-  `TERRASCALE_AUTH_API_BASE_URL` (`src/integration/devhost-smoke.test.ts`) and
-  skip when those env vars are unset.
-- Keep live tests explicitly environment-gated. Do not commit credentials,
-  tokens, `.env` files, captured authorization headers, or real tenant data;
-  supply secrets only through the local/CI environment and redact them from
-  logs, fixtures, test output, and commits.
-- Real-API evidence is conditional, never simulated: when both DevHost base
-  URLs and authorized test credentials are supplied by the environment, run
-  the affected live success and expected-failure paths and report the command
-  and redacted result. When any required variable is absent, keep the tests
-  skipped, state that live evidence was unavailable, and do not substitute
-  mocks, fixed secrets, local `.env` loading, or fabricated proof.
-- Contract-drift checks are release gates for changed public operations. Run
-  the repository's applicable generation/verification and type/test commands;
-  inspect the REST OpenAPI/route-manifest or realtime versioned
-  protocol/schema contract, as applicable, and the exported SDK diff. A
-  mismatch, unexplained generated-file change, or missing public-boundary
-  evidence blocks handoff until resolved or explicitly accepted by the
-  contract owner.
+- Use the repository's native TypeScript tools and no mocks for TerraScale
+  product boundaries.
+- Keep real API tests environment-gated. Never commit credentials, tokens,
+  cookies, `.env` files, or real tenant data.
+- REST changes require OpenAPI and route-manifest drift checks.
+- Reactive changes require generated schema, byte vectors, and the shared Rust,
+  TypeScript, and .NET semantic corpus.
+- Better Auth changes require exact-version adapter tests, Region concurrency,
+  migration, retry, unique, one-time consume, revocation, and denial cases.
+- Dashboard integration evidence uses the fixed DevHost routes. Authentication
+  remains on `18445` and Dashboard on `18446`.
+- The new Database API route must be fixed in the workspace and DevHost
+  contracts before live tests depend on it.
 
-## Branch and Git Workflow
+When live configuration is unavailable, report the gate as skipped. Do not
+substitute a fake service or fabricated evidence.
 
-Workspace root `/workspaces/TerraScale/AGENTS.md` Git policy applies in full:
+## Git and collaboration
 
-- **When working on `develop`, before modifying it:** `git fetch` + `git pull
-  --ff-only origin develop`. When already in a user-requested feature
-  branch/worktree, do not pull `develop` into that checkout; preserve the
-  workspace policy's feature-worktree exception and its required base/integration
-  workflow.
-- **Default:** implement on `develop`, **commit often** on substantial coherent changes, and **push directly to `origin/develop`**. Do not open pull requests for day-to-day work.
-- **Do not** create feature branches or worktrees unless the user explicitly asks; when used, branch and worktree are always paired, and finished work lands back on `develop`.
-- Pushes to `develop` intentionally run no Forgejo automation.
-- `main` is for release/promotion only. Only the `develop` → `main` promotion path may build and publish the immutable major-version release candidate.
-- Before handoff, inspect the exact owned-path diff and `git status`; run the
-  relevant checks, then `git fetch origin`. If `origin/develop` moved, stop and
-  coordinate before any push. Report the commit, validation, owned paths, and
-  only redacted fixture/credential details.
-- Stage named owned files only (for example, `git add -- AGENTS.md`); never
-  use broad staging commands. Before requesting review or root validation,
-  hand off the owned files, exact diff/commit, OpenAPI and route-manifest
-  parity result for REST or versioned realtime protocol/schema compatibility
-  result for WebSocket/SSE, compatibility/retry decision, commands and
-  results, live evidence status, and known gaps. The reviewer/root validator
-  must be able to confirm the public contract without secrets or access to
-  unredacted tenant data.
+- Before the first write on `develop`, fetch and fast-forward from
+  `origin/develop`.
+- Claim exact paths, inspect status before each write or staging action, and
+  preserve unrelated changes.
+- Stage named paths only.
+- Commit coherent changes often and push directly to `origin/develop`.
+- Fetch immediately before push and stop if the remote moved.
+- Do not create a feature branch, worktree, pull request, release, deployment,
+  or live external mutation unless the user explicitly asks.
+- Keep secrets, private endpoints, raw remote errors, and customer payloads out
+  of source, fixtures, logs, command output, commits, and reports.
 
 ## Agent skills
 
 ### Issue tracker
 
-Issues are tracked in this repository's Forgejo project. Prefer the configured Forgejo MCP server and fall back to `fj`. See `docs/agents/issue-tracker.md`.
+See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-The tracker uses the five default triage labels. See `docs/agents/triage-labels.md`.
+See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-This repository uses the single-context domain-doc layout. See `docs/agents/domain.md`.
+See `docs/agents/domain.md`.

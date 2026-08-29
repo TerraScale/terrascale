@@ -1,5 +1,12 @@
 # Vendored `terrascale.sync.v2` golden-vector corpus
 
+> Legacy Loro-era corpus. It remains pinned for regression and migration
+> evidence but is not current v2 conformance. The replacement protocol requires
+> a new generated corpus and shared semantic cases for authorized query
+> results, optimistic reconciliation, checkpoints, policy changes, Region
+> movement, and backpressure. Do not re-vendor new engine work into this corpus
+> generation.
+
 This directory is a **byte-exact pin** of the engine's committed conformance
 corpus, vendored by hand with `cp` — never regenerated or edited locally.
 `manifest.json` is the engine's own integrity manifest; the conformance run

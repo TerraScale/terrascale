@@ -1,329 +1,201 @@
 # TerraScale TypeScript SDK
 
-This repository contains the `@terrascale/sdk` package.
+`@terrascale/sdk` is the public TypeScript client for TerraScale.
+
+The workspace `../GOAL.md` defines target architecture. An accepted target is
+not a released SDK capability.
+
+## Service boundary
+
+The SDK uses public versioned TerraScale HTTPS and reactive contracts:
+
+- Dashboard owns Better Auth, Organizations, Projects, Users, Payments, HTTP
+  MCP, and those public product routes.
+- The independent C#/.NET 10 `TerraScale.Database` service owns database,
+  query, placement, backup, usage, and reactive routes.
+- TerraBaseV2 is private. The SDK never speaks TBEP, opens a TerraBase
+  connection, consumes native replication data, or uses NATS.
+
+Dashboard uses this package exactly as an external customer application does.
+It receives no private entrypoint, header, tenant bypass, or direct database
+path.
+
+## Entrypoints
+
+| Entrypoint | Contract |
+| --- | --- |
+| `@terrascale/sdk` | Ordinary typed customer operations |
+| `@terrascale/sdk/admin` | Role-protected public administration |
+| `@terrascale/sdk/local` | Explicit development-only local runtime |
+| `@terrascale/sdk/better-auth` | Planned public server-only Better Auth adapter |
+
+The Better Auth adapter is required by the current goal but is not implemented
+or released yet. When it lands, it will use named public Database API
+operations and will be excluded from browser bundles.
+
+There is no Dashboard-named or generic request entrypoint.
+
+## Honest sync status
+
+This tree still contains:
+
+- the legacy `terrascale.sync.v1` client; and
+- a Loro-era `terrascale.sync.v2` client, codec, and vendored corpus.
+
+Neither implements the accepted replacement reactive contract. The old v2
+uses collection subscriptions, opaque Loro deltas and snapshots, and
+server-ack-only presentation. It is migration evidence and must not receive new
+product features.
+
+The replacement `terrascale.sync.v2` will:
+
+- subscribe to bounded typed TQL queries;
+- receive authorized result snapshots, insert, update, patch, remove, move, or
+  reset operations;
+- use opaque view-scoped checkpoints;
+- support read-your-writes and Region movement through sparse causal tokens;
+- apply reversible optimistic presentation for connected online writes;
+- reject durable writes while disconnected;
+- reauthorize on reconnect and grant refresh;
+- remove data after permission loss;
+- bound every queue, subscription, result, and reconnect path; and
+- pass one semantic corpus shared with Rust and .NET.
+
+The new generated corpus must not preserve old Loro bytes. Until the
+replacement passes conformance, the current sync story is decided but
+unqualified.
+
+## Better Auth adapter target
+
+The planned server-only adapter implements the pinned Better Auth database
+adapter contract through named operations for:
+
+- unique insert;
+- compare-and-swap;
+- one-time consume;
+- bounded transaction batches;
+- indexed reads and pagination;
+- idempotent retry; and
+- schema migration.
+
+It cannot use raw `fetch`, arbitrary paths, generic SDK requests, direct
+TerraBase, TBEP, or Dashboard private routes.
+
+Qualification uses Better Auth's maintained adapter tests where available,
+exact-version compatibility, concurrent Region cases, migration, revocation,
+and fault injection.
 
 ## Idempotent mutations
 
-Public clients opt in with `idempotencyKeyFactory` on the client or `idempotencyKey` on an individual request. Set the request value to `false` to opt out of global generation. Keys must be nonblank and no longer than 128 characters. Replayable API results expire after 24 hours; replays include `Idempotency-Replayed: true`, while reuse with different input returns `409 idempotency_key_reused`.
+Public clients opt in with `idempotencyKeyFactory` on the client or
+`idempotencyKey` on an individual request. Set the request value to `false`
+only when the operation's public contract permits no generated identity.
 
-The package is the customer-facing TypeScript client for TerraScale public REST
-APIs. Role-protected owner/admin APIs use a separate explicit public entrypoint.
+Keys are nonblank and at most 128 characters. A retry reuses the same key for
+one logical attempt. Reusing a key with different input is a typed conflict.
+Replay retention and response headers follow the owning public contract.
 
-## Entry Points
+Mutations retry only when the operation is documented as idempotent. Validation,
+authentication, authorization, and deterministic conflict failures are not
+automatic retry candidates.
 
-- `@terrascale/sdk` exports the SDK client, REST models, ULID helpers, runtime
-  config, HTTP primitives, and result types.
-- `@terrascale/sdk/admin` exports role-protected platform administration.
-  Dashboard business flows use the same root clients as customer applications.
+## Region and session behavior
 
-The SDK has no Dashboard-specific entrypoint, DTO, method, or route. Dashboard
-composes these typed public product clients inside its own full-stack route
-handlers as an ordinary external user and never receives special headers,
-authorization, tenant access, direct database access, or private API access.
+The default public API origin is `https://api.terrascale.tech` in the current
+SDK. The final single-origin edge routing decision is awaiting owner
+confirmation.
 
-## SQLite local development runtime
+A database selects one through twenty active Regions, initially GRU, SFO, and
+FRA. A preferred Region is a failover-capable hint. Strict affinity fails
+rather than silently serving from another Region.
 
-Node development and tests can explicitly import the SQLite-backed local
-runtime. The root and `admin` entrypoints keep their normal defaults:
+Automatic session consistency retains the latest opaque causal token inside
+one client instance and sends it on later eligible reads. A caller can request
+an explicitly stale read where the public contract allows it.
 
-```ts
+`RegionalDurable` avoids WAN acknowledgement and requires both active local
+Members. `GlobalDurable` pays WAN latency and requires every selected active
+Region. Backup is an independent opt-in.
+
+## Local development runtime
+
+The explicit SQLite local runtime supports bounded public-contract development:
+
+~~~ts
 import { createTerraScaleSqliteRuntime } from "@terrascale/sdk/local";
 
 const local = createTerraScaleSqliteRuntime({
   sqlite: { enabled: true, databasePath: "/absolute/path/to/local.sqlite" },
 });
+
 const seed = await local.seed();
 const client = local.createClient({ projectId: seed.projectId });
-const admin = local.createAdminClient();
 
-await local.start(); // Optional loopback HTTP endpoint.
+await local.start();
 await local.stop();
 await local.reset({ seed: true });
 await local.close();
-```
+~~~
 
-`createClient` and `createAdminClient` return typed in-process clients sharing
-the runtime's router and SQLite store. Use
-`createSyncV1Session` or `createSyncV2Session` to run the public Sync clients
-against the same SQLite store. `seed` creates one starter organization,
-project, database, repository, and document. `reset` clears the store
-and can seed it again. `close` releases the listener and database. Omit
-`databasePath`, or use `:memory:`, for an in-memory store.
+Importing `local` is the opt-in. Root, `admin`, and future `better-auth`
+entrypoints never enable SQLite automatically.
 
-`start` opens an optional real HTTP listener on `127.0.0.1` and an available
-port. Another process can then use the returned `apiBaseUrl`. Call `stop` to
-close the listener without closing SQLite.
+The local runtime does not prove TerraBaseV2 replication, RF=2 durability,
+failover, reactive conformance, authorization, usage, billing, external
+providers, or performance. Unsupported operations fail explicitly.
 
-You can opt in through the CLI instead:
+## Public contract discipline
 
-```bash
-npx --package @terrascale/sdk terrascale-local --database /absolute/path/to/local.sqlite --seed
-```
+The SDK implements only named operations published by the owning service.
+Dashboard-owned contracts and Database API contracts may share one edge origin
+and OpenAPI document, but their runtime ownership remains distinct.
 
-The CLI prints a `TERRASCALE_API_BASE_URL` value for the running runtime. Stop
-it and unset that URL to return to the normal endpoint. Importing the local
-subpath or running the CLI is the full opt-in. Root and `admin` clients never
-enable SQLite on their own. Unsupported local operations return an explicit
-not-implemented response.
+Each operation is gated against:
 
-The emulator supports public contract behavior for development. It does not
-prove production replication, failover, latency, metering, or external
-provider behavior, and it does not replace live DevHost evidence.
+- method and versioned path;
+- operation identity;
+- parameters and requiredness;
+- request and response media types;
+- field types and nullability;
+- security scheme and scopes;
+- success, error, and partial outcome shapes;
+- idempotency and retry;
+- pagination, checkpoint, and streaming semantics; and
+- route-manifest parity.
 
-## Regional and session consistency
-
-The default client targets `https://api.terrascale.tech`. A preferred region on
-the global endpoint is a failover-capable hint. Strict affinity uses the
-selected regional hostname and does not silently fall back:
-
-```ts
-const session = createTerraScaleClient({
-  accessToken,
-  projectId,
-  preferredRegion: "fra",
-  regionAffinity: "strict",
-  sessionConsistency: "automatic",
-});
-
-const current = await session.documents.get({ repositoryId }, documentId);
-if (current.ok) {
-  await session.documents.put(
-    { repositoryId },
-    documentId,
-    { ...current.value.data, status: "approved" },
-    { expectedChangeToken: current.value.changeToken ?? undefined },
-  );
-}
-```
-
-Automatic session consistency keeps the latest opaque write token inside that
-client instance and sends it on later single-document reads. Set
-`allowStale: true` on an individual read to opt out of the server wait. A
-conditional mismatch returns a normal `TerraScaleResult` conflict and changes
-no document. `result.routing` reports the public edge and serving regions when
-the API supplies them; it marks a cross-region response as degraded without
-exposing operator details.
-
-Transient retries are disabled by default. Set `maxRetryAttempts` and, when
-needed, `retryDelayMs` to enable bounded retries for reads. Mutations retry only
-when they carry an idempotency key, and the same key is reused for each attempt.
-
-## Sync
-
-`TerraScaleSyncSession` is the framework-neutral live-query client. Browser
-sessions use a fresh single-use ticket for every connection; server runtimes
-use a bearer-token provider. Both use the native `WebSocket` implementation.
-
-```ts
-import { TerraScaleSyncSession } from "@terrascale/sdk";
-
-const sync = new TerraScaleSyncSession({
-  Url: "wss://api.example.com/api/v1/sync",
-  DatabaseId: databaseId,
-  EnvironmentId: environmentId,
-  Tenant: tenantId,
-  AuthorizationScope: authorizationHash,
-  TicketProvider: getSingleUseSyncTicket,
-});
-
-const tasks = sync.subscribeQuery({
-  Query: "from Tasks where State = $state",
-  Arguments: { state: "open" },
-  SchemaVersion: "1",
-});
-
-const unsubscribe = tasks.subscribe(render);
-await sync.connect();
-```
-
-`tasks.getSnapshot()` and `tasks.getServerSnapshot()` implement the
-`useSyncExternalStore` contract without a React dependency. Identical queries
-share one wire registration until their last handle is released. Call
-`executeMutation` with a stable idempotency key and optional optimistic patches;
-call `disconnect` or `dispose` with the owning application lifetime.
-
-The v1 WebSocket session above stays available behind its compat flag for the
-deprecation window; it speaks `terrascale.sync.v1` and is the legacy surface.
-
-## Sync v2 (`terrascale.sync.v2`)
-
-`TerraScaleSyncV2Session` is the native TypeScript client for the
-`terrascale.sync.v2` contract (PD-2026-08-26-12: native-language SDK clients,
-no wasm/wasi artifacts). It speaks to the TerraBase API host's HTTP/SSE
-endpoints: session setup with durable checkpoint resume, checkpoint-bounded
-delta pulls, snapshot adoption on resync-required, and the trigger-notification
-channel that drives immediate pulls — push the hint, pull the delta.
-
-```ts
-import { TerraScaleSyncV2Session } from "@terrascale/sdk";
-
-const sync = new TerraScaleSyncV2Session({
-  Url: "https://api.terrascale.test",
-  Collection: "orders",
-  Principal,   // backend-supplied context (X-TB-Principal)
-  Tenant,      // backend-supplied context (X-TB-Tenant)
-  ResumeCheckpoint: persisted, // base64, from getCheckpointBase64()
-  CheckpointStore: { save: persist },
-});
-
-await sync.connect();
-const applied = await sync.executeMutation(
-  { Document: "d-01", Put: { status: "approved" } },
-  "stable-idempotency-key",
-);
-await sync.disconnect();
-```
-
-Mutations are server-ack-only (PD-2026-08-26-12 D2, the recorded v1/v2
-behavioral difference): `executeMutation` returns the durable receipt or the
-typed rejection and there is no optimistic-patch surface — the mutation
-reaches the session's state only through the journal-to-delta path, and a
-retry with the same idempotency key is the same mutation. Stores are
-memory-only this wave; `loro-delta/1`/`loro-snapshot/1` payload bytes stay
-opaque to the protocol and reach documents through an optional materializer.
-
-Conformance to the engine's committed golden vectors runs in this package's
-test suite: the SE-04 corpus and the SE-05 integrity manifest are vendored
-under `test/fixtures/terrascale.sync.v2/` (digest-verified), and
-`runSyncV2Conformance` executes the per-language harness contract against
-the shipped codec, emitting the `terrascale.sync.v2/conformance-report@1`
-report. The vendored corpus is a deliberate pin of one engine revision —
-see `test/fixtures/terrascale.sync.v2/README.md` for the pinned source,
-its digests, and how to re-vendor.
-
-## Public API Surface
-
-The public client follows the versioned REST surface hosted by the single
-full-stack Vinext `TerraScale.Dashboard` application. Dashboard TypeScript
-backend modules own the database/TerraBase endpoint families below:
-
-- Project databases: list/create/get/delete under
-  `/api/v1/projects/{projectId}/databases`, with environment list/get/create/delete
-  under `/api/v1/projects/{projectId}/databases/{databaseId}/environments`.
-- Physical database branching: `client.databaseBranches.getCapability` reads
-  `/api/v1/projects/{projectId}/database-branches/capability` and
-  `requestClone` sends the typed clone request to `/api/v1/projects/{projectId}/database-branches`.
-  The currently admitted state is fail-closed (`"unavailable"`): clone has no success response and returns
-  the typed `503` failure until the database service reports otherwise.
-- Repositories: list/create/get/delete under `/api/v1/repositories`.
-- Documents: list/create/get/put/patch/delete/batch under
-  `/api/v1/repositories/{repositoryId}/documents`; document write bodies are
-  wrapped as `{ data }`, and document responses use `id`, `data`,
-  `lastModified`, `changeToken`, and write-only `sessionConsistencyToken`.
-  Put, patch, and delete accept `expectedChangeToken`; single-document reads accept
-  `allowStale`. A client configured with `sessionConsistency: "automatic"`
-  forwards the last successful write token on later reads.
-- TQL and schema: `/api/v1/repositories/{repositoryId}/tql`,
-  `/api/v1/repositories/{repositoryId}/schema`, and
-  `/api/v1/repositories/{repositoryId}/schema/validate`.
-- Backups and restores:
-  `/api/v1/projects/{projectId}/databases/{databaseId}/backups/policy`,
-  `/api/v1/projects/{projectId}/databases/{databaseId}/backups`,
-  `/api/v1/projects/{projectId}/databases/{databaseId}/backups:plan`, and
-  `/api/v1/projects/{projectId}/databases/{databaseId}/backups:execute`,
-  `/api/v1/projects/{projectId}/databases/{databaseId}/backups/{backupId}`,
-  `/api/v1/projects/{projectId}/databases/{databaseId}/restore-points`, and
-  `/api/v1/projects/{projectId}/databases/{databaseId}/restores`; on-demand backups require
-  an explicit `planBackup` then `executeBackup` confirmation flow, with no unconfirmed trigger.
-  Responses
-  use logical ULID fields such as `backupId`, `restoreId`, and
-  `restoredDatabaseId`.
-- Onboarding: initial organization/project creation under
-  `/api/v1/onboarding`.
-- Organizations and projects: organization create/list/get/update/deletion,
-  membership and invitation lifecycle, plus project create/list/get/update/delete
-  and region placement.
-- Usage: project totals, workload, latency, and history plus organization totals.
-- Notifications: `/api/v1/users/me/notifications` returns a bare
-  `Notification[]`; `/api/v1/users/me/notifications/{notificationId}:mark-read`
-  returns a `Notification`; and
-  `/api/v1/users/me/notifications:mark-all-read` returns `{ markedRead }`.
-- Saved queries: `client.savedQueries.list/create/update/delete` provides typed
-  v1 CRUD under `/api/v1/projects/{projectId}/saved-queries`, with revision-aware v2
-  `client.savedQueries.v2.list/get/update`, and mutation-safe snapshot pagination with
-  `client.savedQueries.v3.list` under `/api/v3/projects/{projectId}/saved-queries`.
-  V2 revisions and v3 cursors are opaque; reload a v3 collection after a cursor conflict.
-
-Unbacked public SDK methods are intentionally omitted until matching versioned
-OpenAPI request and response schemas are published. This currently excludes
-repository update, database update/region switching/environment switching, query
-history, project settings, and public project switching.
-
-The OpenAPI drift check carries a reviewed typed-contract debt baseline. It prevents
-new or changed untyped SDK contracts, while the listed debt still blocks production
-qualification until the full-stack Vinext Dashboard publishes the missing schemas
-and removes the baseline.
+Unbacked operations remain omitted. Do not invent types or use a generic
+request to hide a contract gap.
 
 ## Development
 
-```bash
+~~~bash
 npm install
 npm run typecheck
 npm run build
 npm test
 npm run test:browser
-```
+~~~
 
-Node.js 22 and 24 are the supported server runtimes. The package supports the
-current stable major versions of Chrome, Firefox, Safari, and Edge. CI runs
-the public contract suite on both Node versions and the browser build against
-the current Playwright Chromium, Firefox, and WebKit engines. Branded-browser
-and live API evidence still belongs to the protected release qualification;
-local engine results do not stand in for evidence that was not run.
+Node.js 22 and 24 are the supported server runtimes. Browser qualification
+covers current stable Chrome, Firefox, Safari, and Edge through the repository
+release gates.
 
-The supported public API `/api/v1` contract applies to both package entry
-points. Release qualification installs the exact packed tarball into clean
-Node and browser consumers. It does not rebuild the package for those checks.
+Generate and verify route contracts with:
 
-The SDK route manifest is generated from the route-capture tests:
-
-```bash
+~~~bash
 npm run generate:route-manifest
 npm run check:openapi-drift
 npm run generate:openapi-contract-descriptor
 npm run check:openapi-contract-descriptor
-```
+~~~
 
-`sdk-openapi-contract-descriptor.json` is the reviewable, deterministic pin for
-every captured SDK route: OpenAPI operation ID, parameters, request schema, and
-each successful response schema. `void` and `never` SDK types are explicit in
-the descriptor; any OpenAPI identity, parameter, nullability, field-shape, or
-schema-constraint drift fails the descriptor check.
-The route manifest also records the actual captured JSON body shape plus sorted
-query and header name/value pairs (including repeated query values), so changes
-to pagination or destructive-confirmation semantics cannot pass unnoticed.
-Only an explicit deterministic test-value allowlist is retained; all other pair
-values are redacted. Schema entries retain every nested OpenAPI
-`$ref`, its legal sibling constraints, and canonical resolved shape.
-Headers are captured after the Fetch `Headers` boundary as one effective value
-per lowercase name; repeated SDK header values are intentionally coalesced by
-that boundary and are not represented as distinct wire fields.
-
-The drift checker accepts any OpenAPI JSON file path or live spec URL, including
-a DevHost-served `/openapi/v1.json`. Refresh the Dashboard canonical snapshot
-from the current full-stack Dashboard OpenAPI artifact before treating a
-snapshot failure as an SDK defect; the Documentation site consumes that same
-snapshot.
-
-Integration tests are expected to run against a real TerraScale DevHost stack
-and its emitted API URL:
-
-```bash
-TERRASCALE_API_BASE_URL=http://127.0.0.1:... \
-npm run test:integration
-```
-
-When those URLs are not set, integration tests skip instead of substituting
-mocked HTTP.
-
-The saved-query CRUD smoke test additionally requires
-`TERRASCALE_E2E_ACCESS_TOKEN` and `TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID`.
-Set the latter only to a dedicated disposable DevHost project for which the
-token has saved-query permissions; it never falls back to
-`TERRASCALE_E2E_PROJECT_ID`.
+Integration tests target the fixed DevHost public routes. When the required
+base URLs or credentials are absent, they skip instead of using mocked HTTP.
+The new Database API needs a fixed DevHost route before its live tests can be
+current.
 
 ## Releases
 
-Main pushes publish `@terrascale/sdk` to the public npm registry through
-Forgejo CI after the release gates pass. See `docs/release.md` for the required
-checks and release/versioning flow.
+The Orchestrator-owned `develop` to `main` promotion path builds and
+publishes the immutable package only after contract, conformance, security, and
+compatibility gates pass. See `docs/release.md`.
