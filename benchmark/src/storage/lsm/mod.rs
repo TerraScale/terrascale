@@ -35,6 +35,8 @@ pub(crate) mod tests;
 #[cfg(test)]
 pub(crate) mod tests_support;
 pub(crate) mod tier;
+#[cfg(test)]
+mod tier_matrix_tests;
 pub(crate) mod wal;
 
 use std::{
