@@ -195,7 +195,7 @@ fn client_link_frames_stay_within_their_written_budgets() {
     };
     let delivery = SyncV2Frame::seal(
         SyncV2Body::DeltaBatch {
-            codec: terrabase_sync_core::protocol::PayloadCodec::LoroDelta1,
+            codec: terrabase_sync_core::protocol::PayloadCodec::NativeDelta1,
             payload: payload.clone(),
             next: core.checkpoint(),
             within_budget: true,

@@ -58,7 +58,7 @@ fn put(sequence: u64, document: &str, fields: usize) -> JournalCommit {
     }
 }
 
-fn checkpoint(end: i32, sequence: u64) -> SyncCheckpoint {
+fn checkpoint(end: u64, sequence: u64) -> SyncCheckpoint {
     SyncCheckpoint::from_ends(vec![(terrabase_sync_core::SERVER_PEER_ID, end)], sequence)
 }
 
@@ -243,7 +243,7 @@ fn only_named_payload_codecs_carry_bytes_and_only_server_delivery_uses_them() {
     // The closed registry: the only bodies that carry a byte payload are
     // the delivery frames, and their codec identity is fixed by the kind.
     let body = SyncV2Body::DeltaBatch {
-        codec: PayloadCodec::LoroDelta1,
+        codec: PayloadCodec::NativeDelta1,
         payload: vec![1, 2, 3],
         next: checkpoint(3, 2),
         within_budget: true,
@@ -254,7 +254,7 @@ fn only_named_payload_codecs_carry_bytes_and_only_server_delivery_uses_them() {
     assert_eq!(body.frame_class(), FrameClass::Delivery);
 
     let snapshot = SyncV2Body::SnapshotAnswer {
-        codec: PayloadCodec::LoroSnapshot1,
+        codec: PayloadCodec::NativeSnapshot1,
         payload: vec![9, 9],
         checkpoint: checkpoint(3, 2),
     };
@@ -263,7 +263,7 @@ fn only_named_payload_codecs_carry_bytes_and_only_server_delivery_uses_them() {
     // Codec and kind must agree: a snapshot codec on a delta body is
     // malformed, at seal time and on the wire.
     let mismatched = SyncV2Body::DeltaBatch {
-        codec: PayloadCodec::LoroSnapshot1,
+        codec: PayloadCodec::NativeSnapshot1,
         payload: vec![1],
         next: checkpoint(1, 1),
         within_budget: true,
@@ -465,7 +465,7 @@ fn serving_glue_maps_the_core_answers_to_protocol_frames() {
     assert_eq!(frame.kind(), FrameKind::DeltaBatch);
     match frame.body() {
         SyncV2Body::DeltaBatch { codec, payload, next, commits, within_budget, .. } => {
-            assert_eq!(*codec, PayloadCodec::LoroDelta1);
+            assert_eq!(*codec, PayloadCodec::NativeDelta1);
             assert!(!payload.is_empty());
             assert!(next.end_for(terrabase_sync_core::SERVER_PEER_ID).unwrap_or(0) > 2);
             assert!(*commits >= 1);
@@ -495,7 +495,7 @@ fn serving_glue_maps_the_core_answers_to_protocol_frames() {
     assert_eq!(snapshot.kind(), FrameKind::SnapshotAnswer);
     match snapshot.body() {
         SyncV2Body::SnapshotAnswer { codec, payload, checkpoint: at } => {
-            assert_eq!(*codec, PayloadCodec::LoroSnapshot1);
+            assert_eq!(*codec, PayloadCodec::NativeSnapshot1);
             assert!(!payload.is_empty());
             assert_eq!(*at, core.checkpoint());
         }
@@ -573,7 +573,7 @@ fn frame_budgets_are_written_definitions_with_exact_envelope_overhead() {
 
     // The oversized single-commit exception is flagged, never silent.
     let oversize = SyncV2Body::DeltaBatch {
-        codec: PayloadCodec::LoroDelta1,
+        codec: PayloadCodec::NativeDelta1,
         payload: vec![0xAB; FrameClass::Delivery.budget_bytes() + 1],
         next: checkpoint(1, 1),
         within_budget: false,
@@ -586,7 +586,7 @@ fn frame_budgets_are_written_definitions_with_exact_envelope_overhead() {
 
     // An oversize flag on a multi-commit batch is malformed.
     let lying = SyncV2Body::DeltaBatch {
-        codec: PayloadCodec::LoroDelta1,
+        codec: PayloadCodec::NativeDelta1,
         payload: vec![1],
         next: checkpoint(1, 1),
         within_budget: false,
@@ -637,7 +637,7 @@ fn sample_body(kind: FrameKind) -> SyncV2Body {
         FrameKind::CheckpointAck => SyncV2Body::CheckpointAck { checkpoint: checkpoint(1, 1) },
         FrameKind::Heartbeat => SyncV2Body::Heartbeat,
         FrameKind::DeltaBatch => SyncV2Body::DeltaBatch {
-            codec: PayloadCodec::LoroDelta1,
+            codec: PayloadCodec::NativeDelta1,
             payload: vec![1],
             next: checkpoint(1, 1),
             within_budget: true,
@@ -645,7 +645,7 @@ fn sample_body(kind: FrameKind) -> SyncV2Body {
             commits: 1,
         },
         FrameKind::SnapshotAnswer => SyncV2Body::SnapshotAnswer {
-            codec: PayloadCodec::LoroSnapshot1,
+            codec: PayloadCodec::NativeSnapshot1,
             payload: vec![1],
             checkpoint: checkpoint(1, 1),
         },

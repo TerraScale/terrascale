@@ -3,7 +3,7 @@
   "description": "Fail-closed decode: unknown versions (including v1), unknown kinds, truncation, trailing bytes, lying lengths, and idempotency keys on non-mutation frames are all rejected with typed errors.",
   "protocol": "terrascale.sync.v2",
   "protocol_version": 2,
-  "schema": "terrascale.sync.v2/vector-corpus@1",
+  "schema": "terrascale.sync.v2/vector-corpus@2",
   "server": {
     "config": {
       "batch_byte_budget": 8192,

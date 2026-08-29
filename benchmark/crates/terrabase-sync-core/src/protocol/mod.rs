@@ -1,14 +1,16 @@
-//! The `terrascale.sync.v2` client-channel wire protocol (ticket
-//! SE-04): the versioned frame vocabulary spoken between client Sync
-//! Sessions and the serving host, and the conformance-vector substrate.
+//! The `terrascale.sync.v2` client-channel wire protocol: the
+//! versioned frame vocabulary spoken between client Sync Sessions and
+//! the serving host, and the conformance-vector substrate.
 //!
-//! The protocol **wraps** the adopted base engine's wire payloads
-//! (decision recorded in `docs/sync/terrascale-sync-v2.md`): delta and
-//! snapshot payloads ride as named, versioned payload codecs
-//! (`loro-delta/1`, `loro-snapshot/1`) inside V2-owned typed frames.
-//! The frame vocabulary, envelope discipline, session semantics, and
-//! error taxonomy are `TerraBaseV2`'s; only the document-delta payload
-//! encoding is Loro's.
+//! The protocol carries **TerraBase-native** wire payloads (the
+//! replacement contract recorded in `docs/sync/terrascale-sync-v2.md`
+//! and ADR 0024): delta and snapshot payloads ride as named, versioned
+//! payload codecs (`terrabase-native/1`, `terrabase-snapshot/1`) inside
+//! V2-owned typed frames, encoded by this crate's native CRDT substrate
+//! over `terrabase-crdt` and `terrabase-causal`. The frame vocabulary,
+//! envelope discipline, session semantics, payload encoding, and error
+//! taxonomy are all `TerraBaseV2`'s; no external CRDT engine's payload
+//! is spoken, and the superseded codec codes fail closed.
 //!
 //! Scope limits, stated exactly:
 //!
@@ -305,7 +307,7 @@ pub fn serve_delta(
         SyncBatch::Delta { bytes, next, within_budget, commits, single_commit_oversize } => {
             let frame = SyncV2Frame::seal(
                 SyncV2Body::DeltaBatch {
-                    codec: PayloadCodec::LoroDelta1,
+                    codec: PayloadCodec::NativeDelta1,
                     payload: bytes,
                     next,
                     within_budget,
@@ -336,7 +338,7 @@ pub fn serve_snapshot(
     let SyncSnapshot { bytes, checkpoint } = core.resync_snapshot()?;
     let frame = SyncV2Frame::seal(
         SyncV2Body::SnapshotAnswer {
-            codec: PayloadCodec::LoroSnapshot1,
+            codec: PayloadCodec::NativeSnapshot1,
             payload: bytes,
             checkpoint,
         },

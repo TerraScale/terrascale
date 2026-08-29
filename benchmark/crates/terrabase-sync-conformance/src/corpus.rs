@@ -833,12 +833,11 @@ fn checkpoint_from_json(value: &Value) -> Result<SyncCheckpoint, String> {
             let peer = pair.first().and_then(Value::as_u64).ok_or("the pair carries no peer")?;
             let end = pair
                 .get(1)
-                .and_then(Value::as_i64)
-                .and_then(|end| i32::try_from(end).ok())
+                .and_then(Value::as_u64)
                 .ok_or("the pair carries no end counter")?;
             Ok((peer, end))
         })
-        .collect::<Result<Vec<(u64, i32)>, String>>()?;
+        .collect::<Result<Vec<(u64, u64)>, String>>()?;
     let storage_sequence = value
         .get("storage_sequence")
         .and_then(Value::as_u64)
@@ -1034,8 +1033,8 @@ fn strings_from(value: Option<&Value>) -> Result<Vec<String>, String> {
 
 fn codec_from(value: Option<&Value>) -> Result<PayloadCodec, String> {
     match value.and_then(Value::as_str) {
-        Some("loro-delta/1") => Ok(PayloadCodec::LoroDelta1),
-        Some("loro-snapshot/1") => Ok(PayloadCodec::LoroSnapshot1),
+        Some("terrabase-native/1") => Ok(PayloadCodec::NativeDelta1),
+        Some("terrabase-snapshot/1") => Ok(PayloadCodec::NativeSnapshot1),
         _ => Err("the frame carries an unknown payload codec".to_string()),
     }
 }

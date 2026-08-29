@@ -1,11 +1,8 @@
-# `terrabase-sync-core` — the SE-02 seam crate wrapping the adopted sync
-# base engine (Loro, per the SE-02 GO decision record) behind the typed
-# frame/checkpoint contract that TBEP's sync-delivery frames consume.
+# `terrabase-sync-core` — the engine-side sync-core seam over
+# TerraBase-native CRDT types (per ADR 0024 and the sync-v2 replacement
+# contract: no external CRDT engine is a dependency of this crate).
 #
-# Standalone workspace root on purpose: the engine workspace at the
-# repository root stays zero-dependency and untouched; the integrator adds
-# this crate to the root `members` list when the engine wires it in (the
-# SE-02 decision record names that as the required integrator action).
+# Workspace member of the engine root (see the root `Cargo.toml`).
 
 [package]
 name = "terrabase-sync-core"
@@ -13,11 +10,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "LicenseRef-TerraScale-Pending"
-description = "TerraBaseV2 sync-core seam: server-authoritative journal materialization, checkpoints, budgeted deltas, frames"
+description = "TerraBaseV2 sync-core seam: server-authoritative journal materialization over native CRDTs, checkpoints, budgeted deltas, frames"
 publish = false
-
-# Own workspace root: stays out of the engine workspace without any
-# root-Cargo.toml edit until the integrator wires it in.
 
 [lints.rust]
 unsafe_code = "deny"
@@ -27,9 +21,13 @@ missing_docs = "deny"
 pedantic = "warn"
 
 [dependencies]
-loro = "1.13.9"
+# The datatypes are TerraBase-native: LWW registers from `terrabase-crdt`
+# joined over the dotted version vectors, causal contexts, and hybrid
+# logical clocks of `terrabase-causal`.
+terrabase-causal = { path = "../terrabase-causal" }
+terrabase-crdt = { path = "../terrabase-crdt" }
 
 [dev-dependencies]
-# The golden conformance corpus (SE-04) is JSON so every SDK CI can
-# consume the same data files; the runner parses it with serde_json.
+# The golden conformance corpus is JSON so every SDK CI can consume the
+# same data files; the runner parses it with serde_json.
 serde_json = "1.0.150"

@@ -1,6 +1,6 @@
 //! The golden-vector runner: executes the committed `terrascale.sync.v2`
-//! conformance corpus (ticket SE-04) against the real sync core and
-//! protocol codec, asserting byte-exact wire frames.
+//! conformance corpus against the real sync core and protocol codec,
+//! asserting byte-exact wire frames.
 //!
 //! The corpus lives as JSON data files under `vectors/terrascale.sync.v2/`
 //! so any language can consume it (PD-2026-08-26-12 D1: the same vectors
@@ -9,11 +9,29 @@
 //! description, so an SDK asserts decode(bytes) == frame and
 //! encode(frame) == bytes.
 //!
+//! This is corpus generation 2: the native corpus. Every payload is the
+//! TerraBase-native codec (`terrabase-native/1` deltas,
+//! `terrabase-snapshot/1` snapshots) over `terrabase-crdt` and
+//! `terrabase-causal` state per ADR 0024; the superseded generation-1
+//! corpus carried an external CRDT engine's payloads and is historical
+//! evidence only. Old payload frames never decode as new ones.
+//!
+//! ADR 0024 category mapping: fresh-session covers snapshot bootstrap;
+//! checkpoint-resume covers delta and gap; repeated-change-delta covers
+//! delta efficiency; reconnect-replay covers duplicate and reconnect;
+//! resync-required covers reset; slow-consumer, region-route-change,
+//! malformed-frame-rejection, and trigger-notification complete the
+//! crate's vocabulary. DEFERRED categories (they need engine-side
+//! machinery that does not exist yet — view plans, authorized result
+//! revisions, AEAD checkpoints): authorization change, plus the full
+//! query-view result-operation vocabulary. They land with the ADR 0024
+//! view state machine.
+//!
 //! Regeneration: `cargo test --test vectors_runner -- --ignored
 //! regenerate_corpus` rewrites the corpus from the typed scenario
 //! definitions at the bottom of this file. The committed corpus is the
-//! golden record; if the codec or the base engine changes any byte, the
-//! replay below fails and the change is a contract change, not noise.
+//! golden record; if the codec or the native substrate changes any byte,
+//! the replay below fails and the change is a contract change, not noise.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -104,7 +122,7 @@ fn replay_corpus_file(source: &str, corpus: &Value) {
         corpus["protocol"].as_str().unwrap_or("<missing>"),
         corpus["protocol_version"],
     );
-    assert_eq!(corpus["schema"], json!("terrascale.sync.v2/vector-corpus@1"), "{source}: {header}");
+    assert_eq!(corpus["schema"], json!("terrascale.sync.v2/vector-corpus@2"), "{source}: {header}");
     assert_eq!(corpus["protocol"], json!("terrascale.sync.v2"), "{source}");
     assert_eq!(corpus["protocol_version"], json!(2), "{source}");
 
@@ -371,10 +389,7 @@ fn checkpoint_from_json(value: &Value, where_: &str) -> terrabase_sync_core::Syn
         .iter()
         .map(|pair| {
             let pair = pair.as_array().expect("pair");
-            (
-                pair[0].as_u64().expect("peer"),
-                i32::try_from(pair[1].as_i64().expect("end")).expect("end fits"),
-            )
+            (pair[0].as_u64().expect("peer"), pair[1].as_u64().expect("end"))
         })
         .collect();
     terrabase_sync_core::SyncCheckpoint::from_ends(
@@ -487,8 +502,8 @@ fn frame_from_json(value: &Value, where_: &str) -> SyncV2Frame {
 
 fn codec_from(value: &Value) -> PayloadCodec {
     match value.as_str().expect("codec") {
-        "loro-delta/1" => PayloadCodec::LoroDelta1,
-        "loro-snapshot/1" => PayloadCodec::LoroSnapshot1,
+        "terrabase-native/1" => PayloadCodec::NativeDelta1,
+        "terrabase-snapshot/1" => PayloadCodec::NativeSnapshot1,
         other => panic!("unknown payload codec {other}"),
     }
 }
@@ -594,7 +609,7 @@ impl Scenario {
 
     fn header(&self) -> Value {
         json!({
-            "schema": "terrascale.sync.v2/vector-corpus@1",
+            "schema": "terrascale.sync.v2/vector-corpus@2",
             "protocol": "terrascale.sync.v2",
             "protocol_version": 2,
             "category": "",
@@ -794,8 +809,8 @@ fn kind_name(kind: FrameKind) -> &'static str {
 
 fn codec_name(codec: PayloadCodec) -> &'static str {
     match codec {
-        PayloadCodec::LoroDelta1 => "loro-delta/1",
-        PayloadCodec::LoroSnapshot1 => "loro-snapshot/1",
+        PayloadCodec::NativeDelta1 => "terrabase-native/1",
+        PayloadCodec::NativeSnapshot1 => "terrabase-snapshot/1",
     }
 }
 

@@ -64,7 +64,7 @@ pub const PROTOCOL: &str = "terrascale.sync.v2";
 pub const PROTOCOL_VERSION: u64 = 2;
 
 /// The corpus schema identity every vector file carries.
-pub const CORPUS_SCHEMA: &str = "terrascale.sync.v2/vector-corpus@1";
+pub const CORPUS_SCHEMA: &str = "terrascale.sync.v2/vector-corpus@2";
 
 /// The report schema identity every conformance report carries.
 pub const REPORT_SCHEMA: &str = "terrascale.sync.v2/conformance-report@1";

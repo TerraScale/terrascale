@@ -88,14 +88,16 @@ impl FrameKind {
 }
 
 /// The payload codec identity of a delivery frame: the only places
-/// where byte payloads ride the protocol, each named and versioned (the
-/// wrapped-Loro decision of the wire spec).
+/// where byte payloads ride the protocol, each named and versioned.
+/// Per ADR 0024 the payload codecs are TerraBase-native; the codes
+/// begin at 3 so the superseded external-engine codec codes (1 and 2)
+/// fail closed on decode instead of aliasing a native codec.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PayloadCodec {
-    /// A Loro update-range delta export, codec version 1.
-    LoroDelta1,
-    /// A Loro snapshot export, codec version 1.
-    LoroSnapshot1,
+    /// A native `terrabase-native/1` delta batch, codec version 1.
+    NativeDelta1,
+    /// A native `terrabase-snapshot/1` snapshot, codec version 1.
+    NativeSnapshot1,
 }
 
 impl PayloadCodec {
@@ -103,28 +105,30 @@ impl PayloadCodec {
     #[must_use]
     pub fn code(self) -> u8 {
         match self {
-            PayloadCodec::LoroDelta1 => 1,
-            PayloadCodec::LoroSnapshot1 => 2,
+            PayloadCodec::NativeDelta1 => 3,
+            PayloadCodec::NativeSnapshot1 => 4,
         }
     }
 
-    /// The codec for a wire code, or `None` for unknown codes.
+    /// The codec for a wire code, or `None` for unknown codes —
+    /// including 1 and 2, the superseded external-engine codec codes
+    /// this contract deliberately does not accept.
     #[must_use]
     pub fn from_code(code: u8) -> Option<Self> {
         Some(match code {
-            1 => PayloadCodec::LoroDelta1,
-            2 => PayloadCodec::LoroSnapshot1,
+            3 => PayloadCodec::NativeDelta1,
+            4 => PayloadCodec::NativeSnapshot1,
             _ => return None,
         })
     }
 
-    /// The codec's contract name (`loro-delta/1`), the identity the
-    /// conformance vectors record.
+    /// The codec's contract name (`terrabase-native/1`), the identity
+    /// the conformance vectors record.
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
-            PayloadCodec::LoroDelta1 => "loro-delta/1",
-            PayloadCodec::LoroSnapshot1 => "loro-snapshot/1",
+            PayloadCodec::NativeDelta1 => "terrabase-native/1",
+            PayloadCodec::NativeSnapshot1 => "terrabase-snapshot/1",
         }
     }
 }
@@ -303,7 +307,7 @@ pub enum SyncV2Body {
     Heartbeat,
     /// One byte-budgeted delta batch.
     DeltaBatch {
-        /// The payload codec: always [`PayloadCodec::LoroDelta1`].
+        /// The payload codec: always [`PayloadCodec::NativeDelta1`].
         codec: PayloadCodec,
         /// The encoded delta bytes.
         payload: Vec<u8>,
@@ -319,7 +323,7 @@ pub enum SyncV2Body {
     },
     /// One full-state answer (initial sync or forced resync).
     SnapshotAnswer {
-        /// The payload codec: always [`PayloadCodec::LoroSnapshot1`].
+        /// The payload codec: always [`PayloadCodec::NativeSnapshot1`].
         codec: PayloadCodec,
         /// The encoded snapshot bytes.
         payload: Vec<u8>,
@@ -541,6 +545,9 @@ impl BodyCursor<'_> {
         let len = usize::try_from(len).map_err(|_| {
             crate::SyncCoreError::InvalidFrame("checkpoint length does not fit the platform")
         })?;
+        if len > crate::MAX_CHECKPOINT_BYTES {
+            return Err(crate::SyncCoreError::InvalidFrame("checkpoint exceeds its decode bound"));
+        }
         let bytes = self.take(len).map_err(crate::SyncCoreError::InvalidFrame)?;
         SyncCheckpoint::from_bytes(bytes)
     }
@@ -960,8 +967,8 @@ fn validate_delta(
     single_commit_oversize: bool,
     commits: u64,
 ) -> Result<(), &'static str> {
-    if codec != PayloadCodec::LoroDelta1 {
-        return Err("a delta batch carries the loro-delta/1 codec only");
+    if codec != PayloadCodec::NativeDelta1 {
+        return Err("a delta batch carries the terrabase-native/1 codec only");
     }
     if payload.len() > super::MAX_PAYLOAD_BYTES {
         return Err("payload exceeds the frame bound");
@@ -979,8 +986,8 @@ fn validate_snapshot(
     payload: &[u8],
     checkpoint: &SyncCheckpoint,
 ) -> Result<(), &'static str> {
-    if codec != PayloadCodec::LoroSnapshot1 {
-        return Err("a snapshot answer carries the loro-snapshot/1 codec only");
+    if codec != PayloadCodec::NativeSnapshot1 {
+        return Err("a snapshot answer carries the terrabase-snapshot/1 codec only");
     }
     if payload.len() > super::MAX_PAYLOAD_BYTES {
         return Err("payload exceeds the frame bound");
