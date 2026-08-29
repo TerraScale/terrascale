@@ -252,3 +252,38 @@ the superseded leader machinery.
 Receipts: `terrabase-replication-core` 15/15 (6 convergence + 9
 composed); `terrabase-v2 --lib` 1071/1071; clippy `-D warnings` and
 fmt clean across both packages. `scripts/check.sh` not run (AC-12).
+
+## 7. P2 landing 4 (2026-08-29): bounded CRDT history with the guarded compaction
+
+History compaction landed (`ReplicaDoc::compact_history`, the
+sync-core shallow-snapshot pattern on the server plane): the document
+compacts at its actual frontiers, deltas serve only from
+`retained_floor`, and a peer behind the floor receives
+`BehindRetainedFloor` and falls back to snapshot transfer — adoption
+for a peer with no operations of its own, proven end to end by a
+rejoining server.
+
+Two structural facts surfaced by the tests and now pinned as contracts
+of this seam:
+
+- **Compaction is only safe below the frontier every live peer
+  covers.** A compacted Member can neither serve a behind peer by
+  delta nor absorb that peer's operations whose causal context reaches
+  into the shallow region (Loro refuses such imports). The guarded
+  form — `compact_history_below(peers)`, per-peer-max of the live
+  frontiers — refuses while any live peer is behind, and admits after
+  convergence. The unguarded form stays for the operator who knows the
+  precondition.
+- **Adoption replaces the behind Member's document**, so it is
+  typed-refused (`SnapshotAdoptionWouldDropOwnOps`) while that Member
+  holds writes of its own; its own engine keeps serving them and the
+  correct procedure is to not compact below the live set.
+
+Also fixed en route: compaction at the document's frontiers
+(`oplog_frontiers`), not the peer's own last op — after absorbing
+peers' operations the latest op is not necessarily this peer's own,
+and only a valid frontier cut shallow-exports.
+
+Receipts: `terrabase-replication-core` 19/19 (8 convergence + 11
+composed); clippy `-D warnings` and fmt clean. `scripts/check.sh` not
+run (AC-12).

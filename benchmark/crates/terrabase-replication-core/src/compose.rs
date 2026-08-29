@@ -49,6 +49,12 @@ pub enum ComposeError {
     UnsupportedValue,
     /// An identifier was invalid.
     InvalidIdentifier,
+    /// A snapshot fallback would drop the behind Member's own
+    /// operations: compaction must not run below the live set's
+    /// frontier. The behind Member heals through a non-compacted peer
+    /// instead (the mesh answer); the compaction guard lands with the
+    /// transport wiring.
+    SnapshotAdoptionWouldDropOwnOps,
 }
 
 /// One leaderless write in the composed vocabulary: the operation
@@ -486,22 +492,70 @@ impl ComposedMember {
             if mine.covers(&theirs) && theirs.covers(&mine) {
                 break;
             }
-            if let ReplicaExchange::Delta(bytes) =
-                self.replica.delta_for(&theirs).map_err(ComposeError::Replica)?
-            {
-                other.replica.absorb(&bytes).map_err(ComposeError::Replica)?;
-            }
-            if let ReplicaExchange::Delta(bytes) =
-                other.replica.delta_for(&mine).map_err(ComposeError::Replica)?
-            {
-                self.replica.absorb(&bytes).map_err(ComposeError::Replica)?;
-            }
+            self.push_updates_to(other, &theirs)?;
+            self.pull_updates_from(other, &mine)?;
         }
         let first = self.reconcile()?;
         let second = other.reconcile()?;
         self.stage_snapshot()?;
         other.stage_snapshot()?;
         Ok((first, second))
+    }
+
+    /// Sends this Member's updates beyond `theirs` to `other`, falling
+    /// back to snapshot transfer when `other` sits behind this side's
+    /// retained floor (contract §5). Adoption replaces the behind
+    /// Member's document, so it is safe only while that Member holds
+    /// no operations of its own beyond the snapshot — a Member with
+    /// own ops heals through a non-compacted peer instead.
+    fn push_updates_to(
+        &self,
+        other: &mut Self,
+        theirs: &ReplicaFrontier,
+    ) -> Result<(), ComposeError> {
+        match self.replica.delta_for(theirs).map_err(ComposeError::Replica)? {
+            ReplicaExchange::UpToDate => Ok(()),
+            ReplicaExchange::Delta(bytes) => {
+                other.replica.absorb(&bytes).map_err(ComposeError::Replica)
+            }
+            ReplicaExchange::BehindRetainedFloor { .. } => {
+                let own = other.replica.export_own_ops().map_err(ComposeError::Replica)?;
+                if !own.is_empty() {
+                    return Err(ComposeError::SnapshotAdoptionWouldDropOwnOps);
+                }
+                let snapshot = self.replica.snapshot_bytes().map_err(ComposeError::Replica)?;
+                let peer = other.replica.peer_id();
+                other.replica =
+                    ReplicaDoc::from_snapshot(peer, &snapshot).map_err(ComposeError::Replica)?;
+                Ok(())
+            }
+        }
+    }
+
+    /// The mirror of [`ComposedMember::push_updates_to`]: pulls the
+    /// updates `other` holds beyond `mine` into this Member.
+    fn pull_updates_from(
+        &mut self,
+        other: &Self,
+        mine: &ReplicaFrontier,
+    ) -> Result<(), ComposeError> {
+        match other.replica.delta_for(mine).map_err(ComposeError::Replica)? {
+            ReplicaExchange::UpToDate => Ok(()),
+            ReplicaExchange::Delta(bytes) => {
+                self.replica.absorb(&bytes).map_err(ComposeError::Replica)
+            }
+            ReplicaExchange::BehindRetainedFloor { .. } => {
+                let own = self.replica.export_own_ops().map_err(ComposeError::Replica)?;
+                if !own.is_empty() {
+                    return Err(ComposeError::SnapshotAdoptionWouldDropOwnOps);
+                }
+                let snapshot = other.replica.snapshot_bytes().map_err(ComposeError::Replica)?;
+                let peer = self.replica.peer_id();
+                self.replica =
+                    ReplicaDoc::from_snapshot(peer, &snapshot).map_err(ComposeError::Replica)?;
+                Ok(())
+            }
+        }
     }
 
     /// Reconciles this Member's engine to its merged CRDT state.
@@ -533,6 +587,46 @@ impl ComposedMember {
             }
         }
         Ok(report)
+    }
+
+    /// Bounds the Member's retained CRDT history (contract §5): after
+    /// this, deltas serve only from the new floor and a peer behind it
+    /// recovers through snapshot transfer. Unguarded — safe only below
+    /// the frontier every live peer covers; prefer
+    /// [`ComposedMember::compact_history_below`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ComposeError::Replica`] when the compaction fails and
+    /// [`ComposeError::EngineRefused`] when the refreshed snapshot
+    /// cannot stage.
+    pub fn compact_history(&mut self) -> Result<(), ComposeError> {
+        self.replica.compact_history().map_err(ComposeError::Replica)?;
+        self.stage_snapshot()?;
+        Ok(())
+    }
+
+    /// The guarded compaction: bounds the history only when every live
+    /// peer's frontier covers this Member's, so no peer is stranded
+    /// behind the new floor. Returns `false` while any peer is behind.
+    ///
+    /// # Errors
+    ///
+    /// Returns the typed compose failures of both planes.
+    pub fn compact_history_below(
+        &mut self,
+        peers: &[ReplicaFrontier],
+    ) -> Result<bool, ComposeError> {
+        let mut live = ReplicaFrontier::default();
+        for frontier in peers {
+            live = live.merged_max(frontier);
+        }
+        let compacted = self.replica.compact_history_below(&live).map_err(ComposeError::Replica)?;
+        if !compacted {
+            return Ok(false);
+        }
+        self.stage_snapshot()?;
+        Ok(true)
     }
 
     /// Closes the Member, flushing its durable engine.

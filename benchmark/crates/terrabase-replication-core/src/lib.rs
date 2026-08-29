@@ -34,7 +34,7 @@
 
 use std::collections::BTreeMap;
 
-use loro::{ExportMode, Frontiers, ID, LoroDoc, LoroMap, LoroValue, VersionVector};
+use loro::{ExportMode, Frontiers, ID, IdSpan, LoroDoc, LoroMap, LoroValue, VersionVector};
 
 pub mod compose;
 
@@ -155,12 +155,20 @@ impl ReplicaDoc {
 
     /// Exports the delta this replica holds beyond `remote`'s frontier.
     ///
+    /// A remote behind the retained floor cannot be served by delta:
+    /// the answer names the floor so the caller falls back to snapshot
+    /// transfer.
+    ///
     /// # Errors
     ///
     /// Returns [`ReplicaError::ExportFailed`] when the export fails.
     pub fn delta_for(&self, remote: &ReplicaFrontier) -> Result<ReplicaExchange, ReplicaError> {
         if remote.covers(&self.frontier()) {
             return Ok(ReplicaExchange::UpToDate);
+        }
+        let floor = self.retained_floor();
+        if !floor.ends().is_empty() && !remote.covers(&floor) {
+            return Ok(ReplicaExchange::BehindRetainedFloor { floor });
         }
         let bytes = self
             .doc
@@ -227,6 +235,95 @@ impl ReplicaDoc {
         replica.doc.import(bytes).map_err(|_| ReplicaError::ImportFailed)?;
         Ok(Self { peer_id, doc: replica.doc })
     }
+
+    /// Bounds the retained history: compacts the document to a shallow
+    /// snapshot at the current frontier. Afterwards deltas serve only
+    /// from the new floor ([`ReplicaDoc::retained_floor`]) and a peer
+    /// behind it receives [`ReplicaExchange::BehindRetainedFloor`] and
+    /// falls back to snapshot transfer.
+    ///
+    /// Compaction is only safe below the frontier every live peer
+    /// covers: a compacted replica cannot absorb an operation whose
+    /// causal context reaches into the shallow region. Use
+    /// [`ReplicaDoc::compact_history_below`] for the guarded form.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReplicaError::ExportFailed`] or
+    /// [`ReplicaError::ImportFailed`] when the compaction export or
+    /// re-import fails.
+    pub fn compact_history(&mut self) -> Result<(), ReplicaError> {
+        let current_end = self.own_end();
+        if current_end == 0 && self.frontier().ends().is_empty() {
+            return Ok(());
+        }
+        // Compact at the document's actual heads — after absorbing
+        // peers' operations the latest op is not necessarily this
+        // peer's own, and only a valid frontier cut shallow-exports.
+        let shallow = self
+            .doc
+            .export(ExportMode::shallow_snapshot_owned(self.doc.oplog_frontiers()))
+            .map_err(|_| ReplicaError::ExportFailed)?;
+        let compacted = LoroDoc::new();
+        compacted.set_peer_id(self.peer_id).map_err(|_| ReplicaError::PeerIdRejected)?;
+        compacted.import(&shallow).map_err(|_| ReplicaError::ImportFailed)?;
+        self.doc = compacted;
+        Ok(())
+    }
+
+    /// The guarded compaction: bounds the history only when every live
+    /// peer's frontier covers this replica's current frontier, so no
+    /// peer can be stranded behind the new floor or hold operations
+    /// this replica could never absorb again. Returns `false` —
+    /// compounding nothing — while any live peer is behind.
+    ///
+    /// # Errors
+    ///
+    /// Returns the compaction failures of
+    /// [`ReplicaDoc::compact_history`].
+    pub fn compact_history_below(&mut self, live: &ReplicaFrontier) -> Result<bool, ReplicaError> {
+        let target = self.frontier();
+        if !live.covers(&target) {
+            return Ok(false);
+        }
+        if target.ends().is_empty() {
+            return Ok(true);
+        }
+        self.compact_history()?;
+        Ok(true)
+    }
+
+    /// The oldest frontier this replica can still serve a delta from:
+    /// empty before any compaction, the shallow root's floor after it.
+    #[must_use]
+    pub fn retained_floor(&self) -> ReplicaFrontier {
+        let mut ends: Vec<(u64, i32)> =
+            self.doc.shallow_since_vv().iter().map(|(peer, end)| (*peer, *end)).collect();
+        ends.sort_unstable();
+        ReplicaFrontier { ends }
+    }
+
+    /// This peer's own end counter (the last held counter plus one).
+    fn own_end(&self) -> i32 {
+        self.doc.oplog_vv().get_last(self.peer_id).map_or(0, |counter| counter + 1)
+    }
+
+    /// Exports every operation this peer itself authored — the piece a
+    /// behind-floor resync must carry across a snapshot adoption, so a
+    /// peer's own writes survive the adoption.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReplicaError::ExportFailed`] when the export fails.
+    pub fn export_own_ops(&self) -> Result<Vec<u8>, ReplicaError> {
+        let end = self.own_end();
+        if end == 0 {
+            return Ok(Vec::new());
+        }
+        self.doc
+            .export(ExportMode::updates_in_range(vec![IdSpan::new(self.peer_id, 0, end)]))
+            .map_err(|_| ReplicaError::ExportFailed)
+    }
 }
 
 /// One replica's causal frontier: the per-peer operation counters it
@@ -260,6 +357,24 @@ impl ReplicaFrontier {
         })
     }
 
+    /// Merges two frontiers into the per-peer maximum — the combined
+    /// progress of a peer set.
+    #[must_use]
+    pub fn merged_max(&self, other: &ReplicaFrontier) -> ReplicaFrontier {
+        let mut ends = self.ends.clone();
+        for (peer, end) in &other.ends {
+            match ends.iter_mut().find(|(held_peer, _)| held_peer == peer) {
+                Some(held) => {
+                    if *end > held.1 {
+                        held.1 = *end;
+                    }
+                }
+                None => ends.push((*peer, *end)),
+            }
+        }
+        Self::from_ends(ends)
+    }
+
     fn to_version_vector(&self) -> VersionVector {
         VersionVector::from_iter(self.ends.iter().copied())
     }
@@ -273,4 +388,11 @@ pub enum ReplicaExchange {
     UpToDate,
     /// The delta bytes the requester is missing.
     Delta(Vec<u8>),
+    /// The requester sits behind this replica's retained history floor:
+    /// no delta can serve it. The floor is named so the caller falls
+    /// back to snapshot transfer.
+    BehindRetainedFloor {
+        /// The oldest frontier this replica can still serve from.
+        floor: ReplicaFrontier,
+    },
 }

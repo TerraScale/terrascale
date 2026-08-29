@@ -38,8 +38,18 @@ fn holds(value: &LoroValue, document: &str) -> bool {
     value.get_by_key("docs").and_then(|docs| docs.get_by_key(document)).is_some()
 }
 
+/// Unwraps one exchange into its delta bytes; the tests that use it
+/// never cross a retained floor.
+fn delta_bytes(exchange: ReplicaExchange) -> Vec<u8> {
+    match exchange {
+        ReplicaExchange::Delta(bytes) => bytes,
+        other => panic!("expected a delta batch, got {other:?}"),
+    }
+}
+
 /// Exchanges deltas both ways until both frontiers cover each other —
-/// the anti-entropy loop the transport drives in production.
+/// the anti-entropy loop the transport drives in production, including
+/// the snapshot fallback for a peer behind a retained floor.
 fn sync_pair(first: &mut ReplicaDoc, second: &mut ReplicaDoc) {
     loop {
         let first_frontier = first.frontier();
@@ -47,13 +57,29 @@ fn sync_pair(first: &mut ReplicaDoc, second: &mut ReplicaDoc) {
         if first_frontier.covers(&second_frontier) && second_frontier.covers(&first_frontier) {
             return;
         }
-        if let ReplicaExchange::Delta(bytes) = first.delta_for(&second_frontier).expect("exports") {
-            second.absorb(&bytes).expect("second absorbs");
+        match first.delta_for(&second_frontier).expect("exports") {
+            ReplicaExchange::UpToDate => {}
+            ReplicaExchange::Delta(bytes) => second.absorb(&bytes).expect("second absorbs"),
+            ReplicaExchange::BehindRetainedFloor { .. } => adopt(first, second),
         }
-        if let ReplicaExchange::Delta(bytes) = second.delta_for(&first_frontier).expect("exports") {
-            first.absorb(&bytes).expect("first absorbs");
+        match second.delta_for(&first_frontier).expect("exports") {
+            ReplicaExchange::UpToDate => {}
+            ReplicaExchange::Delta(bytes) => first.absorb(&bytes).expect("first absorbs"),
+            ReplicaExchange::BehindRetainedFloor { .. } => adopt(second, first),
         }
     }
+}
+
+/// The behind-floor fallback: `behind` adopts `source`'s snapshot as
+/// its state. Safe while the behind peer holds no operations of its
+/// own — a peer with own ops heals through a non-compacted peer
+/// instead, and the compaction guard lands with the transport wiring.
+fn adopt(source: &ReplicaDoc, behind: &mut ReplicaDoc) {
+    let own = behind.export_own_ops().expect("exports own ops");
+    assert!(own.is_empty(), "adoption would drop the peer's own operations");
+    let snapshot = source.snapshot_bytes().expect("snapshots");
+    let peer = behind.peer_id();
+    *behind = ReplicaDoc::from_snapshot(peer, &snapshot).expect("adopts");
 }
 
 #[test]
@@ -122,35 +148,17 @@ fn the_merge_winner_is_deterministic_across_independent_runs() {
         member_a.apply_put("order-1", &body("accepted-by-a")).expect("a writes");
         member_b.apply_put("order-1", &body("accepted-by-b")).expect("b writes");
         if first_delivery == MEMBER_A {
-            let bytes = member_a.delta_for(&ReplicaFrontier::default()).expect("exports");
-            member_b
-                .absorb(&match bytes {
-                    ReplicaExchange::Delta(bytes) => bytes,
-                    ReplicaExchange::UpToDate => Vec::new(),
-                })
-                .expect("b absorbs");
-            let bytes = member_b.delta_for(&member_a.frontier()).expect("exports");
-            member_a
-                .absorb(&match bytes {
-                    ReplicaExchange::Delta(bytes) => bytes,
-                    ReplicaExchange::UpToDate => Vec::new(),
-                })
-                .expect("a absorbs");
+            let bytes =
+                delta_bytes(member_a.delta_for(&ReplicaFrontier::default()).expect("exports"));
+            member_b.absorb(&bytes).expect("b absorbs");
+            let bytes = delta_bytes(member_b.delta_for(&member_a.frontier()).expect("exports"));
+            member_a.absorb(&bytes).expect("a absorbs");
         } else {
-            let bytes = member_b.delta_for(&ReplicaFrontier::default()).expect("exports");
-            member_a
-                .absorb(&match bytes {
-                    ReplicaExchange::Delta(bytes) => bytes,
-                    ReplicaExchange::UpToDate => Vec::new(),
-                })
-                .expect("a absorbs");
-            let bytes = member_a.delta_for(&member_b.frontier()).expect("exports");
-            member_b
-                .absorb(&match bytes {
-                    ReplicaExchange::Delta(bytes) => bytes,
-                    ReplicaExchange::UpToDate => Vec::new(),
-                })
-                .expect("b absorbs");
+            let bytes =
+                delta_bytes(member_b.delta_for(&ReplicaFrontier::default()).expect("exports"));
+            member_a.absorb(&bytes).expect("a absorbs");
+            let bytes = delta_bytes(member_a.delta_for(&member_b.frontier()).expect("exports"));
+            member_b.absorb(&bytes).expect("b absorbs");
         }
         assert_eq!(member_a.deep_value(), member_b.deep_value());
         field_of(&member_a.deep_value(), "order-1", "status")
@@ -192,18 +200,11 @@ fn duplicated_and_reordered_delivery_converges_idempotently() {
     let mut member_a = replica(MEMBER_A);
     let mut member_b = replica(MEMBER_B);
     member_a.apply_put("order-1", &body("one")).expect("a writes one");
-    let first = match member_a.delta_for(&ReplicaFrontier::default()).expect("exports") {
-        ReplicaExchange::Delta(bytes) => bytes,
-        ReplicaExchange::UpToDate => panic!("a held operations to export"),
-    };
+    let first = delta_bytes(member_a.delta_for(&ReplicaFrontier::default()).expect("exports"));
     member_a.apply_put("order-2", &body("two")).expect("a writes two");
-    let second = match member_a
-        .delta_for(&ReplicaFrontier::from_ends(vec![(MEMBER_A, 1)]))
-        .expect("exports")
-    {
-        ReplicaExchange::Delta(bytes) => bytes,
-        ReplicaExchange::UpToDate => panic!("a held operations to export"),
-    };
+    let second = delta_bytes(
+        member_a.delta_for(&ReplicaFrontier::from_ends(vec![(MEMBER_A, 1)])).expect("exports"),
+    );
 
     // Reordered: the second window arrives before the first.
     member_b.absorb(&second).expect("b absorbs the later window first");
@@ -270,4 +271,54 @@ fn covered_frontiers_answer_up_to_date_without_exporting() {
         matches!(member_a.delta_for(&foreign), Ok(ReplicaExchange::Delta(_))),
         "an unknown peer's frontier exports everything held"
     );
+}
+
+#[test]
+fn compaction_raises_the_retained_floor() {
+    let mut member = replica(MEMBER_A);
+    member.apply_put("order-1", &body("one")).expect("writes");
+    assert!(member.retained_floor().ends().is_empty(), "no floor before compaction");
+    member.compact_history().expect("compacts");
+    assert!(!member.retained_floor().ends().is_empty(), "the floor is the shallow root");
+    // An up-to-date peer still answers UpToDate.
+    let now = member.frontier();
+    assert_eq!(member.delta_for(&now), Ok(ReplicaExchange::UpToDate));
+    // A peer behind the floor cannot be served by delta: the answer
+    // names the floor for the snapshot fallback.
+    assert!(matches!(
+        member.delta_for(&ReplicaFrontier::default()),
+        Ok(ReplicaExchange::BehindRetainedFloor { .. })
+    ));
+    // The merged state survives the compaction.
+    assert_eq!(field_of(&member.deep_value(), "order-1", "status"), Some(LoroValue::from("one")));
+}
+
+#[test]
+fn a_fresh_peer_adopts_a_compacted_snapshot() {
+    // The rejoin shape the fallback serves: a Member that holds no
+    // operations of its own sits behind a compacted peer's floor and
+    // adopts its snapshot. (A peer WITH own ops must heal through a
+    // non-compacted peer — the compaction guard lands with the
+    // transport wiring; the composed test pins the typed refusal.)
+    let mut holder = replica(MEMBER_A);
+    holder.apply_put("order-1", &body("from-a")).expect("writes");
+    holder.compact_history().expect("compacts");
+    let floor = holder.retained_floor();
+
+    let mut fresh = replica(MEMBER_B);
+    assert!(
+        matches!(
+            holder.delta_for(&fresh.frontier()),
+            Ok(ReplicaExchange::BehindRetainedFloor { .. })
+        ),
+        "a fresh peer sits behind the compacted floor {:?}",
+        floor.ends()
+    );
+    adopt(&holder, &mut fresh);
+
+    // The adopted state is the merged state, and the pair is converged.
+    assert_eq!(fresh.deep_value(), holder.deep_value());
+    assert_eq!(field_of(&fresh.deep_value(), "order-1", "status"), Some(LoroValue::from("from-a")));
+    sync_pair(&mut fresh, &mut holder);
+    assert_eq!(fresh.frontier(), holder.frontier());
 }

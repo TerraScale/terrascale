@@ -412,3 +412,81 @@ fn global_quorum_composed_requires_a_majority_of_regions() {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+#[test]
+fn a_rejoining_server_behind_the_floor_recovers_by_snapshot_adoption() {
+    let dir_a = location("floor-a");
+    let dir_c = location("floor-c");
+    let mut member_a = ComposedMember::open("member-a", &dir_a, "tenant-a").expect("opens");
+
+    member_a.accept_put("op-a1", "order-1", &body("one")).expect("a writes");
+    member_a.accept_put("op-a2", "order-2", &body("two")).expect("a writes more");
+    member_a.compact_history().expect("a bounds its history");
+
+    // c rejoins with no operations of its own: it sits behind a's
+    // retained floor and recovers by adopting a's snapshot.
+    let mut member_c = ComposedMember::open("member-c", &dir_c, "tenant-a").expect("opens");
+    member_a.anti_entropy_with(&mut member_c).expect("heals across the floor");
+    assert_eq!(member_c.visible("order-1"), Ok(Some(body("one"))));
+    assert_eq!(member_c.visible("order-2"), Ok(Some(body("two"))));
+    assert_eq!(member_a.merged_state(), member_c.merged_state());
+
+    member_a.shutdown().expect("closes");
+    member_c.shutdown().expect("closes");
+    let _ = std::fs::remove_dir_all(&dir_a);
+    let _ = std::fs::remove_dir_all(&dir_c);
+}
+
+#[test]
+fn guarded_compaction_waits_for_the_live_set_and_adoption_refuses_own_ops() {
+    // The operator rule for bounded history: compaction only below the
+    // frontier every live peer covers — a compacted Member can neither
+    // serve a behind peer by delta nor absorb that peer's operations
+    // whose causal context reaches into the shallow region. And the
+    // snapshot fallback is typed-refused while the behind Member holds
+    // writes of its own.
+    let dir_a = location("guard-a");
+    let dir_b = location("guard-b");
+    let dir_c = location("guard-c");
+    let mut member_a = ComposedMember::open("member-a", &dir_a, "tenant-a").expect("opens");
+    let mut member_b = ComposedMember::open("member-b", &dir_b, "tenant-a").expect("opens");
+
+    member_a.accept_put("op-a1", "order-1", &body("one")).expect("a writes");
+    member_a.anti_entropy_with(&mut member_b).expect("spreads to b");
+    // Diverge: a writes past the exchange, b writes concurrently.
+    member_a.accept_put("op-a2", "order-2", &body("two")).expect("a writes more");
+    member_b.accept_put("op-b1", "order-3", &body("three")).expect("b writes concurrently");
+
+    // The guarded compaction refuses while b is behind a's frontier.
+    assert!(
+        !member_a.compact_history_below(&[member_b.frontier()]).expect("guards"),
+        "the guarded compaction refuses while a live peer is behind"
+    );
+    // The normal heal converges both servers with the history whole.
+    member_a.anti_entropy_with(&mut member_b).expect("the un-compacted heal converges");
+    for document in ["order-1", "order-2", "order-3"] {
+        assert!(member_a.visible(document).expect("a serves").is_some(), "a serves {document}");
+        assert!(member_b.visible(document).expect("b serves").is_some(), "b serves {document}");
+    }
+    // After convergence the guard admits the compaction.
+    assert!(member_a.compact_history_below(&[member_b.frontier()]).expect("guards"));
+
+    // A fresh Member holding one write of its own now sits behind a's
+    // floor: adopting a's snapshot would drop its write, so the direct
+    // heal is typed-refused — the operator compacts only below the live
+    // set's frontier, which this Member has not yet joined.
+    let mut member_c = ComposedMember::open("member-c", &dir_c, "tenant-a").expect("opens");
+    member_c.accept_put("op-c1", "order-4", &body("four")).expect("c writes");
+    let refusal =
+        member_a.anti_entropy_with(&mut member_c).expect_err("adoption would drop c's own write");
+    assert_eq!(refusal, ComposeError::SnapshotAdoptionWouldDropOwnOps);
+    // c's own write is intact on its own engine.
+    assert_eq!(member_c.visible("order-4"), Ok(Some(body("four"))));
+
+    member_a.shutdown().expect("closes");
+    member_b.shutdown().expect("closes");
+    member_c.shutdown().expect("closes");
+    for dir in [dir_a, dir_b, dir_c] {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
