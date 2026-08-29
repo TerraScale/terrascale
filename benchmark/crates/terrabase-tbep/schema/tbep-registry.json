@@ -14,8 +14,8 @@
     "stream_prefix": "u32 little-endian length of the encoded envelope"
   },
   "payload_codecs": [
-    "loro-delta/1",
-    "loro-snapshot/1",
+    "terrabase-native/1",
+    "terrabase-snapshot/1",
     "terrabase.sync-core/checkpoint@1",
     "terrabase.family-request/1",
     "terrabase.family-response/1"

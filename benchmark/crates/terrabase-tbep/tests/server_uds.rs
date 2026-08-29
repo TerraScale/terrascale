@@ -216,7 +216,7 @@ fn sync_delivery_flows_end_to_end_over_the_socket() {
         fixture.call(SyncDeltaPullRequest { session_id, from: setup_checkpoint }, None);
     let next = match delta_answer.body() {
         TbepBody::SyncDeltaPullResponse(response) => {
-            assert_eq!(response.payload_codec, "loro-delta/1");
+            assert_eq!(response.payload_codec, "terrabase-native/1");
             assert!(!response.payload.is_empty());
             response.next.clone()
         }
@@ -225,7 +225,7 @@ fn sync_delivery_flows_end_to_end_over_the_socket() {
     let snapshot_answer = fixture.call(SyncSnapshotPullRequest { session_id }, None);
     match snapshot_answer.body() {
         TbepBody::SyncSnapshotPullResponse(response) => {
-            assert_eq!(response.payload_codec, "loro-snapshot/1");
+            assert_eq!(response.payload_codec, "terrabase-snapshot/1");
             assert!(!response.payload.is_empty());
         }
         other => panic!("expected a snapshot, got {other:?}"),

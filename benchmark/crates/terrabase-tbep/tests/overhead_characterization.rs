@@ -171,7 +171,7 @@ fn every_registry_kind_overhead_stays_within_the_fixed_bound() {
             TbepFrame::seal(
                 SyncDeltaPullResponse {
                     session_id: u64::MAX,
-                    payload_codec: "loro-delta/1".into(),
+                    payload_codec: "terrabase-native/1".into(),
                     payload: Vec::new(),
                     next: Vec::new(),
                     commits: 1,
@@ -253,7 +253,7 @@ fn stream_write_uses_one_buffer_and_one_write_case() {
     let frame = TbepFrame::seal(
         SyncDeltaPullResponse {
             session_id: 1,
-            payload_codec: "loro-delta/1".into(),
+            payload_codec: "terrabase-native/1".into(),
             payload: vec![7_u8; 512],
             next: vec![1_u8; 24],
             commits: 4,

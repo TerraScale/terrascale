@@ -39,6 +39,8 @@ use std::sync::mpsc::channel;
 
 use terrabase_sync_core::JournalChange;
 use terrabase_sync_core::JournalCommit;
+use terrabase_sync_core::NATIVE_DELTA_MAGIC;
+use terrabase_sync_core::NATIVE_SNAPSHOT_MAGIC;
 use terrabase_sync_core::SyncBatch;
 use terrabase_sync_core::SyncCheckpoint;
 use terrabase_sync_core::SyncCore;
@@ -46,6 +48,7 @@ use terrabase_sync_core::SyncCoreConfig;
 use terrabase_sync_core::SyncCoreError;
 use terrabase_sync_core::SyncScope;
 use terrabase_sync_core::SyncValue;
+use terrabase_sync_core::protocol::PayloadCodec;
 
 use crate::codec::TbepValue;
 use crate::generated::AdminStatusResponse;
@@ -129,6 +132,15 @@ pub const IDEMPOTENCY_RETRY_HORIZON: usize = CHECKPOINT_WINDOW;
 
 /// The journal bound per scope (bounded memory: the retained window).
 const JOURNAL_BOUND: usize = CHECKPOINT_WINDOW;
+
+/// The maximum encoded native checkpoint accepted by this host. The core's
+/// decoder enforces the same entry bound; checking the byte bound first keeps
+/// malformed TBEP bodies from reaching even bounded decode allocation.
+const MAX_SYNC_CHECKPOINT_BYTES: usize = 1 + 8 + 4 + 64 * 16;
+
+/// Native payloads are bounded by the generated TBEP frame limit and by the
+/// sync core's native decoder.
+const MAX_SYNC_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 
 /// The per-host failure vocabulary; every row maps onto a closed TBEP
 /// error code.
@@ -723,6 +735,14 @@ struct SessionState {
     /// from any other tenant's channel are refused (the engine-enforced
     /// isolation of PD-2026-08-26-11 D1).
     tenant: String,
+    /// The latest checkpoint issued to this session. This is delivery state,
+    /// not a replication frontier or an authorization grant.
+    checkpoint: SyncCheckpoint,
+    /// The greatest checkpoint acknowledged by this session.
+    acknowledged: SyncCheckpoint,
+    /// Checkpoints issued to this session and therefore eligible for ack or
+    /// replay. The ring is bounded by the delivery window.
+    issued_checkpoints: VecDeque<SyncCheckpoint>,
 }
 
 /// One backbone subscription served by the host.
@@ -747,7 +767,7 @@ struct HostState {
 /// The real sync-delivery host over the adopted sync core.
 ///
 /// Serves the sync-delivery frame family end-to-end over
-/// `terrabase-sync-core` (real Loro deltas and snapshots), the
+/// `terrabase-sync-core` (native deltas and snapshots), the
 /// journal-backed backbone streams with content-free trigger
 /// notifications, topology/admin reads, and the supervision contract.
 /// The document/query/family operations answer
@@ -838,6 +858,36 @@ impl SyncDeliveryHost {
         session_id: u64,
     ) -> Result<String, HostingError> {
         Ok(Self::session_of(state, tenant, session_id)?.collection.clone())
+    }
+
+    fn decode_checkpoint(bytes: &[u8]) -> Result<SyncCheckpoint, HostingError> {
+        if bytes.len() > MAX_SYNC_CHECKPOINT_BYTES {
+            return Err(HostingError::CheckpointRefused(
+                "checkpoint exceeds the native decode bound".into(),
+            ));
+        }
+        SyncCheckpoint::from_bytes(bytes)
+            .map_err(|_| HostingError::CheckpointRefused("the checkpoint does not decode".into()))
+    }
+
+    fn checkpoint_is_issued(session: &SessionState, checkpoint: &SyncCheckpoint) -> bool {
+        session.issued_checkpoints.iter().any(|issued| issued == checkpoint)
+    }
+
+    fn remember_checkpoint(session: &mut SessionState, checkpoint: SyncCheckpoint) {
+        if session.issued_checkpoints.back() != Some(&checkpoint) {
+            session.issued_checkpoints.push_back(checkpoint.clone());
+        }
+        while session.issued_checkpoints.len() > CHECKPOINT_WINDOW {
+            session.issued_checkpoints.pop_front();
+        }
+        session.checkpoint = checkpoint;
+    }
+
+    fn checkpoint_is_monotone(previous: &SyncCheckpoint, candidate: &SyncCheckpoint) -> bool {
+        candidate.storage_sequence >= previous.storage_sequence
+            && candidate.end_for(terrabase_sync_core::SERVER_PEER_ID).unwrap_or(0)
+                >= previous.end_for(terrabase_sync_core::SERVER_PEER_ID).unwrap_or(0)
     }
 }
 
@@ -1036,24 +1086,50 @@ impl TbepHost for SyncDeliveryHost {
     ) -> Result<SyncSessionSetupResponse, HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
-        if let Some(resume) = &request.resume
-            && SyncCheckpoint::from_bytes(resume).is_err()
-        {
-            return Err(HostingError::CheckpointRefused(
-                "the resume checkpoint does not decode".into(),
-            ));
+        if request.collection.len() > 64 {
+            return Err(HostingError::Invalid("collection exceeds the sync bound".into()));
         }
+        let resume = request.resume.as_deref().map(Self::decode_checkpoint).transpose()?;
         let (checkpoint, retained_floor) = {
             let scope = Self::scope(&mut state.scopes, tenant, &request.collection);
+            // Validate the native peer and server position before accepting
+            // a resume. The generated schema still carries a causal
+            // checkpoint rather than the opaque, scope-bound view token
+            // required by ADR 0024; collection binding is therefore a
+            // schema/API gap reported with this integration.
+            if let Some(resume) = &resume {
+                match scope.core.delta_since(resume) {
+                    Ok(_) => {}
+                    Err(error) => {
+                        return Err(HostingError::CheckpointRefused(error.to_string()));
+                    }
+                }
+            }
             (scope.core.checkpoint().to_bytes(), scope.core.retained_floor().to_bytes())
         };
+        let checkpoint = Self::decode_checkpoint(&checkpoint)?;
         state.next_session += 1;
         let session_id = state.next_session;
+        let mut issued_checkpoints = VecDeque::new();
+        if let Some(resume) = resume {
+            issued_checkpoints.push_back(resume);
+        }
+        issued_checkpoints.push_back(checkpoint.clone());
         state.sessions.insert(
             session_id,
-            SessionState { collection: request.collection.clone(), tenant: tenant.to_string() },
+            SessionState {
+                collection: request.collection.clone(),
+                tenant: tenant.to_string(),
+                checkpoint: checkpoint.clone(),
+                acknowledged: SyncCheckpoint::initial(),
+                issued_checkpoints,
+            },
         );
-        Ok(SyncSessionSetupResponse { session_id, checkpoint, retained_floor })
+        Ok(SyncSessionSetupResponse {
+            session_id,
+            checkpoint: checkpoint.to_bytes(),
+            retained_floor,
+        })
     }
 
     fn sync_delta_pull(
@@ -1063,42 +1139,69 @@ impl TbepHost for SyncDeliveryHost {
     ) -> Result<SyncDeltaPullResponse, HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
-        let collection = Self::session_collection(&state, tenant, request.session_id)?;
-        let from = SyncCheckpoint::from_bytes(&request.from).map_err(|_| {
-            HostingError::CheckpointRefused("the checkpoint does not decode".into())
-        })?;
-        let scope = Self::scope(&mut state.scopes, tenant, &collection);
-        match scope.core.delta_since(&from) {
-            Ok(SyncBatch::UpToDate) => Ok(SyncDeltaPullResponse {
-                session_id: request.session_id,
-                payload_codec: "loro-delta/1".into(),
-                payload: Vec::new(),
-                next: scope.core.checkpoint().to_bytes(),
-                commits: 0,
-                single_commit_oversize: false,
-            }),
-            Ok(SyncBatch::Delta {
-                bytes,
-                next,
-                within_budget,
-                commits,
-                single_commit_oversize,
-            }) => {
-                let _ = within_budget;
-                Ok(SyncDeltaPullResponse {
-                    session_id: request.session_id,
-                    payload_codec: "loro-delta/1".into(),
-                    payload: bytes,
-                    next: next.to_bytes(),
-                    commits: u32::try_from(commits).unwrap_or(u32::MAX),
+        let (collection, from) = {
+            let session = Self::session_of(&state, tenant, request.session_id)?;
+            let from = Self::decode_checkpoint(&request.from)?;
+            if !Self::checkpoint_is_issued(session, &from) {
+                return Err(HostingError::CheckpointRefused(
+                    "checkpoint was not issued to this session".into(),
+                ));
+            }
+            (session.collection.clone(), from)
+        };
+        let response = {
+            let scope = Self::scope(&mut state.scopes, tenant, &collection);
+            match scope.core.delta_since(&from) {
+                Ok(SyncBatch::UpToDate) => {
+                    let next = scope.core.checkpoint();
+                    Ok(SyncDeltaPullResponse {
+                        session_id: request.session_id,
+                        payload_codec: PayloadCodec::NativeDelta1.name().into(),
+                        payload: Vec::new(),
+                        next: next.to_bytes(),
+                        commits: 0,
+                        single_commit_oversize: false,
+                    })
+                }
+                Ok(SyncBatch::Delta {
+                    bytes,
+                    next,
+                    within_budget,
+                    commits,
                     single_commit_oversize,
-                })
+                }) => {
+                    if !within_budget && !single_commit_oversize {
+                        return Err(HostingError::EngineFailure(
+                            "native delta exceeded its batch bound".into(),
+                        ));
+                    }
+                    if bytes.len() > MAX_SYNC_PAYLOAD_BYTES
+                        || (!bytes.is_empty() && !bytes.starts_with(NATIVE_DELTA_MAGIC))
+                    {
+                        return Err(HostingError::EngineFailure(
+                            "native delta failed its payload bound".into(),
+                        ));
+                    }
+                    Ok(SyncDeltaPullResponse {
+                        session_id: request.session_id,
+                        payload_codec: PayloadCodec::NativeDelta1.name().into(),
+                        payload: bytes,
+                        next: next.to_bytes(),
+                        commits: u32::try_from(commits).unwrap_or(u32::MAX),
+                        single_commit_oversize,
+                    })
+                }
+                Ok(SyncBatch::BehindRetainedFloor { .. }) => Err(HostingError::CheckpointRefused(
+                    "resync-required:behind-retained-floor".into(),
+                )),
+                Err(error) => Err(HostingError::EngineFailure(error.to_string())),
             }
-            Ok(SyncBatch::BehindRetainedFloor { .. }) => {
-                Err(HostingError::CheckpointRefused("behind-retained-floor".into()))
-            }
-            Err(error) => Err(HostingError::EngineFailure(error.to_string())),
-        }
+        }?;
+        let next = Self::decode_checkpoint(&response.next)?;
+        let session =
+            state.sessions.get_mut(&request.session_id).expect("session was validated above");
+        Self::remember_checkpoint(session, next);
+        Ok(response)
     }
 
     fn sync_snapshot_pull(
@@ -1111,12 +1214,28 @@ impl TbepHost for SyncDeliveryHost {
         let collection = Self::session_collection(&state, tenant, request.session_id)?;
         let scope = Self::scope(&mut state.scopes, tenant, &collection);
         match scope.core.resync_snapshot() {
-            Ok(snapshot) => Ok(SyncSnapshotPullResponse {
-                session_id: request.session_id,
-                payload_codec: "loro-snapshot/1".into(),
-                payload: snapshot.bytes,
-                checkpoint: snapshot.checkpoint.to_bytes(),
-            }),
+            Ok(snapshot) => {
+                if snapshot.bytes.len() > MAX_SYNC_PAYLOAD_BYTES
+                    || !snapshot.bytes.starts_with(NATIVE_SNAPSHOT_MAGIC)
+                {
+                    return Err(HostingError::EngineFailure(
+                        "native snapshot failed its payload bound".into(),
+                    ));
+                }
+                let checkpoint = Self::decode_checkpoint(&snapshot.checkpoint.to_bytes())?;
+                let response = SyncSnapshotPullResponse {
+                    session_id: request.session_id,
+                    payload_codec: PayloadCodec::NativeSnapshot1.name().into(),
+                    payload: snapshot.bytes,
+                    checkpoint: checkpoint.to_bytes(),
+                };
+                let session = state
+                    .sessions
+                    .get_mut(&request.session_id)
+                    .expect("session was validated above");
+                Self::remember_checkpoint(session, checkpoint);
+                Ok(response)
+            }
             Err(error) => Err(HostingError::EngineFailure(error.to_string())),
         }
     }
@@ -1131,12 +1250,29 @@ impl TbepHost for SyncDeliveryHost {
         // The session must belong to this tenant's channel before the
         // checkpoint is even parsed: another tenant's ack is refused
         // with the typed session refusal and changes nothing.
-        Self::session_of(&state, tenant, request.session_id)?;
-        if SyncCheckpoint::from_bytes(&request.checkpoint).is_ok() {
-            Ok(SyncCheckpointAckResponse { session_id: request.session_id })
-        } else {
-            Err(HostingError::CheckpointRefused("the checkpoint does not decode".into()))
+        let (collection, checkpoint) = {
+            let session = Self::session_of(&state, tenant, request.session_id)?;
+            let checkpoint = Self::decode_checkpoint(&request.checkpoint)?;
+            if !Self::checkpoint_is_issued(session, &checkpoint) {
+                return Err(HostingError::CheckpointRefused(
+                    "checkpoint was not issued to this session".into(),
+                ));
+            }
+            if !Self::checkpoint_is_monotone(&session.acknowledged, &checkpoint) {
+                return Err(HostingError::CheckpointRefused(
+                    "checkpoint acknowledgement moved backwards".into(),
+                ));
+            }
+            (session.collection.clone(), checkpoint)
+        };
+        let scope = Self::scope(&mut state.scopes, tenant, &collection);
+        if let Err(error) = scope.core.delta_since(&checkpoint) {
+            return Err(HostingError::CheckpointRefused(error.to_string()));
         }
+        let session =
+            state.sessions.get_mut(&request.session_id).expect("session was validated above");
+        session.acknowledged = checkpoint;
+        Ok(SyncCheckpointAckResponse { session_id: request.session_id })
     }
 
     fn sync_mutation_submit(
@@ -1634,7 +1770,7 @@ mod tests {
                 &SyncDeltaPullRequest { session_id: 1, from: initial.to_bytes() },
             )
             .expect("delta");
-        assert_eq!(delta.payload_codec, "loro-delta/1");
+        assert_eq!(delta.payload_codec, "terrabase-native/1");
         assert!(!delta.payload.is_empty());
         assert_eq!(delta.commits, 2);
 
@@ -1650,7 +1786,7 @@ mod tests {
         let snapshot = host
             .sync_snapshot_pull("tenant-a", &SyncSnapshotPullRequest { session_id: 1 })
             .expect("snapshot");
-        assert_eq!(snapshot.payload_codec, "loro-snapshot/1");
+        assert_eq!(snapshot.payload_codec, "terrabase-snapshot/1");
         assert!(!snapshot.payload.is_empty());
     }
 

@@ -30,8 +30,8 @@ public static partial class TbepRegistry
     /// <summary>The closed payload-codec vocabulary.</summary>
     public static readonly string[] PayloadCodecs =
     [
-        "loro-delta/1",
-        "loro-snapshot/1",
+        "terrabase-native/1",
+        "terrabase-snapshot/1",
         "terrabase.sync-core/checkpoint@1",
         "terrabase.family-request/1",
         "terrabase.family-response/1",
