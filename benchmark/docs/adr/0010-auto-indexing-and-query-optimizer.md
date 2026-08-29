@@ -22,8 +22,8 @@ capabilities:
 
 ```text
 AutoIndexDefinition {
-    tenant_id
-    database_id
+    tenant_ulid
+    database_ulid
     collection
     schema_generation
     ordered_fields_and_directions
@@ -36,10 +36,12 @@ AutoIndexDefinition {
 }
 ```
 
-`AutoIndexId` is a domain-separated BLAKE3 digest of the canonical definition.
-Equivalent query shapes in different Regions therefore propose the same
-identity and definition. The complete definition is compared even when IDs
-match. Same identity with different bytes is corruption.
+`AutoIndexUlid` is the catalog identity from ADR 0027.
+`AutoIndexDefinitionDigest` is the domain-separated BLAKE3 digest of the
+canonical definition. Equivalent query shapes in different Regions therefore
+propose the same digest. The coordinated catalog decision selects or reuses one
+ULID for that digest. The complete definition is compared even when digests
+match; the same digest with different canonical bytes is corruption.
 
 Definitions are versioned database metadata and replicate through native
 TerraBase commits. Concurrent identical creation converges. Widening or merging
@@ -90,7 +92,8 @@ The query may scan only when all of these are true:
 
 Otherwise the query waits within its deadline for the index's required applied
 generation or returns `IndexBuilding` with typed progress and retry guidance.
-It never falls back to an unbounded scan.
+The build is a durable long-running operation under ADR 0028. It never falls
+back to an unbounded scan.
 
 ## Causal visibility
 
@@ -98,7 +101,7 @@ Each local index tracks:
 
 ```text
 IndexProgress {
-    definition_id
+    auto_index_ulid
     definition_version
     build_generation
     applied_partition_positions
@@ -139,7 +142,8 @@ recreated from canonical data without affecting database correctness.
 Catalog and build work use bounded tenant-aware queues. Index construction,
 merge, and deletion cannot starve writes, replication, repair, or another
 tenant. When resource admission refuses a build, the query receives typed
-progress or overload instead of triggering unlimited background work.
+operation progress or overload instead of triggering unlimited background
+work.
 
 ## Reactive and authorization integration
 

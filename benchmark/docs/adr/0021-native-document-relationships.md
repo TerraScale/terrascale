@@ -9,8 +9,8 @@ Accepted on 2026-08-29 by direct workspace-owner instruction.
 ## Decision
 
 TerraBaseV2 supports one-to-one, one-to-many, and many-to-many relationships
-as native edge records. Edges have stable identities, CRDT field semantics,
-and engine-owned forward and reverse Auto-Indexes.
+as native edge records. Edges have stable ULIDs under ADR 0027, CRDT field
+semantics, and engine-owned forward and reverse Auto-Indexes.
 
 The first release supports named forward and reverse one-hop queries and
 bounded multi-hop TQL traversal. Every traversal has explicit depth, result,
@@ -26,7 +26,8 @@ availability cost.
 
 Delete policies are explicit: `preserve`, `nullify`, `cascade`, or `restrict`.
 Cascade and nullify use bounded idempotent mutation plans. The engine never
-runs an unbounded synchronous cascade.
+runs an unbounded synchronous cascade. Work that outlives the request deadline
+is a durable long-running operation under ADR 0028.
 
 ## Consequences
 

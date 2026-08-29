@@ -52,11 +52,12 @@ changes, and new incarnations. It does not execute arbitrary JavaScript, WASM,
 plugins, agents, or user processes inside TerraBase.
 
 The engine runs migration output as ordinary authorized native commits. Each
-Partition records plan identity, source and target schema, cursor, causal cut,
-counts, checksums, failures, resource use, and completion. Retry uses stable
-idempotency identities. A migration can pause, resume, cancel before cutover,
-or report partial completion. It cannot roll back already replicated immutable
-commits by deleting history.
+Partition records the plan ULID and digest, source and target schema, cursor,
+causal cut, counts, checksums, failures, resource use, and completion. The
+migration is a durable long-running operation under ADR 0028. Retry uses its
+stable client-request ULID. It can pause, resume, request cancellation before
+cutover, or report partial completion. It cannot roll back already replicated
+immutable commits by deleting history.
 
 Cutover occurs only after every selected Region understands the target schema,
 required Auto-Indexes are ready, migration verification passes, and the

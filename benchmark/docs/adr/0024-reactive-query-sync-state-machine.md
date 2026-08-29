@@ -14,9 +14,9 @@ authorized result of bounded queries. Exposing native CRDT frames to a client
 would leak internal history, make client identity part of replication, and tie
 the public protocol to storage encoding.
 
-ADR 0019 separates the planes. ADRs 0022 and 0023 define native commits and
-their replication. This record fixes how applied commits become query result
-snapshots, revisions, patches, checkpoints, and safe reconnects.
+The workspace goal separates the planes. ADRs 0022 and 0023 define native
+commits and their replication. This record fixes how applied commits become
+query result snapshots, revisions, patches, checkpoints, and safe reconnects.
 
 ## Product contract
 
@@ -52,14 +52,14 @@ delta, causal Merkle proof, or Member acknowledgement.
 ## Canonical view identity
 
 TerraBase parses TQL into the versioned typed AST, binds arguments and schema,
-compiles authorization, and canonicalizes the result contract. The view plan
-identity is:
+compiles authorization, and canonicalizes the result contract. The canonical
+view-plan digest is:
 
 ```text
-ViewPlanId = BLAKE3-256(
+ViewPlanDigest = BLAKE3-256(
     domain = "terrabase-view-plan/1",
-    tenant_id,
-    database_id,
+    tenant_ulid,
+    database_ulid,
     canonical_tql_ast,
     canonical_arguments,
     projection,
@@ -71,6 +71,10 @@ ViewPlanId = BLAKE3-256(
     authorization_scope_digest
 )
 ```
+
+The catalog assigns one `ViewPlanUlid` under ADR 0027 to the coordinated plan
+record for that digest. A digest is a content verification value, not an entity
+ID. The complete canonical inputs are compared when digests match.
 
 Queries without a deterministic total order add canonical document identity as
 the final tie breaker. Offset pagination is not resumable reactive state.
@@ -85,8 +89,9 @@ Each subscription attempt creates:
 
 ```text
 ViewInstance {
-    view_id
-    view_plan_id
+    view_ulid
+    view_plan_ulid
+    view_plan_digest
     principal_binding
     authorization_generation
     view_generation
@@ -96,9 +101,9 @@ ViewInstance {
 }
 ```
 
-`ViewId` is an unpredictable 128-bit server identity. `ViewGeneration`
-changes whenever the query contract or visibility domain changes. Revisions
-are unsigned 64-bit and monotone inside one generation. They never wrap.
+`ViewUlid` is a server-generated ULID. `ViewGeneration` changes whenever the
+query contract or visibility domain changes. Revisions are unsigned 64-bit and
+monotone inside one generation. They never wrap.
 
 ## Durable change publication
 
@@ -107,11 +112,11 @@ the same recoverable publication state machine:
 
 ```text
 ChangeSummary {
-    commit_id
+    commit_ulid
     applied_causal_position
-    tenant_id
-    database_id
-    partition_id
+    tenant_ulid
+    database_ulid
+    partition_ulid
     changed_documents_and_incarnations
     changed_field_paths
     changed_relationship_edges
@@ -146,7 +151,7 @@ Bootstrap uses a publication barrier:
 
 1. Authenticate and admit the bounded query and result budget.
 2. Compile the plan and dependencies.
-3. Allocate `ViewId` and `ViewGeneration`.
+3. Allocate `ViewUlid` and `ViewGeneration`.
 4. Register dependencies at publication barrier `B` before exposing a result.
 5. Select an MVCC causal cut `C` at or before `B` that satisfies the requested
    session token.
@@ -166,7 +171,7 @@ Snapshot frames are:
 
 ```text
 SnapshotBegin {
-    view_id
+    view_ulid
     view_generation
     base_revision
     causal_cut
@@ -176,7 +181,7 @@ SnapshotBegin {
 }
 
 SnapshotChunk {
-    view_id
+    view_ulid
     view_generation
     chunk_ordinal
     rows
@@ -184,7 +189,7 @@ SnapshotChunk {
 }
 
 SnapshotEnd {
-    view_id
+    view_ulid
     view_generation
     base_revision
     result_digest
@@ -207,7 +212,7 @@ An incremental frame is:
 
 ```text
 ResultDelta {
-    view_id
+    view_ulid
     view_generation
     from_revision
     to_revision
@@ -266,11 +271,11 @@ resume. It is not an authorization grant. The plaintext logical fields are:
 ```text
 ViewCheckpoint {
     protocol_major
-    cluster_identity
-    tenant_id
-    database_id
-    view_id
-    view_plan_id
+    cluster_ulid
+    tenant_ulid
+    database_ulid
+    view_ulid
+    view_plan_ulid
     principal_binding_digest
     authorization_generation
     view_generation
@@ -294,8 +299,8 @@ protocol major and TerraScale environment. A token from another environment,
 cluster, tenant, or database fails before lookup.
 
 Small sparse positions may remain inside the token. When the canonical token
-would exceed its fixed byte limit, it contains a random `CheckpointRecordId`
-and digest instead. TerraBase stores the bounded record with the same expiry
+would exceed its fixed byte limit, it contains a `CheckpointRecordUlid` and
+digest instead. TerraBase stores the bounded record with the same expiry
 and tenant accounting. Loss or delayed replication of that record causes a
 safe authorized reset, never missing data.
 
@@ -315,7 +320,7 @@ The client sends:
 
 ```text
 ViewAck {
-    view_id
+    view_ulid
     view_generation
     applied_revision
     result_digest
@@ -338,7 +343,8 @@ On reconnect, TerraBase:
 1. validates token encoding and authentication before using any embedded ID;
 2. authenticates the current principal independently;
 3. resolves current tenant, database, schema, and authorization generations;
-4. validates the normalized query and projection against `ViewPlanId`;
+4. validates the normalized query and projection against `ViewPlanUlid` and
+   `ViewPlanDigest`;
 5. verifies retention generation and expiry;
 6. satisfies the checkpoint's session dependencies locally, fetches them,
    routes to a qualified Region, or returns a typed causal-availability error;
@@ -416,10 +422,11 @@ not required to enforce the immediate bound.
 
 ## Public and TBEP protocol states
 
-The public WebSocket uses bounded generated FlatBuffers frames over TLS. A
-decoder verifies the outer length, file and schema identity, version and
-feature bits, offsets, vectors, strings, unions, and resource limits before
-field access. Its logical session states are:
+The public WebSocket uses the bounded generated MessagePack contract from ADR
+0025 over TLS with subprotocol `terrascale.sync.v2.msgpack`. One binary
+WebSocket message contains one envelope. C# untrusted-data decoding and the
+TypeScript generated shape validator enforce the whole-message and per-field
+limits before application use. Its logical session states are:
 
 ```text
 Connecting
@@ -433,10 +440,10 @@ Closing
 Closed
 ```
 
-Every message declares protocol major, session ID, operation ID, body length,
-and required feature bits. Unknown major or required feature fails closed.
-Messages received in the wrong state return a typed protocol error without
-allocating query work.
+Every message declares protocol major, session ULID, operation ULID, body
+length, and required feature bits. Unknown major or required feature fails
+closed. Messages received in the wrong state return a typed protocol error
+without allocating query work.
 
 TBEP has corresponding typed operations for opening, driving, acknowledging,
 relocating, and closing an engine sync session. The C# API applies bounded
@@ -445,13 +452,13 @@ does not orphan an unbounded view.
 
 Public frames never use `terrabase-native/1`, `terrabase-snapshot/1`, a Loro
 codec, or a Member progress clock as payload. They carry only query result
-snapshots, result operations, public causal session tokens, and opaque view
-checkpoints.
+snapshots, result operations, public causal session tokens, opaque view
+checkpoints, and authorized ADR 0028 operation progress.
 
 ## Online writes and optimistic presentation
 
-A client mutation includes a stable idempotency identity, typed operation,
-arguments, and optional session causal token. The server returns the
+A client mutation includes a client-request ULID, typed operation, arguments,
+and optional session causal token. The server returns the
 authoritative commit result and resulting session token.
 
 An SDK may attach a reversible optimistic presentation patch to its local
@@ -464,7 +471,7 @@ cache. The patch:
 - is identified separately from the server commit.
 
 Disconnect before server acceptance yields an unknown request only when the
-server may have received it. The SDK resolves the existing idempotency identity
+server may have received it. The SDK resolves the existing client-request ULID
 online. It does not queue a new offline write.
 
 ## Loro replacement
@@ -500,27 +507,24 @@ Before P5 exits, tests and deterministic simulation must cover:
 - slow, hostile, and non-acknowledging clients;
 - one hundred thousand active subscriptions under measured tenant isolation;
 - API process loss and replacement with no sticky session dependency;
-- malformed FlatBuffers offsets, vectors, strings, unions, lengths, nesting,
-  compression, state, and allocation fuzzing; and
+- malformed MessagePack tags, arrays, strings, binary fields, integers,
+  lengths, nesting, trailing bytes, state, and allocation fuzzing; and
 - identical final query results and result digests across TypeScript, .NET,
   Rust, and every selected Region.
 
-Decision-grade sync benchmarks begin only after the corresponding query,
-authorization, reconnect, reset, and convergence scenarios pass on the exact
-candidate source. GRU, SFO, and FRA runs cover concurrent writes, WAN delay and
-loss, Region failure, cross-Region reconnect, retained catch-up, snapshot
+Decision-grade sync qualification follows ADR 0026 after the corresponding
+query, authorization, reconnect, reset, and convergence scenarios pass on the
+exact candidate source. GRU, SFO, and FRA runs cover concurrent writes, WAN
+faults, Region failure, cross-Region reconnect, retained catch-up, snapshot
 reset, authorization changes, slow consumers, top-k movement, fan-out, and one
 hundred thousand subscriptions where the qualified environment supports it.
-Receipts record commit-to-authorized-view-visible p50/p95/p99 latency, snapshot
-and patch throughput, bytes, CPU, allocations, copies, reset rate, backlog,
-convergence time, and foreground interference. No sync performance change may
-regress against the best approved valid baseline for the same topology and
-fault shape.
 
-The live path is event-driven and adds no avoidable poll interval, broker hop,
-re-encoding pass, copy, or acknowledgement. Coalescing and batching must improve
-an end-to-end receipt without regressing tail latency, reset frequency,
-authorization-change delivery, or foreground isolation.
+The live path is event-driven. Receipts measure its poll intervals, hops,
+encoding passes, copies, acknowledgements, bytes, CPU, allocations, reset rate,
+backlog, convergence, foreground interference, and commit-to-authorized-view
+latency. Coalescing and batching must improve the preregistered end-to-end
+metric without losing any tail, correctness, authorization, or isolation
+guardrail.
 
 The core qualification invariant is:
 

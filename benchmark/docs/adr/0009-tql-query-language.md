@@ -102,10 +102,11 @@ visibility requires explicit request.
 
 ## Reactive queries
 
-Every reactive TQL plan has a canonical `ViewPlanId` under ADR 0024. The
-planner records collection, index, key-range, document, relationship, schema,
-and authorization dependencies. A query is reactive only when its result and
-dependency set fit the admitted bounds.
+Every reactive TQL plan has a `ViewPlanUlid` under ADR 0027 and a canonical
+`ViewPlanDigest` under ADR 0024. The planner records collection, index,
+key-range, document, relationship, schema, and authorization dependencies. A
+query is reactive only when its result and dependency set fit the admitted
+bounds.
 
 Simple indexed plans update incrementally. A bounded plan that cannot prove an
 incremental patch may rerun and emit `Reset`. Changing execution strategy does

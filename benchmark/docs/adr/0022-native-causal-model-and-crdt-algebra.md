@@ -8,22 +8,21 @@ authority: ../../../GOAL.md
 
 ## Context
 
-ADR 0019 removes Loro from TerraBaseV2 and selects Partition-scoped causal
-metadata and native delta CRDTs. That decision is not enough to implement a
-database. A generic statement that merges are commutative does not define tag
-identity, removal semantics, counter allocation, canonical bytes, deletion,
-or safe compaction.
+TerraBaseV2 uses Partition-scoped causal metadata and native delta CRDTs. A
+generic statement that merges are commutative does not define tag identity,
+removal semantics, counter allocation, canonical bytes, deletion, or safe
+compaction.
 
 This record fixes those contracts. The workspace goal remains authoritative.
-Calibration values such as batch sizes and retention durations are not fixed
-here.
+Transport batch sizes remain measured configuration; correctness and retention
+bounds are explicit here or in their owning ADR.
 
 ## Scope
 
 This record governs:
 
 - native commit, dot, actor, mutation, and element identity;
-- causal contexts and gap representation;
+- causal contexts and received-interval representation;
 - HLC generation and concurrent scalar ordering;
 - the initial CRDT datatype state, delta, and merge rules;
 - document deletion and incarnation;
@@ -38,60 +37,55 @@ delivery. ADRs 0023 and 0024 own those state machines.
 
 ### Stable identifiers
 
-The native binary model uses these logical identities:
+TerraBase-owned entity identities follow ADR 0027. The causal model uses these
+ULIDs and numeric coordinates:
 
 ```text
-TenantId        opaque 128-bit identifier
-DatabaseId      opaque 128-bit identifier
-PartitionId     unsigned 64-bit logical identifier
-ReplicaId       opaque 128-bit identifier allocated by TerraScale
-ReplicaEpoch    unsigned 64-bit incarnation allocated by membership
+TenantUlid      128-bit ULID
+DatabaseUlid    128-bit ULID
+PartitionUlid   128-bit ULID
+ReplicaUlid     128-bit ULID allocated by membership
+CommitUlid      128-bit ULID allocated by the origin
+ObjectUlid      128-bit ULID allocated at document creation
+ObjectIncarnationUlid 128-bit ULID allocated at creation or recreation
+ReplicaEpoch    unsigned 64-bit generation allocated by membership
 OriginCounter   unsigned 64-bit counter local to one Partition actor
 MutationOrdinal unsigned 32-bit index inside one canonical commit
 ```
 
-External string forms are presentation only. Parsing a string never changes
-the binary identity. A decoder rejects non-canonical widths, counter zero when
-the protocol reserves zero, overflow, and an unknown identity version.
+The native wire uses exact 16-byte ULIDs. A decoder rejects non-canonical
+widths, counter zero when the protocol reserves zero, and numeric overflow.
 
 A replication actor is:
 
 ```text
-ActorId = (ReplicaId, ReplicaEpoch)
+Actor = (ReplicaUlid, ReplicaEpoch)
 ```
 
 An actor exists independently in every Database and Partition counter domain.
 It is not a client, process boot ID, network connection, Region name, or host
 address.
 
-A commit is globally identified by:
-
-```text
-CommitId = (
-    DatabaseId,
-    PartitionId,
-    ReplicaId,
-    ReplicaEpoch,
-    OriginCounter
-)
-```
+A commit is globally identified by `CommitUlid`. It also names its Database,
+Partition, and causal dot; those coordinates are validated independently and
+are not an alternate commit-ID format.
 
 Inside a known Database and Partition, its causal dot is:
 
 ```text
-Dot = (ActorId, OriginCounter)
+Dot = (Actor, OriginCounter)
 ```
 
 All mutations in an atomic commit share that dot. Anything needing identity
 inside the commit uses:
 
 ```text
-MutationTag = (CommitId, MutationOrdinal)
+MutationTag = (CommitUlid, MutationOrdinal)
 ```
 
-OR-Set elements, relationship edges created without an application-provided
-stable edge ID, and other multi-value additions use `MutationTag`. They never
-use HLC, array position, a payload hash, or arrival order as identity.
+OR-Set additions and other multi-value events use `MutationTag`. Relationship
+edges have their own ULIDs under ADR 0021 and ADR 0027. Neither uses HLC, array
+position, a payload hash, or arrival order as identity.
 
 The canonical commit contains at most one semantic mutator for the same
 object, incarnation, field path, datatype, and datatype subkey. The builder
@@ -108,8 +102,9 @@ commit record in the same actor log.
 
 Counter allocation and the complete canonical commit body enter the same WAL
 record. There is no independently durable reservation that can become an
-unexplained permanent hole. A failed remote delivery may create a temporary
-gap at a receiver, which its gap set records explicitly.
+unexplained permanent hole. A failed remote delivery may leave missing counters
+at a receiver, whose received-interval set records out-of-order arrivals
+explicitly.
 
 After restart, an actor cannot issue another counter until it has reconciled
 its local actor log and high-water mark with both current local seats. A commit
@@ -124,17 +119,17 @@ not guess the old counter or reuse the old actor.
 
 ### Idempotency
 
-`ClientIdempotencyId` is a bounded opaque public retry identity. It is not a
-dot and never enters a causal vector. TerraBase persists this tuple in the same
-atomic commit batch:
+`ClientRequestUlid` is the public retry identity. It is not a dot and never
+enters a causal vector. TerraBase persists this tuple in the same atomic commit
+batch:
 
 ```text
 IdempotencyRecord {
-    tenant_id
-    database_id
-    client_idempotency_id
+    tenant_ulid
+    database_ulid
+    client_request_ulid
     canonical_request_digest
-    commit_id
+    commit_ulid
     outcome_state
     response_digest
     retention_deadline
@@ -147,10 +142,19 @@ one local Member has stored the commit is an unknown or partial outcome, not a
 rollback. The retry must discover or finish the same commit before a new
 commit may be minted.
 
-After explicit expiry, the API returns `IdempotencyExpired` for a retry it can
-still recognize from the retained client identity floor. It never silently
-executes an old retry again. The exact retry and recognition windows are
-calibration values, but they must exceed every supported SDK retry window.
+The complete outcome remains retryable for seven days after its terminal
+result. Until day thirty, a compact floor retains the client-request ULID,
+request digest, commit ULID when one exists, terminal outcome code, and expiry.
+A same-digest retry during that interval returns
+`IdempotencyResultExpired`, includes the retained commit ULID and outcome code,
+and never executes the mutation again. A different digest still returns
+`IdempotencyConflict`. A client-request ULID more than thirty days old is
+rejected as `IdempotencyExpired` at admission, so the same old retry cannot
+execute after the floor is collected. A client-request ULID more than five
+minutes ahead of admission time fails as `InvalidClientRequestUlidTime`. The
+ULID timestamp is used only for these admission bounds; server timestamps
+govern record retention, and the ULID timestamp never proves freshness or
+causality.
 
 ## Causal state
 
@@ -160,18 +164,18 @@ For each actor, a Partition clock stores:
 
 ```text
 ActorProgress {
-    through       // every counter 1..through is present
-    gaps[]        // normalized, non-overlapping intervals above through
+    through               // every counter 1..through is present
+    received_intervals[]  // normalized, non-overlapping intervals above through
 }
 ```
 
-`gaps` names counters actually present above `through`; it does not name
-missing counters. Insertion merges adjacent intervals and advances `through`
-when the next interval closes the prefix. Implementations may use another
-bounded representation only if it produces the same membership answers and
-passes the same model tests.
+`received_intervals` contains counters actually present above `through`.
+Insertion merges adjacent intervals and advances `through` when the next
+interval closes the prefix. Implementations may use another bounded
+representation only if it produces the same membership answers and passes the
+same model tests.
 
-The complete Partition clock is a sorted map from `ActorId` to
+The complete Partition clock is a sorted map from `Actor` to
 `ActorProgress`. It answers whether a commit is stored, which intervals a peer
 lacks, and whether a snapshot dominates a local frontier. Receiving counter
 100 never proves counters 1 through 99.
@@ -246,18 +250,24 @@ For concurrent register candidates, the total comparison key is:
 ```text
 (
     HlcTimestamp,
-    ReplicaId canonical bytes,
+    ReplicaUlid canonical bytes,
     ReplicaEpoch,
     OriginCounter,
     MutationOrdinal
 )
 ```
 
-Members bound future physical skew before accepting a locally submitted or
-replicated candidate into materialized state. A future-skew violation is
-quarantined with its bytes and source identity, reported, and excluded from
-acknowledged applied progress until policy admits or rejects it. The bound is
-a measured deployment value. It may not be disabled.
+Members admit a physical component at most 500 milliseconds ahead of the local
+clock. A structurally valid, authenticated candidate between 500 milliseconds
+and five minutes ahead may enter a separate per-lane byte-bounded quarantine
+journal for at most five minutes. Quarantine does not advance canonical
+`stored`, `applied`, or causal progress. Admission later revalidates the
+candidate and writes the canonical WAL commit before progress advances;
+expiration records `FutureClockRejected` and removes it. A value more than five
+minutes ahead, or malformed, unauthenticated, hash-mismatched, or over-limit
+input, is rejected before the canonical WAL and is not quarantine data. The
+500-millisecond admission bound may be lowered but never disabled or raised
+without a new compatibility and qualification decision.
 
 ## Native datatype contract
 
@@ -303,10 +313,11 @@ Candidate<T> {
 ```
 
 Join unions the contexts, removes candidates dominated by the other state,
-and selects the one remaining causally maximal candidate. If several maximal
-candidates are concurrent, the HLC comparison key selects one. The joined
-context records every considered dot, including discarded candidates, so a
-discarded value cannot reappear after a later merge.
+and selects from the causally maximal candidates. The field's concurrent
+assignment/removal policy is applied first. HLC selects among candidates that
+remain at the same policy precedence. The joined context records every
+considered dot, including discarded candidates, so a discarded value cannot
+reappear after a later merge.
 
 For states with live candidate sets `L1` and `L2` and contexts `C1` and `C2`,
 the pre-selection live set is exactly:
@@ -317,8 +328,11 @@ union { x in L1 where x.dot is not in C2 }
 union { x in L2 where x.dot is not in C1 }
 ```
 
-The joined context is the normalized union of `C1` and `C2`. LWW applies its
-deterministic winner rule to that set. MV retains the complete set. State uses
+The joined context is the normalized union of `C1` and `C2`. For `remove-wins`,
+any concurrent removal excludes concurrent assignments and the HLC key selects
+among removals. For `add-wins`, any concurrent assignment excludes concurrent
+removals and the HLC key selects among assignments. Plain LWW applies the HLC
+key to all concurrent candidates. MV retains the complete set. State uses
 candidate identity, not value equality, for the intersection.
 
 A field removal is a candidate with no value. The schema chooses LWW,
@@ -335,7 +349,7 @@ a new mutation whose context covers the versions being resolved.
 
 ### Grow-only and PN counters
 
-`GCounter` is a sorted map from `ActorId` to a checked unsigned 128-bit
+`GCounter` is a sorted map from `Actor` to a checked unsigned 128-bit
 component. An increment by `d` emits the actor's new absolute component, not a
 bare increment that depends on exactly-once delivery. Join takes the maximum
 component for each actor. Materialization is the checked sum of components.
@@ -412,29 +426,30 @@ Ordinary JSON booleans remain LWW registers.
 
 ### Document tombstones and incarnations
 
-Every document mutation names `ObjectId` and `ObjectIncarnation`. Deletion
+Every document mutation names `ObjectUlid` and `ObjectIncarnationUlid`. Deletion
 creates a remove-wins document tombstone event. Updates concurrent with the
 delete remain in retained history but are not visible. An update causally
 after the delete is rejected unless it explicitly creates a new incarnation.
 
-A recreate operation must observe the tombstone and mints a new incarnation
-from its `MutationTag`. Concurrent recreates are concurrent incarnation
-candidates. The default document policy selects one through the LWW comparison
-key while preserving the losing causal facts. A schema may opt into an MV
-incarnation result. A late mutation for an older incarnation never applies to
-the current one.
+A recreate operation must observe the tombstone and mint a new
+`ObjectIncarnationUlid`. Concurrent recreates are concurrent incarnation
+candidates. Their mutation tags carry causality but are not incarnation IDs.
+The default document policy selects one through the LWW comparison key while
+preserving the losing causal facts. A schema may opt into an MV incarnation
+result. A late mutation for an older incarnation never applies to the current
+one.
 
 Delete, recreate, restore, PITR, relationship edge handling, index entries,
 and reactive publication all carry the incarnation identity. Reusing a plain
-document ID cannot erase a tombstone.
+document ULID cannot erase a tombstone.
 
 ### Native relationships
 
 Relationship edges use the same native rules. The edge's stable application
-ID or creation `MutationTag` is its identity. Edge properties are an `OrMap` of
-typed values. To-one endpoints are LWW or MV registers. To-many membership uses
-an explicitly selected set policy. ADR 0021 continues to govern cardinality,
-integrity modes, reverse indexes, traversal, and delete behavior.
+ULID is its identity. Edge properties are an `OrMap` of typed values. To-one
+endpoints are LWW or MV registers. To-many membership uses an explicitly
+selected set policy. ADR 0021 continues to govern cardinality, integrity modes,
+reverse indexes, traversal, and delete behavior.
 
 ## Canonical encoding and hashing
 
@@ -467,12 +482,11 @@ for commits, request digests, causal summaries, Merkle nodes, snapshot chunks,
 and manifests. Each domain has a fixed ASCII prefix and codec major version.
 A checksum proves identity and corruption detection, not authorization.
 
-Generated FlatBuffers tables are the bounded control envelope for TBEP. The
-decoder verifies the outer length, file and schema identity, version and
-feature bits, table offsets, vectors, strings, unions, and configured resource
-limits before field access. Native CRDT and snapshot bytes are opaque
-length-bounded vectors inside that envelope. A payload is validated against its
-declared native codec before any progress acknowledgement.
+Generated FlatBuffers tables are the bounded private TBEP control envelope
+under ADR 0025. Native CRDT and snapshot bytes are opaque length-bounded vectors
+inside that envelope. A payload is validated against its declared native codec
+before any progress acknowledgment. Public MessagePack never carries raw CRDT,
+causal, snapshot, or replication payloads.
 
 Compression occurs after canonical encoding. The receiver authenticates the
 frame, enforces compressed and declared uncompressed bounds, decompresses into
@@ -516,9 +530,10 @@ before WAL admission.
 Remote mutations additionally validate origin membership at the commit's
 replica-set epoch, dot and counter domain, request and payload digests, HLC
 skew, mutation ordinals, and codec capabilities. Invalid remote input does not
-advance `stored`, `applied`, or causal progress. The Member closes or
-quarantines the offending lane according to error class and records a bounded,
-secret-safe receipt.
+advance `stored`, `applied`, or causal progress. Only an authenticated,
+structurally valid future-skew candidate may enter the separate quarantine
+journal. Every other invalid class is rejected, closes or isolates the
+offending lane according to policy, and records a bounded secret-safe receipt.
 
 Unknown datatype kinds, required features, codec majors, or schema majors fail
 closed. They never materialize as an opaque value that other Members may hash
@@ -534,7 +549,7 @@ Before P1 exits, each datatype and the shared causal kernel must pass:
 - native golden vectors with independent expected canonical bytes and hashes;
 - snapshot, compaction, restore, and retired-actor replay tests;
 - malformed, oversized, non-canonical, overflow, and allocation fuzzing;
-- model tests for gap normalization and causal containment;
+- model tests for received-interval normalization and causal containment;
 - cross-platform deterministic materialization and hashing tests; and
 - differential benchmark workloads against Loro, Yrs, and Automerge where the
   same semantics can be represented.
@@ -544,8 +559,8 @@ correctness and does not keep any compared library in the product.
 
 ## Rejected shortcuts
 
-- A UUID for every field mutation wastes identity bytes and does not replace
-  causal context.
+- A new ULID for every field mutation wastes identity bytes and does not
+  replace causal context or `MutationTag`.
 - A timestamp alone cannot prove causality or safe removal.
 - Arrival-order LWW diverges after reordering.
 - A bare `increment(1)` replicated without a dot or absolute component depends

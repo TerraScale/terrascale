@@ -8,10 +8,11 @@ authority: ../../../GOAL.md
 
 ## Context
 
-ADR 0019 selects leaderless active Regions, RF=2 local durability, direct QUIC
-replication, anti-entropy, Merkle repair, snapshots, and Partition-scoped
-causality. ADR 0022 defines the native commit and CRDT state. This record fixes
-the state machines that move and retain those commits.
+The workspace goal selects leaderless active Regions, RF=2 local durability,
+direct QUIC replication, anti-entropy, Merkle repair, snapshots, and
+Partition-scoped causality. ADR 0022 defines the native commit and CRDT state.
+This record fixes the state machines that move and retain those commits. Every
+TerraBase entity named here is a ULID under ADR 0027.
 
 Transport delivery is never the correctness boundary. Durable canonical
 commits, native join semantics, causal progress, replica-set epochs, verified
@@ -49,7 +50,7 @@ Before allocating a counter, the coordinator:
 1. verifies the signed principal, authorization generation, tenant, database,
    and Partition;
 2. verifies that both local seats agree on the effective replica-set epoch;
-3. resolves the client idempotency identity against both local Members;
+3. resolves the client-request ULID against both local Members;
 4. validates schema, datatype, causal dependencies, transaction boundary, and
    resource admission; and
 5. confirms that both Members can enter the bounded durable lane.
@@ -94,15 +95,16 @@ The failure matrix is:
 
 | Durable observation | Required behavior |
 | --- | --- |
-| Neither Member stored the commit | The same idempotency identity may retry. A new commit is minted only after both available Members prove absence. |
+| Neither Member stored the commit | The same client-request ULID may retry. A new commit is minted only after both available Members prove absence. |
 | Exactly one Member stored the commit | Return or retain `PartialCommit`. Repair the same bytes to the other current seat. Do not mint a replacement. |
 | Both stored, coordinator did not reply | Retry discovers the same commit, completes required application, and returns the recorded outcome. |
 | Both stored and the client received success | Ordinary replay returns the same logical result and never reapplies the mutation. |
 | One seat is unavailable | The Region refuses new `RegionalDurable` writes for that Partition and routes to another selected healthy Region when policy allows. |
 
-A blind retry under a new idempotency identity is a new logical write and the
+A blind retry under a new client-request ULID is a new logical write and the
 SDK must not perform it automatically. Unknown and partial outcomes include
-the original idempotency identity and a typed status operation.
+the original client-request and commit ULIDs plus the durable ADR 0028
+operation.
 
 ### Global durability
 
@@ -146,10 +148,11 @@ Mutation traffic forbids QUIC 0-RTT. Connection resumption does not resume an
 application session without a fresh nonce, capability negotiation, and
 replica-set epoch check.
 
-Members pool bounded connections between Region pairs. They do not open one
-connection or stream per tenant, database, Partition, or mutation. Independent
-bounded lanes carry control, current writes, live replication, repair, and
-snapshot traffic.
+Selected Regions form a direct full mesh. Members pool a bounded number of
+authenticated QUIC connections for each Region pair and multiplex every tenant,
+database, and Partition over them. They do not open one connection or stream
+per tenant, database, Partition, or mutation. Independent bounded lanes carry
+control, current writes, live replication, repair, and snapshot traffic.
 
 ### Capability negotiation
 
@@ -163,8 +166,8 @@ ConnectionHello {
     compression_algorithms
     maximum_frame_bytes
     maximum_uncompressed_bytes
-    cluster_identity
-    member_identity
+    cluster_ulid
+    member_ulid
     certificate_identity_digest
     connection_nonce
 }
@@ -182,8 +185,8 @@ A logical Partition session begins with:
 
 ```text
 PartitionOpen {
-    database_id
-    partition_id
+    database_ulid
+    partition_ulid
     placement_generation
     replica_set_epoch
     stored_progress
@@ -216,9 +219,10 @@ MerkleRangeState
 SessionError
 ```
 
-Every message has a protocol version, session ID, monotone message sequence,
-bounded body length, payload hash, and replica-set epoch. Message sequence
-detects replay within the session but does not define commit ordering.
+Every message has a protocol version, session ULID, bounded body length,
+payload hash, and replica-set epoch. Each sender maintains a strictly monotone
+message sequence for its direction within that session. The sequence detects
+replay and reordering in that direction but does not define commit ordering.
 
 ### Commit batches
 
@@ -231,14 +235,15 @@ The receiver:
 1. authenticates and bounds the envelope;
 2. bounds decompression and validates the native payload;
 3. validates every commit and epoch before changing progress;
-4. deduplicates by `CommitId` and canonical hash;
+4. deduplicates by `CommitUlid` and canonical hash;
 5. atomically stores accepted commits in WAL order local to the receiver;
 6. persists updated received intervals; and
 7. emits `ProgressAck(position = stored)`.
 
-The same `CommitId` with different canonical bytes is corruption or a
-Byzantine identity violation. The receiver quarantines the lane and never
-selects a winner.
+The same `CommitUlid` with different canonical bytes is corruption or a
+Byzantine identity violation. The receiver rejects the frame, isolates the
+lane, records a secret-safe corruption receipt, and never selects a winner or
+advances progress.
 
 Application may follow storage asynchronously under bounded queues. Applied
 acknowledgements advance only after the application state machine completes.
@@ -322,10 +327,10 @@ An immutable Partition snapshot has a canonical signed manifest:
 
 ```text
 PartitionSnapshotManifest {
-    cluster_identity
-    tenant_id
-    database_id
-    partition_id
+    cluster_ulid
+    tenant_ulid
+    database_ulid
+    partition_ulid
     bucket_range_generation
     replica_set_epoch
     snapshot_generation
@@ -396,8 +401,8 @@ componentwise minimum `applied` prefix known durably across:
 
 - every active Member seat in every selected active Region;
 - every joining seat required by an in-progress joint configuration;
-- an enabled backup replica when its contract requires current causal state;
-  and
+- explicit durable backup send cursors, snapshot pins, and `BackupDurable`
+  operations that still require retained causal state under ADR 0017; and
 - any explicit recovery or legal-hold pin that names causal state.
 
 An absent actor entry contributes zero. Sparse received intervals above a
@@ -439,7 +444,7 @@ or visible state equality.
 
 Membership is a durable versioned state machine in the coordinated lane. A
 configuration names selected Regions, active and joining seats per Partition,
-Replica IDs, actor epochs, and a placement generation.
+replica ULIDs, actor epochs, and a placement generation.
 
 ### Add or replace
 
@@ -462,7 +467,9 @@ Replica IDs, actor epochs, and a placement generation.
    retention rules permit compaction.
 
 Adding or removing a Region applies this protocol to every Partition. It is
-not a routing-table edit.
+not a routing-table edit. Add, replace, retire, remove, snapshot bootstrap,
+repair, and disaster recovery are durable long-running operations under ADR
+0028 with exact per-Partition and aggregate progress.
 
 ### Lost quorum
 
@@ -474,7 +481,7 @@ It never pretends the transition was quorum safe.
 
 ## Corruption and conflicting identity
 
-A canonical hash mismatch, same `CommitId` with different bytes, invalid
+A canonical hash mismatch, same `CommitUlid` with different bytes, invalid
 snapshot root, impossible counter regression, or inconsistent membership proof
 is not an ordinary CRDT conflict. The Member quarantines the source and
 affected state range, stops advancing progress, and repairs from another
@@ -497,29 +504,18 @@ advertise routes or configuration hints behind a replaceable adapter.
 
 ## Performance qualification
 
-Decision-grade replication benchmarks start only after the tested topology and
-fault path pass their deterministic convergence, durability, recovery,
-membership, corruption, resource-bound, and tenant-isolation gates on the exact
-candidate source.
+ADR 0026 owns the decision-grade method, baselines, metrics, latency budgets,
+and completion rule. Initial production readiness covers one, two, and three
+selected Regions with real GRU/SFO/FRA WAN evidence and two Members per Region.
+Twenty-Region qualification begins only after the three-Region product is
+production-ready and operating.
 
-The benchmark matrix covers one, two, three, and twenty Regions; steady-state
-live push; bounded WAN delay, loss, reordering, and bandwidth; one-minute and
-one-hour outages; backlog catch-up; anti-entropy repair; snapshot bootstrap;
-Region loss; and rejoin. Receipts record origin-to-remote `stored`, `applied`,
-and `verified` p50/p95/p99 latency, steady-state and catch-up throughput,
-convergence time, bytes, CPU, allocations, copies, backlog growth, and
-foreground interference.
-
-No replication performance change may regress against the best approved valid
-baseline for the same topology and fault shape. Optimization continues while a
-measured bottleneck remains. It cannot weaken RF=2 durability, causal or
-materialized verification, fairness, bounded queues, backpressure, repair, or
-recovery to improve a timing.
-
-The live path adds no avoidable broker hop, poll interval, re-encoding pass,
-copy, durability wait, or acknowledgement. Batching, compression, lane
-scheduling, and credit windows are calibrated from end-to-end throughput and
-tail-latency receipts rather than throughput alone.
+The implementation uses direct event-driven fanout and the pooled QUIC lanes
+defined here. Copies, encoding passes, scheduling delay, durability delay,
+acknowledgement delay, bytes, CPU, allocations, backlog, and foreground
+interference are measured guardrails rather than subjective “avoidable” work.
+No timing may weaken RF=2 durability, causal or materialized verification,
+fairness, bounded queues, backpressure, repair, or recovery.
 
 ## Required evidence
 
@@ -529,8 +525,9 @@ Before P3 exits, deterministic and crash tests must cover:
 - idempotent recovery of one-sided and two-sided partial outcomes;
 - writes through either Member in every selected Region;
 - duplicate, corrupt, delayed, missing, reordered, and conflicting frames;
-- bounded gap growth and forced snapshot fallback;
-- twenty-Region full mesh with bounded connection and lane counts;
+- bounded out-of-order interval growth and forced snapshot fallback;
+- one-, two-, and three-Region full meshes with bounded pooled connection and
+  lane counts;
 - process restart between store, apply, publish, and acknowledgement;
 - snapshot interruption at every manifest and chunk boundary;
 - snapshot adoption with local extra dots;

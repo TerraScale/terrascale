@@ -2,93 +2,78 @@
 status: accepted
 ---
 
-# ADR 0016: ZoneTree-inspired Rust storage engine and the NVMe/S3 tiers
+# ZoneTree-inspired native storage and NVMe/object tiers
 
-Parent record of charter PD-2026-08-28-05, 2026-08-28, accepted on user
-instruction.
+## Decision
 
-Owner: the parent fleet orchestrator, on the workspace owner's direction
-to use a design similar to ZoneTree for the storage layer.
+TerraBaseV2 implements an independent Rust ordered-segment storage engine. It
+adopts the useful organization of a mutable memory segment, immutable frozen
+segments, immutable disk segments, sparse indexes, and background merge. It
+does not embed or port ZoneTree or another database storage format.
 
-## Context
+New writes enter an ordered mutable segment protected by the WAL. Rotation
+freezes it. Background maintenance merges frozen segments into immutable disk
+segments and may retain unchanged key ranges. Deletes write tombstones and
+reclaim older state only after every snapshot, backup, PITR, replication,
+causal-stability, audit, and recovery pin permits it.
 
-The W3-1 storage engine rewrites a full tenant root per commit. The V2
-commissioning run measured 154,246,326 durable bytes appended by a
-512-write window of roughly 300-byte documents — per-commit write
-amplification of ~300 KB per write. Compaction bounds accumulation but
-does not fix per-commit amplification. The owner selected ZoneTree's
-organizational ideas as the design input for the replacement.
+Segment limits use both bytes and record counts. The versioned format includes
+checksums, crash-safe manifests, MVCC snapshots, forward and reverse seekable
+iteration, encryption, compression capabilities, and compaction receipts.
+Primary documents, secondary indexes, publication history, CRDT metadata,
+tombstones, and operation records use distinct ordered keyspaces and bounded
+maintenance budgets.
 
-Reference: `https://github.com/koculu/ZoneTree` at upstream commit
-`910f9dba2998599efe6312163012c65c33dfa6e8`, reviewed 2026-08-28, MIT
-licensed. ZoneTree is a C#/.NET library; TerraBaseV2 neither embeds nor
-ports it. The implementation is independent Rust with its own tests,
-format identity, and recovery evidence.
+One atomic commit batch covers the primary value, CRDT and causal metadata,
+index deltas, publication facts, idempotency outcome, and transaction markers.
+Recovery observes all of it or none. TerraBase-owned keys store ADR 0027 ULIDs
+as fixed 16-byte values without a duplicated textual form.
 
-## Decisions
+## Internal durability achievements
 
-### D-1 — adopted organization
+`Buffered` and `Synced` are internal storage achievements, not public write
+levels. `Buffered` means accepted into the WAL buffer but not yet proven on
+stable storage. `Synced` means the required bytes survived the configured
+stable-storage boundary. Bounded group commit may produce `Synced`.
 
-New writes enter an ordered mutable memory segment protected by the WAL.
-Rotation freezes it into an immutable memory segment. Background
-maintenance merges frozen segments into immutable disk segments. Sparse
-indexes position reads without loading every key. Multipart disk segments
-may retain unchanged key ranges across a merge. Deletes write tombstones
-and reclaim old values only after every snapshot, backup, replication,
-causal-stability, and shadow-delete retention gate permits it.
+Public `RegionalDurable`, `GlobalDurable`, and `BackupDurable` receipts in ADR
+0023 compose these achievements across the required Members and Regions. An
+internal `Buffered` or one-Member `Synced` result never becomes a successful
+production acknowledgment.
 
-### D-2 — TerraBase requirements
-
-Segment bounds use bytes and record counts (document sizes vary). The
-format includes checksums, crash-safe manifests, MVCC snapshots,
-forward and reverse seekable iteration, encryption, compression
-negotiation, live backup, and explicit compaction receipts. Primary
-documents, secondary indexes, publication history, CRDT metadata, and
-tombstones use ordered keyspaces with separate maintenance budgets so
-one backlog cannot starve the others. One ordered commit batch covers
-the primary record, CRDT operation and causal metadata, index deltas,
-publication facts, and transaction markers; recovery observes all of it
-or none.
-
-### D-3 — durability contract
-
-`Synced` acknowledgements may use bounded group commit but return only
-after the required stable-storage boundary. `Buffered` reports its
-weaker achieved durability honestly. No-WAL storage is allowed only for
-rebuildable temporary state such as disposable index build scratch.
-Acknowledged database writes never use an unsafe asynchronous tail. Every
-mode has crash, torn-tail, checksum, replay-idempotency, and
+No-WAL storage is permitted only for rebuildable temporary state such as index
+build scratch. Acknowledged database writes never use an unsafe asynchronous
+tail. Every mode has crash, torn-tail, checksum, replay-idempotency, and
 manifest-publication tests.
 
-### D-4 — NVMe and S3-compatible tiers
+## NVMe and object storage
 
-Tier 1 (NVMe SSD) keeps the WAL, mutable and frozen segments, hot
-immutable segments, manifests, indexes, active CRDT state, and a bounded
-cache. Tier 2 (S3-compatible object storage) stores encrypted, immutable,
-checksum-addressed cold segments and checkpoints. A configurable Storage
-Tier Mover inherits versioned policies from cluster to database to
-collection. The mover transfers immutable segments or key ranges, never
-one object per document; mixed-temperature segments may be split through
-bounded compaction only when the predicted NVMe saving exceeds the
-rewrite cost. Upload and read-after-write verification complete before both
-active local Members durably publish the cold-tier manifest under the current
-replica-set epoch. S3 never counts
-toward write acknowledgement and is not a backup by itself. Hot
-PostgreSQL parity and cold-tier performance have separate evidence
-gates.
+Tier 1 NVMe retains the WAL, mutable and frozen segments, hot immutable
+segments, manifests, indexes, active CRDT state, and bounded caches. Tier 2
+S3-compatible storage contains encrypted, immutable, checksum-addressed cold
+segments and checkpoints.
 
-### D-5 — acceptance
+The tenant-aware Storage Tier Mover inherits versioned policy from deployment
+to database to collection. It transfers immutable segments or key ranges,
+never one object per document. A mixed-temperature segment is split only
+through bounded compaction after the predicted NVMe saving exceeds rewrite and
+refetch cost.
 
-The new storage format must reduce durable bytes per write by orders of
-magnitude from the full-root rewrite, retain crash and recovery
-guarantees, and pass TerraBase.Benchmark against PostgreSQL. This record
-selects an architecture, not a performance verdict.
+Upload, authentication, read-after-write verification, and checksum validation
+complete before both active local Members publish a cold-tier manifest under
+the current replica-set epoch. Object storage never counts toward a write
+acknowledgment and is not a backup by itself.
 
-## Consequences
+Tier movement and compaction are durable long-running operations under ADR
+0028. They report planned and verified bytes, segments, key ranges, source,
+target, cache impact, amplification, tenant resource use, and exact terminal
+results.
 
-The current full-root engine remains the working store until P1 lands
-the replacement behind the same engine-facing seams (read snapshots,
-commit intent pipeline, operation ledger) so engine, families, query, and
-replication consumers migrate without protocol change. Tenant-aware
-tiering policy, cold-read fallback ordering, and backup-cluster storage
-are governed by ADR 0017.
+## Qualification
+
+Qualification covers atomic recovery, torn WAL and manifest tails, checksum
+failure, idempotent replay, MVCC pinning, tombstone safety, merge starvation,
+tenant fairness, tier outage and fallback, encryption and compression, ULID key
+ordering, and bounded cancellation. Performance and regression claims follow
+ADR 0026 and include durable bytes per write, fsync behavior, read and write
+latency, compaction amplification, recovery, memory, and cold-tier cost.
