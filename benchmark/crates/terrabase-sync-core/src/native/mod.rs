@@ -1,0 +1,1202 @@
+//! Transport-independent state for the `terrascale.sync.v2` result view.
+//!
+//! This module deliberately has no transport, storage, query, or replication
+//! dependency.  A view is an ordered, authorized projection; its revisions
+//! and checkpoints are delivery facts, not database causal positions.  The
+//! small model is also useful as a reference harness for other protocol
+//! implementations.
+
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
+
+/// The maximum number of bytes in a caller idempotency identity.
+pub const MAX_IDEMPOTENCY_BYTES: usize = 256;
+/// The maximum number of items in a result snapshot.
+pub const DEFAULT_MAX_ITEMS: usize = 10_000;
+/// The maximum number of bytes in one projected item value.
+pub const DEFAULT_MAX_VALUE_BYTES: usize = 64 * 1024;
+/// Maximum number of in-flight optimistic mutation identities per view.
+pub const MAX_PENDING_MUTATIONS: usize = 1024;
+
+/// An opaque authenticated resume checkpoint.
+///
+/// No fields, decoder, or merge operation are exposed.  Equality is the only
+/// comparison a client needs; a server creates a replacement checkpoint when
+/// it publishes a snapshot or result revision.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct Checkpoint {
+    token: Vec<u8>,
+    view_generation: u64,
+    revision: u64,
+    retention_generation: u64,
+    expires_at: u64,
+    integrity: u64,
+}
+
+impl fmt::Debug for Checkpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Checkpoint").field("token", &"<opaque>").finish()
+    }
+}
+
+impl Checkpoint {
+    fn issue(
+        view_generation: u64,
+        revision: u64,
+        digest: ResultDigest,
+        retention_generation: u64,
+        expires_at: u64,
+    ) -> Self {
+        let mut token = Vec::with_capacity(8 * 5 + 32);
+        token.extend_from_slice(&view_generation.to_le_bytes());
+        token.extend_from_slice(&revision.to_le_bytes());
+        token.extend_from_slice(&retention_generation.to_le_bytes());
+        token.extend_from_slice(&expires_at.to_le_bytes());
+        token.extend_from_slice(&digest.as_bytes());
+        let integrity = checksum(&token);
+        token.extend_from_slice(&integrity.to_le_bytes());
+        Self { token, view_generation, revision, retention_generation, expires_at, integrity }
+    }
+
+    /// Returns whether this checkpoint can be used at `now` and the current
+    /// retained-history generation.
+    #[must_use]
+    pub fn is_valid_at(&self, now: u64, retention_generation: u64) -> bool {
+        now <= self.expires_at
+            && retention_generation == self.retention_generation
+            && self.integrity == checksum(&self.token[..self.token.len().saturating_sub(8)])
+    }
+}
+
+/// A stable digest of the complete ordered result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ResultDigest([u8; 32]);
+
+impl ResultDigest {
+    /// The all-empty digest for an empty result.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self([0; 32])
+    }
+
+    /// Returns the digest bytes for protocol framing and independent tests.
+    #[must_use]
+    pub const fn as_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+/// A bounded projected value.  Keys are canonicalized by their ordered map.
+pub type ProjectedValue = BTreeMap<String, Vec<u8>>;
+
+/// One item in an authorized ordered result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResultItem {
+    /// Stable identity including any incarnation identity chosen by the view.
+    pub identity: String,
+    /// The bounded projected fields.
+    pub value: ProjectedValue,
+}
+
+impl ResultItem {
+    /// Creates a projected item.
+    #[must_use]
+    pub fn new(identity: impl Into<String>, value: ProjectedValue) -> Self {
+        Self { identity: identity.into(), value }
+    }
+
+    fn encoded_size(&self) -> usize {
+        self.identity.len()
+            + self.value.iter().map(|(k, v)| k.len() + v.len() + 16).sum::<usize>()
+            + 16
+    }
+}
+
+/// A bounded field operation in a [`ResultOperation::Patch`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FieldChange {
+    /// Canonical typed field path (a single projected field in this harness).
+    pub path: String,
+    /// New value, or `None` to remove the field.
+    pub value: Option<Vec<u8>>,
+}
+
+/// One atomic operation against an ordered result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResultOperation {
+    /// Add a new item at `position`.
+    Insert {
+        /// Stable item identity.
+        identity: String,
+        /// Destination position in the ordered result.
+        position: usize,
+        /// Authorized projected value.
+        value: ProjectedValue,
+    },
+    /// Replace an existing item's complete projected value.
+    Update {
+        /// Stable item identity.
+        identity: String,
+        /// Authorized projected replacement.
+        value: ProjectedValue,
+    },
+    /// Apply bounded typed field changes to an existing item.
+    Patch {
+        /// Stable item identity.
+        identity: String,
+        /// Field-level changes to apply atomically.
+        changes: Vec<FieldChange>,
+    },
+    /// Remove an item by identity.
+    Remove {
+        /// Stable item identity.
+        identity: String,
+    },
+    /// Move an item to a new ordered position.
+    Move {
+        /// Stable item identity.
+        identity: String,
+        /// Destination position in the ordered result.
+        position: usize,
+    },
+    /// Replace the complete result with a fresh authorized snapshot.
+    Reset {
+        /// Fresh authorized snapshot.
+        snapshot: Box<Snapshot>,
+    },
+}
+
+/// A complete authorized snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Snapshot {
+    /// The view generation that produced this snapshot.
+    pub view_generation: u64,
+    /// The authorization generation used for filtering.
+    pub authorization_generation: u64,
+    /// The result revision represented by the snapshot.
+    pub revision: u64,
+    /// Ordered, authorized projected items.
+    pub items: Vec<ResultItem>,
+    /// Digest over all items in order.
+    pub digest: ResultDigest,
+    /// Resume checkpoint valid after applying this snapshot.
+    pub checkpoint: Checkpoint,
+}
+
+impl Snapshot {
+    /// Builds a snapshot and issues its opaque checkpoint.
+    #[must_use]
+    pub fn new(
+        view_generation: u64,
+        authorization_generation: u64,
+        revision: u64,
+        items: Vec<ResultItem>,
+        retention_generation: u64,
+        expires_at: u64,
+    ) -> Self {
+        let digest = digest_items(&items);
+        let checkpoint =
+            Checkpoint::issue(view_generation, revision, digest, retention_generation, expires_at);
+        Self { view_generation, authorization_generation, revision, items, digest, checkpoint }
+    }
+
+    fn validate(&self, limits: Limits) -> Result<(), ViewError> {
+        validate_items(&self.items, limits)?;
+        if self.digest != digest_items(&self.items) {
+            return Err(ViewError::DigestMismatch);
+        }
+        if self.checkpoint.view_generation != self.view_generation
+            || self.checkpoint.revision != self.revision
+            || !self.checkpoint.is_valid_at(0, self.checkpoint.retention_generation)
+        {
+            return Err(ViewError::InvalidCheckpoint);
+        }
+        Ok(())
+    }
+}
+
+/// One result revision delivered after a snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResultDelta {
+    /// View generation for this delta.
+    pub view_generation: u64,
+    /// Revision from which operations apply.
+    pub from_revision: u64,
+    /// Revision reached after all operations apply.
+    pub to_revision: u64,
+    /// Atomic ordered operations.
+    pub operations: Vec<ResultOperation>,
+    /// Digest of the complete result at `to_revision`.
+    pub result_digest: ResultDigest,
+    /// Checkpoint issued only for the resulting revision.
+    pub checkpoint: Checkpoint,
+}
+
+impl ResultDelta {
+    /// Creates a delta, calculating its digest from `result` and issuing a
+    /// checkpoint.  The caller supplies the already-authoritative final
+    /// result; operations are never interpreted as a partial digest.
+    #[must_use]
+    pub fn new(
+        view_generation: u64,
+        from_revision: u64,
+        to_revision: u64,
+        operations: Vec<ResultOperation>,
+        result: &[ResultItem],
+        retention_generation: u64,
+        expires_at: u64,
+    ) -> Self {
+        let result_digest = digest_items(result);
+        let checkpoint = Checkpoint::issue(
+            view_generation,
+            to_revision,
+            result_digest,
+            retention_generation,
+            expires_at,
+        );
+        Self { view_generation, from_revision, to_revision, operations, result_digest, checkpoint }
+    }
+}
+
+/// A bounded result-view state machine.
+#[derive(Clone, Debug)]
+pub struct ViewState {
+    view_generation: u64,
+    authorization_generation: u64,
+    revision: u64,
+    items: Vec<ResultItem>,
+    digest: ResultDigest,
+    checkpoint: Option<Checkpoint>,
+    limits: Limits,
+    online: bool,
+    optimistic: BTreeMap<IdempotencyKey, Vec<ResultOperation>>,
+    completed_mutations: BTreeSet<IdempotencyKey>,
+}
+
+/// Limits applied before allocating or retaining view state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    /// Maximum result items.
+    pub max_items: usize,
+    /// Maximum bytes in any projected item.
+    pub max_value_bytes: usize,
+    /// Maximum operations in one delta.
+    pub max_operations: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            max_items: DEFAULT_MAX_ITEMS,
+            max_value_bytes: DEFAULT_MAX_VALUE_BYTES,
+            max_operations: 1024,
+        }
+    }
+}
+
+impl ViewState {
+    /// Creates an empty state awaiting snapshot bootstrap.
+    #[must_use]
+    pub fn new(limits: Limits) -> Self {
+        Self {
+            view_generation: 0,
+            authorization_generation: 0,
+            revision: 0,
+            items: Vec::new(),
+            digest: ResultDigest::empty(),
+            checkpoint: None,
+            limits,
+            online: true,
+            optimistic: BTreeMap::new(),
+            completed_mutations: BTreeSet::new(),
+        }
+    }
+
+    /// Installs a complete authorized bootstrap snapshot atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewError`] when the snapshot exceeds limits or carries an
+    /// invalid digest or checkpoint.
+    pub fn bootstrap(&mut self, snapshot: Snapshot) -> Result<(), ViewError> {
+        snapshot.validate(self.limits)?;
+        self.install_snapshot(snapshot);
+        Ok(())
+    }
+
+    /// Applies one ordered delta. A duplicate is ignored; a gap or future
+    /// reorder is reported so the caller can resume or request a reset.
+    pub fn apply_delta(&mut self, delta: &ResultDelta) -> ApplyOutcome {
+        if delta.view_generation != self.view_generation {
+            return ApplyOutcome::ResetRequired(ResetReason::GenerationChanged);
+        }
+        if delta.to_revision <= self.revision {
+            return if delta.to_revision == self.revision && delta.result_digest != self.digest {
+                ApplyOutcome::ResetRequired(ResetReason::ViewDiverged)
+            } else {
+                ApplyOutcome::Duplicate
+            };
+        }
+        if delta.from_revision != self.revision || delta.to_revision <= delta.from_revision {
+            return ApplyOutcome::Gap { expected: self.revision, got: delta.from_revision };
+        }
+        if delta.operations.len() > self.limits.max_operations {
+            return ApplyOutcome::ResetRequired(ResetReason::Oversized);
+        }
+        let mut candidate = self.items.clone();
+        if apply_operations(&mut candidate, &delta.operations, self.limits).is_err() {
+            return ApplyOutcome::ResetRequired(ResetReason::InvalidOperations);
+        }
+        if digest_items(&candidate) != delta.result_digest {
+            return ApplyOutcome::ResetRequired(ResetReason::ViewDiverged);
+        }
+        if delta.checkpoint.view_generation != delta.view_generation
+            || delta.checkpoint.revision != delta.to_revision
+        {
+            return ApplyOutcome::ResetRequired(ResetReason::InvalidCheckpoint);
+        }
+        self.items = candidate;
+        self.revision = delta.to_revision;
+        self.digest = delta.result_digest;
+        self.checkpoint = Some(delta.checkpoint.clone());
+        ApplyOutcome::Applied
+    }
+
+    /// Applies an authorization transition. Visibility removals are applied
+    /// to the old generation before the replacement snapshot advances it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewError`] for stale authorization or view generations, or
+    /// when the replacement snapshot is invalid or exceeds limits.
+    pub fn transition_authorization(
+        &mut self,
+        next_authorization_generation: u64,
+        removals: &[String],
+        replacement: Snapshot,
+    ) -> Result<(), ViewError> {
+        if next_authorization_generation <= self.authorization_generation {
+            return Err(ViewError::StaleAuthorization);
+        }
+        replacement.validate(self.limits)?;
+        if replacement.authorization_generation != next_authorization_generation
+            || replacement.view_generation <= self.view_generation
+        {
+            return Err(ViewError::GenerationChanged);
+        }
+        for identity in removals {
+            if let Some(index) = self.items.iter().position(|item| &item.identity == identity) {
+                self.items.remove(index);
+            }
+        }
+        self.install_snapshot_with_authorization(replacement, next_authorization_generation);
+        Ok(())
+    }
+
+    /// Determines whether the current checkpoint can resume, returning a
+    /// typed reset requirement for expiry or retained-history advancement.
+    #[must_use]
+    pub fn resume(
+        &self,
+        presented: &Checkpoint,
+        now: u64,
+        retention_generation: u64,
+    ) -> ResumeDecision {
+        if !presented.is_valid_at(now, retention_generation) {
+            if now > presented.expires_at {
+                ResumeDecision::ResetRequired(ResetReason::CheckpointExpired)
+            } else {
+                ResumeDecision::ResetRequired(ResetReason::RetentionAdvanced)
+            }
+        } else if self.checkpoint.as_ref() == Some(presented) {
+            ResumeDecision::ReplayFrom(self.revision)
+        } else {
+            ResumeDecision::ResetRequired(ResetReason::CheckpointNotCurrent)
+        }
+    }
+
+    /// Replaces the result with an authorized reset snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewError`] when the snapshot is invalid or older than the
+    /// state already installed.
+    pub fn reset(&mut self, snapshot: Snapshot) -> Result<(), ViewError> {
+        snapshot.validate(self.limits)?;
+        if snapshot.view_generation < self.view_generation {
+            return Err(ViewError::StaleGeneration);
+        }
+        if snapshot.view_generation == self.view_generation && snapshot.revision < self.revision {
+            return Err(ViewError::StaleRevision);
+        }
+        self.install_snapshot(snapshot);
+        Ok(())
+    }
+
+    /// Sets whether online server-authoritative mutations may be attempted.
+    pub fn set_online(&mut self, online: bool) {
+        self.online = online;
+    }
+
+    /// Starts a reversible optimistic presentation. It cannot advance the
+    /// authoritative revision, digest, or checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MutationError`] when offline, over the pending or operation
+    /// bounds, or when the presentation cannot apply to the current result.
+    pub fn begin_mutation(
+        &mut self,
+        key: IdempotencyKey,
+        presentation: Vec<ResultOperation>,
+    ) -> Result<MutationStatus, MutationError> {
+        if !self.online {
+            return Err(MutationError::Offline);
+        }
+        if self.completed_mutations.contains(&key) || self.optimistic.contains_key(&key) {
+            return Err(MutationError::DuplicateIdentity);
+        }
+        if presentation.len() > self.limits.max_operations {
+            return Err(MutationError::Oversized);
+        }
+        if self.optimistic.len() >= MAX_PENDING_MUTATIONS {
+            return Err(MutationError::TooManyPending);
+        }
+        let mut candidate = self.visible_items();
+        apply_operations(&mut candidate, &presentation, self.limits)
+            .map_err(|()| MutationError::InvalidPresentation)?;
+        self.optimistic.insert(key, presentation);
+        Ok(MutationStatus::Pending)
+    }
+
+    /// Accepts a server outcome and rebases remaining presentations on the
+    /// authoritative result. Retrying the same identity is idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MutationError`] when the identity is unknown or the
+    /// authoritative result requires a gap or reset.
+    pub fn accept_mutation(
+        &mut self,
+        key: &IdempotencyKey,
+        delta: &ResultDelta,
+    ) -> Result<MutationStatus, MutationError> {
+        if self.completed_mutations.contains(key) {
+            return Ok(MutationStatus::Accepted);
+        }
+        if !self.optimistic.contains_key(key) {
+            return Err(MutationError::UnknownIdentity);
+        }
+        match self.apply_delta(delta) {
+            ApplyOutcome::Applied | ApplyOutcome::Duplicate => {
+                self.optimistic.remove(key);
+                self.remember_completed(key.clone());
+                Ok(MutationStatus::Accepted)
+            }
+            ApplyOutcome::ResetRequired(reason) => Err(MutationError::AuthoritativeReset(reason)),
+            ApplyOutcome::Gap { .. } => Err(MutationError::AuthoritativeGap),
+        }
+    }
+
+    /// Rejects a pending mutation and removes its presentation. Repeated
+    /// rejection is safe and returns the already-rejected status.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MutationError::UnknownIdentity`] when the identity is not
+    /// pending or already completed.
+    pub fn reject_mutation(
+        &mut self,
+        key: &IdempotencyKey,
+    ) -> Result<MutationStatus, MutationError> {
+        if self.completed_mutations.contains(key) {
+            return Ok(MutationStatus::Rejected);
+        }
+        if self.optimistic.remove(key).is_some() {
+            self.remember_completed(key.clone());
+            Ok(MutationStatus::Rejected)
+        } else {
+            Err(MutationError::UnknownIdentity)
+        }
+    }
+
+    /// Returns the authoritative ordered items, excluding optimistic
+    /// presentation. Use [`Self::visible_items`] for rendering.
+    #[must_use]
+    pub fn items(&self) -> &[ResultItem] {
+        &self.items
+    }
+
+    /// Applies pending presentations over a clone of authoritative state.
+    #[must_use]
+    pub fn visible_items(&self) -> Vec<ResultItem> {
+        let mut visible = self.items.clone();
+        for operations in self.optimistic.values() {
+            if apply_operations(&mut visible, operations, self.limits).is_err() {
+                return self.items.clone();
+            }
+        }
+        visible
+    }
+
+    /// Current authoritative revision.
+    #[must_use]
+    pub const fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Current complete-result digest.
+    #[must_use]
+    pub const fn digest(&self) -> ResultDigest {
+        self.digest
+    }
+
+    /// Current view generation.
+    #[must_use]
+    pub const fn view_generation(&self) -> u64 {
+        self.view_generation
+    }
+
+    /// Current authorization generation.
+    #[must_use]
+    pub const fn authorization_generation(&self) -> u64 {
+        self.authorization_generation
+    }
+
+    /// Current opaque checkpoint, if bootstrap has completed.
+    #[must_use]
+    pub fn checkpoint(&self) -> Option<&Checkpoint> {
+        self.checkpoint.as_ref()
+    }
+
+    fn install_snapshot(&mut self, snapshot: Snapshot) {
+        self.view_generation = snapshot.view_generation;
+        self.authorization_generation = snapshot.authorization_generation;
+        self.install_result(snapshot);
+    }
+
+    fn install_snapshot_with_authorization(&mut self, snapshot: Snapshot, auth: u64) {
+        self.view_generation = snapshot.view_generation;
+        self.authorization_generation = auth;
+        self.install_result(snapshot);
+    }
+
+    fn install_result(&mut self, snapshot: Snapshot) {
+        self.revision = snapshot.revision;
+        self.items = snapshot.items;
+        self.digest = snapshot.digest;
+        self.checkpoint = Some(snapshot.checkpoint);
+    }
+
+    fn remember_completed(&mut self, key: IdempotencyKey) {
+        if self.completed_mutations.len() >= MAX_PENDING_MUTATIONS
+            && let Some(oldest) = self.completed_mutations.iter().next().cloned()
+        {
+            self.completed_mutations.remove(&oldest);
+        }
+        self.completed_mutations.insert(key);
+    }
+}
+
+/// Result of applying a revision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApplyOutcome {
+    /// The revision was applied atomically.
+    Applied,
+    /// The same or an older revision was already applied.
+    Duplicate,
+    /// A missing or reordered revision requires resume.
+    Gap {
+        /// Revision currently applied by the consumer.
+        expected: u64,
+        /// Revision named as the delta's source.
+        got: u64,
+    },
+    /// The stream cannot be safely repaired by applying this delta.
+    ResetRequired(ResetReason),
+}
+
+/// Why a stream requires a fresh authorized snapshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResetReason {
+    /// Checkpoint lifetime elapsed.
+    CheckpointExpired,
+    /// Retained-history generation changed.
+    RetentionAdvanced,
+    /// Authorization or view generation changed.
+    GenerationChanged,
+    /// The checkpoint was not the current view checkpoint.
+    CheckpointNotCurrent,
+    /// Complete-result digest did not validate.
+    ViewDiverged,
+    /// Operation list or snapshot exceeded bounds.
+    Oversized,
+    /// Operations were not valid for the current result.
+    InvalidOperations,
+    /// Checkpoint fields did not match the delta.
+    InvalidCheckpoint,
+    /// Backlog was coalesced into a reset.
+    Backpressure,
+}
+
+/// Resume decision after validating an opaque checkpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResumeDecision {
+    /// The server may replay from this already-applied revision.
+    ReplayFrom(u64),
+    /// A new authorized snapshot is required.
+    ResetRequired(ResetReason),
+}
+
+/// A bounded caller identity for mutation retries.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct IdempotencyKey(String);
+
+impl IdempotencyKey {
+    /// Validates and creates an identity. Identities are opaque to mutation
+    /// semantics and are never used as replication identities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MutationError::InvalidIdentity`] for an empty, overlong, or
+    /// control-character-containing value.
+    pub fn new(value: impl Into<String>) -> Result<Self, MutationError> {
+        let value = value.into();
+        if value.trim().is_empty()
+            || value.len() > MAX_IDEMPOTENCY_BYTES
+            || value.chars().any(char::is_control)
+        {
+            return Err(MutationError::InvalidIdentity);
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the validated identity for request correlation.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Mutation lifecycle status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MutationStatus {
+    /// A reversible presentation is visible while the request is in flight.
+    Pending,
+    /// The server accepted the durable request.
+    Accepted,
+    /// The server rejected the request and presentation was rolled back.
+    Rejected,
+}
+
+/// Why an online optimistic mutation could not complete.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MutationError {
+    /// Mutations attempted while disconnected are never queued.
+    Offline,
+    /// Identity is empty, invalid, or oversized.
+    InvalidIdentity,
+    /// Identity is already pending or completed.
+    DuplicateIdentity,
+    /// Presentation exceeds the operation bound.
+    Oversized,
+    /// The view already has its bounded number of pending mutations.
+    TooManyPending,
+    /// Presentation cannot apply to the authoritative result.
+    InvalidPresentation,
+    /// The identity is not pending.
+    UnknownIdentity,
+    /// The authoritative result requires a reset.
+    AuthoritativeReset(ResetReason),
+    /// The authoritative result had a revision gap.
+    AuthoritativeGap,
+}
+
+/// A queued delivery, either one delta or a coalesced reset snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum QueuedDelivery {
+    /// An incremental result revision.
+    Delta(ResultDelta),
+    /// A fresh snapshot replacing all pending revisions.
+    Reset(Snapshot),
+}
+
+/// Outcome of adding to the bounded delivery queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueueOutcome {
+    /// Delta was retained.
+    Queued,
+    /// Older pending work was replaced with a reset.
+    CoalescedReset,
+}
+
+/// A per-subscriber bounded outbound result queue.
+#[derive(Clone, Debug)]
+pub struct DeliveryQueue {
+    max_revisions: usize,
+    max_bytes: usize,
+    bytes: usize,
+    pending: VecDeque<ResultDelta>,
+    reset: Option<Snapshot>,
+}
+
+impl DeliveryQueue {
+    /// Creates a queue with independent revision and byte bounds.
+    #[must_use]
+    pub fn new(max_revisions: usize, max_bytes: usize) -> Self {
+        Self { max_revisions, max_bytes, bytes: 0, pending: VecDeque::new(), reset: None }
+    }
+
+    /// Queues a delta, replacing all pending work with `snapshot` if the
+    /// backlog exceeds either bound.  The reset is always one bounded object.
+    pub fn push(&mut self, delta: ResultDelta, snapshot: Snapshot) -> QueueOutcome {
+        let delta_bytes = estimate_delta_bytes(&delta);
+        if self.reset.is_some()
+            || self.pending.len() >= self.max_revisions
+            || self.bytes.saturating_add(delta_bytes) > self.max_bytes
+        {
+            self.pending.clear();
+            self.bytes = 0;
+            self.reset = Some(snapshot);
+            QueueOutcome::CoalescedReset
+        } else {
+            self.bytes = self.bytes.saturating_add(delta_bytes);
+            self.pending.push_back(delta);
+            QueueOutcome::Queued
+        }
+    }
+
+    /// Takes the next bounded delivery.
+    pub fn pop(&mut self) -> Option<QueuedDelivery> {
+        if let Some(snapshot) = self.reset.take() {
+            return Some(QueuedDelivery::Reset(snapshot));
+        }
+        let delta = self.pending.pop_front()?;
+        self.bytes = self.bytes.saturating_sub(estimate_delta_bytes(&delta));
+        Some(QueuedDelivery::Delta(delta))
+    }
+
+    /// Number of retained deliveries (zero or one after coalescing).
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.pending.len() + usize::from(self.reset.is_some())
+    }
+
+    /// Whether no delivery is retained.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+fn apply_operations(
+    items: &mut Vec<ResultItem>,
+    operations: &[ResultOperation],
+    limits: Limits,
+) -> Result<(), ()> {
+    if operations.len() > limits.max_operations {
+        return Err(());
+    }
+    let mut identities = items.iter().map(|item| item.identity.clone()).collect::<BTreeSet<_>>();
+    for operation in operations {
+        match operation {
+            ResultOperation::Insert { identity, position, value } => {
+                if identity.is_empty()
+                    || !identities.insert(identity.clone())
+                    || *position > items.len()
+                {
+                    return Err(());
+                }
+                let item = ResultItem::new(identity.clone(), value.clone());
+                if item.encoded_size() > limits.max_value_bytes {
+                    return Err(());
+                }
+                items.insert(*position, item);
+            }
+            ResultOperation::Update { identity, value } => {
+                let item = items.iter_mut().find(|item| item.identity == *identity).ok_or(())?;
+                item.value = value.clone();
+                if item.encoded_size() > limits.max_value_bytes {
+                    return Err(());
+                }
+            }
+            ResultOperation::Patch { identity, changes } => {
+                let item = items.iter_mut().find(|item| item.identity == *identity).ok_or(())?;
+                for change in changes {
+                    if change.path.is_empty() {
+                        return Err(());
+                    }
+                    match &change.value {
+                        Some(value) => {
+                            item.value.insert(change.path.clone(), value.clone());
+                        }
+                        None => {
+                            item.value.remove(&change.path);
+                        }
+                    }
+                }
+                if item.encoded_size() > limits.max_value_bytes {
+                    return Err(());
+                }
+            }
+            ResultOperation::Remove { identity } => {
+                let index = items.iter().position(|item| item.identity == *identity).ok_or(())?;
+                items.remove(index);
+                identities.remove(identity);
+            }
+            ResultOperation::Move { identity, position } => {
+                let index = items.iter().position(|item| item.identity == *identity).ok_or(())?;
+                if *position >= items.len() {
+                    return Err(());
+                }
+                let item = items.remove(index);
+                items.insert(*position, item);
+            }
+            ResultOperation::Reset { snapshot } => {
+                if snapshot.validate(limits).is_err() {
+                    return Err(());
+                }
+                items.clone_from(&snapshot.items);
+                identities = items.iter().map(|item| item.identity.clone()).collect();
+            }
+        }
+        if items.len() > limits.max_items {
+            return Err(());
+        }
+    }
+    Ok(())
+}
+
+fn validate_items(items: &[ResultItem], limits: Limits) -> Result<(), ViewError> {
+    if items.len() > limits.max_items {
+        return Err(ViewError::Oversized);
+    }
+    let mut identities = BTreeSet::new();
+    for item in items {
+        if item.identity.is_empty()
+            || !identities.insert(&item.identity)
+            || item.encoded_size() > limits.max_value_bytes
+        {
+            return Err(ViewError::InvalidSnapshot);
+        }
+    }
+    Ok(())
+}
+
+fn digest_items(items: &[ResultItem]) -> ResultDigest {
+    if items.is_empty() {
+        return ResultDigest::empty();
+    }
+    let mut bytes = Vec::new();
+    for item in items {
+        bytes.extend_from_slice(&(item.identity.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(item.identity.as_bytes());
+        for (key, value) in &item.value {
+            bytes.extend_from_slice(&(key.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(key.as_bytes());
+            bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(value);
+        }
+        bytes.push(0xff);
+    }
+    let mut out = [0; 32];
+    for lane in 0..4 {
+        let mut hash =
+            0xcbf2_9ce4_8422_2325_u64 ^ (lane as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        for byte in &bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+        out[lane * 8..lane * 8 + 8].copy_from_slice(&hash.to_le_bytes());
+    }
+    ResultDigest(out)
+}
+
+fn checksum(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
+}
+
+fn estimate_delta_bytes(delta: &ResultDelta) -> usize {
+    64 + delta.operations.len() * 32
+        + delta
+            .operations
+            .iter()
+            .map(|operation| match operation {
+                ResultOperation::Insert { identity, value, .. }
+                | ResultOperation::Update { identity, value } => identity.len() + value.len(),
+                ResultOperation::Patch { identity, changes } => {
+                    identity.len()
+                        + changes
+                            .iter()
+                            .map(|change| {
+                                change.path.len() + change.value.as_ref().map_or(0, Vec::len)
+                            })
+                            .sum::<usize>()
+                }
+                ResultOperation::Remove { identity } | ResultOperation::Move { identity, .. } => {
+                    identity.len()
+                }
+                ResultOperation::Reset { snapshot } => {
+                    snapshot.items.iter().map(ResultItem::encoded_size).sum()
+                }
+            })
+            .sum::<usize>()
+}
+
+/// Errors raised while installing an authorized snapshot or transition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewError {
+    /// Snapshot exceeds configured bounds.
+    Oversized,
+    /// Snapshot contains malformed identities or duplicate rows.
+    InvalidSnapshot,
+    /// Snapshot digest does not cover the supplied rows.
+    DigestMismatch,
+    /// Checkpoint does not match its snapshot.
+    InvalidCheckpoint,
+    /// Transition would move backwards.
+    StaleGeneration,
+    /// A reset would move a generation's revision backwards.
+    StaleRevision,
+    /// Authorization generation is stale.
+    StaleAuthorization,
+    /// Transition supplied inconsistent generation values.
+    GenerationChanged,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn value(name: &str, body: &str) -> ProjectedValue {
+        BTreeMap::from([(name.to_owned(), body.as_bytes().to_vec())])
+    }
+
+    fn snapshot(
+        generation: u64,
+        auth: u64,
+        revision: u64,
+        names: &[&str],
+        expiry: u64,
+    ) -> Snapshot {
+        Snapshot::new(
+            generation,
+            auth,
+            revision,
+            names.iter().map(|name| ResultItem::new(*name, value("v", name))).collect(),
+            1,
+            expiry,
+        )
+    }
+
+    #[derive(Clone)]
+    enum CorpusStep {
+        Bootstrap,
+        Insert,
+        Update,
+        Patch,
+        Move,
+        Remove,
+        Duplicate,
+        Reordered,
+        Reset,
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn semantic_corpus_snapshot_operations_and_delivery() {
+        let corpus = [
+            CorpusStep::Bootstrap,
+            CorpusStep::Insert,
+            CorpusStep::Update,
+            CorpusStep::Patch,
+            CorpusStep::Move,
+            CorpusStep::Remove,
+            CorpusStep::Duplicate,
+            CorpusStep::Reordered,
+            CorpusStep::Reset,
+        ];
+        let mut state = ViewState::new(Limits::default());
+        let initial = snapshot(1, 1, 0, &["a", "b"], 100);
+        for step in corpus {
+            match step {
+                CorpusStep::Bootstrap => state.bootstrap(initial.clone()).unwrap(),
+                CorpusStep::Insert => {
+                    let mut final_items = state.items().to_vec();
+                    final_items.insert(1, ResultItem::new("c", value("v", "c")));
+                    let delta = ResultDelta::new(
+                        1,
+                        0,
+                        1,
+                        vec![ResultOperation::Insert {
+                            identity: "c".into(),
+                            position: 1,
+                            value: value("v", "c"),
+                        }],
+                        &final_items,
+                        1,
+                        100,
+                    );
+                    assert_eq!(state.apply_delta(&delta), ApplyOutcome::Applied);
+                }
+                CorpusStep::Update => {
+                    let mut final_items = state.items().to_vec();
+                    final_items[0].value = value("v", "updated");
+                    let delta = ResultDelta::new(
+                        1,
+                        1,
+                        2,
+                        vec![ResultOperation::Update {
+                            identity: "a".into(),
+                            value: value("v", "updated"),
+                        }],
+                        &final_items,
+                        1,
+                        100,
+                    );
+                    assert_eq!(state.apply_delta(&delta), ApplyOutcome::Applied);
+                }
+                CorpusStep::Patch => {
+                    let mut final_items = state.items().to_vec();
+                    final_items[0].value.insert("extra".into(), b"yes".to_vec());
+                    let delta = ResultDelta::new(
+                        1,
+                        2,
+                        3,
+                        vec![ResultOperation::Patch {
+                            identity: "a".into(),
+                            changes: vec![FieldChange {
+                                path: "extra".into(),
+                                value: Some(b"yes".to_vec()),
+                            }],
+                        }],
+                        &final_items,
+                        1,
+                        100,
+                    );
+                    assert_eq!(state.apply_delta(&delta), ApplyOutcome::Applied);
+                }
+                CorpusStep::Move => {
+                    let mut final_items = state.items().to_vec();
+                    let item = final_items.remove(1);
+                    final_items.insert(0, item);
+                    let delta = ResultDelta::new(
+                        1,
+                        3,
+                        4,
+                        vec![ResultOperation::Move { identity: "c".into(), position: 0 }],
+                        &final_items,
+                        1,
+                        100,
+                    );
+                    assert_eq!(state.apply_delta(&delta), ApplyOutcome::Applied);
+                }
+                CorpusStep::Remove => {
+                    let mut final_items = state.items().to_vec();
+                    final_items.retain(|item| item.identity != "b");
+                    let delta = ResultDelta::new(
+                        1,
+                        4,
+                        5,
+                        vec![ResultOperation::Remove { identity: "b".into() }],
+                        &final_items,
+                        1,
+                        100,
+                    );
+                    assert_eq!(state.apply_delta(&delta), ApplyOutcome::Applied);
+                }
+                CorpusStep::Duplicate => {
+                    let current = state.items().to_vec();
+                    let delta = ResultDelta::new(1, 4, 5, vec![], &current, 1, 100);
+                    assert_eq!(state.apply_delta(&delta), ApplyOutcome::Duplicate);
+                }
+                CorpusStep::Reordered => {
+                    let current = state.items().to_vec();
+                    let delta = ResultDelta::new(1, 8, 9, vec![], &current, 1, 100);
+                    assert_eq!(
+                        state.apply_delta(&delta),
+                        ApplyOutcome::Gap { expected: 5, got: 8 }
+                    );
+                }
+                CorpusStep::Reset => state.reset(snapshot(2, 1, 0, &["z"], 100)).unwrap(),
+            }
+        }
+        assert_eq!(state.items()[0].identity, "z");
+    }
+
+    #[test]
+    fn optimistic_accept_reject_and_online_only() {
+        let mut state = ViewState::new(Limits::default());
+        state.bootstrap(snapshot(1, 1, 0, &["a"], 100)).unwrap();
+        let key = IdempotencyKey::new("request-1").unwrap();
+        state
+            .begin_mutation(
+                key.clone(),
+                vec![ResultOperation::Update {
+                    identity: "a".into(),
+                    value: value("v", "optimistic"),
+                }],
+            )
+            .unwrap();
+        assert_eq!(state.items()[0].value["v"], b"a");
+        assert_eq!(state.visible_items()[0].value["v"], b"optimistic");
+        let mut accepted = state.items().to_vec();
+        accepted[0].value = value("v", "server");
+        let delta = ResultDelta::new(
+            1,
+            0,
+            1,
+            vec![ResultOperation::Update { identity: "a".into(), value: value("v", "server") }],
+            &accepted,
+            1,
+            100,
+        );
+        assert_eq!(state.accept_mutation(&key, &delta), Ok(MutationStatus::Accepted));
+        assert_eq!(state.visible_items()[0].value["v"], b"server");
+        let rejected = IdempotencyKey::new("request-2").unwrap();
+        state
+            .begin_mutation(
+                rejected.clone(),
+                vec![ResultOperation::Update {
+                    identity: "a".into(),
+                    value: value("v", "temporary"),
+                }],
+            )
+            .unwrap();
+        assert_eq!(state.reject_mutation(&rejected), Ok(MutationStatus::Rejected));
+        state.set_online(false);
+        assert_eq!(
+            state.begin_mutation(IdempotencyKey::new("request-3").unwrap(), vec![]),
+            Err(MutationError::Offline)
+        );
+    }
+
+    #[test]
+    fn checkpoint_expiry_authorization_and_slow_consumer_reset() {
+        let mut state = ViewState::new(Limits::default());
+        state.bootstrap(snapshot(1, 1, 0, &["a", "secret"], 5)).unwrap();
+        let checkpoint = state.checkpoint().unwrap().clone();
+        assert_eq!(
+            state.resume(&checkpoint, 6, 1),
+            ResumeDecision::ResetRequired(ResetReason::CheckpointExpired)
+        );
+        let replacement = snapshot(2, 2, 0, &["a"], 100);
+        state.transition_authorization(2, &["secret".into()], replacement).unwrap();
+        assert_eq!(state.authorization_generation(), 2);
+        assert_eq!(
+            state.items().iter().map(|item| item.identity.as_str()).collect::<Vec<_>>(),
+            ["a"]
+        );
+
+        let mut queue = DeliveryQueue::new(1, 1);
+        let base = state.items().to_vec();
+        let delta = ResultDelta::new(2, 0, 1, vec![], &base, 1, 100);
+        assert_eq!(queue.push(delta, snapshot(2, 2, 1, &["a"], 100)), QueueOutcome::CoalescedReset);
+        assert!(matches!(queue.pop(), Some(QueuedDelivery::Reset(_))));
+    }
+}
