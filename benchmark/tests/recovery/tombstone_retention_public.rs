@@ -6,10 +6,10 @@
 //! `TenantScope` has no public constructor by design (Platform creates it
 //! after authorization) and neither has `StorageSequence`, so the
 //! data-bearing below-bound behavior — a member catching up across a
-//! declared bound, a chain restoring without resurrecting, a smuggler
+//! declared bound, a chain restoring without resurrecting, a backup
 //! export carrying retained evidence — is proved by the in-crate suites at
-//! `src/replication/retention_tests.rs`, `src/backup/tests.rs`, and
-//! `src/backup/smuggler/tests.rs`. This file proves what an external caller
+//! `src/replication/retention_tests.rs` and `src/backup/tests.rs`. This
+//! file proves what an external caller
 //! of the two seams can construct and observe: the watermark contract's
 //! fail-closed surface and its composition with a backup plan.
 //!
