@@ -152,6 +152,8 @@ providers, or performance. Unsupported operations fail explicitly.
 The SDK implements only named operations published by the owning service.
 Dashboard-owned contracts and Database API contracts may share one edge origin
 and OpenAPI document, but their runtime ownership remains distinct.
+The public API `/api/v1` remains versioned; releases qualify the exact packed tarball
+so consumers receive the same server and browser surface that passed the repository gates.
 
 Each operation is gated against:
 
@@ -180,7 +182,7 @@ npm run test:browser
 ~~~
 
 Node.js 22 and 24 are the supported server runtimes. Browser qualification
-covers current stable Chrome, Firefox, Safari, and Edge through the repository
+covers the current stable major versions of Chrome, Firefox, Safari, and Edge through the repository
 release gates.
 
 Generate and verify route contracts with:

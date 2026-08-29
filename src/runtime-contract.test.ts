@@ -75,7 +75,12 @@ async function productionSources(directory: string): Promise<string[]> {
     if (entry.isDirectory()) {
       return entry.name === "integration" || entry.name === "local" || entry.name === "better-auth" ? [] : productionSources(entryPath);
     }
-    if (!entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts") || entry.name.includes("capture")) {
+    if (
+      !entry.name.endsWith(".ts") ||
+      entry.name.endsWith(".test.ts") ||
+      entry.name === "better-auth.ts" ||
+      entry.name.includes("capture")
+    ) {
       return [];
     }
     return [entryPath];
