@@ -572,3 +572,155 @@ fn a_quorum_read_without_a_regional_majority_is_refused() {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+#[test]
+fn an_epoch_change_keeps_every_acknowledged_write() {
+    use std::collections::BTreeMap;
+    use terrabase_replication_core::{EpochError, accept_epoch, coordinate_composed_write};
+    use terrabase_v2::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
+
+    // Epoch 1: alpha seats a1,a2. A write is acknowledged at regional
+    // quorum — durably held by both.
+    let (set_v1, mut members, dirs) = three_region_members("epoch");
+    let (alpha, _rest) = members.split_at_mut(2);
+    coordinate_composed_write(
+        &set_v1,
+        &MemberId::try_new("a1").expect("valid member"),
+        alpha,
+        &put_write("op-w1", "order-1", "written-under-epoch-1"),
+        LeaderlessLevel::RegionalQuorum,
+    )
+    .expect("epoch 1 accepts the write");
+
+    // Epoch 2 replaces a2 with a3 in alpha. The overlap precondition
+    // holds (2 + 2 > 3 voters in the union), so old and new quorums
+    // must intersect.
+    let dir_a3 = location("epoch-a3");
+    members.push(ComposedMember::open("a3", &dir_a3, "tenant-a").expect("opens"));
+    let mut voters = BTreeMap::new();
+    voters.insert(
+        RegionId::try_new("r-alpha").expect("valid region"),
+        vec![
+            MemberId::try_new("a1").expect("valid member"),
+            MemberId::try_new("a3").expect("valid member"),
+        ],
+    );
+    voters.insert(
+        RegionId::try_new("r-beta").expect("valid region"),
+        vec![
+            MemberId::try_new("b1").expect("valid member"),
+            MemberId::try_new("b2").expect("valid member"),
+        ],
+    );
+    voters.insert(
+        RegionId::try_new("r-gamma").expect("valid region"),
+        vec![
+            MemberId::try_new("g1").expect("valid member"),
+            MemberId::try_new("g2").expect("valid member"),
+        ],
+    );
+    let set_v2 = ReplicaSet::new(2, voters);
+
+    // A skipped epoch is refused outright.
+    let error = accept_epoch(
+        &set_v1,
+        &ReplicaSet::new(3, {
+            let mut voters = BTreeMap::new();
+            voters.insert(
+                RegionId::try_new("r-alpha").expect("valid region"),
+                vec![MemberId::try_new("a1").expect("valid member")],
+            );
+            voters
+        }),
+        &mut members,
+    )
+    .expect_err("epochs never skip");
+    assert_eq!(error, EpochError::NotAStep { from: 1, to: 3 }, "a two-step proposal is refused");
+
+    // The real transition: both sides' quorums durably record it.
+    let receipt = accept_epoch(&set_v1, &set_v2, &mut members).expect("the epoch is accepted");
+    assert_eq!(receipt.from(), 1);
+    assert_eq!(receipt.to(), 2);
+    assert!(receipt.old_acceptors().contains(&MemberId::try_new("a2").expect("valid member")));
+    assert!(receipt.new_acceptors().contains(&MemberId::try_new("a3").expect("valid member")));
+    assert_eq!(receipt.regions().len(), 3);
+
+    // The acknowledged write survives: a3, joining only at epoch 2,
+    // receives it through the heal — the overlap member a1 held it.
+    heal_all(&mut members);
+    for name in ["a1", "a2", "a3", "b1", "b2", "g1", "g2"] {
+        let index = members
+            .iter()
+            .position(|member| member.member_id().as_str() == name)
+            .expect("member present");
+        assert_eq!(
+            members[index].visible("order-1"),
+            Ok(Some(body("written-under-epoch-1"))),
+            "{name} serves the epoch-1 write after the transition"
+        );
+    }
+
+    // A write under the new epoch coordinates against the new set: a2
+    // (retired from the voters) is skipped by the fan-out.
+    let receipt = coordinate_composed_write(
+        &set_v2,
+        &MemberId::try_new("a1").expect("valid member"),
+        &mut members,
+        &put_write("op-w2", "order-2", "written-under-epoch-2"),
+        LeaderlessLevel::RegionalQuorum,
+    )
+    .expect("epoch 2 accepts the write");
+    assert_eq!(receipt.epoch(), 2);
+    assert_eq!(receipt.contributors().len(), 6, "a2 is no longer a voter");
+    assert!(!receipt.contributors().iter().any(|ack| ack.member().as_str() == "a2"));
+
+    for member in members.drain(..) {
+        member.shutdown().expect("closes");
+    }
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    let _ = std::fs::remove_dir_all(&dir_a3);
+}
+
+#[test]
+fn a_transition_without_regional_overlap_is_refused() {
+    use std::collections::BTreeMap;
+    use terrabase_replication_core::{EpochError, accept_epoch};
+    use terrabase_v2::replication::{MemberId, RegionId, ReplicaSet};
+
+    // Epoch 1 seats a1,a2 in alpha; the proposal replaces BOTH with
+    // a3,a4: no old majority can intersect a new majority (2 + 2 is
+    // not greater than the union of 4), so the transition is refused
+    // before any durable recording.
+    let (set_v1, mut members, dirs) = three_region_members("no-overlap");
+    let mut voters = BTreeMap::new();
+    voters.insert(
+        RegionId::try_new("r-alpha").expect("valid region"),
+        vec![
+            MemberId::try_new("a3").expect("valid member"),
+            MemberId::try_new("a4").expect("valid member"),
+        ],
+    );
+    for region in ["r-beta", "r-gamma"] {
+        voters.insert(
+            RegionId::try_new(region).expect("valid region"),
+            set_v1.voters_of(&RegionId::try_new(region).expect("valid region")).to_vec(),
+        );
+    }
+    let set_v2 = ReplicaSet::new(2, voters);
+    let error = accept_epoch(&set_v1, &set_v2, &mut members).expect_err("no overlap");
+    assert_eq!(
+        error,
+        EpochError::NoRegionalOverlap {
+            region: RegionId::try_new("r-alpha").expect("valid region")
+        }
+    );
+
+    for member in members.drain(..) {
+        member.shutdown().expect("closes");
+    }
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

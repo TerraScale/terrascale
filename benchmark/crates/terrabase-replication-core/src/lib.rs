@@ -40,8 +40,8 @@ pub mod compose;
 
 pub use compose::{
     ComposeError, ComposedAck, ComposedCoordinationError, ComposedMember, ComposedReceipt,
-    ComposedWrite, ReadRepairReport, ReconcileReport, coordinate_composed_write,
-    quorum_read_with_repair,
+    ComposedWrite, EpochError, EpochReceipt, ReadRepairReport, ReconcileReport, accept_epoch,
+    coordinate_composed_write, quorum_read_with_repair,
 };
 
 /// The root container holding one entry per document — the same shape

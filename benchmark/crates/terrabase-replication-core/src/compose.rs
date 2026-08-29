@@ -906,3 +906,181 @@ pub fn quorum_read_with_repair(
     repaired.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     Ok((body, ReadRepairReport { repaired }))
 }
+
+/// The reserved document the configuration epoch is durably recorded
+/// in. P5's configuration plane owns this namespace.
+const EPOCH_DOCUMENT: &str = "config-epoch";
+
+/// The receipt of one accepted configuration epoch: both sides' durable
+/// acceptors and the Regions whose quorums overlapped.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EpochReceipt {
+    from: u64,
+    to: u64,
+    old_acceptors: Vec<MemberId>,
+    new_acceptors: Vec<MemberId>,
+    regions: Vec<RegionId>,
+}
+
+impl EpochReceipt {
+    /// Returns the epoch the transition was from.
+    #[must_use]
+    pub const fn from(&self) -> u64 {
+        self.from
+    }
+
+    /// Returns the epoch the transition was to.
+    #[must_use]
+    pub const fn to(&self) -> u64 {
+        self.to
+    }
+
+    /// Returns the Members of the OLD epoch's set that durably
+    /// accepted, in canonical order.
+    #[must_use]
+    pub fn old_acceptors(&self) -> &[MemberId] {
+        &self.old_acceptors
+    }
+
+    /// Returns the Members of the NEW epoch's set that durably
+    /// accepted, in canonical order.
+    #[must_use]
+    pub fn new_acceptors(&self) -> &[MemberId] {
+        &self.new_acceptors
+    }
+
+    /// Returns the Regions whose old and new quorums overlapped, in
+    /// canonical order.
+    #[must_use]
+    pub fn regions(&self) -> &[RegionId] {
+        &self.regions
+    }
+}
+
+/// Why a configuration epoch change did not take effect.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EpochError {
+    /// The transition is not one step: epochs never skip.
+    NotAStep {
+        /// The epoch the set is at.
+        from: u64,
+        /// The epoch that was proposed.
+        to: u64,
+    },
+    /// In this Region the old and new quorums cannot be made to
+    /// intersect — the transition would allow an acknowledged write to
+    /// be lost, so it is refused outright (contract §7).
+    NoRegionalOverlap {
+        /// The Region without an overlapping quorum pair.
+        region: RegionId,
+    },
+    /// A Region's quorum did not durably accept on one side. The
+    /// partial acceptors are named; the retry replays the same
+    /// operation identities.
+    QuorumNotAccepted {
+        /// The old-epoch acceptors that did record the change.
+        old_acceptors: Vec<MemberId>,
+        /// The new-epoch acceptors that did record the change.
+        new_acceptors: Vec<MemberId>,
+    },
+    /// The durable recording failed on one Member.
+    Compose(ComposeError),
+}
+
+/// Accepts one configuration epoch change (contract §7): any Member
+/// may propose; the change becomes effective only after the OLD and
+/// NEW regional quorums durably record it in every Region either set
+/// seats — and only after verifying the two quorums of each Region can
+/// intersect, so a write acknowledged under the old epoch is never
+/// lost by the change.
+///
+/// # Errors
+///
+/// Returns the typed epoch failures; [`EpochError::Compose`] wraps the
+/// durable-recording failures.
+pub fn accept_epoch(
+    current: &ReplicaSet,
+    proposed: &ReplicaSet,
+    members: &mut [ComposedMember],
+) -> Result<EpochReceipt, EpochError> {
+    if proposed.epoch() != current.epoch() + 1 {
+        return Err(EpochError::NotAStep { from: current.epoch(), to: proposed.epoch() });
+    }
+    // The overlap precondition, per Region both sets seat together:
+    // any old majority and any new majority intersect exactly when
+    // their thresholds exceed the union of the Region's voters.
+    let mut regions: Vec<RegionId> = Vec::new();
+    for region in current.regions() {
+        let old_voters = current.voters_of(&region);
+        let new_voters = proposed.voters_of(&region);
+        let union: BTreeSet<_> = old_voters
+            .iter()
+            .chain(new_voters.iter())
+            .map(terrabase_v2::replication::MemberId::as_str)
+            .collect();
+        let overlaps = old_voters.is_empty()
+            || new_voters.is_empty()
+            || current.regional_threshold(&region) + proposed.regional_threshold(&region)
+                > union.len();
+        if !overlaps {
+            return Err(EpochError::NoRegionalOverlap { region });
+        }
+        regions.push(region);
+    }
+    for region in proposed.regions() {
+        if !regions.contains(&region) {
+            regions.push(region);
+        }
+    }
+    regions.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    // Durable acceptance: every reachable Member records the epoch in
+    // its engine and its CRDT state (the configuration is replicated
+    // data). The operation identity is the epoch itself, so a retry of
+    // a partially accepted change replays the recorded receipts.
+    let operation = format!("epoch-{}", proposed.epoch());
+    let mut old_acceptors: Vec<MemberId> = Vec::new();
+    let mut new_acceptors: Vec<MemberId> = Vec::new();
+    for member in members.iter_mut() {
+        let body = BTreeMap::from([(
+            "epoch".to_owned(),
+            DocumentValue::Integer(i64::try_from(proposed.epoch()).map_err(|_| {
+                EpochError::NotAStep { from: current.epoch(), to: proposed.epoch() }
+            })?),
+        )]);
+        member.accept_put(&operation, EPOCH_DOCUMENT, &body).map_err(EpochError::Compose)?;
+        if current.is_voter(member.member_id()) {
+            old_acceptors.push(member.member_id().clone());
+        }
+        if proposed.is_voter(member.member_id()) {
+            new_acceptors.push(member.member_id().clone());
+        }
+    }
+    // The quorum evidence, per Region, on both sides.
+    for region in &regions {
+        let old_threshold = current.regional_threshold(region);
+        let new_threshold = proposed.regional_threshold(region);
+        let old_count =
+            current.voters_of(region).iter().filter(|voter| old_acceptors.contains(voter)).count();
+        let new_count =
+            proposed.voters_of(region).iter().filter(|voter| new_acceptors.contains(voter)).count();
+        let old_voters = current.voters_of(region);
+        let new_voters = proposed.voters_of(region);
+        let old_ok = old_voters.is_empty() || old_count >= old_threshold;
+        let new_ok = new_voters.is_empty() || new_count >= new_threshold;
+        if !old_ok || !new_ok {
+            return Err(EpochError::QuorumNotAccepted {
+                old_acceptors: old_acceptors.clone(),
+                new_acceptors: new_acceptors.clone(),
+            });
+        }
+    }
+    old_acceptors.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    new_acceptors.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    Ok(EpochReceipt {
+        from: current.epoch(),
+        to: proposed.epoch(),
+        old_acceptors,
+        new_acceptors,
+        regions,
+    })
+}

@@ -308,3 +308,40 @@ repairs nothing; a lone Member cannot quorum-read.
 Receipts: `terrabase-replication-core` 21/21 (8 convergence + 13
 composed); clippy `-D warnings` and fmt clean. `scripts/check.sh` not
 run (AC-12).
+
+## 9. P2 landing 6 (2026-08-29): membership epochs with overlapping quorums
+
+The last P2-owned item of the frozen contract §7 landed:
+`accept_epoch` transitions a replica set to the next configuration
+epoch after (a) verifying the per-Region overlap precondition — any
+old majority and any new majority must be able to intersect
+(`thr_old + thr_new > |union of the Region's voters|`; a full
+replacement is refused outright with `NoRegionalOverlap`) — and (b)
+durable acceptance by BOTH sides' regional quorums: every reachable
+Member records the epoch as replicated data (engine commit + CRDT op,
+operation identity `epoch-{n}`, so a partially accepted retry
+replays). Receipts name both sides' acceptors and the overlapping
+Regions; skipped epochs are refused (`NotAStep`).
+
+Proven (scenario 5): a write acknowledged at regional quorum under
+epoch 1 survives the transition to epoch 2 (which replaces one of its
+two holders) — the joining Member receives it through the overlap
+holder — and the next write coordinates against the new set with the
+retired Member absent from the fan-out. Also pinned: the full-replacement
+refusal.
+
+With this landing every P2-owned item of the charter is implemented:
+durable Writer identities, symmetric replica sets, any-Member entry,
+request-scoped coordination, idempotent quorum fan-out,
+coordinator-failure recovery, membership epochs, per-document Loro
+state, anti-entropy, read repair, snapshot transfer, history
+compaction (guarded), delete-wins, shadow history. Still open, owned
+by later phases per the frozen contracts: the authenticated QUIC
+transport (P4), `BackupAck` (P5's backup cluster), qualification
+receipts for the AC-10 list (P7), and the deletion of the superseded
+leader-per-range machinery in `src/replication/member.rs` (ADR 0018
+D-8) once its lanes' observations are migrated.
+
+Receipts: `terrabase-replication-core` 23/23 (8 convergence + 15
+composed); `terrabase-v2 --lib` 1071/1071; clippy `-D warnings` and
+fmt clean. `scripts/check.sh` not run (AC-12).
