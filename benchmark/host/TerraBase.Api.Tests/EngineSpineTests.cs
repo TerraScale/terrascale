@@ -307,6 +307,7 @@ public sealed class EngineTierTests
             }
 
             process.Dispose();
+        
             Directory.Delete(location, recursive: true);
         }
     }
@@ -516,6 +517,125 @@ public sealed class EngineBatchTests
             }
 
             process.Dispose();
+            Directory.Delete(location, recursive: true);
+        }
+    }
+}
+
+/// <summary>
+/// Protocol-level reconnect/resume against the real engine (P4): the
+/// engine process dies mid-session, a fresh process opens the same
+/// durable location, the client reconnects its channel, and the SAME
+/// idempotency key replays the recorded receipt — resume without
+/// re-applying.
+/// </summary>
+public sealed class EngineResumeTests
+{
+    private static string Location()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"tbep-engine-resume-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    private static async Task<Process> StartAsync(string socket, string location)
+    {
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = await EngineHarness.BinaryPathAsync(),
+                Arguments = $"{socket} 1 engine:{location}",
+                RedirectStandardOutput = true,
+                RedirectStandardInput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            },
+        };
+        _ = process.Start();
+        _ = await process.StandardOutput.ReadLineAsync();
+        return process;
+    }
+
+    private static async Task KillAsync(Process process)
+    {
+        process.Kill(entireProcessTree: true);
+        await process.WaitForExitAsync();
+        process.Dispose();
+    }
+
+    /// <summary>Resume: reconnect after a hard kill, replay the receipt, continue.</summary>
+    [Test]
+    public async Task TheClientResumesAcrossAHardProcessKill()
+    {
+        var location = Location();
+        var socket = Path.Combine(Path.GetTempPath(), $"tbep-resume-{Guid.NewGuid():N}.sock");
+        var process = await StartAsync(socket, location);
+
+        CommitReceipt receipt;
+        var client = TbepClient.Connect(socket);
+        await client.BindChannelAsync("backend", "tenant-a");
+        var write = await client.DocumentWriteAsync(
+            new DocumentPut
+            {
+                Id = "order-1",
+                Collection = "orders",
+                Body = TbepValue.Of(new[] { new ObjectField("item", TbepValue.Of("bookshelf")) }),
+            },
+            ExpectedVersion.Absent(),
+            "op-resume-1",
+            "op-resume-1");
+        await Assert.That(write.Outcome.Variant).IsEqualTo("Committed");
+        receipt = (CommitReceipt)write.Outcome.Payload!;
+
+        // A hard kill — no graceful shutdown — then a fresh process over
+        // the same durable location. The old channel dies with the
+        // process; the client resumes on a new one.
+        await KillAsync(process);
+        var restarted = await StartAsync(socket, location);
+        try
+        {
+            await using var resumed = client.Reconnect(socket);
+
+            // The same idempotency key replays the recorded receipt: the
+            // durable ledger resolves the identity across the restart.
+            var replay = await resumed.DocumentWriteAsync(
+                new DocumentPut
+                {
+                    Id = "order-1",
+                    Collection = "orders",
+                    Body = TbepValue.Of(new[] { new ObjectField("item", TbepValue.Of("bookshelf")) }),
+                },
+                ExpectedVersion.Absent(),
+                "op-resume-1",
+                "op-resume-1");
+            await Assert.That(replay.Outcome.Variant).IsEqualTo("Committed");
+            var replayed = (CommitReceipt)replay.Outcome.Payload!;
+            await Assert.That(replayed.Sequence).IsEqualTo(receipt.Sequence);
+
+            // The resumed channel continues serving new work.
+            var next = await resumed.DocumentWriteAsync(
+                new DocumentPut
+                {
+                    Id = "order-2",
+                    Collection = "orders",
+                    Body = TbepValue.Of(new[] { new ObjectField("item", TbepValue.Of("desk")) }),
+                },
+                ExpectedVersion.Absent(),
+                "op-resume-2",
+                "op-resume-2");
+            await Assert.That(next.Outcome.Variant).IsEqualTo("Committed");
+        }
+        finally
+        {
+            await restarted.StandardInput.WriteLineAsync(string.Empty);
+            if (!restarted.WaitForExit(10_000))
+            {
+                restarted.Kill();
+            }
+
+            restarted.Dispose();
+            await client.DisposeAsync();
             Directory.Delete(location, recursive: true);
         }
     }

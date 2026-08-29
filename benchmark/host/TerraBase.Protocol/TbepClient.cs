@@ -22,6 +22,7 @@ public sealed partial class TbepClient : IAsyncDisposable
     private readonly Queue<TbepWire.Frame> inbox = new();
     private ulong correlation;
     private string? tenant;
+    private string? principal;
 
     private TbepClient(Socket socket)
     {
@@ -72,7 +73,38 @@ public sealed partial class TbepClient : IAsyncDisposable
             cancellationToken).ConfigureAwait(false);
         var response = MessagePackSerializer.Deserialize<ChannelBindResponse>(answer.Body, TbepOptions.Strict);
         this.tenant = tenant;
+        this.principal = principal;
         return response;
+    }
+
+    /// <summary>
+    /// Protocol-level reconnect/resume (P4): opens a fresh channel to a
+    /// serving engine process and re-binds the SAME principal and tenant
+    /// this channel held. The engine's durable idempotency ledger makes
+    /// the resumed channel's retries safe — the same operation identity
+    /// replays its recorded receipt instead of re-applying.
+    /// </summary>
+    /// <param name="path">The socket path the (possibly restarted) engine bound.</param>
+    /// <returns>The reconnected, re-bound client.</returns>
+    /// <exception cref="TbepException">The channel was never bound, or the re-bind was refused.</exception>
+    public TbepClient Reconnect(string path)
+    {
+        if (this.tenant is null || this.principal is null)
+        {
+            throw new TbepException("only a bound channel can resume");
+        }
+
+        var resumed = Connect(path);
+        try
+        {
+            resumed.BindChannelAsync(this.principal, this.tenant).GetAwaiter().GetResult();
+            return resumed;
+        }
+        catch (Exception)
+        {
+            resumed.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            throw;
+        }
     }
 
     /// <summary>Connection-open capability and version negotiation: the client names its supported wire versions and capabilities; the peers select the highest common version, unknown capabilities are ignored.</summary>

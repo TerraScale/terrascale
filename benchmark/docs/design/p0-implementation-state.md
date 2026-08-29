@@ -815,3 +815,41 @@ Still open in P4: protocol-level reconnect/resume and the C# CI gates.
 Receipts: `cargo test -p terrabase-tbep` 14 suites green (12 engine-host
 UDS rows); clippy `-D warnings` and fmt clean; Protocol 23/23; Api 91
 green + 1 honest skip. `scripts/check.sh` not run (AC-12).
+
+## 22. P4 landing 11 (2026-08-29): protocol-level reconnect/resume — P4 complete
+
+The client's resume discipline: `TbepClient.Reconnect(path)` opens a
+fresh channel to a serving engine process and re-binds the SAME
+principal and tenant the channel held (only a bound channel can
+resume). The safety of resume is the engine's durable idempotency
+ledger, not client bookkeeping: the C# row
+(`EngineResumeTests.TheClientResumesAcrossAHardProcessKill`) writes
+through one channel, HARD-kills the engine process (no graceful
+shutdown), starts a fresh process over the same durable location,
+reconnects, and retries the SAME idempotency key — the engine replays
+the recorded receipt (same storage sequence, no second application) —
+then continues serving new work on the resumed channel.
+
+The C# CI gates were verified complete rather than built anew: P0's
+`.forgejo/workflows/ci.yml` already carries the dotnet job (protocol
+client build+test, API host build+test — the real-engine rows run in
+CI through the synthesized harness — and the CLI build+test) beside
+the studio job, one gate owning the cross-language product (AC-8).
+
+P4's charter scope is now complete: QUIC/TLS admission (landings 8-9),
+identity (server certificates over TLS 1.3; client tokens and mTLS
+member identities are P5 identity machinery, recorded), generated
+Rust/C# conformance (the corpus replays byte-exact in both languages,
+CI-gated), multiplexing and streaming (the sync/backbone plane over
+bounded lanes), cancellation (landing 5), retries (idempotent frames
+everywhere; resume proven across a hard kill), overload control
+(landing 5's gate), topology (landing 4's honest standalone answer),
+acknowledgement (landing 4's levels with positions), tier
+administration (landing 7), cluster mode (the wire vocabulary; the
+cluster itself is P5), and backup errors (the frozen codes; the
+machinery is P5). The family plane's codec is P6 scope per the
+contract's honest-limits section.
+
+Receipts: `cargo test -p terrabase-tbep` 14 suites green; Protocol
+23/23; Api 92 green + 1 honest skip (msquic). `scripts/check.sh` not
+run (AC-12).
