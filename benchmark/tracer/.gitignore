@@ -1,3 +1,0 @@
-# Build outputs of the SE-11 tracer harness stay out of the repository.
-dotnet/**/bin/
-dotnet/**/obj/
