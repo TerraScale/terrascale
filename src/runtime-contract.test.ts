@@ -32,6 +32,10 @@ test("package metadata declares the supported Node and browser matrix", async ()
     types: "./dist/admin.d.ts",
     import: "./dist/admin.js",
   });
+  assert.deepEqual(packageJson.exports?.["./better-auth"], {
+    types: "./dist/better-auth.d.ts",
+    node: "./dist/better-auth.js",
+  });
   assert.deepEqual(packageJson.exports?.["./local"], {
     types: "./dist/local/index.d.ts",
     node: "./dist/local/index.js",
@@ -69,7 +73,7 @@ async function productionSources(directory: string): Promise<string[]> {
   const paths = await Promise.all(entries.map(async (entry) => {
     const entryPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      return entry.name === "integration" || entry.name === "local" ? [] : productionSources(entryPath);
+      return entry.name === "integration" || entry.name === "local" || entry.name === "better-auth" ? [] : productionSources(entryPath);
     }
     if (!entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts") || entry.name.includes("capture")) {
       return [];

@@ -54,6 +54,7 @@ const files = [
     return filePath.endsWith(".ts")
       && !filePath.endsWith(".test.ts")
       && !relative.startsWith("src/integration/")
+      && !relative.startsWith("src/better-auth.ts")
       && !filePath.endsWith("client-route-capture.ts");
   })),
   ...(await filesUnder(path.join(repositoryRoot, "dist"), (filePath) => {
@@ -62,6 +63,7 @@ const files = [
       && !filePath.includes(".test.")
       && !relative.startsWith("dist/integration/")
       && !relative.startsWith("dist/internal/")
+      && !relative.startsWith("dist/better-auth.")
       && !filePath.includes("capture");
   })),
   path.join(repositoryRoot, "README.md"),

@@ -140,7 +140,7 @@ await local.reset({ seed: true });
 await local.close();
 ~~~
 
-Importing `local` is the opt-in. Root, `admin`, and future `better-auth`
+Importing `local` is the opt-in. Root, `admin`, and `better-auth`
 entrypoints never enable SQLite automatically.
 
 The local runtime does not prove TerraBaseV2 replication, RF=2 durability,
