@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3026",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Far past the P0 hypothesis: collection and database-default policies validate V1 field shapes, the revisions bin lists deleted documents past the age and its cleaner purges eligible entries atomically while refusing live documents, minimum-age floors and per-update caps hold, and purge-on-delete is configurable; conflict-revision configuration (GAP-F07 note in src/families/revisions.rs) and start-from-etag semantics remain absent.",
-  "previous_status": "unresolved"
-}

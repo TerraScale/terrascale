@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4001",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "StaticIndexDefinition with identity/comparison/multi-map/reduce/output-rule validation exists and is tested, but it is not wired into the engine catalog/optimizer: the catalog registers the seam-local optimizer::IndexDefinition field lists, so a static definition never serves a query. Planning itself (selection, auto-index creation) is real and tested.",
-  "previous_status": "unresolved"
-}

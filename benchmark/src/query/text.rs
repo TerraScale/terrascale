@@ -1,11 +1,11 @@
-//! The private V1-compatible query grammar.
+//! The private bounded TQL query grammar.
 //!
 //! This module defines the exact small text subset W3-2 accepts through
-//! [`QueryInput::V1Compatible`](crate::operations::QueryInput::V1Compatible)
+//! [`QueryInput::Tql`](crate::operations::QueryInput::Tql)
 //! and rejects as [`QueryInputError::UnsupportedGrammar`] everywhere else. It
-//! is a V1-inspired subset, not a claim about V1's grammar, and it is the only
-//! parser in the crate: the same function validates the public
-//! [`V1QueryText`](crate::operations::V1QueryText) wrapper and normalizes the
+//! is a deliberately small first-release subset. It is the only parser in the
+//! crate: the same function validates the public
+//! [`TqlQueryText`](crate::operations::TqlQueryText) wrapper and normalizes the
 //! text into the same model as the typed form.
 //!
 //! The grammar is, in this fixed clause order, each clause optional:
@@ -38,7 +38,7 @@ use super::spec::{
 use crate::operations::QueryInputError;
 use crate::types::{CollectionName, DocumentValue};
 
-/// One lexical token of the V1-compatible subset.
+/// One lexical token of the first-release TQL subset.
 #[derive(Clone, Debug, PartialEq)]
 enum Token {
     Word(String),
@@ -312,7 +312,7 @@ fn parse_uint(parser: &mut Parser) -> Result<u64, QueryInputError> {
 }
 
 /// Validates one text against the subset without keeping the clauses.
-#[allow(dead_code, reason = "the public V1QueryText::try_new validation is the integrator action")]
+#[allow(dead_code, reason = "the public TqlQueryText::try_new validation delegates here")]
 pub(crate) fn validate(text: &str) -> Result<(), QueryInputError> {
     parse_clauses(text).map(|_| ())
 }

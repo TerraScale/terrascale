@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2027",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Three pre-commit lifecycle hooks exist with a cannot-partially-commit contract — before-store (value mutation plus veto), before-delete (veto), after-save (operation and sequence observation) — focused-tested. Gap: only these three of V1's hook points exist; there are no query, request success/failure, topology-update, or session-disposing hooks, and conversion hooks are a recorded accepted difference (typed documents, SDK-side mapping per GAP-D01) rather than implemented behavior.",
-  "previous_status": "unresolved"
-}

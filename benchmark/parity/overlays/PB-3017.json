@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3017",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Range-window-bounded reads, bounded cursor-stable paging chained to exhaustion, multi-series enumeration, includes through the family seam, retention-horizon reads, and ordered streaming are all tested (the GAP-F04 paging half landed); the V1 include metadata shape (From/To/Entries/TotalResults - no totals exist in pages), multiple-ranges-in-one-request, and cancellation-specific range parity remain untested.",
-  "previous_status": "unresolved"
-}

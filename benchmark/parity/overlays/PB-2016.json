@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2016",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Single-node SaveChanges commits the session's whole batch atomically on one member with distinct durability points (Buffered/Written/Synced, focused-tested), and the mode contract is observable — mode fixed at open with ClusterWide failing closed, a recorded GAP-D01 accepted difference. Gap: the sharded single-bucket and non-transactional multi-bucket variants live only at the sharding coordination seam (Atomic vs PerShard outcomes); the session has no sharding integration.",
-  "previous_status": "unresolved"
-}

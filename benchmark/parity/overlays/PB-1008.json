@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1008",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No CORS or preflight code exists anywhere under host/ or src/ or crates/ (grep for cors/preflight/OPTIONS handling finds nothing). The host registers no OPTIONS routes and emits no CORS headers, so there is no behavior to grade."
-}

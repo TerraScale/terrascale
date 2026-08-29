@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6001",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Real behavior exists for all four operations (backup, restore, smuggler export/import, manifest-verified V1-to-V2 logical migration) with focused passing tests, but the contract's clause on which credentials/authorization checks reject or skip records has no behavior (local-filesystem only, no credentials anywhere), and the migration reads a synthetic V1 representation rather than real V1 exporter output; the contract facts themselves record that no recovery proof is claimed by this inventory row.",
-  "previous_status": "unresolved"
-}

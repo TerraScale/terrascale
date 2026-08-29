@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-5029",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Counter and time-series family replication is real and focused-tested (additive counter merge, delete-wins, duplicate delivery merged once, rejoin preserving totals, whole-record LWW for time-series by recorded decision). Gap: it rides the superseded single-leader member plane (ADR 0018 D-8) — the leaderless composed member carries documents only — and no time-series-vs-document conflict case exists.",
-  "previous_status": "unresolved"
-}

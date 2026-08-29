@@ -2,8 +2,8 @@
 //!
 //! This module implements the W3-2 query contract: one compile/execute path
 //! over [`QueryInput`], execution against an immutable [`ReadSnapshot`], and
-//! generation-aware index selection. The typed clause values and the
-//! V1-compatible grammar normalize into one private model, the plan is
+//! generation-aware index selection. Typed clauses and bounded TQL text
+//! normalize into one private model, the plan is
 //! immutable after compilation, and execution consumes only the caller's
 //! snapshot.
 //!
@@ -31,7 +31,7 @@ mod result;
 mod spatial;
 mod spec;
 mod statistics;
-mod v1;
+mod text;
 mod vector;
 
 pub mod bulk;
@@ -98,11 +98,8 @@ pub use spatial::{
 // window and its source through one vocabulary.
 pub use crate::families::{TimeSeriesPaging, TimeSeriesRange};
 pub use statistics::{DiagnosticDuration, QueryStatistics, ResultEtag};
-#[allow(
-    unused_imports,
-    reason = "the public V1QueryText constructor delegates here once the integrator action lands"
-)]
-pub(crate) use v1::validate as validate_v1_text;
+#[allow(unused_imports, reason = "the public TqlQueryText constructor delegates here")]
+pub(crate) use text::validate as validate_tql_text;
 pub use vector::{
     DEFAULT_VECTOR_SEARCH_LIMIT, MAX_VECTOR_DIMENSIONS, MAX_VECTOR_SEARCH_LIMIT,
     MIN_VECTOR_DIMENSIONS, TqlVectorPredicate, VECTOR_PREDICATE_VERSION, VECTOR_SEARCH_WINDOW,
@@ -340,21 +337,21 @@ impl<'engine> QueryStore<'engine> {
                 spec.includes().to_vec(),
                 spec.time_series_window(),
             )),
-            QueryInput::V1Compatible(text) => {
+            QueryInput::Tql(text) => {
                 let (source, predicate, ordering, paging, projection) =
-                    v1::parse_clauses(text.as_str()).map_err(input_error)?;
+                    text::parse_clauses(text.as_str()).map_err(input_error)?;
                 self.compile_normalized(NormalizedQuery::unbound(
                     source,
                     predicate,
                     ordering,
                     projection,
                     paging,
-                    v1::default_staleness(),
+                    text::default_staleness(),
                 ))
             }
-            QueryInput::V1CompatibleBounded { text, deadline, cancellation } => {
+            QueryInput::TqlBounded { text, deadline, cancellation } => {
                 let (source, predicate, ordering, paging, projection) =
-                    v1::parse_clauses(text.as_str()).map_err(input_error)?;
+                    text::parse_clauses(text.as_str()).map_err(input_error)?;
                 self.compile_normalized(
                     NormalizedQuery::unbound(
                         source,
@@ -362,7 +359,7 @@ impl<'engine> QueryStore<'engine> {
                         ordering,
                         projection,
                         paging,
-                        v1::default_staleness(),
+                        text::default_staleness(),
                     )
                     .with_control(deadline, cancellation),
                 )
@@ -370,23 +367,22 @@ impl<'engine> QueryStore<'engine> {
         }
     }
 
-    /// Compiles raw V1-compatible text through the same seam.
+    /// Compiles raw TQL text through the same seam.
     ///
     /// Test-only: the public path wraps the text in
-    /// [`V1QueryText`](crate::operations::V1QueryText) first, and that
-    /// constructor's validation is the integrator action recorded in the
-    /// design record. Both entries parse with the same function.
+    /// [`TqlQueryText`](crate::operations::TqlQueryText) first, and that
+    /// constructor validates through the same parser.
     #[cfg(test)]
-    pub(crate) fn compile_v1_text(&self, text: &str) -> Result<QueryPlan, QueryError> {
+    pub(crate) fn compile_tql_text(&self, text: &str) -> Result<QueryPlan, QueryError> {
         let (source, predicate, ordering, paging, projection) =
-            v1::parse_clauses(text).map_err(input_error)?;
+            text::parse_clauses(text).map_err(input_error)?;
         self.compile_normalized(NormalizedQuery::unbound(
             source,
             predicate,
             ordering,
             projection,
             paging,
-            v1::default_staleness(),
+            text::default_staleness(),
         ))
     }
 

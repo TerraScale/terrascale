@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3021",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Time-series records replicate by decided whole-record last-writer-wins (decision D4 in docs/families/counter-merge-encoding.md, pinned by a test so the exclusion is observable, never silent) and retention observes the tombstone evidence window; V1's segment split/merge, out-of-order value merge, deleted-range replication, and tombstone cleaner do not exist, and the lane machinery is the superseded leader-per-range plane.",
-  "previous_status": "unresolved"
-}

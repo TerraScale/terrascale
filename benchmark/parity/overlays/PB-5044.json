@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-5044",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "The machinery exists and is lane-tested: failure domains per member are validated topology facts, region loss after an acknowledged write states durable visibility and its recovery limit, the sharded lane measures per-shard RPO as the explicit data-loss window, and backup-restore rejoin reports the recovery window per shard. The row's own scope is the qualification matrix — deployed-Region fault evidence is P7, and the correlated-failure model is declared failure-domain strings only.",
-  "previous_status": "unresolved"
-}

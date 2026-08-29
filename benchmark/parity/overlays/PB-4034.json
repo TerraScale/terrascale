@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4034",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Upgraded by P4: raw V1-compatible query text now executes as a typed public operation over TBEP (query.execute) with bounded deadline/cancellation and typed query.cancel outcomes, proven over a real UDS socket; the C# channel exposes QueryExecuteAsync/QueryCancelAsync. Gaps: no lazy execution, no client session-disposal contract, and no C# test drives QueryExecuteAsync.",
-  "previous_status": "unresolved"
-}

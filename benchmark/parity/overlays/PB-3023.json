@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3023",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Time-series change events carry typed segment-summary payloads proven through replay and live delivery under the checkpointed/acknowledged subscription rules; subscription include-ranges (V1's last n by count/time or all entries in document batches) are not implemented.",
-  "previous_status": "unresolved"
-}

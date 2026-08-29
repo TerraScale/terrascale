@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1013",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "A typed V2 status/header subset exists and is tested: Results.Json content type, 401 gate refusal, 422 scope refusal, the X-TB-Expected conditional mapped across header cases, SSE Cache-Control: no-cache, and 409/410 conflict/gone rows on sync sessions. No ETag/If-None-Match conditional-304 behavior, no Server-Version or transaction headers, and no wire-level header casing/quoting tests exist, so the V1-shaped contract is only partially covered.",
-  "previous_status": "unresolved"
-}

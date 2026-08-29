@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3014",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Counter change events carry a typed counters payload (name, total, shape, record version, bounded entries) proven through replay and live delivery, with checkpoint-not-advancing-before-ack and resend-after-reconnect; no document-metadata counter notification (V1 @counters flag concept) exists and no counter-specific backpressure test exists.",
-  "previous_status": "unresolved"
-}

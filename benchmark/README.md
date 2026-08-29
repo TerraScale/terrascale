@@ -4,14 +4,13 @@ TerraBaseV2 is TerraScale's private Rust database engine. The target is a
 leaderless, multi-writer document database with TerraBase-native delta CRDTs,
 Partition-scoped causal metadata, local-Region durable writes, direct QUIC
 replication, anti-entropy, reactive query synchronization, a ZoneTree-inspired
-LSM, TQL, automatic indexes, optional schemas, and multi-tenant resource
-governance.
+LSM, TQL, automatic indexes, typed document relationships, optional schemas,
+and multi-tenant resource governance.
 
 The current cross-repository charter is [the workspace goal](../GOAL.md).
 [AGENTS.md](AGENTS.md) defines repository rules, and [CONTEXT.md](CONTEXT.md)
-defines current terms. Contract facts live under `parity/contracts/`. Mutable
-V2 state and Proof IDs live under `parity/overlays/`.
-`parity/inventory.json` is generated output.
+defines current terms. RavenDB and TerraBase V1 parity artifacts are legacy
+deletion targets, not product contracts or qualification gates.
 
 ## Supported boundary
 
@@ -43,7 +42,7 @@ The accepted architecture is not yet the implemented architecture. At the
 components:
 
 - Rust storage, WAL, recovery, document, transaction, session, query, index,
-  TQL, family, streaming, sharding, backup, restore, import, migration, and
+  TQL, family, streaming, sharding, backup, restore, and schema-migration
   benchmark modules with focused tests;
 - a bounded, versioned MessagePack TBEP implementation and generated Rust/C#
   contract artifacts;
@@ -87,9 +86,8 @@ The following code and evidence block an architecture-complete claim:
 - Current storage write amplification, tiering, immutable backup, and recovery
   gaps remain open until the matching Recovery and Benchmark Receipts pass.
 
-The parity inventory records status by row. An empty proof list is not
-evidence. Existing Loro, UDS, host, replication, sync, and auth-dependent Proof
-IDs cannot qualify their replacements.
+Existing Loro, UDS, host, replication, sync, and auth-dependent results cannot
+qualify their replacements.
 
 The PostgreSQL performance objective remains `inconclusive` until
 TerraBase.Benchmark produces comparable, valid receipts. No statement in this
@@ -106,9 +104,6 @@ cargo check --workspace --locked
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo doc --workspace --no-deps --locked
-python3 scripts/validate_parity.py --check
-python3 scripts/test_parity_tooling.py
-python3 scripts/test_v1_citations.py
 python3 scripts/check_license.py
 ./scripts/check_secrets.sh
 ~~~
@@ -130,9 +125,5 @@ dotnet run --project cli/TerraBase.Cli.Tests/TerraBase.Cli.Tests.csproj --config
 
 The Studio uses its pinned package manager and runs its native unit, type, and
 browser checks.
-
-The V1 contract audit requires an exact TerraBase V1 checkout. Set
-`TERRABASE_V1_ROOT` only in an approved validation environment. If the V1
-checkout is unavailable, record that gate as unrun rather than weakening it.
 
 No global tools or credentials are required for focused foundation checks.

@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1006",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Server-level routes exist behind the local gate (/health, /v1/metrics, /v1/audit, /v1/engine/health|status|topology|shutdown) with tests for gate refusal and supervision behavior. The V1 /admin families (certificates, studio, operations-server, tcp-connection-info) are neither enumerated nor dispositioned, and no V1 authorization-marker or debug-flag classification exists on V2 server routes.",
-  "previous_status": "unresolved"
-}

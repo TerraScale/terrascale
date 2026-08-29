@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3044",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Family replication is real only for counters (merge encoding) and time-series (decided whole-record LWW) with rejoin/preservation proofs, but it rides the superseded leader-per-range member plane (src/replication/member.rs) rather than the P2 leaderless coordinators, which carry documents only; there is no family-aware shard routing (family queries refuse sharded execution), attachment/revision/compare-exchange replication is untested, and the contract's acknowledgement levels remain unresolved - fault/convergence qualification is P7 regardless.",
-  "previous_status": "unresolved"
-}

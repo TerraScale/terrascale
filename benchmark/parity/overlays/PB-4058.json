@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4058",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Index definitions accept counter and time-series map sources and refuse mixed/overlapping family sources, and family-source queries return entry rows with series cursators through the family seam — all focused-tested. Family map sources are not registered through the engine catalog as serving indexes, and there is no reduce or retention behavior over family sources.",
-  "previous_status": "unresolved"
-}

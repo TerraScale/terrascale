@@ -39,8 +39,7 @@ pub use ingest::{
 };
 pub use metadata::{
     ConditionalLoadError, DocumentHead, DocumentVersionContract, DocumentVersionContractError,
-    HeadCondition, MAX_V1_CHANGE_VECTOR_BYTES, MAX_V1_CHANGE_VECTOR_ENTRIES, V1ChangeVector,
-    V1ChangeVectorEntry, V1ChangeVectorError, V1ChangeVectorMapping,
+    HeadCondition,
 };
 pub use patch::{
     AddOrPatch, DocumentPatch, MAX_PATCH_FIELD_BYTES, MAX_PATCH_OPERATIONS,

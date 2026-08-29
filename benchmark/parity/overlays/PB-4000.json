@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4000",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "One typed compile/execute seam (typed spec, V1-compatible text, TQL) with typed errors and positions exists and is served over TBEP, all tested and passing. The result-shape bullet is still short of V1: result metadata lacks the V1 index-name string, timestamp, and node tag, and the result-kind set excludes map-reduce/facet/suggestion outputs (tracked by PB-4025/4018/4019).",
-  "previous_status": "unresolved"
-}

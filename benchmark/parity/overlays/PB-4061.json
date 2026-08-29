@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4061",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "The raw observations exist and are tested (engine-owned index statistics, an execution duration observation, a bounded non-stale wait), but the row's benchmark-observation contract is unmet: no separation of build/wait/result-processing timing fields, no workload-identity surface, and no benchmark-adapter wiring. Per the contract these observations are inputs only; any speed claim is P7-gated.",
-  "previous_status": "unresolved"
-}

@@ -1,7 +1,5 @@
 //! The TBEP registry drift contract (SE-14): the committed generated
-//! bindings equal regeneration byte-for-byte, and the operation
-//! registry's parity-mapping column names real rows of the parity
-//! inventory (PD-2026-08-26-14 D1, the GAP-A1 fold).
+//! bindings equal regeneration byte-for-byte.
 //!
 //! A schema edit without regeneration cannot land quietly: this test
 //! re-runs `terrabase_tbep::codegen::generate` over
@@ -81,40 +79,11 @@ fn generated_bindings_end_with_exactly_one_newline() {
 }
 
 #[test]
-fn every_parity_reference_names_a_real_inventory_row() {
-    let inventory_path = crate_root().join("../../parity/inventory.json");
-    let inventory = fs::read_to_string(&inventory_path)
-        .unwrap_or_else(|error| panic!("cannot read {}: {error}", inventory_path.display()));
-    codegen::check_parity_against_inventory(&schema_document(), &inventory)
-        .expect("every PB-* reference names a row of the parity inventory");
-}
-
-#[test]
-fn every_operation_carries_a_parity_mapping() {
-    // The registry validates this at generation time (an operation
-    // without a parity mapping fails the schema parse); the assertion
-    // here pins the shipped table explicitly for the drift reader.
+fn required_operations_are_registered() {
     assert!(!registry::OPERATIONS.is_empty());
-    for operation in registry::OPERATIONS {
-        assert!(
-            !operation.parity.is_empty(),
-            "operation {} carries no parity mapping",
-            operation.name
-        );
-        assert!(
-            operation
-                .parity
-                .iter()
-                .any(|entry| entry.starts_with("PB-") || entry.starts_with("new-capability")),
-            "operation {} carries neither a PB row nor a new-capability marker",
-            operation.name
-        );
-    }
-    // The GAP-Q12 fold (PD-2026-08-26-14 D3): query cancellation is a
-    // first-class typed operation of the registry.
     assert!(
         registry::OPERATIONS.iter().any(|operation| operation.name == "query.cancel"),
-        "the query cancellation live signal (GAP-Q12) is a registry operation"
+        "query cancellation is a registry operation"
     );
 }
 

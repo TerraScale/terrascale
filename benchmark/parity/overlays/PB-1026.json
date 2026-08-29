@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1026",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No build/version identity surface exists: no /build/version route, no Server-Version header exchange, and no commit-hash, product-version, or startup-time identity anywhere in host/, the TBEP registry, or the engine (the registry carries only wire/registry version numbers, and TBEP negotiation exchanges wire versions, not build identity). Nothing implements the row's capability."
-}

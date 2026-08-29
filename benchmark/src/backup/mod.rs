@@ -97,7 +97,6 @@ mod records;
 mod restore;
 mod schedule;
 mod sha256;
-mod smuggler;
 #[cfg(test)]
 mod tests;
 

@@ -115,11 +115,6 @@ fn the_schema_operations_register_in_a_new_family_block() {
                 "operation {} mutation flag agrees with the idempotency pairing",
                 operation.name
             );
-            assert!(
-                !operation.parity.is_empty(),
-                "operation {} carries a parity mapping",
-                operation.name
-            );
         }
     }
 }

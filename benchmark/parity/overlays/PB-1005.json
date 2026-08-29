@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1005",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "A database-scoped typed route family exists (documents GET/PUT/DELETE, query + cancel, families read/write, schemas, migrations, streams, sync sessions) and is tested against the scripted engine, while the engine itself serves documents, V1-compatible queries, and schema declare/status over TBEP against a real durable engine. However, the HTTP routes against the real engine still answer 501 operation_refused (RealEngineTests.TheEngineBackedOperationsAnswerTheTypedRefusal), the attachment, index, and operations route families have no V2 surface, and no per-route public/Platform/private disposition exists.",
-  "previous_status": "unresolved"
-}

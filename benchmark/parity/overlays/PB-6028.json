@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6028",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No queue ETL provider code exists (no Kafka, RabbitMQ, SQS, Azure Queue/Service Bus publishers, no CloudEvent converter). Not an accepted exclusion: no charter PD record excludes queue ETL, so it stays in scope unimplemented."
-}

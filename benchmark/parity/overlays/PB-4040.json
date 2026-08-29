@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4040",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Query is now a typed public protocol operation (query.execute and query.cancel in the TBEP registry, served over UDS/QUIC with tenant isolation and a cross-tenant denial/audit test, plus the generic-route refusal test). Gaps: stream, patch, delete, and explain query operations are absent from the public registry, and the only authorization gate is tenant scope — no V1 authorization-class mapping.",
-  "previous_status": "unresolved"
-}

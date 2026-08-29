@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2012",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "what_changed reports field-level old/new values and change types with V1's exact change-type vocabulary, including nested and root type changes and array handling — focused-tested at the session and in public-construction tests. Gap: no per-entity WhatChangedFor report form exists.",
-  "previous_status": "unresolved"
-}

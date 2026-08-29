@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1022",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Replication and cluster traffic exist as V2-native leaderless member lanes with focused tests: identity-checked rejoin and catch-up without duplicates, anti-entropy repair, cross-tenant replication probes denied and observable, quorum writes converging after a partition, epoch transitions keeping acknowledged writes, and the cluster served over TBEP separated from customer typed operations. The V1 wire half of the row is unimplemented and superseded: no Rachis/V1 replication or cluster TCP contract or versioned feature gates exist, per PD-2026-08-28-07's leaderless replacement and PD-2026-08-28-02's TBEP boundary; that wire-contract accounting still needs a recorded disposition.",
-  "previous_status": "unresolved"
-}

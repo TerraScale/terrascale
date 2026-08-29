@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-5047",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Rejoin validates source identity and storage format, resumes from durable cursors or snapshot adoption, and shard recovery reports name every member and owner verdict with per-shard recovery windows. Gap: no typed Recovery Receipt at the plain replication rejoin seam (the shard recovery report and the restore receipt are the only receipt shapes) and no conflict-state validation before a Member becomes eligible for reads or acknowledgements.",
-  "previous_status": "unresolved"
-}

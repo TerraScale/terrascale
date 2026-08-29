@@ -1,12 +1,10 @@
-//! Integration test binary for the recovery seam's public construction
-//! paths (BK-01 backup core, BK-03 logical migration).
+//! Integration test binary for native backup and recovery construction paths.
 //!
 //! Cargo compiles `tests/<directory>/main.rs` as one test target, so the
 //! focused files in this directory are declared as modules here.
 
 mod backup_public_construction;
 mod compaction_public;
-mod migration_public_contract;
 mod restore_public;
 mod schedule_public_chain;
 mod tombstone_retention_public;

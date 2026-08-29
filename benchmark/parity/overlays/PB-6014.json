@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6014",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Retention with disabled state, minimum-age handling, whole-chain pruning that never removes the only chain, keeps the newest chain's bundles and young chains, fails closed on an invalid destination manifest, and runs after each scheduled run is implemented and heavily tested; the gap is local deletion only: no provider-specific deletion, missing-object, partial-deletion, or retry-state reporting exists.",
-  "previous_status": "unresolved"
-}

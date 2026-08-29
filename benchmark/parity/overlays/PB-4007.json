@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4007",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "StartsWith/EndsWith/Contains are implemented with V1 exact-mode case-sensitive matching over string and array fields, focused-tested. Regex is absent: the TQL registry rejects it (docs/tql/rql-mapping.md R42 records regex only as a PROPOSED accepted difference, not charter-accepted), so a named predicate mode of this row is unimplemented.",
-  "previous_status": "unresolved"
-}

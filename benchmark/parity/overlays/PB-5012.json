@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-5012",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "V2 implements the contract's chosen path: a manifest-verified logical migration that rejects unsupported manifest versions and never claims direct V1 file opens, plus versioned, resumable, rollbackable collection schema migrations with forward-only lineage. [downgraded by verification: citations did not survive review]",
-  "previous_status": "unresolved"
-}

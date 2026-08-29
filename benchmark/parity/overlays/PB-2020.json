@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2020",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "The query seam materializes document, counter, and time-series includes in the same request, walking nested paths and flattening arrays, omitting unresolved references and the row's own document — focused-tested. Gap: includes live on the query seam only (no session Load-with-include form exists in src/session) and V1 dictionary key/value include paths have no direct mapping test.",
-  "previous_status": "unresolved"
-}

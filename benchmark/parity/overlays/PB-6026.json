@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6026",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No ETL destination providers exist (no TerraBase/SQL/OLAP/Elasticsearch/Queue/Snowflake/EmbeddingsGeneration/GenAi ETL). Not an accepted exclusion: no charter PD record excludes ETL variants, so it stays in scope unimplemented."
-}

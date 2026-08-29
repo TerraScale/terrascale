@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3006",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Sharding exists as a real subsystem but carries no family routing: family-source queries refuse sharded execution before routing (explicit, tested refusal rather than silent misrouting), while attachment operation routing and shard-local attachment counts do not exist.",
-  "previous_status": "unresolved"
-}

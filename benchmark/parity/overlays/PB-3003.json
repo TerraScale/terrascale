@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3003",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Attachment mutations compose with document and counter writes in one transaction marker, abort hides all staged family changes, and V1 batch staging order is pinned; no bulk-insert attachment path exists and there is no client input-stream validation model (non-readable/non-zero-position/lengthless streams are a V1 client concept with no V2 counterpart yet).",
-  "previous_status": "unresolved"
-}

@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6024",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No ETL configuration, transformation, loader, or process code exists (verified by repo-wide search for ETL identifiers). Not an accepted exclusion: the current GOAL.md decision register has no PD record excluding ETL (PD-2026-08-26-10 keeps optional gaps in parity scope), so the row stays in scope unimplemented."
-}

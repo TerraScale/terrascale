@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1004",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Typed route registration and dispatch exist at the C# host (TypedApi.MapApi maps method+path to typed handlers gated on backend context, tested) and dispatch through the real engine is proven at the TBEP spine. None of the V1 registration mechanics are implemented: no duplicate-route registration failure, no sharded-handler selection or database-loading wait, and no change-check/usage/request-time route metadata.",
-  "previous_status": "unresolved"
-}

@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3041",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Typed change payloads exist for counters, time-series (segment summaries), and attachments (content-addressed metadata) and round-trip through replay and live delivery under bounded, acknowledged, checkpointed subscriptions with at-least-once identifiable duplicates and document-body refusal; the other family kinds never mint payloads (pinned by test rather than silently dropped), and per-family include/filter delivery is untested.",
-  "previous_status": "unresolved"
-}

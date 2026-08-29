@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3035",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Two interactions are contracted and tested (full backup/restore reproduces archived state and expired deletions; an incremental chain replays pass deletions on restore) plus owner-gone family-record clearing; the row requires an independent contract per interaction, and index, patch, replication, sharding, subscription, and revision interactions are absent.",
-  "previous_status": "unresolved"
-}

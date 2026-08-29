@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4020",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No suggestion query, options, or suggestion-enabled field metadata exists anywhere; the analyzer foundation has no suggestion wiring. The row remains an open optional obligation."
-}

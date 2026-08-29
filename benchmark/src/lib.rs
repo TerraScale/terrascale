@@ -1,10 +1,7 @@
 //! `TerraBaseV2` engine.
 //!
-//! The public seams, parity obligations, and evidence rules live in the
-//! workspace charter and parity inventory. Behavior lands behind those seams
-//! packet by packet: the storage/WAL/recovery and document/transaction
-//! engine seam is implemented and focused-tested; later seams remain
-//! declaration-only until their packets prove them.
+//! The workspace charter defines the native product boundary and qualification
+//! rules. Accepted architecture is not an implementation or performance claim.
 
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
@@ -21,7 +18,6 @@ pub mod backup;
 pub mod engine;
 pub mod families;
 pub mod index;
-pub mod migration;
 pub mod operations;
 pub mod query;
 pub mod replication;
@@ -62,14 +58,10 @@ pub use index::operations::{
     LifecycleTransition, MAX_INDEX_ERRORS_PER_INDEX, NonStaleWaitOutcome, RebuildStepOutcome,
     StalenessReason, TenantIndexStatistics, WaitForNonStale,
 };
-pub use migration::{
-    MigrationError, MigrationLossMatrix, MigrationManifest, MigrationOptions, MigrationRecord,
-    MigrationReport,
-};
 pub use operations::{
     DocumentReadRequest, DocumentWriteRequest, FamilyOperation, MAX_QUERY_TEXT_BYTES,
     PublicOperation, PublicResponse, QueryInput, QueryInputError, QueryOperation,
-    RequestValidationError, V1QueryText,
+    RequestValidationError, TqlQueryText,
 };
 pub use query::{
     BulkAuditEntry, BulkAuditStage, BulkByQueryOptions, BulkByQueryReceipt, BulkDetail,

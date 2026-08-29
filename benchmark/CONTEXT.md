@@ -5,26 +5,6 @@ status report. The workspace charter at `../GOAL.md` resolves conflicts.
 
 ## Evidence
 
-**V1 Parity Item**
-
-A capability or observable contract from TerraBase V1 that V2 must implement,
-omit through an accepted disposition, or keep unresolved.
-
-Avoid: feature checkbox.
-
-**Parity Matrix**
-
-The versioned record connecting each V1 Parity Item to V1 evidence, V2 status,
-ownership, contract semantics, Proof IDs, impact, and risk.
-
-Avoid: feature list.
-
-**Proof ID**
-
-A stable identifier for evidence supporting one bounded claim.
-
-Avoid: link, screenshot, confidence.
-
 **Recovery Receipt**
 
 A secret-safe record of an exact recovery scenario, source and data identity,
@@ -52,7 +32,7 @@ Avoid: local timing.
 A statement about behavior, durability, correctness, scale, availability, or
 performance that requires the matching evidence before publication.
 
-Avoid: promise without a Proof ID.
+Avoid: promise without a receipt.
 
 **Current**
 
@@ -260,13 +240,6 @@ active identity.
 
 Avoid: standby, secondary Region.
 
-**Logical Migration**
-
-A manifest-verified V1 to V2 data transformation. V2 does not open V1 files or
-claim V1 wire compatibility.
-
-Avoid: in-place upgrade.
-
 ## Replication and client sync
 
 **Replication Plane**
@@ -407,4 +380,26 @@ Avoid: mandatory table definition.
 An explicit, idempotent, resumable move between Document Schema versions with
 recovery evidence.
 
-Avoid: V1 Logical Migration.
+Avoid: unversioned rewrite, external database import.
+
+**Relationship Edge**
+
+A native record connecting one source document to one target document under a
+named relationship. It has stable identity, CRDT semantics, optional
+properties, and automatic forward and reverse indexes.
+
+Avoid: foreign key without a declared integrity mode, untyped link.
+
+**Soft Relationship**
+
+The default relationship integrity mode. An endpoint may be missing without
+blocking local writes or convergence. Reads report the missing target.
+
+Avoid: silently guaranteed referential integrity.
+
+**Partition-Strict Relationship**
+
+A relationship whose source, target, edge, and delete policy commit atomically
+inside one Partition.
+
+Avoid: cross-Partition foreign key, WAN-free global constraint.

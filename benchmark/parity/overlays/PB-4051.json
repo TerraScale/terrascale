@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4051",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "VectorOptions and VectorIndexDeclaration validate dimensions, refuse text destinations as V1 does, refuse quantization typed while deferred, and carry a content-addressed identity — all focused-tested. Quantized/approximate interpretation is deferred (refused typed), and exact-versus-approximate agreement is proven only as refusal.",
-  "previous_status": "unresolved"
-}

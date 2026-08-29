@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4042",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "Map and reduce definitions are validated shapes only (group-by shape pinned by a definitions test); no map/reduce execution, no grouped query results, and StaticIndexDefinition is not wired into the catalog. The row's capability — executing map-reduce indexes — does not exist."
-}

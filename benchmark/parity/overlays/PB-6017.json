@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6017",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Single-job admission with typed concurrent-attempt rejection (also on the public seam), read throttling that limits reads without reordering or dropping records, cancellation leaving no usable partial recovery point, declared-bound refusal past the durable head, and idempotent torn-publish retry are implemented and tested; the gaps are no disabled/unhealthy-member admission (no member concept on this seam), no provider storage-error mapping, and throttling is not visible in any metrics surface.",
-  "previous_status": "unresolved"
-}

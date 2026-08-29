@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3007",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "The smuggler round-trips family records (attachment metadata and segment records are reserved-collection records) with manifest counts/digests, tamper/digest/truncate rejection, idempotent and resumable import, and migration converts Attachment records with an explicit loss matrix; no attachment-content fixture rides the smuggler round-trip test and no incremental export exists.",
-  "previous_status": "unresolved"
-}

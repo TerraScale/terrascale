@@ -4,7 +4,7 @@
 //! production role of creating a validated scope, because `TenantScope` has
 //! no public constructor by design. The V1-compatible text is exercised
 //! through the crate-private raw-text compile entry, because the public
-//! `V1QueryText::try_new` constructor is still the declaration-only W3-0
+//! `TqlQueryText::try_new` constructor is still the declaration-only W3-0
 //! placeholder; that wiring is the integrator action recorded in the design
 //! record. No test inspects raw pages, WAL bytes, or private lock state.
 
@@ -25,7 +25,7 @@ use super::{
 };
 use crate::{
     engine::{CommitOutcome, Engine, EngineConfig},
-    operations::{QueryInput, QueryInputError, RequestValidationError, V1QueryText},
+    operations::{QueryInput, QueryInputError, RequestValidationError, TqlQueryText},
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
         ExpectedVersion, IndexGenerationSet, LocalDurability, OperationId, ReadSnapshot,
@@ -551,8 +551,8 @@ fn query_input_normalizes_typed_and_v1_text_through_one_compile_seam() {
     // The same query as supported V1-compatible text, through the same seam.
     // The public constructor validates the text before it reaches the seam.
     let text_plan = store
-        .compile(QueryInput::v1_compatible(
-            V1QueryText::try_new(
+        .compile(QueryInput::tql(
+            TqlQueryText::try_new(
                 "from users where age >= 30 order by age desc limit 2 offset 0 select name, age",
             )
             .expect("public constructor accepts the supported subset"),
@@ -594,20 +594,24 @@ fn query_input_rejects_unsupported_or_generic_query_text() {
     ];
     for text in unsupported {
         assert_eq!(
-            store.compile_v1_text(text).unwrap_err(),
+            store.compile_tql_text(text).unwrap_err(),
             QueryError::InvalidSpec,
             "unsupported grammar must be rejected: {text}"
         );
-        assert_eq!(v1::validate(text).unwrap_err(), QueryInputError::UnsupportedGrammar, "{text}");
         assert_eq!(
-            V1QueryText::try_new(text).unwrap_err(),
+            text::validate(text).unwrap_err(),
+            QueryInputError::UnsupportedGrammar,
+            "{text}"
+        );
+        assert_eq!(
+            TqlQueryText::try_new(text).unwrap_err(),
             QueryInputError::UnsupportedGrammar,
             "the public constructor rejects the same text before the seam: {text}"
         );
     }
-    assert_eq!(v1::validate("   ").unwrap_err(), QueryInputError::EmptyText);
+    assert_eq!(text::validate("   ").unwrap_err(), QueryInputError::EmptyText);
     assert_eq!(
-        v1::validate(&format!("from {} where a = 1", "x".repeat(300))).unwrap_err(),
+        text::validate(&format!("from {} where a = 1", "x".repeat(300))).unwrap_err(),
         QueryInputError::InvalidIdentifier
     );
     // Generic query text cannot enter through the typed form: it has no
@@ -1039,7 +1043,7 @@ fn query_rejects_a_wrong_tenant_scope() {
 
 #[test]
 fn v1_grammar_parses_the_supported_subset_into_typed_clauses() {
-    let (source, predicate, ordering, paging, projection) = v1::parse_clauses(
+    let (source, predicate, ordering, paging, projection) = text::parse_clauses(
         "from users where exists(flag) and age >= 30 and missing(note) order by age desc, name limit 10 offset 5 select name, age",
     )
     .expect("parses the documented subset");
@@ -1053,8 +1057,8 @@ fn v1_grammar_parses_the_supported_subset_into_typed_clauses() {
     assert_eq!(paging.limit(), Some(10));
     assert_eq!(projection.selected(), Some(&["name".to_owned(), "age".to_owned()][..]));
     // A `from`-only query is the minimal valid form.
-    assert!(v1::parse_clauses("from users").is_ok());
-    assert!(v1::parse_clauses("from users where name = 'o''brien'").is_err());
+    assert!(text::parse_clauses("from users").is_ok());
+    assert!(text::parse_clauses("from users where name = 'o''brien'").is_err());
 }
 
 #[test]

@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1018",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "The retry-safety half is real and tested: retries carry idempotency keys that replay the recorded receipt (engine spine over UDS, sync sessions), and the client resumes across a hard engine process kill on the same durable location. The failover half is absent: no multi-endpoint client, no V1 status-code retry rules (410 moved, 503/502/timeouts, 425 TooEarly), and no topology/client-configuration ETag or version-exchange headers.",
-  "previous_status": "unresolved"
-}

@@ -25,7 +25,7 @@ use crate::query::{
 use crate::{
     engine::{CommitOutcome, Engine, EngineConfig},
     index::{IndexBuilder, IndexError},
-    operations::{QueryInput, V1QueryText},
+    operations::{QueryInput, TqlQueryText},
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
         ExpectedVersion, LocalDurability, OperationId, TenantId, TenantScope,
@@ -882,12 +882,12 @@ fn plan_cache_hits_are_recorded_and_invalidate_on_catalog_change() {
 }
 
 #[test]
-fn v1_compatible_text_lowers_through_the_optimizer_seam() {
+fn tql_text_lowers_through_the_optimizer_seam() {
     let (dir, engine) = open_engine("v1-lowering");
     commit_users(&engine, "tenant-a", "op-1", &[5]);
     let store = engine.queries();
-    let text = V1QueryText::try_new("from users where age = 5").expect("valid text");
-    let plan = store.compile(QueryInput::v1_compatible(text)).expect("compiles");
+    let text = TqlQueryText::try_new("from users where age = 5").expect("valid text");
+    let plan = store.compile(QueryInput::tql(text)).expect("compiles");
     let snapshot = engine.read_snapshot(&scope(&engine, "tenant-a")).expect("snapshot");
     let result = store.execute(&plan, &snapshot).expect("executes");
     assert_eq!(result.matched(), 1);

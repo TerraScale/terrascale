@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2026",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "The revisions family implements paging and revert with snapshot identity, policy trimming, V1 field shapes, collection→default→disabled policy resolution, and V1-derived limits — focused-tested including public-contract rows. Gap: no session revision access and no revision includes (IncludeRevisionsByChangeVector equivalent), revision conflict/replication visibility is untested, and the engine-document-contract vs data-family ownership adjudication (GAP-D17) is not recorded.",
-  "previous_status": "unresolved"
-}

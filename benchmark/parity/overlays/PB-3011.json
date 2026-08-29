@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3011",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Counter merge semantics are implemented and lane-proven (concurrent increments merge to the union total, delete wins, duplicate delivery idempotent, rejoin preserves totals, plus associative/idempotent merge and forged-sequence fail-closed unit proofs), but all of it rides the superseded leader-per-range member plane (src/replication/member.rs), not the P2 leaderless coordinators; Unicode-name/split-group scenarios and the contract's unresolved acknowledgement-level policy remain open.",
-  "previous_status": "unresolved"
-}

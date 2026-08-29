@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4062",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "Index lifecycle operations are tenant-scoped and typed at the engine seam, but there is no database-admin authorization class (tenant scope is the only gate), no dump/optimize/test-index actions, no index-admin route in the TBEP registry, and no recorded disposition for private or debug-only admin operations. None of the row's authorization contract exists."
-}

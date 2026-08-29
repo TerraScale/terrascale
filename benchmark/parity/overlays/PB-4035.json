@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4035",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Query streaming over a compiled plan is real and focused-tested: incremental delivery, bounded memory under a non-draining consumer, prompt cancellation, and backpressure that never blocks a commit, plus stream/paged include equivalence. The supported formats are internal typed batch framing only — no JSON or CSV output writers exist.",
-  "previous_status": "unresolved"
-}

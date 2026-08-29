@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-5037",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Bucket identity is implemented and pinned: XXH64 into the fixed 2^20 space matching reference vectors, pure function of the shard key, exact table partitioning, canonical shard identities, and explicit public bucket moves. Gap: no per-bucket storage-size accounting (bytes or attachment stream size per bucket) — the V1 BucketStats contract has no V2 surface.",
-  "previous_status": "unresolved"
-}

@@ -33,7 +33,7 @@ use crate::{
     },
     operations::{
         DocumentReadRequest, DocumentWriteRequest, FamilyOperation, PublicOperation,
-        PublicResponse, QueryInput, QueryOperation, RequestValidationError, V1QueryText,
+        PublicResponse, QueryInput, QueryOperation, RequestValidationError, TqlQueryText,
     },
     query::{
         OrderDirection, OrderingKey, QueryCondition, QueryOrdering, QueryPaging, QueryPredicate,
@@ -225,15 +225,10 @@ fn typed_query_operation(tenant_name: &str) -> PublicOperation {
 }
 
 fn v1_query_operation() -> PublicOperation {
-    let text = V1QueryText::try_new("from users").expect("valid query text");
+    let text = TqlQueryText::try_new("from users").expect("valid query text");
     PublicOperation::query(
-        QueryOperation::try_new(
-            QueryInput::v1_compatible(text),
-            None,
-            deadline(),
-            Cancellation::new(),
-        )
-        .expect("valid query"),
+        QueryOperation::try_new(QueryInput::tql(text), None, deadline(), Cancellation::new())
+            .expect("valid query"),
     )
 }
 
@@ -409,28 +404,19 @@ fn query_operation_try_new_validates_and_reports_parts() {
     assert!(!typed.deadline().is_expired());
     assert!(!typed.cancellation().is_cancelled());
 
-    let text = V1QueryText::try_new("from users where name = 'ada'").expect("valid query text");
-    let compatible = QueryOperation::try_new(
-        QueryInput::v1_compatible(text),
-        None,
-        deadline(),
-        Cancellation::new(),
-    )
-    .expect("a live V1-compatible query constructs");
-    assert!(matches!(compatible.input(), QueryInput::V1Compatible(_)));
+    let text = TqlQueryText::try_new("from users where name = 'ada'").expect("valid query text");
+    let compatible =
+        QueryOperation::try_new(QueryInput::tql(text), None, deadline(), Cancellation::new())
+            .expect("a live V1-compatible query constructs");
+    assert!(matches!(compatible.input(), QueryInput::Tql(_)));
     assert!(compatible.operation_id().is_none());
 
     // The bounds are checked for both input forms.
     let expired = Deadline::after(Duration::from_millis(1)).expect("valid deadline");
     std::thread::sleep(Duration::from_millis(10));
-    let text = V1QueryText::try_new("from users").expect("valid query text");
+    let text = TqlQueryText::try_new("from users").expect("valid query text");
     assert_eq!(
-        QueryOperation::try_new(
-            QueryInput::v1_compatible(text),
-            None,
-            expired,
-            Cancellation::new()
-        ),
+        QueryOperation::try_new(QueryInput::tql(text), None, expired, Cancellation::new()),
         Err(RequestValidationError::InvalidDeadline)
     );
 
@@ -438,7 +424,7 @@ fn query_operation_try_new_validates_and_reports_parts() {
     cancelled.cancel();
     assert_eq!(
         QueryOperation::try_new(
-            QueryInput::v1_compatible(V1QueryText::try_new("from users").expect("valid text")),
+            QueryInput::tql(TqlQueryText::try_new("from users").expect("valid text")),
             None,
             deadline(),
             cancelled

@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1027",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "A truthful readiness boundary exists and is tested: the composite /health answers 200 serving vs 503 engine-unavailable (never optimistic), engine loss is clean and recovers without orphaned state, calls during the loss window hear the typed 503 refusal, the restart policy is bounded, and failed startup disposes the spawned engine. The V1 unsafe-mode semantics (503 with HTML/JSON warning with only /debug/server-id allowed through) have no V2 equivalent, and the composite /health is a V2 contract V1 never had — the parent decision and parity case the row demands are still open.",
-  "previous_status": "unresolved"
-}

@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6009",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Optional row: time-series stream ranges (document, series name, from/to bounds) preserve timestamp/tag/value ordering, and time-series change payloads round-trip segment summaries through replay and live delivery — both focused-tested; the gaps are no rollups, offsets, incremental series values, deleted-range or empty-range rules, missing-series errors, or cross-shard merge behavior.",
-  "previous_status": "unresolved"
-}

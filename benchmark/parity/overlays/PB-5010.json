@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-5010",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Corruption fault behavior is well covered: bad checksums, truncated frames, failed torn-tail truncation, and foreign formats fail the open rather than silently succeeding. Gap: no quota/disk-full exhaustion behavior anywhere and no partial-recovery alert with a data-loss boundary in a Recovery Receipt.",
-  "previous_status": "unresolved"
-}

@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4041",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Malformed clauses, invalid combinations, and adversarial input return distinguishable typed errors carrying grammar version and line/column positions, with dedicated adversarial and position tests. Gaps: no invalid-JavaScript category (script clauses do not exist by design) and no focused test asserting secret/value redaction inside query error payloads.",
-  "previous_status": "unresolved"
-}

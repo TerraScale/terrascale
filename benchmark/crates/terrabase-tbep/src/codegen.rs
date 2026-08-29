@@ -13,11 +13,8 @@
 //! what regeneration produces. `tests/registry_drift.rs` re-runs this
 //! module against the committed files and fails on any difference, so a
 //! schema edit without regeneration cannot land quietly. The same test
-//! validates the operation registry's parity-mapping column against
-//! `parity/inventory.json`: every `PB-*` reference must name an existing
-//! V1 parity row, and every operation carries either such references or
-//! an explicit `new-capability` marker (PD-2026-08-26-14 D1, the GAP-A1
-//! fold).
+//! validates the operation registry: every operation carries a bounded,
+//! typed request and response shape, and every frame code and name is unique.
 //!
 //! The generator is deterministic: identical schema input produces
 //! byte-identical output on every run and platform.
@@ -137,7 +134,6 @@ struct OperationDef {
     family: String,
     class: String,
     mutation: bool,
-    parity: Vec<String>,
     request: BodyDef,
     response: BodyDef,
 }
@@ -156,7 +152,6 @@ struct NotificationDef {
     code: u64,
     family: String,
     class: String,
-    parity: Vec<String>,
     fields: Vec<FieldDef>,
 }
 
@@ -263,16 +258,6 @@ fn body_from_json(value: &Value) -> Result<BodyDef, String> {
     Ok(BodyDef { name: name.to_string(), fields })
 }
 
-fn parity_from_json(value: &Value) -> Result<Vec<String>, SchemaError> {
-    let array = value.as_array().ok_or_else(|| err("`parity` must be an array"))?;
-    array
-        .iter()
-        .map(|item| {
-            item.as_str().map(str::to_string).ok_or_else(|| err("a parity entry must be a string"))
-        })
-        .collect()
-}
-
 fn notification_from_json(value: &Value) -> Result<NotificationDef, SchemaError> {
     let entry = value.as_object().ok_or_else(|| err("a frame must be an object"))?;
     let name = string_field(entry, "name")?;
@@ -284,9 +269,6 @@ fn notification_from_json(value: &Value) -> Result<NotificationDef, SchemaError>
             .ok_or_else(|| err(format!("frame {name}: missing code")))?,
         family: entry.get("family").and_then(Value::as_str).unwrap_or("channel").to_string(),
         class: string_field(entry, "class")?,
-        parity: parity_from_json(
-            entry.get("parity").ok_or_else(|| err(format!("frame {name}: missing parity")))?,
-        )?,
         fields: fields_from_json(entry.get("fields").unwrap_or(&Value::Null))?,
     })
 }
@@ -298,8 +280,7 @@ impl Schema {
     ///
     /// Returns [`SchemaError`] naming the first structural violation:
     /// duplicate frame codes or names, unknown field types, payload-carrying
-    /// enum variants with unsupported payload types, or an operation without
-    /// a parity mapping.
+    /// enum variants with unsupported payload types, or an invalid operation.
     #[allow(clippy::too_many_lines)]
     pub fn parse(document: &str) -> Result<Self, SchemaError> {
         let root: Value =
@@ -429,9 +410,6 @@ impl Schema {
                     family: string_field(entry, "family")?,
                     class: string_field(entry, "class")?,
                     mutation: entry.get("mutation").and_then(Value::as_bool).unwrap_or(false),
-                    parity: parity_from_json(entry.get("parity").ok_or_else(|| {
-                        err(format!("operation {name}: missing parity mapping"))
-                    })?)?,
                     request,
                     response,
                 })
@@ -562,16 +540,10 @@ impl Schema {
             claim(operation.response_code, &operation.response.name)?;
             claim_name(&operation.request.name)?;
             claim_name(&operation.response.name)?;
-            if operation.parity.is_empty() {
-                return Err(err(format!("operation {} carries no parity mapping", operation.name)));
-            }
         }
         for notification in self.notifications.iter().chain(self.channel_frames.iter()) {
             claim(notification.code, &notification.name)?;
             claim_name(&notification.name)?;
-            if notification.parity.is_empty() {
-                return Err(err(format!("frame {} carries no parity mapping", notification.name)));
-            }
         }
 
         let mut all_fields: Vec<&FieldDef> = Vec::new();
@@ -714,58 +686,6 @@ pub struct GeneratedFiles {
     /// The C# bindings source
     /// (`host/TerraBase.Protocol/Generated/TbepRegistry.g.cs`).
     pub csharp: String,
-}
-
-/// Validates every `PB-*` parity reference against the parity inventory.
-///
-/// `new-capability` markers (entries starting with `new-capability`)
-/// carry no inventory reference and pass by construction.
-///
-/// # Errors
-///
-/// Returns [`SchemaError`] naming the first reference that does not
-/// resolve to a row of the inventory document, or fails to parse either
-/// document.
-pub fn check_parity_against_inventory(
-    schema_document: &str,
-    inventory_document: &str,
-) -> Result<(), SchemaError> {
-    let schema = Schema::parse(schema_document)?;
-    let inventory: Value = serde_json::from_str(inventory_document)
-        .map_err(|e| err(format!("invalid inventory JSON: {e}")))?;
-    let known: Vec<String> = inventory
-        .get("items")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.get("id").and_then(Value::as_str))
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    let mut references: Vec<String> = Vec::new();
-    for operation in &schema.operations {
-        references.extend(operation.parity.iter().cloned());
-    }
-    for notification in schema.notifications.iter().chain(schema.channel_frames.iter()) {
-        references.extend(notification.parity.iter().cloned());
-    }
-    if references.is_empty() {
-        return Err(err("the registry carries no parity mappings at all"));
-    }
-    for reference in &references {
-        if reference.starts_with("new-capability") {
-            continue;
-        }
-        let id = reference.split_whitespace().next().unwrap_or(reference);
-        if !known.iter().any(|k| k == id) {
-            return Err(err(format!(
-                "parity reference {id} does not name a row of parity/inventory.json"
-            )));
-        }
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1481,12 +1401,9 @@ fn emit_rust_operation_table(out: &mut String, schema: &Schema) {
     let _ = writeln!(out, "    pub response_code: u16,");
     let _ = writeln!(out, "    /// Whether the operation is a mutation (idempotency pairing).");
     let _ = writeln!(out, "    pub mutation: bool,");
-    let _ = writeln!(out, "    /// The parity-mapping column: V1 parity row ids or the explicit");
-    let _ = writeln!(out, "    /// `new-capability` marker (PD-2026-08-26-14 D1).");
-    let _ = writeln!(out, "    pub parity: &'static [&'static str],");
     let _ = writeln!(out, "}}");
     let _ = writeln!(out);
-    let _ = writeln!(out, "/// The closed operation registry with the parity-mapping column.");
+    let _ = writeln!(out, "/// The closed operation registry.");
     let _ = writeln!(out, "pub const OPERATIONS: &[OperationRow] = &[");
     for operation in &schema.operations {
         let _ = writeln!(out, "    OperationRow {{");
@@ -1494,11 +1411,6 @@ fn emit_rust_operation_table(out: &mut String, schema: &Schema) {
         let _ = writeln!(out, "        request_code: {},", operation.code);
         let _ = writeln!(out, "        response_code: {},", operation.response_code);
         let _ = writeln!(out, "        mutation: {},", operation.mutation);
-        let _ = writeln!(out, "        parity: &[");
-        for entry in &operation.parity {
-            let _ = writeln!(out, "            \"{entry}\",");
-        }
-        let _ = writeln!(out, "        ],");
         let _ = writeln!(out, "    }},");
     }
     let _ = writeln!(out, "];");
@@ -1974,25 +1886,20 @@ fn emit_csharp_operation_table(out: &mut String, schema: &Schema) {
     let _ = writeln!(out, "/// <summary>One row of the generated operation registry.</summary>");
     let _ = writeln!(
         out,
-        "public sealed record OperationRow(string Name, ushort RequestCode, ushort ResponseCode, bool Mutation, string[] Parity);"
+        "public sealed record OperationRow(string Name, ushort RequestCode, ushort ResponseCode, bool Mutation);"
     );
     let _ = writeln!(out);
     let _ = writeln!(out, "/// <summary>Registry helpers.</summary>");
     let _ = writeln!(out, "public static partial class TbepRegistry");
     let _ = writeln!(out, "{{");
-    let _ = writeln!(
-        out,
-        "    /// <summary>The closed operation registry with the parity-mapping column.</summary>"
-    );
+    let _ = writeln!(out, "    /// <summary>The closed operation registry.</summary>");
     let _ = writeln!(out, "    public static readonly OperationRow[] Operations =");
     let _ = writeln!(out, "    [");
     for operation in &schema.operations {
-        let parity =
-            operation.parity.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
         let _ = writeln!(
             out,
-            "        new OperationRow(\"{}\", {}, {}, {}, [{}]),",
-            operation.name, operation.code, operation.response_code, operation.mutation, parity
+            "        new OperationRow(\"{}\", {}, {}, {}),",
+            operation.name, operation.code, operation.response_code, operation.mutation
         );
     }
     let _ = writeln!(out, "    ];");

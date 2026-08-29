@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6020",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Optional row: typed collection-rename transforms on import (with rejection of transforms targeting the reserved collection) and revision/tombstone policy controls on the migration seam are implemented and focused-tested; the gaps are that no transform-script execution, step budget, or execution context exists and there is no SkipRevisionCreation equivalent on the smuggler seam (revision policy exists only on the V1-to-V2 migration seam).",
-  "previous_status": "unresolved"
-}

@@ -1379,9 +1379,6 @@
       "family": "supervision",
       "class": "control",
       "mutation": false,
-      "parity": [
-        "new-capability: backend-supplied tenant binding at a local channel (PD-2026-08-26-11 D1)"
-      ],
       "request": {
         "name": "channel_bind_request",
         "fields": [
@@ -1419,9 +1416,6 @@
       "family": "documents",
       "class": "operation",
       "mutation": false,
-      "parity": [
-        "PB-2005"
-      ],
       "request": {
         "name": "document_read_request",
         "fields": [
@@ -1469,11 +1463,6 @@
       "family": "documents",
       "class": "operation_large",
       "mutation": true,
-      "parity": [
-        "PB-2001",
-        "PB-1013",
-        "PB-2025"
-      ],
       "request": {
         "name": "document_write_request",
         "fields": [
@@ -1514,10 +1503,6 @@
       "family": "documents",
       "class": "operation",
       "mutation": true,
-      "parity": [
-        "PB-2002",
-        "PB-2025"
-      ],
       "request": {
         "name": "document_delete_request",
         "fields": [
@@ -1564,9 +1549,6 @@
       "family": "documents",
       "class": "operation_large",
       "mutation": true,
-      "parity": [
-        "new-capability: atomic client batching \u2014 one frame, one engine transaction (p0-protocol-compatibility-contract section 2)"
-      ],
       "request": {
         "name": "document_batch_request",
         "fields": [
@@ -1598,9 +1580,6 @@
       "family": "query",
       "class": "operation_large",
       "mutation": false,
-      "parity": [
-        "PB-4000"
-      ],
       "request": {
         "name": "query_execute_request",
         "fields": [
@@ -1654,10 +1633,6 @@
       "family": "query",
       "class": "operation",
       "mutation": false,
-      "parity": [
-        "PB-4034",
-        "PB-1012"
-      ],
       "request": {
         "name": "query_cancel_request",
         "fields": [
@@ -1684,10 +1659,6 @@
       "family": "families",
       "class": "operation",
       "mutation": false,
-      "parity": [
-        "PB-3000",
-        "PB-3001"
-      ],
       "request": {
         "name": "family_read_request",
         "fields": [
@@ -1735,11 +1706,6 @@
       "family": "families",
       "class": "operation",
       "mutation": true,
-      "parity": [
-        "PB-3000",
-        "PB-3001",
-        "PB-2025"
-      ],
       "request": {
         "name": "family_write_request",
         "fields": [
@@ -1792,10 +1758,6 @@
       "family": "backbone",
       "class": "operation",
       "mutation": false,
-      "parity": [
-        "PB-1021",
-        "PB-6003"
-      ],
       "request": {
         "name": "backbone_subscribe_request",
         "fields": [
@@ -1835,9 +1797,6 @@
       "family": "backbone",
       "class": "operation",
       "mutation": false,
-      "parity": [
-        "PB-6004"
-      ],
       "request": {
         "name": "backbone_acknowledge_request",
         "fields": [
@@ -1872,9 +1831,6 @@
       "family": "backbone",
       "class": "operation",
       "mutation": false,
-      "parity": [
-        "PB-6005"
-      ],
       "request": {
         "name": "backbone_unsubscribe_request",
         "fields": [
@@ -1901,9 +1857,6 @@
       "family": "sync",
       "class": "delivery",
       "mutation": false,
-      "parity": [
-        "new-capability: terrascale.sync.v2 serving seam (PD-2026-08-26-12)"
-      ],
       "request": {
         "name": "sync_session_setup_request",
         "fields": [
@@ -1944,9 +1897,6 @@
       "family": "sync",
       "class": "delivery",
       "mutation": false,
-      "parity": [
-        "new-capability: terrascale.sync.v2 serving seam (PD-2026-08-26-12)"
-      ],
       "request": {
         "name": "sync_delta_pull_request",
         "fields": [
@@ -1998,9 +1948,6 @@
       "family": "sync",
       "class": "delivery",
       "mutation": false,
-      "parity": [
-        "new-capability: terrascale.sync.v2 serving seam (PD-2026-08-26-12)"
-      ],
       "request": {
         "name": "sync_snapshot_pull_request",
         "fields": [
@@ -2040,9 +1987,6 @@
       "family": "sync",
       "class": "delivery",
       "mutation": false,
-      "parity": [
-        "new-capability: terrascale.sync.v2 serving seam (PD-2026-08-26-12)"
-      ],
       "request": {
         "name": "sync_checkpoint_ack_request",
         "fields": [
@@ -2073,9 +2017,6 @@
       "family": "sync",
       "class": "delivery",
       "mutation": true,
-      "parity": [
-        "new-capability: server-ack-only mutations (PD-2026-08-26-12 D2)"
-      ],
       "request": {
         "name": "sync_mutation_submit_request",
         "fields": [
@@ -2115,9 +2056,6 @@
       "family": "sync",
       "class": "delivery",
       "mutation": false,
-      "parity": [
-        "new-capability: terrascale.sync.v2 serving seam (PD-2026-08-26-12)"
-      ],
       "request": {
         "name": "sync_session_close_request",
         "fields": [
@@ -2144,10 +2082,6 @@
       "family": "topology",
       "class": "control",
       "mutation": false,
-      "parity": [
-        "PB-5019",
-        "PB-5036"
-      ],
       "request": {
         "name": "topology_read_request",
         "fields": []
@@ -2182,9 +2116,6 @@
       "family": "topology",
       "class": "control",
       "mutation": false,
-      "parity": [
-        "PB-5032"
-      ],
       "request": {
         "name": "admin_status_request",
         "fields": []
@@ -2223,10 +2154,6 @@
       "family": "replication",
       "class": "observation",
       "mutation": false,
-      "parity": [
-        "PB-5022",
-        "PB-5035"
-      ],
       "request": {
         "name": "replication_conflicts_request",
         "fields": []
@@ -2253,10 +2180,6 @@
       "family": "replication",
       "class": "observation",
       "mutation": false,
-      "parity": [
-        "PB-5035",
-        "new-capability: typed fenced-leader history observation (ADR-0004 D-1 fencing evidence)"
-      ],
       "request": {
         "name": "replication_fenced_request",
         "fields": []
@@ -2283,10 +2206,6 @@
       "family": "replication",
       "class": "observation",
       "mutation": false,
-      "parity": [
-        "PB-5035",
-        "new-capability: typed deposition observation of ownership transitions (ADR-0004 D-1)"
-      ],
       "request": {
         "name": "replication_depositions_request",
         "fields": []
@@ -2313,11 +2232,6 @@
       "family": "replication",
       "class": "observation",
       "mutation": false,
-      "parity": [
-        "PB-5031",
-        "PB-5033",
-        "PB-5035"
-      ],
       "request": {
         "name": "replication_cursor_request",
         "fields": []
@@ -2345,10 +2259,6 @@
       "family": "replication",
       "class": "observation",
       "mutation": false,
-      "parity": [
-        "PB-5032",
-        "PB-5035"
-      ],
       "request": {
         "name": "replication_health_request",
         "fields": []
@@ -2375,10 +2285,6 @@
       "family": "replication",
       "class": "observation",
       "mutation": false,
-      "parity": [
-        "PB-5035",
-        "new-capability: typed tenant-isolation denial observation (engine-enforced isolation evidence)"
-      ],
       "request": {
         "name": "replication_denials_request",
         "fields": []
@@ -2405,9 +2311,6 @@
       "family": "supervision",
       "class": "control",
       "mutation": false,
-      "parity": [
-        "PB-5032"
-      ],
       "request": {
         "name": "supervision_health_request",
         "fields": []
@@ -2441,9 +2344,6 @@
       "family": "supervision",
       "class": "control",
       "mutation": false,
-      "parity": [
-        "new-capability: engine-process supervision contract (PD-2026-08-26-02 D2)"
-      ],
       "request": {
         "name": "supervision_shutdown_request",
         "fields": [
@@ -2474,10 +2374,6 @@
       "family": "schemas",
       "class": "schema",
       "mutation": true,
-      "parity": [
-        "PB-3036",
-        "PB-3037"
-      ],
       "request": {
         "name": "schema_declare_request",
         "fields": [
@@ -2520,10 +2416,6 @@
       "family": "schemas",
       "class": "schema",
       "mutation": false,
-      "parity": [
-        "PB-3036",
-        "PB-3037"
-      ],
       "request": {
         "name": "schema_status_request",
         "fields": [
@@ -2556,10 +2448,6 @@
       "family": "schemas",
       "class": "schema",
       "mutation": false,
-      "parity": [
-        "PB-3036",
-        "PB-3037"
-      ],
       "request": {
         "name": "schema_validate_request",
         "fields": [
@@ -2600,9 +2488,6 @@
       "family": "schemas",
       "class": "schema",
       "mutation": false,
-      "parity": [
-        "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)"
-      ],
       "request": {
         "name": "migration_status_request",
         "fields": [
@@ -2630,9 +2515,6 @@
       "family": "schemas",
       "class": "schema",
       "mutation": false,
-      "parity": [
-        "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)"
-      ],
       "request": {
         "name": "migration_dry_run_request",
         "fields": [
@@ -2659,9 +2541,6 @@
       "family": "schemas",
       "class": "schema",
       "mutation": true,
-      "parity": [
-        "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)"
-      ],
       "request": {
         "name": "migration_apply_request",
         "fields": [
@@ -2697,9 +2576,6 @@
       "family": "tiers",
       "class": "control",
       "mutation": true,
-      "parity": [
-        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
-      ],
       "request": {
         "name": "tier_configure_request",
         "fields": [
@@ -2756,9 +2632,6 @@
       "family": "tiers",
       "class": "control",
       "mutation": false,
-      "parity": [
-        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
-      ],
       "request": {
         "name": "tier_inspect_request",
         "fields": []
@@ -2796,9 +2669,6 @@
       "family": "tiers",
       "class": "operation",
       "mutation": false,
-      "parity": [
-        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
-      ],
       "request": {
         "name": "tier_dry_run_request",
         "fields": []
@@ -2820,9 +2690,6 @@
       "family": "tiers",
       "class": "operation",
       "mutation": false,
-      "parity": [
-        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
-      ],
       "request": {
         "name": "tier_explain_request",
         "fields": []
@@ -2844,9 +2711,6 @@
       "family": "tiers",
       "class": "operation",
       "mutation": true,
-      "parity": [
-        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
-      ],
       "request": {
         "name": "tier_run_request",
         "fields": []
@@ -2868,9 +2732,6 @@
       "family": "tiers",
       "class": "control",
       "mutation": true,
-      "parity": [
-        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
-      ],
       "request": {
         "name": "tier_pause_request",
         "fields": []
@@ -2892,9 +2753,6 @@
       "family": "tiers",
       "class": "control",
       "mutation": true,
-      "parity": [
-        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
-      ],
       "request": {
         "name": "tier_resume_request",
         "fields": []
@@ -2917,10 +2775,6 @@
       "code": 769,
       "family": "backbone",
       "class": "subscription",
-      "parity": [
-        "PB-1020",
-        "PB-6003"
-      ],
       "fields": [
         {
           "name": "subscription_id",
@@ -2945,9 +2799,6 @@
       "code": 770,
       "family": "backbone",
       "class": "trigger",
-      "parity": [
-        "PB-2024"
-      ],
       "fields": [
         {
           "name": "subscription_id",
@@ -2974,9 +2825,6 @@
       "code": 771,
       "family": "backbone",
       "class": "control",
-      "parity": [
-        "PB-6005"
-      ],
       "fields": [
         {
           "name": "subscription_id",
@@ -2995,9 +2843,6 @@
       "code": 1,
       "direction": "both",
       "class": "control",
-      "parity": [
-        "PB-1014"
-      ],
       "fields": [
         {
           "name": "code",
@@ -3015,9 +2860,6 @@
       "code": 2,
       "direction": "client-to-server",
       "class": "control",
-      "parity": [
-        "new-capability: connection-open capability and version negotiation (p0-protocol-compatibility-contract section 1)"
-      ],
       "fields": [
         {
           "name": "supported_versions",
@@ -3034,9 +2876,6 @@
       "code": 3,
       "direction": "server-to-client",
       "class": "control",
-      "parity": [
-        "new-capability: connection-open capability and version negotiation (p0-protocol-compatibility-contract section 1)"
-      ],
       "fields": [
         {
           "name": "selected_version",

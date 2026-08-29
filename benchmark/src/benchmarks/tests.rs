@@ -142,9 +142,9 @@ fn objective_status_reads_the_comparison() {
     );
 }
 
-/// The fail-closed rule: without **both** reference baselines having actually
-/// run, no wall-clock comparison may produce any status other than
-/// `inconclusive` — not `met`, and not a verdict. A missing reference can
+/// The fail-closed rule: without the reference baseline having run, no
+/// wall-clock comparison may produce any status other than `inconclusive`.
+/// A missing reference can
 /// never be averaged, extrapolated, or assumed away.
 #[test]
 fn a_missing_reference_forces_inconclusive() {
@@ -155,15 +155,11 @@ fn a_missing_reference_forces_inconclusive() {
     };
     let comparison = ReferenceComparison { throughput: Trend::Better, p95: Trend::Better };
 
-    for (postgres, v1) in
-        [(ran.clone(), unrun.clone()), (unrun.clone(), ran.clone()), (unrun.clone(), unrun)]
-    {
-        let (status, verdict) = gates::reference_comparison_status(&postgres, &v1, comparison);
-        assert_eq!(status, ObjectiveStatus::Inconclusive, "postgres={postgres:?} v1={v1:?}");
-        assert_eq!(verdict, Verdict::Inconclusive);
-    }
+    let (status, verdict) = gates::reference_comparison_status(&unrun, comparison);
+    assert_eq!(status, ObjectiveStatus::Inconclusive);
+    assert_eq!(verdict, Verdict::Inconclusive);
 
-    let (status, verdict) = gates::reference_comparison_status(&ran, &ran, comparison);
+    let (status, verdict) = gates::reference_comparison_status(&ran, comparison);
     assert_eq!((status, verdict), (ObjectiveStatus::Met, Verdict::V2Faster));
 }
 
@@ -337,16 +333,6 @@ fn the_postgresql_pin_records_a_decision_and_an_empty_observation_slot() {
     assert!(pin.describe().starts_with("postgresql — decided 18"));
 }
 
-/// The TerraBase V1 baseline pin keeps the exact source identity the parity
-/// work already cites.
-#[test]
-fn the_v1_reference_pin_is_the_pinned_source_commit() {
-    let pin = &reference::TERRABASE_V1_REFERENCE;
-    assert_eq!(pin.decided_version, "fa99b9257776dbe625e6a2388c74c9ce916637ee");
-    assert_eq!(pin.observed_identity, Some("fa99b9257776dbe625e6a2388c74c9ce916637ee"));
-    assert!(pin.describe().contains("observed: fa99b925"));
-}
-
 /// On this host the PostgreSQL reference reports `Unrun` with a reason that
 /// names the concrete environment gap and an owner, never a silent skip and
 /// never a number.
@@ -358,17 +344,10 @@ fn a_reference_that_did_not_run_says_why_and_who_owns_it() {
     };
     assert!(reason.contains("no postgres"), "{reason}");
     assert!(!owner.is_empty());
-
-    let v1 = reference::terrabase_v1_reference_run();
-    let ReferenceRun::Unrun { reason, owner } = &v1 else {
-        panic!("the pinned V1 tree is read-only here, so its server cannot run");
-    };
-    assert!(reason.contains("read-only"), "{reason}");
-    assert!(!owner.is_empty());
 }
 
 /// A rendered receipt carries the canonical objective-status line, the exact
-/// verdict, both references' honest statuses, and — when the objective is not
+/// verdict, the reference's honest status, and — when the objective is not
 /// met — a regression follow-up with a named owner.
 #[test]
 fn a_receipt_renders_the_discipline_lines() {
@@ -377,7 +356,6 @@ fn a_receipt_renders_the_discipline_lines() {
     assert!(text.contains("PostgreSQL-parity-or-better: inconclusive"), "{text}");
     assert!(text.contains("verdict: inconclusive"), "{text}");
     assert!(text.contains("postgresql reference: unrun"), "{text}");
-    assert!(text.contains("terrabase v1 reference: unrun"), "{text}");
     assert!(!text.contains("PostgreSQL-parity-or-better: met"), "{text}");
     assert!(!text.contains("v2-faster"), "{text}");
     assert!(text.contains("postgresql pin: "), "{text}");

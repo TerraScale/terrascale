@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2028",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No maintenance-operation executor, server/database statistics, database-record, ongoing-task, or server/database lifecycle adapter exists, and the row's own ownership adjudication (GAP-D18: splitting V1's maintenance inventory into engine-owned vs control-plane operations) is not recorded anywhere in docs/ or parity/. Adjacent V2-native surfaces exist — tier administration and engine-owned index rebuild scheduling — but neither is the V1 maintenance-operation parity surface, and ADR 0002 records only the general engine/Platform/control-plane separation, not this row's inventory."
-}

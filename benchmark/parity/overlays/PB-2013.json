@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2013",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "defer stages typed family commands after document puts in V1 batch order with save-time validation — a deferred command on a session-deleted document refuses the whole save, and deferred identity commands are not document-guarded — focused-tested. Gap: only family-write commands are deferrable (no deferred patch/JSON-patch commands) and there is no no-reply batch flag.",
-  "previous_status": "unresolved"
-}

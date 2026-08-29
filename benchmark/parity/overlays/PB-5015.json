@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-5015",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Local manifest discovery and validation is strong: tampered member bytes, truncated/missing members, path traversal, in-progress manifests, unsealed orphans, and identity selection are all rejected before database creation. Gap: no remote-source manifest discovery, remote root binding, or staging-directory ownership/reclamation — local filesystem destinations only.",
-  "previous_status": "unresolved"
-}

@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3040",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Family query sources for counters and time-series are implemented and tested (entry rows, predicates, paging, includes matching direct reads, public compilation seam, index definitions accepting family map sources with mixed/overlapping refusal); no family index is maintained (family_source_refuses_index_staleness_policy - sources fail closed index-less), there is no map-reduce, and attachments/revisions/compare-exchange are not queryable.",
-  "previous_status": "unresolved"
-}

@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1032",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "TLS is now real on both bindings since the P0 pass: the client-facing TBEP QUIC binding serves TLS 1.3 (rustls, fixed ALPN identity, engine-owned server certificate that clients verify), proven over a real socket from Rust and driven from the C# client (the C# QUIC row skips only where the platform lacks msquic), and member lanes use mutual TLS with per-member certificates from a lane CA. Client-certificate authorization on the client path, short-lived tenant tokens, external certificate-validator callbacks, and certificate refresh/lifecycle remain absent (recorded honest limits of P4/P5 landings), so the V1 hook set is only partially covered.",
-  "previous_status": "unresolved"
-}

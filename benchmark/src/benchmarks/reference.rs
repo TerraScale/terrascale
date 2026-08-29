@@ -1,7 +1,6 @@
-//! The pinned reference identities of the objective's two baselines.
+//! The pinned PostgreSQL reference identity.
 //!
-//! The TerraBase V1 baseline keeps the exact source pin the parity work
-//! already cites. The PostgreSQL baseline is a **decision plus a
+//! The PostgreSQL baseline is a decision plus a
 //! configuration**: the major series is decided here, and the observed
 //! identity slot stays empty until an operator captures the server's own
 //! `version()` output at a lane run. No `version()` string is invented in
@@ -57,31 +56,6 @@ impl ReferencePin {
         format!("{} — decided {} ({observed})", self.name, self.decided_version)
     }
 }
-
-/// The pinned TerraBase V1 reference baseline.
-///
-/// The identity is the pinned V1 source commit, the same pin the parity
-/// contracts and citation audit resolve against, so the benchmark baseline
-/// and the parity baseline cannot drift apart.
-pub(crate) const TERRABASE_V1_REFERENCE: ReferencePin = ReferencePin {
-    name: "terrabase-v1",
-    decided_version: "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-    observed_identity: Some("fa99b9257776dbe625e6a2388c74c9ce916637ee"),
-    server_configuration: &[
-        ("source", "pinned V1 checkout at the commit above (read-only on this host)"),
-        ("harness", "bench/TerraBase.Server.Benchmark/ServerComparisonBenchmark.cs"),
-        ("server", "TerraBase.Server built from the pinned source, Release"),
-        ("data", "fresh tmpfs data directory per run, discarded afterwards"),
-        ("binding", "loopback-only HTTP, unsecured local access"),
-        ("limits", "no container CPU or memory limits"),
-    ],
-    client_configuration: &[
-        ("concurrency", "16 in-flight requests, pooled connections"),
-        ("warmup", "1000 operations per workload before any measured sample"),
-        ("order", "server order alternates each sample"),
-    ],
-    owner: REFERENCE_OWNER,
-};
 
 /// The pinned PostgreSQL reference baseline (PD-2026-08-26-03 D2).
 ///
@@ -190,20 +164,4 @@ pub(crate) fn postgresql_reference_run() -> ReferenceRun {
             .to_owned()
     };
     ReferenceRun::Unrun { reason, owner: REFERENCE_OWNER }
-}
-
-/// The TerraBase V1 reference's run status on this host.
-///
-/// Also fails closed: the pinned V1 checkout is a read-only tree on this
-/// host, and driving its server needs a build and containers that the
-/// offline, no-live-systems environment does not provide.
-pub(crate) fn terrabase_v1_reference_run() -> ReferenceRun {
-    ReferenceRun::Unrun {
-        reason: "the pinned TerraBase V1 checkout is read-only on this host, and driving its \
-                 server needs the V1 build plus its pinned containers, which this offline \
-                 environment does not provide; the operator must run the V1 baseline from the \
-                 pinned source fa99b9257776dbe625e6a2388c74c9ce916637ee"
-            .to_owned(),
-        owner: REFERENCE_OWNER,
-    }
 }

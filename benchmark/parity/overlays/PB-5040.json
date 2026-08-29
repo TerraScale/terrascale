@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-5040",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Shard-scoped recovery reporting and per-shard backup/restore rejoin are tested: the recovery report names every shard member and owner verdict, a shard-local commit is reported as shard-scoped never database success, and the lane reports the recovery window per shard after backup restore. Gap: no sharded external replication, per-shard backup-lag coordination, or compare-exchange tombstone cleanup tied to shard backup progress.",
-  "previous_status": "unresolved"
-}

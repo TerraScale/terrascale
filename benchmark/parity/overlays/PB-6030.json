@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6030",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No broker sink or dead-letter behavior exists. Not an accepted exclusion: no charter PD record excludes queue sinks, so it stays in scope unimplemented."
-}

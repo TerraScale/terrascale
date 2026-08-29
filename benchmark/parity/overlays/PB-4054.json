@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4054",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Coverage-based staleness across normal/paused/disabled states, side-by-side reset serving the old epoch until cutover, monotonic rebuild generations, and bounded wait-to-non-stale are implemented and focused-tested. The catalog is in-memory: epoch/generation and progress do not persist across restart, and there is no tombstone-work progress reporting.",
-  "previous_status": "unresolved"
-}

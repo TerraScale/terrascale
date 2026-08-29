@@ -8,8 +8,8 @@ use terrabase_v2::{
     QueryError, QueryInput, QueryInputError, QueryOperation, QueryOrdering, QueryPaging, QueryPlan,
     QueryPredicate, QueryProjection, QueryResult, QuerySource, QuerySpec,
     QueryStore as RootQueryStore, ReadSnapshot, RequestValidationError, RetryDisposition,
-    StalenessPolicy, StorageSequence, TenantId, TenantScope, Transaction, UnknownCommit,
-    UnknownReason, V1QueryText,
+    StalenessPolicy, StorageSequence, TenantId, TenantScope, TqlQueryText, Transaction,
+    UnknownCommit, UnknownReason,
     adapters::{platform, protocol},
     engine::{self, Engine},
     families::{self, FamilyStore},
@@ -116,7 +116,7 @@ fn public_exports_compile_with_declaration_only_tree() {
         std::any::type_name::<Transaction<'static>>(),
         std::any::type_name::<UnknownCommit>(),
         std::any::type_name::<UnknownReason>(),
-        std::any::type_name::<V1QueryText>(),
+        std::any::type_name::<TqlQueryText>(),
     );
 }
 

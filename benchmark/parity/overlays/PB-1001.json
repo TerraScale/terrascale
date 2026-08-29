@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1001",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "The Platform seam is real and focused-tested for the clauses it owns: engine-enforced tenant isolation with audited cross-tenant refusal, content-free lifecycle audit, no credential reads, and closed-registry dispatch through the in-process engine port. Authorization, confirmation, and secret-handling policy are deliberately absent at this seam — the module header cites PD-2026-08-26-11 keeping the boundary trusted with CallerDenied/PermissionDenied/ConfirmationRequired/SecretPolicyViolation unused for the future Platform side — so the row's full semantics are not yet met.",
-  "previous_status": "unresolved"
-}

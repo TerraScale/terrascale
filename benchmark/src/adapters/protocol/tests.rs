@@ -29,7 +29,7 @@ use crate::{
     operations::{
         DocumentReadRequest, DocumentWriteRequest, FamilyOperation, PublicOperation,
         PublicResponse, QueryInput, QueryInputError, QueryOperation, RequestValidationError,
-        V1QueryText,
+        TqlQueryText,
     },
     query::QuerySpec,
     types::{
@@ -273,20 +273,20 @@ fn public_operation_constructors_reject_generic_payloads_and_permissions() {
     // V1-compatible text is the only accepted text form; generic SQL shapes
     // and oversized raw payloads are typed rejections, never forwarded
     // strings.
-    assert_eq!(V1QueryText::try_new(""), Err(QueryInputError::EmptyText));
-    assert_eq!(V1QueryText::try_new("   "), Err(QueryInputError::EmptyText));
+    assert_eq!(TqlQueryText::try_new(""), Err(QueryInputError::EmptyText));
+    assert_eq!(TqlQueryText::try_new("   "), Err(QueryInputError::EmptyText));
     assert_eq!(
-        V1QueryText::try_new("SELECT * FROM users"),
+        TqlQueryText::try_new("SELECT * FROM users"),
         Err(QueryInputError::UnsupportedGrammar)
     );
     let oversized = format!("from {}", "x".repeat(17 * 1024));
-    assert_eq!(V1QueryText::try_new(&oversized), Err(QueryInputError::UnsupportedGrammar));
-    assert!(V1QueryText::try_new("from users where name = 'ada'").is_ok());
+    assert_eq!(TqlQueryText::try_new(&oversized), Err(QueryInputError::UnsupportedGrammar));
+    assert!(TqlQueryText::try_new("from users where name = 'ada'").is_ok());
 
     // The query input forms accept only the typed specification or the
     // validated text (compile-shape).
     let typed_shape: fn(QuerySpec) -> QueryInput = QueryInput::typed;
-    let compatible_shape: fn(V1QueryText) -> QueryInput = QueryInput::v1_compatible;
+    let compatible_shape: fn(TqlQueryText) -> QueryInput = QueryInput::tql;
     let _ = (typed_shape, compatible_shape);
 
     // Family payloads reject structurally invalid fields and already-set

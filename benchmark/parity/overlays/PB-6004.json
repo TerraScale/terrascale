@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6004",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Batch boundary recording before the wait, checkpoint advance only at the acknowledgement seam, verbatim resend of unacknowledged items, and identifiable at-least-once duplicates are implemented with focused passing tests, and backbone.acknowledge returns typed refusals for unknown/foreign/never-served sequences; the gap is checkpoint durability: the subscription registry is engine-lifetime, with no restart- or crash-durable subscription-state test, and no changed-subscription-state or database-deletion ack-failure paths.",
-  "previous_status": "unresolved"
-}

@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1016",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Since the P0 pass, a real topology read exists: the TBEP topology.read operation answers the actual binding, subsystems, cluster mode, and (on the cluster host) the real active/backup mode and engine topology, tested over UDS. But no client-side discovery exists — the C# client has no initial-URL discovery loop, no topology ETags or serialized cacheable updates, and no member/promotable/rehab role vocabulary — so the row's client discovery semantics remain unimplemented.",
-  "previous_status": "unresolved"
-}

@@ -126,7 +126,7 @@ export interface CommitReceipt {
 }
 
 /**
- * The engine accepts Typed(QuerySpec) and V1Compatible text; the pre-landing shape carries
+ * The engine accepts Typed(QuerySpec) and Tql text; the pre-landing shape carries
  * the v1 text form only and records the typed form as a contract TODO for SE-08.
  */
 export type QueryInput =

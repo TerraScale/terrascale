@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6021",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Resume and idempotency are real and tested: a mid-transfer cancellation interrupts a live import, the retry resolves the durable prefix as duplicates, and the final state equals a single uninterrupted import; migration resumes from its last durable record, re-imports are idempotent, operation identities are stable, and loss/skipped items are reported without hiding them; the gaps are that interruption is proven by cancellation rather than a kill-point/crash of a live transfer process, and permission-skip reporting has no authorization surface to exercise (none exists anywhere in the engine).",
-  "previous_status": "unresolved"
-}

@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4029",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "Only a single always-recorded DiagnosticDuration exists (with its observation test); there is no opt-in, no per-part timing tree, and no query plan or inspection output. That is a stub of the row's capability, not timings-and-plan behavior."
-}

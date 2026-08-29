@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3013",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Migration writes counters only through the engine transaction seam with the V1 value asserted to arrive, smuggler round-trips family records with checksums, and imports apply tombstones as engine deletes; no restored-store replication convergence test (V1 RestoreAndReplicate equivalents) exists, so restored totals replicating without change is unproven.",
-  "previous_status": "unresolved"
-}

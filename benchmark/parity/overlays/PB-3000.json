@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3000",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Store/Delete/Rename/Copy/Move are staged, validated, and focused-tested (duplicate-name typed, one-record same-document copy/move, ordered metadata enumeration with tenant scoping), but AttachmentMetadata carries name/content-type/size/hash/document only - the contract-listed change-vector metadata semantic is wholly absent from the surface.",
-  "previous_status": "unresolved"
-}

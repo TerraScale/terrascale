@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6034",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No sharded transfer path exists: src/sharding covers routing, query fan-out, and bucket migration only, and src/backup plus src/streaming subscriptions/smuggler are shard-unaware (no per-shard checkpoints, merged continuations, shard restore settings, or aggregate qualification). Not an accepted exclusion — the row stays in scope unimplemented."
-}

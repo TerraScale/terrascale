@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-5027",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No hub/sink roles, access registration, credential or certificate machinery, idle handling, or hub deletion protection exist anywhere under src/ or crates/."
-}

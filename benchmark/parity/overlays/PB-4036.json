@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4036",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Sharded routing (default fan-out, shard-key pinning, TQL-lowered plans), merge with V1-consistent ordering, paging, true matched counts, and composed staleness are implemented with property and skew tests. Gaps: no sharded map-reduce reduction, no include merging, and family-source queries refuse sharded execution.",
-  "previous_status": "unresolved"
-}

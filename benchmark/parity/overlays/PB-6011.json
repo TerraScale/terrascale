@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6011",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Scheduling with full-before-incremental chaining, full rotation, missed-run policies, pause/resume, typed failures recorded in status, and per-run encrypted bundles with no secrets is implemented and tested on the public seam; the gaps are caller-driven tick cadences (no cron expression parsing or engine timers), no task identity/mentor/pinning, and no cluster-owned durable status.",
-  "previous_status": "unresolved"
-}

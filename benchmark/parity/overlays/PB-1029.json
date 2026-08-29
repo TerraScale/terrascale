@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1029",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No TCP connection information or management endpoints exist: no /info/tcp, no per-database TCP info, and no remote-task/debug TCP diagnostics anywhere in the tree. The V2 topology reads (/v1/engine/topology and TBEP topology.read) are registry-mapped elsewhere and are not the V1 TCP information contract, so there is no behavior for this row."
-}

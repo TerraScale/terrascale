@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4013",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Multi-field ordering with direction, type, explicit nulls placement, total deterministic cross-type order, and seeded random ordering are implemented and focused-tested. Score ordering does not exist because no full-text scoring path exists (PB-4008), leaving that clause of the row unmet.",
-  "previous_status": "unresolved"
-}

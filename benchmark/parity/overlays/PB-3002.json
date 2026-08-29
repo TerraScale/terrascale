@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3002",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "The content plane (GAP-F01) landed: whole-content reads, V1 RangeHelper-style range normalization (open-ended clamp, suffix, unsatisfiable typed errors), bounded segment-crossing readers, digest validation, dedup, and explicit size limits are all focused-tested; ordered multi-attachment content enumeration with skip and read-after-disposal error distinctions remain untested.",
-  "previous_status": "unresolved"
-}

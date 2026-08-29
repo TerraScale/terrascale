@@ -518,7 +518,6 @@ fn the_receipts_render_the_discipline_lines() {
     assert!(text.contains("PostgreSQL-parity-or-better: inconclusive"), "{text}");
     assert!(text.contains("verdict: no-improvement"), "{text}");
     assert!(text.contains("postgresql reference: unrun"), "{text}");
-    assert!(text.contains("terrabase v1 reference: unrun"), "{text}");
     assert!(!text.contains("regression follow-up owner:"), "{text}");
     assert_eq!(comparison.status, ObjectiveStatus::Inconclusive);
 
@@ -527,11 +526,9 @@ fn the_receipts_render_the_discipline_lines() {
     assert!(counter_text.contains("verdict: inconclusive"), "{counter_text}");
     assert!(counter_text.contains("no comparand:"), "{counter_text}");
 
-    // The fail-closed rule reaches the objective status of this class too:
-    // with both references unrun, no receipt here can carry `met`.
+    // The fail-closed rule reaches the objective status of this class too.
     let (status, verdict) = super::gates::reference_comparison_status(
         &reference::postgresql_reference_run(),
-        &reference::terrabase_v1_reference_run(),
         super::gates::ReferenceComparison { throughput: Trend::Better, p95: Trend::Better },
     );
     assert_eq!((status, verdict), (ObjectiveStatus::Inconclusive, Verdict::Inconclusive));

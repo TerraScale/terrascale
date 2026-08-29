@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2022",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Upgraded from the P0 sweep's unresolved: P4 landing 11 added real client retry/resume — TbepClient.Reconnect re-binds the same principal and tenant, and the engine's durable idempotency ledger makes a retried idempotency key replay exactly one commit, proven from C# across a hard process kill; CommitError::retry_disposition is a closed replay-safety mapping. Gap: the client holds no topology state — no per-request member selection, no topology update from server responses, and no AllTopologyNodesDown-equivalent typed failure (cluster topology is served via topology.read but the client never fails over across members).",
-  "previous_status": "unresolved"
-}

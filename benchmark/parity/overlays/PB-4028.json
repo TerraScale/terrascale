@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4028",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "QueryStatistics reports matched totals with typed caps, skipped/scanned accounting, staleness, a result etag, and a duration, all focused-tested (statistics count caps are typed, exact, and saturating). Statistics are always computed — there is no unrequested/opt-in marker — and stream statistics expose only the generation/staleness subset.",
-  "previous_status": "unresolved"
-}

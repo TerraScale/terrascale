@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-5009",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Startup replay, restart persistence, committed-versus-uncommitted recovery, and multi-segment manifest recovery are focused-tested on both backends. Gap: no typed Recovery Receipt at the storage-restart seam and no sample-database/time-series recovery harness (the manifest-verified logical migration covers migration instead).",
-  "previous_status": "unresolved"
-}

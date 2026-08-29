@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-5019",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Membership and topology changes exist and are tested: Platform-validated views with monotonic ownership epochs, overlapping-quorum epoch transitions, one-step expansion, and refusal of stale topology (a lost owner cannot be re-seated through a new shard identity; epoch regressions refuse). V2 replaces V1 promotable/rehabilitating member roles with epoch-fenced symmetric seats per the leaderless charter; no per-row accepted-difference record names that role-model delta.",
-  "previous_status": "unresolved"
-}

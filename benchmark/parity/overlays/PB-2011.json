@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2011",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "One-instance-per-document identity-map tracking, has_changes/has_changed, ignore_changes_for (tracked but outside the save), and the NoTracking refusal set — reads answer while every write path refuses, matching V1's throw set — are focused-tested. Gap: no tracked-entity enumeration (tracked_count only) and NoTracking incompatibilities are proven for the Store/SaveChanges paths only.",
-  "previous_status": "unresolved"
-}

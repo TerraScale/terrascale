@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4057",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Lock modes guarding definition changes exactly as V1, deployment options, priorities, reset modes, and side-by-side cutover are implemented and focused-tested. There is no rolling index deployment or replace/finish-rolling flow.",
-  "previous_status": "unresolved"
-}

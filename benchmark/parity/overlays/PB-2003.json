@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2003",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "store_generated allocates sequential ids from the collection's identity family inside the save transaction (a vetoed save leaks no identity) and the GAP-F9 HiLo distributor landed with V1 block bounds — both focused-tested. Gap: no ULID identity form exists anywhere in the tree, and convention-based entity-id extraction is decided SDK-side (GAP-D01 row 11) with no implementation.",
-  "previous_status": "unresolved"
-}

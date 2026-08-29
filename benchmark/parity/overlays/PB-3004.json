@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3004",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No attachment replication path exists: src/replication contains no attachment handling (commit_family_write merge-special-cases counter records only) and attachment change payloads exist solely as streaming notifications, not replication; no focused test."
-}

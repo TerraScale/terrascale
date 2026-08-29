@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-5024",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Progress cursors, bounded links, anti-entropy repair after gaps, partition-blocked catch-up, and full-catch-up fallback below servable history are all focused-tested. Gap: no wait-for-change-vector operation with reached/timed-out outcomes — the cursor is observed, not awaited — and no bounded-lag or convergence default is claimed.",
-  "previous_status": "unresolved"
-}

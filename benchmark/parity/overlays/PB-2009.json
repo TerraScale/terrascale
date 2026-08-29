@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2009",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "delete/delete_expected stage deferred deletes: loads answer absent after a pending delete, store-then-delete never resurrects on a later save, before-delete veto is atomic, and commit conflicts reject without partial writes — focused-tested. Gap: the delete path is ID-addressed only (no entity-object overload, so V1's changed-entity guard and before-delete listener differences have no direct counterpart test); delete-then-store ordering is a recorded accepted difference.",
-  "previous_status": "unresolved"
-}

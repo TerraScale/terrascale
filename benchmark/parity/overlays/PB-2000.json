@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2000",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "The V2 form is the durable Engine plus Session::open, which gates on the engine-validated TenantScope (database selection maps to tenant scope, not V1 named databases) and SessionOptions defaults; open-gating and options are focused-tested and passing. Gap: exactly one synchronous session form — no async session and no session created/disposed hooks, so the V1 lifecycle clause has no counterpart.",
-  "previous_status": "unresolved"
-}

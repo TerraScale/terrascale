@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6022",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Legacy offline migration exists as a manifest-verified, versioned logical path: manifest validation before any write, unsupported-version rejection, writes only through the engine transaction seam, per-record durable resume, idempotency, explicit loss matrix, V1 change-vector provenance recording with fail-closed malformed vectors, and an explicit no-direct-V1-file-open claim — all focused-tested; the gaps are that the input is a synthetic 'terrabase-v1-export 1' fixture representation with no real V1 exporter output or version-specific migrators (Migrator_V2/V3 payloads) and no compression, encryption, batch-limit, journal, or timeout options.",
-  "previous_status": "unresolved"
-}

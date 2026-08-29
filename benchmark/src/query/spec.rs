@@ -4,7 +4,7 @@
 //! (`try_new` or a named builder) and observed only through read-only
 //! accessors. None of them accepts a route, arbitrary SQL, a generic map, or
 //! generic bytes: the raw-query escape hatch is the separately validated
-//! [`V1QueryText`](crate::operations::V1QueryText), which normalizes through
+//! [`TqlQueryText`](crate::operations::TqlQueryText), which normalizes through
 //! the same compile seam as these typed values.
 
 use super::includes::IncludeClause;

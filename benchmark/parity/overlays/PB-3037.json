@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3037",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "The indexing/sharding half has no behavior: nothing under src/query or src/index consults a validation policy during indexing, there is no validator cache, and no sharded validator routing exists; write-time enforcement belongs to PB-3036's evidence, and the query-plane quarantine gate is recorded as open P4/P6 work in docs/design/p0-implementation-state.md section 11."
-}

@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1021",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "The subscription seam implements bounded batches with checkpoint-gated acknowledgement, at-least-once redelivery of unacknowledged items after reconnect, durable checkpoint preservation, duplicate-delivery identifiability, and an explicit terminal close status — all focused-tested. The V1 connection-status vocabulary (Redirect/NotFound/Closed/Invalid/InUse/Accepted), includes, heartbeats, and sharded-subscription routing/ordering have no V2 equivalent, and TBEP/SSE framing replaces the V1 TCP protocol.",
-  "previous_status": "unresolved"
-}

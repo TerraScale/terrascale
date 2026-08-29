@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2017",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Since the P0 sweep, real cluster transactions exist at the composed seam (P2-P5): coordinate_composed_transaction heals to the frontier fixed point, evaluates coordinated constraints, fans at GlobalQuorum, and refuses under partition; ClusterHost client_write coordinates leaderless writes with ack-level receipts. Gap: the document session's ClusterWide mode still fails closed (SessionError::ClusterWideUnavailable) so no session runs a cluster-wide save, V1 leader/index waits are superseded by the leaderless charter (PD-2026-08-28-07), and per-data-family mode restrictions are unmapped.",
-  "previous_status": "unresolved"
-}

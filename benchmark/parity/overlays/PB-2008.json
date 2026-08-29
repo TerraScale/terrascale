@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2008",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "store/store_new/store_checked implement the overwrite (Any), create-only (New), and expected-version (Exact) overloads with expectation adoption by a later store, expectation consumption on successful save, and engine-side expected-version enforcement — all focused-tested. Gap: a single synchronous form (no async overloads with cancellation), and the generated-ID store reserves engine-side rather than extracting client-side identities.",
-  "previous_status": "unresolved"
-}

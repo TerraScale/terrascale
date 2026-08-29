@@ -11148,399 +11148,254 @@ pub struct OperationRow {
     pub response_code: u16,
     /// Whether the operation is a mutation (idempotency pairing).
     pub mutation: bool,
-    /// The parity-mapping column: V1 parity row ids or the explicit
-    /// `new-capability` marker (PD-2026-08-26-14 D1).
-    pub parity: &'static [&'static str],
 }
 
-/// The closed operation registry with the parity-mapping column.
+/// The closed operation registry.
 pub const OPERATIONS: &[OperationRow] = &[
     OperationRow {
         name: "channel.bind",
         request_code: 320,
         response_code: 576,
         mutation: false,
-        parity: &[
-            "new-capability: backend-supplied tenant binding at a local channel (PD-2026-08-26-11 D1)",
-        ],
     },
     OperationRow {
         name: "document.read",
         request_code: 257,
         response_code: 513,
         mutation: false,
-        parity: &[
-            "PB-2005",
-        ],
     },
     OperationRow {
         name: "document.write",
         request_code: 258,
         response_code: 514,
         mutation: true,
-        parity: &[
-            "PB-2001",
-            "PB-1013",
-            "PB-2025",
-        ],
     },
     OperationRow {
         name: "document.delete",
         request_code: 259,
         response_code: 515,
         mutation: true,
-        parity: &[
-            "PB-2002",
-            "PB-2025",
-        ],
     },
     OperationRow {
         name: "document.batch",
         request_code: 264,
         response_code: 605,
         mutation: true,
-        parity: &[
-            "new-capability: atomic client batching — one frame, one engine transaction (p0-protocol-compatibility-contract section 2)",
-        ],
     },
     OperationRow {
         name: "query.execute",
         request_code: 260,
         response_code: 516,
         mutation: false,
-        parity: &[
-            "PB-4000",
-        ],
     },
     OperationRow {
         name: "query.cancel",
         request_code: 261,
         response_code: 517,
         mutation: false,
-        parity: &[
-            "PB-4034",
-            "PB-1012",
-        ],
     },
     OperationRow {
         name: "family.read",
         request_code: 262,
         response_code: 518,
         mutation: false,
-        parity: &[
-            "PB-3000",
-            "PB-3001",
-        ],
     },
     OperationRow {
         name: "family.write",
         request_code: 263,
         response_code: 519,
         mutation: true,
-        parity: &[
-            "PB-3000",
-            "PB-3001",
-            "PB-2025",
-        ],
     },
     OperationRow {
         name: "backbone.subscribe",
         request_code: 272,
         response_code: 528,
         mutation: false,
-        parity: &[
-            "PB-1021",
-            "PB-6003",
-        ],
     },
     OperationRow {
         name: "backbone.acknowledge",
         request_code: 273,
         response_code: 529,
         mutation: false,
-        parity: &[
-            "PB-6004",
-        ],
     },
     OperationRow {
         name: "backbone.unsubscribe",
         request_code: 274,
         response_code: 530,
         mutation: false,
-        parity: &[
-            "PB-6005",
-        ],
     },
     OperationRow {
         name: "sync.session_setup",
         request_code: 288,
         response_code: 544,
         mutation: false,
-        parity: &[
-            "new-capability: terrascale.sync.v2 serving seam (PD-2026-08-26-12)",
-        ],
     },
     OperationRow {
         name: "sync.delta_pull",
         request_code: 289,
         response_code: 545,
         mutation: false,
-        parity: &[
-            "new-capability: terrascale.sync.v2 serving seam (PD-2026-08-26-12)",
-        ],
     },
     OperationRow {
         name: "sync.snapshot_pull",
         request_code: 290,
         response_code: 546,
         mutation: false,
-        parity: &[
-            "new-capability: terrascale.sync.v2 serving seam (PD-2026-08-26-12)",
-        ],
     },
     OperationRow {
         name: "sync.checkpoint_ack",
         request_code: 291,
         response_code: 547,
         mutation: false,
-        parity: &[
-            "new-capability: terrascale.sync.v2 serving seam (PD-2026-08-26-12)",
-        ],
     },
     OperationRow {
         name: "sync.mutation_submit",
         request_code: 292,
         response_code: 548,
         mutation: true,
-        parity: &[
-            "new-capability: server-ack-only mutations (PD-2026-08-26-12 D2)",
-        ],
     },
     OperationRow {
         name: "sync.session_close",
         request_code: 293,
         response_code: 549,
         mutation: false,
-        parity: &[
-            "new-capability: terrascale.sync.v2 serving seam (PD-2026-08-26-12)",
-        ],
     },
     OperationRow {
         name: "topology.read",
         request_code: 304,
         response_code: 560,
         mutation: false,
-        parity: &[
-            "PB-5019",
-            "PB-5036",
-        ],
     },
     OperationRow {
         name: "admin.status",
         request_code: 305,
         response_code: 561,
         mutation: false,
-        parity: &[
-            "PB-5032",
-        ],
     },
     OperationRow {
         name: "replication.conflicts",
         request_code: 306,
         response_code: 562,
         mutation: false,
-        parity: &[
-            "PB-5022",
-            "PB-5035",
-        ],
     },
     OperationRow {
         name: "replication.fenced",
         request_code: 307,
         response_code: 563,
         mutation: false,
-        parity: &[
-            "PB-5035",
-            "new-capability: typed fenced-leader history observation (ADR-0004 D-1 fencing evidence)",
-        ],
     },
     OperationRow {
         name: "replication.depositions",
         request_code: 308,
         response_code: 564,
         mutation: false,
-        parity: &[
-            "PB-5035",
-            "new-capability: typed deposition observation of ownership transitions (ADR-0004 D-1)",
-        ],
     },
     OperationRow {
         name: "replication.cursor",
         request_code: 309,
         response_code: 565,
         mutation: false,
-        parity: &[
-            "PB-5031",
-            "PB-5033",
-            "PB-5035",
-        ],
     },
     OperationRow {
         name: "replication.health",
         request_code: 310,
         response_code: 566,
         mutation: false,
-        parity: &[
-            "PB-5032",
-            "PB-5035",
-        ],
     },
     OperationRow {
         name: "replication.denials",
         request_code: 311,
         response_code: 567,
         mutation: false,
-        parity: &[
-            "PB-5035",
-            "new-capability: typed tenant-isolation denial observation (engine-enforced isolation evidence)",
-        ],
     },
     OperationRow {
         name: "supervision.health",
         request_code: 321,
         response_code: 577,
         mutation: false,
-        parity: &[
-            "PB-5032",
-        ],
     },
     OperationRow {
         name: "supervision.shutdown",
         request_code: 322,
         response_code: 578,
         mutation: false,
-        parity: &[
-            "new-capability: engine-process supervision contract (PD-2026-08-26-02 D2)",
-        ],
     },
     OperationRow {
         name: "schema.declare",
         request_code: 336,
         response_code: 592,
         mutation: true,
-        parity: &[
-            "PB-3036",
-            "PB-3037",
-        ],
     },
     OperationRow {
         name: "schema.status",
         request_code: 337,
         response_code: 593,
         mutation: false,
-        parity: &[
-            "PB-3036",
-            "PB-3037",
-        ],
     },
     OperationRow {
         name: "schema.validate",
         request_code: 338,
         response_code: 594,
         mutation: false,
-        parity: &[
-            "PB-3036",
-            "PB-3037",
-        ],
     },
     OperationRow {
         name: "migration.status",
         request_code: 339,
         response_code: 595,
         mutation: false,
-        parity: &[
-            "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)",
-        ],
     },
     OperationRow {
         name: "migration.dry_run",
         request_code: 340,
         response_code: 596,
         mutation: false,
-        parity: &[
-            "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)",
-        ],
     },
     OperationRow {
         name: "migration.apply",
         request_code: 341,
         response_code: 597,
         mutation: true,
-        parity: &[
-            "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)",
-        ],
     },
     OperationRow {
         name: "tier.configure",
         request_code: 342,
         response_code: 598,
         mutation: true,
-        parity: &[
-            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
-        ],
     },
     OperationRow {
         name: "tier.inspect",
         request_code: 343,
         response_code: 599,
         mutation: false,
-        parity: &[
-            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
-        ],
     },
     OperationRow {
         name: "tier.dry_run",
         request_code: 344,
         response_code: 600,
         mutation: false,
-        parity: &[
-            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
-        ],
     },
     OperationRow {
         name: "tier.explain",
         request_code: 345,
         response_code: 601,
         mutation: false,
-        parity: &[
-            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
-        ],
     },
     OperationRow {
         name: "tier.run",
         request_code: 346,
         response_code: 602,
         mutation: true,
-        parity: &[
-            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
-        ],
     },
     OperationRow {
         name: "tier.pause",
         request_code: 347,
         response_code: 603,
         mutation: true,
-        parity: &[
-            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
-        ],
     },
     OperationRow {
         name: "tier.resume",
         request_code: 348,
         response_code: 604,
         mutation: true,
-        parity: &[
-            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
-        ],
     },
 ];

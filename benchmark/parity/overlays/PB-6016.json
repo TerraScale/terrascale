@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6016",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Local restore selection (latest or named identity), publication-order incremental chain replay, pinned snapshot boundaries, typed refusal of non-empty or unrelated targets, fail-closed corruption handling, retry-after-failure, and post-restore reopen are implemented and focused-tested on the public seam; the gaps are no provider sources and no encryption-settings, max-read-rate, shard-settings, skip-indexes, or disable-ongoing-tasks options, so the selection-options clause is materially partial.",
-  "previous_status": "unresolved"
-}

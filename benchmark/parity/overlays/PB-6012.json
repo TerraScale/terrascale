@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6012",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Only a LocalFileSystem destination kind exists, with a real validate/probe split (path-traversal, root, and existing-file rejection; writability proof) — all focused-tested; no S3/Glacier/Azure/GCS/FTP providers, no upload/list/delete/retry contracts, and no direct-vs-staged upload modes exist (the P1 engine object-store tier is storage tiering, not a backup destination), so most of this row is unmet.",
-  "previous_status": "unresolved"
-}

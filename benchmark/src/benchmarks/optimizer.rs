@@ -680,7 +680,6 @@ impl OptimizerRunRecord {
     ) -> Self {
         let (status, _) = gates::reference_comparison_status(
             &reference::postgresql_reference_run(),
-            &reference::terrabase_v1_reference_run(),
             gates::ReferenceComparison { throughput: Trend::Better, p95: Trend::Better },
         );
         Self {
@@ -716,17 +715,10 @@ impl OptimizerRunRecord {
         let _unused = writeln!(text, "terrabase v2 source: {}", self.source_identity);
         let _unused =
             writeln!(text, "postgresql pin: {}", reference::POSTGRESQL_REFERENCE.describe());
-        let _unused =
-            writeln!(text, "terrabase v1 pin: {}", reference::TERRABASE_V1_REFERENCE.describe());
         let _unused = writeln!(
             text,
             "postgresql reference: {}",
             reference::postgresql_reference_run().describe()
-        );
-        let _unused = writeln!(
-            text,
-            "terrabase v1 reference: {}",
-            reference::terrabase_v1_reference_run().describe()
         );
         let _unused = writeln!(text, "verdict: {}", self.verdict.as_str());
         let _unused = writeln!(text, "{}", vocabulary::objective_status_line(self.status));

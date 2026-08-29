@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1023",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Accepted V2 difference per PD-2026-08-28-02: the database server is Rust with C#/.NET as the only supported client over TBEP on QUIC/TLS and UDS, so a PostgreSQL wire listener serving non-TBEP database clients is outside the accepted support contract; no PostgreSQL wire code exists in the tree (only benchmark reference comparisons in src/benchmarks). PostgreSQL parity itself remains a mandatory, separately-owned benchmark obligation (PD-2026-08-26-03), and the ps-04 sweep's matching exclusion proposal (PD-2026-08-26-10 D4) is not yet frozen in parity/adjudications.json, which should record this disposition. [downgraded by verification: no charter decision names this exclusion]",
-  "previous_status": "unresolved"
-}

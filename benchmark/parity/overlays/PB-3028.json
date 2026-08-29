@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3028",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No revision or revision-tombstone replication path or test exists: src/replication merge-special-cases counter records only, and migration carries revision records locally (latest-only policy collapse) without any transfer/convergence contract for history."
-}

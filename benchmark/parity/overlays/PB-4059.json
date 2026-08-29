@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4059",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "Output-collection naming and pattern rules are validated by definitions tests only; no map-reduce execution exists to write output or reference documents. The row's capability (map-reduce output collections creating durable documents) is absent."
-}

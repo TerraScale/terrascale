@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2005",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Session load/load_many implement single-ID loads, identity-map pinning of the loaded instance, and known-missing registration, with batch results in request order — focused-tested. Gap: no async load form or cancellation parameter, and the batch answers Vec<Option> in request order rather than V1's dictionary shape keyed by requested ID.",
-  "previous_status": "unresolved"
-}

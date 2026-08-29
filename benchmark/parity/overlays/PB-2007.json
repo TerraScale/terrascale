@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2007",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Transaction::load_if_match serves exact version contracts, rejects stale vectors with typed ConditionalLoadError::Stale, rejects the recreated document's stale vector, and the error vocabulary is pinned in a public-contract test. Gap: no session-level, lazy, or async conditional-load forms exist — the capability is engine-Transaction-only.",
-  "previous_status": "unresolved"
-}

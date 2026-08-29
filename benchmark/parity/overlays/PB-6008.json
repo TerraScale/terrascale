@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6008",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "One plan-order query document stream exists and honestly reports the index generation it used, reusing the bounded family readers; the gaps are that no projection variants, result-format/statistics parity, unsupported-format/staleness/timeout/partial-write error surface, or sharded stream merging exists, so most of the row's semantics are unmet.",
-  "previous_status": "unresolved"
-}

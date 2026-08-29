@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4017",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "`select distinct` parses in the TQL grammar and lowering fails closed with UnsupportedForPlanning naming the construct (pinned by the 'select-distinct-not-planned' parity vector). No distinct execution, counting, or paging agreement exists anywhere — a fail-closed stub, not behavior."
-}

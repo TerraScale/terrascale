@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2006",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Transaction::head serves existence/HEAD with distinct Any vs If-Unchanged conditions, missing-vs-deleted distinction, published-view (not staged) reads, and contract survival across reopen — focused-tested. Gap: head lives on the engine Transaction with no session-level Exists convenience, and ULID identities do not exist as a distinct form.",
-  "previous_status": "unresolved"
-}

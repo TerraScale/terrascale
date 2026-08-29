@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-2010",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "refresh replaces tracked state with the current server value (registering newly-missing ids), evict/clear remove tracked plus queued pending state including pending lazy reads, and is_loaded/is_known_missing report identity-map state rather than server existence — all focused-tested. Gap: refresh takes one document at a time; V1's multi-entity refresh overload has no counterpart.",
-  "previous_status": "unresolved"
-}

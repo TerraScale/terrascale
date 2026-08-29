@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3019",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "The execution half landed (GAP-F04): rollup windows align and stop at now, per-column aggregations match policy, rerun extends/preserves prior windows, policy change prunes, retention drops pre-horizon entries and trims rollups, and run order is V1's rollups-then-retention; policy-frequency/replay configuration and collection-scoped configuration state (V1 TimeSeriesConfiguration per collection) are absent - policies are per-series with caller-driven ticks.",
-  "previous_status": "unresolved"
-}

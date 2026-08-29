@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4022",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "A real spatial predicate seam exists (WKT/circle/polygon shapes, four V1 relations, typed WKT refusal) and is tested at the foundation level. It is not a QueryCondition: TQL spatial.* functions are capability-gated and fail closed, and no query execution over documents goes through a spatial predicate.",
-  "previous_status": "unresolved"
-}

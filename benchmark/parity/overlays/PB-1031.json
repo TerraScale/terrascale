@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-1031",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "The contract facts themselves state this row has neither a named decision nor proof, and nothing has changed: no accepted control-plane exclusion exists, and the V1 setup/provisioning/certificate-enrollment families have no accounting artifact. V2's own control surfaces (NATS-backed control metadata, host engine admin) are new seams, not dispositions of the V1 setup family, so the row stays open exactly as recorded."
-}

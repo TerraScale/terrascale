@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4055",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Index failures are recorded content-safe and bounded, drive an error state with a reset streak, and can be cleared — all focused-tested. Error records carry category/action/timestamp only (no document or batch context), and there is no external typed listing/clear route beyond the engine seam.",
-  "previous_status": "unresolved"
-}

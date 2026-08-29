@@ -504,22 +504,18 @@ impl TbepHost for EngineHost {
     ) -> Result<crate::generated::QueryExecuteResponse, HostingError> {
         self.count_frame();
         let tenant = Self::tenant_of(tenant)?;
-        // The wire's text is the V1-compatible query input, bounded at
+        // The wire's text is bounded TQL input, capped at
         // 16 KiB by the registry's own validation. The query runs with
         // its own cancellation signal — registered under the caller's
         // query id — so a cancel from any channel ends it at a bounded
         // checkpoint.
-        let text = terrabase_v2::operations::V1QueryText::try_new(&request.text)
+        let text = terrabase_v2::operations::TqlQueryText::try_new(&request.text)
             .map_err(|_| HostingError::Invalid("the query text is not valid".into()))?;
         let cancellation = terrabase_v2::types::Cancellation::new();
         self.register_live_query(request.query_id, &cancellation);
         let deadline = terrabase_v2::types::Deadline::after(std::time::Duration::from_secs(30))
             .map_err(|_| HostingError::EngineFailure("the deadline is invalid".into()))?;
-        let input = terrabase_v2::operations::QueryInput::v1_compatible_bounded(
-            text,
-            deadline,
-            cancellation,
-        );
+        let input = terrabase_v2::operations::QueryInput::tql_bounded(text, deadline, cancellation);
         let scope = self.engine.scope_for(&tenant);
         let executed = (|| -> Result<
             (

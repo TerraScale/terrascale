@@ -9,9 +9,7 @@
 //!
 //! Writes `../../src/generated/registry.rs` (Rust) and
 //! `../../../../host/TerraBase.Protocol/Generated/TbepRegistry.g.cs`
-//! (C#), then validates (when `parity/inventory.json` is reachable) that
-//! every `PB-*` parity reference in the operation registry names a row
-//! of the inventory (PD-2026-08-26-14 D1). The committed files must
+//! (C#). The committed files must
 //! equal regeneration exactly; `tests/registry_drift.rs` re-runs the
 //! same generator against the committed files and fails on any
 //! difference, so a schema edit without regeneration cannot land
@@ -51,18 +49,4 @@ fn main() {
     println!("wrote {}", rust_path.display());
     println!("wrote {}", csharp_path.display());
 
-    let inventory_path = crate_root.join("../../parity/inventory.json");
-    match std::fs::read_to_string(&inventory_path) {
-        Ok(inventory) => {
-            codegen::check_parity_against_inventory(&document, &inventory)
-                .unwrap_or_else(|error| panic!("parity drift: {error}"));
-            println!("parity-mapping column validated against {}", inventory_path.display());
-        }
-        Err(_) => {
-            println!(
-                "parity inventory not found at {}: parity check unrun",
-                inventory_path.display()
-            );
-        }
-    }
 }

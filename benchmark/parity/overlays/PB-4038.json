@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4038",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Delete-by-query exists at the engine seam with default refusal requiring confirmation, bounded-page deletion, selection limits, and strict/allow-stale behavior, all focused-tested and audited. It is not exposed as a public protocol operation, and the options surface is a subset of V1's QueryOperationOptions.",
-  "previous_status": "unresolved"
-}

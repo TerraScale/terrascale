@@ -1,20 +1,13 @@
-//! The statistical gate, carried over from V1's server-comparison benchmark
-//! unchanged in its rule.
+//! Conservative statistical gates for benchmark comparisons.
 //!
-//! V1's rule (`bench/TerraBase.Server.Benchmark` at the pinned source
-//! `fa99b9257776dbe625e6a2388c74c9ce916637ee`, `ClassifyHigher` /
-//! `ClassifyLower`): a difference is called only when the median moves by
-//! more than the noise percent **and** every sample of one side separates
-//! from every sample of the other side. Overlapping sample ranges are
-//! reported as stable noise, whatever the medians appear to say. SE-15
-//! keeps that rule exactly; it adds only the objective reading on top of it
-//! and the fail-closed reference check beneath it.
+//! A difference is reported only when the median moves beyond the noise
+//! budget and the sample ranges do not overlap.
 
 use super::vocabulary::{ObjectiveStatus, ReferenceRun, Verdict};
 
 /// The median and full sample range of one measured quantity.
 ///
-/// The median follows V1: the middle sample of an odd run, the mean of the
+/// The median is the middle sample of an odd run and the mean of the
 /// middle pair of an even run. The range is the run's own minimum and
 /// maximum, which is what the separation half of the gate tests.
 #[derive(Clone, Copy, Debug)]
@@ -135,18 +128,17 @@ pub(crate) fn objective_status(comparison: ReferenceComparison) -> (ObjectiveSta
 }
 
 /// The fail-closed rule of the lane: no wall-clock comparison may produce
-/// any status other than `inconclusive` while either reference baseline is
+/// any status other than `inconclusive` while the reference baseline is
 /// [`ReferenceRun::Unrun`].
 ///
 /// This is the structural guard behind the charter's "an objective is not a
 /// claim" — a missing reference cannot be averaged in, extrapolated from, or
 /// assumed away, and the honest outcome is what the type system returns.
 pub(crate) fn reference_comparison_status(
-    postgresql: &ReferenceRun,
-    terrabase_v1: &ReferenceRun,
+    reference: &ReferenceRun,
     comparison: ReferenceComparison,
 ) -> (ObjectiveStatus, Verdict) {
-    if !postgresql.ran() || !terrabase_v1.ran() {
+    if !reference.ran() {
         return (ObjectiveStatus::Inconclusive, Verdict::Inconclusive);
     }
     comparison.objective()

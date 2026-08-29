@@ -2,19 +2,17 @@
 //!
 //! These tests inspect only the compile, export, and lifetime surface of the
 //! W4 declaration-only tree. They make no claim that any streaming,
-//! replication, backup, or migration behavior exists.
+//! replication or backup behavior exists.
 
 use terrabase_v2::{
     AcknowledgementLevel, AcknowledgementReport, BackupArchive, BackupError, BackupKind,
     BackupManifest, BackupPlan, BackupProgress, BackupResult, ChangeEvent, ChangeFilter,
     ChangeKind, CommitReceipt, ConflictRecord, Convergence, DocumentStreamSelector, Engine,
-    MemberId, MigrationError, MigrationLossMatrix, MigrationManifest, MigrationOptions,
-    MigrationRecord, MigrationReport, RegionId, ReplicationConfig, ReplicationCursor,
-    ReplicationError, ReplicationOutcome, ReplicationReceipt, ReplicationStatus, RestorePlan,
-    RestoreResult, StreamBatch, StreamCompletion, StreamCursor, StreamError, StreamItem,
-    StreamPosition, StreamSource, StreamStore, SubscriptionAcknowledgement, SubscriptionBatch,
-    SubscriptionCheckpoint, SubscriptionSpec, SubscriptionStatus, TopologyView, backup, migration,
-    replication, streaming,
+    MemberId, RegionId, ReplicationConfig, ReplicationCursor, ReplicationError, ReplicationOutcome,
+    ReplicationReceipt, ReplicationStatus, RestorePlan, RestoreResult, StreamBatch,
+    StreamCompletion, StreamCursor, StreamError, StreamItem, StreamPosition, StreamSource,
+    StreamStore, SubscriptionAcknowledgement, SubscriptionBatch, SubscriptionCheckpoint,
+    SubscriptionSpec, SubscriptionStatus, TopologyView, backup, replication, streaming,
 };
 
 #[test]
@@ -66,18 +64,10 @@ fn w4_public_exports_compile_with_declaration_only_tree() {
         std::any::type_name::<RestorePlan>(),
         std::any::type_name::<RestoreResult>(),
         std::any::type_name::<BackupError>(),
-        // Migration root re-exports.
-        std::any::type_name::<MigrationManifest>(),
-        std::any::type_name::<MigrationRecord>(),
-        std::any::type_name::<MigrationOptions>(),
-        std::any::type_name::<MigrationReport>(),
-        std::any::type_name::<MigrationLossMatrix>(),
-        std::any::type_name::<MigrationError>(),
-        // The four W4 module roots are public.
+        // The three W4 module roots are public.
         std::any::type_name::<streaming::StreamStore<'static>>(),
         std::any::type_name::<replication::AcknowledgementLevel>(),
         std::any::type_name::<backup::BackupManifest>(),
-        std::any::type_name::<migration::MigrationManifest>(),
     );
 }
 
@@ -143,12 +133,6 @@ fn w4_roots_reexport_no_transport_codec_or_leader_state() {
         (std::any::type_name::<BackupResult>(), "terrabase_v2::backup::"),
         (std::any::type_name::<RestorePlan>(), "terrabase_v2::backup::"),
         (std::any::type_name::<RestoreResult>(), "terrabase_v2::backup::"),
-        (std::any::type_name::<MigrationError>(), "terrabase_v2::migration::"),
-        (std::any::type_name::<MigrationLossMatrix>(), "terrabase_v2::migration::"),
-        (std::any::type_name::<MigrationManifest>(), "terrabase_v2::migration::"),
-        (std::any::type_name::<MigrationOptions>(), "terrabase_v2::migration::"),
-        (std::any::type_name::<MigrationRecord>(), "terrabase_v2::migration::"),
-        (std::any::type_name::<MigrationReport>(), "terrabase_v2::migration::"),
         (std::any::type_name::<AcknowledgementLevel>(), "terrabase_v2::replication::"),
         (std::any::type_name::<AcknowledgementReport>(), "terrabase_v2::replication::"),
         (std::any::type_name::<ConflictRecord>(), "terrabase_v2::replication::"),

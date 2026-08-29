@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6006",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Typed predicate dimensions (collection/document/prefix filters) with deterministic validation, drop reporting without checkpoint advance, and delivery beyond long filtered runs are implemented and tested; the gap is that no script execution or step budget, no projection criteria, and no revision subscriptions exist, so the V1 criteria and revision clauses are unmet.",
-  "previous_status": "unresolved"
-}

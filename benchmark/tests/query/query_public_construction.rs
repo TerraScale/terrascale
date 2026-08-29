@@ -10,7 +10,7 @@ use std::{path::PathBuf, time::Duration};
 
 use terrabase_v2::{
     Cancellation, Deadline, Engine, EngineConfig, QueryInput, QueryInputError,
-    RequestValidationError, TenantId, V1QueryText,
+    RequestValidationError, TenantId, TqlQueryText,
     query::{
         IndexNamespace, OrderDirection, OrderingKey, QueryCondition, QueryError, QueryOrdering,
         QueryPaging, QueryPredicate, QueryProjection, QuerySource, QuerySpec, QueryStore,
@@ -236,25 +236,25 @@ fn query_store_is_acquired_only_from_a_live_engine() {
 #[test]
 fn v1_query_text_public_constructor_validates_and_rejects() {
     let accepted =
-        V1QueryText::try_new("from users where age > 21 order by age").expect("supported grammar");
+        TqlQueryText::try_new("from users where age > 21 order by age").expect("supported grammar");
     assert_eq!(accepted.as_str(), "from users where age > 21 order by age");
     assert_eq!(
-        V1QueryText::try_new(""),
+        TqlQueryText::try_new(""),
         Err(QueryInputError::EmptyText),
         "empty text is rejected at construction"
     );
     assert_eq!(
-        V1QueryText::try_new("select * from users"),
+        TqlQueryText::try_new("select * from users"),
         Err(QueryInputError::UnsupportedGrammar),
         "unsupported grammar is rejected at construction"
     );
     assert_eq!(
-        V1QueryText::try_new("from users where ag\u{7}e > 1"),
+        TqlQueryText::try_new("from users where ag\u{7}e > 1"),
         Err(QueryInputError::UnsupportedGrammar),
         "control characters are not grammar tokens and are rejected at construction"
     );
     assert_eq!(
-        V1QueryText::try_new(&format!("from {} where a = 1", "x".repeat(300))),
+        TqlQueryText::try_new(&format!("from {} where a = 1", "x".repeat(300))),
         Err(QueryInputError::InvalidIdentifier),
         "oversized identifiers are rejected as invalid identifiers"
     );
@@ -264,7 +264,7 @@ fn v1_query_text_public_constructor_validates_and_rejects() {
         "test text must exceed the bound"
     );
     assert_eq!(
-        V1QueryText::try_new(&oversized),
+        TqlQueryText::try_new(&oversized),
         Err(QueryInputError::UnsupportedGrammar),
         "text beyond the byte bound is rejected before parsing"
     );
@@ -275,15 +275,13 @@ fn public_v1_text_compiles_through_the_one_compile_seam() {
     let (dir, engine) = open_engine("v1-public");
     let store = engine.queries();
     let text =
-        V1QueryText::try_new("from users where age > 21 order by age").expect("supported grammar");
-    let plan = store
-        .compile(QueryInput::v1_compatible(text))
-        .expect("public V1 text compiles through the one seam");
+        TqlQueryText::try_new("from users where age > 21 order by age").expect("supported grammar");
+    let plan =
+        store.compile(QueryInput::tql(text)).expect("public V1 text compiles through the one seam");
     let second =
-        V1QueryText::try_new("from users where age > 21 order by age").expect("supported grammar");
-    let replay = store
-        .compile(QueryInput::v1_compatible(second))
-        .expect("the same text recompiles deterministically");
+        TqlQueryText::try_new("from users where age > 21 order by age").expect("supported grammar");
+    let replay =
+        store.compile(QueryInput::tql(second)).expect("the same text recompiles deterministically");
     assert_eq!(plan, replay, "one grammar, one compile seam, one plan");
     drop(store);
     drop(engine);

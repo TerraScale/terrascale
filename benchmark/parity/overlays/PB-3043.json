@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3043",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "Bounded streaming is proven: family streams reuse bounded family readers, memory stays bounded under a non-draining consumer, backpressure never blocks an engine commit, cancellation closes promptly without leaked locks or buffers, and the attachment plane enforces explicit limits (64 KiB segments, 8 MiB content ceiling) with typed over-limit errors; no huge-file/stress-scale attachment test exists (V1 BigFiles/HugeFiles; the 8 MiB V2 ceiling is an explicit refusal with no charter decision), and position/partial-consumption semantics are only partially asserted.",
-  "previous_status": "unresolved"
-}

@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-3018",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "No incremental time-series arithmetic exists: appends carry absolute value vectors, there is no add/subtract-at-timestamp operation, no same-timestamp merge rule, and no full-vs-raw result distinction; the 'incremental encoding' note in the timeseries module is rollup recompute-replace (decision D2), not incremental series."
-}

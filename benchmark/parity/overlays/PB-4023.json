@@ -1,7 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-4023",
-  "status": "unresolved",
-  "proof_ids": [],
-  "disposition": "Distance arithmetic and units are pinned by a foundation test, but QueryOrdering has no distance ordering key and no lowering accepts one, so distance ordering in queries does not exist. The pinned arithmetic is a foundation, not the row's capability."
-}

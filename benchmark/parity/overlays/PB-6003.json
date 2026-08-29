@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "item_id": "PB-6003",
-  "status": "in-progress",
-  "proof_ids": [],
-  "disposition": "The engine seam implements bounded one-batch-then-ack subscriptions with an explicit terminal close status, and a typed wire contract now exists (backbone.subscribe with subscription_batch/subscription_closed frames served by SyncDeliveryHost over UDS), closing part of the P0 gap; still missing are heartbeats, SubscriptionOpeningStrategy/compression/buffer-size negotiation, CloseWhenNoDocsLeft/IgnoreSubscriberErrors, and distinct document-vs-revision batch payloads, and the engine-backed host routes backbone delivery to the sync-delivery host beside it.",
-  "previous_status": "unresolved"
-}

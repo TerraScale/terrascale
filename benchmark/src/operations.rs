@@ -190,21 +190,21 @@ impl DocumentWriteRequest {
     }
 }
 
-/// A validated V1-compatible query text.
+/// Validated bounded TQL query text.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct V1QueryText(String);
+pub struct TqlQueryText(String);
 
-/// The maximum accepted V1-compatible query text length.
+/// The maximum accepted TQL query text length.
 ///
 /// The bound keeps parsing cost proportional to a bounded input before the
 /// text reaches the public constructor.
 pub const MAX_QUERY_TEXT_BYTES: usize = 16 * 1024;
 
-impl V1QueryText {
-    /// Creates a validated V1-compatible query text.
+impl TqlQueryText {
+    /// Creates validated TQL query text.
     ///
     /// The text must be non-empty, at most [`MAX_QUERY_TEXT_BYTES`] bytes,
-    /// and use only the supported V1-compatible grammar; anything else is a
+    /// and use only the supported first-release TQL grammar. Anything else is a
     /// typed [`QueryInputError`] and never reaches the compile seam.
     ///
     /// # Errors
@@ -220,7 +220,7 @@ impl V1QueryText {
         if text.len() > MAX_QUERY_TEXT_BYTES {
             return Err(QueryInputError::UnsupportedGrammar);
         }
-        crate::query::validate_v1_text(text)?;
+        crate::query::validate_tql_text(text)?;
         Ok(Self(text.to_owned()))
     }
 
@@ -235,14 +235,14 @@ impl V1QueryText {
 pub enum QueryInput {
     /// A typed query specification.
     Typed(QuerySpec),
-    /// V1-compatible query text.
-    V1Compatible(V1QueryText),
-    /// V1-compatible query text with a caller-supplied deadline and
+    /// TQL query text.
+    Tql(TqlQueryText),
+    /// TQL query text with a caller-supplied deadline and
     /// cancellation signal: the serving seam binds control to the
     /// grammar's otherwise unbound query (P4's cancellation surface).
-    V1CompatibleBounded {
+    TqlBounded {
         /// The validated text.
-        text: V1QueryText,
+        text: TqlQueryText,
         /// The execution deadline.
         deadline: Deadline,
         /// The cancellation signal.
@@ -256,19 +256,15 @@ impl QueryInput {
         Self::Typed(spec)
     }
 
-    /// Wraps validated V1-compatible query text.
-    pub fn v1_compatible(text: V1QueryText) -> Self {
-        Self::V1Compatible(text)
+    /// Wraps validated TQL query text.
+    pub fn tql(text: TqlQueryText) -> Self {
+        Self::Tql(text)
     }
 
-    /// Wraps validated V1-compatible text with execution control.
+    /// Wraps validated TQL text with execution control.
     #[must_use]
-    pub fn v1_compatible_bounded(
-        text: V1QueryText,
-        deadline: Deadline,
-        cancellation: Cancellation,
-    ) -> Self {
-        Self::V1CompatibleBounded { text, deadline, cancellation }
+    pub fn tql_bounded(text: TqlQueryText, deadline: Deadline, cancellation: Cancellation) -> Self {
+        Self::TqlBounded { text, deadline, cancellation }
     }
 }
 
@@ -286,7 +282,7 @@ impl QueryOperation {
     ///
     /// Both input forms arrive pre-validated — the typed specification
     /// through [`QuerySpec::try_new`](crate::query::QuerySpec::try_new) and
-    /// the V1-compatible text through [`V1QueryText::try_new`] — so this
+    /// TQL text through [`TqlQueryText::try_new`], so this
     /// constructor repeats only the bounded liveness checks. The optional
     /// operation identity is a stable retry identity, not a liveness bound.
     ///

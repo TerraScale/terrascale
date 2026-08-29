@@ -2,7 +2,7 @@
 //!
 //! A receipt is the only place a performance statement may live, so the
 //! renderer emits every line the standing discipline checks for: the exact
-//! verdict, the canonical objective-status line, both references' honest
+//! verdict, the canonical objective-status line, the reference's honest
 //! run statuses, and — when the objective is not met — a regression
 //! follow-up with a named owner.
 
@@ -45,8 +45,6 @@ pub(crate) struct RunRecord {
     pub status: ObjectiveStatus,
     /// The PostgreSQL reference's honest run status.
     pub postgresql: ReferenceRun,
-    /// The TerraBase V1 reference's honest run status.
-    pub terrabase_v1: ReferenceRun,
     /// Validity notes, retained whether they flatter the run or not.
     pub notes: Vec<String>,
 }
@@ -61,7 +59,6 @@ impl RunRecord {
     /// support `met` or a verdict.
     pub(crate) fn commissioning(workload: Workload) -> Self {
         let postgresql = reference::postgresql_reference_run();
-        let terrabase_v1 = reference::terrabase_v1_reference_run();
         Self {
             label: format!("se15-commissioning-{}", workload.as_str()),
             workload,
@@ -70,7 +67,6 @@ impl RunRecord {
             verdict: Verdict::Inconclusive,
             status: ObjectiveStatus::Inconclusive,
             postgresql,
-            terrabase_v1,
             notes: vec![
                 "commissioning run: the lane's gates, warm-up discipline, and renderer \
                  exercised end to end on real engine operations"
@@ -115,10 +111,7 @@ impl RunRecord {
         let _unused = writeln!(text, "terrabase v2 source: {}", self.source_identity);
         let _unused =
             writeln!(text, "postgresql pin: {}", reference::POSTGRESQL_REFERENCE.describe());
-        let _unused =
-            writeln!(text, "terrabase v1 pin: {}", reference::TERRABASE_V1_REFERENCE.describe());
         let _unused = writeln!(text, "postgresql reference: {}", self.postgresql.describe());
-        let _unused = writeln!(text, "terrabase v1 reference: {}", self.terrabase_v1.describe());
         let _unused = writeln!(text, "verdict: {}", self.verdict.as_str());
         let _unused = writeln!(text, "{}", vocabulary::objective_status_line(self.status));
         if let Some(follow_up) = Self::regression_follow_up(self.status) {
