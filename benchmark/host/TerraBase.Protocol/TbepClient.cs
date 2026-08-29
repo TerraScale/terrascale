@@ -15,8 +15,8 @@ using System.Threading;
 /// </summary>
 public sealed partial class TbepClient : IAsyncDisposable
 {
-    private readonly Socket socket;
-    private readonly NetworkStream stream;
+    private readonly Socket? socket;
+    private readonly Stream stream;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly object inboxLock = new();
     private readonly Queue<TbepWire.Frame> inbox = new();
@@ -27,6 +27,18 @@ public sealed partial class TbepClient : IAsyncDisposable
     {
         this.socket = socket;
         this.stream = new NetworkStream(socket, ownsSocket: true);
+    }
+
+    /// <summary>Wraps the client discipline over an already-connected transport stream — the QUIC binding's bidirectional channel (P4).</summary>
+    /// <param name="stream">The connected bidirectional stream carrying TBEP frames.</param>
+    /// <returns>The client, unbound.</returns>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000", Justification = "the stream's ownership transfers to the client")]
+    public static TbepClient OverStream(Stream stream) => new(stream);
+
+    private TbepClient(Stream stream)
+    {
+        this.socket = null;
+        this.stream = stream;
     }
 
     /// <summary>Connects to a serving engine process at a UDS path.</summary>
@@ -314,7 +326,7 @@ public sealed partial class TbepClient : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await this.stream.DisposeAsync().ConfigureAwait(false);
-        this.socket.Dispose();
+        this.socket?.Dispose();
         this.gate.Dispose();
         await Task.CompletedTask.ConfigureAwait(false);
     }

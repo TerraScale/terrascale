@@ -311,3 +311,126 @@ public sealed class EngineTierTests
         }
     }
 }
+
+/// <summary>
+/// The QUIC+TLS binding cross-language (P4): the C# client connects
+/// over TLS 1.3 to the real engine's QUIC listener and drives the same
+/// spine — the identical frame layer on the network binding.
+/// </summary>
+public sealed class EngineQuicTests
+{
+    private static string Location()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"tbep-engine-quic-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    /// <summary>The spine over QUIC: bind, commit with receipt, read back.</summary>
+    [Test]
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    public async Task TheClientDrivesTheRealEngineOverQuicTls()
+    {
+        // The row provisions its own self-signed identity; the Rust
+        // process reads the PEM pair we write.
+        var home = Path.Combine(Path.GetTempPath(), $"tbep-quic-identity-{Guid.NewGuid():N}");
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            "CN=tbep-quic-row",
+            rsa,
+            System.Security.Cryptography.HashAlgorithmName.SHA256,
+            System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        var names = new System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder();
+        names.AddDnsName("localhost");
+        request.CertificateExtensions.Add(names.Build());
+        using var certificate = request.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddDays(1));
+        Directory.CreateDirectory(home);
+        var certPem = Path.Combine(home, "cert.pem");
+        var keyPem = Path.Combine(home, "key.pem");
+        await File.WriteAllTextAsync(certPem, certificate.ExportCertificatePem());
+        await File.WriteAllTextAsync(keyPem, rsa.ExportPkcs8PrivateKeyPem());
+
+        var location = Location();
+        var socket = Path.Combine(Path.GetTempPath(), $"tbep-quic-row-{Guid.NewGuid():N}.sock");
+        var port = 34000 + Random.Shared.Next(1000);
+        var binary = await EngineHarness.BinaryPathAsync();
+        var process = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = binary,
+                Arguments = $"{socket} 1 engine:{location} quic:{port}:{certPem}:{keyPem}",
+                RedirectStandardOutput = true,
+                RedirectStandardInput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            },
+        };
+        _ = process.Start();
+        var announcement = await process.StandardOutput.ReadLineAsync();
+        if (announcement is null || !announcement.StartsWith("quic ", StringComparison.Ordinal))
+        {
+            process.Kill();
+            throw new InvalidOperationException($"the QUIC harness did not announce its listener: {announcement}");
+        }
+
+        try
+        {
+            if (!System.Net.Quic.QuicConnection.IsSupported)
+            {
+                // The host carries no msquic closure: the QUIC row cannot
+                // run here, and the skip records that honestly rather
+                // than failing a working binding (the Rust lane covers
+                // the same transport end to end).
+                throw new TUnit.Core.Exceptions.SkipTestException(
+                    "this host carries no QUIC platform support (msquic)");
+            }
+
+            await using var client = await TerraBase.Protocol.TbepQuic.ConnectAsync("localhost", port, trustServerCertificate: true);
+            await client.BindChannelAsync("backend", "tenant-a");
+
+            var write = await client.DocumentWriteAsync(
+                new DocumentPut
+                {
+                    Id = "order-1",
+                    Collection = "orders",
+                    Body = TbepValue.Of(new[]
+                    {
+                        new ObjectField("item", TbepValue.Of("bookshelf")),
+                        new ObjectField("quantity", TbepValue.Of(2L)),
+                    }),
+                },
+                ExpectedVersion.Absent(),
+                "op-quic-1",
+                "op-quic-1");
+            await Assert.That(write.Outcome.Variant).IsEqualTo("Committed");
+            var receipt = (CommitReceipt)write.Outcome.Payload!;
+            await Assert.That(receipt.Version).IsEqualTo(1ul);
+            await Assert.That(receipt.Acknowledgement).IsEqualTo(Acknowledgement.RegionalQuorum());
+
+            var read = await client.DocumentReadAsync("orders", "order-1");
+            await Assert.That(read.Found).IsTrue();
+            await Assert.That(read.Position).IsNotNull();
+        }
+        finally
+        {
+            await process.StandardInput.WriteLineAsync(string.Empty);
+            if (!process.WaitForExit(10_000))
+            {
+                process.Kill();
+            }
+
+            process.Dispose();
+            Directory.Delete(location, recursive: true);
+            try
+            {
+                Directory.Delete(home, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+}

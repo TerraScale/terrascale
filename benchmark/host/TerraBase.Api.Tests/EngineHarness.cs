@@ -77,11 +77,12 @@ public static class EngineHarness
     use std::path::Path;
     use std::sync::Arc;
     use terrabase_tbep::engine_host::EngineHost;
+    use terrabase_tbep::quic::TbepQuicServer;
     use terrabase_tbep::{SyncDeliveryHost, TbepHost, TbepServer};
 
     fn main() {
         let mut args = std::env::args().skip(1);
-        let socket = args.next().expect("usage: tbep-engine-harness <socket> <instance> [engine:<location>]");
+        let socket = args.next().expect("usage: tbep-engine-harness <socket> <instance> [engine:<location>] [quic:<port>:<cert-pem>:<key-pem>]");
         let instance: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(1);
         // The optional third argument selects the host: `engine:<dir>`
         // binds the real durable Engine at that location (the P4
@@ -90,6 +91,10 @@ public static class EngineHarness
         let engine_location = args
             .next()
             .and_then(|argument| argument.strip_prefix("engine:").map(str::to_owned));
+        // The optional fourth argument binds the QUIC+TLS listener beside
+        // the UDS one: `quic:<port>:<cert-pem>:<key-pem>` serves the same
+        // host over TLS 1.3 at 127.0.0.1:<port>.
+        let quic = args.next().and_then(|argument| argument.strip_prefix("quic:").map(str::to_owned));
         let host: Arc<dyn TbepHost> = match engine_location {
             Some(location) => Arc::new(
                 EngineHost::open(Path::new(&location), instance)
@@ -97,14 +102,38 @@ public static class EngineHarness
             ),
             None => Arc::new(SyncDeliveryHost::new(instance)),
         };
-        let mut server = TbepServer::bind(&socket, host)
+        let mut server = TbepServer::bind(&socket, Arc::clone(&host))
             .expect("the engine harness binds its UDS listener");
+        let mut quic_server = quic.map(|spec| {
+            let mut parts = spec.splitn(3, ':');
+            let port: u16 = parts.next().and_then(|p| p.parse().ok()).expect("quic port");
+            let cert_path = parts.next().expect("quic cert path");
+            let key_path = parts.next().expect("quic key path");
+            let certificate = std::fs::read(cert_path).expect("the certificate reads");
+            let key = std::fs::read(key_path).expect("the key reads");
+            // PEM-decode the pair the operator (or the row) provisioned.
+            let certificate = terrabase_tbep::quic::decode_pem_certificate(&certificate)
+                .expect("the certificate is a PEM chain");
+            let key = terrabase_tbep::quic::decode_pem_key(&key).expect("the key is PEM PKCS#8");
+            let mut listener = TbepQuicServer::bind(
+                std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+                certificate,
+                key,
+                host,
+            )
+            .expect("the engine harness binds its QUIC listener");
+            println!("quic 127.0.0.1:{port}");
+            listener
+        });
         println!("serving {socket} instance {instance}");
         // The supervisor owns the process: it ends on stdin close, on
         // SIGTERM, or by process loss — exactly the supervision surface.
         let mut line = String::new();
         let _ = std::io::stdin().lock().read_line(&mut line);
         server.shutdown();
+        if let Some(listener) = quic_server.as_mut() {
+            listener.shutdown();
+        }
     }
     """).ConfigureAwait(false);
 

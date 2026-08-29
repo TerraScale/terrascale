@@ -44,9 +44,10 @@ impl QuicClient {
         let client = runtime.block_on(async move {
             let mut roots = quinn::rustls::RootCertStore::empty();
             roots.add(certificate).expect("the server identity is trusted");
-            let client_config = quinn::rustls::ClientConfig::builder()
+            let mut client_config = quinn::rustls::ClientConfig::builder()
                 .with_root_certificates(roots)
                 .with_no_client_auth();
+            client_config.alpn_protocols = vec![b"terrabase.engine.protocol/1".to_vec()];
             let quic_config = quinn::crypto::rustls::QuicClientConfig::try_from(client_config)
                 .expect("the client config builds");
             let mut endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().expect("local"))?;

@@ -21,11 +21,15 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 use quinn::crypto::rustls::QuicServerConfig;
-use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio::runtime::Handle;
 
 use crate::host::TbepHost;
 use crate::server::{MAX_INFLIGHT_OPERATIONS, serve_io};
+
+/// The binding's ALPN identity: every TBEP QUIC endpoint offers and
+/// requires exactly this protocol name.
+pub const TBEP_ALPN: &[&[u8]] = &[b"terrabase.engine.protocol/1"];
 
 /// A QUIC binding failure.
 #[derive(Debug)]
@@ -147,10 +151,11 @@ impl TbepQuicServer {
         host: Arc<dyn TbepHost>,
         inflight_bound: usize,
     ) -> Result<TbepQuicHandle, QuicBindError> {
-        let rustls_config = rustls::ServerConfig::builder()
+        let mut rustls_config = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(vec![certificate], key)
             .map_err(|_| QuicBindError::Tls)?;
+        rustls_config.alpn_protocols = TBEP_ALPN.iter().map(|name| name.to_vec()).collect();
         let server_config =
             QuicServerConfig::try_from(rustls_config).map_err(|_| QuicBindError::Tls)?;
         // quinn's endpoint registers its socket with the ambient async
@@ -198,5 +203,86 @@ impl TbepQuicServer {
             })
             .map_err(|_| QuicBindError::Runtime)?;
         Ok(TbepQuicHandle { endpoint, runtime: Some(serving) })
+    }
+}
+
+/// Decodes the first PEM `CERTIFICATE` block into its DER certificate.
+///
+/// # Errors
+///
+/// Returns `None` when the block is absent or its base64 is invalid.
+#[must_use]
+pub fn decode_pem_certificate(pem: &[u8]) -> Option<CertificateDer<'static>> {
+    let der = pem_block(pem, "CERTIFICATE")?;
+    Some(CertificateDer::from(der))
+}
+
+/// Decodes the first PEM `PRIVATE KEY` block (PKCS#8) into its DER key.
+///
+/// # Errors
+///
+/// Returns `None` when the block is absent or its base64 is invalid.
+#[must_use]
+pub fn decode_pem_key(pem: &[u8]) -> Option<PrivateKeyDer<'static>> {
+    let der = pem_block(pem, "PRIVATE KEY")?;
+    Some(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der)))
+}
+
+/// Extracts and base64-decodes the first `-----BEGIN <label>-----`
+/// block.
+fn pem_block(pem: &[u8], label: &str) -> Option<Vec<u8>> {
+    let text = std::str::from_utf8(pem).ok()?;
+    let begin = format!("-----BEGIN {label}-----");
+    let end = format!("-----END {label}-----");
+    let start = text.find(&begin)? + begin.len();
+    let stop = text[start..].find(&end)? + start;
+    let base64: String = text[start..stop].chars().filter(|c| !c.is_whitespace()).collect();
+    base64_decode(&base64)
+}
+
+/// Minimal standard base64 decoding (the PEM closure needs no
+/// dependency): the alphabet, the padding, nothing else.
+fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    fn value(byte: u8) -> Option<u32> {
+        match byte {
+            b'A'..=b'Z' => Some(u32::from(byte - b'A')),
+            b'a'..=b'z' => Some(u32::from(byte - b'a') + 26),
+            b'0'..=b'9' => Some(u32::from(byte - b'0') + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let bytes: Vec<u8> = text.bytes().filter(|byte| *byte != b'=').collect();
+    if bytes.len() % 4 == 1 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    for chunk in bytes.chunks(4) {
+        let mut acc = 0u32;
+        for (index, byte) in chunk.iter().enumerate() {
+            acc |= value(*byte)? << (18 - 6 * index);
+        }
+        let produced = chunk.len() - 1;
+        for index in 0..produced {
+            out.push(((acc >> (16 - 8 * index)) & 0xff) as u8);
+        }
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::base64_decode;
+
+    #[test]
+    fn the_pem_base64_closure_decodes_the_standard_alphabet() {
+        assert_eq!(base64_decode(""), Some(Vec::new()));
+        assert_eq!(base64_decode("Zg=="), Some(vec![b'f']));
+        assert_eq!(base64_decode("Zm8="), Some(vec![b'f', b'o']));
+        assert_eq!(base64_decode("Zm9v"), Some(vec![b'f', b'o', b'o']));
+        assert_eq!(base64_decode("Zm9vYg=="), Some(vec![b'f', b'o', b'o', b'b']));
+        assert_eq!(base64_decode("!!!!"), None);
+        assert_eq!(base64_decode("Zm9vY"), None, "an impossible tail length refuses");
     }
 }

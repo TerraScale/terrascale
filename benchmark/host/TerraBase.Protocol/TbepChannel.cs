@@ -21,7 +21,7 @@ using System.Threading.Channels;
 public sealed class TbepChannel : IAsyncDisposable
 {
     private readonly TbepClient client;
-    private readonly NetworkStream stream;
+    private readonly Stream stream;
     private readonly SemaphoreSlim writeGate = new(1, 1);
     private readonly object gate = new();
     private readonly Dictionary<ulong, TaskCompletionSource<TbepWire.Frame>> pending = [];
@@ -668,8 +668,8 @@ public sealed class TbepChannel : IAsyncDisposable
 /// <summary>The host-side additions to the SE-14 client the serving channel builds on.</summary>
 public sealed partial class TbepClient
 {
-    /// <summary>The channel's transport: the stream of the socket this client opened.</summary>
-    internal NetworkStream Transport => this.stream;
+    /// <summary>The channel's transport: the stream of the socket or QUIC channel this client opened.</summary>
+    internal Stream Transport => this.stream;
 
     /// <summary>Records the tenant a serving channel bound (the channel, not the caller, owns the binding).</summary>
     /// <param name="tenant">The bound tenant.</param>
