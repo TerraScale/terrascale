@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use loro::LoroValue;
 use terrabase_v2::CommitReceipt;
 use terrabase_v2::engine::{CommitOutcome, Engine, EngineConfig};
+use terrabase_v2::families::modes::{self, AdmissionError, CollectionPolicy, KnownKinds};
 use terrabase_v2::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
 use terrabase_v2::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
@@ -39,7 +40,7 @@ const COLLECTION: &str = "documents";
 
 /// Why a composed-member operation failed. Typed and bounded: no
 /// engine internals cross the seam.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ComposeError {
     /// The engine refused the local write or read.
     EngineRefused,
@@ -58,6 +59,13 @@ pub enum ComposeError {
     /// Fewer than the Region's majority of eligible Members were
     /// reachable for a quorum read.
     ReadQuorumNotReached,
+    /// The collection's schema policy refused the mutation at
+    /// admission (contract §2, point 1): nothing durable happened.
+    SchemaAdmission(AdmissionError),
+    /// The read addresses a document whose merged state violates the
+    /// collection's schema policy: it is quarantined from reads, never
+    /// silently visible (contract §2, point 2).
+    SchemaQuarantine,
 }
 
 /// One leaderless write in the composed vocabulary: the operation
@@ -331,6 +339,8 @@ pub struct ComposedMember {
     tenant: TenantId,
     reads: u64,
     known: BTreeSet<String>,
+    policy: CollectionPolicy,
+    quarantine: BTreeMap<String, Vec<terrabase_v2::families::SchemaViolation>>,
 }
 
 impl ComposedMember {
@@ -373,6 +383,8 @@ impl ComposedMember {
             tenant,
             reads: 0,
             known: BTreeSet::new(),
+            policy: CollectionPolicy::default(),
+            quarantine: BTreeMap::new(),
         })
     }
 
@@ -401,6 +413,60 @@ impl ComposedMember {
         self.replica.deep_value()
     }
 
+    /// Selects the collection's schema policy (contract §1): the mode
+    /// and, for `validated`/`strict`, the governing definition. The
+    /// policy governs admission here and post-merge validation in
+    /// [`ComposedMember::reconcile`]; its durable replication as
+    /// collection metadata lands with the P5 configuration plane.
+    pub fn set_policy(&mut self, policy: CollectionPolicy) {
+        self.policy = policy;
+    }
+
+    /// Returns the collection's schema policy.
+    #[must_use]
+    pub fn policy(&self) -> &CollectionPolicy {
+        &self.policy
+    }
+
+    /// Returns the documents whose merged state violates the policy —
+    /// the quarantine register with its auditable violation receipts
+    /// (contract §2, point 2).
+    #[must_use]
+    pub fn quarantined(&self) -> &BTreeMap<String, Vec<terrabase_v2::families::SchemaViolation>> {
+        &self.quarantine
+    }
+
+    /// The schema-aware read: serves the document body, refusing a
+    /// quarantined document with a typed error — a schema-invalid
+    /// merged state is never silently visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ComposeError::SchemaQuarantine`] for a quarantined
+    /// document and the engine-read failures otherwise.
+    pub fn read_document(
+        &mut self,
+        document: &str,
+    ) -> Result<Option<BTreeMap<String, DocumentValue>>, ComposeError> {
+        if self.quarantine.contains_key(document) {
+            return Err(ComposeError::SchemaQuarantine);
+        }
+        self.visible(document)
+    }
+
+    /// The stable path-kind registry this Member merged for one
+    /// document: the kinds of the merged body's paths.
+    fn merged_kinds(&self, document: &str) -> Result<KnownKinds, ComposeError> {
+        let merged = crdt_documents(&self.replica.deep_value())?;
+        let mut kinds = KnownKinds::new();
+        if let Some(body) = merged.get(document) {
+            for (path, value) in body {
+                kinds.insert(path.clone(), terrabase_v2::families::modes::ValueKind::of(value));
+            }
+        }
+        Ok(kinds)
+    }
+
     /// Accepts one whole-body put durably: the engine commits it and
     /// the Member's own-peer CRDT op records it.
     ///
@@ -413,6 +479,11 @@ impl ComposedMember {
         document: &str,
         body: &BTreeMap<String, DocumentValue>,
     ) -> Result<CommitReceipt, ComposeError> {
+        // Admission (contract §2, point 1): before any durable
+        // acceptance, against the collection's policy and the stable
+        // path kinds this Member already merged.
+        let known = self.merged_kinds(document)?;
+        modes::admit(&self.policy, body, &known).map_err(ComposeError::SchemaAdmission)?;
         let receipt = self.engine_put(operation, document, body)?;
         let mut merged = BTreeMap::new();
         for (field, value) in body {
@@ -573,6 +644,18 @@ impl ComposedMember {
     pub fn reconcile(&mut self) -> Result<ReconcileReport, ComposeError> {
         let merged = crdt_documents(&self.replica.deep_value())?;
         let fingerprint = self.frontier_fingerprint();
+        // Post-merge validation (contract §2, point 2): every merged
+        // document is re-validated against the policy; an invalid
+        // merged state is quarantined from reads with its auditable
+        // violation receipt, never silently visible. Delete-wins keeps
+        // precedence: an absent document carries no body to violate.
+        self.quarantine.clear();
+        for (document, body) in &merged {
+            let violations = modes::merged_violations(&self.policy, body);
+            if !violations.is_empty() {
+                self.quarantine.insert(document.clone(), violations);
+            }
+        }
         let mut report = ReconcileReport::default();
         for (document, body) in &merged {
             if self.visible(document)?.as_ref() != Some(body) {

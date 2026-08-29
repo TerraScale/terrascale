@@ -724,3 +724,137 @@ fn a_transition_without_regional_overlap_is_refused() {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+#[test]
+fn admission_refuses_nothing_durable() {
+    use terrabase_v2::families::modes::{AdmissionError, CollectionPolicy, ValueKind};
+    use terrabase_v2::families::{SchemaDefinition, SchemaRule, SchemaVersion};
+
+    let dir = location("admission");
+    let mut member = ComposedMember::open("member-a", &dir, "tenant-a").expect("opens");
+    let definition = SchemaDefinition::try_new(
+        SchemaVersion::try_new(1).expect("valid version"),
+        vec![SchemaRule::Required { field: "status".to_owned() }],
+    )
+    .expect("valid definition");
+
+    // strict: an undeclared path is refused, nothing durable.
+    member.set_policy(CollectionPolicy::strict(definition.clone()));
+    let refusal = member
+        .accept_put("op-1", "order-1", &body_from(&[("undeclared", "x")]))
+        .expect_err("strict refuses the undeclared path");
+    assert_eq!(
+        refusal,
+        ComposeError::SchemaAdmission(AdmissionError::UndeclaredPath {
+            path: "undeclared".to_owned()
+        })
+    );
+    assert_eq!(member.visible("order-1"), Ok(None), "nothing durable on refusal");
+
+    // validated: a rule violation is refused with the violation named;
+    // a conforming body is admitted.
+    member.set_policy(CollectionPolicy::validated(definition));
+    let refusal = member
+        .accept_put("op-2", "order-1", &body_from(&[("note", "no status")]))
+        .expect_err("the required rule refuses the missing field");
+    assert!(matches!(
+        refusal,
+        ComposeError::SchemaAdmission(AdmissionError::RuleViolations { .. })
+    ));
+    member
+        .accept_put("op-3", "order-1", &body_from(&[("status", "open")]))
+        .expect("a conforming body is admitted");
+
+    // schema-free: stable path kinds — re-kinding a created path fails.
+    member.set_policy(CollectionPolicy::schema_free());
+    let refusal = member
+        .accept_put("op-4", "order-1", &body_int(&[("status", 7)]))
+        .expect_err("re-kinding a created path fails closed");
+    assert_eq!(
+        refusal,
+        ComposeError::SchemaAdmission(AdmissionError::KindMismatch {
+            path: "status".to_owned(),
+            expected: ValueKind::String,
+            offered: ValueKind::Integer,
+        })
+    );
+    // The engine still serves the admitted body, not the refused one.
+    assert_eq!(member.visible("order-1"), Ok(Some(body_from(&[("status", "open")]))));
+
+    member.shutdown().expect("closes");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_policy_skewed_merge_is_quarantined_then_healed_by_alignment() {
+    use terrabase_v2::families::modes::CollectionPolicy;
+    use terrabase_v2::families::{SchemaDefinition, SchemaRule, SchemaVersion};
+
+    // Policy skew during a rolling upgrade: member-a validates under a
+    // version without the Required rule; member-b already upgraded.
+    // The write is valid where it is admitted; b's post-merge
+    // validation sees a violation and quarantines the merged document
+    // — never silently visible — and aligning the policy heals it.
+    let dir_a = location("skew-a");
+    let dir_b = location("skew-b");
+    let mut member_a = ComposedMember::open("member-a", &dir_a, "tenant-a").expect("opens");
+    let mut member_b = ComposedMember::open("member-b", &dir_b, "tenant-a").expect("opens");
+    let relaxed = SchemaDefinition::try_new(
+        SchemaVersion::try_new(1).expect("valid version"),
+        vec![SchemaRule::TextLength { field: "note".to_owned(), min: None, max: Some(8) }],
+    )
+    .expect("valid definition");
+    let upgraded = SchemaDefinition::try_new(
+        SchemaVersion::try_new(2).expect("valid version"),
+        vec![
+            SchemaRule::Required { field: "status".to_owned() },
+            SchemaRule::TextLength { field: "note".to_owned(), min: None, max: Some(8) },
+        ],
+    )
+    .expect("valid definition");
+    member_a.set_policy(CollectionPolicy::validated(relaxed.clone()));
+    member_b.set_policy(CollectionPolicy::validated(upgraded.clone()));
+
+    member_a
+        .accept_put("op-1", "order-1", &body_from(&[("note", "kept")]))
+        .expect("admitted under the relaxed version");
+    member_a.anti_entropy_with(&mut member_b).expect("the merge reaches b");
+
+    // b quarantined the merged document and refuses the read.
+    assert!(member_b.quarantined().contains_key("order-1"), "the merged body violates b's policy");
+    assert_eq!(member_b.read_document("order-1"), Err(ComposeError::SchemaQuarantine));
+    // The raw engine still holds the merged bytes — quarantine is a
+    // read-gate, not an erasure.
+    assert!(member_b.visible("order-1").expect("raw read").is_some());
+
+    // Aligning the policy (rolling upgrade completes) heals: the next
+    // reconcile clears the quarantine and serves the document.
+    member_a.set_policy(CollectionPolicy::validated(upgraded));
+    member_b.set_policy(CollectionPolicy::validated(relaxed.clone()));
+    // Now a's policy is the upgraded one — the write side refuses new
+    // violations, and the existing merged state validates under relaxed.
+    member_b.reconcile().expect("reconciles");
+    assert!(member_b.quarantined().is_empty(), "the aligned policy validates the merged body");
+    assert!(member_b.read_document("order-1").expect("serves").is_some());
+
+    member_a.shutdown().expect("closes");
+    member_b.shutdown().expect("closes");
+    let _ = std::fs::remove_dir_all(&dir_a);
+    let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+/// A string-field body helper.
+fn body_from(entries: &[(&str, &str)]) -> BTreeMap<String, DocumentValue> {
+    entries
+        .iter()
+        .map(|(path, text)| ((*path).to_owned(), DocumentValue::String((*text).to_owned())))
+        .collect()
+}
+
+/// An integer-field body helper.
+fn body_int(entries: &[(&str, i64)]) -> BTreeMap<String, DocumentValue> {
+    entries
+        .iter()
+        .map(|(path, value)| ((*path).to_owned(), DocumentValue::Integer(*value)))
+        .collect()
+}

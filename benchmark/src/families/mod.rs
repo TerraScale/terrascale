@@ -60,6 +60,7 @@ pub mod compare_exchange;
 pub mod hilo;
 pub mod lifecycle;
 pub mod migrations;
+pub mod modes;
 mod payloads;
 pub mod revisions;
 pub(crate) mod schemas;

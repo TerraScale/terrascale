@@ -345,3 +345,40 @@ D-8) once its lanes' observations are migrated.
 Receipts: `terrabase-replication-core` 23/23 (8 convergence + 15
 composed); `terrabase-v2 --lib` 1071/1071; clippy `-D warnings` and
 fmt clean. `scripts/check.sh` not run (AC-12).
+
+## 10. P3 landing 1 (2026-08-29): the three-mode schema model, admission, and post-merge quarantine
+
+The CRDT-aware schema modes landed (`src/families/modes.rs`, public at
+`terrabase_v2::families::modes`): `SchemaMode`
+{`schema-free` (default), `validated`, `strict`} exactly per the
+frozen contract §1; `CollectionPolicy` binding a mode to its governing
+`SchemaDefinition`; `ValueKind` — the per-path CRDT kind, the
+stability unit of `schema-free` collections; `admit()` — the
+admission point (§2.1): `schema-free` fails closed on re-kinding a
+created path, `validated` enforces the SM-02 rule set while accepting
+undeclared paths, `strict` also rejects undeclared paths with a typed
+error; `merged_violations()` — the post-merge point (§2.2).
+
+Both validation points are wired into the composed Member:
+`accept_put` admits against the policy and the stable path kinds the
+Member already merged (nothing durable on refusal — `ComposeError::
+SchemaAdmission` carrying the typed detail), and `reconcile`
+re-validates every merged document, quarantining violators from the
+schema-aware read (`read_document` refuses with
+`ComposeError::SchemaQuarantine`; the quarantine register with its
+auditable violation receipts is exposed for audit). Delete-wins keeps
+precedence: an absent document carries no body to violate.
+
+Proven: strict's undeclared-path refusal with nothing durable;
+validated's named rule violation; `schema-free` re-kinding refusal
+with the admitted body still served; and the policy-skew scenario —
+a write valid under the relaxed version merges into a Member already
+upgraded, is quarantined there (raw engine bytes intact — a read
+gate, not an erasure), and heals when the rolling upgrade aligns the
+policies. The classification of coordinated rules (§3) and the
+CRDT-aware migration wiring (§7) remain open P3 work; the policy's
+own durable replication lands with the P5 configuration plane.
+
+Receipts: `terrabase-v2 --lib` 1076/1076 (5 new modes tests);
+`terrabase-replication-core` 25/25; clippy `-D warnings` and fmt
+clean. `scripts/check.sh` not run (AC-12).
