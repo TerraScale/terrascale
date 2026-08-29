@@ -11,8 +11,10 @@ under the run's temp directory.
 - Sibling SDK checkouts (read-only, never edited or pushed):
   TerraScale.TypeScript @ `cde691866e04882998a29e6ecd2c661802d48459`, TerraScale.DotNet @ `21d21aa9a5f3d9231f005a4b4eb5fb6bd986abe7`
 - Reproduce: `python3 scripts/se11/run.py --scenario s4-tbep-link-loss` from the
-  TerraBaseV2 worktree root (the fresh-checkout sequence is in
-  `docs/evidence/sync/se11-live-update-tracer.md`).
+  TerraBaseV2 worktree root (the fresh-checkout sequence was recorded in
+  `docs/evidence/sync/se11-live-update-tracer.md`, deleted by the legacy
+  parity scrub 8f697ba; it survives in git history at 8f697ba^, and the
+  per-scenario receipts in this directory remain the record).
 
 Outcome: **PASS** (6/6 checks).
 

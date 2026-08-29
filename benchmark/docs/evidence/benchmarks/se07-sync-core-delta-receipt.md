@@ -52,7 +52,9 @@ vocabulary, codecs, and checkpoint semantics are untouched.
 ## E-12 compression decision: **reject**, with receipts
 
 Decision rule (written before measurement, in
-`docs/benchmarks/se07-efficiency-budget.md`): reject link compression if
+`docs/benchmarks/se07-efficiency-budget.md` — deleted by the legacy
+parity scrub 8f697ba; the budget rows survive in git history at
+8f697ba^): reject link compression if
 the measured payload-per-delivered-change on both links sits at or below
 50% of its written budget and no measured workload exceeds a byte
 budget; otherwise adopt with a receipt.

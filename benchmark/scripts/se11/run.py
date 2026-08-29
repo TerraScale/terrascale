@@ -1645,8 +1645,10 @@ under the run's temp directory.
 - Sibling SDK checkouts (read-only, never edited or pushed):
   TerraScale.TypeScript @ `{ts}`, TerraScale.DotNet @ `{dotnet}`
 - Reproduce: `python3 scripts/se11/run.py --scenario {name}` from the
-  TerraBaseV2 worktree root (the fresh-checkout sequence is in
-  `docs/evidence/sync/se11-live-update-tracer.md`).
+  TerraBaseV2 worktree root (the fresh-checkout sequence was recorded in
+  `docs/evidence/sync/se11-live-update-tracer.md`, deleted by the legacy
+  parity scrub 8f697ba; it survives in git history at 8f697ba^, and the
+  per-scenario receipts in this directory remain the record).
 """
 
 

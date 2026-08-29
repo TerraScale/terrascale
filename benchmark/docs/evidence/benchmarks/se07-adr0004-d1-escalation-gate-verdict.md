@@ -21,7 +21,9 @@ spawned by this verdict.
 
    - The scenario is green on the accepted W4 plane: scenario 20 of the
      R-2 in-crate contract (tracked in
-     `docs/replication/w4-replication-r3.md`, suite `src/replication`),
+     `docs/replication/w4-replication-r3.md` — deleted by the legacy
+     parity scrub 8f697ba; the record survives in git history at
+     8f697ba^ — suite `src/replication`),
      re-run green at this packet's source in the full workspace test
      run (`cargo test --offline --locked --release --workspace`: 527
      engine tests passed, 0 failed).
@@ -36,7 +38,10 @@ spawned by this verdict.
 2. Efficiency budgets on the same plane (this packet's receipts, all
    deterministic counters):
 
-   - Member lane (`docs/evidence/benchmarks/se07-member-lane-efficiency-receipt.md`):
+   - Member lane (receipt
+     `docs/evidence/benchmarks/se07-member-lane-efficiency-receipt.md`,
+     deleted by the legacy parity scrub 8f697ba; its measured rows
+     survive in git history at 8f697ba^):
      catch-up throughput within the batch bound (E-1), flow-control
      bounds enforced (E-2), batched acknowledgement frames 5 vs 40 for
      an 8-operation `AllRegions` wait (E-3/E-4), slow-consumer isolation
@@ -52,7 +57,9 @@ spawned by this verdict.
      (E-8), frame seal+encode at 1 allocation (E-10), client-link byte
      budgets measured and met (E-11), compression decision rejected on
      measured margins (E-12).
-   - TBEP (`docs/evidence/benchmarks/se07-tbep-overhead-receipt.md`): every
+   - TBEP (receipt `docs/evidence/benchmarks/se07-tbep-overhead-receipt.md`,
+     deleted by the legacy parity scrub 8f697ba; its measured rows
+     survive in git history at 8f697ba^): every
      budget class within the fixed envelope bound (E-13), one-write
      stream framing (E-14).
 
