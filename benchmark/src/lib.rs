@@ -16,6 +16,7 @@ pub const STATUS: &str = "w3-1-storage-engine";
 pub mod adapters;
 pub mod authorization;
 pub mod backup;
+pub mod deletion;
 pub mod engine;
 pub mod families;
 pub mod index;
