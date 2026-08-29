@@ -27,11 +27,14 @@ path.
 | `@terrascale/sdk` | Ordinary typed customer operations |
 | `@terrascale/sdk/admin` | Role-protected public administration |
 | `@terrascale/sdk/local` | Explicit development-only local runtime |
-| `@terrascale/sdk/better-auth` | Planned public server-only Better Auth adapter |
+| `@terrascale/sdk/better-auth` | Public server-only Better Auth adapter |
 
-The Better Auth adapter is required by the current goal but is not implemented
-or released yet. When it lands, it will use named public Database API
-operations and will be excluded from browser bundles.
+The Better Auth adapter accepts the generated Database API operation port and
+maps Better Auth's adapter contract to named unique-insert, compare-and-swap,
+one-time-consume, pagination, transaction, and migration operations. It is
+server-only and is excluded from browser bundles. The live Database API
+implementation and adapter conformance evidence are separate qualification
+gates.
 
 There is no Dashboard-named or generic request entrypoint.
 

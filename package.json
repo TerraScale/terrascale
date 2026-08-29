@@ -21,6 +21,10 @@
       "types": "./dist/admin.d.ts",
       "import": "./dist/admin.js"
     },
+    "./better-auth": {
+      "types": "./dist/better-auth.d.ts",
+      "node": "./dist/better-auth.js"
+    },
     "./local": {
       "types": "./dist/local/index.d.ts",
       "node": "./dist/local/index.js"
