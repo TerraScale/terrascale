@@ -5646,11 +5646,67 @@ public sealed class Error : IEquatable<Error>
     }
 }
 
+/// <summary>The `negotiation_request` frame body.</summary>
+[MessagePackObject]
+public sealed class NegotiationRequest : IEquatable<NegotiationRequest>
+{
+    /// <summary>The `supported_versions` field.</summary>
+    [Key(0)]
+    public required ushort[] SupportedVersions { get; init; }
+    /// <summary>The `capabilities` field.</summary>
+    [Key(1)]
+    public required string[] Capabilities { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(NegotiationRequest? other) => other is not null
+        && TbepRegistry.FieldEquals(SupportedVersions, other.SupportedVersions)
+        && TbepRegistry.FieldEquals(Capabilities, other.Capabilities);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as NegotiationRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(SupportedVersions, Capabilities);
+    }
+}
+
+/// <summary>The `negotiation_response` frame body.</summary>
+[MessagePackObject]
+public sealed class NegotiationResponse : IEquatable<NegotiationResponse>
+{
+    /// <summary>The `selected_version` field.</summary>
+    [Key(0)]
+    public required ushort SelectedVersion { get; init; }
+    /// <summary>The `accepted_capabilities` field.</summary>
+    [Key(1)]
+    public required string[] AcceptedCapabilities { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(NegotiationResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(SelectedVersion, other.SelectedVersion)
+        && TbepRegistry.FieldEquals(AcceptedCapabilities, other.AcceptedCapabilities);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as NegotiationResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(SelectedVersion, AcceptedCapabilities);
+    }
+}
+
 /// <summary>The closed frame-kind registry.</summary>
 public enum TbepFrameKind : ushort
 {
     /// <summary>Code 1 (engine-to-host; channel).</summary>
     Error = 1,
+    /// <summary>Code 2 (engine-to-host; channel).</summary>
+    NegotiationRequest = 2,
+    /// <summary>Code 3 (engine-to-host; channel).</summary>
+    NegotiationResponse = 3,
     /// <summary>Code 257 (host-to-engine; documents).</summary>
     DocumentReadRequest = 257,
     /// <summary>Code 258 (host-to-engine; documents).</summary>
@@ -5798,6 +5854,8 @@ public static partial class TbepRegistry
     public static readonly (ushort Code, string Kind, string Family, string Class, string Direction, bool CarriesIdempotency)[] Frames =
     [
         (1, "Error", "channel", "control", "engine-to-host", false),
+        (2, "NegotiationRequest", "channel", "control", "engine-to-host", false),
+        (3, "NegotiationResponse", "channel", "control", "engine-to-host", false),
         (257, "DocumentReadRequest", "documents", "operation", "host-to-engine", false),
         (258, "DocumentWriteRequest", "documents", "operation_large", "host-to-engine", true),
         (259, "DocumentDeleteRequest", "documents", "operation", "host-to-engine", true),

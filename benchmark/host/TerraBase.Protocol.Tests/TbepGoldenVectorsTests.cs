@@ -57,6 +57,7 @@ public sealed class TbepGoldenVectorsTests
         var categories = new[]
         {
             "channel-bind",
+            "negotiation",
             "document-frames",
             "query-cancellation",
             "sync-session",

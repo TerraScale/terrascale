@@ -135,3 +135,101 @@ public sealed class EngineSpineTests
         }
     }
 }
+
+/// <summary>
+/// The connection-open negotiation against the real engine (P4): the
+/// highest common version wins, unknown capabilities are ignored, and a
+/// version mismatch fails closed with the typed error before any
+/// operation frame runs.
+/// </summary>
+public sealed class EngineNegotiationTests
+{
+    private static string Location()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"tbep-engine-negotiate-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    private static async Task<Process> StartAsync(string socket, string location)
+    {
+        var binary = await EngineHarness.BinaryPathAsync();
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = binary,
+                Arguments = $"{socket} 1 engine:{location}",
+                RedirectStandardOutput = true,
+                RedirectStandardInput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            },
+        };
+        _ = process.Start();
+        var announcement = await process.StandardOutput.ReadLineAsync();
+        if (announcement is null || !announcement.StartsWith("serving ", StringComparison.Ordinal))
+        {
+            process.Kill();
+            throw new InvalidOperationException($"the negotiation harness did not announce itself: {announcement}");
+        }
+
+        return process;
+    }
+
+    private static async Task StopAsync(Process process)
+    {
+        await process.StandardInput.WriteLineAsync(string.Empty);
+        if (!process.WaitForExit(10_000))
+        {
+            process.Kill();
+        }
+
+        process.Dispose();
+    }
+
+    /// <summary>The negotiation: selection, ignored unknowns, and the typed mismatch.</summary>
+    [Test]
+    public async Task TheClientNegotiatesVersionAndCapabilitiesWithTheRealEngine()
+    {
+    var location = Location();
+    var socket = Path.Combine(Path.GetTempPath(), $"tbep-negotiate-{Guid.NewGuid():N}.sock");
+    var process = await StartAsync(socket, location);
+    try
+    {
+        await using var client = TbepClient.Connect(socket);
+
+        // The highest common version and the known capabilities are
+        // accepted; the unknown one is ignored, never refused.
+        var negotiated = await client.NegotiateAsync([9, 2, 1], ["query-surface", "quantum-tunneling"]);
+        await Assert.That(negotiated.SelectedVersion).IsEqualTo((ushort)1);
+        await Assert.That(negotiated.AcceptedCapabilities).IsEquivalentTo(["query-surface"]);
+
+        // The channel still operates after negotiating.
+        await client.BindChannelAsync("backend", "tenant-a");
+        var read = await client.DocumentReadAsync("orders", "order-none");
+        await Assert.That(read.Found).IsFalse();
+    }
+    finally
+    {
+        await StopAsync(process);
+        Directory.Delete(location, recursive: true);
+    }
+
+    // A version the server cannot speak fails closed with the typed
+    // error before any operation frame runs.
+    var mismatchSocket = Path.Combine(Path.GetTempPath(), $"tbep-mismatch-{Guid.NewGuid():N}.sock");
+    var mismatchLocation = Location();
+    var mismatch = await StartAsync(mismatchSocket, mismatchLocation);
+    try
+    {
+        await using var client = TbepClient.Connect(mismatchSocket);
+        await Assert.That(async () => await client.NegotiateAsync([2, 3], [])).Throws<TbepException>();
+    }
+    finally
+    {
+        await StopAsync(mismatch);
+        Directory.Delete(mismatchLocation, recursive: true);
+    }
+}
+}

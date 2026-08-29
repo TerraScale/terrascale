@@ -63,6 +63,24 @@ public sealed partial class TbepClient : IAsyncDisposable
         return response;
     }
 
+    /// <summary>Connection-open capability and version negotiation: the client names its supported wire versions and capabilities; the peers select the highest common version, unknown capabilities are ignored.</summary>
+    /// <param name="supportedVersions">The wire versions the client can speak.</param>
+    /// <param name="capabilities">The capabilities the client offers.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The negotiation response with the selected version and accepted capabilities.</returns>
+    /// <exception cref="TbepException">No version is common (the typed <c>ProtocolVersionMismatch</c>) or the frame failed.</exception>
+    public async Task<NegotiationResponse> NegotiateAsync(ushort[] supportedVersions, string[] capabilities, CancellationToken cancellationToken = default)
+    {
+        var answer = await this.CallKindedAsync(
+            "channel.negotiate",
+            (ushort)TbepFrameKind.NegotiationRequest,
+            new NegotiationRequest { SupportedVersions = supportedVersions, Capabilities = capabilities },
+            idempotency: null,
+            expect: (ushort)TbepFrameKind.NegotiationResponse,
+            cancellationToken).ConfigureAwait(false);
+        return MessagePackSerializer.Deserialize<NegotiationResponse>(answer.Body, TbepOptions.Strict);
+    }
+
     /// <summary>Reads one document.</summary>
     /// <param name="collection">The collection.</param>
     /// <param name="document">The document id.</param>
@@ -246,6 +264,30 @@ public sealed partial class TbepClient : IAsyncDisposable
         T request,
         string? idempotency,
         ushort expect,
+        CancellationToken cancellationToken) =>
+        await this.CallKindedAsync(
+            operation,
+            TbepRegistry.RequestKindOf(operation),
+            request,
+            idempotency,
+            expect,
+            cancellationToken).ConfigureAwait(false);
+
+    /// <summary>The call discipline over an explicit request kind — the channel control frames (negotiation) live outside the operation registry's name table.</summary>
+    /// <typeparam name="T">The request body type.</typeparam>
+    /// <param name="operation">The operation name, for error text only.</param>
+    /// <param name="requestKind">The request frame kind code.</param>
+    /// <param name="request">The request body.</param>
+    /// <param name="idempotency">The idempotency key, or <c>null</c>.</param>
+    /// <param name="expect">The response frame kind code.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The answered frame.</returns>
+    private async Task<TbepWire.Frame> CallKindedAsync<T>(
+        string operation,
+        ushort requestKind,
+        T request,
+        string? idempotency,
+        ushort expect,
         CancellationToken cancellationToken)
     {
         await this.gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -253,7 +295,6 @@ public sealed partial class TbepClient : IAsyncDisposable
         {
             var body = MessagePackSerializer.Serialize(request, TbepOptions.Strict);
             var correlation = ++this.correlation;
-            var requestKind = TbepRegistry.RequestKindOf(operation);
             var frame = TbepWire.Seal(requestKind, correlation, 0, idempotency, body);
             await TbepWire.WriteFrame(this.stream, frame).ConfigureAwait(false);
             while (true)

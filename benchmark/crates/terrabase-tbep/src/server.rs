@@ -49,6 +49,7 @@ use crate::envelope::TbepFrame;
 use crate::generated::Error;
 use crate::generated::ErrorCode;
 use crate::generated::TbepBody;
+use crate::generated::WIRE_VERSION;
 use crate::host::HostingError;
 use crate::host::TbepHost;
 use crate::host::TbepNotification;
@@ -76,6 +77,13 @@ pub const MAX_INFLIGHT_OPERATIONS: usize = 128;
 /// The retry guidance an overloaded frame answers with — bounded,
 /// machine-readable, inside the registry's detail bound.
 pub const OVERLOADED_RETRY_HINT_MS: u32 = 50;
+
+/// The capabilities this server knows and serves (the negotiation
+/// surface): a client naming one of these has it accepted; any other
+/// capability is ignored, never refused. Compression stays absent —
+/// it is enabled only by benchmark receipts, and none exist.
+pub const SUPPORTED_CAPABILITIES: [&str; 4] =
+    ["streaming-lanes", "admin-surface", "query-surface", "schema-surface"];
 
 /// A binding failure.
 #[derive(Debug)]
@@ -367,7 +375,9 @@ fn serve_connection(
         // without bound. Health and query cancellation bypass it.
         let gated = !matches!(
             frame.body(),
-            TbepBody::SupervisionHealthRequest(_) | TbepBody::QueryCancelRequest(_)
+            TbepBody::SupervisionHealthRequest(_)
+                | TbepBody::QueryCancelRequest(_)
+                | TbepBody::NegotiationRequest(_)
         );
         if gated {
             let occupied = connection.inflight.fetch_add(1, Ordering::SeqCst);
@@ -642,6 +652,42 @@ fn dispatch(connection: &mut Connection, frame: &TbepFrame) -> bool {
                     connection.host.migration_apply(&tenant, &body, key.as_str()),
                 );
             }
+        }
+        // Connection-open capability and version negotiation: the
+        // client names its supported wire versions and capabilities; the
+        // peers select the highest common version, unknown capabilities
+        // are ignored, and a version mismatch fails closed with the
+        // typed error before any operation frame.
+        TbepBody::NegotiationRequest(body) => {
+            let common = body
+                .supported_versions
+                .iter()
+                .copied()
+                .filter(|version| u8::try_from(*version) == Ok(WIRE_VERSION))
+                .max();
+            let Some(selected) = common else {
+                connection.error_frame(
+                    causation,
+                    ErrorCode::ProtocolVersionMismatch,
+                    &format!("server supports wire version {WIRE_VERSION} only"),
+                );
+                // The mismatch fails closed: no operation frame runs.
+                return true;
+            };
+            let accepted: Vec<String> = body
+                .capabilities
+                .iter()
+                .filter(|capability| SUPPORTED_CAPABILITIES.contains(&capability.as_str()))
+                .cloned()
+                .collect();
+            respond(
+                connection,
+                causation,
+                crate::generated::NegotiationResponse {
+                    selected_version: selected,
+                    accepted_capabilities: accepted,
+                },
+            );
         }
         // Response and notification kinds are engine-to-host frames: a
         // host sending them to the engine is a protocol violation.

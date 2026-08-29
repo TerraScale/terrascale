@@ -38,6 +38,8 @@ use terrabase_tbep::generated::DocumentPut;
 use terrabase_tbep::generated::DocumentReadRequest;
 use terrabase_tbep::generated::DocumentWriteRequest;
 use terrabase_tbep::generated::ExpectedVersion;
+use terrabase_tbep::generated::NegotiationRequest;
+use terrabase_tbep::generated::NegotiationResponse;
 use terrabase_tbep::generated::QueryCancelRequest;
 use terrabase_tbep::generated::ReadLevel;
 use terrabase_tbep::generated::ShutdownReason;
@@ -59,6 +61,7 @@ fn corpus_dir() -> PathBuf {
 /// The categories every accepted corpus file must cover exactly once.
 const CATEGORIES: &[&str] = &[
     "channel-bind",
+    "negotiation",
     "document-frames",
     "query-cancellation",
     "sync-session",
@@ -294,6 +297,35 @@ fn build_corpus() -> Vec<(String, Value)> {
                     &TbepFrame::seal(
                         ChannelBindRequest { principal: "backend".into(), tenant: "tenant-b".into() },
                         u64::MAX, u64::MAX, None).expect("seals")),
+            ],
+            "adversarial": [],
+        }),
+    ));
+
+    // negotiation: the connection-open capability and version exchange.
+    corpus.push((
+        "negotiation".into(),
+        json!({
+            "category": "negotiation",
+            "description": "Connection-open capability and version negotiation (p0-protocol-compatibility-contract section 1): the client names its supported wire versions and capabilities; the peers select the highest common version and unknown capabilities are ignored.",
+            "protocol": "terrabase.engine.protocol",
+            "wire_version": 1,
+            "schema": "terrabase.engine.protocol/vector-corpus@1",
+            "frames": [
+                scenario_frame("NegotiationRequest",
+                    &TbepFrame::seal(
+                        NegotiationRequest {
+                            supported_versions: vec![9, 2, 1],
+                            capabilities: vec!["query-surface".into(), "quantum-tunneling".into()],
+                        },
+                        1, 0, None).expect("seals")),
+                scenario_frame("NegotiationResponse",
+                    &TbepFrame::seal(
+                        NegotiationResponse {
+                            selected_version: 1,
+                            accepted_capabilities: vec!["query-surface".into()],
+                        },
+                        2, 1, None).expect("seals")),
             ],
             "adversarial": [],
         }),

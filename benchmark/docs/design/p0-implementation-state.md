@@ -627,3 +627,44 @@ QUIC/TLS binding (quinn/rustls live in `terrabase-member-transport`).
 Receipts: `cargo test -p terrabase-tbep` 12 suites green; clippy
 `-D warnings` and fmt clean on both crates. `scripts/check.sh` not run
 (AC-12).
+
+## 17. P4 landing 6 (2026-08-29): capability and version negotiation
+
+The connection-open exchange the protocol contract §1 froze now exists
+on the wire: two new channel frames (registry codes 2 and 3, beside the
+error frame) — `negotiation_request` carrying the client's supported
+wire versions and offered capabilities, and `negotiation_response`
+carrying the selected version and the accepted capabilities. The
+server's rules are the contract's rules verbatim: the peers select the
+highest COMMON version; a client naming no version the server speaks
+fails closed with the typed `protocol_version_mismatch` error (code 18,
+frozen in landing 4) and the connection ends before any operation
+frame; unknown capabilities are ignored, never refused — the server
+answers the intersection with its own served set
+(`streaming-lanes`, `admin-surface`, `query-surface`, `schema-surface`;
+compression stays absent until benchmark receipts justify it, per the
+contract). The negotiation is connection-open control: it needs no
+channel binding, carries no idempotency key, and bypasses the overload
+gate beside health and cancellation. It is optional — a client may open
+and operate directly (the envelope's version byte still fails closed on
+unsupported versions); negotiation is the explicit discovery surface.
+
+`TbepClient` gained `NegotiateAsync` (the call discipline over an
+explicit frame kind — the channel frames live outside the operation
+name table). The golden corpus gained the `negotiation` category (both
+languages replay the same frames byte-exact), and the C# suite's
+category guard learned the eighth file.
+
+Proven: three Rust rows (highest-common selection with an unknown
+capability ignored and operations still running after; the mismatch
+failing closed — the typed error then the stream ends; the bare
+negotiation before any bind) and the C# row against the real engine
+(selection, ignored unknown, the typed mismatch exception). The corpus
+replays byte-exact in both languages.
+
+Still open in P4: tier administration (registry + a public engine tier
+surface), client batching, reconnect/resume, and the QUIC/TLS binding.
+
+Receipts: `cargo test -p terrabase-tbep` 13 suites green; clippy
+`-D warnings` and fmt clean; Protocol 21/21, Api 89/89.
+`scripts/check.sh` not run (AC-12).

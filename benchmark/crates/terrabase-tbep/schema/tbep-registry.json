@@ -2633,6 +2633,44 @@
           "bound": 256
         }
       ]
+    },
+    {
+      "name": "negotiation_request",
+      "code": 2,
+      "direction": "client-to-server",
+      "class": "control",
+      "parity": [
+        "new-capability: connection-open capability and version negotiation (p0-protocol-compatibility-contract section 1)"
+      ],
+      "fields": [
+        {
+          "name": "supported_versions",
+          "type": "[u16]"
+        },
+        {
+          "name": "capabilities",
+          "type": "[str]"
+        }
+      ]
+    },
+    {
+      "name": "negotiation_response",
+      "code": 3,
+      "direction": "server-to-client",
+      "class": "control",
+      "parity": [
+        "new-capability: connection-open capability and version negotiation (p0-protocol-compatibility-contract section 1)"
+      ],
+      "fields": [
+        {
+          "name": "selected_version",
+          "type": "u16"
+        },
+        {
+          "name": "accepted_capabilities",
+          "type": "[str]"
+        }
+      ]
     }
   ]
 }

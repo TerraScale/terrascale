@@ -8194,11 +8194,124 @@ impl crate::codec::WireBody for Error {
     }
 }
 
+/// The `negotiation_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NegotiationRequest {
+    /// The `supported_versions` field.
+    pub supported_versions: Vec<u16>,
+    /// The `capabilities` field.
+    pub capabilities: Vec<String>,
+}
+
+impl serde::Serialize for NegotiationRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.supported_versions.as_slice())?;
+        tuple.serialize_element(&self.capabilities.as_slice())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for NegotiationRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = NegotiationRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a negotiation_request array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let supported_versions = seq
+                    .next_element::<Vec<u16>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let capabilities = seq
+                    .next_element::<Vec<String>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    supported_versions,
+                    capabilities,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for NegotiationRequest {
+    const KIND: FrameKind = FrameKind::NegotiationRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_list_bound(&self.supported_versions, MAX_LIST_ITEMS, "supported_versions")?;
+        crate::codec::check_list_bound(&self.capabilities, MAX_LIST_ITEMS, "capabilities")?;
+        Ok(())
+    }
+}
+
+/// The `negotiation_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NegotiationResponse {
+    /// The `selected_version` field.
+    pub selected_version: u16,
+    /// The `accepted_capabilities` field.
+    pub accepted_capabilities: Vec<String>,
+}
+
+impl serde::Serialize for NegotiationResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.selected_version)?;
+        tuple.serialize_element(&self.accepted_capabilities.as_slice())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for NegotiationResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = NegotiationResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a negotiation_response array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let selected_version = seq
+                    .next_element::<u16>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let accepted_capabilities = seq
+                    .next_element::<Vec<String>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    selected_version,
+                    accepted_capabilities,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for NegotiationResponse {
+    const KIND: FrameKind = FrameKind::NegotiationResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_list_bound(&self.accepted_capabilities, MAX_LIST_ITEMS, "accepted_capabilities")?;
+        Ok(())
+    }
+}
+
 /// The closed frame-kind registry: one variant per wire frame.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum FrameKind {
     /// Code 1 (engine-to-host; channel).
     Error,
+    /// Code 2 (engine-to-host; channel).
+    NegotiationRequest,
+    /// Code 3 (engine-to-host; channel).
+    NegotiationResponse,
     /// Code 257 (host-to-engine; documents).
     DocumentReadRequest,
     /// Code 258 (host-to-engine; documents).
@@ -8345,6 +8458,8 @@ impl FrameKind {
     pub const fn code(self) -> u16 {
         match self {
             Self::Error => 1,
+            Self::NegotiationRequest => 2,
+            Self::NegotiationResponse => 3,
             Self::DocumentReadRequest => 257,
             Self::DocumentWriteRequest => 258,
             Self::DocumentDeleteRequest => 259,
@@ -8422,6 +8537,8 @@ impl FrameKind {
     pub const fn from_code(code: u16) -> Option<Self> {
         match code {
             1 => Some(Self::Error),
+            2 => Some(Self::NegotiationRequest),
+            3 => Some(Self::NegotiationResponse),
             257 => Some(Self::DocumentReadRequest),
             258 => Some(Self::DocumentWriteRequest),
             259 => Some(Self::DocumentDeleteRequest),
@@ -8500,6 +8617,8 @@ impl FrameKind {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Error => "Error",
+            Self::NegotiationRequest => "NegotiationRequest",
+            Self::NegotiationResponse => "NegotiationResponse",
             Self::DocumentReadRequest => "DocumentReadRequest",
             Self::DocumentWriteRequest => "DocumentWriteRequest",
             Self::DocumentDeleteRequest => "DocumentDeleteRequest",
@@ -8577,6 +8696,8 @@ impl FrameKind {
     pub const fn family(self) -> &'static str {
         match self {
             Self::Error => "channel",
+            Self::NegotiationRequest => "channel",
+            Self::NegotiationResponse => "channel",
             Self::DocumentReadRequest => "documents",
             Self::DocumentWriteRequest => "documents",
             Self::DocumentDeleteRequest => "documents",
@@ -8654,6 +8775,8 @@ impl FrameKind {
     pub const fn class(self) -> &'static str {
         match self {
             Self::Error => "control",
+            Self::NegotiationRequest => "control",
+            Self::NegotiationResponse => "control",
             Self::DocumentReadRequest => "operation",
             Self::DocumentWriteRequest => "operation_large",
             Self::DocumentDeleteRequest => "operation",
@@ -8756,6 +8879,8 @@ pub struct FrameRow {
 /// The frame taxonomy rows, sorted by code.
 pub const FRAME_ROWS: &[FrameRow] = &[
     FrameRow { code: 1, kind: "Error", family: "channel", class: "control" },
+    FrameRow { code: 2, kind: "NegotiationRequest", family: "channel", class: "control" },
+    FrameRow { code: 3, kind: "NegotiationResponse", family: "channel", class: "control" },
     FrameRow { code: 257, kind: "DocumentReadRequest", family: "documents", class: "operation" },
     FrameRow { code: 258, kind: "DocumentWriteRequest", family: "documents", class: "operation_large" },
     FrameRow { code: 259, kind: "DocumentDeleteRequest", family: "documents", class: "operation" },
@@ -8832,6 +8957,10 @@ pub const FRAME_ROWS: &[FrameRow] = &[
 pub enum TbepBody {
     /// The `Error` body.
     Error(Error),
+    /// The `NegotiationRequest` body.
+    NegotiationRequest(NegotiationRequest),
+    /// The `NegotiationResponse` body.
+    NegotiationResponse(NegotiationResponse),
     /// The `DocumentReadRequest` body.
     DocumentReadRequest(DocumentReadRequest),
     /// The `DocumentWriteRequest` body.
@@ -8974,6 +9103,14 @@ pub enum TbepBody {
 
 impl From<Error> for TbepBody {
     fn from(value: Error) -> Self { Self::Error(value) }
+}
+
+impl From<NegotiationRequest> for TbepBody {
+    fn from(value: NegotiationRequest) -> Self { Self::NegotiationRequest(value) }
+}
+
+impl From<NegotiationResponse> for TbepBody {
+    fn from(value: NegotiationResponse) -> Self { Self::NegotiationResponse(value) }
 }
 
 impl From<DocumentReadRequest> for TbepBody {
@@ -9258,6 +9395,8 @@ impl TbepBody {
     pub const fn kind(&self) -> FrameKind {
         match self {
             Self::Error(_) => FrameKind::Error,
+            Self::NegotiationRequest(_) => FrameKind::NegotiationRequest,
+            Self::NegotiationResponse(_) => FrameKind::NegotiationResponse,
             Self::DocumentReadRequest(_) => FrameKind::DocumentReadRequest,
             Self::DocumentWriteRequest(_) => FrameKind::DocumentWriteRequest,
             Self::DocumentDeleteRequest(_) => FrameKind::DocumentDeleteRequest,
@@ -9338,6 +9477,8 @@ impl TbepBody {
     pub fn encode(&self) -> Result<Vec<u8>, crate::codec::BodyError> {
         match self {
             Self::Error(body) => crate::codec::encode_body(body),
+            Self::NegotiationRequest(body) => crate::codec::encode_body(body),
+            Self::NegotiationResponse(body) => crate::codec::encode_body(body),
             Self::DocumentReadRequest(body) => crate::codec::encode_body(body),
             Self::DocumentWriteRequest(body) => crate::codec::encode_body(body),
             Self::DocumentDeleteRequest(body) => crate::codec::encode_body(body),
@@ -9418,6 +9559,8 @@ impl TbepBody {
     pub fn decode(kind: FrameKind, bytes: &[u8]) -> Result<Self, crate::codec::BodyError> {
         match kind {
             FrameKind::Error => Ok(Self::Error(crate::codec::decode_body(bytes)?)),
+            FrameKind::NegotiationRequest => Ok(Self::NegotiationRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::NegotiationResponse => Ok(Self::NegotiationResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::DocumentReadRequest => Ok(Self::DocumentReadRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::DocumentWriteRequest => Ok(Self::DocumentWriteRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::DocumentDeleteRequest => Ok(Self::DocumentDeleteRequest(crate::codec::decode_body(bytes)?)),
