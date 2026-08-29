@@ -32,6 +32,10 @@ pub(crate) enum ObjectStoreError {
     NotFound,
     /// The object's bytes do not match its checksum address.
     ChecksumMismatch,
+    /// An immutable object key already names different bytes.
+    AlreadyExists,
+    /// Every bounded cold-tier source was exhausted without a verified copy.
+    ColdTierUnavailable,
 }
 
 /// The content-addressed key of one immutable object.
@@ -113,11 +117,30 @@ impl LocalObjectStore {
 impl ObjectStore for LocalObjectStore {
     fn put(&mut self, key: &ObjectKey, bytes: &[u8]) -> Result<(), ObjectStoreError> {
         let path = self.path_of(key);
+        if path.exists() {
+            // Content-addressed retries are idempotent, but a key may never
+            // be replaced. In particular, do not rely on `rename`'s Unix
+            // overwrite behavior for this write-once contract.
+            return match self.get(key) {
+                Ok(existing) if existing == bytes => Ok(()),
+                Ok(_) | Err(ObjectStoreError::ChecksumMismatch) => {
+                    Err(ObjectStoreError::AlreadyExists)
+                }
+                Err(error) => Err(error),
+            };
+        }
         let tmp = self.dir.join(format!("{}.tmp", key.as_str()));
         {
-            let mut file = fs::File::create(&tmp).map_err(|_| ObjectStoreError::Unavailable)?;
+            let mut file = fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&tmp)
+                .map_err(|_| ObjectStoreError::Unavailable)?;
             file.write_all(bytes).map_err(|_| ObjectStoreError::Unavailable)?;
             file.sync_all().map_err(|_| ObjectStoreError::Unavailable)?;
+        }
+        if path.exists() {
+            return Err(ObjectStoreError::AlreadyExists);
         }
         fs::rename(&tmp, &path).map_err(|_| ObjectStoreError::Unavailable)?;
         if let Ok(dir_handle) = fs::File::open(&self.dir) {
@@ -207,5 +230,20 @@ mod tests {
         let bytes = b"identical".to_vec();
         assert_eq!(ObjectKey::of(&bytes), ObjectKey::of(b"identical"));
         assert_ne!(ObjectKey::of(&bytes), ObjectKey::of(b"different"));
+    }
+
+    #[test]
+    fn existing_key_is_write_once_and_cannot_be_overwritten() {
+        let dir = store_dir("write-once");
+        let mut store = LocalObjectStore::open(&dir).unwrap();
+        let original = b"immutable payload".to_vec();
+        let key = ObjectKey::of(&original);
+        store.put(&key, &original).unwrap();
+        assert_eq!(store.put(&key, b"different payload"), Err(ObjectStoreError::AlreadyExists));
+        assert_eq!(store.get(&key).unwrap(), original);
+        // Retrying the exact same immutable write is idempotent and does not
+        // replace the object.
+        store.put(&key, b"immutable payload").unwrap();
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

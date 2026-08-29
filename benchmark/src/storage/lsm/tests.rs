@@ -513,3 +513,36 @@ fn engine_opens_on_the_lsm_backend_and_serves_documents() {
     assert_eq!(marker.trim(), "TBV2LSM1");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn demoted_documents_are_read_from_cold_tier_after_reopen() {
+    let dir = location("tier-read-reopen");
+    let scope_tenant = tenant("acme");
+    let mut engine = LsmStorage::open(&dir).unwrap();
+    crate::storage::lsm::tests_support::seed_segments(&mut engine, 8);
+    let before = engine.documents_at(engine.published_state().0, &scope_tenant);
+    assert_eq!(before.len(), 32);
+    let mut policy = crate::storage::lsm::tier::TierMovePolicy::default_policy();
+    policy.nvme_budget_bytes = 1;
+    let outcome = engine.mover_pass(&policy, "home-a").expect("LSM tier mover");
+    assert!(matches!(outcome, crate::storage::lsm::tier::MoverOutcome::Completed(_)));
+    drop(engine);
+
+    let reopened = LsmStorage::open(&dir).unwrap();
+    let after = reopened.documents_at(reopened.published_state().0, &scope_tenant);
+    assert_eq!(after.len(), before.len(), "demotion must not silently omit documents");
+    assert!(after.iter().any(|document| document.id().as_str() == "order-0031"));
+    let collection = CollectionName::try_new("orders").unwrap();
+    let id = DocumentId::try_new("order-0031").unwrap();
+    assert!(
+        reopened
+            .read_document_in_collection_at(
+                reopened.published_state().0,
+                &scope_tenant,
+                &collection,
+                &id
+            )
+            .is_some()
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

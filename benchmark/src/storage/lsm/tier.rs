@@ -17,10 +17,11 @@
 //! lands with P4's TBEP admin operations.
 #![allow(dead_code, reason = "P2 quorum acceptance and P4 typed administration wire the callers")]
 
-use std::path::Path;
+use std::{fs::File, io, path::Path};
 
 use super::{
     LsmStorage, codec,
+    internal::Entry,
     manifest::SegmentManifest,
     object_store::{ObjectKey, ObjectStore, ObjectStoreError},
     segment::SegmentMeta,
@@ -124,17 +125,23 @@ impl TierManifest {
 
     /// Publishes the manifest atomically at `dir/TIERMANIFEST`.
     pub(crate) fn publish(&self, dir: &Path) -> Result<(), ObjectStoreError> {
+        self.publish_with_sync(dir, |path| File::open(path).and_then(|file| file.sync_all()))
+    }
+
+    /// Publishes with an injectable sync operation. The production wrapper
+    /// above uses real file and directory fsyncs; tests can force either
+    /// durability boundary to fail without depending on filesystem mounts.
+    fn publish_with_sync<F>(&self, dir: &Path, sync: F) -> Result<(), ObjectStoreError>
+    where
+        F: Fn(&Path) -> io::Result<()>,
+    {
         let encoded = self.encode();
         let tmp = dir.join("TIERMANIFEST.tmp");
         let live = dir.join("TIERMANIFEST");
         std::fs::write(&tmp, &encoded).map_err(|_| ObjectStoreError::Unavailable)?;
-        if let Ok(file) = std::fs::File::open(&tmp) {
-            let _ = file.sync_all();
-        }
+        sync(&tmp).map_err(|_| ObjectStoreError::Unavailable)?;
         std::fs::rename(&tmp, &live).map_err(|_| ObjectStoreError::Unavailable)?;
-        if let Ok(dir_handle) = std::fs::File::open(dir) {
-            let _ = dir_handle.sync_all();
-        }
+        sync(dir).map_err(|_| ObjectStoreError::Unavailable)?;
         Ok(())
     }
 
@@ -395,7 +402,11 @@ pub(crate) fn run_mover(
         manifest_before,
         manifest_after: manifest.epoch,
         dry_run: false,
-        manifest_accepted: true,
+        // This landing has no replica-set quorum hook. A local rename and
+        // fsync are not a RegionalQuorum acceptance and must not be reported
+        // as one. The cold copy remains available for reads; reclaim and
+        // quorum publication are completed by the replication integration.
+        manifest_accepted: false,
     })
 }
 
@@ -439,19 +450,157 @@ pub(crate) fn read_segment_with_fallback(
     store: &dyn ObjectStore,
     segment_id: u64,
 ) -> Result<Vec<u8>, ObjectStoreError> {
+    read_segment_with_sources(storage, store, &[], segment_id)
+}
+
+/// Reads one segment through the home source and any eligible active/backup
+/// sources in deterministic caller order. Every returned byte has passed the
+/// object address and segment-format checks. A missing or corrupt source is
+/// not an empty range: later sources are attempted before typed exhaustion.
+pub(crate) fn read_segment_with_sources(
+    storage: &LsmStorage,
+    home_store: &dyn ObjectStore,
+    later_sources: &[&dyn ObjectStore],
+    segment_id: u64,
+) -> Result<Vec<u8>, ObjectStoreError> {
+    const MAX_COLD_SOURCES: usize = 8;
     // 1. Local `NVMe`.
     if let Some(meta) = storage.segment_metas().iter().find(|meta| meta.id == segment_id)
         && let Ok(bytes) = std::fs::read(super::segment_path(storage.dir(), meta.id))
+        && decode_segment_bytes(&bytes, meta.id, meta.level).is_ok()
     {
         return Ok(bytes);
     }
     // 2. Home object store, through the manifest's verified reference.
-    if let Some(manifest) = TierManifest::read(storage.dir())
-        && let Some(object) = manifest.objects.iter().find(|object| object.segment_id == segment_id)
-    {
-        return store.get(&object.object_key);
+    let Some(manifest) = TierManifest::read(storage.dir()) else {
+        return Err(ObjectStoreError::ColdTierUnavailable);
+    };
+    let Some(object) =
+        manifest.objects.iter().find(|object| object.segment_id == segment_id && object.verified)
+    else {
+        return Err(ObjectStoreError::ColdTierUnavailable);
+    };
+    let mut sources = std::iter::once(home_store).chain(later_sources.iter().copied());
+    for source in sources.by_ref().take(MAX_COLD_SOURCES) {
+        let Ok(bytes) = source.get(&object.object_key) else {
+            continue;
+        };
+        if bytes.len() as u64 != object.byte_len {
+            continue;
+        }
+        if decode_segment_bytes(&bytes, object.segment_id, object.level).is_ok() {
+            return Ok(bytes);
+        }
     }
-    Err(ObjectStoreError::NotFound)
+    Err(ObjectStoreError::ColdTierUnavailable)
+}
+
+/// Reads and decodes a segment from the local cold-tier store. The helper is
+/// used by normal document/range reads after a segment has been demoted.
+pub(super) fn read_cold_segment_entries(
+    storage: &LsmStorage,
+    segment_id: u64,
+) -> Result<Vec<Entry>, ObjectStoreError> {
+    let store = super::object_store::LocalObjectStore::open(&storage.dir().join("tier-objects"))?;
+    let bytes = read_segment_with_fallback(storage, &store, segment_id)?;
+    let object = TierManifest::read(storage.dir())
+        .and_then(|manifest| {
+            manifest.objects.into_iter().find(|object| object.segment_id == segment_id)
+        })
+        .ok_or(ObjectStoreError::ColdTierUnavailable)?;
+    decode_segment_bytes(&bytes, object.segment_id, object.level)
+}
+
+/// Decodes and verifies the immutable segment format from an object-store
+/// response. This mirrors the on-disk reader's checks without creating a
+/// temporary file (cold reads must not mutate `NVMe` merely to be correct).
+fn decode_segment_bytes(
+    bytes: &[u8],
+    expected_id: u64,
+    expected_level: u16,
+) -> Result<Vec<Entry>, ObjectStoreError> {
+    const HEADER_MAGIC: &[u8; 8] = b"TBLSMSG1";
+    const FOOTER_MAGIC: &[u8; 8] = b"TBLSMFT1";
+    const MAX_KEY_BOUND: usize = 4096;
+    if bytes.len() < 20 + 32 || &bytes[..8] != HEADER_MAGIC {
+        return Err(ObjectStoreError::ChecksumMismatch);
+    }
+    let id = u64::from_le_bytes(bytes[8..16].try_into().expect("eight bytes"));
+    let level = u16::from_le_bytes(bytes[16..18].try_into().expect("two bytes"));
+    if id != expected_id || level != expected_level {
+        return Err(ObjectStoreError::ChecksumMismatch);
+    }
+    let crc_start = bytes.len().checked_sub(8).ok_or(ObjectStoreError::ChecksumMismatch)?;
+    let stored_crc = u64::from_le_bytes(bytes[crc_start..].try_into().expect("eight bytes"));
+    let mut footer = &bytes[..crc_start];
+    let max_key = pop_key_back(&mut footer, MAX_KEY_BOUND)?;
+    let min_key = pop_key_back(&mut footer, MAX_KEY_BOUND)?;
+    let fixed_start = footer.len().checked_sub(24).ok_or(ObjectStoreError::ChecksumMismatch)?;
+    if &footer[fixed_start..fixed_start + 8] != FOOTER_MAGIC {
+        return Err(ObjectStoreError::ChecksumMismatch);
+    }
+    let sparse_offset = usize::try_from(u64::from_le_bytes(
+        footer[fixed_start + 8..fixed_start + 16].try_into().expect("eight bytes"),
+    ))
+    .map_err(|_| ObjectStoreError::ChecksumMismatch)?;
+    let entry_count = usize::try_from(u64::from_le_bytes(
+        footer[fixed_start + 16..fixed_start + 24].try_into().expect("eight bytes"),
+    ))
+    .map_err(|_| ObjectStoreError::ChecksumMismatch)?;
+    if sparse_offset < 20 || sparse_offset > fixed_start {
+        return Err(ObjectStoreError::ChecksumMismatch);
+    }
+    if codec::fnv1a(&bytes[..fixed_start]) != stored_crc {
+        return Err(ObjectStoreError::ChecksumMismatch);
+    }
+    // Validate the sparse section too, so a malformed index cannot make a
+    // later read silently omit records.
+    let mut sparse_reader = codec::Reader::new(&bytes[sparse_offset..fixed_start]);
+    let sparse_count = sparse_reader.read_u32().ok_or(ObjectStoreError::ChecksumMismatch)?;
+    for _ in 0..sparse_count {
+        let key_len = sparse_reader.read_u32().ok_or(ObjectStoreError::ChecksumMismatch)? as usize;
+        sparse_reader.take(key_len).ok_or(ObjectStoreError::ChecksumMismatch)?;
+        sparse_reader.read_u64().ok_or(ObjectStoreError::ChecksumMismatch)?;
+    }
+    if sparse_reader.remaining() != 0
+        || min_key.len() > MAX_KEY_BOUND
+        || max_key.len() > MAX_KEY_BOUND
+    {
+        return Err(ObjectStoreError::ChecksumMismatch);
+    }
+    let mut reader = codec::Reader::new(&bytes[20..sparse_offset]);
+    let mut entries = Vec::with_capacity(entry_count.min(bytes.len()));
+    while reader.remaining() > 0 {
+        let key_len = reader.read_u32().ok_or(ObjectStoreError::ChecksumMismatch)? as usize;
+        let key = reader.take(key_len).ok_or(ObjectStoreError::ChecksumMismatch)?;
+        let sequence = reader.read_u64().ok_or(ObjectStoreError::ChecksumMismatch)?;
+        let deletion = reader.read_u8().ok_or(ObjectStoreError::ChecksumMismatch)? != 0;
+        let value_len = reader.read_u32().ok_or(ObjectStoreError::ChecksumMismatch)? as usize;
+        let value = reader.take(value_len).ok_or(ObjectStoreError::ChecksumMismatch)?;
+        entries.push(Entry {
+            key: super::internal::InternalKey::decode(key, sequence, deletion),
+            value: value.to_owned(),
+        });
+    }
+    if entries.len() != entry_count {
+        return Err(ObjectStoreError::ChecksumMismatch);
+    }
+    Ok(entries)
+}
+
+fn pop_key_back(cursor: &mut &[u8], max: usize) -> Result<Vec<u8>, ObjectStoreError> {
+    if cursor.len() < 4 {
+        return Err(ObjectStoreError::ChecksumMismatch);
+    }
+    let len =
+        u32::from_le_bytes(cursor[cursor.len() - 4..].try_into().expect("four bytes")) as usize;
+    if len > max || cursor.len() < 4 + len {
+        return Err(ObjectStoreError::ChecksumMismatch);
+    }
+    let start = cursor.len() - 4 - len;
+    let key = cursor[start..start + len].to_vec();
+    *cursor = &cursor[..start];
+    Ok(key)
 }
 
 /// Reports the segment metadata the mover considered (crate-private
@@ -506,7 +655,7 @@ mod tests {
         assert_eq!(receipt.decision, MoveDecision::Demote);
         assert!(receipt.bytes > 0);
         assert!(receipt.manifest_after > receipt.manifest_before);
-        assert!(receipt.manifest_accepted);
+        assert!(!receipt.manifest_accepted, "local publication is not a regional quorum");
         // The demoted segment still serves, from the object store.
         let bytes = read_segment_with_fallback(&storage, &store, receipt.segment_id);
         assert!(bytes.is_ok());
@@ -610,7 +759,92 @@ mod tests {
         let store = LocalObjectStore::open(&object_dir).unwrap();
         assert_eq!(
             read_segment_with_fallback(&storage, &store, 4242),
-            Err(ObjectStoreError::NotFound)
+            Err(ObjectStoreError::ColdTierUnavailable)
+        );
+        tests_support::cleanup(&dir);
+    }
+
+    #[test]
+    fn checksum_failure_tries_a_later_verified_source() {
+        let dir = tests_support::location("tier-fallback-later");
+        let mut storage = tests_support::open(&dir);
+        tests_support::seed_segments(&mut storage, 8);
+        let home_dir = dir.join("home");
+        let later_dir = dir.join("later");
+        let mut home = LocalObjectStore::open(&home_dir).unwrap();
+        let mut later = LocalObjectStore::open(&later_dir).unwrap();
+        let mut policy = TierMovePolicy::default_policy();
+        policy.nvme_budget_bytes = 1;
+        let MoverOutcome::Completed(receipt) =
+            run_mover(&mut storage, &mut home, &policy, "home-a")
+        else {
+            panic!("the demote completes");
+        };
+        let object = TierManifest::read(&dir)
+            .unwrap()
+            .objects
+            .into_iter()
+            .find(|object| object.segment_id == receipt.segment_id)
+            .unwrap();
+        let bytes = home.get(&object.object_key).unwrap();
+        later.put(&object.object_key, &bytes).unwrap();
+        let home_path = home_dir.join(object.object_key.as_str());
+        let mut corrupt = std::fs::read(&home_path).unwrap();
+        corrupt[0] ^= 0xFF;
+        std::fs::write(home_path, corrupt).unwrap();
+        let later_sources: [&dyn ObjectStore; 1] = [&later];
+        assert_eq!(
+            read_segment_with_sources(&storage, &home, &later_sources, receipt.segment_id).unwrap(),
+            bytes,
+            "a checksum mismatch in home storage must not hide a verified later copy"
+        );
+        tests_support::cleanup(&dir);
+    }
+
+    #[test]
+    fn missing_home_object_is_typed_after_bounded_exhaustion() {
+        let dir = tests_support::location("tier-fallback-missing");
+        let mut storage = tests_support::open(&dir);
+        tests_support::seed_segments(&mut storage, 8);
+        let object_dir = dir.join("home");
+        let mut store = LocalObjectStore::open(&object_dir).unwrap();
+        let mut policy = TierMovePolicy::default_policy();
+        policy.nvme_budget_bytes = 1;
+        let MoverOutcome::Completed(receipt) =
+            run_mover(&mut storage, &mut store, &policy, "home-a")
+        else {
+            panic!("the demote completes");
+        };
+        let object = TierManifest::read(&dir)
+            .unwrap()
+            .objects
+            .into_iter()
+            .find(|object| object.segment_id == receipt.segment_id)
+            .unwrap();
+        store.delete(&object.object_key).unwrap();
+        assert_eq!(
+            read_segment_with_fallback(&storage, &store, receipt.segment_id),
+            Err(ObjectStoreError::ColdTierUnavailable)
+        );
+        tests_support::cleanup(&dir);
+    }
+
+    #[test]
+    fn manifest_sync_failures_are_propagated() {
+        let dir = tests_support::location("tier-manifest-sync-fault");
+        let manifest =
+            TierManifest { epoch: 1, home_region: "home-a".to_owned(), ..Default::default() };
+        assert_eq!(
+            manifest.publish_with_sync(&dir, |_| Err(std::io::Error::other("injected"))),
+            Err(ObjectStoreError::Unavailable)
+        );
+        let calls = std::cell::Cell::new(0_u8);
+        assert_eq!(
+            manifest.publish_with_sync(&dir, |_| {
+                calls.set(calls.get() + 1);
+                if calls.get() == 2 { Err(std::io::Error::other("injected")) } else { Ok(()) }
+            }),
+            Err(ObjectStoreError::Unavailable)
         );
         tests_support::cleanup(&dir);
     }

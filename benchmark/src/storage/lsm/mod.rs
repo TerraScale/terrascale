@@ -229,6 +229,7 @@ impl LsmStorage {
             faults: FaultPlan::empty(),
         };
         engine.rebuild_indexes_from_segments();
+        engine.rebuild_indexes_from_cold_tier();
         let wal_scan = engine.wal.scan().map_err(|_| LsmOpenError::Unavailable)?;
         let mut watermark = engine.sequence_watermark;
         for entry in &wal_scan.entries {
@@ -276,6 +277,36 @@ impl LsmStorage {
                 continue;
             };
             for entry in entries {
+                let tag = entry.key.tag();
+                if tag == internal::Keyspace::Ledger.tag()
+                    || tag == internal::Keyspace::History.tag()
+                    || tag == internal::Keyspace::Meta.tag()
+                {
+                    self.apply_entry_to_memory(&entry);
+                }
+            }
+        }
+    }
+
+    /// Rebuilds indexes and the publication watermark from verified cold
+    /// segments as well as `NVMe` segments. Demotion intentionally removes the
+    /// latter from the active segment manifest, so omitting this pass would
+    /// make a reopen advertise an older sequence and hide the demoted range.
+    fn rebuild_indexes_from_cold_tier(&mut self) {
+        let Some(tier_manifest) = tier::TierManifest::read(&self.dir) else {
+            return;
+        };
+        let active_ids: BTreeSet<u64> = self.manifest.segments.iter().map(|meta| meta.id).collect();
+        for object in tier_manifest
+            .objects
+            .iter()
+            .filter(|object| object.verified && !active_ids.contains(&object.segment_id))
+        {
+            let Ok(entries) = tier::read_cold_segment_entries(self, object.segment_id) else {
+                continue;
+            };
+            for entry in entries {
+                self.sequence_watermark = self.sequence_watermark.max(entry.key.sequence());
                 let tag = entry.key.tag();
                 if tag == internal::Keyspace::Ledger.tag()
                     || tag == internal::Keyspace::History.tag()
@@ -366,6 +397,31 @@ impl LsmStorage {
                 // records are other keys' versions, not this range's.
                 if entry.key.user_key() >= start && entry.key.sequence() <= sequence {
                     merged.push(entry);
+                }
+            }
+        }
+        // Demotion removes a segment from the NVMe manifest and reader map;
+        // its immutable object remains named by the tier manifest. Read all
+        // such cold segments through the verified fallback before reducing
+        // keys. If any named cold segment is unavailable/corrupt, fail closed
+        // instead of returning a partial range that silently omits data.
+        let active_ids: BTreeSet<u64> = self.manifest.segments.iter().map(|meta| meta.id).collect();
+        if let Some(tier_manifest) = tier::TierManifest::read(&self.dir) {
+            for object in tier_manifest
+                .objects
+                .iter()
+                .filter(|object| object.verified && !active_ids.contains(&object.segment_id))
+            {
+                let Ok(entries) = tier::read_cold_segment_entries(self, object.segment_id) else {
+                    return Vec::new();
+                };
+                for entry in entries {
+                    if entry.key.user_key() >= start
+                        && entry.key.user_key() < end
+                        && entry.key.sequence() <= sequence
+                    {
+                        merged.push(entry);
+                    }
                 }
             }
         }
