@@ -61,7 +61,7 @@ public static class EngineHarness
             [package]
             name = "tbep-engine-harness"
             version = "0.1.0"
-            edition = "2021"
+            edition = "2024"
             publish = false
 
             [dependencies]
@@ -74,14 +74,30 @@ public static class EngineHarness
             """).ConfigureAwait(false);
         await File.WriteAllTextAsync(Path.Combine(source, "main.rs"), """
             use std::io::BufRead as _;
+    use std::path::Path;
     use std::sync::Arc;
-    use terrabase_tbep::{SyncDeliveryHost, TbepServer};
+    use terrabase_tbep::engine_host::EngineHost;
+    use terrabase_tbep::{SyncDeliveryHost, TbepHost, TbepServer};
 
     fn main() {
         let mut args = std::env::args().skip(1);
-        let socket = args.next().expect("usage: tbep-engine-harness <socket> <instance>");
+        let socket = args.next().expect("usage: tbep-engine-harness <socket> <instance> [engine:<location>]");
         let instance: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(1);
-        let mut server = TbepServer::bind(&socket, Arc::new(SyncDeliveryHost::new(instance)))
+        // The optional third argument selects the host: `engine:<dir>`
+        // binds the real durable Engine at that location (the P4
+        // document-spine rows); anything else binds the sync-delivery
+        // specialist.
+        let engine_location = args
+            .next()
+            .and_then(|argument| argument.strip_prefix("engine:").map(str::to_owned));
+        let host: Arc<dyn TbepHost> = match engine_location {
+            Some(location) => Arc::new(
+                EngineHost::open(Path::new(&location), instance)
+                    .expect("the engine host opens its durable location"),
+            ),
+            None => Arc::new(SyncDeliveryHost::new(instance)),
+        };
+        let mut server = TbepServer::bind(&socket, host)
             .expect("the engine harness binds its UDS listener");
         println!("serving {socket} instance {instance}");
         // The supervisor owns the process: it ends on stdin close, on

@@ -455,3 +455,33 @@ code and client batching op, and protocol-level reconnect/resume.
 Receipts: `terrabase-tbep` suites all green (3 new engine-host tests
 over the 78 existing); clippy `-D warnings` and fmt clean.
 `scripts/check.sh` not run (AC-12).
+
+## 13. P4 landing 2 (2026-08-29): the C# client drives the real Engine
+
+The cross-language spine closed: the C# test harness's synthesized
+server binary gained an engine mode (`engine:<location>` binds
+`EngineHost` over a durable location; without it the sync-delivery
+specialist binds as before), and `TbepClient` gained the document
+mutation surface (`DocumentWriteAsync`, `DocumentDeleteAsync` — the
+same `CallAsync` discipline as the existing client methods, the
+idempotency key as the retry identity).
+
+`EngineSpineTests.TheClientDrivesTheRealEngineAcrossARestart` proves
+the full spine from C# against the repository's real Engine: commit
+with version and sequence, the idempotent retry replaying the same
+sequence, the `Absent`-expectation conflict, the read serving the
+published body and version — then the process is stopped, a fresh
+process opens over the SAME durable location, and the committed body
+still serves. All 88 Api rows and 19 Protocol rows pass (one
+harness-build fix en route: the throwaway cargo project now declares
+edition 2024, and the host selection avoids edition-gated match
+let-chains).
+
+Still open in P4 (unchanged from §12): the QUIC/TLS binding,
+tokens/mTLS, capability negotiation, the query/family/schema surfaces
+over EngineHost, tier administration, cluster mode, the overload code,
+client batching, reconnect/resume.
+
+Receipts: `TerraBase.Api.Tests` 88/88 (1 new cross-language spine
+row); `TerraBase.Protocol.Tests` 19/19. `scripts/check.sh` not run
+(AC-12).

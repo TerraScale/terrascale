@@ -80,6 +80,45 @@ public sealed partial class TbepClient : IAsyncDisposable
         return MessagePackSerializer.Deserialize<DocumentReadResponse>(answer.Body, TbepOptions.Strict);
     }
 
+    /// <summary>Writes one document (mutation): the idempotency key is the retry identity the engine replays.</summary>
+    /// <param name="document">The whole document body to put.</param>
+    /// <param name="expected">The expected current version of the document.</param>
+    /// <param name="operationId">The stable operation identity.</param>
+    /// <param name="idempotencyKey">The envelope's idempotency key.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The write response with its outcome.</returns>
+    /// <exception cref="TbepException">The operation failed.</exception>
+    public async Task<DocumentWriteResponse> DocumentWriteAsync(DocumentPut document, ExpectedVersion expected, string operationId, string idempotencyKey, CancellationToken cancellationToken = default)
+    {
+        var answer = await this.CallAsync(
+            "document.write",
+            new DocumentWriteRequest { Document = document, Expected = expected, OperationId = operationId },
+            idempotency: idempotencyKey,
+            expect: TbepRegistry.ResponseKindOf("document.write"),
+            cancellationToken).ConfigureAwait(false);
+        return MessagePackSerializer.Deserialize<DocumentWriteResponse>(answer.Body, TbepOptions.Strict);
+    }
+
+    /// <summary>Deletes one document (mutation): the idempotency key is the retry identity the engine replays.</summary>
+    /// <param name="collection">The collection.</param>
+    /// <param name="document">The document id.</param>
+    /// <param name="expected">The expected current version of the document.</param>
+    /// <param name="operationId">The stable operation identity.</param>
+    /// <param name="idempotencyKey">The envelope's idempotency key.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The delete response with its outcome.</returns>
+    /// <exception cref="TbepException">The operation failed.</exception>
+    public async Task<DocumentDeleteResponse> DocumentDeleteAsync(string collection, string document, ExpectedVersion expected, string operationId, string idempotencyKey, CancellationToken cancellationToken = default)
+    {
+        var answer = await this.CallAsync(
+            "document.delete",
+            new DocumentDeleteRequest { Collection = collection, Document = document, Expected = expected, OperationId = operationId },
+            idempotency: idempotencyKey,
+            expect: TbepRegistry.ResponseKindOf("document.delete"),
+            cancellationToken).ConfigureAwait(false);
+        return MessagePackSerializer.Deserialize<DocumentDeleteResponse>(answer.Body, TbepOptions.Strict);
+    }
+
     /// <summary>Submits the query-cancellation live signal (GAP-Q12, PB-4034).</summary>
     /// <param name="queryId">The in-flight query identity.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
