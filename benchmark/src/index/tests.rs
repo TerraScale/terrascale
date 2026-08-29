@@ -16,7 +16,10 @@ use std::{
     time::Duration,
 };
 
-use super::{IndexBuilder, IndexCatalog, IndexDelta, IndexError, RebuildOutcome};
+use super::{
+    IndexBuilder, IndexCatalog, IndexDelta, IndexError, IndexKind, IndexLookupBounds,
+    IndexLookupError, RebuildOutcome,
+};
 use crate::{
     engine::{CommitOutcome, CommitPublicationSink, Engine, EngineConfig},
     operations::QueryInput,
@@ -71,16 +74,27 @@ fn object_document(id: &str, collection: &str, fields: &[(&str, DocumentValue)])
 }
 
 fn commit_one(engine: &Engine, tenant_name: &str, tag: &str, id: &str, age: i64) -> u64 {
+    commit_documents(
+        engine,
+        tenant_name,
+        tag,
+        vec![object_document(id, "users", &[("age", DocumentValue::Integer(age))])],
+    )
+}
+
+fn commit_documents(
+    engine: &Engine,
+    tenant_name: &str,
+    tag: &str,
+    documents: Vec<Document>,
+) -> u64 {
     let tenant_scope = scope(engine, tenant_name);
     let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
     let operation = OperationId::try_new(tag).expect("valid identifier");
     let mut transaction = engine.begin(&tenant_scope, snapshot, operation).expect("begins");
-    transaction
-        .put(
-            object_document(id, "users", &[("age", DocumentValue::Integer(age))]),
-            ExpectedVersion::Any,
-        )
-        .expect("stages");
+    for document in documents {
+        transaction.put(document, ExpectedVersion::Any).expect("stages");
+    }
     match transaction.commit(LocalDurability::Synced) {
         CommitOutcome::Committed(receipt) => receipt.sequence().get(),
         other => panic!("commit did not succeed: {other:?}"),
@@ -394,6 +408,185 @@ fn segments_index_the_registered_field_of_their_own_tenant() {
     assert!(entry.contains(&DocumentId::try_new("doc-a1").expect("valid identifier")));
     assert!(!segment.entries().values().flatten().any(|id| id.as_str().starts_with("doc-b")));
     assert!(!segment.entries().contains_key("string:x"), "only the registered field is indexed");
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn definition_segments_are_isolated_to_their_collection() {
+    let (dir, engine) = open_engine("collection-isolation");
+    let catalog = engine.index_catalog();
+    let namespace = namespace("tenant-a", "users-by-age");
+    let definition = crate::query::optimizer::IndexDefinition::try_new(
+        CollectionName::try_new("users").expect("valid identifier"),
+        vec![
+            crate::query::optimizer::IndexField::try_new(
+                "age",
+                crate::query::optimizer::IndexCapabilities::FULL,
+            )
+            .expect("valid field"),
+        ],
+        IndexKind::Explicit,
+    )
+    .expect("valid definition");
+    catalog.register_explicit(&namespace, &definition).expect("registers");
+
+    commit_documents(
+        &engine,
+        "tenant-a",
+        "collection-isolation-op",
+        vec![
+            object_document("user-2", "users", &[("age", DocumentValue::Integer(7))]),
+            object_document("audit-1", "audit", &[("age", DocumentValue::Integer(7))]),
+            object_document("user-1", "users", &[("age", DocumentValue::Integer(7))]),
+        ],
+    );
+    let builder = IndexBuilder::new(&catalog, &engine);
+    let delta = catalog.delta().expect("event observed");
+    assert!(matches!(
+        builder.rebuild_from(&namespace, &delta, engine.identity()),
+        Ok(RebuildOutcome::Published { .. })
+    ));
+
+    let segment = catalog.segment(&namespace).expect("published");
+    assert_eq!(segment.collection(), Some(&CollectionName::try_new("users").expect("valid")));
+    let posting = &segment.entries()["integer:7"];
+    assert_eq!(posting.iter().map(DocumentId::as_str).collect::<Vec<_>>(), ["user-1", "user-2"]);
+    assert!(!posting.iter().any(|id| id.as_str() == "audit-1"));
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn bounded_lookup_and_iteration_are_deterministic_and_refuse_overflow() {
+    let (dir, engine) = open_engine("bounded-reads");
+    let catalog = engine.index_catalog();
+    let namespace = namespace("tenant-a", "users-by-age");
+    let definition = crate::query::optimizer::IndexDefinition::try_new(
+        CollectionName::try_new("users").expect("valid identifier"),
+        vec![
+            crate::query::optimizer::IndexField::try_new(
+                "age",
+                crate::query::optimizer::IndexCapabilities::FULL,
+            )
+            .expect("valid field"),
+        ],
+        IndexKind::Explicit,
+    )
+    .expect("valid definition");
+    catalog.register_explicit(&namespace, &definition).expect("registers");
+    commit_documents(
+        &engine,
+        "tenant-a",
+        "bounded-reads-op",
+        vec![
+            object_document("z-user", "users", &[("age", DocumentValue::Integer(8))]),
+            object_document("a-user", "users", &[("age", DocumentValue::Integer(7))]),
+            object_document("m-user", "users", &[("age", DocumentValue::Integer(8))]),
+        ],
+    );
+    let builder = IndexBuilder::new(&catalog, &engine);
+    let delta = catalog.delta().expect("event observed");
+    builder.rebuild_from(&namespace, &delta, engine.identity()).expect("publishes");
+    let segment = catalog.segment(&namespace).expect("published");
+
+    let key = "integer:8";
+    let key_bytes = key.len() + "m-user".len() + key.len() + "z-user".len();
+    let lookup = segment
+        .lookup(key, IndexLookupBounds::new(2, key_bytes))
+        .expect("exact bounds permit complete lookup");
+    assert_eq!(lookup.bytes(), key_bytes);
+    assert_eq!(lookup.identity(), segment.identity());
+    assert_eq!(
+        lookup.rows().iter().map(|row| (row.key(), row.document_id().as_str())).collect::<Vec<_>>(),
+        [(key, "m-user"), (key, "z-user")]
+    );
+    assert_eq!(
+        segment.lookup(key, IndexLookupBounds::new(1, key_bytes)),
+        Err(IndexLookupError::RowLimitExceeded { limit: 1, required: 2 })
+    );
+    assert_eq!(
+        segment.lookup(key, IndexLookupBounds::new(2, key_bytes - 1)),
+        Err(IndexLookupError::ByteLimitExceeded { limit: key_bytes - 1, required: key_bytes })
+    );
+
+    let all_rows = segment
+        .iter_bounded(IndexLookupBounds::new(3, key_bytes + key.len() + "a-user".len()))
+        .expect("exact full-segment bounds permit complete iteration")
+        .map(|(key, id)| (key.to_owned(), id.as_str().to_owned()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        all_rows,
+        [
+            ("integer:7".to_owned(), "a-user".to_owned()),
+            ("integer:8".to_owned(), "m-user".to_owned()),
+            ("integer:8".to_owned(), "z-user".to_owned())
+        ]
+    );
+    let iterator = segment
+        .iter_bounded(IndexLookupBounds::new(3, key_bytes + key.len() + "a-user".len()))
+        .expect("bounds permit iterator");
+    assert_eq!(iterator.identity(), segment.identity());
+    assert!(matches!(
+        segment.iter_bounded(IndexLookupBounds::new(2, usize::MAX)),
+        Err(IndexLookupError::RowLimitExceeded { limit: 2, required: 3 })
+    ));
+    assert!(matches!(
+        segment.iter_bounded(IndexLookupBounds::new(
+            usize::MAX,
+            key_bytes + key.len() + "a-user".len() - 1
+        )),
+        Err(IndexLookupError::ByteLimitExceeded { .. })
+    ));
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn bounded_reads_keep_empty_and_missing_values_unindexed() {
+    let (dir, engine) = open_engine("bounded-empty-values");
+    let catalog = engine.index_catalog();
+    let namespace = namespace("tenant-a", "users-by-age");
+    let definition = crate::query::optimizer::IndexDefinition::try_new(
+        CollectionName::try_new("users").expect("valid identifier"),
+        vec![
+            crate::query::optimizer::IndexField::try_new(
+                "age",
+                crate::query::optimizer::IndexCapabilities::FULL,
+            )
+            .expect("valid field"),
+        ],
+        IndexKind::Explicit,
+    )
+    .expect("valid definition");
+    catalog.register_explicit(&namespace, &definition).expect("registers");
+    commit_documents(
+        &engine,
+        "tenant-a",
+        "bounded-empty-values-op",
+        vec![
+            object_document("good", "users", &[("age", DocumentValue::Integer(1))]),
+            object_document("missing", "users", &[("name", DocumentValue::String("n".into()))]),
+            object_document("array", "users", &[("age", DocumentValue::Array(Vec::new()))]),
+            object_document("object", "users", &[("age", DocumentValue::Object(BTreeMap::new()))]),
+        ],
+    );
+    let builder = IndexBuilder::new(&catalog, &engine);
+    let delta = catalog.delta().expect("event observed");
+    builder.rebuild_from(&namespace, &delta, engine.identity()).expect("publishes");
+    let segment = catalog.segment(&namespace).expect("published");
+    assert_eq!(segment.entries().len(), 1);
+    assert_eq!(
+        segment.lookup("missing", IndexLookupBounds::new(0, 0)).expect("empty lookup").rows(),
+        []
+    );
+    assert_eq!(
+        segment.lookup("array", IndexLookupBounds::new(0, 0)).expect("empty lookup").rows(),
+        []
+    );
+    assert_eq!(segment.identity().epoch(), 1);
+    assert_eq!(segment.identity().generation(), 1);
+    assert_eq!(segment.identity().covered_sequence(), delta.covered_sequence());
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
 }

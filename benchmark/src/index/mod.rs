@@ -32,6 +32,7 @@
 
 use std::{
     collections::{BTreeMap, VecDeque},
+    slice,
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -63,8 +64,8 @@ use crate::{
     },
     storage::CommitPublicationEvent,
     types::{
-        Document, DocumentId, DocumentValue, IndexGenerationSet, ReadSnapshot, StorageSequence,
-        TenantId, TenantScope,
+        CollectionName, Document, DocumentId, DocumentValue, IndexGenerationSet, ReadSnapshot,
+        StorageSequence, TenantId, TenantScope,
     },
 };
 use operations::{
@@ -130,14 +131,16 @@ impl IndexDelta {
 /// One published in-memory index segment.
 ///
 /// A segment maps the canonical key of one indexed field tuple to the
-/// documents of one tenant that carry it, as observed at the covered storage
-/// sequence of the publication that produced the segment. A multi-field
-/// definition composes its key from the per-field canonical keys joined with
-/// the unit separator; a document that misses any indexed field, or carries
-/// a value the subset does not index, has no entry.
+/// documents of one tenant and, for definition-backed indexes, one collection
+/// that carry it, as observed at the covered storage sequence of the
+/// publication that produced the segment. A multi-field definition composes
+/// its key from the per-field canonical keys joined with the unit separator;
+/// a document that misses any indexed field, belongs to another collection,
+/// or carries a value the subset does not index, has no entry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IndexSegment {
     namespace_key: String,
+    collection: Option<CollectionName>,
     epoch: u64,
     generation: u64,
     covered_sequence: u64,
@@ -146,6 +149,25 @@ pub(crate) struct IndexSegment {
 }
 
 impl IndexSegment {
+    /// Returns the collection bound to the segment's definition, when the
+    /// segment was created from a definition-carrying namespace. Raw
+    /// single-field registrations have no collection metadata and return
+    /// `None` for compatibility with that registration path.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) fn collection(&self) -> Option<&CollectionName> {
+        self.collection.as_ref()
+    }
+
+    /// Returns the immutable publication identity of this segment.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) const fn identity(&self) -> IndexSegmentIdentity {
+        IndexSegmentIdentity {
+            epoch: self.epoch,
+            generation: self.generation,
+            covered_sequence: self.covered_sequence,
+        }
+    }
+
     /// Returns the catalog key of the segment's namespace.
     #[allow(dead_code, reason = "observed by the index tests")]
     pub(crate) fn namespace_key(&self) -> &str {
@@ -178,6 +200,236 @@ impl IndexSegment {
     pub(crate) fn entries(&self) -> &BTreeMap<String, Vec<DocumentId>> {
         &self.entries
     }
+
+    /// Looks up one canonical key under explicit row and byte bounds.
+    ///
+    /// The posting list is measured before any document IDs are copied. If a
+    /// bound would be exceeded, the operation refuses with a typed error and
+    /// never returns a partial result. Byte usage is the sum of the UTF-8
+    /// bytes of each returned key and document ID.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) fn lookup(
+        &self,
+        key: &str,
+        bounds: IndexLookupBounds,
+    ) -> Result<IndexLookupResult, IndexLookupError> {
+        let Some(document_ids) = self.entries.get(key) else {
+            return Ok(IndexLookupResult { identity: self.identity(), rows: Vec::new(), bytes: 0 });
+        };
+
+        let mut rows = 0;
+        let mut bytes = 0;
+        for document_id in document_ids {
+            check_row(&mut rows, &mut bytes, key, document_id, bounds)?;
+        }
+        let result_rows = document_ids
+            .iter()
+            .map(|document_id| IndexLookupRow {
+                key: key.to_owned(),
+                document_id: document_id.clone(),
+            })
+            .collect();
+        Ok(IndexLookupResult { identity: self.identity(), rows: result_rows, bytes })
+    }
+
+    /// Returns a bounded, allocation-free iterator over all key/posting rows.
+    ///
+    /// The complete segment is measured before the iterator is returned, so
+    /// callers receive either every row or a typed refusal, never a silently
+    /// truncated stream. Iteration follows the segment's canonical key order
+    /// and each posting list's canonical document-ID order.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) fn iter_bounded(
+        &self,
+        bounds: IndexLookupBounds,
+    ) -> Result<IndexSegmentIterator<'_>, IndexLookupError> {
+        let mut rows = 0;
+        let mut bytes = 0;
+        for (key, document_ids) in &self.entries {
+            for document_id in document_ids {
+                check_row(&mut rows, &mut bytes, key, document_id, bounds)?;
+            }
+        }
+        Ok(IndexSegmentIterator {
+            entries: self.entries.iter(),
+            current: None,
+            identity: self.identity(),
+        })
+    }
+}
+
+/// The immutable publication identity carried by one segment read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+pub(crate) struct IndexSegmentIdentity {
+    epoch: u64,
+    generation: u64,
+    covered_sequence: u64,
+}
+
+impl IndexSegmentIdentity {
+    /// Returns the persisted epoch.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) const fn epoch(self) -> u64 {
+        self.epoch
+    }
+
+    /// Returns the generation within the epoch.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) const fn generation(self) -> u64 {
+        self.generation
+    }
+
+    /// Returns the covered storage sequence.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) const fn covered_sequence(self) -> u64 {
+        self.covered_sequence
+    }
+}
+
+/// Explicit limits for one bounded index read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+pub(crate) struct IndexLookupBounds {
+    max_rows: usize,
+    max_bytes: usize,
+}
+
+impl IndexLookupBounds {
+    /// Creates bounds. Zero is valid and permits only an empty result.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) const fn new(max_rows: usize, max_bytes: usize) -> Self {
+        Self { max_rows, max_bytes }
+    }
+
+    /// Returns the maximum number of key/posting rows.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) const fn max_rows(self) -> usize {
+        self.max_rows
+    }
+
+    /// Returns the maximum accounted UTF-8 bytes.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) const fn max_bytes(self) -> usize {
+        self.max_bytes
+    }
+}
+
+/// Typed refusal when a bounded index read cannot return its complete result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+pub(crate) enum IndexLookupError {
+    /// The result has more rows than the requested row cap.
+    RowLimitExceeded { limit: usize, required: usize },
+    /// The result accounts for more bytes than the requested byte cap.
+    ByteLimitExceeded { limit: usize, required: usize },
+}
+
+/// One key/document row returned by an exact-key lookup.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+pub(crate) struct IndexLookupRow {
+    key: String,
+    document_id: DocumentId,
+}
+
+impl IndexLookupRow {
+    /// Returns the canonical key.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Returns the matching document ID.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) fn document_id(&self) -> &DocumentId {
+        &self.document_id
+    }
+}
+
+/// A complete exact-key lookup result and the segment identity that served it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+pub(crate) struct IndexLookupResult {
+    identity: IndexSegmentIdentity,
+    rows: Vec<IndexLookupRow>,
+    bytes: usize,
+}
+
+impl IndexLookupResult {
+    /// Returns the segment publication identity.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) const fn identity(&self) -> IndexSegmentIdentity {
+        self.identity
+    }
+
+    /// Returns all rows in deterministic posting order.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) fn rows(&self) -> &[IndexLookupRow] {
+        &self.rows
+    }
+
+    /// Returns the accounted UTF-8 bytes of all rows.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) const fn bytes(&self) -> usize {
+        self.bytes
+    }
+}
+
+/// Allocation-free iterator over a segment's canonical key/posting rows.
+#[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+pub(crate) struct IndexSegmentIterator<'segment> {
+    entries: std::collections::btree_map::Iter<'segment, String, Vec<DocumentId>>,
+    current: Option<(&'segment str, slice::Iter<'segment, DocumentId>)>,
+    identity: IndexSegmentIdentity,
+}
+
+impl IndexSegmentIterator<'_> {
+    /// Returns the segment publication identity that was bounded.
+    #[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+    pub(crate) const fn identity(&self) -> IndexSegmentIdentity {
+        self.identity
+    }
+}
+
+impl<'segment> Iterator for IndexSegmentIterator<'segment> {
+    type Item = (&'segment str, &'segment DocumentId);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some((key, document_ids)) = self.current.as_mut()
+                && let Some(document_id) = document_ids.next()
+            {
+                return Some((*key, document_id));
+            }
+            let (key, document_ids) = self.entries.next()?;
+            self.current = Some((key.as_str(), document_ids.iter()));
+        }
+    }
+}
+
+#[allow(dead_code, reason = "the bounded index consumer is not wired yet")]
+fn check_row(
+    rows: &mut usize,
+    bytes: &mut usize,
+    key: &str,
+    document_id: &DocumentId,
+    bounds: IndexLookupBounds,
+) -> Result<(), IndexLookupError> {
+    if *rows >= bounds.max_rows {
+        return Err(IndexLookupError::RowLimitExceeded {
+            limit: bounds.max_rows,
+            required: rows.saturating_add(1),
+        });
+    }
+    let row_bytes = key.len().saturating_add(document_id.as_str().len());
+    let required = bytes.saturating_add(row_bytes);
+    if required > bounds.max_bytes {
+        return Err(IndexLookupError::ByteLimitExceeded { limit: bounds.max_bytes, required });
+    }
+    *rows += 1;
+    *bytes = required;
+    Ok(())
 }
 
 /// The per-epoch publication state of one namespace.
@@ -1868,15 +2120,24 @@ impl<'catalog, 'engine> IndexBuilder<'catalog, 'engine> {
             .snapshot_documents(&scope, &snapshot)
             .map_err(|_| IndexError::StorageFailure)?;
         // Build the segment privately, with no lock held.
-        let fields = {
+        let (fields, collection) = {
             let state = self.catalog.state.lock().expect("index lock");
-            state
+            let entry = state
                 .namespaces
                 .get(&namespace.catalog_key())
-                .map(|entry| entry.fields.clone())
-                .ok_or(IndexError::NamespaceUnknown)?
+                .ok_or(IndexError::NamespaceUnknown)?;
+            (
+                entry.fields.clone(),
+                entry.definition.as_ref().map(|definition| definition.collection().clone()),
+            )
         };
-        let segment = build_segment(namespace, &fields, delta.covered_sequence(), &documents);
+        let segment = build_segment(
+            namespace,
+            collection.as_ref(),
+            &fields,
+            delta.covered_sequence(),
+            &documents,
+        );
         // Publish under the index lock only.
         self.catalog.publish(namespace, segment)
     }
@@ -1885,12 +2146,16 @@ impl<'catalog, 'engine> IndexBuilder<'catalog, 'engine> {
 /// Builds one segment from the documents a publication covers.
 fn build_segment(
     namespace: &IndexNamespace,
+    collection: Option<&CollectionName>,
     fields: &[String],
     covered_sequence: u64,
     documents: &[Document],
 ) -> IndexSegment {
     let mut entries: BTreeMap<String, Vec<DocumentId>> = BTreeMap::new();
     for document in documents {
+        if collection.is_some_and(|expected| document.collection() != expected) {
+            continue;
+        }
         let DocumentValue::Object(document_fields) = document.value() else {
             continue;
         };
@@ -1908,8 +2173,12 @@ fn build_segment(
             entries.entry(keys.join("\u{1f}")).or_default().push(document.id().clone());
         }
     }
+    for document_ids in entries.values_mut() {
+        document_ids.sort_unstable();
+    }
     IndexSegment {
         namespace_key: namespace.catalog_key(),
+        collection: collection.cloned(),
         epoch: 0,
         generation: 0,
         covered_sequence,
