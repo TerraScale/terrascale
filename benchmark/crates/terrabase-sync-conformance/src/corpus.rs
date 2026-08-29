@@ -831,10 +831,8 @@ fn checkpoint_from_json(value: &Value) -> Result<SyncCheckpoint, String> {
         .map(|pair| {
             let pair = pair.as_array().ok_or("a checkpoint end is not a pair")?;
             let peer = pair.first().and_then(Value::as_u64).ok_or("the pair carries no peer")?;
-            let end = pair
-                .get(1)
-                .and_then(Value::as_u64)
-                .ok_or("the pair carries no end counter")?;
+            let end =
+                pair.get(1).and_then(Value::as_u64).ok_or("the pair carries no end counter")?;
             Ok((peer, end))
         })
         .collect::<Result<Vec<(u64, u64)>, String>>()?;

@@ -6,7 +6,9 @@
 //! D1): every SDK implementation — TypeScript, C#, any later language —
 //! passes the same vectors in its own CI, natively, with no Rust
 //! toolchain. This crate is the kit that makes that runnable and
-//! verifiable:
+//! verifiable, and it owns the ADR 0024 extension corpus
+//! (`vectors/terrascale.sync.v2-adr0024/`) covering the corpus states
+//! the base corpus defers:
 //!
 //! - [`ConformanceHarness`] is the **Rust reference harness**: it
 //!   executes every corpus file against the engine's delivery core
@@ -28,9 +30,12 @@
 //!
 //! Scope limits, stated exactly:
 //!
-//! - This crate never modifies the corpus; the SE-04 runner
-//!   (`terrabase-sync-core`'s `vectors_runner`) remains the corpus's
-//!   regeneration gate, and both must stay green.
+//! - This crate never modifies the SE-04 base corpus; its runner
+//!   (`terrabase-sync-core`'s `vectors_runner`) remains that corpus's
+//!   regeneration gate, and both must stay green. The ADR 0024
+//!   extension corpus this crate owns (`vectors/terrascale.sync.v2-adr0024/`)
+//!   regenerates only through this crate's own ignored generator
+//!   (`tests/generate_extension_corpus.rs`) under the same discipline.
 //! - Reports are deterministic and carry no host paths, no timestamps,
 //!   and no document or payload bytes: failure details hold step
 //!   indices, check names, byte counts, and static reason text only.
@@ -70,9 +75,19 @@ pub const CORPUS_SCHEMA: &str = "terrascale.sync.v2/vector-corpus@2";
 pub const REPORT_SCHEMA: &str = "terrascale.sync.v2/conformance-report@1";
 
 /// The manifest schema identity every corpus manifest carries.
-pub const MANIFEST_SCHEMA: &str = "terrascale.sync.v2/corpus-manifest@1";
+pub const MANIFEST_SCHEMA: &str = "terrascale.sync.v2/corpus-manifest@2";
 
-/// The corpus categories a conforming corpus covers exactly once each.
+/// The legacy single-corpus manifest schema (no per-entry corpus
+/// identity): still parsed — its entries belong to the base corpus —
+/// but never emitted.
+pub const MANIFEST_SCHEMA_LEGACY: &str = "terrascale.sync.v2/corpus-manifest@1";
+
+/// The corpus identity of the SE-04 base corpus directory: the corpus
+/// [`REQUIRED_CATEGORIES`] gates.
+pub const BASE_CORPUS_NAME: &str = "terrascale.sync.v2";
+
+/// The corpus categories a conforming base corpus covers exactly once
+/// each.
 pub const REQUIRED_CATEGORIES: [&str; 9] = [
     "fresh-session",
     "checkpoint-resume",
@@ -84,6 +99,15 @@ pub const REQUIRED_CATEGORIES: [&str; 9] = [
     "repeated-change-delta",
     "trigger-notification",
 ];
+
+/// The ADR 0024 expansion categories the kit's extension corpus
+/// (`vectors/terrascale.sync.v2-adr0024/`, owned by this crate) covers
+/// exactly once each: the ADR 0024 corpus states the base corpus
+/// defers. The base runner records them as deferred because their
+/// engine-side machinery (the ADR 0024 view state machine) does not
+/// exist yet; these vectors pin the wire behavior that does exist —
+/// native codecs only, no superseded external CRDT engine payload.
+pub const EXTENSION_CATEGORIES: [&str; 2] = ["authorization-reset", "slow-consumer-overload"];
 
 /// Whether a corpus directory entry is a vector file (a `*.json`
 /// file, compared case-insensitively).
@@ -371,23 +395,96 @@ impl ConformanceReport {
 /// The Rust reference harness: executes a `terrascale.sync.v2`
 /// golden-vector corpus against the engine's delivery core.
 ///
-/// A harness owns one corpus directory. [`ConformanceHarness::run`]
-/// interprets every vector file with the real `terrabase-sync-core`
-/// core and codec — the reference semantics the per-language harness
-/// contract documents.
+/// A harness owns one or more corpus directories, each with the role
+/// that gates its category coverage. [`ConformanceHarness::new`] owns
+/// one base corpus; [`ConformanceHarness::kit`] owns the committed
+/// base corpus plus this crate's ADR 0024 extension corpus.
+/// [`ConformanceHarness::run`] interprets every vector file with the
+/// real `terrabase-sync-core` core and codec — the reference semantics
+/// the per-language harness contract documents.
 pub struct ConformanceHarness {
-    corpus_dir: PathBuf,
+    corpora: Vec<Corpus>,
+}
+
+/// The role one corpus directory plays in a harness run: which
+/// category set gates its coverage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CorpusRole {
+    /// The SE-04 base corpus: coverage is gated on
+    /// [`REQUIRED_CATEGORIES`].
+    Base,
+    /// The ADR 0024 extension corpus this crate owns: coverage is
+    /// gated on [`EXTENSION_CATEGORIES`].
+    Extension,
+}
+
+impl CorpusRole {
+    /// The category set that gates a corpus of this role.
+    #[must_use]
+    pub fn categories(self) -> &'static [&'static str] {
+        match self {
+            CorpusRole::Base => &REQUIRED_CATEGORIES,
+            CorpusRole::Extension => &EXTENSION_CATEGORIES,
+        }
+    }
+}
+
+/// One corpus directory a harness executes, with its coverage role.
+#[derive(Clone, Debug)]
+struct Corpus {
+    dir: PathBuf,
+    role: CorpusRole,
+}
+
+impl Corpus {
+    /// The corpus's identity: its directory's name, never its host
+    /// path.
+    fn name(&self) -> String {
+        self.dir
+            .file_name()
+            .map_or_else(|| ".".to_string(), |name| name.to_string_lossy().into_owned())
+    }
+
+    /// The directory's vector files, sorted; empty when the directory
+    /// holds no JSON files (the report records the coverage problems).
+    fn files(&self) -> Result<Vec<String>, HarnessError> {
+        let entries = fs::read_dir(&self.dir)
+            .map_err(|e| HarnessError::CorpusUnreadable(format!("{}: {e}", self.dir.display())))?;
+        let mut files: Vec<String> = entries
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| is_corpus_file(name))
+            .collect();
+        files.sort();
+        Ok(files)
+    }
 }
 
 impl ConformanceHarness {
-    /// Creates a harness over a corpus directory.
+    /// Creates a harness over one base corpus directory.
     #[must_use]
     pub fn new(corpus_dir: impl Into<PathBuf>) -> Self {
-        Self { corpus_dir: corpus_dir.into() }
+        Self { corpora: vec![Corpus { dir: corpus_dir.into(), role: CorpusRole::Base }] }
     }
 
-    /// The repository's committed corpus directory (resolved at compile
-    /// time so `cargo run` and `cargo test` find it from the crate).
+    /// Creates the kit harness: the committed base corpus plus this
+    /// crate's ADR 0024 extension corpus. This is the repository's
+    /// reference run.
+    #[must_use]
+    pub fn kit() -> Self {
+        Self::new(Self::default_corpus_dir()).with_extension(Self::adr0024_corpus_dir())
+    }
+
+    /// Adds one extension corpus directory to a harness.
+    #[must_use]
+    pub fn with_extension(mut self, corpus_dir: impl Into<PathBuf>) -> Self {
+        self.corpora.push(Corpus { dir: corpus_dir.into(), role: CorpusRole::Extension });
+        self
+    }
+
+    /// The repository's committed base corpus directory (resolved at
+    /// compile time so `cargo run` and `cargo test` find it from the
+    /// crate).
     #[must_use]
     pub fn default_corpus_dir() -> PathBuf {
         PathBuf::from(concat!(
@@ -396,17 +493,31 @@ impl ConformanceHarness {
         ))
     }
 
-    /// The corpus directory this harness executes.
+    /// The ADR 0024 extension corpus directory this crate owns
+    /// (resolved at compile time, like the base corpus directory).
+    #[must_use]
+    pub fn adr0024_corpus_dir() -> PathBuf {
+        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/vectors/terrascale.sync.v2-adr0024"))
+    }
+
+    /// The primary corpus directory this harness executes (the first
+    /// corpus it was built with).
     #[must_use]
     pub fn corpus_dir(&self) -> &Path {
-        &self.corpus_dir
+        self.corpora.first().map_or_else(|| Path::new("."), |corpus| corpus.dir.as_path())
+    }
+
+    /// Every corpus directory this harness executes, in run order.
+    #[must_use]
+    pub fn corpus_dirs(&self) -> Vec<PathBuf> {
+        self.corpora.iter().map(|corpus| corpus.dir.clone()).collect()
     }
 
     /// Runs the corpus and produces the conformance report.
     ///
     /// # Errors
     ///
-    /// Returns [`HarnessError::CorpusUnreadable`] only when the corpus
+    /// Returns [`HarnessError::CorpusUnreadable`] only when a corpus
     /// directory itself cannot be read; every content-level
     /// disagreement is a recorded failure inside the report.
     pub fn run(&self) -> Result<ConformanceReport, HarnessError> {
@@ -432,41 +543,49 @@ impl ConformanceHarness {
         &self,
         manifest: Option<&CorpusManifest>,
     ) -> Result<ConformanceReport, HarnessError> {
-        let files = self.corpus_files()?;
-        let mut vectors: Vec<VectorResult> =
-            files.iter().map(|file| corpus::interpret(file, &self.corpus_dir.join(file))).collect();
-        vectors.sort_by(|a, b| a.file.cmp(&b.file));
-
-        // Category coverage: a conforming corpus covers every required
-        // category exactly once.
+        let mut vectors: Vec<VectorResult> = Vec::new();
         let mut problems = Vec::new();
-        for category in REQUIRED_CATEGORIES {
-            let count = vectors.iter().filter(|v| v.category() == category).count();
-            match count {
-                0 => problems.push(format!("the corpus is missing the {category} category")),
-                1 => {}
-                _ => problems
-                    .push(format!("the corpus covers the {category} category {count} times")),
+        for corpus in &self.corpora {
+            let files = corpus.files()?;
+            let mut run: Vec<VectorResult> =
+                files.iter().map(|file| corpus::interpret(file, &corpus.dir.join(file))).collect();
+            run.sort_by(|a, b| a.file.cmp(&b.file));
+
+            // Category coverage: a conforming corpus covers every
+            // category its role requires exactly once, and no other.
+            for category in corpus.role.categories() {
+                let count = run.iter().filter(|v| v.category() == *category).count();
+                match count {
+                    0 => problems.push(format!(
+                        "the corpus {} is missing the {category} category",
+                        corpus.name()
+                    )),
+                    1 => {}
+                    _ => problems.push(format!(
+                        "the corpus {} covers the {category} category {count} times",
+                        corpus.name()
+                    )),
+                }
             }
-        }
-        for vector in &vectors {
-            if !REQUIRED_CATEGORIES.contains(&vector.category()) {
-                problems.push(format!(
-                    "the corpus carries an unexpected category {}",
-                    vector.category()
-                ));
+            for vector in &run {
+                if !corpus.role.categories().contains(&vector.category()) {
+                    problems.push(format!(
+                        "the corpus {} carries an unexpected category {}",
+                        corpus.name(),
+                        vector.category()
+                    ));
+                }
             }
+            vectors.extend(run);
         }
+        vectors.sort_by(|a, b| a.file.cmp(&b.file));
 
         let manifest_outcome =
             manifest.map(|manifest| self.gate_with_manifest(manifest, &mut vectors));
         Ok(ConformanceReport {
-            // The corpus identity is the directory's name — never its
-            // host path.
-            corpus: self
-                .corpus_dir
-                .file_name()
-                .map_or_else(|| ".".to_string(), |name| name.to_string_lossy().into_owned()),
+            // The corpus identity is the primary corpus directory's
+            // name — never its host path.
+            corpus: self.corpora.first().map_or_else(|| ".".to_string(), Corpus::name),
             vectors,
             problems,
             manifest: manifest_outcome,
@@ -474,19 +593,33 @@ impl ConformanceHarness {
     }
 
     /// Attaches the manifest gate to every vector result and returns
-    /// the gate's overall outcome.
+    /// the gate's overall outcome. A manifest entry names the corpus
+    /// its file belongs to; each file is gated by the entry of its own
+    /// corpus only.
     fn gate_with_manifest(
         &self,
         manifest: &CorpusManifest,
         vectors: &mut [VectorResult],
     ) -> ManifestOutcome {
         let mut problems = Vec::new();
+        let corpora: Vec<(String, &Path)> =
+            self.corpora.iter().map(|corpus| (corpus.name(), corpus.dir.as_path())).collect();
         for vector in &mut *vectors {
-            let Some(entry) = manifest.vectors().iter().find(|e| e.file() == vector.file()) else {
+            let Some(entry) = manifest.vectors().iter().find(|e| {
+                e.file() == vector.file() && corpora.iter().any(|(name, _)| *name == e.corpus())
+            }) else {
                 problems.push(format!("{}: corpus file without a manifest entry", vector.file()));
                 continue;
             };
-            let Ok(bytes) = fs::read(self.corpus_dir.join(vector.file())) else {
+            let Some((_, dir)) = corpora.iter().find(|(name, _)| *name == entry.corpus()) else {
+                problems.push(format!(
+                    "{}: its manifest entry names the corpus {} the run does not hold",
+                    vector.file(),
+                    entry.corpus()
+                ));
+                continue;
+            };
+            let Ok(bytes) = fs::read(dir.join(vector.file())) else {
                 problems.push(format!("{}: missing from the corpus", vector.file()));
                 continue;
             };
@@ -514,22 +647,6 @@ impl ConformanceHarness {
             }
         }
         ManifestOutcome { verified: problems.is_empty(), problems }
-    }
-
-    /// The corpus directory's vector files, sorted; empty when the
-    /// directory holds no JSON files (the report records the coverage
-    /// problems).
-    fn corpus_files(&self) -> Result<Vec<String>, HarnessError> {
-        let entries = fs::read_dir(&self.corpus_dir).map_err(|e| {
-            HarnessError::CorpusUnreadable(format!("{}: {e}", self.corpus_dir.display()))
-        })?;
-        let mut files: Vec<String> = entries
-            .flatten()
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| is_corpus_file(name))
-            .collect();
-        files.sort();
-        Ok(files)
     }
 }
 

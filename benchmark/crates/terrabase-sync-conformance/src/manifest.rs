@@ -1,20 +1,29 @@
 //! The corpus integrity manifest: the machine-readable digest list over
-//! the SE-04 golden-vector corpus. An SDK's CI vendors the corpus
-//! directory plus this manifest and verifies the digests before running
-//! any vector — integrity without a Rust toolchain (PD-2026-08-26-12
-//! D1: the corpus is the compatibility contract; SE-05 makes it
-//! tamper-evident).
+//! the golden-vector corpora a harness runs. An SDK's CI vendors the
+//! corpus directories plus this manifest and verifies the digests
+//! before running any vector — integrity without a Rust toolchain
+//! (PD-2026-08-26-12 D1: the corpus is the compatibility contract;
+//! SE-05 makes it tamper-evident).
+//!
+//! Schema `terrascale.sync.v2/corpus-manifest@2` extends the @1 form
+//! with one field: each entry names the corpus (directory identity)
+//! its file belongs to, so one manifest gates a multi-corpus kit run —
+//! the SE-04 base corpus plus the ADR 0024 extension corpus this crate
+//! owns. The @1 form still parses (its entries belong to the base
+//! corpus); it is never emitted.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
-use std::path::Path;
 
 use crate::is_corpus_file;
 
 use serde_json::Value;
 use serde_json::json;
 
+use crate::BASE_CORPUS_NAME;
 use crate::MANIFEST_SCHEMA;
+use crate::MANIFEST_SCHEMA_LEGACY;
 use crate::PROTOCOL;
 use crate::PROTOCOL_VERSION;
 use crate::sha256::Sha256;
@@ -40,6 +49,7 @@ fn err(reason: impl Into<String>) -> ManifestError {
 /// One manifest entry: a corpus file's identity, digest, and size.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ManifestEntry {
+    corpus: String,
     category: String,
     file: String,
     sha256: String,
@@ -47,13 +57,19 @@ pub struct ManifestEntry {
 }
 
 impl ManifestEntry {
+    /// The corpus (directory identity) the file belongs to.
+    #[must_use]
+    pub fn corpus(&self) -> &str {
+        &self.corpus
+    }
+
     /// The corpus category the file covers.
     #[must_use]
     pub fn category(&self) -> &str {
         &self.category
     }
 
-    /// The file name within the corpus directory (never a path).
+    /// The file name within its corpus directory (never a path).
     #[must_use]
     pub fn file(&self) -> &str {
         &self.file
@@ -72,7 +88,8 @@ impl ManifestEntry {
     }
 }
 
-/// The corpus manifest: every corpus file, digested.
+/// The corpus manifest: every corpus file of every gated corpus,
+/// digested.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CorpusManifest {
     schema: String,
@@ -82,42 +99,65 @@ pub struct CorpusManifest {
 }
 
 impl CorpusManifest {
-    /// Builds the manifest of a corpus directory: every `*.json` file,
-    /// digested and sized, one entry per file, sorted by file name.
+    /// Builds the manifest of corpus directories: every `*.json` file
+    /// of every directory, digested and sized, one entry per file,
+    /// sorted by corpus then file name. Each entry carries its
+    /// directory's name as the corpus identity.
     ///
     /// # Errors
     ///
-    /// Returns [`ManifestError`] when the directory cannot be read or a
-    /// file is not valid JSON carrying a string `category`.
-    pub fn build(corpus_dir: &Path) -> Result<Self, ManifestError> {
-        let entries = fs::read_dir(corpus_dir).map_err(|e| {
-            err(format!("the corpus directory {} is unreadable: {e}", corpus_dir.display()))
-        })?;
-        let mut files: Vec<String> = entries
-            .flatten()
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| is_corpus_file(name))
-            .collect();
-        files.sort();
-        let mut vectors = Vec::with_capacity(files.len());
-        for file in files {
-            let bytes = fs::read(corpus_dir.join(&file))
-                .map_err(|e| err(format!("the vector file {file} is unreadable: {e}")))?;
-            let value: Value = serde_json::from_slice(&bytes)
-                .map_err(|e| err(format!("the vector file {file} is not valid JSON: {e}")))?;
-            let category = value
-                .get("category")
-                .and_then(Value::as_str)
-                .ok_or_else(|| err(format!("the vector file {file} carries no category")))?;
-            let mut hasher = Sha256::new();
-            hasher.update(&bytes);
-            vectors.push(ManifestEntry {
-                category: category.to_string(),
-                file,
-                sha256: to_hex(&hasher.finish()),
-                bytes: bytes.len() as u64,
-            });
+    /// Returns [`ManifestError`] when a directory cannot be read, a
+    /// file is not valid JSON carrying a string `category`, or two
+    /// directories share one name (a corpus identity would be
+    /// ambiguous).
+    pub fn build(corpus_dirs: &[std::path::PathBuf]) -> Result<Self, ManifestError> {
+        let mut names = std::collections::BTreeSet::new();
+        for dir in corpus_dirs {
+            let name = dir
+                .file_name()
+                .map_or_else(|| ".".to_string(), |n| n.to_string_lossy().into_owned());
+            if !names.insert(name) {
+                return Err(err(format!(
+                    "two corpus directories share the identity {}",
+                    dir.display()
+                )));
+            }
         }
+        let mut vectors = Vec::new();
+        for dir in corpus_dirs {
+            let corpus = dir
+                .file_name()
+                .map_or_else(|| ".".to_string(), |n| n.to_string_lossy().into_owned());
+            let entries = fs::read_dir(dir).map_err(|e| {
+                err(format!("the corpus directory {} is unreadable: {e}", dir.display()))
+            })?;
+            let mut files: Vec<String> = entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| is_corpus_file(name))
+                .collect();
+            files.sort();
+            for file in files {
+                let bytes = fs::read(dir.join(&file))
+                    .map_err(|e| err(format!("the vector file {file} is unreadable: {e}")))?;
+                let value: Value = serde_json::from_slice(&bytes)
+                    .map_err(|e| err(format!("the vector file {file} is not valid JSON: {e}")))?;
+                let category = value
+                    .get("category")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| err(format!("the vector file {file} carries no category")))?;
+                let mut hasher = Sha256::new();
+                hasher.update(&bytes);
+                vectors.push(ManifestEntry {
+                    corpus: corpus.clone(),
+                    category: category.to_string(),
+                    file,
+                    sha256: to_hex(&hasher.finish()),
+                    bytes: bytes.len() as u64,
+                });
+            }
+        }
+        vectors.sort_by(|a, b| (&a.corpus, &a.file).cmp(&(&b.corpus, &b.file)));
         Ok(Self {
             schema: MANIFEST_SCHEMA.to_string(),
             protocol: PROTOCOL.to_string(),
@@ -127,7 +167,9 @@ impl CorpusManifest {
     }
 
     /// Parses a manifest, failing closed on unknown schema identities,
-    /// foreign protocols, and malformed entries.
+    /// foreign protocols, and malformed entries. Both schema @2 (the
+    /// emitted form, entries may name their corpus) and the legacy @1
+    /// form (entries belong to the base corpus) parse.
     ///
     /// # Errors
     ///
@@ -139,7 +181,7 @@ impl CorpusManifest {
             .get("schema")
             .and_then(Value::as_str)
             .ok_or_else(|| err("the manifest carries no schema identity"))?;
-        if schema != MANIFEST_SCHEMA {
+        if schema != MANIFEST_SCHEMA && schema != MANIFEST_SCHEMA_LEGACY {
             return Err(err(format!(
                 "unknown manifest schema {schema} (expected {MANIFEST_SCHEMA})"
             )));
@@ -179,6 +221,17 @@ impl CorpusManifest {
                     "the manifest entry for {category} carries a path, not a file name"
                 )));
             }
+            let corpus = match entry.get("corpus").and_then(Value::as_str) {
+                Some(name) => {
+                    if name.is_empty() || name.contains('/') || name.contains('\\') {
+                        return Err(err(format!(
+                            "the manifest entry for {file} carries a corpus path, not a corpus identity"
+                        )));
+                    }
+                    name.to_string()
+                }
+                None => BASE_CORPUS_NAME.to_string(),
+            };
             let sha256 = entry
                 .get("sha256")
                 .and_then(Value::as_str)
@@ -194,17 +247,19 @@ impl CorpusManifest {
                 err(format!("the manifest entry for {file} carries no byte count"))
             })?;
             vectors.push(ManifestEntry {
+                corpus,
                 category: category.to_string(),
                 file: file.to_string(),
                 sha256: sha256.to_string(),
                 bytes,
             });
         }
-        let mut seen_categories = vectors.iter().map(|e| e.category.clone()).collect::<Vec<_>>();
-        seen_categories.sort();
-        seen_categories.dedup();
-        if seen_categories.len() != vectors.len() {
-            return Err(err("the manifest repeats a category"));
+        let mut seen =
+            vectors.iter().map(|e| (e.corpus.clone(), e.category.clone())).collect::<Vec<_>>();
+        seen.sort();
+        seen.dedup();
+        if seen.len() != vectors.len() {
+            return Err(err("the manifest repeats a category within one corpus"));
         }
         Ok(Self {
             schema: schema.to_string(),
@@ -226,7 +281,8 @@ impl CorpusManifest {
         &self.vectors
     }
 
-    /// The manifest's canonical JSON (pretty, deterministic).
+    /// The manifest's canonical JSON (pretty, deterministic, schema
+    /// @2 — every entry names its corpus).
     ///
     /// # Panics
     ///
@@ -239,7 +295,7 @@ impl CorpusManifest {
 
     fn to_json(&self) -> Value {
         json!({
-            "schema": self.schema,
+            "schema": MANIFEST_SCHEMA,
             "protocol": self.protocol,
             "protocol_version": self.protocol_version,
             "vectors": self
@@ -247,6 +303,7 @@ impl CorpusManifest {
                 .iter()
                 .map(|entry| {
                     json!({
+                        "corpus": entry.corpus,
                         "category": entry.category,
                         "file": entry.file,
                         "sha256": entry.sha256,
@@ -257,23 +314,42 @@ impl CorpusManifest {
         })
     }
 
-    /// Verifies a corpus directory against this manifest: every
-    /// manifest entry's file must exist with the recorded digest and
-    /// size, and every corpus file must have an entry. Returns the
-    /// problems; an empty list is a verified corpus.
+    /// Verifies corpus directories against this manifest: every
+    /// manifest entry's file must exist in its named corpus with the
+    /// recorded digest and size, and every corpus file must have an
+    /// entry. Returns the problems; an empty list is a verified corpus.
     ///
     /// Problems carry file names and reasons, never corpus bytes or
     /// host paths.
     ///
     /// # Errors
     ///
-    /// Returns [`ManifestError`] only when the corpus directory itself
+    /// Returns [`ManifestError`] only when a corpus directory itself
     /// cannot be read; file-level disagreement is reported through the
     /// returned problem list.
-    pub fn verify(&self, corpus_dir: &Path) -> Result<Vec<String>, ManifestError> {
+    pub fn verify(&self, corpus_dirs: &[std::path::PathBuf]) -> Result<Vec<String>, ManifestError> {
+        let mut dirs: BTreeMap<String, &std::path::PathBuf> = BTreeMap::new();
+        for dir in corpus_dirs {
+            let name = dir
+                .file_name()
+                .map_or_else(|| ".".to_string(), |n| n.to_string_lossy().into_owned());
+            if dirs.insert(name, dir).is_some() {
+                return Err(err(format!(
+                    "two corpus directories share the identity {}",
+                    dir.display()
+                )));
+            }
+        }
         let mut problems = Vec::new();
         for entry in &self.vectors {
-            match fs::read(corpus_dir.join(&entry.file)) {
+            let Some(dir) = dirs.get(&entry.corpus) else {
+                problems.push(format!(
+                    "{}: its manifest entry names the corpus {} the run does not hold",
+                    entry.file, entry.corpus
+                ));
+                continue;
+            };
+            match fs::read(dir.join(&entry.file)) {
                 Err(_) => {
                     problems.push(format!("{}: missing from the corpus", entry.file));
                 }
@@ -297,17 +373,20 @@ impl CorpusManifest {
                 }
             }
         }
-        let listed = fs::read_dir(corpus_dir).map_err(|e| {
-            err(format!("the corpus directory {} is unreadable: {e}", corpus_dir.display()))
-        })?;
-        let present: Vec<String> = listed
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|name| is_corpus_file(name))
-            .collect();
-        for file in present {
-            if !self.vectors.iter().any(|entry| entry.file == file) {
-                problems.push(format!("{file}: corpus file without a manifest entry"));
+        for (name, dir) in &dirs {
+            let listed = fs::read_dir(dir).map_err(|e| {
+                err(format!("the corpus directory {} is unreadable: {e}", dir.display()))
+            })?;
+            let present: Vec<String> = listed
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|file| is_corpus_file(file))
+                .collect();
+            for file in present {
+                if !self.vectors.iter().any(|entry| entry.file == file) {
+                    problems
+                        .push(format!("{file}: corpus file of {name} without a manifest entry"));
+                }
             }
         }
         Ok(problems)
@@ -317,9 +396,35 @@ impl CorpusManifest {
 #[cfg(test)]
 mod tests {
     use super::CorpusManifest;
+    use crate::BASE_CORPUS_NAME;
 
     #[test]
     fn a_well_formed_manifest_parses_and_round_trips() {
+        let text = r#"{
+            "schema": "terrascale.sync.v2/corpus-manifest@2",
+            "protocol": "terrascale.sync.v2",
+            "protocol_version": 2,
+            "vectors": [
+                {
+                    "corpus": "terrascale.sync.v2",
+                    "category": "fresh-session",
+                    "file": "fresh-session.json",
+                    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "bytes": 10
+                }
+            ]
+        }"#;
+        let manifest = CorpusManifest::from_json_str(text).expect("parses");
+        assert_eq!(manifest.vectors().len(), 1);
+        assert_eq!(manifest.vectors()[0].category(), "fresh-session");
+        assert_eq!(manifest.vectors()[0].corpus(), BASE_CORPUS_NAME);
+        let reparsed =
+            CorpusManifest::from_json_str(&manifest.to_json_string()).expect("round trips");
+        assert_eq!(manifest, reparsed);
+    }
+
+    #[test]
+    fn the_legacy_schema_parses_into_base_corpus_entries() {
         let text = r#"{
             "schema": "terrascale.sync.v2/corpus-manifest@1",
             "protocol": "terrascale.sync.v2",
@@ -333,18 +438,18 @@ mod tests {
                 }
             ]
         }"#;
-        let manifest = CorpusManifest::from_json_str(text).expect("parses");
-        assert_eq!(manifest.vectors().len(), 1);
-        assert_eq!(manifest.vectors()[0].category(), "fresh-session");
-        let reparsed =
-            CorpusManifest::from_json_str(&manifest.to_json_string()).expect("round trips");
-        assert_eq!(manifest, reparsed);
+        let manifest = CorpusManifest::from_json_str(text).expect("the legacy schema parses");
+        assert_eq!(manifest.vectors()[0].corpus(), BASE_CORPUS_NAME);
+        // The legacy form parses but is never re-emitted.
+        let emitted = manifest.to_json_string();
+        assert!(emitted.contains("terrascale.sync.v2/corpus-manifest@2"));
+        assert!(!emitted.contains("terrascale.sync.v2/corpus-manifest@1"));
     }
 
     #[test]
     fn malformed_entries_fail_closed() {
         let base = r#"{
-            "schema": "terrascale.sync.v2/corpus-manifest@1",
+            "schema": "terrascale.sync.v2/corpus-manifest@2",
             "protocol": "terrascale.sync.v2",
             "protocol_version": 2,
             "vectors": ["#;
@@ -352,6 +457,9 @@ mod tests {
             r#"{ "category": "c", "file": "../escape.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "bytes": 1 }],"#,
             r#"{ "category": "c", "file": "c.json", "sha256": "short", "bytes": 1 }],"#,
             r#"{ "category": "c", "file": "c.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000" }],"#,
+            r#"{ "category": "c", "file": "c.json", "corpus": "../escape", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "bytes": 1 }],"#,
+            r#"{ "category": "c", "file": "a.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "bytes": 1 },
+                { "category": "c", "file": "b.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "bytes": 1 }],"#,
         ] {
             let text = format!("{base}{tail}}}");
             assert!(

@@ -13,14 +13,15 @@ use std::path::PathBuf;
 use serde_json::Value;
 use terrabase_sync_conformance::ConformanceHarness;
 use terrabase_sync_conformance::CorpusManifest;
+use terrabase_sync_conformance::EXTENSION_CATEGORIES;
 use terrabase_sync_conformance::REPORT_SCHEMA;
 use terrabase_sync_conformance::REQUIRED_CATEGORIES;
 use terrabase_sync_conformance::VectorResult;
 
+/// The kit reference run: the base corpus plus the ADR 0024 extension
+/// corpus.
 fn harness() -> ConformanceHarness {
-    let corpus = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../terrabase-sync-core/vectors/terrascale.sync.v2");
-    ConformanceHarness::new(corpus)
+    ConformanceHarness::kit()
 }
 
 fn committed_manifest() -> CorpusManifest {
@@ -36,7 +37,8 @@ fn the_reference_harness_passes_the_committed_corpus() {
     let report = harness().run().expect("the harness runs");
     assert!(report.passed(), "the committed corpus must pass: {:#?}", report.vectors());
     let categories: BTreeSet<&str> = report.vectors().iter().map(VectorResult::category).collect();
-    let expected: BTreeSet<&str> = REQUIRED_CATEGORIES.iter().copied().collect();
+    let expected: BTreeSet<&str> =
+        REQUIRED_CATEGORIES.iter().chain(EXTENSION_CATEGORIES.iter()).copied().collect();
     assert_eq!(categories, expected, "the run covers every corpus category exactly once");
     assert!(report.vectors().iter().all(|v| v.failures().is_empty()));
 }
