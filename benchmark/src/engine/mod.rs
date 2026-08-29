@@ -648,6 +648,18 @@ impl Engine {
         self.identity
     }
 
+    /// Mints the tenant scope bound to this Engine.
+    ///
+    /// The scope names this Engine's own identity, so only a caller
+    /// holding this Engine can mint a scope that validates against it.
+    /// The replication members (P2) and the server sessions (P4) mint
+    /// their scopes here for authenticated tenants; `TenantScope`
+    /// itself stays opaque.
+    #[must_use]
+    pub fn scope_for(&self, tenant: &TenantId) -> TenantScope {
+        TenantScope::from_parts(tenant.clone(), self.identity)
+    }
+
     /// Returns an immutable tenant-scoped read snapshot.
     ///
     /// # Errors

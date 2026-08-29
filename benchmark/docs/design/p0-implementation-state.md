@@ -167,3 +167,44 @@ Receipts: `cargo test -p terrabase-v2 --lib` 1071/1071;
 `cargo clippy -p terrabase-v2 -p terrabase-replication-core
 --all-targets --all-features --locked -- -D warnings` clean;
 `cargo fmt --all -- --check` clean. `scripts/check.sh` not run (AC-12).
+
+## 5. P2 landing 2 (2026-08-29): the composed Member
+
+The composition landed: `ComposedMember`
+(`crates/terrabase-replication-core/src/compose.rs`, a path dependency
+on the engine crate) binds one durable engine to one same-peer
+`ReplicaDoc`. Accepted writes land on both planes (`accept_put` /
+`accept_delete`: engine commit at `Synced` + own-peer CRDT op);
+`anti_entropy_with` merges the CRDTs of any two Members and reconciles
+each engine to the merged state; `visible` reads the engine's served
+body. The reconcile is idempotent per merged state — its operation
+identities derive from the document and a frontier fingerprint, so an
+unchanged frontier replays the recorded receipts and commits nothing.
+
+Five end-to-end proofs over real engines: concurrent writes accepted
+at two servers during a partition diverge visibly, then after the heal
+both engines serve the identical merged body — one deterministic
+winner, exactly one loser reconciled (§8 scenario 6 at server level);
+delete wins between servers (scenario 13); a repeated heal at an
+unchanged frontier commits nothing; a third server joins by exchanging
+with one Member only; invalid tenant text is refused typed.
+
+One public engine API was added: `Engine::scope_for(&TenantId)` mints
+the tenant scope bound to that Engine — only a caller holding the
+Engine can mint a scope that validates against it. Previously scopes
+were minted only crate-internally (`TenantScope::from_parts` stays
+`pub(crate)`).
+
+**Still open in P2** (updated): durable CRDT persistence (the
+`ReplicaDoc` is in-memory; its snapshot staging through the
+object-store tier lands with the transport wiring); reconcile's
+document enumeration tracks the Member's known set — durable
+re-enumeration after a restart needs the public tenant-read surface
+(P4); the QUIC transport carrying frontiers and deltas; read repair
+(§6); membership epochs (§7, scenario 5); `BackupAck` (P5); the
+qualification receipts for the full AC-10 list; removal of the
+superseded leader machinery.
+
+Receipts: `terrabase-replication-core` 11/11 (6 convergence + 5
+composed); `terrabase-v2 --lib` 1071/1071; clippy `-D warnings` and
+fmt clean across both packages. `scripts/check.sh` not run (AC-12).

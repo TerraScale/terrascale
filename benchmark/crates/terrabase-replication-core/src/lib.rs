@@ -36,10 +36,14 @@ use std::collections::BTreeMap;
 
 use loro::{ExportMode, Frontiers, ID, LoroDoc, LoroMap, LoroValue, VersionVector};
 
+pub mod compose;
+
+pub use compose::{ComposeError, ComposedMember, ReconcileReport};
+
 /// The root container holding one entry per document — the same shape
 /// `terrabase-sync-core` materializes, so the two planes read the same
 /// document bodies.
-const DOCS_ROOT: &str = "docs";
+pub(crate) const DOCS_ROOT: &str = "docs";
 
 /// A typed failure of the replication core. No internal error text
 /// crosses the seam: the caller learns the class, not the internals.

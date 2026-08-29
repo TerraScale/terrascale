@@ -28,3 +28,4 @@ pedantic = "warn"
 
 [dependencies]
 loro = "1.13.9"
+terrabase-v2 = { path = "../.." }
