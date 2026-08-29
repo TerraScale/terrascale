@@ -9,9 +9,14 @@ cddadfd.
 
 Everything below was verified against the working tree on 2026-08-29
 (engine repo HEAD fb7f598 — which includes the SE-11 tracer retirement
-at bafabd2 and its note at fb7f598 — and `TerraScale.Database` HEAD
-1c17026 plus one in-flight uncommitted lane — see "Honest state" before
-quoting counts).
+at bafabd2 and its note at fb7f598 — and `TerraScale.Database` at
+1c17026 plus, at writing time, one in-flight uncommitted AuthStorage
+lane; the wave-3 document-write vertical (6775ef5) and the
+`tests/TerraScale.Database.Conformance` suite (12a617f..038e1dd) landed
+after this inventory was taken — see "Honest state" and re-verify §2
+before quoting counts). Counts in this record were corrected on
+2026-08-29 after independent review (31 routes; 6 `sync.*` and 7
+`tier.*` registry operations; client coverage 31/41).
 
 ## 1. What `host/` is today
 
@@ -19,8 +24,8 @@ Four projects under `host/` (none in the Rust workspace):
 
 | Path | Contents |
 | --- | --- |
-| `host/TerraBase.Protocol/` | SE-14 TBEP client library: `TbepClient.cs` (typed methods for every registry operation plus `channel.negotiate`), `TbepChannel.cs` (one engine connection multiplexed between concurrent typed calls and unsolicited backbone notifications, with the error-routing contract), `TbepQuic.cs` (QUIC+TLS binding, ALPN `terrabase.engine.protocol/1`, test-only trust-all), `TbepRegistry.cs`/`TbepValue.cs`/`TbepWire.cs`, `Generated/TbepRegistry.g.cs`. UDS and QUIC bindings. |
-| `host/TerraBase.Api/` | ASP.NET Core loopback host (default `127.0.0.1:8420`): `TypedApi.cs` (34 routes), `EngineSupervisor.cs` (spawns/watches/restarts the engine process or attaches a socket), `BackboneHub.cs` (SSE/WebSocket projections, bounded queue depth 64 with counted surfaced drops), `AuditLog.cs` (bounded 1024-record ring), `Dto.cs`, `TerraBaseHost.cs`, `Program.cs`. |
+| `host/TerraBase.Protocol/` | SE-14 TBEP client library: `TbepClient.cs` (typed methods, split with `TbepChannel.cs`, covering 31 of the 41 registry operations — everything except `tier.explain`, `tier.run`, `tier.pause`, `tier.resume`, and the six `replication.*` operations — plus `channel.negotiate` as a channel frame), `TbepChannel.cs` (one engine connection multiplexed between concurrent typed calls and unsolicited backbone notifications, with the error-routing contract), `TbepQuic.cs` (QUIC+TLS binding, ALPN `terrabase.engine.protocol/1`, test-only trust-all), `TbepRegistry.cs`/`TbepValue.cs`/`TbepWire.cs`, `Generated/TbepRegistry.g.cs`. UDS and QUIC bindings. |
+| `host/TerraBase.Api/` | ASP.NET Core loopback host (default `127.0.0.1:8420`): `TypedApi.cs` (31 routes: 12 GET, 15 POST, 2 PUT, 2 DELETE), `EngineSupervisor.cs` (spawns/watches/restarts the engine process or attaches a socket), `BackboneHub.cs` (SSE/WebSocket projections, bounded queue depth 64 with counted surfaced drops), `AuditLog.cs` (bounded 1024-record ring), `Dto.cs`, `TerraBaseHost.cs`, `Program.cs`. |
 | `host/TerraBase.Api.Tests/` | 67 `[Test]` rows across 12 files, including real-engine rows: `RealEngineTests.cs` (8), `EngineSpineTests.cs` (6 — restart survival, version/capability negotiation, tier administration, QUIC+TLS drive, atomic batches, hard-kill resume), `SyncGoldenVectorTests.cs` (9 — SE-04 corpus), `SupervisionTests.cs` (4), plus `GateTests.cs` (10), `StreamsTests.cs` (13), `SyncSessionTests.cs` (8), `SchemaSurfaceTests.cs` (5), `EngineProbesTests.cs` (2), `ChannelBindingTests.cs` (1), `EntryPointTests.cs` (1). Harness: `ScriptedTbepEngine.cs` (981-line scripted engine), `EngineHarness.cs` (builds the real engine binary from `crates/terrabase-tbep` via a throwaway cargo project), `HostHarness.cs`, `Streams.cs`. |
 | `host/TerraBase.Protocol.Tests/` | 7 `[Test]` rows: `TbepGoldenVectorsTests.cs` (4), `TbepChannelRoutingTests.cs` (2), `TbepClientInterleavingTests.cs` (1). |
 
@@ -35,11 +40,13 @@ HTTP surface of `host/TerraBase.Api` (`TypedApi.cs` lines 46–81):
 The engine registry (`crates/terrabase-tbep/schema/tbep-registry.json`,
 identity `terrabase.engine.protocol`, registry 1.3, wire 1) defines 41
 operations and 3 notifications (`subscription_batch`,
-`trigger_notification`, `subscription_closed`). The host client exercises
-the large majority: documents, query, families, backbone, all seven sync
-operations, topology/admin, supervision, schema/migration, tier
-administration, and channel negotiation (a channel frame, not an
-operation).
+`trigger_notification`, `subscription_closed`). The host client
+implements 31 of the 41 operations: documents, query, families,
+backbone, all six `sync.*` operations, topology/admin, supervision,
+schema/migration, and three of the seven `tier.*` operations
+(`configure`, `inspect`, `dry_run`); `tier.explain|run|pause|resume` and
+the six `replication.*` operations have no host client code. Channel
+negotiation is a channel frame, not an operation.
 
 Trust model (by design, and explicitly slated for removal): there is no
 authentication; callers present `X-TB-Principal`/`X-TB-Tenant` headers
@@ -113,9 +120,9 @@ landed; do not cite them as committed capability.
 | `query.execute`/`query.cancel` | Routes + client ops | None | Full gap |
 | `family.read`/`family.write` | Routes + client ops | None | Full gap |
 | Backbone subscriptions + SSE/WS streams | `backbone.subscribe|acknowledge|unsubscribe`, two stream projections, bounded queue with counted drops, checkpoint resume | None | Full gap |
-| Sync sessions (`sync.*`, 7 ops) | Full session lifecycle routes; checkpoint refusal/resync semantics; 9 SE-04 golden vectors replayed end to end against the real engine | None | Full gap (largest single gap) |
+| Sync sessions (`sync.*`, 6 ops) | Full session lifecycle routes (7 HTTP routes); checkpoint refusal/resync semantics; 9 SE-04 golden vectors replayed end to end against the real engine | None | Full gap (largest single gap) |
 | Schema/migrations (6 ops) | Routes + client ops (SM-04) | None | Full gap |
-| Tier administration (8 ops) | Client ops + real-engine tier rows | None | Full gap |
+| Tier administration (7 registry ops; client implements 3) | Client ops for `configure`/`inspect`/`dry_run` + real-engine tier rows | None | Full gap |
 | Topology/admin/supervision | `topology.read`, `admin.status`, `supervision.health|shutdown`, `EngineSupervisor` process lifecycle | None | Deliberate non-goal for the product gateway (see §4) |
 | Local gate / principal headers | Trusted `X-TB-Principal`/`X-TB-Tenant` gate (no auth, by design) | None — correct; the gateway instead has grant verification (unwired) and OIDC integration pending | Not a migration item; the header gate must die with `host/` |
 | Idempotency-key HTTP discipline | Required on every mutation route | Required on auth-storage mutations only (in-flight) | Extends with each mutation op |
@@ -238,6 +245,16 @@ Machine-checked dependencies (deletion breaks these silently if missed):
 - `.forgejo/workflows/ci.yml:59–66` — builds/tests both host projects.
 - `cli/TerraBase.Cli/TerraBase.Cli.csproj:32` — project reference; the
   CLI does not build without it.
+- `cli/TerraBase.Cli.Tests/TerraBase.Cli.Tests.csproj:32,37` —
+  ProjectReferences to `host/TerraBase.Api.csproj` and
+  `host/TerraBase.Api.Tests.csproj`; the CLI test project (built and run
+  by engine CI) cannot compile after deletion.
+- `studio/scripts/real-host-probe.mjs` (~157 `buildHost()`, ~358 spawns
+  `TerraBase.Api.dll`) — functionally builds and boots the host;
+  `studio/scripts/fixture-server.mjs:602` and
+  `studio/contract/terrabase-api.contract.json:861` name the host's
+  `/v1/streams` surface; `studio/tests/changes-subscription.test.mjs:4,326`
+  cites `TypedApi.StreamSseAsync` and `BackboneHub.cs`.
 
 Documentation and evidence citations:
 
@@ -293,7 +310,10 @@ Known inconsistencies the deletion packet must not trust:
   across the engine repo (minus `target/`, `host/`) — the §7 citation
   list, re-run after the working tree fast-forwarded to fb7f598 (SE-11
   tracer retirement) so the tracer citations reflect the post-deletion
-  state.
+  state. Correction pass (post-review) extended the census with
+  `--include=*.csproj --include=*.mjs --include=*.json`, which surfaced
+  the CLI test project references and the `studio/` citations now listed
+  in §7; the original filter would have missed them.
 - `grep -rn "UsageEndpoints.Map\|GrantVerifier"` across
   `TerraScale.Database/src` — confirmed usage route and grant verifier
   are unwired.
