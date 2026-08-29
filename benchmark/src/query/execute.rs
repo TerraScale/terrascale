@@ -1,13 +1,14 @@
 //! The private query execution path.
 //!
 //! Execution validates tenant, snapshot, and namespace bindings before any
-//! data access, evaluates the staleness policy against the index catalog,
-//! then scans the immutable snapshot view, orders, projects, and pages the
-//! matches with bounded deadline and cancellation checkpoints. It never
-//! mutates a document, a snapshot, or an index, and it publishes nothing.
+//! data access, evaluates the staleness policy against the index catalog, then
+//! uses a bounded exact-key posting list when one safely covers the snapshot
+//! (otherwise scanning the immutable snapshot view), orders, projects, and
+//! pages the matches with bounded deadline and cancellation checkpoints. It
+//! never mutates a document, a snapshot, or an index, and it publishes nothing.
 
-use std::sync::Arc;
 use std::time::Instant;
+use std::{collections::BTreeMap, collections::BTreeSet, sync::Arc};
 
 use super::spec::StalenessPolicy;
 use super::{
@@ -17,8 +18,10 @@ use super::{
 };
 use crate::{
     engine::Engine,
-    index::IndexCatalog,
-    types::{Cancellation, Deadline, Document, DocumentValue, ReadSnapshot, TenantScope},
+    index::{IndexCatalog, IndexLookupBounds, IndexLookupError},
+    types::{
+        Cancellation, Deadline, Document, DocumentId, DocumentValue, ReadSnapshot, TenantScope,
+    },
 };
 
 /// How many scanned documents pass between two bounded checkpoints.
@@ -104,14 +107,12 @@ pub(crate) fn select_indexes(
 
 /// Executes one compiled plan against one immutable snapshot.
 ///
-/// A dynamic plan — one whose staleness policy names no index — also runs
-/// one optimizer pass against the engine-owned catalog on its valid, served
-/// execution: the pass selects or creates the serving index, records the
-/// selection, and fails closed on its guards, in which case the scanned
-/// answer is discarded and the query refuses rather than silently scanning
-/// without its index. The pass never changes the plan's rows, ordering, or
-/// paging, which the bounded snapshot scan below produces either way. A plan
-/// that names an index bypasses the optimizer entirely (AX-26).
+/// A dynamic plan — one whose staleness policy names no index — runs one
+/// optimizer pass before data execution: the pass selects or creates the
+/// serving index, records the selection, and fails closed on its guards. The
+/// selected segment is used only for the exact-key shape it can prove safe;
+/// all other shapes use the canonical bounded scan. A plan that names an index
+/// bypasses the optimizer entirely (AX-26).
 pub(crate) fn execute(
     engine: &Engine,
     indexes: &Arc<IndexCatalog>,
@@ -125,17 +126,25 @@ pub(crate) fn execute(
     if plan.model().source().kind() != super::spec::QuerySourceKind::Collection {
         return execute_with_view(engine, indexes.as_ref(), plan, snapshot);
     }
-    if plan.model().staleness().indexes().is_empty() {
-        // Execution validates the plan's bindings — tenant claim, namespace
-        // tenants, the snapshot's Engine identity inside the snapshot view —
-        // and the bounded scan only completes for a valid, served query, so
-        // the optimizer pass below never sees an unvalidated snapshot.
-        let result = execute_with_view(engine, indexes.as_ref(), plan, snapshot)?;
-        super::optimizer::run(engine, indexes.as_ref(), plan, snapshot)?;
-        Ok(result)
+    let selected = if plan.model().staleness().indexes().is_empty() {
+        // The optimizer may build an index by reading this snapshot, so reject
+        // forged engine/tenant bindings before it can perform any catalog work.
+        validate_bindings(engine, plan.model(), snapshot)?;
+        super::optimizer::run(engine, indexes.as_ref(), plan, snapshot)?
     } else {
-        execute_with_view(engine, indexes.as_ref(), plan, snapshot)
-    }
+        // Explicitly named plans bypass optimizer selection (AX-26), but may
+        // still use their named segment when the execution safety checks below
+        // prove that it exactly covers this snapshot.
+        plan.model().staleness().indexes().first().cloned()
+    };
+    execute_with_index(
+        engine,
+        indexes.as_ref(),
+        plan,
+        snapshot,
+        Some(indexes.as_ref()),
+        selected.as_ref(),
+    )
 }
 
 /// Executes one plan against one supplied index-generation view.
@@ -149,6 +158,22 @@ pub(crate) fn execute_with_view(
     view: &dyn GenerationView,
     plan: &super::QueryPlan,
     snapshot: &ReadSnapshot,
+) -> Result<QueryResult, QueryError> {
+    execute_with_index(engine, view, plan, snapshot, None, None)
+}
+
+/// Executes one plan, optionally narrowing the document candidates through a
+/// catalog segment selected by the optimizer. The generic `GenerationView`
+/// remains the test seam; only the production catalog can provide segment
+/// contents, so forged generation views continue to exercise the original
+/// scan path.
+fn execute_with_index(
+    engine: &Engine,
+    view: &dyn GenerationView,
+    plan: &super::QueryPlan,
+    snapshot: &ReadSnapshot,
+    catalog: Option<&IndexCatalog>,
+    selected: Option<&super::IndexNamespace>,
 ) -> Result<QueryResult, QueryError> {
     // The diagnostic window: entry of the execution path to the construction
     // of the result. It is an observation of this one call, never a
@@ -181,33 +206,21 @@ pub(crate) fn execute_with_view(
     let documents =
         engine.snapshot_documents(&scope, snapshot).map_err(|error| map_engine_error(&error))?;
 
-    // Index-less scan: the W3-2 tracer base path. The document list is
-    // materialized, so no Engine or storage lock is held while scanning,
-    // ordering, projecting, or paging. The scan accounting counts the
-    // candidates of the source collection — the FILTER accounting of V1's
-    // statistics — and saturates, so no count ever wraps.
-    let mut matched: Vec<&Document> = Vec::new();
-    let mut scanned: u64 = 0;
-    let mut skipped: u64 = 0;
-    let Some(source_collection) = query.source().collection() else {
-        // The family branch above returns before the scan; a model without
-        // a collection cannot reach this point.
-        return Err(QueryError::InvalidSpec);
+    // The document list is materialized, so no Engine or storage lock is held
+    // while candidate filtering, ordering, projecting, or paging. When an
+    // index read above succeeded, only its bounded candidate IDs are filtered;
+    // otherwise this is the complete source-collection scan. The accounting
+    // counts candidates — the FILTER accounting of V1's statistics — and
+    // saturates, so no count ever wraps.
+    let indexed_read = match (selected, catalog) {
+        (Some(namespace), Some(catalog)) if view.available_generation(namespace).is_some() => {
+            indexed_candidates(catalog, namespace, query, snapshot)?
+        }
+        _ => None,
     };
-    for (position, document) in documents.iter().enumerate() {
-        if position % CHECKPOINT_INTERVAL == 0 {
-            check_bounds(query.deadline(), query.cancellation_signal())?;
-        }
-        if document.collection() != source_collection {
-            continue;
-        }
-        scanned = scanned.saturating_add(1);
-        if model::matches(query.predicate(), document) {
-            matched.push(document);
-        } else {
-            skipped = skipped.saturating_add(1);
-        }
-    }
+    let indexed_generation = indexed_read.as_ref().map(|read| read.generation);
+    let indexed_ids = indexed_read.map(|read| read.ids.into_iter().collect::<BTreeSet<_>>());
+    let (matched, scanned, skipped) = collect_matches(query, &documents, indexed_ids.as_ref())?;
     // Reference resolution for the loads clause: one bounded id lookup per
     // load, served from the same materialized snapshot view. The map spans
     // every collection of the tenant, because a reference is an id, not a
@@ -243,14 +256,19 @@ pub(crate) fn execute_with_view(
         query.cancellation_signal(),
     )?;
 
-    let index_generation = staleness
-        .observations()
-        .first()
-        .filter(|observation| observation.used().is_some())
-        .and_then(|observation| {
-            observation
-                .used()
-                .map(|used| IndexGenerationRef::new(observation.namespace().clone(), used))
+    let index_generation = selected
+        .zip(indexed_generation)
+        .map(|(namespace, generation)| IndexGenerationRef::new(namespace.clone(), generation))
+        .or_else(|| {
+            staleness
+                .observations()
+                .first()
+                .filter(|observation| observation.used().is_some())
+                .and_then(|observation| {
+                    observation
+                        .used()
+                        .map(|used| IndexGenerationRef::new(observation.namespace().clone(), used))
+                })
         });
     let statistics = QueryStatistics::new(
         matched_count,
@@ -269,6 +287,169 @@ pub(crate) fn execute_with_view(
         includes,
         statistics,
     ))
+}
+
+/// Performs the binding checks needed before the optimizer can build or
+/// select an index. The full snapshot view repeats these checks, but doing the
+/// identity checks here keeps a forged request from mutating the catalog.
+fn validate_bindings(
+    engine: &Engine,
+    query: &NormalizedQuery,
+    snapshot: &ReadSnapshot,
+) -> Result<(), QueryError> {
+    if snapshot.engine_identity() != engine.identity() {
+        return Err(QueryError::SnapshotEngineMismatch);
+    }
+    if query.tenant_claim().is_some_and(|claim| claim != snapshot.tenant()) {
+        return Err(QueryError::SnapshotTenantMismatch);
+    }
+    if query.staleness().indexes().iter().any(|namespace| namespace.tenant() != snapshot.tenant()) {
+        return Err(QueryError::TenantMismatch);
+    }
+    Ok(())
+}
+
+/// Reads an index's complete exact-key posting list when the segment can
+/// safely answer this query. `None` is the deterministic fallback for a
+/// predicate the segment cannot prove complete (unsupported operators,
+/// missing equality values, another collection, or a generation that does
+/// not cover exactly this snapshot). A bounded refusal is an error: silently
+/// turning an admitted index read into an unbounded scan would violate the
+/// resource contract.
+fn indexed_candidates(
+    catalog: &IndexCatalog,
+    namespace: &super::IndexNamespace,
+    query: &NormalizedQuery,
+    snapshot: &ReadSnapshot,
+) -> Result<Option<IndexedCandidates>, QueryError> {
+    if namespace.tenant() != snapshot.tenant() {
+        return Err(QueryError::TenantMismatch);
+    }
+    let Some(source_collection) = query.source().collection() else {
+        return Ok(None);
+    };
+    let Some(segment) = catalog.segment(namespace) else {
+        return Ok(None);
+    };
+    // A segment covering an older or newer MVCC cut cannot be used: either
+    // it misses documents visible to the snapshot or it includes future ones.
+    if segment.collection() != Some(source_collection)
+        || segment.covered_sequence() != snapshot.sequence().get()
+    {
+        return Ok(None);
+    }
+    let Some(key) = exact_index_key(query, segment.fields()) else {
+        return Ok(None);
+    };
+    let bounds = IndexLookupBounds::new(MAX_INDEX_READ_ROWS, MAX_INDEX_READ_BYTES);
+    let result = segment.lookup(&key, bounds).map_err(map_lookup_error)?;
+    Ok(Some(IndexedCandidates {
+        ids: result.rows().iter().map(|row| row.document_id().clone()).collect(),
+        generation: ObservedGeneration::new(
+            result.identity().epoch(),
+            result.identity().generation(),
+        ),
+    }))
+}
+
+/// The complete bounded posting read and the generation that produced it.
+/// Keeping the identity beside the IDs means a concurrent catalog replacement
+/// cannot make result metadata claim a different segment than the one read.
+struct IndexedCandidates {
+    ids: Vec<DocumentId>,
+    generation: ObservedGeneration,
+}
+
+/// Bounded resource limits for one complete index posting list. These limits
+/// are deliberately independent of the result page limit: matched counts and
+/// offsets require the complete candidate set, not only the returned page.
+const MAX_INDEX_READ_ROWS: usize = 65_536;
+const MAX_INDEX_READ_BYTES: usize = 4 * 1024 * 1024;
+
+fn map_lookup_error(error: IndexLookupError) -> QueryError {
+    match error {
+        // The index seam keeps the precise row/byte refusal typed. The query
+        // public error vocabulary intentionally remains stable, so both
+        // bounded refusals surface as the existing fail-closed readiness
+        // error rather than permitting a partial or unbounded fallback.
+        IndexLookupError::RowLimitExceeded { .. } | IndexLookupError::ByteLimitExceeded { .. } => {
+            QueryError::IndexNotReady
+        }
+    }
+}
+
+/// Builds the exact key shape emitted by the index builder. Only a conjunction
+/// of one scalar equality per indexed field is admitted; every other query
+/// falls back to the predicate evaluator, preserving its richer semantics.
+fn exact_index_key(query: &NormalizedQuery, fields: &[String]) -> Option<String> {
+    let mut equals: BTreeMap<&str, &DocumentValue> = BTreeMap::new();
+    for condition in query.predicate().conditions() {
+        let super::QueryCondition::Equals { field, value } = condition else {
+            return None;
+        };
+        if equals.insert(field.as_str(), value).is_some() {
+            return None;
+        }
+    }
+    if equals.len() != fields.len()
+        || fields.iter().any(|field| !equals.contains_key(field.as_str()))
+    {
+        return None;
+    }
+    fields
+        .iter()
+        .map(|field| index_value_key(equals[field.as_str()]))
+        .collect::<Option<Vec<_>>>()
+        .map(|keys| keys.join("\u{1f}"))
+}
+
+/// Mirrors the index builder's scalar key encoding. Arrays and objects are
+/// intentionally excluded because the current index segment does not flatten
+/// or recursively index them.
+fn index_value_key(value: &DocumentValue) -> Option<String> {
+    match value {
+        DocumentValue::Null => Some("null".to_owned()),
+        DocumentValue::Boolean(value) => Some(format!("boolean:{value}")),
+        DocumentValue::Integer(value) => Some(format!("integer:{value}")),
+        DocumentValue::Number(value) if value.is_finite() => Some(format!("number:{value}")),
+        DocumentValue::String(value) => Some(format!("string:{value}")),
+        DocumentValue::Number(_) | DocumentValue::Array(_) | DocumentValue::Object(_) => None,
+    }
+}
+
+/// Evaluates the predicate against either the complete source collection or
+/// the bounded candidate IDs supplied by an index. Candidates remain
+/// re-checked by the canonical evaluator so an index can safely provide a
+/// superset (for example, when key delimiters collide) without changing
+/// query semantics.
+fn collect_matches<'documents>(
+    query: &NormalizedQuery,
+    documents: &'documents [Document],
+    indexed_ids: Option<&BTreeSet<DocumentId>>,
+) -> Result<(Vec<&'documents Document>, u64, u64), QueryError> {
+    let Some(source_collection) = query.source().collection() else {
+        return Err(QueryError::InvalidSpec);
+    };
+    let mut matched: Vec<&'documents Document> = Vec::new();
+    let mut scanned: u64 = 0;
+    let mut skipped: u64 = 0;
+    for (position, document) in documents.iter().enumerate() {
+        if position % CHECKPOINT_INTERVAL == 0 {
+            check_bounds(query.deadline(), query.cancellation_signal())?;
+        }
+        if document.collection() != source_collection
+            || indexed_ids.is_some_and(|ids| !ids.contains(document.id()))
+        {
+            continue;
+        }
+        scanned = scanned.saturating_add(1);
+        if model::matches(query.predicate(), document) {
+            matched.push(document);
+        } else {
+            skipped = skipped.saturating_add(1);
+        }
+    }
+    Ok((matched, scanned, skipped))
 }
 
 /// Sorts nothing and reads no data: this is the bounded materialization step

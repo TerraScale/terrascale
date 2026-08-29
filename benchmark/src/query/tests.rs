@@ -497,9 +497,81 @@ fn query_store_compiles_and_executes_against_supplied_snapshot() {
     assert_eq!(result.matched(), 1);
     assert_eq!(result.ordering().keys(), QueryOrdering::default().keys());
     assert!(result.staleness().observations().is_empty());
-    assert_eq!(result.index_generation(), None, "an index-less query reports no generation");
+    assert_eq!(
+        result.index_generation().map(|reference| reference.generation()),
+        Some(ObservedGeneration::new(1, 1)),
+        "the exact equality query is served by its automatic index"
+    );
+    assert_eq!(result.statistics().scanned(), 1, "the index narrows candidates before filtering");
     let row = &result.rows()[0];
     assert_eq!(row.projected(), [("name".to_owned(), DocumentValue::String("ada".to_owned()))]);
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn automatic_index_reads_are_collection_scoped_and_fall_back_for_an_uncovered_snapshot() {
+    let (dir, engine) = open_engine("indexed-scope");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("user", "users", &[("name", DocumentValue::String("ada".into()))]),
+            object_document("city", "cities", &[("name", DocumentValue::String("ada".into()))]),
+            object_document("other", "users", &[("name", DocumentValue::String("ben".into()))]),
+        ],
+    );
+    let store = engine.queries();
+    let query = spec(
+        "tenant-a",
+        "users",
+        predicate(vec![QueryCondition::Equals {
+            field: "name".to_owned(),
+            value: DocumentValue::String("ada".to_owned()),
+        }]),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(0, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+    );
+    let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let indexed = store.execute(&plan, &snapshot).expect("indexed execution");
+    assert_eq!(row_ids(&indexed), ["user"]);
+    assert_eq!(
+        indexed.statistics().scanned(),
+        1,
+        "cities and non-matching users are not candidates"
+    );
+    assert!(indexed.index_generation().is_some(), "the automatic segment served the lookup");
+
+    // A later commit makes the published segment incomplete for the new cut.
+    // The executor must scan deterministically rather than omit the new match.
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-2",
+        vec![object_document(
+            "new-user",
+            "users",
+            &[("name", DocumentValue::String("ada".into()))],
+        )],
+    );
+    let newer = engine.read_snapshot(&tenant_scope).expect("new snapshot");
+    let fallback = store.execute(&plan, &newer).expect("bounded fallback execution");
+    assert_eq!(row_ids(&fallback), ["new-user", "user"]);
+    assert_eq!(
+        fallback.statistics().scanned(),
+        3,
+        "an uncovered segment falls back to the full collection scan"
+    );
+    assert_eq!(
+        fallback.index_generation(),
+        None,
+        "a fallback scan does not claim an index generation"
+    );
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -93,9 +93,10 @@
 //!
 //! # Not claimed
 //!
-//! Execution remains the W3-2 bounded snapshot scan: no query is narrowed or
-//! ordered by index data, so this packet makes no performance claim of any
-//! kind (D-6; receipts belong to IX-04).
+//! Execution remains a bounded snapshot materialization: safely supported
+//! scalar equality predicates may narrow candidates through the selected
+//! segment, while all other predicates use the canonical scan. This packet
+//! makes no performance claim of any kind (D-6; receipts belong to IX-04).
 
 use std::sync::Arc;
 
@@ -511,7 +512,7 @@ pub enum SelectionOutcome {
         kind: IndexKind,
     },
     /// The query created an auto index. The triggering query executed
-    /// unindexed: the bounded, recorded first-query behavior.
+    /// The initial build outcome recorded for the triggering query.
     CreatedAutoIndex {
         /// The deterministic name the shape maps to.
         name: String,
@@ -900,13 +901,11 @@ fn demand_field(fields: &mut Vec<IndexField>, name: &str, capability: IndexCapab
 
 /// Runs one optimizer pass for a dynamic plan and records its selection.
 ///
-/// The pass runs on a valid, served execution: the caller executed the plan
-/// first, so the plan's bindings — the tenant claim, the namespace tenants,
-/// and the snapshot's Engine identity inside the snapshot view — already
-/// held, and the pass re-checks the execution bounds at its own bounded
-/// checkpoint before it creates anything. A fail-closed refusal discards the
-/// served answer upstream: the query errors rather than silently scanning
-/// without its index. The pass never changes the query's result.
+/// The pass runs before data execution after the caller's binding checks, and
+/// re-checks the execution bounds at its own bounded checkpoint before it
+/// creates anything. A fail-closed refusal prevents a silent unbounded scan;
+/// the selected segment is still subject to the executor's exact-key and
+/// snapshot-coverage checks. The pass never changes the query's result.
 ///
 /// One lifecycle maintenance pass runs at the head (IX-03): selection
 /// decides against post-maintenance truth, and one public-seam query drives
@@ -918,7 +917,7 @@ pub(crate) fn run(
     catalog: &IndexCatalog,
     plan: &QueryPlan,
     snapshot: &ReadSnapshot,
-) -> Result<(), QueryError> {
+) -> Result<Option<IndexNamespace>, QueryError> {
     let query = plan.model();
     super::execute::check_bounds(query.deadline(), query.cancellation_signal())?;
     lifecycle::maintain(engine, catalog, snapshot.engine_identity());
@@ -928,7 +927,7 @@ pub(crate) fn run(
 
     // The pure collection scan stays index-free (AX-1).
     if demand.fields.is_empty() {
-        catalog.record_selection(IndexSelectionRecord::new(
+        let record = IndexSelectionRecord::new(
             tenant,
             demand.collection,
             demand.fields,
@@ -937,8 +936,9 @@ pub(crate) fn run(
             SelectionOutcome::CollectionScan,
             false,
             None,
-        ));
-        return Ok(());
+        );
+        catalog.record_selection(record);
+        return Ok(None);
     }
 
     let shape = demand.shape_key(&tenant);
@@ -947,11 +947,25 @@ pub(crate) fn run(
         if let Some(record) =
             select_once(engine, catalog, &tenant, &demand, &shape, snapshot, final_attempt)?
         {
+            let serving = serving_namespace(&record);
             catalog.record_selection(record);
-            return Ok(());
+            return Ok(serving);
         }
     }
-    Ok(()) // unreachable in practice: the final attempt always records
+    Ok(None) // unreachable in practice: the final attempt always records
+}
+
+/// Extracts the selected namespace from one recorded outcome. A created auto
+/// index is immediately usable when its bounded initial build published a
+/// segment; callers still verify coverage and predicate support before use.
+fn serving_namespace(record: &IndexSelectionRecord) -> Option<IndexNamespace> {
+    match record.outcome() {
+        SelectionOutcome::ChosenIndex { name, .. }
+        | SelectionOutcome::CreatedAutoIndex { name, .. } => {
+            IndexNamespace::try_new(record.tenant().clone(), name).ok()
+        }
+        SelectionOutcome::CollectionScan | SelectionOutcome::CreationRefused { .. } => None,
+    }
 }
 
 /// Runs one selection attempt and returns its record, or `None` when the

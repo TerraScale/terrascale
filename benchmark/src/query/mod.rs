@@ -15,12 +15,13 @@
 //! exactly as they were. The decision record is
 //! `docs/query/gapq19-family-sources.md`.
 //!
-//! W3-2 proves the seam; it does not claim the V1 query matrix. Execution is
-//! an index-less full scan of the snapshot view, the private index catalog
-//! keeps in-memory segments, and every query parity row stays unresolved
-//! until its parity test and Proof ID exist. The design record with the
-//! supported grammar, per-row coverage notes, limits, and non-claims is
-//! `docs/query/w3-query-index.md`.
+//! W3-2 proves the seam; it does not claim the V1 query matrix. Execution uses
+//! bounded exact-key postings for the safely supported scalar equality shape
+//! and deterministically falls back to a snapshot scan for other predicates;
+//! the private index catalog keeps in-memory segments. Every query parity row
+//! stays unresolved until its parity test and Proof ID exist. The design
+//! record with the supported grammar, per-row coverage notes, limits, and
+//! non-claims is `docs/query/w3-query-index.md`.
 
 mod analyzer;
 mod execute;
@@ -153,7 +154,9 @@ pub enum QueryError {
     /// epoch, and the policy is strict. The optimizer's fail-closed refusals
     /// surface here too: an unmatched dynamic query when automatic creation
     /// is disabled, or a creation refused by the identity guard — the query
-    /// fails rather than silently scanning without its index.
+    /// fails rather than silently scanning without its index. A bounded
+    /// posting-list row or byte refusal also uses this fail-closed error so a
+    /// partial index result is never returned.
     IndexNotReady,
     /// The request deadline expired.
     Deadline,

@@ -110,11 +110,10 @@ impl StaleIndexObservation {
 
     /// Returns the generation execution accepted for the namespace.
     ///
-    /// This is the generation the staleness gate let through, not a claim
-    /// that index data served the query: W3-2 execution is index-less, and no
-    /// segment content is consulted. Under an allow-stale policy the accepted
-    /// generation may be older than, absent from, or from a different epoch
-    /// than the snapshot's observation.
+    /// This is the generation the staleness gate let through. Under an
+    /// allow-stale policy it may be older than, absent from, or from a
+    /// different epoch than the snapshot's observation; indexed execution
+    /// additionally requires an exact snapshot coverage check.
     #[must_use]
     pub const fn used(&self) -> Option<ObservedGeneration> {
         self.used
@@ -168,10 +167,10 @@ impl StalenessReport {
 /// The namespace/epoch/generation of the index a query used.
 ///
 /// This is the primary generation of the query: the generation the staleness
-/// gate accepted for the first namespace the plan required. It records which
-/// generation the gate allowed through, not which segment served the query —
-/// W3-2 execution is index-less and consults no index data. An index-less
-/// query reports `None`.
+/// gate accepted for the first namespace the plan required, or the selected
+/// automatic-index generation for a dynamic plan. When a segment serves the
+/// query, this identifies the generation whose bounded postings supplied its
+/// candidates; otherwise it records only the named-plan staleness gate.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndexGenerationRef {
     namespace: IndexNamespace,
@@ -453,9 +452,10 @@ impl QueryResult {
         &self.staleness
     }
 
-    /// Returns the generation the staleness gate accepted for this query, or
-    /// `None` for an index-less execution. The value names the accepted
-    /// generation; it does not claim index data served the query.
+    /// Returns the generation used by this query, or `None` when no index was
+    /// selected. For indexed execution the value names the bounded segment
+    /// that supplied candidates; for a named plan it may instead describe the
+    /// staleness gate when execution fell back to a scan.
     #[must_use]
     pub const fn index_generation(&self) -> Option<&IndexGenerationRef> {
         self.index_generation.as_ref()
