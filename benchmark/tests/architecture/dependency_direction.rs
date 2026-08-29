@@ -45,16 +45,17 @@ const LAYERS: &[(&str, u32)] = &[
 /// review note; new members may join the workspace freely but their first
 /// internal edge must be added to this list with the layer check satisfied.
 ///
-/// Review note (2026-08-29): the `terrabase-replication-core` edges onto
-/// `terrabase-causal` and `terrabase-crdt` pre-register the in-flight
-/// de-Loro rewiring observed in the working tree of the concurrent engine
-/// lane (its manifest replaces `loro` with the native foundational crates).
-/// Both edges point strictly down the frozen layer order, and GOAL.md
+/// Review note (2026-08-29): the `terrabase-sync-core` and
+/// `terrabase-replication-core` edges onto `terrabase-causal` and
+/// `terrabase-crdt` record the landed native causal migrations (their
+/// manifests replaced `loro` with the foundational crates). All four edges
+/// point strictly down the frozen layer order, and GOAL.md
 /// (AC-3, "No product crate or supported codec depends on Loro") is the
-/// accepting record for that transition. The entries are dormant until the
-/// lane lands its manifest.
+/// accepting record for that transition.
 const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-crdt", "terrabase-causal"),
+    ("terrabase-sync-core", "terrabase-causal"),
+    ("terrabase-sync-core", "terrabase-crdt"),
     ("terrabase-sync-conformance", "terrabase-sync-core"),
     ("terrabase-replication-core", "terrabase-causal"),
     ("terrabase-replication-core", "terrabase-crdt"),

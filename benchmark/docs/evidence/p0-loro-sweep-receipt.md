@@ -147,15 +147,12 @@ Run against the working tree at `7dde68e` plus this packet's edits
 
 ### Honestly remaining
 
-1. `tests/architecture/forbidden_imports.rs` still scans
+1. `tests/architecture/forbidden_imports.rs` now scans
    `LORO_FREE_ROOTS = ["src", "crates/terrabase-causal/src",
-   "crates/terrabase-crdt/src"]`; with the sweep landed, the
-   gate-owning lane can add `crates/terrabase-sync-core/src` and
-   `crates/terrabase-replication-core/src` — its own review note says
-   they join "when those land". The same lane can un-dorm the
-   pre-registered edges in `dependency_direction.rs` (its note at
-   lines 48-55). Not edited here: those files are outside this
-   packet's named paths.
+   "crates/terrabase-crdt/src", `"crates/terrabase-sync-core/src"`,
+   `"crates/terrabase-replication-core/src"`] so the completed sweep is
+   continuously enforced. The dependency-direction review note likewise
+   records the native edges as landed rather than dormant.
 2. `TerraScale.Database` must re-vendor the regenerated
    `TbepRegistry.g.cs` — resolved during this close-out window:
    that repository's `1c17026` ("Regenerate native TBEP codec

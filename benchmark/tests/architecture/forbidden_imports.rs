@@ -18,11 +18,9 @@
 //!    and audited record names the exact boundary").
 //! 4. Every workspace crate denies unsafe code by lint or attribute, with
 //!    any gap recorded in the reviewed list below.
-//! 5. The engine core and the native codecs are Loro-free (AGENTS.md
+//! 5. The engine core, native codecs, sync core, and replication core are Loro-free (AGENTS.md
 //!    'Replication and sync rules' and GOAL.md AC-3: "No product crate or
-//!    supported codec depends on Loro"). `terrabase-sync-core` and
-//!    `terrabase-replication-core` still carry their scheduled Loro sweep;
-//!    they join the scanned roots when that lane lands, as a review note.
+//!    supported codec depends on Loro").
 //!
 //! Kept honest: feature-specific branches inside stable core dispatch and
 //! public-module-surface drift are not mechanically detectable by this scan
@@ -256,12 +254,15 @@ fn unsafe_denial_lints_cover_workspace_crates() {
     }
 }
 
-/// The scanned roots of the Loro-free rule: the engine core and the native
-/// codecs. `terrabase-sync-core` and `terrabase-replication-core` remain
-/// under their scheduled de-Loro lanes and are added with a review note
-/// when those land.
-const LORO_FREE_ROOTS: &[&str] =
-    &["src", "crates/terrabase-causal/src", "crates/terrabase-crdt/src"];
+/// The scanned roots of the Loro-free rule. Sync and replication joined this
+/// gate after their native causal migration landed on 2026-08-29.
+const LORO_FREE_ROOTS: &[&str] = &[
+    "src",
+    "crates/terrabase-causal/src",
+    "crates/terrabase-crdt/src",
+    "crates/terrabase-sync-core/src",
+    "crates/terrabase-replication-core/src",
+];
 
 #[test]
 fn engine_core_and_native_codecs_are_loro_free() {
@@ -278,7 +279,7 @@ fn engine_core_and_native_codecs_are_loro_free() {
                     && (hit + 4 >= bytes.len() || !is_ident_byte(bytes[hit + 4]));
                 assert!(
                     !boundary_ok,
-                    "{} references Loro at byte {hit}; the engine core and native codecs must \
+                    "{} references Loro at byte {hit}; native engine, sync, and replication code must \
                      stay Loro-free (AGENTS 'Replication and sync rules', GOAL AC-3)",
                     file.display(),
                 );
