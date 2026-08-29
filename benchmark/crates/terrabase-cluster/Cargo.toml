@@ -1,0 +1,15 @@
+# TerraBaseV2 (P5): the cluster lifecycle crate — immutable cluster
+# identity, membership epochs, and the cluster-mode host seam. MIT/Apache-2.0.
+[package]
+name = "terrabase-cluster"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# The leaderless core P5 drives: ComposedMember, ReplicaSet, the
+# coordinators, and the engine beneath them.
+terrabase-replication-core = { path = "../terrabase-replication-core" }
+terrabase-v2 = { path = "../.." }
+
+[dev-dependencies]

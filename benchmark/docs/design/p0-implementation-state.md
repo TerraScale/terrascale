@@ -853,3 +853,52 @@ contract's honest-limits section.
 Receipts: `cargo test -p terrabase-tbep` 14 suites green; Protocol
 23/23; Api 92 green + 1 honest skip (msquic). `scripts/check.sh` not
 run (AC-12).
+
+## 23. P5 landing 1 (2026-08-29): the immutable cluster identity and the mode-enforcing member
+
+The cluster lifecycle crate exists: `crates/terrabase-cluster`
+(depends on the P2 replication core). Two surfaces landed.
+
+**The identity** (`identity.rs`): `ClusterIdentity::create(cluster,
+mode, record)` freezes `mode: active | backup` at the moment of
+creation — the frozen backup-cluster contract §1 — with a content hash
+(FNV-1a-64, the object-key style) over the canonical record, pinned
+durably (staged write + rename) and verified at every open: a tampered
+record — a quiet `mode: backup` edited into `active` — fails the open
+with the typed `Tampered` error, and no mode-change operation exists
+anywhere: `change_mode` answers the typed `ModeImmutable` (the wire's
+`backup_cluster_immutable`) whatever the current mode is, because the
+IDENTITY is immutable, not merely the backup's.
+
+**The member** (`member.rs`): `ClusterMember` binds one durable
+`ComposedMember` (its state in `<location>/state` — a fresh LSM
+location refuses the identity file at its root) to a verified
+identity. `ClusterMember::create` is the one-step creation entry:
+identity created and pinned, member open, mode enforced from then on.
+An ACTIVE member serves client writes and reads; a BACKUP member
+refuses EVERY client mutation permanently — the typed
+`MutationRefused { position }` (the wire's
+`backup_cluster_read_only`) with the member's replication position
+attached (the engine grew `published_sequence()`; `ComposedMember`
+surfaces it as `position()`) — while its replication intake
+(`accept_replicated_write`) remains the one write path a backup
+serves, and both modes read (the backup serves last-resort reads). A
+member never opens under an identity it cannot verify.
+
+Proven: seven rows — creation pins and verifies round-trip; the
+tampered record refusing; mode changes refusing typed in both modes;
+absent/malformed identities failing typed; one-step creation serving
+as active; the backup refusing every client mutation identically and
+permanently while replication writes land; the unverified member
+refusing to start.
+
+Next in P5: the multi-member cluster host over the coordinators
+(`coordinate_composed_write` / `quorum_read_with_repair`) served
+through TBEP with `topology.read` past `Standalone`; the backup
+membership shape (non-voting, `backup_ack` on the wire); the NATS
+control-plane semantics (6 buckets, 5 subjects, the no-data rule) with
+live-server rows recorded unrun; one-step expansion and catch-up.
+
+Receipts: `cargo test -p terrabase-cluster` 7/7; replication-core and
+engine suites green (1080/1080 lib); clippy `-D warnings` and fmt
+clean on the three touched crates. `scripts/check.sh` not run (AC-12).

@@ -476,6 +476,13 @@ impl ComposedMember {
         Ok(kinds)
     }
 
+    /// Returns the member's replication position: its engine's
+    /// published storage sequence.
+    #[must_use]
+    pub fn position(&self) -> u64 {
+        self.engine.published_sequence().map_or(0, terrabase_v2::StorageSequence::get)
+    }
+
     /// Accepts one whole-body put durably: the engine commits it and
     /// the Member's own-peer CRDT op records it.
     ///

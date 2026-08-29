@@ -1455,6 +1455,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "terrabase-cluster"
+version = "0.1.0"
+dependencies = [
+ "terrabase-replication-core",
+ "terrabase-v2",
+]
+
+[[package]]
 name = "terrabase-member-transport"
 version = "0.1.0"
 dependencies = [

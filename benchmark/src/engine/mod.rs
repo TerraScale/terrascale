@@ -671,6 +671,17 @@ impl Engine {
         TenantScope::from_parts(tenant.clone(), self.identity)
     }
 
+    /// Returns the currently published storage sequence — the
+    /// replication position a member reports (P5's cluster surface).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when storage cannot lock.
+    pub fn published_sequence(&self) -> Result<StorageSequence, EngineError> {
+        let storage = self.lock_storage()?;
+        Ok(storage.port.published_state().0)
+    }
+
     /// Returns an immutable tenant-scoped read snapshot.
     ///
     /// # Errors
