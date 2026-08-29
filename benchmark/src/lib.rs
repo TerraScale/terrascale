@@ -21,6 +21,7 @@ pub mod families;
 pub mod index;
 pub mod operations;
 pub mod query;
+pub mod relationships;
 pub mod replication;
 pub mod session;
 pub mod sharding;
