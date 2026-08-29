@@ -259,7 +259,7 @@ impl TierStateView {
 }
 
 /// The typed failures of tier administration.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TierAdminError {
     /// The policy fields were invalid.
     InvalidPolicy,
@@ -269,8 +269,9 @@ pub enum TierAdminError {
     Paused,
     /// This backend carries no tiers.
     UnsupportedBackend,
-    /// The mover run failed; its receipt names the stage.
-    MoveFailed,
+    /// The mover run failed; the receipt names the failed stage (the
+    /// candidate, the decision, the untouched manifest epochs).
+    MoveFailed(TierMoveRunReceipt),
 }
 
 /// The engine-level tier control state.
@@ -365,9 +366,8 @@ impl TierAdministration {
     ///
     /// Returns [`TierAdminError::NotConfigured`], [`TierAdminError::Paused`],
     /// [`TierAdminError::UnsupportedBackend`], or
-    /// [`TierAdminError::MoveFailed`] when the pass failed (its receipt
-    /// is lost to the typed error; a following `dry_run` re-derives the
-    /// stage's reasons).
+    /// [`TierAdminError::MoveFailed`] when the pass failed — carrying
+    /// the receipt that names the failed stage.
     pub fn run(&self) -> Result<TierMoveRunReceipt, TierAdminError> {
         let control = self.lock_control();
         let Some(policy) = control.policy.clone() else {
@@ -419,7 +419,9 @@ impl TierAdministration {
         };
         match outcome {
             MoverOutcome::Completed(receipt) => Ok(public_receipt(&receipt)),
-            MoverOutcome::Failed(_, _) => Err(TierAdminError::MoveFailed),
+            MoverOutcome::Failed(receipt, _error) => {
+                Err(TierAdminError::MoveFailed(public_receipt(&receipt)))
+            }
         }
     }
 }

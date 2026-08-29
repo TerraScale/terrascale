@@ -97,8 +97,15 @@ fn tier_error(error: terrabase_v2::tiers::TierAdminError) -> HostingError {
         terrabase_v2::tiers::TierAdminError::UnsupportedBackend => {
             HostingError::Refused("this backend carries no tiers".into())
         }
-        terrabase_v2::tiers::TierAdminError::MoveFailed => {
-            HostingError::EngineFailure("the mover run failed".into())
+        terrabase_v2::tiers::TierAdminError::MoveFailed(receipt) => {
+            HostingError::EngineFailure(format!(
+                "the mover run failed at segment {} (policy {}, manifest {}->{}, decision {:?})",
+                receipt.segment_id(),
+                receipt.policy_id(),
+                receipt.manifest_epoch_before(),
+                receipt.manifest_epoch_after(),
+                receipt.decision()
+            ))
         }
     }
 }

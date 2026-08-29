@@ -1174,3 +1174,31 @@ Receipts: `cargo test -p terrabase-cluster --test qualification` 4/4;
 the full cluster+takes battery 18 suites green; `terrabase-v2 --lib`
 1080/1080; `terrabase-replication-core` 28/28; clippy `-D warnings`
 and fmt clean. `scripts/check.sh` not run (AC-12).
+
+## 30. The tier-failure lane and the receipt-carrying MoveFailed (P7 landing 2)
+
+The storage-tiering contract §4 failure table is now a focused lane
+(`src/storage/lsm/tier.rs::failure_lane`, receipt
+`docs/evidence/p7-tier-failure-lane.md`): an unavailable object store
+fails the mover pass typed with a receipt that NAMES THE STAGE (the
+attempted demote, the candidate, `failed_stage`, zero bytes, manifest
+untouched, NVMe copy standing); a corrupt object refuses reads typed
+`ChecksumMismatch` from its own checksum address — quarantined, never
+served; a torn upload under no manifest key is unreachable by every
+verified address.
+
+The honesty gap the lane exposed is closed: `TierAdminError::MoveFailed`
+now CARRIES the run receipt (it was previously lost to the typed
+error — the doc comment admitted it), and the TBEP engine-host mapping
+names the segment, policy, manifest epochs, and decision in its error
+detail. The internal failure receipt gained the stage name and the
+attempted-decision truth (a failed transfer is a failed DEMOTE, not a
+policy `Refused`).
+
+Scoping kept honest: the local content-addressed store stands in for
+the remote cold tier; live S3 failure classes are recorded unrun (no
+object-store endpoint on this host).
+
+Receipts: `cargo test -p terrabase-v2 --lib` 1083/1083 (3 new lane
+rows); `cargo test -p terrabase-tbep` 15 suites green; clippy
+`-D warnings` and fmt clean. `scripts/check.sh` not run (AC-12).

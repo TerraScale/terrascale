@@ -352,13 +352,16 @@ pub(crate) fn run_mover(
     }
     let Some(bytes) = segment_bytes(storage.dir(), &candidate) else {
         return MoverOutcome::Failed(
-            dry_receipt(policy, &candidate, manifest_before),
+            failed_receipt(policy, &candidate, manifest_before, "segment_read"),
             ObjectStoreError::Unavailable,
         );
     };
     let key = ObjectKey::of(&bytes);
     if let Err(error) = store.put(&key, &bytes) {
-        return MoverOutcome::Failed(dry_receipt(policy, &candidate, manifest_before), error);
+        return MoverOutcome::Failed(
+            failed_receipt(policy, &candidate, manifest_before, "object_put"),
+            error,
+        );
     }
     // Publish the next manifest epoch naming the verified object.
     let mut manifest = TierManifest::read(storage.dir()).unwrap_or_default();
@@ -373,7 +376,10 @@ pub(crate) fn run_mover(
         verified: true,
     });
     if let Err(error) = manifest.publish(storage.dir()) {
-        return MoverOutcome::Failed(dry_receipt(policy, &candidate, manifest_before), error);
+        return MoverOutcome::Failed(
+            failed_receipt(policy, &candidate, manifest_before, "manifest_publish"),
+            error,
+        );
     }
     // The manifest names the verified object as the fallback source; the
     // `NVMe` copy may now be reclaimed. The manifest's acceptance is local
@@ -393,13 +399,26 @@ pub(crate) fn run_mover(
     })
 }
 
-/// Builds the receipt skeleton of a failed run.
-fn dry_receipt(policy: &TierMovePolicy, candidate: &SegmentMeta, before: u64) -> TierMoveReceipt {
+/// Builds the receipt of a failed run: the DEMOTE it was attempting,
+/// the candidate, the named failed stage, and the manifest untouched —
+/// the failure receipt names the stage (tiering contract §3).
+fn failed_receipt(
+    policy: &TierMovePolicy,
+    candidate: &SegmentMeta,
+    before: u64,
+    stage: &str,
+) -> TierMoveReceipt {
     TierMoveReceipt {
         policy_id: policy.policy_id.clone(),
         policy_version: policy.version,
-        decision: MoveDecision::Refused,
-        reasons: Vec::new(),
+        decision: MoveDecision::Demote,
+        reasons: vec![
+            MoveReason { fact: "failed_stage".to_owned(), observed: stage.to_owned() },
+            MoveReason {
+                fact: "candidate_segment".to_owned(),
+                observed: format!("id={} level={}", candidate.id, candidate.level),
+            },
+        ],
         segment_id: candidate.id,
         bytes: 0,
         manifest_before: before,
@@ -592,6 +611,133 @@ mod tests {
         assert_eq!(
             read_segment_with_fallback(&storage, &store, 4242),
             Err(ObjectStoreError::NotFound)
+        );
+        tests_support::cleanup(&dir);
+    }
+}
+
+/// The P7 tier-failure lane: the storage-tiering contract §4 failure
+/// table, as focused rows.
+#[cfg(test)]
+mod failure_lane {
+    use super::*;
+    use crate::storage::lsm::{object_store::LocalObjectStore, tests_support};
+
+    /// An object store that cannot write: the remote tier is down.
+    struct UnavailableStore;
+
+    impl ObjectStore for UnavailableStore {
+        fn put(&mut self, _key: &ObjectKey, _bytes: &[u8]) -> Result<(), ObjectStoreError> {
+            Err(ObjectStoreError::Unavailable)
+        }
+        fn get(&self, _key: &ObjectKey) -> Result<Vec<u8>, ObjectStoreError> {
+            Err(ObjectStoreError::NotFound)
+        }
+        fn exists(&self, _key: &ObjectKey) -> bool {
+            false
+        }
+        fn delete(&mut self, _key: &ObjectKey) -> Result<(), ObjectStoreError> {
+            Err(ObjectStoreError::Unavailable)
+        }
+    }
+
+    #[test]
+    fn an_unavailable_object_store_fails_typed_with_the_stage_receipt() {
+        let dir = tests_support::location("tier-fail-unavailable");
+        let mut storage = tests_support::open(&dir);
+        tests_support::seed_segments(&mut storage, 8);
+        let mut policy = TierMovePolicy::default_policy();
+        policy.nvme_budget_bytes = 1; // force pressure
+        let mut store = UnavailableStore;
+        let MoverOutcome::Failed(receipt, error) =
+            run_mover(&mut storage, &mut store, &policy, "home-a")
+        else {
+            panic!("the unavailable store fails the pass");
+        };
+        assert_eq!(error, ObjectStoreError::Unavailable);
+        // The receipt names the failed stage: the candidate, the
+        // decision it was attempting, and the manifest untouched.
+        assert_eq!(receipt.decision, MoveDecision::Demote);
+        assert!(receipt.segment_id > 0);
+        assert!(
+            receipt
+                .reasons
+                .iter()
+                .any(|reason| reason.fact == "failed_stage" && reason.observed == "object_put"),
+            "the stage is named: {:?}",
+            receipt.reasons
+        );
+        assert_eq!(receipt.bytes, 0, "nothing transferred");
+        assert_eq!(receipt.manifest_after, receipt.manifest_before, "no epoch moved");
+        assert!(!receipt.manifest_accepted);
+        // The NVMe copy stands: nothing was demoted behind the failure.
+        assert!(!storage.segment_metas().is_empty());
+        tests_support::cleanup(&dir);
+    }
+
+    #[test]
+    fn a_corrupt_object_is_never_served_but_quarantined_by_address() {
+        let dir = tests_support::location("tier-fail-corrupt");
+        let mut storage = tests_support::open(&dir);
+        tests_support::seed_segments(&mut storage, 8);
+        let object_dir = dir.join("objects");
+        let mut store = LocalObjectStore::open(&object_dir).unwrap();
+        let mut policy = TierMovePolicy::default_policy();
+        policy.nvme_budget_bytes = 1;
+        let MoverOutcome::Completed(receipt) =
+            run_mover(&mut storage, &mut store, &policy, "home-a")
+        else {
+            panic!("the demote completes");
+        };
+        // The manifest references only the verified object.
+        let manifest = TierManifest::read(&dir).expect("published");
+        let entry = manifest
+            .objects
+            .iter()
+            .find(|object| object.segment_id == receipt.segment_id)
+            .expect("referenced");
+        assert!(entry.verified);
+
+        // Corrupt the stored bytes behind the manifest's back: the
+        // checksum address no longer matches, so the read refuses
+        // typed — never serving the corrupt bytes (contract §4).
+        let path = object_dir.join(entry.object_key.as_str());
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[0] ^= 0xFF;
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(
+            store.get(&entry.object_key).err(),
+            Some(ObjectStoreError::ChecksumMismatch),
+            "the corrupt object is quarantined by its address"
+        );
+        tests_support::cleanup(&dir);
+    }
+
+    #[test]
+    fn a_torn_upload_is_orphaned_and_never_referenced() {
+        let dir = tests_support::location("tier-fail-torn");
+        let mut storage = tests_support::open(&dir);
+        tests_support::seed_segments(&mut storage, 8);
+        let object_dir = dir.join("objects");
+        let mut store = LocalObjectStore::open(&object_dir).unwrap();
+        let mut policy = TierMovePolicy::default_policy();
+        policy.nvme_budget_bytes = 1;
+        let MoverOutcome::Completed(_) = run_mover(&mut storage, &mut store, &policy, "home-a")
+        else {
+            panic!("the demote completes");
+        };
+        // A torn upload: a partial object in the store under no key the
+        // manifest references. It can never be served — the manifest
+        // is the only source of truth for fallback reads.
+        let manifest = TierManifest::read(&dir).expect("published");
+        std::fs::write(object_dir.join("orphan-partial"), b"half an object").unwrap();
+        for object in &manifest.objects {
+            assert_ne!(object.object_key.as_str(), "orphan-partial");
+            assert!(store.exists(&object.object_key), "only verified objects are referenced");
+        }
+        assert!(
+            !store.exists(&ObjectKey::of(b"half an object")),
+            "the orphan is unreachable by any verified address"
         );
         tests_support::cleanup(&dir);
     }
