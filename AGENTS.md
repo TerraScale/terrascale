@@ -1,22 +1,14 @@
+AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 # TerraScale TypeScript SDK rules
 
-Read the workspace `../GOAL.md` and root `../AGENTS.md` before changing a
-public contract.
+# SQLITE
+> @terrascale/sdk must support an explicitly enabled SQLite backend for local development only. TerraScale.Dashboard must use this SQLite mode for fast local development
+> until TerraBaseV2 is ready. SQLite must never be enabled in production, CI qualification, staging, or deployed environments, and it must not become a public production
+> database contract.
 
 ## Repository role
 
-This repository owns the public `@terrascale/sdk` package:
-
-- typed customer and administration operations;
-- the public TypeScript reactive client and local result cache;
-- reversible optimistic presentation for online mutations;
-- the native `terrascale.sync.v2` implementation and conformance harness;
-- a public server-only Better Auth database adapter; and
-- contract drift and compatibility gates.
-
-It does not own a public server, Dashboard-only business contract, identity
-policy, payment state machine, TerraBase adapter, TBEP client, NATS client, or
-private control-plane operation.
+This repository owns the public `@terrascale/sdk` package
 
 ## Service ownership
 
@@ -135,31 +127,3 @@ hatches for TerraScale data.
 
 When live configuration is unavailable, report the gate as skipped. Do not
 substitute a fake service or fabricated evidence.
-
-## Git and collaboration
-
-- Before the first write on `develop`, fetch and fast-forward from
-  `origin/develop`.
-- Claim exact paths, inspect status before each write or staging action, and
-  preserve unrelated changes.
-- Stage named paths only.
-- Commit coherent changes often and push directly to `origin/develop`.
-- Fetch immediately before push and stop if the remote moved.
-- Do not create a feature branch, worktree, pull request, release, deployment,
-  or live external mutation unless the user explicitly asks.
-- Keep secrets, private endpoints, raw remote errors, and customer payloads out
-  of source, fixtures, logs, command output, commits, and reports.
-
-## Agent skills
-
-### Issue tracker
-
-See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-See `docs/agents/domain.md`.
