@@ -115,6 +115,13 @@ impl BackupSet {
         &self.identity
     }
 
+    /// The set's replication position: the FURTHEST-BEHIND member's —
+    /// what a last-resort reader would see, named honestly.
+    #[must_use]
+    pub fn position(&mut self) -> u64 {
+        self.members.iter().map(ClusterMember::position).min().unwrap_or(0)
+    }
+
     /// Reads one document through the first backup member — the
     /// backup's last-resort read of the frozen routing order.
     #[must_use]

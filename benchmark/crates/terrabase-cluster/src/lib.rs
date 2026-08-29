@@ -14,6 +14,7 @@ pub mod control;
 pub mod host;
 pub mod identity;
 pub mod member;
+pub mod reads;
 
 pub use backup::{BackupOutcome, BackupPolicy, BackupSet};
 pub use control::{

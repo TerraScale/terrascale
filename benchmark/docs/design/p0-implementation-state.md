@@ -1086,3 +1086,54 @@ untouched and still covers KV/config/discovery only; live rows unrun.
 Receipts: `cargo test -p terrabase-cluster` 27/27 (13 new control
 rows); clippy `-D warnings` and fmt clean. `scripts/check.sh` not run
 (AC-12).
+
+## 28. One-step expansion, catch-up, restart, and backup-last routing (P5 landing 6)
+
+`ClusterHost::expand` is the one-step expansion: the new member's
+durable state is created under the same pinned identity (verified at
+every start), the membership steps to the next epoch through the
+overlapping-quorum coordinator — the OLD shape coordinates its own
+expansion — and the newcomer then catches up EAGERLY through
+anti-entropy with an existing voter (frontier exchange, deltas,
+reconcile), so it serves the cluster's pre-join state the moment it
+joins and votes immediately. A duplicate name refuses typed
+(`InvalidShape`), and an epoch refusal is its own typed
+`ClusterError::EpochRefused` now. Proven end to end: expand to a sixth
+member in a second Region, the newcomer reading the pre-join document,
+writes committing across the expanded shape, and the RESTART — a
+fresh host over the same root re-verifying every identity and serving
+the expanded, converged state, then taking new writes.
+
+`reads.rs` delivers the frozen backup-last routing of the
+backup-cluster contract §5: the four-step order (local active NVMe →
+home S3 Region → active Regions over QUIC → backup cluster, last
+resort only) with the in-process scoping named in the module header —
+the active cluster's local read stands for steps 1-3, and while it
+serves, the backup is NEVER touched (proven against a backup that
+holds nothing). When the active refuses, the last-resort leg answers
+the latest applied value plus EXACT position and lag — the lag named
+honestly behind the furthest-ahead active member, never zero-filled.
+With no backup attached, the active's typed refusal passes through
+unmasked.
+
+Minimum-frontier reads: `read_with_frontier(F, deadline)` polls the
+backup's position (the FURTHEST-BEHIND member's — what a last-resort
+reader would see) until it covers `F`, serving with position and lag,
+or fails `FrontierUnreachable { required, position }` when the
+deadline passes — older state is never returned silently. Proven both
+ways: coverage serves, an unreachable frontier fails typed inside a
+30 ms deadline. The non-voting proof (contract §6 scenario 5) is
+structural and asserted: backup members appear in no voter list of
+the replica set while every active member votes.
+
+Scoping kept honest: the S3 and QUIC legs of the routing order are
+engine-side sources recorded as scoping; the minimum-frontier deadline
+is a real clock but in-process convergence is driven by the caller
+(fan or catch-up), not a background replicator; the wire surface for
+a client-supplied minimum frontier (`min_frontier` on the read
+request) is not added — the typed behavior lives in the cluster crate
+until the read-level wiring lands.
+
+Receipts: `cargo test -p terrabase-cluster` 32/32 (5 new rows);
+`cargo test -p terrabase-tbep` unchanged suites green; clippy
+`-D warnings` and fmt clean. `scripts/check.sh` not run (AC-12).

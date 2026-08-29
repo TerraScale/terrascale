@@ -50,6 +50,9 @@ pub enum ClusterError {
     ApplyFailed,
     /// The coordinated write was refused at admission.
     AdmissionRefused,
+    /// The membership epoch step refused (no overlapping quorum, or
+    /// not a step forward).
+    EpochRefused,
 }
 
 /// The multi-member cluster host: the identity, the replica set, and
@@ -327,6 +330,71 @@ impl ClusterHost {
         }
     }
 
+    /// Expands the cluster in one step: the new member's durable state
+    /// is created under the identity, the membership steps to the next
+    /// epoch through the overlapping-quorum coordinator, and the new
+    /// member catches up through anti-entropy with an existing voter —
+    /// frontier exchange, deltas, reconcile — so it serves the
+    /// converged state the moment it joins.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClusterError::InvalidShape`] for a duplicate name or
+    /// an invalid id, [`ClusterError::Member`] when the new member's
+    /// state cannot open, and the epoch coordinator's typed failures
+    /// through [`ClusterWriteRefusal`]-free [`ClusterError`].
+    pub fn expand(&mut self, spec: MemberSpec) -> Result<compose::EpochReceipt, ClusterError> {
+        let member_id = MemberId::try_new(&spec.name).map_err(|_| ClusterError::InvalidShape)?;
+        let region = RegionId::try_new(&spec.region).map_err(|_| ClusterError::InvalidShape)?;
+        if self.ids.contains(&member_id) {
+            return Err(ClusterError::InvalidShape);
+        }
+        // The new member's durable state, under the same pinned
+        // identity every member verifies at start.
+        let location = self.root.join("members").join(&spec.name);
+        self.identity.pin(&location).map_err(ClusterError::Identity)?;
+        let member = ClusterMember::create(
+            &location,
+            self.identity.cluster(),
+            self.identity.mode(),
+            self.identity.creation_record(),
+            &spec.name,
+            &self.tenant,
+        )
+        .map_err(ClusterError::Member)?;
+
+        // The next epoch: the same Regions, plus the new member voting
+        // in its own — the overlapping-quorum precondition is the
+        // coordinator's to enforce.
+        let mut voters: BTreeMap<RegionId, Vec<MemberId>> = BTreeMap::new();
+        for known in self.set.regions() {
+            voters.insert(known.clone(), self.set.voters_of(&known).to_vec());
+        }
+        voters.entry(region).or_default().push(member_id.clone());
+
+        // The step runs BEFORE the member joins the host's vectors, so
+        // the old shape coordinates its own expansion.
+        let next = ReplicaSet::new(self.set.epoch() + 1, voters);
+        let mut composed = self.take_composed();
+        let outcome = compose::accept_epoch(&self.set, &next, &mut composed);
+        self.return_composed(composed);
+        let receipt = outcome.map_err(|_| ClusterError::EpochRefused)?;
+
+        // Now the member joins, and catches up: frontier exchange with
+        // an existing voter, deltas, reconcile — the rejoin path of the
+        // contract §5, run eagerly so the member serves converged
+        // state immediately.
+        self.ids.push(member_id);
+        self.members.push(member);
+        self.set = next;
+        let mut composed = self.take_composed();
+        let newcomer_at = composed.len() - 1;
+        let (donor, newcomer) = composed.split_at_mut(newcomer_at);
+        let _ = donor[0].anti_entropy_with(&mut newcomer[0]);
+        self.return_composed(composed);
+        Ok(receipt)
+    }
+
     /// Steps the membership to a new epoch through the P2 epoch
     /// coordinator: the overlapping-quorum precondition holds or the
     /// step refuses typed, and every member records the epoch durably.
@@ -568,6 +636,76 @@ mod tests {
         let converged =
             cluster.backup_mut().expect("attached").read("doc-1").expect("the backup reads");
         assert!(converged.contains_key("status"), "the replicated body is visible");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn one_step_expansion_catches_up_and_survives_the_restart() {
+        let dir = root("expand");
+        let mut cluster = ClusterHost::create(
+            &dir,
+            "cell-a",
+            ClusterMode::Active,
+            "created",
+            &spec(),
+            "tenant-a",
+        )
+        .expect("creates");
+        cluster
+            .client_write("member-a", &write("op-1", "doc-1"), LeaderlessLevel::RegionalQuorum)
+            .expect("commits before the expansion");
+
+        // The one-step expansion: durable state, epoch step, catch-up.
+        let receipt = cluster
+            .expand(MemberSpec { name: "member-f".into(), region: "us-1".into() })
+            .expect("the expansion accepts");
+        assert_eq!(receipt.to(), 2, "the membership stepped an epoch");
+        assert_eq!(cluster.set().epoch(), 2);
+        assert_eq!(cluster.member_names().len(), 6);
+        assert!(
+            cluster.set().is_voter(&MemberId::try_new("member-f").expect("valid")),
+            "the newcomer votes immediately"
+        );
+
+        // The catch-up ran eagerly: the newcomer serves the document
+        // the cluster held BEFORE it joined.
+        let (value, _) = cluster.client_read("member-f", "doc-1").expect("the newcomer reads");
+        assert!(value.is_some(), "the newcomer serves the pre-join state");
+
+        // Writes commit across the expanded shape, and a duplicate
+        // expansion refuses typed.
+        cluster
+            .client_write("member-f", &write("op-2", "doc-2"), LeaderlessLevel::RegionalQuorum)
+            .expect("the expanded cluster serves writes");
+        assert_eq!(
+            cluster.expand(MemberSpec { name: "member-f".into(), region: "us-1".into() }).err(),
+            Some(super::ClusterError::InvalidShape),
+            "a duplicate name refuses"
+        );
+
+        // The restart: a fresh host over the same root verifies every
+        // member's identity and serves the expanded, converged state.
+        drop(cluster);
+        let mut reopened = ClusterHost::open(
+            &dir,
+            &[
+                MemberSpec { name: "member-a".into(), region: "eu-1".into() },
+                MemberSpec { name: "member-b".into(), region: "eu-1".into() },
+                MemberSpec { name: "member-c".into(), region: "eu-1".into() },
+                MemberSpec { name: "member-d".into(), region: "us-1".into() },
+                MemberSpec { name: "member-e".into(), region: "us-1".into() },
+                MemberSpec { name: "member-f".into(), region: "us-1".into() },
+            ],
+            "tenant-a",
+        )
+        .expect("reopens over the expanded shape");
+        for document in ["doc-1", "doc-2"] {
+            let (value, _) = reopened.client_read("member-f", document).expect("reads");
+            assert!(value.is_some(), "{document} survives the restart");
+        }
+        reopened
+            .client_write("member-a", &write("op-3", "doc-3"), LeaderlessLevel::RegionalQuorum)
+            .expect("writes serve after the restart");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
