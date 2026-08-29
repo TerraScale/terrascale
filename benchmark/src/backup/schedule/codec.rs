@@ -49,7 +49,9 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::path::Path;
 
-use crate::backup::manifest::{MANIFEST_FILE, parse_manifest, point_directory, validate_identity};
+use crate::backup::manifest::{
+    MANIFEST_FILE, parse_manifest, point_directory, read_manifest_bytes, validate_identity,
+};
 use crate::backup::sha256::{Sha256, to_hex};
 use crate::backup::{BackupMember, load_recovery_point};
 
@@ -552,7 +554,7 @@ pub fn seal_artifact_bundle(
     let point = destination.join(point_directory(identity));
 
     let mut stream = Vec::new();
-    let manifest_bytes = std::fs::read(point.join(MANIFEST_FILE))
+    let manifest_bytes = read_manifest_bytes(&point.join(MANIFEST_FILE))
         .map_err(|_| EncryptionError::DestinationUnavailable)?;
     append_frame(&mut stream, MANIFEST_FILE, &manifest_bytes);
     let mut members = Vec::new();

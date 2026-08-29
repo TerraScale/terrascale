@@ -786,7 +786,16 @@ fn execute(
             )?;
         }
     }
-    seal_run(&mut state, writer, tenant_counts, boundary, plan.kind, destination, staging)
+    seal_run(
+        &mut state,
+        writer,
+        tenant_counts,
+        boundary,
+        plan.kind,
+        format!("{:032x}", engine.identity()),
+        destination,
+        staging,
+    )
 }
 
 /// Resolves the boundary this run covers and proves it, failing closed when
@@ -1111,12 +1120,14 @@ fn archive_state_at(
 
 /// Finishes the member writer and seals the manifest, returning the
 /// terminal result of the run.
+#[allow(clippy::too_many_arguments)]
 fn seal_run(
     state: &mut RunState,
     writer: MemberWriter,
     tenant_counts: BTreeMap<TenantId, (u64, u64)>,
     boundary: StorageSequence,
     kind: BackupKind,
+    database_id: String,
     destination: &Path,
     staging: &StagingDir,
 ) -> Result<BackupResult, BackupError> {
@@ -1136,6 +1147,8 @@ fn seal_run(
         .collect();
     state.observe(BackupStep::SealingManifest)?;
     let facts = ManifestFacts {
+        database_id,
+        partition_id: "partition-000000".to_owned(),
         kind,
         boundary,
         documents: state.documents,
@@ -1312,9 +1325,20 @@ fn seal_point(
 
 /// Loads and validates the sealed manifest of one point directory.
 fn load_point_manifest(point: &Path) -> Result<BackupManifest, BackupError> {
-    let text = std::fs::read_to_string(point.join(MANIFEST_FILE))
-        .map_err(|_| BackupError::ManifestInvalid)?;
-    manifest::parse_manifest(&text)
+    let point_metadata =
+        std::fs::symlink_metadata(point).map_err(|_| BackupError::ManifestInvalid)?;
+    if !point_metadata.file_type().is_dir() {
+        return Err(BackupError::ManifestInvalid);
+    }
+    let manifest_path = point.join(MANIFEST_FILE);
+    let manifest_metadata =
+        std::fs::symlink_metadata(&manifest_path).map_err(|_| BackupError::ManifestInvalid)?;
+    if !manifest_metadata.file_type().is_file() {
+        return Err(BackupError::ManifestInvalid);
+    }
+    let bytes = manifest::read_manifest_bytes(&manifest_path)?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| BackupError::ManifestInvalid)?;
+    manifest::parse_manifest(text)
 }
 
 /// Discovers every sealed recovery point in a destination, failing closed
@@ -1342,7 +1366,10 @@ fn discover_points(destination: &Path) -> Result<Vec<BackupManifest>, BackupErro
         // not fail the whole destination: the identical retry replaces it.
         // A directory that *does* hold a sealed manifest still fails closed
         // when that manifest does not validate.
-        if !path.is_dir() || !path.join(MANIFEST_FILE).is_file() {
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.file_type().is_dir() || !path.join(MANIFEST_FILE).is_file() {
             continue;
         }
         points.push(load_point_manifest(&path)?);
@@ -1359,7 +1386,14 @@ fn verify_members(
     let point = destination.join(point_directory(identity));
     for member in members {
         let path = point.join(member.name());
-        let metadata = std::fs::metadata(&path).map_err(|_| BackupError::ChainIncomplete)?;
+        // Do not follow a destination-controlled symlink while verifying a
+        // member: the manifest's canonical name binds a regular archive file
+        // inside this point, never an arbitrary path elsewhere on disk.
+        let metadata =
+            std::fs::symlink_metadata(&path).map_err(|_| BackupError::ChainIncomplete)?;
+        if !metadata.file_type().is_file() {
+            return Err(BackupError::ChainIncomplete);
+        }
         if metadata.len() != member.length() {
             return Err(BackupError::ChecksumMismatch);
         }
@@ -1443,10 +1477,54 @@ pub fn verify_latest_chain(destination: &Path) -> Result<Vec<BackupManifest>, Ba
         chain.push(link.clone());
     }
     chain.reverse();
+    validate_chain_frontier(&chain)?;
     for point in &chain {
         verify_members(destination, point.identity(), point.members())?;
     }
     Ok(chain)
+}
+
+/// Validates the restore frontier represented by an ordered chain.
+///
+/// A storage sequence is only a verified frontier when every link advances
+/// from the exact preceding boundary and all links belong to one database
+/// and partition. Incremental links may narrow (but never expand) the root
+/// tenant scope. This check deliberately permits an equal
+/// boundary: an empty incremental is a valid idempotent publication in the
+/// existing backup contract.  It rejects regressions, mixed scopes, and a
+/// chain that begins with an incremental link before any root exists.
+pub(crate) fn validate_chain_frontier(chain: &[BackupManifest]) -> Result<(), BackupError> {
+    let Some(root) = chain.first() else {
+        return Err(BackupError::ChainIncomplete);
+    };
+    if matches!(root.kind(), BackupKind::Incremental { .. }) {
+        return Err(BackupError::ChainIncomplete);
+    }
+    let root_tenants: std::collections::BTreeSet<_> =
+        root.tenants().iter().map(manifest::BackupTenantCount::tenant).collect();
+    for link in chain.iter().skip(1) {
+        let mut link_tenants = link.tenants().iter().map(manifest::BackupTenantCount::tenant);
+        if link.database_id() != root.database_id()
+            || link.partition_id() != root.partition_id()
+            // Incrementals may legitimately be scoped to a subset (or have
+            // no records for a no-op run), but can never introduce a tenant
+            // absent from the chain root.
+            || link_tenants.any(|tenant| !root_tenants.contains(tenant))
+        {
+            return Err(BackupError::ManifestInvalid);
+        }
+    }
+    for pair in chain.windows(2) {
+        let previous = &pair[0];
+        let current = &pair[1];
+        let Some(base) = current.base_sequence() else {
+            return Err(BackupError::ChainIncomplete);
+        };
+        if base != previous.boundary_sequence() || current.boundary_sequence().get() < base.get() {
+            return Err(BackupError::ChainIncomplete);
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

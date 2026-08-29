@@ -106,8 +106,8 @@ use decode::decode_member;
 use crate::backup::manifest::point_directory;
 use crate::backup::records::Record;
 use crate::backup::{
-    BackupError, BackupKind, BackupManifest, RestorePlan, discover_points, verify_latest_chain,
-    verify_members,
+    BackupError, BackupKind, BackupManifest, RestorePlan, discover_points, validate_chain_frontier,
+    verify_latest_chain, verify_members,
 };
 use crate::storage::{
     CommitIntent, CommitResult, FileStorage, StagedWrite, StoragePort, write_set_digest,
@@ -187,6 +187,7 @@ fn resolve_chain(
     if chain.is_empty() {
         return Err(BackupError::ChainIncomplete);
     }
+    validate_chain_frontier(&chain)?;
     Ok(chain)
 }
 
@@ -836,6 +837,10 @@ struct LinkCounts {
     family_records: u64,
     deletes: u64,
     disclosures: u64,
+    /// Per-tenant document/family counts, used to prevent a forged member
+    /// from moving records between otherwise valid tenant scopes while
+    /// preserving the global totals.
+    tenants: BTreeMap<TenantId, (u64, u64)>,
 }
 
 /// The streaming replay of one chain into the staging engine location.
@@ -910,6 +915,12 @@ impl Replay {
                 // so the joined path stays inside the point's directory.
                 let path = destination.join(point_directory(link.identity())).join(member.name());
                 decode_member(&path, member.length(), &mut |record, frame_bytes| {
+                    let tenant = match record {
+                        Record::Document { tenant, .. } | Record::Delete { tenant, .. } => tenant,
+                    };
+                    if !link.tenants().iter().any(|bound| bound.tenant() == tenant) {
+                        return Err(BackupError::ChecksumMismatch);
+                    }
                     self.apply(storage, record, frame_bytes, &mut counts)
                 })?;
             }
@@ -924,6 +935,16 @@ impl Replay {
             if matches!(link.kind(), BackupKind::Incremental { .. })
                 && counts.disclosures != link.disclosures()
             {
+                return Err(BackupError::ChecksumMismatch);
+            }
+            let expected_tenants: BTreeMap<_, _> = link
+                .tenants()
+                .iter()
+                .map(|tenant| {
+                    (tenant.tenant().clone(), (tenant.documents(), tenant.family_records()))
+                })
+                .collect();
+            if counts.tenants != expected_tenants {
                 return Err(BackupError::ChecksumMismatch);
             }
             self.decoded_documents += counts.documents;
@@ -956,8 +977,10 @@ impl Replay {
                 let id = document.id().as_str().to_owned();
                 if collection == RESERVED_FAMILY_COLLECTION {
                     counts.family_records += 1;
+                    counts.tenants.entry(tenant.clone()).or_default().1 += 1;
                 } else {
                     counts.documents += 1;
+                    counts.tenants.entry(tenant.clone()).or_default().0 += 1;
                 }
                 if *durability != LocalDurability::Synced {
                     counts.disclosures += 1;
@@ -983,6 +1006,10 @@ impl Replay {
             }
             Record::Delete { tenant, collection, id, .. } => {
                 counts.deletes += 1;
+                // A delete-only link still binds the tenant with zero put
+                // counts; retain that zero entry for exact scope/count
+                // comparison against the manifest.
+                counts.tenants.entry(tenant.clone()).or_default();
                 let durability = record_durability(record);
                 if durability != LocalDurability::Synced {
                     counts.disclosures += 1;

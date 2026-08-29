@@ -16,18 +16,34 @@
 use crate::backup::sha256::{Sha256, to_hex};
 use crate::backup::{BackupError, BackupKind};
 use crate::types::{StorageSequence, TenantId};
+use std::io::Read;
 
 /// The manifest file name inside one recovery-point directory.
 pub(crate) const MANIFEST_FILE: &str = "manifest.tbv2m";
 
 /// The manifest format header and version.
 ///
-/// Version 2 length-prefixes the tenant name on the `tenant` line. Version 1
+/// Version 3 binds database, partition, and tenant scope identities in
+/// addition to the facts already covered by Version 2. It also keeps the
+/// Version 2 length-prefix for the `tenant` line. Version 1
 /// rendered the name space-separated, so a valid tenant identifier with
 /// interior whitespace (`team a` is committable) produced a manifest that
 /// could never be parsed back; version 2 encodes the name's byte length so
 /// the line is unambiguous for every representable tenant name.
-pub(crate) const HEADER: &str = "terrabase-backup-manifest 2";
+pub(crate) const HEADER: &str = "terrabase-backup-manifest 3";
+
+/// Hard upper bound for one serialized manifest.
+///
+/// Manifest parsing happens before a restore target is admitted.  Keeping the
+/// bound here prevents a destination containing an attacker-controlled file
+/// from turning validation into an unbounded allocation.
+pub(crate) const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
+/// Maximum number of tenant bindings a manifest may carry.
+const MAX_TENANTS: usize = 65_536;
+/// Maximum number of archive members a manifest may carry.
+const MAX_MEMBERS: usize = 65_536;
+/// Maximum length of one line in the line-oriented manifest codec.
+const MAX_LINE_BYTES: usize = 64 * 1024;
 
 /// One bound archive member: its ordered canonical name, exact byte length,
 /// and SHA-256 digest.
@@ -98,6 +114,10 @@ impl BackupTenantCount {
 
 /// The validated facts one sealed run binds into a manifest.
 pub(crate) struct ManifestFacts {
+    /// Identity of the source database instance that produced the point.
+    pub(crate) database_id: String,
+    /// Logical partition covered by this implementation's archive seam.
+    pub(crate) partition_id: String,
     /// The backup kind.
     pub(crate) kind: BackupKind,
     /// The storage-sequence boundary the recovery point covers.
@@ -125,6 +145,9 @@ pub(crate) struct ManifestFacts {
 /// mismatches before any target is created.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackupManifest {
+    database_id: String,
+    partition_id: String,
+    tenant_scope: String,
     identity: String,
     kind: BackupKind,
     boundary: StorageSequence,
@@ -142,6 +165,8 @@ impl BackupManifest {
     /// content-derived identity.
     pub(crate) fn assemble(facts: ManifestFacts) -> Self {
         let ManifestFacts {
+            database_id,
+            partition_id,
             kind,
             boundary,
             documents,
@@ -151,8 +176,12 @@ impl BackupManifest {
             tenants,
             members,
         } = facts;
+        let tenant_scope = tenant_scope_digest(&tenants);
         let total_bytes = members.iter().map(BackupMember::length).sum();
         let mut manifest = Self {
+            database_id,
+            partition_id,
+            tenant_scope,
             identity: String::new(),
             kind,
             boundary,
@@ -175,6 +204,24 @@ impl BackupManifest {
     #[must_use]
     pub fn identity(&self) -> &str {
         &self.identity
+    }
+
+    /// Returns the source database binding carried by this point.
+    #[must_use]
+    pub fn database_id(&self) -> &str {
+        &self.database_id
+    }
+
+    /// Returns the logical partition binding carried by this point.
+    #[must_use]
+    pub fn partition_id(&self) -> &str {
+        &self.partition_id
+    }
+
+    /// Returns the digest binding the complete ordered tenant scope.
+    #[must_use]
+    pub fn tenant_scope_digest(&self) -> &str {
+        &self.tenant_scope
     }
 
     /// Returns the backup kind this manifest records.
@@ -259,6 +306,9 @@ impl BackupManifest {
             BackupKind::Snapshot => "kind snapshot".to_owned(),
             BackupKind::Incremental { base } => format!("kind incremental {}", base.get()),
         }];
+        lines.push(format!("database {}", self.database_id));
+        lines.push(format!("partition {}", self.partition_id));
+        lines.push(format!("tenant_scope {}", self.tenant_scope));
         lines.push(format!("boundary {}", self.boundary.get()));
         lines.push(format!("documents {}", self.documents));
         lines.push(format!("family_records {}", self.family_records));
@@ -296,8 +346,12 @@ pub(crate) fn point_directory(identity: &str) -> String {
 /// body, every member name must be the canonical writer form in strictly
 /// increasing order, and every tenant name must be a valid tenant
 /// identifier. Anything else is [`BackupError::ManifestInvalid`].
+#[allow(clippy::too_many_lines)]
 pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> {
     let invalid = || BackupError::ManifestInvalid;
+    if text.len() > MAX_MANIFEST_BYTES || text.lines().any(|line| line.len() > MAX_LINE_BYTES) {
+        return Err(invalid());
+    }
     if !text.ends_with('\n') {
         return Err(invalid());
     }
@@ -311,6 +365,9 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
     validate_identity_hex(identity)?;
 
     let kind = parse_kind(lines.next().ok_or_else(invalid)?)?;
+    let database_id = parse_database_id(lines.next().ok_or_else(invalid)?)?;
+    let partition_id = parse_partition_id(lines.next().ok_or_else(invalid)?)?;
+    let tenant_scope = parse_digest(lines.next().ok_or_else(invalid)?, "tenant_scope")?;
     let boundary = parse_number(lines.next().ok_or_else(invalid)?, "boundary")?;
     let documents = parse_number(lines.next().ok_or_else(invalid)?, "documents")?;
     let family_records = parse_number(lines.next().ok_or_else(invalid)?, "family_records")?;
@@ -330,10 +387,16 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
     let mut in_members = false;
     for line in body {
         if let Some(rest) = line.strip_prefix("member ") {
+            if members.len() >= MAX_MEMBERS {
+                return Err(invalid());
+            }
             in_members = true;
             members.push(parse_member(rest)?);
         } else if let Some(rest) = line.strip_prefix("tenant ") {
             if in_members {
+                return Err(invalid());
+            }
+            if tenants.len() >= MAX_TENANTS {
                 return Err(invalid());
             }
             tenants.push(parse_tenant(rest)?);
@@ -346,10 +409,38 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
             return Err(invalid());
         }
     }
-    if members.iter().map(BackupMember::length).sum::<u64>() != total_bytes {
+    for pair in tenants.windows(2) {
+        if pair[0].tenant() >= pair[1].tenant() {
+            return Err(invalid());
+        }
+    }
+    let documents_sum = tenants.iter().try_fold(0_u64, |sum, tenant| {
+        sum.checked_add(tenant.documents()).ok_or(BackupError::ManifestInvalid)
+    })?;
+    let family_records_sum = tenants.iter().try_fold(0_u64, |sum, tenant| {
+        sum.checked_add(tenant.family_records()).ok_or(BackupError::ManifestInvalid)
+    })?;
+    if documents_sum != documents || family_records_sum != family_records {
+        return Err(invalid());
+    }
+    if tenant_scope != tenant_scope_digest(&tenants) {
+        return Err(invalid());
+    }
+    if let BackupKind::Incremental { base } = kind
+        && base.get() > boundary
+    {
+        return Err(invalid());
+    }
+    let member_bytes = members.iter().try_fold(0_u64, |sum, member| {
+        sum.checked_add(member.length()).ok_or(BackupError::ManifestInvalid)
+    })?;
+    if member_bytes != total_bytes {
         return Err(invalid());
     }
     let manifest = BackupManifest {
+        database_id,
+        partition_id,
+        tenant_scope,
         identity: identity.to_owned(),
         kind,
         boundary: StorageSequence::new(boundary),
@@ -370,6 +461,21 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
     Ok(manifest)
 }
 
+/// Reads one manifest with a hard byte cap, including across a file-size
+/// race. Callers that need the original bytes (artifact bundling) can use
+/// this instead of an unbounded `read`.
+pub(crate) fn read_manifest_bytes(path: &std::path::Path) -> Result<Vec<u8>, BackupError> {
+    let file = std::fs::File::open(path).map_err(|_| BackupError::ManifestInvalid)?;
+    let mut bytes = Vec::new();
+    file.take((MAX_MANIFEST_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| BackupError::ManifestInvalid)?;
+    if bytes.len() > MAX_MANIFEST_BYTES {
+        return Err(BackupError::ManifestInvalid);
+    }
+    Ok(bytes)
+}
+
 fn parse_kind(line: &str) -> Result<BackupKind, BackupError> {
     match line {
         "kind full" => Ok(BackupKind::Full),
@@ -380,6 +486,30 @@ fn parse_kind(line: &str) -> Result<BackupKind, BackupError> {
             .map(|base| BackupKind::Incremental { base: StorageSequence::new(base) })
             .ok_or(BackupError::ManifestInvalid),
     }
+}
+
+fn parse_database_id(line: &str) -> Result<String, BackupError> {
+    let value = line.strip_prefix("database ").ok_or(BackupError::ManifestInvalid)?;
+    if value.len() != 32
+        || !value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(BackupError::ManifestInvalid);
+    }
+    Ok(value.to_owned())
+}
+
+fn parse_partition_id(line: &str) -> Result<String, BackupError> {
+    let value = line.strip_prefix("partition ").ok_or(BackupError::ManifestInvalid)?;
+    if value != "partition-000000" {
+        return Err(BackupError::ManifestInvalid);
+    }
+    Ok(value.to_owned())
+}
+
+fn parse_digest(line: &str, field: &str) -> Result<String, BackupError> {
+    let value = line.strip_prefix(&format!("{field} ")).ok_or(BackupError::ManifestInvalid)?;
+    validate_identity_hex(value)?;
+    Ok(value.to_owned())
 }
 
 fn parse_number(line: &str, field: &str) -> Result<u64, BackupError> {
@@ -456,7 +586,76 @@ fn validate_identity_hex(text: &str) -> Result<(), BackupError> {
     Err(BackupError::ManifestInvalid)
 }
 
+/// Computes the canonical digest of the ordered tenant scope.
+fn tenant_scope_digest(tenants: &[BackupTenantCount]) -> String {
+    let mut hasher = Sha256::new();
+    for tenant in tenants {
+        hasher.update(tenant.tenant().as_str().len().to_string().as_bytes());
+        hasher.update(b":");
+        hasher.update(tenant.tenant().as_str().as_bytes());
+        hasher.update(b"\n");
+    }
+    to_hex(&hasher.finish())
+}
+
 /// Validates a caller-supplied recovery-point identity.
 pub(crate) fn validate_identity(text: &str) -> Result<(), BackupError> {
     validate_identity_hex(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> BackupManifest {
+        BackupManifest::assemble(ManifestFacts {
+            database_id: "0123456789abcdef0123456789abcdef".to_owned(),
+            partition_id: "partition-000000".to_owned(),
+            kind: BackupKind::Full,
+            boundary: StorageSequence::new(7),
+            documents: 1,
+            family_records: 0,
+            deletes: 0,
+            disclosures: 0,
+            tenants: vec![BackupTenantCount::new(
+                TenantId::try_new("tenant-a").expect("tenant"),
+                1,
+                0,
+            )],
+            members: Vec::new(),
+        })
+    }
+
+    fn rebind(mut text: String) -> String {
+        let mut lines: Vec<_> = text.split('\n').map(str::to_owned).collect();
+        let body = lines[2..lines.len() - 1].join("\n");
+        let mut hasher = Sha256::new();
+        hasher.update(body.as_bytes());
+        lines[1] = format!("identity {}", to_hex(&hasher.finish()));
+        text = lines.join("\n");
+        text
+    }
+
+    #[test]
+    fn rejects_oversized_manifest_before_collecting_lines() {
+        let oversized = format!("{}{}", HEADER, "x".repeat(MAX_MANIFEST_BYTES));
+        assert_eq!(parse_manifest(&oversized), Err(BackupError::ManifestInvalid));
+    }
+
+    #[test]
+    fn rejects_duplicate_tenants_and_count_scope_mismatch() {
+        let manifest = sample();
+        let duplicate = format!("{}tenant 8:tenant-a 1 0\n", manifest.render());
+        assert_eq!(parse_manifest(&duplicate), Err(BackupError::ManifestInvalid));
+
+        let forged = rebind(manifest.render().replace("documents 1", "documents 2"));
+        assert_eq!(parse_manifest(&forged), Err(BackupError::ManifestInvalid));
+    }
+
+    #[test]
+    fn rejects_incremental_frontier_ahead_of_its_boundary() {
+        let mut text = sample().render().replace("kind full", "kind incremental 8");
+        text = rebind(text);
+        assert_eq!(parse_manifest(&text), Err(BackupError::ManifestInvalid));
+    }
 }
