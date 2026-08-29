@@ -169,30 +169,30 @@ impl<T: CanonicalValue> LwwRegister<T> {
         let mut context = self.context.clone();
         context.union(&other.context);
         let mut candidates = Vec::with_capacity(2);
-        if let Some(candidate) = self.winner.as_ref() {
-            if other.winner.as_ref().is_some_and(|right| right.identity() == candidate.identity())
-                || !other.context.contains(candidate.dot())
-            {
-                candidates.push(candidate.clone());
-            }
+        if let Some(candidate) = self.winner.as_ref()
+            && (other.winner.as_ref().is_some_and(|right| right.identity() == candidate.identity())
+                || !other.context.contains(candidate.dot()))
+        {
+            candidates.push(candidate.clone());
         }
-        if let Some(candidate) = other.winner.as_ref() {
-            if self.winner.as_ref().is_some_and(|left| left.identity() == candidate.identity())
-                || !self.context.contains(candidate.dot())
-            {
-                if !candidates
-                    .iter()
-                    .any(|existing: &Candidate<T>| existing.identity() == candidate.identity())
-                {
-                    candidates.push(candidate.clone());
-                }
-            }
+        if let Some(candidate) = other.winner.as_ref()
+            && (self.winner.as_ref().is_some_and(|left| left.identity() == candidate.identity())
+                || !self.context.contains(candidate.dot()))
+            && !candidates
+                .iter()
+                .any(|existing: &Candidate<T>| existing.identity() == candidate.identity())
+        {
+            candidates.push(candidate.clone());
         }
         let winner = candidates.into_iter().max_by(|left, right| left.key().cmp(&right.key()));
         Self { context, winner }
     }
 
     /// Returns BLAKE3 over the domain-separated canonical register bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns the causal hash error if the fixed domain is rejected.
     pub fn canonical_hash(&self) -> Result<[u8; 32], terrabase_causal::HashError> {
         canonical_hash("crdt-register", self)
     }
@@ -287,11 +287,15 @@ impl<T: CanonicalValue> MvRegister<T> {
                 candidates.push(candidate.clone());
             }
         }
-        candidates.sort_by(|left, right| left.key().cmp(&right.key()));
+        candidates.sort_by_key(Candidate::key);
         Self { context, candidates }
     }
 
     /// Returns BLAKE3 over the domain-separated canonical register bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns the causal hash error if the fixed domain is rejected.
     pub fn canonical_hash(&self) -> Result<[u8; 32], terrabase_causal::HashError> {
         canonical_hash("crdt-register", self)
     }
@@ -340,7 +344,7 @@ fn encode_candidate<T: CanonicalValue>(candidate: &Candidate<T>, output: &mut Ve
     output.extend_from_slice(candidate.dot().actor().replica().as_bytes());
     encode_u64(candidate.dot().actor().epoch().get(), output);
     encode_u64(candidate.dot().counter().get(), output);
-    encode_u64(candidate.mutation_ordinal().get() as u64, output);
+    encode_u64(u64::from(candidate.mutation_ordinal().get()), output);
     encode_context(candidate.version.context(), output);
     encode_u64(candidate.hlc().physical_unix_millis(), output);
     encode_u64(u64::from(candidate.hlc().logical()), output);
@@ -400,7 +404,7 @@ fn decode_state<T: CanonicalValue>(
     }
     if expected_kind == MV_KIND {
         let mut sorted = candidates.clone();
-        sorted.sort_by(|left, right| left.key().cmp(&right.key()));
+        sorted.sort_by_key(Candidate::key);
         if sorted != candidates {
             return Err(DecodeError::InvalidValue);
         }
