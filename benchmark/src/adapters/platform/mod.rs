@@ -340,7 +340,9 @@ fn enforce_tenant_isolation(
         PublicOperation::DocumentWrite(request) => request.tenant_claim() != tenant,
         PublicOperation::Query(request) => match request.input() {
             QueryInput::Typed(spec) => spec.tenant_claim() != tenant,
-            QueryInput::V1Compatible(_) => false,
+            // The grammar's forms bind the tenant at execution, not in
+            // the text.
+            QueryInput::V1Compatible(_) | QueryInput::V1CompatibleBounded { .. } => false,
         },
         PublicOperation::Family(FamilyOperation::Read(_)) => false,
         PublicOperation::Family(FamilyOperation::Write(request)) => {

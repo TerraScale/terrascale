@@ -352,6 +352,21 @@ impl<'engine> QueryStore<'engine> {
                     v1::default_staleness(),
                 ))
             }
+            QueryInput::V1CompatibleBounded { text, deadline, cancellation } => {
+                let (source, predicate, ordering, paging, projection) =
+                    v1::parse_clauses(text.as_str()).map_err(input_error)?;
+                self.compile_normalized(
+                    NormalizedQuery::unbound(
+                        source,
+                        predicate,
+                        ordering,
+                        projection,
+                        paging,
+                        v1::default_staleness(),
+                    )
+                    .with_control(deadline, cancellation),
+                )
+            }
         }
     }
 

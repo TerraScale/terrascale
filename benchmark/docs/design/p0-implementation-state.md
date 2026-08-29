@@ -579,3 +579,51 @@ QUIC/TLS binding (quinn/rustls live only in
 Receipts: `cargo test -p terrabase-tbep` 11 suites green; clippy
 `-D warnings` and fmt clean on both crates; dotnet Api 88/88 and
 Protocol 19/19. `scripts/check.sh` not run (AC-12).
+
+## 16. P4 landing 5 (2026-08-29): query cancellation and the overload gate
+
+Two of the contract's control surfaces stopped being dead ends.
+
+**Cancellation.** The engine's query seam gained a bounded V1 input:
+`QueryInput::v1_compatible_bounded(text, deadline, cancellation)` binds
+execution control to the grammar's otherwise-unbound query (the grammar
+has no control clauses of its own), so a served query runs with its own
+`Cancellation` signal and a 30 s deadline. The engine-backed host
+registers each live query's signal under its wire id (a bounded map) and
+moves the id to a bounded 256-deep completed horizon when it finishes —
+from any channel, `query.cancel` now answers the typed outcomes: a live
+query cancels at its next bounded checkpoint (the query's own response
+becomes the typed refusal `the query was cancelled`), a finished one
+inside the horizon answers `already_complete`, and anything else is
+`unknown_query`. `SyncDeliveryHost` still refuses the op (it serves no
+queries) — the engine-backed host owns it.
+
+**Overload control.** The server gained the overload gate: one
+server-wide count of concurrently executing host operations
+(`MAX_INFLIGHT_OPERATIONS = 128` by default; `bind_with_inflight_bound`
+sets an explicit capacity). A gated frame arriving at a saturated bound
+answers the typed `overloaded` error (the code landing 4 froze) with
+machine-readable retry guidance (`retry_after_ms=50`) — never an
+unbounded queue, never a dropped frame. Two frames bypass the gate by
+design: supervision health (the operator must always observe the
+server) and query cancellation (the remedy for a slow query must not be
+refused by the pressure it relieves). The per-connection slow-consumer
+policy from the first landing stays beside it — the gate bounds server
+work, the outbound channel bounds per-consumer drift.
+
+Proven: the overload-gate row drives a host whose one read blocks until
+released — at a bound of one, the saturated read answers `overloaded`
+with the retry hint, health and cancel still answer, and the gate
+serves again after the release; the cancellation row pins
+`already_complete` inside the horizon and `unknown_query` beyond it;
+every prior suite stays green (12 tbep suites, engine 1076/1076, Api
+88/88, Protocol 19/19).
+
+Still open in P4: capability/version negotiation (`wire_version` stays
+a fail-closed constant), tier administration (registry + a public
+engine tier surface), client batching, reconnect/resume, and the
+QUIC/TLS binding (quinn/rustls live in `terrabase-member-transport`).
+
+Receipts: `cargo test -p terrabase-tbep` 12 suites green; clippy
+`-D warnings` and fmt clean on both crates. `scripts/check.sh` not run
+(AC-12).

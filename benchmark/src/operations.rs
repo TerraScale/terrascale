@@ -237,6 +237,17 @@ pub enum QueryInput {
     Typed(QuerySpec),
     /// V1-compatible query text.
     V1Compatible(V1QueryText),
+    /// V1-compatible query text with a caller-supplied deadline and
+    /// cancellation signal: the serving seam binds control to the
+    /// grammar's otherwise unbound query (P4's cancellation surface).
+    V1CompatibleBounded {
+        /// The validated text.
+        text: V1QueryText,
+        /// The execution deadline.
+        deadline: Deadline,
+        /// The cancellation signal.
+        cancellation: Cancellation,
+    },
 }
 
 impl QueryInput {
@@ -248,6 +259,16 @@ impl QueryInput {
     /// Wraps validated V1-compatible query text.
     pub fn v1_compatible(text: V1QueryText) -> Self {
         Self::V1Compatible(text)
+    }
+
+    /// Wraps validated V1-compatible text with execution control.
+    #[must_use]
+    pub fn v1_compatible_bounded(
+        text: V1QueryText,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Self {
+        Self::V1CompatibleBounded { text, deadline, cancellation }
     }
 }
 

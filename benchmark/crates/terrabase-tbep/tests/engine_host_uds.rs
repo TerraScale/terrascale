@@ -705,3 +705,40 @@ fn the_engine_serves_acknowledgement_levels_read_levels_and_cluster_mode() {
     drop(fixture);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn query_cancellation_answers_typed_outcomes_for_finished_and_unknown_queries() {
+    use terrabase_tbep::generated::{CancelOutcome, QueryCancelRequest};
+
+    let dir = location("cancel");
+    let mut fixture = Fixture::bind("cancel", &dir, 1);
+    fixture.bind_channel("tenant-a");
+
+    // A query that completes retires its id: a later cancel names it
+    // already complete, inside the bounded horizon.
+    let answer = fixture.call(
+        terrabase_tbep::generated::QueryExecuteRequest {
+            query_id: 41,
+            text: "from orders".into(),
+            max_items: 16,
+            level: None,
+        },
+        None,
+    );
+    assert!(matches!(answer.body(), TbepBody::QueryExecuteResponse(_)));
+    let answer = fixture.call(QueryCancelRequest { query_id: 41 }, None);
+    let TbepBody::QueryCancelResponse(response) = answer.body() else {
+        panic!("the finished cancel answered, got {:?}", answer.kind());
+    };
+    assert!(matches!(response.outcome, CancelOutcome::AlreadyComplete));
+
+    // A cancel naming a query this host never saw is unknown.
+    let answer = fixture.call(QueryCancelRequest { query_id: 404 }, None);
+    let TbepBody::QueryCancelResponse(response) = answer.body() else {
+        panic!("the unknown cancel answered");
+    };
+    assert!(matches!(response.outcome, CancelOutcome::UnknownQuery));
+
+    drop(fixture);
+    let _ = std::fs::remove_dir_all(&dir);
+}

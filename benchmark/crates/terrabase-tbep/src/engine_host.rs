@@ -79,6 +79,10 @@ fn to_engine_expected(expected: &ExpectedVersion) -> EngineVersion {
     }
 }
 
+/// How many recently finished query identities the host remembers for
+/// `already_complete` cancel answers — bounded, drop-oldest.
+const COMPLETED_QUERY_HORIZON: usize = 256;
+
 /// The TBEP host backed by one durable Engine.
 pub struct EngineHost {
     engine: Engine,
@@ -86,6 +90,8 @@ pub struct EngineHost {
     instance: u64,
     reads: Mutex<u64>,
     frames_served: Mutex<u64>,
+    live_queries: Mutex<std::collections::HashMap<u64, terrabase_v2::types::Cancellation>>,
+    completed_queries: Mutex<std::collections::VecDeque<u64>>,
 }
 
 impl EngineHost {
@@ -108,6 +114,8 @@ impl EngineHost {
             instance,
             reads: Mutex::new(0),
             frames_served: Mutex::new(0),
+            live_queries: Mutex::new(std::collections::HashMap::new()),
+            completed_queries: Mutex::new(std::collections::VecDeque::new()),
         })
     }
 
@@ -127,6 +135,31 @@ impl EngineHost {
     fn count_frame(&self) {
         let mut frames = self.frames_served.lock().expect("the frame counter is not poisoned");
         *frames += 1;
+    }
+
+    /// Registers one live query's cancellation signal under its id.
+    fn register_live_query(&self, query_id: u64, cancellation: &terrabase_v2::types::Cancellation) {
+        let mut live = self.live_queries.lock().expect("the live set is not poisoned");
+        live.insert(query_id, cancellation.clone());
+    }
+
+    /// Retires one query: the id moves to the bounded completed set a
+    /// cancel can still name.
+    fn retire_live_query(&self, query_id: u64) {
+        let mut live = self.live_queries.lock().expect("the live set is not poisoned");
+        live.remove(&query_id);
+        let mut completed =
+            self.completed_queries.lock().expect("the completed set is not poisoned");
+        completed.push_back(query_id);
+        while completed.len() > COMPLETED_QUERY_HORIZON {
+            completed.pop_front();
+        }
+    }
+
+    /// Reports whether a finished query is still inside the horizon.
+    fn query_completed(&self, query_id: u64) -> bool {
+        let completed = self.completed_queries.lock().expect("the completed set is not poisoned");
+        completed.contains(&query_id)
     }
 
     fn tenant_of(tenant: &str) -> Result<TenantId, HostingError> {
@@ -366,22 +399,50 @@ impl TbepHost for EngineHost {
         self.count_frame();
         let tenant = Self::tenant_of(tenant)?;
         // The wire's text is the V1-compatible query input, bounded at
-        // 16 KiB by the registry's own validation.
+        // 16 KiB by the registry's own validation. The query runs with
+        // its own cancellation signal — registered under the caller's
+        // query id — so a cancel from any channel ends it at a bounded
+        // checkpoint.
         let text = terrabase_v2::operations::V1QueryText::try_new(&request.text)
             .map_err(|_| HostingError::Invalid("the query text is not valid".into()))?;
-        let input = terrabase_v2::operations::QueryInput::v1_compatible(text);
+        let cancellation = terrabase_v2::types::Cancellation::new();
+        self.register_live_query(request.query_id, &cancellation);
+        let deadline = terrabase_v2::types::Deadline::after(std::time::Duration::from_secs(30))
+            .map_err(|_| HostingError::EngineFailure("the deadline is invalid".into()))?;
+        let input = terrabase_v2::operations::QueryInput::v1_compatible_bounded(
+            text,
+            deadline,
+            cancellation,
+        );
         let scope = self.engine.scope_for(&tenant);
-        let snapshot = self
-            .engine
-            .read_snapshot(&scope)
-            .map_err(|_| HostingError::EngineFailure("the snapshot is unavailable".into()))?;
-        let store = self.engine.queries();
-        let plan = store
-            .compile(input)
-            .map_err(|_| HostingError::Invalid("the query did not compile".into()))?;
-        let result = store
-            .execute(&plan, &snapshot)
-            .map_err(|_| HostingError::EngineFailure("the query execution failed".into()))?;
+        let executed = (|| -> Result<
+            (
+                Result<terrabase_v2::query::QueryResult, terrabase_v2::query::QueryError>,
+                u64,
+            ),
+            HostingError,
+        > {
+            let snapshot = self
+                .engine
+                .read_snapshot(&scope)
+                .map_err(|_| HostingError::EngineFailure("the snapshot is unavailable".into()))?;
+            let position = snapshot.sequence().get();
+            let store = self.engine.queries();
+            let plan = store
+                .compile(input)
+                .map_err(|_| HostingError::Invalid("the query did not compile".into()))?;
+            Ok((store.execute(&plan, &snapshot), position))
+        })();
+        // Every completion path retires the query from the live set.
+        self.retire_live_query(request.query_id);
+        let (executed, position) = executed?;
+        let result = match executed {
+            Ok(result) => result,
+            Err(terrabase_v2::query::QueryError::Cancelled) => {
+                return Err(HostingError::Refused("the query was cancelled".into()));
+            }
+            Err(_) => return Err(HostingError::EngineFailure("the query execution failed".into())),
+        };
         // The response serves at most the caller's page (bounded by the
         // registry's list bound); `count` reports the query's total
         // matched rows, `terminal` whether the page cut them.
@@ -410,16 +471,31 @@ impl TbepHost for EngineHost {
             terminal,
             // The snapshot the query observed — the read position every
             // level shares on this member.
-            position: Some(snapshot.sequence().get()),
+            position: Some(position),
         })
     }
 
     fn query_cancel(
         &self,
         _tenant: &str,
-        _request: &crate::generated::QueryCancelRequest,
+        request: &crate::generated::QueryCancelRequest,
     ) -> Result<crate::generated::QueryCancelResponse, HostingError> {
-        Err(HostingError::Refused("query_cancel is served by the query-plane landing".into()))
+        self.count_frame();
+        // A live query cancels at its next bounded checkpoint; a
+        // finished one reports completion; anything else is unknown.
+        let mut live = self.live_queries.lock().expect("the live set is not poisoned");
+        if let Some(cancellation) = live.remove(&request.query_id) {
+            cancellation.cancel();
+            return Ok(crate::generated::QueryCancelResponse {
+                outcome: crate::generated::CancelOutcome::Cancelled,
+            });
+        }
+        let outcome = if self.query_completed(request.query_id) {
+            crate::generated::CancelOutcome::AlreadyComplete
+        } else {
+            crate::generated::CancelOutcome::UnknownQuery
+        };
+        Ok(crate::generated::QueryCancelResponse { outcome })
     }
 
     fn family_read(

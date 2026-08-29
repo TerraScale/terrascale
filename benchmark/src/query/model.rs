@@ -95,6 +95,15 @@ impl NormalizedQuery {
         }
     }
 
+    /// Binds execution control to an unbound model — the deadline and
+    /// cancellation the serving seam supplies for a V1-compatible
+    /// query whose grammar has no control clauses.
+    pub(crate) fn with_control(mut self, deadline: Deadline, cancellation: Cancellation) -> Self {
+        self.deadline = Some(deadline);
+        self.cancellation = Some(cancellation);
+        self
+    }
+
     /// Returns the typed source.
     pub(crate) const fn source(&self) -> &QuerySource {
         &self.source

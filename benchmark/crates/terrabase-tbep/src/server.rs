@@ -36,6 +36,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::SyncSender;
 use std::sync::mpsc::TrySendError;
@@ -62,6 +63,19 @@ pub const SOCKET_MODE: u32 = 0o600;
 /// and typed instead of buffering without bound or blocking the
 /// engine's serving thread.
 pub const OUTBOUND_DEPTH: usize = 64;
+
+/// The default server-wide bound on concurrently executing host
+/// operations (P4's overload control): a frame arriving while the bound
+/// is saturated answers the typed `overloaded` error with retry
+/// guidance — never an unbounded queue and never a dropped frame. Two
+/// frames bypass the bound by design: supervision health (the operator
+/// must always observe the server) and query cancellation (the remedy
+/// for a slow query must not be refused by the pressure it relieves).
+pub const MAX_INFLIGHT_OPERATIONS: usize = 128;
+
+/// The retry guidance an overloaded frame answers with — bounded,
+/// machine-readable, inside the registry's detail bound.
+pub const OVERLOADED_RETRY_HINT_MS: u32 = 50;
 
 /// A binding failure.
 #[derive(Debug)]
@@ -126,6 +140,21 @@ impl TbepServer {
         path: impl AsRef<Path>,
         host: Arc<dyn TbepHost>,
     ) -> Result<TbepServerHandle, BindError> {
+        Self::bind_with_inflight_bound(path, host, MAX_INFLIGHT_OPERATIONS)
+    }
+
+    /// Binds with an explicit server-wide in-flight operation bound —
+    /// the overload gate's capacity. The default [`Self::bind`] uses
+    /// [`MAX_INFLIGHT_OPERATIONS`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BindError::Io`] when the listener cannot be bound.
+    pub fn bind_with_inflight_bound(
+        path: impl AsRef<Path>,
+        host: Arc<dyn TbepHost>,
+        inflight_bound: usize,
+    ) -> Result<TbepServerHandle, BindError> {
         let path = path.as_ref();
         if path.exists() {
             let _ = std::fs::remove_file(path);
@@ -136,6 +165,7 @@ impl TbepServer {
         let stopped = Arc::new(AtomicBool::new(false));
         let accept_stopped = Arc::clone(&stopped);
         let accept_path = path.to_path_buf();
+        let inflight = Arc::new(AtomicUsize::new(0));
         let accept = std::thread::Builder::new()
             .name("tbep-accept".into())
             .spawn(move || {
@@ -146,9 +176,12 @@ impl TbepServer {
                     match stream {
                         Ok(stream) => {
                             let host = Arc::clone(&host);
+                            let inflight = Arc::clone(&inflight);
                             let _ = std::thread::Builder::new()
                                 .name("tbep-connection".into())
-                                .spawn(move || serve_connection(stream, host));
+                                .spawn(move || {
+                                    serve_connection(stream, host, inflight, inflight_bound);
+                                });
                         }
                         Err(_) => break,
                     }
@@ -177,6 +210,10 @@ struct Connection {
     /// The slow-consumer verdict: the outbound channel filled to its
     /// depth; the reader loop closes the connection when it is set.
     slow: bool,
+    /// The server-wide in-flight operation count and its bound (the
+    /// overload gate).
+    inflight: Arc<AtomicUsize>,
+    inflight_bound: usize,
 }
 
 impl Connection {
@@ -219,10 +256,43 @@ impl Connection {
     }
 }
 
+/// Spawns one connection's writer thread: it drains the bounded
+/// outbound channel to the stream until the channel closes or a write
+/// fails. A spawn failure ends the connection — the reader sees the
+/// closed channel on its next answer and the loop exits.
+fn spawn_writer(
+    mut writer: UnixStream,
+    outbound: std::sync::mpsc::Receiver<Outbound>,
+) -> Option<JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("tbep-writer".into())
+        .spawn(move || {
+            for unit in outbound {
+                match unit {
+                    Outbound::Frame(frame) => {
+                        if frame.write_stream(&mut writer).is_err() {
+                            break;
+                        }
+                    }
+                    Outbound::Close => {
+                        let _ = writer.shutdown(std::net::Shutdown::Both);
+                        break;
+                    }
+                }
+            }
+        })
+        .ok()
+}
+
 // The clean end of stream and a transport failure both end the loop;
 // the arm duplication keeps the two causes readable.
 #[allow(clippy::match_same_arms)]
-fn serve_connection(stream: UnixStream, host: Arc<dyn TbepHost>) {
+fn serve_connection(
+    stream: UnixStream,
+    host: Arc<dyn TbepHost>,
+    inflight: Arc<AtomicUsize>,
+    inflight_bound: usize,
+) {
     let Ok(reader) = stream.try_clone() else { return };
     let Ok(writer) = stream.try_clone() else { return };
     // The accepting thread's ownership ends here: dropping the listener
@@ -230,26 +300,16 @@ fn serve_connection(stream: UnixStream, host: Arc<dyn TbepHost>) {
     // peer blocked on read observes the close.
     drop(stream);
     let (outbound_sender, outbound_receiver) = sync_channel::<Outbound>(OUTBOUND_DEPTH);
-    // A spawn failure ends this connection; the reader sees the closed
-    // channel on its next answer and the loop exits.
-    let _writer_spawn = std::thread::Builder::new().name("tbep-writer".into()).spawn(move || {
-        let mut writer = writer;
-        for unit in outbound_receiver {
-            match unit {
-                Outbound::Frame(frame) => {
-                    if frame.write_stream(&mut writer).is_err() {
-                        break;
-                    }
-                }
-                Outbound::Close => {
-                    let _ = writer.shutdown(std::net::Shutdown::Both);
-                    break;
-                }
-            }
-        }
-    });
-    let mut connection =
-        Connection { host, outbound: outbound_sender, tenant: None, correlation: 0, slow: false };
+    let _writer_spawn = spawn_writer(writer, outbound_receiver);
+    let mut connection = Connection {
+        host,
+        outbound: outbound_sender,
+        tenant: None,
+        correlation: 0,
+        slow: false,
+        inflight,
+        inflight_bound,
+    };
     let mut reader = reader;
     loop {
         let frame = match TbepFrame::read_stream(&mut reader) {
@@ -301,7 +361,30 @@ fn serve_connection(stream: UnixStream, host: Arc<dyn TbepHost>) {
             }
             Err(EnvelopeError::Io(_)) => break,
         };
+        // The overload gate: a bounded operation frame takes a slot for
+        // the duration of its dispatch; a saturated bound answers the
+        // typed overloaded error with retry guidance instead of queueing
+        // without bound. Health and query cancellation bypass it.
+        let gated = !matches!(
+            frame.body(),
+            TbepBody::SupervisionHealthRequest(_) | TbepBody::QueryCancelRequest(_)
+        );
+        if gated {
+            let occupied = connection.inflight.fetch_add(1, Ordering::SeqCst);
+            if occupied >= connection.inflight_bound {
+                connection.inflight.fetch_sub(1, Ordering::SeqCst);
+                connection.error_frame(
+                    frame.correlation(),
+                    ErrorCode::Overloaded,
+                    &format!("in-flight bound reached; retry_after_ms={OVERLOADED_RETRY_HINT_MS}"),
+                );
+                continue;
+            }
+        }
         let closing = dispatch(&mut connection, &frame);
+        if gated {
+            connection.inflight.fetch_sub(1, Ordering::SeqCst);
+        }
         if closing || connection.slow {
             connection.close();
             break;
@@ -668,6 +751,8 @@ mod tests {
             tenant: None,
             correlation: 0,
             slow: false,
+            inflight: Arc::new(AtomicUsize::new(0)),
+            inflight_bound: MAX_INFLIGHT_OPERATIONS,
         }
     }
 
