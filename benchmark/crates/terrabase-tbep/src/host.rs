@@ -1203,6 +1203,7 @@ impl TbepHost for SyncDeliveryHost {
             operation_id: idempotency_key.to_string(),
             // The journal's single-member commit is its regional quorum.
             acknowledgement: Some(crate::generated::Acknowledgement::RegionalQuorum),
+            backup: None,
         };
         scope.record_applied(idempotency_key.to_string(), receipt.clone());
         let record = JournalRecord {

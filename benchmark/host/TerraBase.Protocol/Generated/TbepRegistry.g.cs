@@ -13,7 +13,7 @@ public static partial class TbepRegistry
     /// <summary>The protocol identity.</summary>
     public const string Identity = "terrabase.engine.protocol";
     /// <summary>The registry version.</summary>
-    public const string RegistryVersion = "1.2";
+    public const string RegistryVersion = "1.3";
     /// <summary>The wire version; unknown versions fail closed.</summary>
     public const byte WireVersion = 1;
     /// <summary>The decode bound in bytes before any field parses.</summary>
@@ -440,6 +440,8 @@ public sealed class Acknowledgement : IEquatable<Acknowledgement>
     public static Acknowledgement RegionalQuorum() => new() { Variant = "RegionalQuorum", Tag = (byte)1 };
     /// <summary>The `global_quorum` variant.</summary>
     public static Acknowledgement GlobalQuorum() => new() { Variant = "GlobalQuorum", Tag = (byte)2 };
+    /// <summary>The `backup_ack` variant.</summary>
+    public static Acknowledgement BackupAck() => new() { Variant = "BackupAck", Tag = (byte)3 };
 
     /// <inheritdoc/>
     public bool Equals(Acknowledgement? other) =>
@@ -480,6 +482,14 @@ public sealed class AcknowledgementFormatter : IMessagePackFormatter<Acknowledge
             }
             return new Acknowledgement { Variant = "GlobalQuorum", Tag = tag };
         }
+        if (tag == (byte)3)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("BackupAck carries no payload");
+            }
+            return new Acknowledgement { Variant = "BackupAck", Tag = tag };
+        }
         throw TbepWire.FormatException("unknown Acknowledgement tag");
     }
 
@@ -501,8 +511,108 @@ public sealed class AcknowledgementFormatter : IMessagePackFormatter<Acknowledge
                 writer.WriteArrayHeader(1);
                 writer.Write((byte)2);
                 return;
+            case "BackupAck":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)3);
+                return;
             default:
                 throw TbepWire.FormatException("unknown Acknowledgement variant");
+        }
+    }
+}
+
+/// <summary>The generated `backup_outcome` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(BackupOutcomeFormatter))]
+public sealed class BackupOutcome : IEquatable<BackupOutcome>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `none` variant.</summary>
+    public static BackupOutcome None() => new() { Variant = "None", Tag = (byte)1 };
+    /// <summary>The `full` variant.</summary>
+    public static BackupOutcome Full() => new() { Variant = "Full", Tag = (byte)2 };
+    /// <summary>The `partial` variant.</summary>
+    public static BackupOutcome Partial() => new() { Variant = "Partial", Tag = (byte)3 };
+
+    /// <inheritdoc/>
+    public bool Equals(BackupOutcome? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as BackupOutcome);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="BackupOutcome"/>.</summary>
+public sealed class BackupOutcomeFormatter : IMessagePackFormatter<BackupOutcome?>
+{
+    /// <inheritdoc/>
+    public BackupOutcome? Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            return null;
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("None carries no payload");
+            }
+            return new BackupOutcome { Variant = "None", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Full carries no payload");
+            }
+            return new BackupOutcome { Variant = "Full", Tag = tag };
+        }
+        if (tag == (byte)3)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Partial carries no payload");
+            }
+            return new BackupOutcome { Variant = "Partial", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown BackupOutcome tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, BackupOutcome? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            writer.WriteNil();
+            return;
+        }
+        switch (value.Variant)
+        {
+            case "None":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "Full":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            case "Partial":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)3);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown BackupOutcome variant");
         }
     }
 }
@@ -3302,13 +3412,17 @@ public sealed class CommitReceipt : IEquatable<CommitReceipt>
     /// <summary>The `acknowledgement` field.</summary>
     [Key(3)]
     public Acknowledgement? Acknowledgement { get; init; }
+    /// <summary>The `backup` field.</summary>
+    [Key(4)]
+    public BackupOutcome? Backup { get; init; }
 
     /// <inheritdoc/>
     public bool Equals(CommitReceipt? other) => other is not null
         && TbepRegistry.FieldEquals(Sequence, other.Sequence)
         && TbepRegistry.FieldEquals(Version, other.Version)
         && TbepRegistry.FieldEquals(OperationId, other.OperationId)
-        && TbepRegistry.FieldEquals(Acknowledgement, other.Acknowledgement);
+        && TbepRegistry.FieldEquals(Acknowledgement, other.Acknowledgement)
+        && TbepRegistry.FieldEquals(Backup, other.Backup);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => Equals(obj as CommitReceipt);
@@ -3316,7 +3430,7 @@ public sealed class CommitReceipt : IEquatable<CommitReceipt>
     /// <inheritdoc/>
     public override int GetHashCode()
     {
-        return System.HashCode.Combine(Sequence, Version, OperationId, Acknowledgement);
+        return System.HashCode.Combine(Sequence, Version, OperationId, Acknowledgement, Backup);
     }
 }
 

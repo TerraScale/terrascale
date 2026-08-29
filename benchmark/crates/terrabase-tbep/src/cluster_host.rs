@@ -100,6 +100,14 @@ impl ClusterTbepHost {
             .lock()
             .map_err(|_| HostingError::EngineFailure("the cluster is unavailable".into()))
     }
+
+    /// Attaches the backup target set — the active-to-backup
+    /// replication setup that arms the `backup_ack` level.
+    pub fn attach_backup(&self, set: terrabase_cluster::BackupSet) {
+        if let Ok(mut cluster) = self.cluster.lock() {
+            cluster.attach_backup(set);
+        }
+    }
 }
 
 impl TbepHost for ClusterTbepHost {
@@ -164,6 +172,31 @@ impl TbepHost for ClusterTbepHost {
                 _ => return Err(HostingError::Invalid("the body is not an object".into())),
             },
         };
+        // The backup_ack level is ordered: the regional quorum commits
+        // first, then the 2-of-3 backup durability names FULL or
+        // PARTIAL on the receipt — the active write never rolls back.
+        if matches!(request.ack, Some(crate::generated::Acknowledgement::BackupAck)) {
+            let (receipt, backup) = cluster
+                .client_write_backup(&self.serving_member, &write)
+                .map_err(cluster_write_refusal)?;
+            let local = receipt.local();
+            return Ok(DocumentWriteResponse {
+                outcome: WriteOutcome::Committed(CommitReceipt {
+                    sequence: local.sequence().get(),
+                    version: local.sequence().get(),
+                    operation_id: receipt.operation().to_owned(),
+                    acknowledgement: Some(crate::generated::Acknowledgement::BackupAck),
+                    backup: Some(match backup {
+                        terrabase_cluster::BackupOutcome::Full { .. } => {
+                            crate::generated::BackupOutcome::Full
+                        }
+                        terrabase_cluster::BackupOutcome::Partial { .. } => {
+                            crate::generated::BackupOutcome::Partial
+                        }
+                    }),
+                }),
+            });
+        }
         let level = match request.ack {
             Some(crate::generated::Acknowledgement::GlobalQuorum) => LeaderlessLevel::GlobalQuorum,
             _ => LeaderlessLevel::RegionalQuorum,
@@ -185,6 +218,7 @@ impl TbepHost for ClusterTbepHost {
                         crate::generated::Acknowledgement::GlobalQuorum
                     }
                 }),
+                backup: None,
             }),
         })
     }
@@ -208,6 +242,19 @@ impl TbepHost for ClusterTbepHost {
         let receipt = cluster
             .client_write(&self.serving_member, &write, LeaderlessLevel::RegionalQuorum)
             .map_err(cluster_write_refusal)?;
+        // A delete with an attached backup set fans its tombstone: a
+        // backup that misses tombstones would resurrect deleted
+        // documents on the last-resort read.
+        let backup = cluster.fan_to_backup(&write, terrabase_cluster::BackupPolicy::default()).map(
+            |outcome| match outcome {
+                terrabase_cluster::BackupOutcome::Full { .. } => {
+                    crate::generated::BackupOutcome::Full
+                }
+                terrabase_cluster::BackupOutcome::Partial { .. } => {
+                    crate::generated::BackupOutcome::Partial
+                }
+            },
+        );
         let local = receipt.local();
         Ok(crate::generated::DocumentDeleteResponse {
             outcome: WriteOutcome::Committed(CommitReceipt {
@@ -215,6 +262,7 @@ impl TbepHost for ClusterTbepHost {
                 version: local.sequence().get(),
                 operation_id: receipt.operation().to_owned(),
                 acknowledgement: Some(crate::generated::Acknowledgement::RegionalQuorum),
+                backup,
             }),
         })
     }
@@ -328,5 +376,8 @@ fn cluster_write_refusal(refusal: ClusterWriteRefusal) -> HostingError {
             HostingError::EngineFailure("the read quorum was not reached".into())
         }
         ClusterWriteRefusal::EpochRefused => HostingError::Refused("the epoch step refused".into()),
+        ClusterWriteRefusal::NoBackupSet => {
+            HostingError::Refused("the backup_ack level needs an attached backup set".into())
+        }
     }
 }

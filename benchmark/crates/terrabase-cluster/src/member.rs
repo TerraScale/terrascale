@@ -151,6 +151,22 @@ impl ClusterMember {
             .map_err(|_| MemberError::StateRefused)
     }
 
+    /// Accepts one replicated delete — the backup member's tombstone
+    /// intake, the delete half of its replication path.
+    ///
+    /// # Errors
+    ///
+    /// Returns the composed member's failure.
+    pub fn accept_replicated_delete(
+        &mut self,
+        operation: &str,
+        document: &str,
+    ) -> Result<terrabase_v2::CommitReceipt, MemberError> {
+        self.composed_mut()
+            .accept_delete(operation, document)
+            .map_err(|_| MemberError::StateRefused)
+    }
+
     /// Lends the underlying composed member — the coordinators take
     /// `&mut [ComposedMember]`, and the cluster host drives them.
     ///

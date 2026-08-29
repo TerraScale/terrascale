@@ -19,6 +19,7 @@ use terrabase_replication_core::compose::{
 use terrabase_v2::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
 use terrabase_v2::types::DocumentValue;
 
+use crate::backup::{BackupOutcome, BackupPolicy, BackupSet};
 use crate::identity::{ClusterIdentity, ClusterMode, IdentityError};
 use crate::member::{ClusterMember, MemberError, MutationRefusal};
 
@@ -62,6 +63,7 @@ pub struct ClusterHost {
     tenant: String,
     ids: Vec<MemberId>,
     members: Vec<ClusterMember>,
+    backup: Option<BackupSet>,
 }
 
 impl ClusterHost {
@@ -138,6 +140,7 @@ impl ClusterHost {
             tenant: tenant.to_owned(),
             ids,
             members,
+            backup: None,
         })
     }
 
@@ -187,6 +190,63 @@ impl ClusterHost {
         let id = MemberId::try_new(member).map_err(|_| ClusterError::UnknownMember)?;
         let index = self.ids.iter().position(|known| *known == id);
         index.map_or(Err(ClusterError::UnknownMember), |at| Ok(self.members[at].position()))
+    }
+
+    /// Attaches the backup target set: the non-voting members this
+    /// cluster fans its committed writes to for the `backup_ack`
+    /// level. One active cluster, one backup set — the active-to-backup
+    /// replication setup of the one-step creation.
+    pub fn attach_backup(&mut self, set: BackupSet) {
+        self.backup = Some(set);
+    }
+
+    /// The attached backup set, when one is.
+    #[must_use]
+    pub fn backup(&self) -> Option<&BackupSet> {
+        self.backup.as_ref()
+    }
+
+    /// The attached backup set, mutably, when one is.
+    pub fn backup_mut(&mut self) -> Option<&mut BackupSet> {
+        self.backup.as_mut()
+    }
+
+    /// The ordered `backup_ack` level (frozen): the regional quorum
+    /// commits FIRST, then the write fans to the backup set and awaits
+    /// 2-of-3 durability. The outcome names the truth — FULL at the
+    /// minimum, PARTIAL below it — and the active write is never
+    /// rolled back either way. Requesting the level without an
+    /// attached backup set refuses BEFORE anything commits.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::client_write`], plus
+    /// [`ClusterWriteRefusal::NoBackupSet`] when no backup set is
+    /// attached.
+    pub fn client_write_backup(
+        &mut self,
+        accepting: &str,
+        write: &ComposedWrite,
+    ) -> Result<(compose::ComposedReceipt, BackupOutcome), ClusterWriteRefusal> {
+        if self.backup.is_none() {
+            return Err(ClusterWriteRefusal::NoBackupSet);
+        }
+        // The level is ordered: the requested regional quorum first...
+        let receipt = self.client_write(accepting, write, LeaderlessLevel::RegionalQuorum)?;
+        // ...then the backup durability, whatever it turns out to be.
+        let outcome = self.fan_to_backup(write, BackupPolicy::default());
+        Ok((receipt, outcome.expect("the backup set is attached")))
+    }
+
+    /// Fans one already-committed write to the attached backup set —
+    /// `None` names "no backup set attached, no backup durability
+    /// claimed". The active commit stands whatever the outcome.
+    pub fn fan_to_backup(
+        &mut self,
+        write: &ComposedWrite,
+        policy: BackupPolicy,
+    ) -> Option<BackupOutcome> {
+        self.backup.as_mut().map(|set| set.await_ack(write, policy))
     }
 
     /// Accepts one client write at any member — the leaderless
@@ -304,6 +364,9 @@ pub enum ClusterWriteRefusal {
     ReadQuorumNotReached,
     /// The epoch step refused (no overlap, or not a step).
     EpochRefused,
+    /// The backup_ack level was requested without an attached backup
+    /// set — refused before anything committed.
+    NoBackupSet,
 }
 
 impl ClusterWriteRefusal {
@@ -450,6 +513,61 @@ mod tests {
         let mut reopened = ClusterHost::open(&dir, &spec(), "tenant-a").expect("reopens");
         let (value, _) = reopened.client_read("member-d", "doc-1").expect("reads");
         assert!(value.is_some(), "the converged state survives the reopen");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn backup_ack_commits_regionally_then_answers_the_backup_outcome() {
+        let dir = root("backup-ack");
+        let mut cluster = ClusterHost::create(
+            &dir,
+            "cell-a",
+            ClusterMode::Active,
+            "created",
+            &spec(),
+            "tenant-a",
+        )
+        .expect("creates");
+
+        // The level without a backup set refuses before committing.
+        let refusal = cluster
+            .client_write_backup("member-a", &write("op-0", "doc-0"))
+            .expect_err("no backup set, no backup_ack");
+        assert_eq!(refusal, super::ClusterWriteRefusal::NoBackupSet);
+        assert!(
+            cluster.client_read("member-a", "doc-0").expect("reads").0.is_none(),
+            "nothing committed behind the refusal"
+        );
+
+        // The backup set: three bulk-HDD members under their own
+        // backup identity, beside the active cluster.
+        let backup = crate::backup::BackupSet::create(
+            &dir.join("backup"),
+            "cell-a-backup",
+            "created",
+            &[
+                MemberSpec { name: "backup-1".into(), region: "bulk-hdd".into() },
+                MemberSpec { name: "backup-2".into(), region: "bulk-hdd".into() },
+                MemberSpec { name: "backup-3".into(), region: "bulk-hdd".into() },
+            ],
+            "tenant-a",
+        )
+        .expect("the backup set creates");
+        cluster.attach_backup(backup);
+        assert_eq!(cluster.backup().map_or(0, crate::backup::BackupSet::len), 3);
+
+        // The ordered level: regional quorum first, then 2-of-3.
+        let (receipt, outcome) = cluster
+            .client_write_backup("member-b", &write("op-1", "doc-1"))
+            .expect("the ordered write commits");
+        assert_eq!(receipt.achieved(), LeaderlessLevel::RegionalQuorum);
+        assert!(outcome.is_full(), "all three backups hold it: {outcome:?}");
+        assert_eq!(outcome.acks(), 3);
+
+        // The backup members converge: they read what replicated.
+        let converged =
+            cluster.backup_mut().expect("attached").read("doc-1").expect("the backup reads");
+        assert!(converged.contains_key("status"), "the replicated body is visible");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

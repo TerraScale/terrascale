@@ -326,6 +326,7 @@ impl EngineHost {
                 // One standalone member IS its region's quorum: the
                 // local durable commit satisfies both levels.
                 acknowledgement: Some(ack),
+                backup: None,
             })),
             CommitOutcome::Rejected(_) => Ok(WriteOutcome::Conflict),
             // An uncertain commit resolves by identity on retry; the

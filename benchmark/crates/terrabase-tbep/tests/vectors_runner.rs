@@ -33,10 +33,13 @@ use terrabase_tbep::generated::Acknowledgement;
 use terrabase_tbep::generated::AdminStatusRequest;
 use terrabase_tbep::generated::BUDGETS;
 use terrabase_tbep::generated::BackboneSubscribeRequest;
+use terrabase_tbep::generated::BackupOutcome;
 use terrabase_tbep::generated::ChannelBindRequest;
+use terrabase_tbep::generated::CommitReceipt;
 use terrabase_tbep::generated::DocumentPut;
 use terrabase_tbep::generated::DocumentReadRequest;
 use terrabase_tbep::generated::DocumentWriteRequest;
+use terrabase_tbep::generated::DocumentWriteResponse;
 use terrabase_tbep::generated::ExpectedVersion;
 use terrabase_tbep::generated::NegotiationRequest;
 use terrabase_tbep::generated::NegotiationResponse;
@@ -411,7 +414,7 @@ fn build_corpus() -> Vec<(String, Value)> {
         "document-frames".into(),
         json!({
             "category": "document-frames",
-            "description": "Typed document operations: the read carries no key; the write carries its idempotency key (the retry identity) and the expected-version contract.",
+            "description": "Typed document operations: the read carries no key; the write carries its idempotency key (the retry identity) and the expected-version contract; the backup_ack level (backup-cluster contract section 2) is ordered — the regional quorum first, then the 2-of-3 backup durability whose FULL/PARTIAL outcome names itself on the receipt and never rolls the active write back.",
             "protocol": "terrabase.engine.protocol",
             "wire_version": 1,
             "schema": "terrabase.engine.protocol/vector-corpus@1",
@@ -425,6 +428,49 @@ fn build_corpus() -> Vec<(String, Value)> {
                         },
                         3, 0, None).expect("seals")),
                 scenario_frame("DocumentWriteRequest", &write),
+                scenario_frame("DocumentWriteRequest",
+                    &TbepFrame::seal(
+                        DocumentWriteRequest {
+                            document: DocumentPut {
+                                id: "d-02".into(),
+                                collection: "orders".into(),
+                                body: TbepValue::Object(vec![
+                                    ("qty".into(), TbepValue::Integer(1)),
+                                ]),
+                            },
+                            expected: ExpectedVersion::Any,
+                            operation_id: "op-02".into(),
+                            ack: Some(Acknowledgement::BackupAck),
+                        },
+                        4, 0,
+                        Some(&IdempotencyKey::new("retry-02").expect("key")))
+                    .expect("seals")),
+                scenario_frame("DocumentWriteResponse",
+                    &TbepFrame::seal(
+                        DocumentWriteResponse {
+                            outcome: terrabase_tbep::generated::WriteOutcome::Committed(CommitReceipt {
+                                sequence: 12,
+                                version: 12,
+                                operation_id: "op-02".into(),
+                                acknowledgement: Some(Acknowledgement::BackupAck),
+                                backup: Some(BackupOutcome::Full),
+                            }),
+                        },
+                        5, 4, None)
+                    .expect("seals")),
+                scenario_frame("DocumentWriteResponse",
+                    &TbepFrame::seal(
+                        DocumentWriteResponse {
+                            outcome: terrabase_tbep::generated::WriteOutcome::Committed(CommitReceipt {
+                                sequence: 13,
+                                version: 13,
+                                operation_id: "op-03".into(),
+                                acknowledgement: Some(Acknowledgement::BackupAck),
+                                backup: Some(BackupOutcome::Partial),
+                            }),
+                        },
+                        6, 4, None)
+                    .expect("seals")),
             ],
             "adversarial": [],
         }),

@@ -9,10 +9,12 @@
 //! plane here carries the typed semantics, and the live-server rows
 //! are recorded unrun where no broker runs).
 
+pub mod backup;
 pub mod host;
 pub mod identity;
 pub mod member;
 
+pub use backup::{BackupOutcome, BackupPolicy, BackupSet};
 pub use host::{ClusterError, ClusterHost, ClusterWriteRefusal, MemberSpec};
 
 // Re-exported so the serving seam builds writes without a direct

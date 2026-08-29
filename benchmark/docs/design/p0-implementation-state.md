@@ -977,3 +977,58 @@ catch-up.
 Receipts: `cargo test -p terrabase-tbep` 15 suites green (3 new
 cluster-host rows); `terrabase-cluster` 11/11; clippy `-D warnings`
 and fmt clean. `scripts/check.sh` not run (AC-12).
+
+## 26. The backup membership shape and the ordered BackupAck level (P5 landing 4)
+
+Registry 1.2 → 1.3 (add-only): the `acknowledgement` enum gained
+`backup_ack`; a new `backup_outcome` enum (`none | full | partial`)
+was inserted after it; `commit_receipt` gained the optional `backup`
+field. Both bindings regenerated; the golden corpus's `document-frames`
+scenario now records the wire truth of the level — a
+`DocumentWriteRequest` sealed with `ack = backup_ack`, and two
+committed receipts, one carrying `backup = full`, one `backup =
+partial`. No new corpus category, so the C# guard list is unchanged.
+
+The cluster crate gained `backup.rs`: `BackupSet` is three backup-mode
+members under their own immutable backup identity (mode frozen to
+backup — terminal), with `BackupPolicy { min_acks }` (the contract's
+2 of 3) and `BackupOutcome::{Full, Partial}` carrying the ack count.
+`await_ack` fans ONE already-committed write to every backup member
+through the replication intake (`accept_replicated_write`, and the new
+`accept_replicated_delete` — a delete fans as its tombstone, so a
+backup that missed tombstones could not resurrect deleted documents on
+the last-resort read). A backup member's failure is a missing ack, not
+an error: the outcome is the honesty. The operation identity is the
+retry identity — re-fanning the same operation replays the recorded
+receipts.
+
+`ClusterHost::client_write_backup` implements the ordered level
+exactly: the regional quorum commits FIRST, then the fan awaits the
+2-of-3 durability. FULL at the minimum, PARTIAL below it, and the
+active write is NEVER rolled back either way. Requesting the level
+with no backup set attached refuses BEFORE anything commits (the new
+typed `NoBackupSet`). `attach_backup`/`fan_to_backup` arm the
+active-to-backup replication setup of the one-step creation; deletes
+fan their tombstone whenever a set is attached and name the outcome on
+the receipt.
+
+`ClusterTbepHost` maps the wire: `ack = backup_ack` routes to the
+composed path and the receipt carries `backup = full|partial` (both
+outcomes are successful commits — the field names the backup
+durability honestly); every other ack level answers `backup = none`.
+Proven over a real UDS socket: the unattached level answering the
+typed refusal with nothing committed behind it, and the attached level
+committing with `backup = full` on the receipt.
+
+Scoping kept honest: the fan is synchronous and in-process (the QUIC
+member-to-member data transport is the later cluster-mode landing);
+there is no timeout clock inside `await_ack` — the partial-outcome
+rule is exercised through the min-acks policy (a 4-of-3 policy no set
+can satisfy), because in-process writes complete before any real
+deadline. Live NATS rows remain unrun.
+
+Receipts: `cargo test -p terrabase-cluster` 15/15 (3 new backup rows +
+the ordered-level host row); `cargo test -p terrabase-tbep` 16 suites
+green (the new backup_ack UDS row, corpus regenerated and replaying
+byte-exact); C# Protocol 23/23, Api 92 passed + 1 msquic skip; clippy
+`-D warnings` and fmt clean. `scripts/check.sh` not run (AC-12).

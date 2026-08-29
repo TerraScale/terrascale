@@ -4,14 +4,14 @@
 // file byte-for-byte against regeneration.
 // The generated TBEP registry and frame bindings.
 //
-// Schema identity `terrabase.engine.protocol` version `1.2`.
+// Schema identity `terrabase.engine.protocol` version `1.3`.
 use crate::codec::TbepValue;
 use serde::ser::SerializeTuple as _;
 
 /// The protocol identity string.
 pub const IDENTITY: &str = "terrabase.engine.protocol";
 /// The registry version (additive changes bump the minor).
-pub const REGISTRY_VERSION: &str = "1.2";
+pub const REGISTRY_VERSION: &str = "1.3";
 /// The wire version every frame carries; unknown versions fail closed.
 pub const WIRE_VERSION: u8 = 1;
 /// The decode bound: larger frames are rejected before any field parses.
@@ -448,6 +448,8 @@ pub enum Acknowledgement {
     RegionalQuorum,
     /// The `global_quorum` row (code 2).
     GlobalQuorum,
+    /// The `backup_ack` row (code 3).
+    BackupAck,
 }
 
 impl Acknowledgement {
@@ -457,6 +459,7 @@ impl Acknowledgement {
         match self {
             Self::RegionalQuorum => 1,
             Self::GlobalQuorum => 2,
+            Self::BackupAck => 3,
         }
     }
 
@@ -469,6 +472,7 @@ impl Acknowledgement {
         match code {
             1 => Some(Self::RegionalQuorum),
             2 => Some(Self::GlobalQuorum),
+            3 => Some(Self::BackupAck),
             _ => None,
         }
     }
@@ -485,6 +489,11 @@ impl serde::Serialize for Acknowledgement {
             Self::GlobalQuorum => {
                 let mut tuple = serializer.serialize_tuple(1)?;
                 tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+            Self::BackupAck => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&3u8)?;
                 tuple.end()
             }
         }
@@ -516,7 +525,111 @@ impl<'de> serde::Deserialize<'de> for Acknowledgement {
                         }
                         Ok(Acknowledgement::GlobalQuorum)
                     }
+                    3 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(Acknowledgement::BackupAck)
+                    }
                     _ => Err(serde::de::Error::custom("unknown acknowledgement code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The generated `backup_outcome` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BackupOutcome {
+    /// The `none` row (code 1).
+    None,
+    /// The `full` row (code 2).
+    Full,
+    /// The `partial` row (code 3).
+    Partial,
+}
+
+impl BackupOutcome {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::None => 1,
+            Self::Full => 2,
+            Self::Partial => 3,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::None),
+            2 => Some(Self::Full),
+            3 => Some(Self::Partial),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for BackupOutcome {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::None => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::Full => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+            Self::Partial => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&3u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for BackupOutcome {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = BackupOutcome;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a backup_outcome array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(BackupOutcome::None)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(BackupOutcome::Full)
+                    }
+                    3 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(BackupOutcome::Partial)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown backup_outcome code")),
                 }
             }
         }
@@ -3443,15 +3556,18 @@ pub struct CommitReceipt {
     pub operation_id: String,
     /// The `acknowledgement` field.
     pub acknowledgement: Option<Acknowledgement>,
+    /// The `backup` field.
+    pub backup: Option<BackupOutcome>,
 }
 
 impl serde::Serialize for CommitReceipt {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut tuple = serializer.serialize_tuple(4)?;
+        let mut tuple = serializer.serialize_tuple(5)?;
         tuple.serialize_element(&self.sequence)?;
         tuple.serialize_element(&self.version)?;
         tuple.serialize_element(&self.operation_id.as_str())?;
         tuple.serialize_element(&self.acknowledgement.as_ref())?;
+        tuple.serialize_element(&self.backup.as_ref())?;
         tuple.end()
     }
 }
@@ -3462,7 +3578,7 @@ impl<'de> serde::Deserialize<'de> for CommitReceipt {
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = CommitReceipt;
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a commit_receipt array of 4 fields")
+                formatter.write_str("a commit_receipt array of 5 fields")
             }
             fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 let sequence = seq
@@ -3477,14 +3593,18 @@ impl<'de> serde::Deserialize<'de> for CommitReceipt {
                 let acknowledgement = seq
                     .next_element::<Option<Acknowledgement>>()?
                     .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let backup = seq
+                    .next_element::<Option<BackupOutcome>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
                 if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                    return Err(serde::de::Error::invalid_length(4, &self));
+                    return Err(serde::de::Error::invalid_length(5, &self));
                 }
                 Ok(Self::Value {
                     sequence,
                     version,
                     operation_id,
                     acknowledgement,
+                    backup,
                 })
             }
         }

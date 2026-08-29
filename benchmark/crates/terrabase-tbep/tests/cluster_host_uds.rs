@@ -12,6 +12,7 @@ use std::time::Duration;
 use terrabase_cluster::{ClusterHost, ClusterMode, MemberSpec};
 use terrabase_tbep::cluster_host::ClusterTbepHost;
 use terrabase_tbep::codec::TbepValue;
+use terrabase_tbep::generated::BackupOutcome;
 use terrabase_tbep::generated::ErrorCode;
 use terrabase_tbep::generated::{
     Acknowledgement, ChannelBindRequest, ClusterMode as WireMode, DocumentPut, DocumentReadRequest,
@@ -22,6 +23,7 @@ use terrabase_tbep::{IdempotencyKey, TbepBody, TbepFrame, TbepServer};
 /// One bound cluster-backed server plus one connected client stream.
 struct Fixture {
     server: terrabase_tbep::TbepServerHandle,
+    host: Arc<ClusterTbepHost>,
     stream: UnixStream,
     correlation: u64,
 }
@@ -44,12 +46,12 @@ impl Fixture {
         ];
         let cluster = ClusterHost::create(&root, "cell-a", mode, "created", &spec, "tenant-a")
             .expect("the cluster creates");
-        let host = ClusterTbepHost::new(cluster, "member-a");
+        let host = Arc::new(ClusterTbepHost::new(cluster, "member-a"));
         let socket =
             std::env::temp_dir().join(format!("tbep-cluster-{tag}-{}.sock", std::process::id()));
-        let server = TbepServer::bind(&socket, Arc::new(host)).expect("the listener binds");
+        let server = TbepServer::bind(&socket, host.clone()).expect("the listener binds");
         let stream = UnixStream::connect(&socket).expect("the client connects");
-        Self { server, stream, correlation: 0 }
+        Self { server, host, stream, correlation: 0 }
     }
 
     fn call(
@@ -193,4 +195,79 @@ fn a_foreign_tenant_never_binds_to_the_cluster() {
         "the cluster serves its own tenant only, got {:?}",
         answer.kind()
     );
+}
+
+#[test]
+fn the_backup_ack_level_names_its_outcome_on_the_receipt_and_never_rolls_back() {
+    let mut fixture = Fixture::bind("backup-ack", ClusterMode::Active);
+    fixture.bind_channel();
+
+    // Requesting the level with no backup set attached refuses BEFORE
+    // anything commits — the honest config error, typed on the wire.
+    let answer = fixture.call(
+        DocumentWriteRequest {
+            document: DocumentPut {
+                id: "order-9".into(),
+                collection: "orders".into(),
+                body: order_body(),
+            },
+            expected: ExpectedVersion::Absent,
+            operation_id: "op-backup-ack-9".into(),
+            ack: Some(Acknowledgement::BackupAck),
+        },
+        Some(&IdempotencyKey::new("op-backup-ack-9").expect("valid key")),
+    );
+    let TbepBody::Error(error) = answer.body() else {
+        panic!("the unattached level refuses, got {:?}", answer.kind());
+    };
+    assert_eq!(error.code, ErrorCode::OperationRefused);
+
+    // The active-to-backup setup: three bulk-HDD members under their
+    // own backup identity.
+    let root = std::env::temp_dir().join(format!(
+        "tbep-cluster-backup-set-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos())
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let backup = terrabase_cluster::BackupSet::create(
+        &root,
+        "cell-a-backup",
+        "created",
+        &[
+            MemberSpec { name: "backup-1".into(), region: "bulk-hdd".into() },
+            MemberSpec { name: "backup-2".into(), region: "bulk-hdd".into() },
+            MemberSpec { name: "backup-3".into(), region: "bulk-hdd".into() },
+        ],
+        "tenant-a",
+    )
+    .expect("the backup set creates");
+    fixture.host.attach_backup(backup);
+
+    // The ordered level: regional quorum first, then the 2-of-3
+    // durability — FULL names itself on the receipt.
+    let answer = fixture.call(
+        DocumentWriteRequest {
+            document: DocumentPut {
+                id: "order-1".into(),
+                collection: "orders".into(),
+                body: order_body(),
+            },
+            expected: ExpectedVersion::Absent,
+            operation_id: "op-backup-ack-1".into(),
+            ack: Some(Acknowledgement::BackupAck),
+        },
+        Some(&IdempotencyKey::new("op-backup-ack-1").expect("valid key")),
+    );
+    let TbepBody::DocumentWriteResponse(response) = answer.body() else {
+        panic!("the backup_ack write answered, got {:?}", answer.kind());
+    };
+    let WriteOutcome::Committed(receipt) = &response.outcome else {
+        panic!("the ordered write commits, got {:?}", response.outcome);
+    };
+    assert_eq!(receipt.acknowledgement, Some(Acknowledgement::BackupAck));
+    assert_eq!(receipt.backup, Some(BackupOutcome::Full));
+    let _ = std::fs::remove_dir_all(&root);
 }
