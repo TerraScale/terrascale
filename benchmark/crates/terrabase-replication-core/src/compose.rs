@@ -1,7 +1,7 @@
 //! The composed Member: the engine and the CRDT plane in one server
 //! (P2 composition).
 //!
-//! A [`ComposedMember`] is what "Loro leaderless multi-writer between
+//! A [`ComposedMember`] is what "native leaderless multi-writer between
 //! servers" means concretely: one Member whose accepted writes land in
 //! its durable engine AND its own-peer [`ReplicaDoc`], and whose
 //! anti-entropy with any other Member heals both planes — the CRDTs
@@ -23,7 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use loro::LoroValue;
+use terrabase_causal::CanonicalEncode as _;
 use terrabase_v2::CommitReceipt;
 use terrabase_v2::engine::{CommitOutcome, Engine, EngineConfig};
 use terrabase_v2::families::modes::{self, AdmissionError, CollectionPolicy, KnownKinds};
@@ -33,7 +33,10 @@ use terrabase_v2::types::{
     OperationId, TenantId,
 };
 
-use crate::{DOCS_ROOT, ReplicaDoc, ReplicaError, ReplicaExchange, ReplicaFrontier};
+use crate::{
+    ReplicaDoc, ReplicaError, ReplicaExchange, ReplicaFrontier, ReplicaScope, ReplicaValue,
+    actor_from_peer,
+};
 
 /// The single collection the composed plane materializes into.
 const COLLECTION: &str = "documents";
@@ -46,8 +49,6 @@ pub enum ComposeError {
     EngineRefused,
     /// The CRDT plane refused.
     Replica(ReplicaError),
-    /// A merged value has no engine representation.
-    UnsupportedValue,
     /// An identifier was invalid.
     InvalidIdentifier,
     /// A snapshot fallback would drop the behind Member's own
@@ -268,74 +269,60 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 /// Converts one engine value into its CRDT form.
-fn to_loro(value: &DocumentValue) -> LoroValue {
+fn to_replica(value: &DocumentValue) -> ReplicaValue {
     match value {
-        DocumentValue::Null => LoroValue::Null,
-        DocumentValue::Boolean(flag) => LoroValue::from(*flag),
-        DocumentValue::Integer(number) => LoroValue::from(*number),
-        DocumentValue::Number(number) => LoroValue::from(*number),
-        DocumentValue::String(text) => LoroValue::from(text.as_str()),
+        DocumentValue::Null => ReplicaValue::Null,
+        DocumentValue::Boolean(flag) => ReplicaValue::Boolean(*flag),
+        DocumentValue::Integer(number) => ReplicaValue::Integer(*number),
+        DocumentValue::Number(number) => ReplicaValue::number(*number),
+        DocumentValue::String(text) => ReplicaValue::Text(text.clone()),
         DocumentValue::Array(items) => {
-            LoroValue::List(items.iter().map(to_loro).collect::<Vec<_>>().into())
+            ReplicaValue::Array(items.iter().map(to_replica).collect::<Vec<_>>())
         }
-        DocumentValue::Object(fields) => LoroValue::Map(
-            fields
-                .iter()
-                .map(|(key, field)| (key.clone(), to_loro(field)))
-                .collect::<Vec<_>>()
-                .into(),
+        DocumentValue::Object(fields) => ReplicaValue::Object(
+            fields.iter().map(|(key, field)| (key.clone(), to_replica(field))).collect(),
         ),
     }
 }
 
-/// Converts one merged CRDT value into its engine form.
-fn from_loro(value: LoroValue) -> Result<DocumentValue, ComposeError> {
+/// Converts one merged CRDT value into its engine form. Total: every
+/// replica value has an engine representation.
+fn from_replica(value: ReplicaValue) -> DocumentValue {
     match value {
-        LoroValue::Null => Ok(DocumentValue::Null),
-        LoroValue::Bool(flag) => Ok(DocumentValue::Boolean(flag)),
-        LoroValue::Double(number) => Ok(DocumentValue::Number(number)),
-        LoroValue::I64(number) => Ok(DocumentValue::Integer(number)),
-        LoroValue::String(text) => Ok(DocumentValue::String(text.to_string())),
-        LoroValue::List(items) => {
-            let mut converted = Vec::new();
-            for item in items.unwrap() {
-                converted.push(from_loro(item)?);
-            }
-            Ok(DocumentValue::Array(converted))
+        ReplicaValue::Null => DocumentValue::Null,
+        ReplicaValue::Boolean(flag) => DocumentValue::Boolean(flag),
+        ReplicaValue::Integer(number) => DocumentValue::Integer(number),
+        ReplicaValue::Number { bits } => DocumentValue::Number(f64::from_bits(bits)),
+        ReplicaValue::Text(text) => DocumentValue::String(text),
+        ReplicaValue::Array(items) => {
+            DocumentValue::Array(items.into_iter().map(from_replica).collect::<Vec<_>>())
         }
-        LoroValue::Map(fields) => {
-            let mut converted = BTreeMap::new();
-            for (field, value) in fields.unwrap() {
-                converted.insert(field, from_loro(value)?);
-            }
-            Ok(DocumentValue::Object(converted))
-        }
-        LoroValue::Binary(_) | LoroValue::Container(_) => Err(ComposeError::UnsupportedValue),
+        ReplicaValue::Object(fields) => DocumentValue::Object(
+            fields.into_iter().map(|(key, field)| (key, from_replica(field))).collect(),
+        ),
     }
 }
 
 /// Extracts the merged documents of a whole CRDT scope.
-fn crdt_documents(
-    state: &LoroValue,
-) -> Result<BTreeMap<String, BTreeMap<String, DocumentValue>>, ComposeError> {
-    let mut documents = BTreeMap::new();
-    let Some(docs) = state.get_by_key(DOCS_ROOT).cloned() else {
-        return Ok(documents);
-    };
-    let LoroValue::Map(entries) = docs else {
-        return Ok(documents);
-    };
-    for (document, body) in entries.unwrap() {
-        let LoroValue::Map(fields) = body else {
-            continue;
-        };
-        let mut converted = BTreeMap::new();
-        for (field, value) in fields.unwrap() {
-            converted.insert(field, from_loro(value)?);
-        }
-        documents.insert(document, converted);
-    }
-    Ok(documents)
+fn crdt_documents(scope: &ReplicaScope) -> BTreeMap<String, BTreeMap<String, DocumentValue>> {
+    scope
+        .iter()
+        .map(|(document, body)| {
+            (
+                document.clone(),
+                body.iter()
+                    .map(|(field, value)| (field.clone(), from_replica(value.clone())))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// The injected physical time for CRDT stamps, in Unix milliseconds.
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(u64::MAX, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// One server Member: a durable engine plus a same-peer CRDT replica.
@@ -377,10 +364,9 @@ impl ComposedMember {
                 .map_err(|_| ComposeError::EngineRefused)?;
         let snapshot = location.join("replica.snapshot");
         let replica = match std::fs::read(&snapshot) {
-            Ok(bytes) => {
-                ReplicaDoc::from_snapshot(peer_id, &bytes).map_err(ComposeError::Replica)?
-            }
-            Err(_) => ReplicaDoc::new(peer_id).map_err(ComposeError::Replica)?,
+            Ok(bytes) => ReplicaDoc::from_snapshot(actor_from_peer(peer_id), &bytes)
+                .map_err(ComposeError::Replica)?,
+            Err(_) => ReplicaDoc::new(actor_from_peer(peer_id)),
         };
         let tenant = TenantId::try_new(tenant_name).map_err(|_| ComposeError::InvalidIdentifier)?;
         Ok(Self {
@@ -418,20 +404,14 @@ impl ComposedMember {
     /// Returns the merged CRDT state of the Member's scope — the
     /// convergence observation surface.
     #[must_use]
-    pub fn merged_state(&self) -> LoroValue {
-        self.replica.deep_value()
+    pub fn merged_state(&self) -> ReplicaScope {
+        self.replica.materialized()
     }
 
     /// Enumerates the Member's visible documents with their merged
     /// bodies — the restore and qualification observation surface.
-    ///
-    /// # Errors
-    ///
-    /// Returns the compose failure when the merged state cannot be
-    /// read back as documents.
-    pub fn documents(
-        &self,
-    ) -> Result<BTreeMap<String, BTreeMap<String, DocumentValue>>, ComposeError> {
+    #[must_use]
+    pub fn documents(&self) -> BTreeMap<String, BTreeMap<String, DocumentValue>> {
         crdt_documents(&self.merged_state())
     }
 
@@ -478,15 +458,15 @@ impl ComposedMember {
 
     /// The stable path-kind registry this Member merged for one
     /// document: the kinds of the merged body's paths.
-    fn merged_kinds(&self, document: &str) -> Result<KnownKinds, ComposeError> {
-        let merged = crdt_documents(&self.replica.deep_value())?;
+    fn merged_kinds(&self, document: &str) -> KnownKinds {
+        let merged = crdt_documents(&self.replica.materialized());
         let mut kinds = KnownKinds::new();
         if let Some(body) = merged.get(document) {
             for (path, value) in body {
                 kinds.insert(path.clone(), terrabase_v2::families::modes::ValueKind::of(value));
             }
         }
-        Ok(kinds)
+        kinds
     }
 
     /// Returns the member's replication position: its engine's
@@ -511,14 +491,14 @@ impl ComposedMember {
         // Admission (contract §2, point 1): before any durable
         // acceptance, against the collection's policy and the stable
         // path kinds this Member already merged.
-        let known = self.merged_kinds(document)?;
+        let known = self.merged_kinds(document);
         modes::admit(&self.policy, body, &known).map_err(ComposeError::SchemaAdmission)?;
         let receipt = self.engine_put(operation, document, body)?;
         let mut merged = BTreeMap::new();
         for (field, value) in body {
-            merged.insert(field.clone(), to_loro(value));
+            merged.insert(field.clone(), to_replica(value));
         }
-        self.replica.apply_put(document, &merged).map_err(ComposeError::Replica)?;
+        self.replica.apply_put(now_millis(), document, &merged).map_err(ComposeError::Replica)?;
         self.known.insert(document.to_owned());
         self.stage_snapshot()?;
         Ok(receipt)
@@ -563,7 +543,7 @@ impl ComposedMember {
         document: &str,
     ) -> Result<CommitReceipt, ComposeError> {
         let receipt = self.engine_delete(operation, document)?;
-        self.replica.apply_delete(document).map_err(ComposeError::Replica)?;
+        self.replica.apply_delete(now_millis(), document).map_err(ComposeError::Replica)?;
         self.stage_snapshot()?;
         Ok(receipt)
     }
@@ -655,7 +635,7 @@ impl ComposedMember {
                     return Err(ComposeError::SnapshotAdoptionWouldDropOwnOps);
                 }
                 let snapshot = self.replica.snapshot_bytes().map_err(ComposeError::Replica)?;
-                let peer = other.replica.peer_id();
+                let peer = other.replica.actor();
                 other.replica =
                     ReplicaDoc::from_snapshot(peer, &snapshot).map_err(ComposeError::Replica)?;
                 Ok(())
@@ -681,7 +661,7 @@ impl ComposedMember {
                     return Err(ComposeError::SnapshotAdoptionWouldDropOwnOps);
                 }
                 let snapshot = other.replica.snapshot_bytes().map_err(ComposeError::Replica)?;
-                let peer = self.replica.peer_id();
+                let peer = self.replica.actor();
                 self.replica =
                     ReplicaDoc::from_snapshot(peer, &snapshot).map_err(ComposeError::Replica)?;
                 Ok(())
@@ -699,7 +679,7 @@ impl ComposedMember {
     ///
     /// Returns the typed compose failures of both planes.
     pub fn reconcile(&mut self) -> Result<ReconcileReport, ComposeError> {
-        let merged = crdt_documents(&self.replica.deep_value())?;
+        let merged = crdt_documents(&self.replica.materialized());
         let fingerprint = self.frontier_fingerprint();
         // Post-merge validation (contract §2, point 2): every merged
         // document is re-validated against the policy; an invalid
@@ -783,12 +763,8 @@ impl ComposedMember {
     }
 
     fn frontier_fingerprint(&self) -> u64 {
-        use std::fmt::Write as _;
-        let mut text = String::new();
-        for (peer, end) in self.replica.frontier().ends() {
-            let _ = write!(text, "{peer:x}-{end:x};");
-        }
-        fnv1a(text.as_bytes())
+        let frontier = self.replica.frontier();
+        fnv1a(frontier.context().canonical_bytes().as_slice())
     }
 
     /// Stages the CRDT snapshot durably beside the engine: temp file,
@@ -981,7 +957,7 @@ impl ReadRepairReport {
 ///
 /// Any active Member accepts the read: the reader merges causally with
 /// the other eligible reachable Members of its Region — the merged
-/// Loro frontier IS the read's view — and returns the merged document
+/// causal frontier IS the read's view — and returns the merged document
 /// body immediately. Members observed behind the merged frontier are
 /// repaired in the same exchange (their engines reconciled too);
 /// repair never gates the read's own result.
@@ -1033,7 +1009,7 @@ pub fn quorum_read_with_repair(
     }
     // The merged view, returned immediately.
     let reader = &members[reader_index];
-    let merged = crdt_documents(&reader.merged_state())?;
+    let merged = crdt_documents(&reader.merged_state());
     let body = merged.get(document).cloned();
     // The repair report: every regional Member whose frontier the read
     // moved was behind the merged frontier and is now repaired.
@@ -1367,8 +1343,7 @@ pub fn coordinate_composed_transaction(
         && let CoordinatedConstraint::UniqueField { field } = constraint
         && let Some(offered) = body.get(field)
     {
-        let merged = crdt_documents(&members[reader_index].merged_state())
-            .map_err(TransactionRefusal::Compose)?;
+        let merged = crdt_documents(&members[reader_index].merged_state());
         for (other, other_body) in &merged {
             if other != document
                 && other_body.get(field) == Some(offered)
@@ -1440,7 +1415,7 @@ pub fn migrate_collection(
     // receipt, and leaves the source version active — no Member's
     // policy or state changes on the stopped path.
     let mut transformed: Vec<(String, BTreeMap<String, DocumentValue>)> = Vec::new();
-    let merged = crdt_documents(&members[0].merged_state())?;
+    let merged = crdt_documents(&members[0].merged_state());
     for (document, body) in merged {
         let next = transform(&body);
         let violations = modes::merged_violations(to, &next);

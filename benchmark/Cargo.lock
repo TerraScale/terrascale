@@ -1513,7 +1513,8 @@ dependencies = [
 name = "terrabase-replication-core"
 version = "0.1.0"
 dependencies = [
- "loro",
+ "terrabase-causal",
+ "terrabase-crdt",
  "terrabase-v2",
 ]
 

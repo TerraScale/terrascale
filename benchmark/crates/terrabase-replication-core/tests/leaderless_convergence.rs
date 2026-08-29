@@ -1,41 +1,63 @@
-//! Convergence proofs of the leaderless multi-writer core over real
-//! Loro documents: the frozen contract's §8 scenarios 6 (concurrent
-//! same-document writes through different Members), 11 (delayed,
-//! reordered, duplicated delivery), 12's data plane (rejoin catch-up),
-//! and 13 (delete-wins with the loser in shadow history).
+//! Convergence proofs of the leaderless multi-writer core over the
+//! native `TerraBase` CRDTs — per-field LWW registers joined over dotted
+//! version vectors and causal contexts: the frozen contract's §8
+//! scenarios 6 (concurrent same-document writes through different
+//! Members), 11 (delayed, reordered, duplicated delivery), 12's data
+//! plane (rejoin catch-up), and 13 (delete-wins with the loser in
+//! shadow history).
+//!
+//! Deterministic convergence is structural here: the materialized
+//! state is a pure function of the SET of operations held, so
+//! reordering, duplication, and retry cannot change it.
 
 use std::collections::BTreeMap;
 
-use loro::{LoroValue, ToJson};
-use terrabase_replication_core::{ReplicaDoc, ReplicaExchange, ReplicaFrontier};
+use terrabase_causal::{ActorId, Dot, OriginCounter};
+use terrabase_replication_core::{
+    ReplicaDoc, ReplicaExchange, ReplicaFrontier, ReplicaScope, ReplicaValue, actor_from_peer,
+};
 
 /// Peer identities standing in for Member identities.
 const MEMBER_A: u64 = 0x11;
 const MEMBER_B: u64 = 0x22;
 const MEMBER_C: u64 = 0x33;
 
+/// The injected physical times, in Unix milliseconds: fixed constants
+/// so the proofs never depend on wall-clock luck.
+const T0: u64 = 10_000;
+const T1: u64 = 20_000;
+
 fn replica(peer: u64) -> ReplicaDoc {
-    ReplicaDoc::new(peer).expect("peer identity accepted")
+    ReplicaDoc::new(actor_from_peer(peer))
 }
 
-fn body(status: &str) -> BTreeMap<String, LoroValue> {
-    let mut fields = BTreeMap::new();
-    fields.insert("status".to_owned(), LoroValue::from(status));
-    fields
+fn actor(peer: u64) -> ActorId {
+    actor_from_peer(peer)
+}
+
+fn body(status: &str) -> BTreeMap<String, ReplicaValue> {
+    BTreeMap::from([("status".to_owned(), ReplicaValue::Text(status.to_owned()))])
 }
 
 /// One field of one document of the materialized scope.
-fn field_of(value: &LoroValue, document: &str, field: &str) -> Option<LoroValue> {
-    value
-        .get_by_key("docs")
-        .and_then(|docs| docs.get_by_key(document))
-        .and_then(|doc| doc.get_by_key(field))
-        .cloned()
+fn field_of(scope: &ReplicaScope, document: &str, field: &str) -> Option<ReplicaValue> {
+    scope.get(document).and_then(|body| body.get(field)).cloned()
 }
 
 /// Whether the materialized scope still holds one document.
-fn holds(value: &LoroValue, document: &str) -> bool {
-    value.get_by_key("docs").and_then(|docs| docs.get_by_key(document)).is_some()
+fn holds(scope: &ReplicaScope, document: &str) -> bool {
+    scope.contains_key(document)
+}
+
+/// The dot of one actor's latest own operation, by its contiguous end.
+fn own_dot(scope_frontier: &ReplicaFrontier, peer: u64) -> Dot {
+    let (peer_actor, through) = scope_frontier
+        .ends()
+        .into_iter()
+        .find(|(held, _)| *held == actor(peer))
+        .expect("the peer recorded its operation");
+    let counter = OriginCounter::new(through).expect("the recorded counter is nonzero");
+    Dot::new(peer_actor, counter)
 }
 
 /// Unwraps one exchange into its delta bytes; the tests that use it
@@ -78,7 +100,7 @@ fn adopt(source: &ReplicaDoc, behind: &mut ReplicaDoc) {
     let own = behind.export_own_ops().expect("exports own ops");
     assert!(own.is_empty(), "adoption would drop the peer's own operations");
     let snapshot = source.snapshot_bytes().expect("snapshots");
-    let peer = behind.peer_id();
+    let peer = behind.actor();
     *behind = ReplicaDoc::from_snapshot(peer, &snapshot).expect("adopts");
 }
 
@@ -88,8 +110,8 @@ fn concurrent_same_document_writes_merge_to_one_deterministic_winner() {
     // a partition: neither sees the other's operation.
     let mut member_a = replica(MEMBER_A);
     let mut member_b = replica(MEMBER_B);
-    member_a.apply_put("order-1", &body("accepted-by-a")).expect("a writes");
-    member_b.apply_put("order-1", &body("accepted-by-b")).expect("b writes");
+    member_a.apply_put(T0, "order-1", &body("accepted-by-a")).expect("a writes");
+    member_b.apply_put(T0, "order-1", &body("accepted-by-b")).expect("b writes");
     let a_frontier_before = member_a.frontier();
     let b_frontier_before = member_b.frontier();
 
@@ -98,41 +120,31 @@ fn concurrent_same_document_writes_merge_to_one_deterministic_winner() {
 
     // Identical materialized state on both replicas (scenario 6), with
     // one scalar winner — not a conflict marker, not a split state.
-    assert_eq!(member_a.deep_value(), member_b.deep_value());
-    let winner_a = field_of(&member_a.deep_value(), "order-1", "status").expect("a winner");
-    let winner_b = field_of(&member_b.deep_value(), "order-1", "status").expect("b winner");
+    assert_eq!(member_a.materialized(), member_b.materialized());
+    let winner_a = field_of(&member_a.materialized(), "order-1", "status").expect("a winner");
+    let winner_b = field_of(&member_b.materialized(), "order-1", "status").expect("b winner");
     assert_eq!(winner_a, winner_b);
-    let winner = winner_a.to_json_value().to_string();
     assert!(
-        winner.contains("accepted-by-a") || winner.contains("accepted-by-b"),
-        "the winner is one of the concurrent writes: {winner}"
+        winner_a == ReplicaValue::Text("accepted-by-a".to_owned())
+            || winner_a == ReplicaValue::Text("accepted-by-b".to_owned()),
+        "the winner is one of the concurrent writes: {winner_a:?}"
     );
 
     // The loser stays recoverable from history: BOTH concurrent writes
     // remain readable at their own operations after the merge — the
     // shadow history, whichever write won the materialized state.
-    let a_end = a_frontier_before
-        .ends()
-        .iter()
-        .find(|(peer, _)| *peer == MEMBER_A)
-        .copied()
-        .expect("a recorded its operation");
-    let b_end = b_frontier_before
-        .ends()
-        .iter()
-        .find(|(peer, _)| *peer == MEMBER_B)
-        .copied()
-        .expect("b recorded its operation");
-    let shadow_a = member_a.value_after(a_end.0, a_end.1 - 1).expect("history serves a's write");
+    let a_dot = own_dot(&a_frontier_before, MEMBER_A);
+    let b_dot = own_dot(&b_frontier_before, MEMBER_B);
+    let shadow_a = member_a.value_after(a_dot).expect("history serves a's write");
     assert_eq!(
         field_of(&shadow_a, "order-1", "status"),
-        Some(LoroValue::from("accepted-by-a")),
+        Some(ReplicaValue::Text("accepted-by-a".to_owned())),
         "a's write stays readable from history after the merge"
     );
-    let shadow_b = member_b.value_after(b_end.0, b_end.1 - 1).expect("history serves b's write");
+    let shadow_b = member_b.value_after(b_dot).expect("history serves b's write");
     assert_eq!(
         field_of(&shadow_b, "order-1", "status"),
-        Some(LoroValue::from("accepted-by-b")),
+        Some(ReplicaValue::Text("accepted-by-b".to_owned())),
         "the losing write stays readable from history after the merge"
     );
 }
@@ -142,11 +154,11 @@ fn the_merge_winner_is_deterministic_across_independent_runs() {
     // The same concurrent pair merges to the same winner when the
     // delivery order is reversed on independent replicas: the outcome
     // is a property of the operations, not of arrival order.
-    let run = |first_delivery: u64| -> String {
+    let run = |first_delivery: u64| -> ReplicaValue {
         let mut member_a = replica(MEMBER_A);
         let mut member_b = replica(MEMBER_B);
-        member_a.apply_put("order-1", &body("accepted-by-a")).expect("a writes");
-        member_b.apply_put("order-1", &body("accepted-by-b")).expect("b writes");
+        member_a.apply_put(T0, "order-1", &body("accepted-by-a")).expect("a writes");
+        member_b.apply_put(T0, "order-1", &body("accepted-by-b")).expect("b writes");
         if first_delivery == MEMBER_A {
             let bytes =
                 delta_bytes(member_a.delta_for(&ReplicaFrontier::default()).expect("exports"));
@@ -160,11 +172,8 @@ fn the_merge_winner_is_deterministic_across_independent_runs() {
             let bytes = delta_bytes(member_a.delta_for(&member_b.frontier()).expect("exports"));
             member_b.absorb(&bytes).expect("b absorbs");
         }
-        assert_eq!(member_a.deep_value(), member_b.deep_value());
-        field_of(&member_a.deep_value(), "order-1", "status")
-            .expect("winner")
-            .to_json_value()
-            .to_string()
+        assert_eq!(member_a.materialized(), member_b.materialized());
+        field_of(&member_a.materialized(), "order-1", "status").expect("winner")
     };
     assert_eq!(run(MEMBER_A), run(MEMBER_B), "delivery order does not choose the winner");
 }
@@ -176,20 +185,46 @@ fn delete_wins_over_a_concurrent_update() {
     // stays in shadow history.
     let mut member_a = replica(MEMBER_A);
     let mut member_b = replica(MEMBER_B);
-    member_a.apply_put("order-1", &body("original")).expect("a seeds");
+    member_a.apply_put(T0, "order-1", &body("original")).expect("a seeds");
     sync_pair(&mut member_a, &mut member_b);
 
-    // Concurrent divergence: b updates, a deletes.
-    member_b.apply_put("order-1", &body("updated-by-b")).expect("b updates");
-    member_a.apply_delete("order-1").expect("a deletes");
-    assert!(holds(&member_b.deep_value(), "order-1"), "b still holds the document");
-    assert!(!holds(&member_a.deep_value(), "order-1"), "a already deleted it");
+    // Concurrent divergence: b updates, a deletes — at the SAME
+    // injected time, so the outcome cannot be an artifact of clock
+    // skew: the tombstone layer decides, not the timestamp.
+    member_b.apply_put(T1, "order-1", &body("updated-by-b")).expect("b updates");
+    member_a.apply_delete(T1, "order-1").expect("a deletes");
+    assert!(holds(&member_b.materialized(), "order-1"), "b still holds the document");
+    assert!(!holds(&member_a.materialized(), "order-1"), "a already deleted it");
 
     sync_pair(&mut member_a, &mut member_b);
 
-    assert!(!holds(&member_a.deep_value(), "order-1"), "delete wins on the deleting member");
-    assert!(!holds(&member_b.deep_value(), "order-1"), "delete wins on the updating member too");
-    assert_eq!(member_a.deep_value(), member_b.deep_value());
+    assert!(!holds(&member_a.materialized(), "order-1"), "delete wins on the deleting member");
+    assert!(!holds(&member_b.materialized(), "order-1"), "delete wins on the updating member too");
+    assert_eq!(member_a.materialized(), member_b.materialized());
+}
+
+#[test]
+fn an_update_that_observed_the_delete_resurrects_the_document() {
+    // The mirror of scenario 13: a put whose causal context contains
+    // the tombstone (the writer had seen the delete) re-creates the
+    // document on every replica.
+    let mut member_a = replica(MEMBER_A);
+    let mut member_b = replica(MEMBER_B);
+    member_a.apply_put(T0, "order-1", &body("original")).expect("a seeds");
+    sync_pair(&mut member_a, &mut member_b);
+    member_a.apply_delete(T1, "order-1").expect("a deletes");
+    sync_pair(&mut member_a, &mut member_b);
+    assert!(!holds(&member_b.materialized(), "order-1"), "the delete spread");
+
+    // b has now observed the delete: its next put resurrects.
+    member_b.apply_put(T1 + 1, "order-1", &body("reborn")).expect("b resurrects");
+    sync_pair(&mut member_a, &mut member_b);
+    assert_eq!(
+        field_of(&member_a.materialized(), "order-1", "status"),
+        Some(ReplicaValue::Text("reborn".to_owned())),
+        "the resurrection reaches the deleting member"
+    );
+    assert_eq!(member_a.materialized(), member_b.materialized());
 }
 
 #[test]
@@ -199,11 +234,13 @@ fn duplicated_and_reordered_delivery_converges_idempotently() {
     // no duplicated effect.
     let mut member_a = replica(MEMBER_A);
     let mut member_b = replica(MEMBER_B);
-    member_a.apply_put("order-1", &body("one")).expect("a writes one");
+    member_a.apply_put(T0, "order-1", &body("one")).expect("a writes one");
     let first = delta_bytes(member_a.delta_for(&ReplicaFrontier::default()).expect("exports"));
-    member_a.apply_put("order-2", &body("two")).expect("a writes two");
+    member_a.apply_put(T0, "order-2", &body("two")).expect("a writes two");
     let second = delta_bytes(
-        member_a.delta_for(&ReplicaFrontier::from_ends(vec![(MEMBER_A, 1)])).expect("exports"),
+        member_a
+            .delta_for(&ReplicaFrontier::from_ends(vec![(actor(MEMBER_A), 1)]))
+            .expect("exports"),
     );
 
     // Reordered: the second window arrives before the first.
@@ -212,13 +249,16 @@ fn duplicated_and_reordered_delivery_converges_idempotently() {
     // Duplicated: the first window arrives again.
     member_b.absorb(&first).expect("duplicate delivery is a no-op");
 
-    assert_eq!(member_a.deep_value(), member_b.deep_value());
+    assert_eq!(member_a.materialized(), member_b.materialized());
     assert_eq!(
-        field_of(&member_b.deep_value(), "order-1", "status"),
-        Some(LoroValue::from("one")),
+        field_of(&member_b.materialized(), "order-1", "status"),
+        Some(ReplicaValue::Text("one".to_owned())),
         "no duplicated materialization"
     );
-    assert_eq!(field_of(&member_b.deep_value(), "order-2", "status"), Some(LoroValue::from("two")));
+    assert_eq!(
+        field_of(&member_b.materialized(), "order-2", "status"),
+        Some(ReplicaValue::Text("two".to_owned()))
+    );
     assert!(member_b.frontier().covers(&member_a.frontier()));
 }
 
@@ -231,8 +271,8 @@ fn a_partitioned_member_catches_up_after_rejoin() {
     let mut member_b = replica(MEMBER_B);
     let mut member_c = replica(MEMBER_C);
 
-    member_a.apply_put("order-1", &body("from-a")).expect("a writes");
-    member_b.apply_put("order-2", &body("from-b")).expect("b writes");
+    member_a.apply_put(T0, "order-1", &body("from-a")).expect("a writes");
+    member_b.apply_put(T0, "order-2", &body("from-b")).expect("b writes");
     sync_pair(&mut member_a, &mut member_b);
 
     // c rejoins: its empty frontier does not cover the merged state, so
@@ -241,32 +281,32 @@ fn a_partitioned_member_catches_up_after_rejoin() {
     sync_pair(&mut member_c, &mut member_a);
     sync_pair(&mut member_c, &mut member_b);
 
-    assert_eq!(member_c.deep_value(), member_a.deep_value());
-    assert_eq!(member_c.deep_value(), member_b.deep_value());
+    assert_eq!(member_c.materialized(), member_a.materialized());
+    assert_eq!(member_c.materialized(), member_b.materialized());
     assert_eq!(
-        field_of(&member_c.deep_value(), "order-2", "status"),
-        Some(LoroValue::from("from-b"))
+        field_of(&member_c.materialized(), "order-2", "status"),
+        Some(ReplicaValue::Text("from-b".to_owned()))
     );
     // c's frontier now names every peer it absorbed.
     let frontier = member_c.frontier();
     let ends = frontier.ends();
-    assert!(ends.iter().any(|(peer, _)| *peer == MEMBER_A), "c names a's operations");
-    assert!(ends.iter().any(|(peer, _)| *peer == MEMBER_B), "c names b's operations");
+    assert!(ends.iter().any(|(held, _)| *held == actor(MEMBER_A)), "c names a's operations");
+    assert!(ends.iter().any(|(held, _)| *held == actor(MEMBER_B)), "c names b's operations");
 }
 
 #[test]
 fn covered_frontiers_answer_up_to_date_without_exporting() {
     let mut member_a = replica(MEMBER_A);
-    member_a.apply_put("order-1", &body("one")).expect("a writes");
+    member_a.apply_put(T0, "order-1", &body("one")).expect("a writes");
     let frontier = member_a.frontier();
 
     assert_eq!(member_a.delta_for(&frontier), Ok(ReplicaExchange::UpToDate));
-    let behind = ReplicaFrontier::from_ends(vec![(MEMBER_A, frontier.ends()[0].1 - 1)]);
+    let behind = ReplicaFrontier::from_ends(vec![(actor(MEMBER_A), frontier.ends()[0].1 - 1)]);
     assert!(
         matches!(member_a.delta_for(&behind), Ok(ReplicaExchange::Delta(_))),
         "a missing counter exports a delta"
     );
-    let foreign = ReplicaFrontier::from_ends(vec![(MEMBER_B, 5)]);
+    let foreign = ReplicaFrontier::from_ends(vec![(actor(MEMBER_B), 5)]);
     assert!(
         matches!(member_a.delta_for(&foreign), Ok(ReplicaExchange::Delta(_))),
         "an unknown peer's frontier exports everything held"
@@ -276,10 +316,10 @@ fn covered_frontiers_answer_up_to_date_without_exporting() {
 #[test]
 fn compaction_raises_the_retained_floor() {
     let mut member = replica(MEMBER_A);
-    member.apply_put("order-1", &body("one")).expect("writes");
+    member.apply_put(T0, "order-1", &body("one")).expect("writes");
     assert!(member.retained_floor().ends().is_empty(), "no floor before compaction");
     member.compact_history().expect("compacts");
-    assert!(!member.retained_floor().ends().is_empty(), "the floor is the shallow root");
+    assert!(!member.retained_floor().ends().is_empty(), "the floor is the compacted frontier");
     // An up-to-date peer still answers UpToDate.
     let now = member.frontier();
     assert_eq!(member.delta_for(&now), Ok(ReplicaExchange::UpToDate));
@@ -290,7 +330,17 @@ fn compaction_raises_the_retained_floor() {
         Ok(ReplicaExchange::BehindRetainedFloor { .. })
     ));
     // The merged state survives the compaction.
-    assert_eq!(field_of(&member.deep_value(), "order-1", "status"), Some(LoroValue::from("one")));
+    assert_eq!(
+        field_of(&member.materialized(), "order-1", "status"),
+        Some(ReplicaValue::Text("one".to_owned()))
+    );
+    // The collected operation no longer answers a shadow read: history
+    // below the floor is gone, exactly as the floor contract says.
+    let collected = own_dot(&now, MEMBER_A);
+    assert_eq!(
+        member.value_after(collected),
+        Err(terrabase_replication_core::ReplicaError::UnknownVersion)
+    );
 }
 
 #[test]
@@ -301,7 +351,7 @@ fn a_fresh_peer_adopts_a_compacted_snapshot() {
     // non-compacted peer — the compaction guard lands with the
     // transport wiring; the composed test pins the typed refusal.)
     let mut holder = replica(MEMBER_A);
-    holder.apply_put("order-1", &body("from-a")).expect("writes");
+    holder.apply_put(T0, "order-1", &body("from-a")).expect("writes");
     holder.compact_history().expect("compacts");
     let floor = holder.retained_floor();
 
@@ -317,8 +367,50 @@ fn a_fresh_peer_adopts_a_compacted_snapshot() {
     adopt(&holder, &mut fresh);
 
     // The adopted state is the merged state, and the pair is converged.
-    assert_eq!(fresh.deep_value(), holder.deep_value());
-    assert_eq!(field_of(&fresh.deep_value(), "order-1", "status"), Some(LoroValue::from("from-a")));
+    assert_eq!(fresh.materialized(), holder.materialized());
+    assert_eq!(
+        field_of(&fresh.materialized(), "order-1", "status"),
+        Some(ReplicaValue::Text("from-a".to_owned()))
+    );
     sync_pair(&mut fresh, &mut holder);
     assert_eq!(fresh.frontier(), holder.frontier());
+}
+
+#[test]
+fn structured_field_values_round_trip_through_the_registers() {
+    // The canonical text form carries structured values exactly:
+    // arrays, objects, integers, floats (by bit pattern), booleans,
+    // and null all merge and materialize identically on both sides.
+    let mut member_a = replica(MEMBER_A);
+    let mut member_b = replica(MEMBER_B);
+    let mut nested = BTreeMap::new();
+    nested.insert("inner".to_owned(), ReplicaValue::Integer(-7));
+    let body = BTreeMap::from([
+        ("text".to_owned(), ReplicaValue::Text("s3:yes:not-a-length".to_owned())),
+        ("flag".to_owned(), ReplicaValue::Boolean(true)),
+        ("count".to_owned(), ReplicaValue::Integer(i64::MIN)),
+        ("ratio".to_owned(), ReplicaValue::number(0.25)),
+        ("nothing".to_owned(), ReplicaValue::Null),
+        (
+            "list".to_owned(),
+            ReplicaValue::Array(vec![
+                ReplicaValue::number(f64::NAN),
+                ReplicaValue::Text("x".to_owned()),
+            ]),
+        ),
+        ("map".to_owned(), ReplicaValue::Object(nested)),
+    ]);
+    member_a.apply_put(T0, "order-1", &body).expect("a writes");
+
+    let bytes = delta_bytes(member_a.delta_for(&ReplicaFrontier::default()).expect("exports"));
+    member_b.absorb(&bytes).expect("b absorbs");
+
+    assert_eq!(member_a.materialized(), member_b.materialized());
+    let merged = member_b.materialized();
+    let body_back = merged.get("order-1").expect("the document merged");
+    assert_eq!(body_back.get("ratio"), Some(&ReplicaValue::number(0.25)));
+    let ReplicaValue::Array(items) = body_back.get("list").expect("the list merged") else {
+        panic!("the list stays structured");
+    };
+    assert_eq!(items[0].as_f64().map(f64::is_nan), Some(true), "even NaN survives by bits");
 }
