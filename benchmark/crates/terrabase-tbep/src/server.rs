@@ -264,14 +264,38 @@ impl Connection {
     }
 }
 
+/// The transport-specific both-direction shutdown of one reader, when
+/// the transport carries one (the UDS socket does; a QUIC bridge ends
+/// the stream through its own writer).
+fn reader_shutdown_of<R: std::io::Read + 'static>(reader: &R) -> Option<Box<dyn Fn() + Send>> {
+    let stream = (reader as &dyn std::any::Any).downcast_ref::<UnixStream>()?;
+    let cloned = stream.try_clone().ok()?;
+    Some(Box::new(move || {
+        let _ = cloned.shutdown(std::net::Shutdown::Both);
+    }))
+}
+
+/// The transport-specific both-direction shutdown of one writer.
+fn writer_shutdown_of<W: std::io::Write + 'static>(writer: &W) -> Option<Box<dyn Fn() + Send>> {
+    let stream = (writer as &dyn std::any::Any).downcast_ref::<UnixStream>()?;
+    let cloned = stream.try_clone().ok()?;
+    Some(Box::new(move || {
+        let _ = cloned.shutdown(std::net::Shutdown::Both);
+    }))
+}
+
 /// Spawns one connection's writer thread: it drains the bounded
 /// outbound channel to the stream until the channel closes or a write
 /// fails. A spawn failure ends the connection — the reader sees the
 /// closed channel on its next answer and the loop exits.
-fn spawn_writer(
-    mut writer: UnixStream,
+fn spawn_writer<W>(
+    mut writer: W,
     outbound: std::sync::mpsc::Receiver<Outbound>,
-) -> Option<JoinHandle<()>> {
+    writer_shutdown: Option<Box<dyn Fn() + Send>>,
+) -> Option<JoinHandle<()>>
+where
+    W: std::io::Write + Send + 'static,
+{
     std::thread::Builder::new()
         .name("tbep-writer".into())
         .spawn(move || {
@@ -283,7 +307,9 @@ fn spawn_writer(
                         }
                     }
                     Outbound::Close => {
-                        let _ = writer.shutdown(std::net::Shutdown::Both);
+                        if let Some(shutdown) = writer_shutdown.as_ref() {
+                            shutdown();
+                        }
                         break;
                     }
                 }
@@ -307,8 +333,30 @@ fn serve_connection(
     // side closes the last borrowed fd when the connection ends, so a
     // peer blocked on read observes the close.
     drop(stream);
+    serve_io(reader, writer, host, inflight, inflight_bound);
+}
+
+/// Serves one TBEP channel over any byte transport (the UDS binding and
+/// the QUIC binding's bridged streams): one reader loop, one writer
+/// thread, the bounded outbound channel, and the overload gate — the
+/// identical frame layer on every binding.
+// The clean end of stream and a transport failure both end the loop;
+// the arm duplication keeps the two causes readable.
+#[allow(clippy::match_same_arms)]
+pub(crate) fn serve_io<R, W>(
+    reader: R,
+    writer: W,
+    host: Arc<dyn TbepHost>,
+    inflight: Arc<AtomicUsize>,
+    inflight_bound: usize,
+) where
+    R: std::io::Read + 'static,
+    W: std::io::Write + Send + 'static,
+{
     let (outbound_sender, outbound_receiver) = sync_channel::<Outbound>(OUTBOUND_DEPTH);
-    let _writer_spawn = spawn_writer(writer, outbound_receiver);
+    let writer_shutdown = writer_shutdown_of(&writer);
+    let _writer_spawn = spawn_writer(writer, outbound_receiver, writer_shutdown);
+    let reader_shutdown = reader_shutdown_of(&reader);
     let mut connection = Connection {
         host,
         outbound: outbound_sender,
@@ -406,7 +454,9 @@ fn serve_connection(
         // fails the writer's pending writes immediately, which ends the
         // writer and (through the closed channel) every drainer of this
         // connection.
-        let _ = reader.shutdown(std::net::Shutdown::Both);
+        if let Some(shutdown) = reader_shutdown.as_ref() {
+            shutdown();
+        }
     }
     drop(connection);
     // Closing the sender ends the writer thread after its queue drains.

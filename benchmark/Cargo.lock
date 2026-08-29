@@ -1493,11 +1493,15 @@ dependencies = [
 name = "terrabase-tbep"
 version = "0.1.0"
 dependencies = [
+ "quinn",
+ "rcgen",
  "rmp-serde",
+ "rustls",
  "serde",
  "serde_json",
  "terrabase-sync-core",
  "terrabase-v2",
+ "tokio",
 ]
 
 [[package]]

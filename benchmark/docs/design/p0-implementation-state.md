@@ -719,3 +719,44 @@ binding (quinn/rustls live in `terrabase-member-transport`).
 Receipts: `cargo test -p terrabase-tbep` 13 suites green;
 `terrabase-v2` 1080/1080; clippy `-D warnings` and fmt clean on both
 crates; Protocol 23/23, Api 90/90. `scripts/check.sh` not run (AC-12).
+
+## 19. P4 landing 8 (2026-08-29): the QUIC+TLS binding
+
+The supported network binding exists: `TbepQuicServer`
+(`crates/terrabase-tbep/src/quic.rs`) binds a quinn endpoint over TLS
+1.3 (rustls, `ring` provider — the same pins
+`terrabase-member-transport` qualified for its member lanes) and serves
+the identical frame layer: the per-connection serving loop was
+extracted to a transport-generic `serve_io` core (std-io reader loop +
+writer thread + bounded outbound channel + the overload gate + every
+typed operation), so the UDS binding and the QUIC binding run ONE
+implementation — channel binding, idempotency-key pairing, the
+slow-consumer policy, and the gate behave exactly the same on both.
+One bidirectional QUIC stream carries one TBEP channel (the same
+sequential frame discipline); a per-connection std thread bridges the
+stream through `Handle::block_on`.
+
+Certificate identity: the engine process owns its certificate and key
+(`TbepQuicServer::bind` takes them; tests provision rcgen
+self-signed identities); clients verify the server. Honest limits:
+client identity today is server verification plus the channel's tenant
+binding — short-lived tenant-scoped client tokens and rotated mTLS
+member identities land with the P5 identity machinery; 0-RTT is not
+enabled for any traffic (the contract forbids it for mutations, and no
+replay-safe read path is qualified); `topology.read` still names the
+UDS binding until the host learns its transport (recorded wrinkle);
+and the C# client's QUIC path (System.Net.Quic) is the next landing —
+this one is proven from Rust.
+
+Proven: `tests/quic_server.rs` — a real engine-backed host bound at
+`127.0.0.1:0`, a quinn client verifying the self-signed identity, and
+the spine over TLS: channel bind, a mutation committing with its
+receipt (version 1), and the read serving the published body. Fourteen
+tbep suites green (the UDS rows unchanged — the shared core).
+
+Still open in P4: the C# QUIC client path, client batching op,
+reconnect/resume, and the C# CI gates.
+
+Receipts: `cargo test -p terrabase-tbep` 14 suites green;
+`terrabase-v2` 1080/1080; clippy `-D warnings` and fmt clean on both
+crates; Protocol 23/23, Api 90/90. `scripts/check.sh` not run (AC-12).

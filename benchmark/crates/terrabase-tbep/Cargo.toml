@@ -31,6 +31,14 @@ missing_docs = "deny"
 pedantic = "warn"
 
 [dependencies]
+# The QUIC+TLS network binding (P4): quinn over rustls with the `ring`
+# provider — the same pins `terrabase-member-transport` qualified for its
+# member lanes — so the TBEP frame layer rides an authenticated TLS 1.3
+# transport beside the local UDS binding.
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "sync", "io-util"] }
+
 # The mandated codec pair (PD-2026-08-26-02 D4): Rust rmp-serde against
 # C# MessagePack-CSharp with contractless/typeless modes disabled.
 # serde rides as rmp-serde's foundation (the generated frame bodies
@@ -50,3 +58,7 @@ terrabase-sync-core = { path = "../terrabase-sync-core" }
 # The engine this host serves (P4): the real durable engine behind the
 # document spine.
 terrabase-v2 = { path = "../.." }
+
+[dev-dependencies]
+# Self-signed test certificates for the QUIC binding's conformance rows.
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }

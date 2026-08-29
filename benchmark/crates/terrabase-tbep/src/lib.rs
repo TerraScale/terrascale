@@ -51,6 +51,7 @@ pub mod engine_host;
 pub mod envelope;
 pub mod generated;
 pub mod host;
+pub mod quic;
 pub mod server;
 
 pub use codec::BodyError;
