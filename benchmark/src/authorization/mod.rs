@@ -966,4 +966,6 @@ fn compare(left: &AttributeValue, right: &AttributeValue, comparison: ClaimCompa
 }
 
 #[cfg(test)]
+mod generation_model_tests;
+#[cfg(test)]
 mod tests;
