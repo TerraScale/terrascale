@@ -12,7 +12,7 @@ namespace TerraBase.Api.Tests;
 /// harness consumes it — spawned, watched, and served by the host's
 /// supervisor over a real Unix-domain socket. The rows cover the real
 /// channel binding and engine-enforced tenant isolation, the real sync
-/// sessions (Loro deltas, idempotent retries, the retained-floor
+/// sessions (native deltas, idempotent retries, the retained-floor
 /// resync), the real backbone streams with content-free triggers, the
 /// topology/admin/supervision reads, and the graceful-shutdown
 /// contract. The document/query/family operations answer the engine's
@@ -193,11 +193,11 @@ public sealed class RealEngineTests
         var (ack, _) = await HostHarness.SendAsync(caller, $"/v1/sync/sessions/{sessionId}/ack", new { checkpoint = next });
         await Assert.That(ack).IsEqualTo(200);
 
-        // The snapshot pull answers a real Loro snapshot.
+        // The snapshot pull answers a real native snapshot.
         var (snapshot, snapshotBody) = await HostHarness.SendAsync(caller, $"/v1/sync/sessions/{sessionId}/snapshot", body: new { }, method: "POST");
         await Assert.That(snapshot).IsEqualTo(200);
-        // Legacy Loro-era codec identifier: mirrors current engine behavior and flips only with the engine-side native codec migration (ADR 0022/0024; see README).
-        await Assert.That(snapshotBody.RootElement.GetProperty("payloadCodec").GetString()).IsEqualTo("loro-snapshot/1");
+        // Native codec of ADR 0022/0024: the engine's snapshot answers carry terrabase-snapshot/1.
+        await Assert.That(snapshotBody.RootElement.GetProperty("payloadCodec").GetString()).IsEqualTo("terrabase-snapshot/1");
         await Assert.That(Convert.FromBase64String(snapshotBody.RootElement.GetProperty("payload").GetString()!)).IsNotEmpty();
 
         var (close, _) = await HostHarness.SendAsync(caller, $"/v1/sync/sessions/{sessionId}/close", method: "POST");

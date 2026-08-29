@@ -48,7 +48,7 @@ components:
   contract artifacts;
 - C# protocol, API host, and CLI projects that exercise TBEP;
 - a Vinext Operations Studio;
-- Loro-backed sync and replication crates;
+- native CRDT and causal sync and replication crates;
 - older range-owner replication and sharding contracts;
 - schema validation and migration foundations; and
 - NATS KV/config/discovery integration.
@@ -60,9 +60,14 @@ architecture.
 
 The following code and evidence block an architecture-complete claim:
 
-- Loro 1.13.9, Loro identities, payload codecs, frontiers, snapshots, and
-  checkpoint semantics must leave persistence, replication, sync, and supported
-  wire formats. The replacement is a native CRDT and causal core.
+- The Loro removal from persistence, replication, sync, and supported wire
+  formats is complete as of 2026-08-29: `grep -ri loro crates/` (excluding
+  `target/`) returns nothing, the root `Cargo.lock` carries no `loro` pin, and
+  the payload codecs are the TerraBase-native `terrabase-native/1` and
+  `terrabase-snapshot/1` of ADR 0022/0024, and `TerraScale.Database` vendors
+  the byte-identical regenerated TBEP registry. Historical Loro mentions
+  survive only in ADRs, the workspace charter, the `tracer/` record, and
+  immutable past receipts.
 - Single range ownership, fencing, and leader-shaped replication must become
   symmetric replica sets with request-scoped coordination only.
 - Production active placement must support RF=2 per selected Region.
@@ -86,8 +91,8 @@ The following code and evidence block an architecture-complete claim:
 - Current storage write amplification, tiering, immutable backup, and recovery
   gaps remain open until the matching Recovery and Benchmark Receipts pass.
 
-Existing Loro, UDS, host, replication, sync, and auth-dependent results cannot
-qualify their replacements.
+Existing Loro-era, UDS, host, replication, sync, and auth-dependent results
+cannot qualify their replacements.
 
 The PostgreSQL performance objective remains `inconclusive` until
 TerraBase.Benchmark produces comparable, valid receipts. No statement in this

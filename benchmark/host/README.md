@@ -8,15 +8,14 @@
 >
 > Per `../GOAL.md` P6, this whole lane migrates to `TerraScale.Database` (the
 > sole TBEP gateway); nothing here is the product host. Until then it remains
-> the active CI cross-language conformance lane and still mirrors the engine's
-> legacy Loro-era payload codecs (`loro-delta/1`, `loro-snapshot/1`) as
-> current behavior: the generated registry is produced from
-> `crates/terrabase-tbep/schema/tbep-registry.json` (drift-checked), and the
-> sync-session tests replay the corpus copied from
-> `crates/terrabase-sync-core/vectors/`. Those identifiers leave this lane
-> only by regenerating from the schema owner when the engine migrates to the
-> native codecs of ADR 0022/0024 — never by editing the generated file or the
-> assertions ahead of the engine.
+> the active CI cross-language conformance lane and mirrors the engine's
+> native payload codecs of ADR 0022/0024 (`terrabase-native/1`,
+> `terrabase-snapshot/1`) as current behavior: the generated registry is
+> produced from `crates/terrabase-tbep/schema/tbep-registry.json`
+> (drift-checked, regenerated when the engine migrated to the native codecs on
+> 2026-08-29), and the sync-session tests replay the corpus copied from
+> `crates/terrabase-sync-core/vectors/`. The registry is never hand-edited and
+> the assertions follow the schema owner — never ahead of the engine.
 
 The database's external surface, in C# per the workspace stack policy
 (charter PD-2026-08-26-01/02; ADR 0005): an ASP.NET Core host that is a
@@ -160,7 +159,7 @@ first run compiles it once per worktree (`~1 minute` cold); set
   an error for an abandoned call completes nothing; a causation-less
   decode refusal fails the oldest pending call.
 - `RealEngineTests` — the real engine over UDS: binding and isolation,
-  the typed operation refusals, real Loro delivery, retained-floor
+  the typed operation refusals, real native delivery, retained-floor
   resync, real backbone streams with content-free triggers, graceful
   shutdown, and the decode-refusal regression (a refused frame surfaces
   its typed error; it never hangs).
