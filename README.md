@@ -70,7 +70,7 @@ unqualified.
 
 ## Better Auth adapter target
 
-The planned server-only adapter implements the pinned Better Auth database
+The server-only adapter implements the pinned Better Auth database
 adapter contract through named operations for:
 
 - unique insert;
