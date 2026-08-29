@@ -14,6 +14,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const STATUS: &str = "w3-1-storage-engine";
 
 pub mod adapters;
+pub mod authorization;
 pub mod backup;
 pub mod engine;
 pub mod families;
