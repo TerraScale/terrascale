@@ -10,11 +10,16 @@
 //! are recorded unrun where no broker runs).
 
 pub mod backup;
+pub mod control;
 pub mod host;
 pub mod identity;
 pub mod member;
 
 pub use backup::{BackupOutcome, BackupPolicy, BackupSet};
+pub use control::{
+    ConfigEpochRecord, ControlCluster, ControlError, CtrlReply, CtrlRequest, CtrlSubject,
+    InProcessControlPlane, JoinToken, KvBucket, KvPayload,
+};
 pub use host::{ClusterError, ClusterHost, ClusterWriteRefusal, MemberSpec};
 
 // Re-exported so the serving seam builds writes without a direct

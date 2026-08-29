@@ -1032,3 +1032,57 @@ the ordered-level host row); `cargo test -p terrabase-tbep` 16 suites
 green (the new backup_ack UDS row, corpus regenerated and replaying
 byte-exact); C# Protocol 23/23, Api 92 passed + 1 msquic skip; clippy
 `-D warnings` and fmt clean. `scripts/check.sh` not run (AC-12).
+
+## 27. The NATS control contract in process (P5 landing 5)
+
+`terrabase-cluster/src/control.rs` delivers the frozen
+`p0-nats-control-contract` as typed in-process semantics — the six KV
+buckets and five `ctrl.*` subjects a live broker deployment serves,
+without the socket (no nats-server runs on this host; the live-server
+rows stay recorded unrun, never fabricated).
+
+The six buckets (`terrabase.$CLUSTER.{members,topology,config,mode,
+routes,tierpolicy}`) each hold exactly their own payload shape —
+`KvPayload` is a tagged enum whose `fits` check refuses a payload in
+any other bucket, and whose serde `deny_unknown_fields` allowlist IS
+the no-data rule made mechanical: a field named `documents`,
+`operations`, `wal`, `frames`, `sync_payload`, `checkpoint`,
+`mover_receipt`, or `crdt_delta` cannot decode into ANY payload or
+request shape. The 64 KiB bound is enforced before any state changes.
+Key shapes validate per bucket (`member/<id>`, `snapshot`,
+`epoch/<n>`, `identity`, `region/<r>`, `tenant/<t>`).
+
+KV writes are CAS-revision fenced: `kv_cas` demands `None` for a
+fresh key or the exact held revision, and a stale writer loses typed
+(`Stale`) and re-reads. A lease expiring marks the advertisement
+`Stale` and nothing else — the entry stands, no eviction, no data
+loss, no ownership transfer (ADR 0014 D-4).
+
+The five request/reply subjects answer typed and bounded:
+`ctrl.join` verifies the bootstrap `JoinToken` (wrong token → a
+normal `JoinRejected` reply), answers the current config epoch, the
+topology snapshot reference, and the member ENDPOINTS to link QUIC
+data to, and lands the joining member's lease; `ctrl.topology` and
+`ctrl.config_refresh` answer only what is NEWER than the caller's
+epoch (`NotNewer` otherwise); `ctrl.route_lookup` names locations
+only; `ctrl.health` answers the digest. Each subject answers exactly
+its request shape — a mismatched or malformed payload is dropped and
+counted (`malformed_dropped()`), never fatal; unknown subjects are
+ignored without counting.
+
+Loss of the plane fails closed: joins, topology, and configuration
+changes pause typed (`Paused`) — even reads of HELD metadata refuse,
+because an unreachable broker answers nothing. The recovery receipt
+the contract demands is proven twice: the plane resumes with its held
+metadata intact, and — the row that matters — a full `ClusterHost`
+serves quorum writes, converges, and reads with the control plane
+dropped entirely: no data-plane dependence on NATS availability.
+
+Scoping kept honest: the plane is in-process (a live broker
+deployment maps the same seam onto JetStream KV and NATS
+request/reply); `nats_usage.rs`'s database-namespace audit is
+untouched and still covers KV/config/discovery only; live rows unrun.
+
+Receipts: `cargo test -p terrabase-cluster` 27/27 (13 new control
+rows); clippy `-D warnings` and fmt clean. `scripts/check.sh` not run
+(AC-12).

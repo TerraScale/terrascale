@@ -1458,6 +1458,8 @@ dependencies = [
 name = "terrabase-cluster"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "terrabase-replication-core",
  "terrabase-v2",
 ]
