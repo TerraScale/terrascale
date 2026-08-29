@@ -21,7 +21,7 @@ use super::{
     QuerySource, QuerySpec, QueryStore, StalenessMode, StalenessPolicy,
     execute::execute_with_view,
     spec::{MAX_PAGE_LIMIT, validate_field_name},
-    v1,
+    text,
 };
 use crate::{
     engine::{CommitOutcome, Engine, EngineConfig},

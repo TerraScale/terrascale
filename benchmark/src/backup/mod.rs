@@ -807,7 +807,14 @@ fn resolve_boundary(
         BackupKind::Full => Ok(high_water.unwrap_or_default()),
         BackupKind::Snapshot => {
             let pinned = plan.pinned_boundary.expect("a snapshot plan pins its boundary");
-            if pinned.get() > high_water.unwrap_or_default().get() {
+            // A pinned PITR cut must still be covered by the servable journal
+            // window.  Checking only the high-water mark is unsafe after
+            // compaction: a request for sequence two can otherwise start at
+            // the retained sequence four, skip that page as newer than the
+            // requested cut, and seal an empty/incomplete snapshot.
+            let below_retained_window =
+                servable_start.is_some_and(|start| pinned.get() < start.get());
+            if pinned.get() > high_water.unwrap_or_default().get() || below_retained_window {
                 return Err(BackupError::SourceUnavailable);
             }
             Ok(pinned)

@@ -432,7 +432,11 @@ pub struct TombstoneRetention {
     bound: Option<StorageSequence>,
     non_deletion_through: BTreeMap<TenantId, Option<StorageSequence>>,
     consumers: BTreeMap<RetentionConsumer, Option<StorageSequence>>,
-    retained: BTreeMap<(TenantId, DocumentId), DeletionEvidence>,
+    // Collection is part of the logical document key.  Keeping it in this
+    // index is essential: the same document id may legitimately exist in
+    // more than one collection, and one delete must never hide the other's
+    // evidence.
+    retained: BTreeMap<(TenantId, Option<CollectionName>, DocumentId), DeletionEvidence>,
     refusals: VecDeque<RetentionRefusal>,
 }
 
@@ -561,7 +565,7 @@ impl TombstoneRetention {
                 below_floor_skipped += 1;
                 continue;
             }
-            let key = (fact.tenant.clone(), fact.id.clone());
+            let key = (fact.tenant.clone(), fact.collection.clone(), fact.id.clone());
             match self.retained.get(&key) {
                 Some(existing) if existing.sequence.get() >= fact.sequence.get() => {}
                 _ => {
@@ -593,9 +597,10 @@ impl TombstoneRetention {
             .filter(|fact| fact.tenant == *tenant && fact.sequence.get() > after.get())
             .cloned()
             .collect::<Vec<_>>();
-        // The retained set is keyed by (tenant, key) so one key keeps only
-        // its newest fact; the serving order is the publication order, and
-        // the stable sort keeps same-sequence facts in key order.
+        // The retained set is keyed by (tenant, collection, key) so one
+        // logical key keeps only its newest fact; the serving order is the
+        // publication order, and the stable sort keeps same-sequence facts in
+        // key order.
         facts.sort_by_key(|fact| fact.sequence.get());
         facts
     }
@@ -813,7 +818,7 @@ impl TombstoneRetention {
                     below_floor_discarded += 1;
                     continue;
                 }
-                let key = (fact.tenant.clone(), fact.id.clone());
+                let key = (fact.tenant.clone(), fact.collection.clone(), fact.id.clone());
                 match self.retained.get(&key) {
                     Some(existing) if existing.sequence.get() >= fact.sequence.get() => {}
                     _ => {

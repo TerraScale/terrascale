@@ -99,9 +99,10 @@ pub(crate) struct RetainedFact {
 
 impl RetainedFact {
     /// Returns the dedup identity: the same fact appended twice lands once.
-    fn identity(&self) -> (String, String, u64, String) {
+    fn identity(&self) -> (String, Option<String>, String, u64, String) {
         (
             self.tenant.as_str().to_owned(),
+            self.collection.as_ref().map(|collection| collection.as_str().to_owned()),
             self.id.as_str().to_owned(),
             self.sequence.get(),
             self.operation.as_str().to_owned(),
@@ -236,7 +237,7 @@ pub(crate) struct RetainedScan {
 #[derive(Default)]
 pub(crate) struct RetainedIndex {
     facts: Vec<RetainedFact>,
-    identities: BTreeSet<(String, String, u64, String)>,
+    identities: BTreeSet<(String, Option<String>, String, u64, String)>,
     /// The highest declared bound, with the journal head it was declared
     /// against.
     bound: Option<(u64, u64)>,
@@ -326,6 +327,11 @@ impl RetainedIndex {
             good_bytes += consumed as u64;
         }
         RetainedScan { index, good_bytes, total_bytes, mid_file_damage: false }
+    }
+
+    /// Holds one fact if its identity is new, reporting whether it landed.
+    pub(crate) fn contains_fact(&self, fact: &RetainedFact) -> bool {
+        self.identities.contains(&fact.identity())
     }
 
     /// Holds one fact if its identity is new, reporting whether it landed.

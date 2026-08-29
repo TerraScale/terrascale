@@ -841,6 +841,51 @@ fn snapshot_backup_pins_its_boundary_and_stays_self_contained() {
 }
 
 #[test]
+fn snapshot_backup_refuses_a_boundary_below_the_retained_history_window() {
+    let (_dir, engine) = open_engine("snapshot-below-floor");
+    let destination = location("snapshot-below-floor-dest");
+    let first = committed(put(
+        &engine,
+        "alpha",
+        "op-1",
+        "doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
+    committed(put(
+        &engine,
+        "alpha",
+        "op-2",
+        "doc-2",
+        "users",
+        text("two"),
+        LocalDurability::Synced,
+    ));
+    committed(put(
+        &engine,
+        "alpha",
+        "op-3",
+        "doc-3",
+        "users",
+        text("three"),
+        LocalDurability::Synced,
+    ));
+    engine
+        .compact(crate::storage::CompactionRequest::new(
+            crate::storage::CompactionPolicy::ReclaimHistory,
+        ))
+        .expect("history compaction runs");
+
+    let result = run_backup(&engine, BackupPlan::snapshot_at(first), &destination);
+    assert_eq!(
+        result.err(),
+        Some(BackupError::SourceUnavailable),
+        "a cut below the retained history floor cannot be reconstructed"
+    );
+}
+
+#[test]
 fn backup_preserves_tenant_scopes_in_per_tenant_counts() {
     let (_dir, engine) = open_engine("tenants");
     let destination = location("tenants-dest");

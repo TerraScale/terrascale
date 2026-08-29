@@ -6,7 +6,7 @@
 //! identities (CONTEXT: Schema Migration): a forward-only version step, a
 //! closed list of declarative field transforms, and the target schema the
 //! collection validates under afterwards. It moves one collection inside this
-//! engine only; TerraBaseV2 has no cross-engine data transfer contract.
+//! engine only; `TerraBaseV2` has no cross-engine data transfer contract.
 //!
 //! The style is declarative-first, and the programmatic escape is the
 //! engine's own typed document seam, never an embedded interpreter: the
@@ -64,7 +64,7 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use evidence::{MigrationPlan, MigrationReceipt, PlanDetail, PlanOutcome, PlanProblem};
-pub use record::MigrationStatus;
+pub use record::{MigrationStatus, MigrationStopReason};
 pub use transform::{
     Coercion, FieldOutcome, FieldTransform, MAX_MIGRATION_TRANSFORMS, RollbackBlockedCause,
     RollbackLimit, SchemaMigration, TransformCounts, TransformLiteral, TransformRejection,
@@ -146,6 +146,10 @@ pub enum MigrationError {
     NotInProgress,
     /// A transform's coercion contract rejects a document value.
     TransformRejected,
+    /// The migration drive was durably stopped after a transform or target
+    /// validation failure. The source schema remains active until an
+    /// operator submits a new valid drive.
+    MigrationStopped,
     /// A transformed document violates the target schema.
     TargetViolation,
     /// The recomputed checksum chain differs from the recorded or planned
@@ -376,6 +380,9 @@ pub fn begin(
                     Err(MigrationError::ManifestMismatch)
                 };
             }
+            RecordState::Stopped { .. } => {
+                return Err(MigrationError::MigrationStopped);
+            }
         }
     }
     let recorded = recorded_schema(&transaction, contract.collection())?;
@@ -462,6 +469,7 @@ pub fn apply_page(
             return Ok(MigrationStep::AlreadyComplete(receipt.clone()));
         }
         RecordState::RollingBack { .. } => return Err(MigrationError::NotInProgress),
+        RecordState::Stopped { .. } => return Err(MigrationError::MigrationStopped),
         RecordState::InProgress { cursor, exhausted, target } => {
             (cursor.clone(), *exhausted, target.clone())
         }
@@ -470,10 +478,13 @@ pub fn apply_page(
         return Ok(MigrationStep::ScanComplete);
     }
 
+    // Keep the last committed evidence separate from the speculative page.
+    // If scanning stops on one document, no partial page facts are durable.
+    let committed_record = record.clone();
     let mut staged: Vec<(DocumentId, DocumentValue)> = Vec::new();
     let mut page_documents: u64 = 0;
     let mut page_transformed: u64 = 0;
-    let next = scan_collection(
+    let next = match scan_collection(
         engine,
         scope,
         &snapshot,
@@ -499,7 +510,24 @@ pub fn apply_page(
             record.documents += 1;
             Ok(())
         },
-    )?;
+    ) {
+        Ok(next) => next,
+        Err(error @ MigrationError::TargetViolation)
+        | Err(error @ MigrationError::TransformRejected) => {
+            let reason = if error == MigrationError::TargetViolation {
+                MigrationStopReason::TargetViolation
+            } else {
+                MigrationStopReason::TransformRejected
+            };
+            let mut stopped = committed_record;
+            stopped.state = RecordState::Stopped { reason };
+            write_record(&mut transaction, contract.collection(), &stopped)
+                .map_err(|_| MigrationError::StorageFailure)?;
+            commit_step(engine, scope, transaction, operation)?;
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
 
     // Stage the page's transformed documents first: while the record still
     // reads in-progress inside this transaction, the write-path hook
@@ -576,6 +604,7 @@ pub fn finalize(
     match &record.state {
         RecordState::Complete { receipt } => return Ok(receipt.clone()),
         RecordState::RollingBack { .. } => return Err(MigrationError::NotInProgress),
+        RecordState::Stopped { .. } => return Err(MigrationError::MigrationStopped),
         RecordState::InProgress { exhausted: false, .. } => {
             return Err(MigrationError::ScanIncomplete);
         }
@@ -689,6 +718,7 @@ pub fn rollback(
     }
     let (cursor, exhausted) = match &record.state {
         RecordState::Complete { .. } => return Err(MigrationError::NotInProgress),
+        RecordState::Stopped { .. } => return Err(MigrationError::MigrationStopped),
         // A forward drive entering rollback restarts the scan from the
         // beginning: every document of the collection is a rollback
         // candidate, and the inverse transforms skip restored documents

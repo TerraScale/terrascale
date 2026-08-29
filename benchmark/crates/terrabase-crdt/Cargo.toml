@@ -1,0 +1,21 @@
+[package]
+name = "terrabase-crdt"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "LicenseRef-TerraScale-Pending"
+description = "TerraBaseV2 native bounded CRDT registers"
+publish = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+pedantic = "warn"
+
+[dependencies]
+terrabase-causal = { path = "../terrabase-causal" }
+blake3 = "1.8.2"

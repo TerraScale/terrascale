@@ -227,7 +227,8 @@ fn map_migration_error(error: crate::families::migrations::MigrationError) -> En
         | MigrationError::InvalidRequest
         | MigrationError::AcknowledgmentRequired
         | MigrationError::TransformRejected
-        | MigrationError::TargetViolation => EngineError::InvalidDocument,
+        | MigrationError::TargetViolation
+        | MigrationError::MigrationStopped => EngineError::InvalidDocument,
         MigrationError::PageProgressStalled
         | MigrationError::ReservedStateInvalid
         | MigrationError::StorageFailure => EngineError::StorageFailure,

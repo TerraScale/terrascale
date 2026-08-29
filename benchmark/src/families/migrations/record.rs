@@ -92,11 +92,50 @@ pub(crate) enum RecordState {
         /// The scan reached the end of the collection's documents.
         exhausted: bool,
     },
+    /// The forward drive stopped before committing a page.
+    Stopped {
+        /// The bounded reason the drive could not continue.
+        reason: MigrationStopReason,
+    },
     /// The migration completed; the receipt is the durable evidence.
     Complete {
         /// The recorded receipt of the completed migration.
         receipt: MigrationReceipt,
     },
+}
+
+/// Why a migration drive was durably stopped.
+//
+// The stop record deliberately carries no document values or transform
+// details. Callers can inspect the dry-run plan for those bounded facts while
+// the durable record remains safe to expose through status and recovery APIs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MigrationStopReason {
+    /// A transform rejected a document.
+    TransformRejected,
+    /// A transformed value violated the target schema.
+    TargetViolation,
+}
+
+impl MigrationStopReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::TransformRejected => "transform-rejected",
+            Self::TargetViolation => "target-violation",
+        }
+    }
+
+    fn decode(value: &DocumentValue) -> Result<Self, EngineError> {
+        match value {
+            DocumentValue::String(value) if value == "transform-rejected" => {
+                Ok(Self::TransformRejected)
+            }
+            DocumentValue::String(value) if value == "target-violation" => {
+                Ok(Self::TargetViolation)
+            }
+            _ => Err(EngineError::StorageFailure),
+        }
+    }
 }
 
 /// Returns the reserved record identifier of one collection's migration
@@ -185,6 +224,10 @@ pub(crate) fn encode(record: &MigrationRecord) -> DocumentValue {
             ("cursor", encode_cursor(cursor.as_ref())),
             ("exhausted", DocumentValue::Boolean(*exhausted)),
         ]),
+        RecordState::Stopped { reason } => object(vec![
+            ("state", DocumentValue::String("stopped".to_owned())),
+            ("reason", DocumentValue::String(reason.as_str().to_owned())),
+        ]),
         RecordState::Complete { receipt } => object(vec![
             ("state", DocumentValue::String("complete".to_owned())),
             ("receipt", encode_receipt(receipt)),
@@ -256,6 +299,9 @@ pub(crate) fn decode(value: &DocumentValue) -> Result<MigrationRecord, EngineErr
         },
         Some(DocumentValue::String(text)) if text == "complete" => RecordState::Complete {
             receipt: decode_receipt(drive_fields.get("receipt").ok_or_else(malformed)?)?,
+        },
+        Some(DocumentValue::String(text)) if text == "stopped" => RecordState::Stopped {
+            reason: MigrationStopReason::decode(drive_fields.get("reason").ok_or_else(malformed)?)?,
         },
         _ => return Err(malformed()),
     };
@@ -502,6 +548,23 @@ pub enum MigrationStatus {
         /// Pages committed so far.
         pages: u64,
     },
+    /// A forward drive stopped before committing its failing page.
+    Stopped {
+        /// The manifest digest of the stopped contract.
+        manifest: String,
+        /// The from-version.
+        from: SchemaVersion,
+        /// The target version that was not seated.
+        to: SchemaVersion,
+        /// The bounded reason for the stop.
+        reason: MigrationStopReason,
+        /// Documents scanned by committed pages.
+        documents: u64,
+        /// Documents transformed by committed pages.
+        transformed: u64,
+        /// Pages committed before the stop.
+        pages: u64,
+    },
     /// A migration completed with the recorded receipt.
     Complete {
         /// The recorded receipt.
@@ -524,6 +587,15 @@ pub(crate) fn status_of(record: &MigrationRecord) -> MigrationStatus {
             manifest: record.manifest.clone(),
             from: record.from,
             to: record.to,
+            pages: record.pages,
+        },
+        RecordState::Stopped { reason } => MigrationStatus::Stopped {
+            manifest: record.manifest.clone(),
+            from: record.from,
+            to: record.to,
+            reason: *reason,
+            documents: record.documents,
+            transformed: record.transformed,
             pages: record.pages,
         },
         RecordState::Complete { receipt } => MigrationStatus::Complete { receipt: receipt.clone() },

@@ -630,7 +630,7 @@ impl FileStorage {
                     below_floor += 1;
                     continue;
                 }
-                if self.retained_index.upsert_fact(fact.clone()) {
+                if !self.retained_index.contains_fact(&fact) {
                     facts.push(fact);
                 }
             }
@@ -647,6 +647,9 @@ impl FileStorage {
         }
         self.retained.sync().map_err(|_| CompactionError::Storage)?;
         root::sync_dir(&self.dir).map_err(|_| CompactionError::Storage)?;
+        for fact in &facts {
+            self.retained_index.upsert_fact(fact.clone());
+        }
         let retained = u64::try_from(facts.len()).unwrap_or(u64::MAX);
         Ok(EvidenceExtraction { window, extracted, retained, below_floor })
     }

@@ -1317,12 +1317,22 @@ impl LsmStorage {
         head: u64,
         non_deletion: &[(TenantId, Option<StorageSequence>)],
     ) -> Result<(), ()> {
+        let mut appended = Vec::new();
         for fact in facts {
-            self.retained.append_fact(fact).map_err(|_| ())?;
-            self.retained_index.upsert_fact(fact.clone());
+            // Check the index before writing. A retry can revisit the same
+            // evidence after the first append was synced; appending first
+            // would grow the durable stream with an indistinguishable
+            // duplicate even though the in-memory index correctly dedups.
+            if !self.retained_index.contains_fact(fact) {
+                self.retained.append_fact(fact).map_err(|_| ())?;
+                appended.push(fact.clone());
+            }
         }
         self.retained.append_bound(bound, head, non_deletion).map_err(|_| ())?;
         self.retained.sync().map_err(|_| ())?;
+        for fact in appended {
+            self.retained_index.upsert_fact(fact);
+        }
         self.retained_index.declare_bound(bound, head);
         Ok(())
     }

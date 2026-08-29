@@ -184,6 +184,39 @@ fn one_key_keeps_only_its_newest_evidence() {
 }
 
 #[test]
+fn same_document_id_in_two_collections_keeps_both_deletion_facts() {
+    let mut retention = TombstoneRetention::new(None);
+    let tenant = tenant("tenant-a");
+    let id = crate::types::DocumentId::try_new("shared-id").expect("valid identifier");
+    let first = DeletionEvidence::new(
+        tenant.clone(),
+        Some(crate::types::CollectionName::try_new("users").expect("valid collection")),
+        id.clone(),
+        1,
+        sequence(2),
+        crate::types::OperationId::try_new("delete-users").expect("valid operation"),
+        crate::replication::ReplicationClockStamp::new(2, 0),
+        crate::types::LocalDurability::Synced,
+    );
+    let second = DeletionEvidence::new(
+        tenant.clone(),
+        Some(crate::types::CollectionName::try_new("orders").expect("valid collection")),
+        id,
+        1,
+        sequence(3),
+        crate::types::OperationId::try_new("delete-orders").expect("valid operation"),
+        crate::replication::ReplicationClockStamp::new(3, 0),
+        crate::types::LocalDurability::Synced,
+    );
+    assert_eq!(retention.hold(&[first, second]).held(), 2);
+    assert_eq!(retention.held_evidence_count(), 2);
+    let served = retention.deletion_evidence_above(&tenant, sequence(0));
+    assert_eq!(served.len(), 2, "collection is part of the deletion identity");
+    assert_eq!(served[0].collection().map(crate::types::CollectionName::as_str), Some("users"));
+    assert_eq!(served[1].collection().map(crate::types::CollectionName::as_str), Some("orders"));
+}
+
+#[test]
 fn a_history_declaration_is_monotone_and_requires_durable_evidence() {
     let mut retention = TombstoneRetention::new(None);
     let refused = retention
