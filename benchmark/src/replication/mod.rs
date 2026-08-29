@@ -40,6 +40,11 @@ mod lane;
 mod lane_tests;
 mod leaderless;
 mod member;
+
+pub use leaderless::{
+    LeaderlessError, LeaderlessLevel, LeaderlessReceipt, LeaderlessWrite, ReplicaAck,
+    ReplicaEndpoint, ReplicaSet, coordinate_write,
+};
 mod observation;
 #[cfg(test)]
 mod observation_tests;

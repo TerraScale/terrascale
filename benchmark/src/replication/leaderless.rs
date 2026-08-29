@@ -31,10 +31,6 @@
 //! anti-entropy and read-repair halves of the contract (partition
 //! healing, catch-up after rejoin) land with the member-transport
 //! wiring that follows.
-#![allow(
-    dead_code,
-    reason = "driven and observed by the P2 leaderless lane tests; the TBEP server seam wires the coordinator into the production path"
-)]
 
 use std::collections::BTreeMap;
 
@@ -50,7 +46,7 @@ use crate::types::{
 /// commit alone is internal partial progress and is not a level a
 /// caller may request or receive as success.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum LeaderlessLevel {
+pub enum LeaderlessLevel {
     /// Durable acceptance by a majority of eligible voting Members in
     /// the accepting Region. The minimum successful write
     /// acknowledgement.
@@ -67,7 +63,7 @@ pub(crate) enum LeaderlessLevel {
 /// write, read, repair, and recovery role — there is no distinguished
 /// replica and no per-range assignment inside this set.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ReplicaSet {
+pub struct ReplicaSet {
     epoch: u64,
     voters: BTreeMap<RegionId, Vec<MemberId>>,
 }
@@ -75,38 +71,38 @@ pub(crate) struct ReplicaSet {
 impl ReplicaSet {
     /// Builds one replica set at a configuration epoch.
     #[must_use]
-    pub(crate) fn new(epoch: u64, voters: BTreeMap<RegionId, Vec<MemberId>>) -> Self {
+    pub fn new(epoch: u64, voters: BTreeMap<RegionId, Vec<MemberId>>) -> Self {
         Self { epoch, voters }
     }
 
     /// Returns the replica-set epoch.
     #[must_use]
-    pub(crate) const fn epoch(&self) -> u64 {
+    pub const fn epoch(&self) -> u64 {
         self.epoch
     }
 
     /// Returns the Regions holding eligible voting Members, in canonical
     /// order.
     #[must_use]
-    pub(crate) fn regions(&self) -> Vec<RegionId> {
+    pub fn regions(&self) -> Vec<RegionId> {
         self.voters.keys().cloned().collect()
     }
 
     /// Returns the eligible voting Members of one Region.
     #[must_use]
-    pub(crate) fn voters_of(&self, region: &RegionId) -> &[MemberId] {
+    pub fn voters_of(&self, region: &RegionId) -> &[MemberId] {
         self.voters.get(region).map_or(&[], Vec::as_slice)
     }
 
     /// Reports whether one Member is an eligible voter in the set.
     #[must_use]
-    pub(crate) fn is_voter(&self, member: &MemberId) -> bool {
+    pub fn is_voter(&self, member: &MemberId) -> bool {
         self.voters.values().any(|members| members.contains(member))
     }
 
     /// Returns the Region a Member votes in, when it is eligible.
     #[must_use]
-    pub(crate) fn region_of(&self, member: &MemberId) -> Option<RegionId> {
+    pub fn region_of(&self, member: &MemberId) -> Option<RegionId> {
         self.voters
             .iter()
             .find(|(_, members)| members.contains(member))
@@ -114,12 +110,14 @@ impl ReplicaSet {
     }
 
     /// The majority threshold of one Region's eligible voters.
-    fn regional_threshold(&self, region: &RegionId) -> usize {
+    #[must_use]
+    pub fn regional_threshold(&self, region: &RegionId) -> usize {
         self.voters_of(region).len() / 2 + 1
     }
 
     /// The majority threshold of eligible active Regions.
-    fn global_threshold(&self) -> usize {
+    #[must_use]
+    pub fn global_threshold(&self) -> usize {
         self.regions().len() / 2 + 1
     }
 }
@@ -138,7 +136,7 @@ enum LeaderlessMutation {
 /// acknowledgement field — the level is an input of coordination, not a
 /// property of the write.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct LeaderlessWrite {
+pub struct LeaderlessWrite {
     operation: OperationId,
     writes: Vec<LeaderlessMutation>,
 }
@@ -146,34 +144,34 @@ pub(crate) struct LeaderlessWrite {
 impl LeaderlessWrite {
     /// Creates one write request carrying a stable operation identity.
     #[must_use]
-    pub(crate) fn new(operation: OperationId) -> Self {
+    pub fn new(operation: OperationId) -> Self {
         Self { operation, writes: Vec::new() }
     }
 
     /// Stages one document put.
     #[must_use]
-    pub(crate) fn with_put(mut self, document: Document) -> Self {
+    pub fn with_put(mut self, document: Document) -> Self {
         self.writes.push(LeaderlessMutation::Put(document));
         self
     }
 
     /// Stages one document deletion.
     #[must_use]
-    pub(crate) fn with_delete(mut self, id: DocumentId) -> Self {
+    pub fn with_delete(mut self, id: DocumentId) -> Self {
         self.writes.push(LeaderlessMutation::Delete(id));
         self
     }
 
     /// Returns the stable operation identity.
     #[must_use]
-    pub(crate) fn operation(&self) -> &OperationId {
+    pub fn operation(&self) -> &OperationId {
         &self.operation
     }
 }
 
 /// One replica's durable acknowledgement of one operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ReplicaAck {
+pub struct ReplicaAck {
     member: MemberId,
     region: RegionId,
     epoch: u64,
@@ -183,26 +181,26 @@ pub(crate) struct ReplicaAck {
 impl ReplicaAck {
     /// Returns the acknowledging Member.
     #[must_use]
-    pub(crate) fn member(&self) -> &MemberId {
+    pub fn member(&self) -> &MemberId {
         &self.member
     }
 
     /// Returns the acknowledging Member's Region.
     #[must_use]
-    pub(crate) fn region(&self) -> &RegionId {
+    pub fn region(&self) -> &RegionId {
         &self.region
     }
 
     /// Returns the replica-set epoch the acknowledgement was collected
     /// at.
     #[must_use]
-    pub(crate) const fn epoch(&self) -> u64 {
+    pub const fn epoch(&self) -> u64 {
         self.epoch
     }
 
     /// Returns the storage sequence the Member's engine published.
     #[must_use]
-    pub(crate) const fn sequence(&self) -> u64 {
+    pub const fn sequence(&self) -> u64 {
         self.sequence
     }
 }
@@ -213,7 +211,7 @@ impl ReplicaAck {
 /// accepting Member, and the epoch the quorums were evaluated at. A
 /// local commit alone never appears here.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct LeaderlessReceipt {
+pub struct LeaderlessReceipt {
     operation: OperationId,
     requested: LeaderlessLevel,
     achieved: LeaderlessLevel,
@@ -227,50 +225,50 @@ pub(crate) struct LeaderlessReceipt {
 impl LeaderlessReceipt {
     /// Returns the stable operation identity.
     #[must_use]
-    pub(crate) fn operation(&self) -> &OperationId {
+    pub fn operation(&self) -> &OperationId {
         &self.operation
     }
 
     /// Returns the requested acknowledgement level.
     #[must_use]
-    pub(crate) const fn requested(&self) -> LeaderlessLevel {
+    pub const fn requested(&self) -> LeaderlessLevel {
         self.requested
     }
 
     /// Returns the achieved acknowledgement level.
     #[must_use]
-    pub(crate) const fn achieved(&self) -> LeaderlessLevel {
+    pub const fn achieved(&self) -> LeaderlessLevel {
         self.achieved
     }
 
     /// Returns the request-scoped coordinating Member.
     #[must_use]
-    pub(crate) fn accepting_member(&self) -> &MemberId {
+    pub fn accepting_member(&self) -> &MemberId {
         &self.accepting_member
     }
 
     /// Returns the accepting Region.
     #[must_use]
-    pub(crate) fn accepting_region(&self) -> &RegionId {
+    pub fn accepting_region(&self) -> &RegionId {
         &self.accepting_region
     }
 
     /// Returns the replica-set epoch the quorums were evaluated at.
     #[must_use]
-    pub(crate) const fn epoch(&self) -> u64 {
+    pub const fn epoch(&self) -> u64 {
         self.epoch
     }
 
     /// Returns every contributing Member's acknowledgement, in canonical
     /// Member order.
     #[must_use]
-    pub(crate) fn contributors(&self) -> &[ReplicaAck] {
+    pub fn contributors(&self) -> &[ReplicaAck] {
         &self.contributors
     }
 
     /// Returns the Regions that contributed, in canonical order.
     #[must_use]
-    pub(crate) fn contributing_regions(&self) -> Vec<RegionId> {
+    pub fn contributing_regions(&self) -> Vec<RegionId> {
         let mut regions: Vec<RegionId> =
             self.contributors.iter().map(ReplicaAck::region).cloned().collect();
         regions.sort();
@@ -280,14 +278,14 @@ impl LeaderlessReceipt {
 
     /// Returns the accepting Member's own local commit receipt.
     #[must_use]
-    pub(crate) fn local(&self) -> &CommitReceipt {
+    pub fn local(&self) -> &CommitReceipt {
         &self.local
     }
 }
 
 /// Why a leaderless write did not succeed.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum LeaderlessError {
+pub enum LeaderlessError {
     /// The accepting Member is not an eligible voter of the set's epoch.
     NotEligible {
         /// The rejecting epoch.
@@ -322,7 +320,7 @@ enum ReplicaApplyRefusal {
 
 /// One replica the coordinator fans out to: its identity, its Region
 /// seat, and its engine.
-pub(crate) struct ReplicaEndpoint<'a> {
+pub struct ReplicaEndpoint<'a> {
     member: MemberId,
     region: RegionId,
     engine: &'a Engine,
@@ -331,7 +329,7 @@ pub(crate) struct ReplicaEndpoint<'a> {
 impl<'a> ReplicaEndpoint<'a> {
     /// Seats one engine in the replica set under its Member identity.
     #[must_use]
-    pub(crate) fn new(member: MemberId, region: RegionId, engine: &'a Engine) -> Self {
+    pub fn new(member: MemberId, region: RegionId, engine: &'a Engine) -> Self {
         Self { member, region, engine }
     }
 }
@@ -389,7 +387,7 @@ fn apply_on_replica(
 /// fails, and [`LeaderlessError::QuorumNotReached`] when the requested
 /// level is not met — naming the durable partial contributors for the
 /// retry.
-pub(crate) fn coordinate_write(
+pub fn coordinate_write(
     set: &ReplicaSet,
     accepting: &MemberId,
     replicas: &[ReplicaEndpoint<'_>],

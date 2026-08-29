@@ -38,7 +38,10 @@ use loro::{ExportMode, Frontiers, ID, LoroDoc, LoroMap, LoroValue, VersionVector
 
 pub mod compose;
 
-pub use compose::{ComposeError, ComposedMember, ReconcileReport};
+pub use compose::{
+    ComposeError, ComposedAck, ComposedCoordinationError, ComposedMember, ComposedReceipt,
+    ComposedWrite, ReconcileReport, coordinate_composed_write,
+};
 
 /// The root container holding one entry per document — the same shape
 /// `terrabase-sync-core` materializes, so the two planes read the same
@@ -199,6 +202,30 @@ impl ReplicaDoc {
             .fork_at(&Frontiers::from_id(ID::new(peer, counter)))
             .map_err(|_| ReplicaError::UnknownVersion)?;
         Ok(forked.get_deep_value())
+    }
+
+    /// Exports the replica's full state and history as one snapshot —
+    /// the durable staging form a Member persists locally.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReplicaError::ExportFailed`] when the export fails.
+    pub fn snapshot_bytes(&self) -> Result<Vec<u8>, ReplicaError> {
+        self.doc.export(ExportMode::Snapshot).map_err(|_| ReplicaError::ExportFailed)
+    }
+
+    /// Rebuilds one replica state from a persisted snapshot under the
+    /// same peer identity that wrote it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReplicaError::PeerIdRejected`] or
+    /// [`ReplicaError::ImportFailed`] when the identity or snapshot is
+    /// refused.
+    pub fn from_snapshot(peer_id: u64, bytes: &[u8]) -> Result<Self, ReplicaError> {
+        let replica = Self::new(peer_id)?;
+        replica.doc.import(bytes).map_err(|_| ReplicaError::ImportFailed)?;
+        Ok(Self { peer_id, doc: replica.doc })
     }
 }
 

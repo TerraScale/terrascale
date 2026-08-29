@@ -208,3 +208,47 @@ superseded leader machinery.
 Receipts: `terrabase-replication-core` 11/11 (6 convergence + 5
 composed); `terrabase-v2 --lib` 1071/1071; clippy `-D warnings` and
 fmt clean across both packages. `scripts/check.sh` not run (AC-12).
+
+## 6. P2 landing 3 (2026-08-29): the coordinated product write path
+
+The write path of the frozen contract now exists end to end:
+`coordinate_composed_write` (replication-core) accepts a
+[`ComposedWrite`] at ANY eligible Member of a [`ReplicaSet`], fans the
+same operation to every eligible reachable Member — each accepting on
+BOTH planes (durable engine commit at `Synced` plus own-peer CRDT op,
+snapshotted to `replica.snapshot` beside the engine) — and evaluates
+`RegionalQuorum` / `GlobalQuorum` exactly as the engine-side core
+does, returning a receipt naming every contributing Member and Region
+at the epoch. The leaderless vocabulary (`ReplicaSet`,
+`LeaderlessLevel`, quorum thresholds, `MemberId`/`RegionId`) is now
+public at `terrabase_v2::replication`, sourced from one module — the
+composed coordinator consumes it rather than restating it. `ComposedMember`
+carries a durable identity: the Member name (validated `MemberId`),
+with its CRDT peer id derived deterministically from that name.
+
+Proven by the composed tests: a Region-partitioned set where each side
+accepts its own client's write at `RegionalQuorum` (two contributors
+each, same epoch), the untouched third Region serving nothing, then a
+heal after which all six servers serve the identical merged body; a
+single Member failing to reach a regional majority with the durable
+partial contributors named; write-through-every-Member rotation with a
+six-contributor fan-out and full convergence; `GlobalQuorum` requiring
+a majority of Regions. One structural fact surfaced and is now pinned
+by a test comment: multi-hop anti-entropy converges in ROUNDS — a
+Member that exchanges before its peer absorbed a later merge is still
+behind and needs the next round — so the heal helper iterates to the
+frontier fixed point, which is what continuous background anti-entropy
+is.
+
+**Still open in P2** (updated): the authenticated QUIC transport
+carrying frontiers and deltas over the member-transport lanes; read
+repair (§6); membership epochs with overlapping quorums (§7, scenario
+5) — `ReplicaSet` carries the epoch but nothing changes it yet;
+`BackupAck` (lands with the P5 backup cluster); bounded CRDT history
+compaction (the sync-core shallow-snapshot pattern applies); the
+qualification receipts for the full AC-10 scenario list; removal of
+the superseded leader machinery.
+
+Receipts: `terrabase-replication-core` 15/15 (6 convergence + 9
+composed); `terrabase-v2 --lib` 1071/1071; clippy `-D warnings` and
+fmt clean across both packages. `scripts/check.sh` not run (AC-12).

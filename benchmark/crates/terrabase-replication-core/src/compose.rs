@@ -21,10 +21,12 @@
 //! tenant-read surface that lands with P4.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use loro::LoroValue;
+use terrabase_v2::CommitReceipt;
 use terrabase_v2::engine::{CommitOutcome, Engine, EngineConfig};
+use terrabase_v2::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
 use terrabase_v2::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
     OperationId, TenantId,
@@ -47,6 +49,164 @@ pub enum ComposeError {
     UnsupportedValue,
     /// An identifier was invalid.
     InvalidIdentifier,
+}
+
+/// One leaderless write in the composed vocabulary: the operation
+/// identity, the document, and its whole-body change.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ComposedWrite {
+    /// Puts one document body.
+    Put {
+        /// The stable operation identity.
+        operation: String,
+        /// The document identity.
+        document: String,
+        /// The whole new body.
+        body: BTreeMap<String, DocumentValue>,
+    },
+    /// Deletes one document.
+    Delete {
+        /// The stable operation identity.
+        operation: String,
+        /// The document identity.
+        document: String,
+    },
+}
+
+impl ComposedWrite {
+    /// Returns the stable operation identity text.
+    #[must_use]
+    pub fn operation(&self) -> &str {
+        match self {
+            Self::Put { operation, .. } | Self::Delete { operation, .. } => operation,
+        }
+    }
+}
+
+/// One composed Member's durable acknowledgement of one coordinated
+/// write.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComposedAck {
+    member: MemberId,
+    region: RegionId,
+    epoch: u64,
+    sequence: u64,
+}
+
+impl ComposedAck {
+    /// Returns the acknowledging Member.
+    #[must_use]
+    pub fn member(&self) -> &MemberId {
+        &self.member
+    }
+
+    /// Returns the acknowledging Member's Region.
+    #[must_use]
+    pub fn region(&self) -> &RegionId {
+        &self.region
+    }
+
+    /// Returns the replica-set epoch the acknowledgement was collected
+    /// at.
+    #[must_use]
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// Returns the storage sequence the Member's engine published.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+
+/// The receipt of one coordinated composed write: the achieved level,
+/// every contributing Member and Region, the accepting Member, and the
+/// epoch the quorums were evaluated at.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComposedReceipt {
+    operation: String,
+    requested: LeaderlessLevel,
+    achieved: LeaderlessLevel,
+    accepting_member: MemberId,
+    accepting_region: RegionId,
+    epoch: u64,
+    contributors: Vec<ComposedAck>,
+    local: CommitReceipt,
+}
+
+impl ComposedReceipt {
+    /// Returns the stable operation identity text.
+    #[must_use]
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
+
+    /// Returns the requested acknowledgement level.
+    #[must_use]
+    pub const fn requested(&self) -> LeaderlessLevel {
+        self.requested
+    }
+
+    /// Returns the achieved acknowledgement level.
+    #[must_use]
+    pub const fn achieved(&self) -> LeaderlessLevel {
+        self.achieved
+    }
+
+    /// Returns the request-scoped coordinating Member.
+    #[must_use]
+    pub fn accepting_member(&self) -> &MemberId {
+        &self.accepting_member
+    }
+
+    /// Returns the accepting Region.
+    #[must_use]
+    pub fn accepting_region(&self) -> &RegionId {
+        &self.accepting_region
+    }
+
+    /// Returns the replica-set epoch the quorums were evaluated at.
+    #[must_use]
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// Returns every contributing Member's acknowledgement, in
+    /// canonical Member order.
+    #[must_use]
+    pub fn contributors(&self) -> &[ComposedAck] {
+        &self.contributors
+    }
+
+    /// Returns the accepting Member's own local commit receipt.
+    #[must_use]
+    pub fn local(&self) -> &CommitReceipt {
+        &self.local
+    }
+}
+
+/// Why a coordinated composed write did not succeed. The same lattice
+/// as the engine-side coordinator's errors, in the composed vocabulary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ComposedCoordinationError {
+    /// The accepting Member is not an eligible voter of the set's
+    /// epoch.
+    NotEligible {
+        /// The rejecting epoch.
+        epoch: u64,
+    },
+    /// One Member's apply failed.
+    ApplyFailed {
+        /// The Member whose apply failed.
+        member: MemberId,
+    },
+    /// The requested level was not met; the durable partial
+    /// contributors are named for the retry.
+    QuorumNotReached {
+        /// The durable partial contributors at the deadline.
+        contributors: Vec<ComposedAck>,
+    },
 }
 
 /// What one reconcile pass changed in the member's engine.
@@ -154,7 +314,9 @@ fn crdt_documents(
 
 /// One server Member: a durable engine plus a same-peer CRDT replica.
 pub struct ComposedMember {
+    member: MemberId,
     peer_id: u64,
+    location: PathBuf,
     engine: Engine,
     replica: ReplicaDoc,
     tenant: TenantId,
@@ -163,24 +325,55 @@ pub struct ComposedMember {
 }
 
 impl ComposedMember {
-    /// Opens one Member's state at a durable location.
+    /// Opens one Member's state at a durable location, recovering the
+    /// persisted CRDT snapshot when one is staged there. The Member's
+    /// CRDT peer identity derives deterministically from its name —
+    /// one identity source, assigned names by the configuration plane.
     ///
     /// # Errors
     ///
     /// Returns [`ComposeError::EngineRefused`] when the location or
     /// engine cannot open, [`ComposeError::Replica`] when the peer
-    /// identity is rejected, and [`ComposeError::InvalidIdentifier`]
-    /// for invalid tenant text.
-    pub fn open(peer_id: u64, location: &Path, tenant_name: &str) -> Result<Self, ComposeError> {
+    /// identity or the persisted snapshot is rejected, and
+    /// [`ComposeError::InvalidIdentifier`] for invalid member or
+    /// tenant text.
+    pub fn open(
+        member_name: &str,
+        location: &Path,
+        tenant_name: &str,
+    ) -> Result<Self, ComposeError> {
+        let member = MemberId::try_new(member_name).map_err(|_| ComposeError::InvalidIdentifier)?;
+        let peer_id = fnv1a(member.as_str().as_bytes());
         let engine =
             Engine::open(EngineConfig::durable(location).map_err(|_| ComposeError::EngineRefused)?)
                 .map_err(|_| ComposeError::EngineRefused)?;
-        let replica = ReplicaDoc::new(peer_id).map_err(ComposeError::Replica)?;
+        let snapshot = location.join("replica.snapshot");
+        let replica = match std::fs::read(&snapshot) {
+            Ok(bytes) => {
+                ReplicaDoc::from_snapshot(peer_id, &bytes).map_err(ComposeError::Replica)?
+            }
+            Err(_) => ReplicaDoc::new(peer_id).map_err(ComposeError::Replica)?,
+        };
         let tenant = TenantId::try_new(tenant_name).map_err(|_| ComposeError::InvalidIdentifier)?;
-        Ok(Self { peer_id, engine, replica, tenant, reads: 0, known: BTreeSet::new() })
+        Ok(Self {
+            member,
+            peer_id,
+            location: location.to_path_buf(),
+            engine,
+            replica,
+            tenant,
+            reads: 0,
+            known: BTreeSet::new(),
+        })
     }
 
-    /// Returns the Member's peer identity.
+    /// Returns the Member's identity.
+    #[must_use]
+    pub fn member_id(&self) -> &MemberId {
+        &self.member
+    }
+
+    /// Returns the Member's CRDT peer identity.
     #[must_use]
     pub const fn peer_id(&self) -> u64 {
         self.peer_id
@@ -210,15 +403,16 @@ impl ComposedMember {
         operation: &str,
         document: &str,
         body: &BTreeMap<String, DocumentValue>,
-    ) -> Result<(), ComposeError> {
-        self.engine_put(operation, document, body)?;
+    ) -> Result<CommitReceipt, ComposeError> {
+        let receipt = self.engine_put(operation, document, body)?;
         let mut merged = BTreeMap::new();
         for (field, value) in body {
             merged.insert(field.clone(), to_loro(value));
         }
         self.replica.apply_put(document, &merged).map_err(ComposeError::Replica)?;
         self.known.insert(document.to_owned());
-        Ok(())
+        self.stage_snapshot()?;
+        Ok(receipt)
     }
 
     /// Accepts one deletion durably on both planes.
@@ -226,10 +420,15 @@ impl ComposedMember {
     /// # Errors
     ///
     /// Returns the typed compose failures of both planes.
-    pub fn accept_delete(&mut self, operation: &str, document: &str) -> Result<(), ComposeError> {
-        self.engine_delete(operation, document)?;
+    pub fn accept_delete(
+        &mut self,
+        operation: &str,
+        document: &str,
+    ) -> Result<CommitReceipt, ComposeError> {
+        let receipt = self.engine_delete(operation, document)?;
         self.replica.apply_delete(document).map_err(ComposeError::Replica)?;
-        Ok(())
+        self.stage_snapshot()?;
+        Ok(receipt)
     }
 
     /// Returns the document body this Member's engine serves, or
@@ -300,6 +499,8 @@ impl ComposedMember {
         }
         let first = self.reconcile()?;
         let second = other.reconcile()?;
+        self.stage_snapshot()?;
+        other.stage_snapshot()?;
         Ok((first, second))
     }
 
@@ -353,12 +554,25 @@ impl ComposedMember {
         fnv1a(text.as_bytes())
     }
 
+    /// Stages the CRDT snapshot durably beside the engine: temp file,
+    /// rename, so a reopen never sees a torn snapshot. Test-grade
+    /// persistence — a full snapshot per state change; incremental
+    /// journal staging lands with the transport wiring.
+    fn stage_snapshot(&self) -> Result<(), ComposeError> {
+        let bytes = self.replica.snapshot_bytes().map_err(ComposeError::Replica)?;
+        let final_path = self.location.join("replica.snapshot");
+        let temp_path = self.location.join("replica.snapshot.tmp");
+        std::fs::write(&temp_path, &bytes).map_err(|_| ComposeError::EngineRefused)?;
+        std::fs::rename(&temp_path, &final_path).map_err(|_| ComposeError::EngineRefused)?;
+        Ok(())
+    }
+
     fn engine_put(
         &self,
         operation: &str,
         document: &str,
         body: &BTreeMap<String, DocumentValue>,
-    ) -> Result<(), ComposeError> {
+    ) -> Result<CommitReceipt, ComposeError> {
         let operation_id =
             OperationId::try_new(operation).map_err(|_| ComposeError::InvalidIdentifier)?;
         let document_id =
@@ -379,14 +593,18 @@ impl ComposedMember {
             )
             .map_err(|_| ComposeError::EngineRefused)?;
         match transaction.commit(LocalDurability::Synced) {
-            CommitOutcome::Committed(_) => Ok(()),
+            CommitOutcome::Committed(receipt) => Ok(receipt),
             CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
                 Err(ComposeError::EngineRefused)
             }
         }
     }
 
-    fn engine_delete(&self, operation: &str, document: &str) -> Result<(), ComposeError> {
+    fn engine_delete(
+        &self,
+        operation: &str,
+        document: &str,
+    ) -> Result<CommitReceipt, ComposeError> {
         let operation_id =
             OperationId::try_new(operation).map_err(|_| ComposeError::InvalidIdentifier)?;
         let document_id =
@@ -402,10 +620,106 @@ impl ComposedMember {
             .delete(document_id, ExpectedVersion::Any)
             .map_err(|_| ComposeError::EngineRefused)?;
         match transaction.commit(LocalDurability::Synced) {
-            CommitOutcome::Committed(_) => Ok(()),
+            CommitOutcome::Committed(receipt) => Ok(receipt),
             CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
                 Err(ComposeError::EngineRefused)
             }
         }
+    }
+}
+
+/// Coordinates one leaderless write across the reachable composed
+/// Members of a replica set (contract §3, the product write path).
+///
+/// The accepting Member is the request-scoped coordinator only: every
+/// eligible reachable Member accepts the same operation on BOTH of its
+/// planes — durable engine commit plus own-peer CRDT op — and success
+/// is decided purely by the collected durable acknowledgements against
+/// the epoch's replica set. No ownership, no lease, no redirect.
+///
+/// # Errors
+///
+/// Returns [`ComposedCoordinationError::NotEligible`] when the
+/// accepting Member is not an eligible voter of the set's epoch,
+/// [`ComposedCoordinationError::ApplyFailed`] when one reachable
+/// Member's apply fails, and
+/// [`ComposedCoordinationError::QuorumNotReached`] when the requested
+/// level is not met — naming the durable partial contributors for the
+/// retry through any Member.
+pub fn coordinate_composed_write(
+    set: &ReplicaSet,
+    accepting: &MemberId,
+    members: &mut [ComposedMember],
+    write: &ComposedWrite,
+    level: LeaderlessLevel,
+) -> Result<ComposedReceipt, ComposedCoordinationError> {
+    let Some(accepting_region) = set.region_of(accepting) else {
+        return Err(ComposedCoordinationError::NotEligible { epoch: set.epoch() });
+    };
+    let mut contributors: Vec<ComposedAck> = Vec::new();
+    let mut local: Option<CommitReceipt> = None;
+    for member in members {
+        // A seat in the set is eligibility: unseated Members are not
+        // fanned out to.
+        let Some(region) = set.region_of(member.member_id()) else {
+            continue;
+        };
+        let receipt = accept_on(member, write).map_err(|_| {
+            ComposedCoordinationError::ApplyFailed { member: member.member_id().clone() }
+        })?;
+        if member.member_id() == accepting {
+            local = Some(receipt.clone());
+        }
+        contributors.push(ComposedAck {
+            member: member.member_id().clone(),
+            region,
+            epoch: set.epoch(),
+            sequence: receipt.sequence().get(),
+        });
+    }
+    let Some(local) = local else {
+        return Err(ComposedCoordinationError::QuorumNotReached { contributors });
+    };
+    let regional_count =
+        contributors.iter().filter(|ack| *ack.region() == accepting_region).count();
+    if regional_count < set.regional_threshold(&accepting_region) {
+        return Err(ComposedCoordinationError::QuorumNotReached { contributors });
+    }
+    if level == LeaderlessLevel::GlobalQuorum {
+        let qualified_regions = set
+            .regions()
+            .into_iter()
+            .filter(|region| {
+                let count = contributors.iter().filter(|ack| ack.region() == region).count();
+                count >= set.regional_threshold(region)
+            })
+            .count();
+        if qualified_regions < set.global_threshold() {
+            return Err(ComposedCoordinationError::QuorumNotReached { contributors });
+        }
+    }
+    contributors.sort_by(|left, right| left.member().as_str().cmp(right.member().as_str()));
+    Ok(ComposedReceipt {
+        operation: write.operation().to_owned(),
+        requested: level,
+        achieved: level,
+        accepting_member: accepting.clone(),
+        accepting_region,
+        epoch: set.epoch(),
+        contributors,
+        local,
+    })
+}
+
+/// Applies one write on one Member's both planes.
+fn accept_on(
+    member: &mut ComposedMember,
+    write: &ComposedWrite,
+) -> Result<CommitReceipt, ComposeError> {
+    match write {
+        ComposedWrite::Put { operation, document, body } => {
+            member.accept_put(operation, document, body)
+        }
+        ComposedWrite::Delete { operation, document } => member.accept_delete(operation, document),
     }
 }

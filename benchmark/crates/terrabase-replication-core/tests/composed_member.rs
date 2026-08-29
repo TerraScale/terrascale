@@ -10,9 +10,6 @@ use std::path::PathBuf;
 use terrabase_replication_core::{ComposeError, ComposedMember, ReconcileReport};
 use terrabase_v2::types::DocumentValue;
 
-const MEMBER_A: u64 = 0x11;
-const MEMBER_B: u64 = 0x22;
-
 fn location(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "tbv2-composed-{tag}-{}-{}",
@@ -40,8 +37,8 @@ fn cleanup(members: &[(&str, PathBuf)]) {
 fn concurrent_writes_at_two_servers_converge_after_the_heal() {
     let dir_a = location("conv-a");
     let dir_b = location("conv-b");
-    let mut member_a = ComposedMember::open(MEMBER_A, &dir_a, "tenant-a").expect("opens");
-    let mut member_b = ComposedMember::open(MEMBER_B, &dir_b, "tenant-a").expect("opens");
+    let mut member_a = ComposedMember::open("member-a", &dir_a, "tenant-a").expect("opens");
+    let mut member_b = ComposedMember::open("member-b", &dir_b, "tenant-a").expect("opens");
 
     // The partition: each server accepts its own client's write with no
     // exchange. Both succeed locally — there is no other Member to ask.
@@ -86,8 +83,8 @@ fn concurrent_writes_at_two_servers_converge_after_the_heal() {
 fn delete_wins_between_servers_after_the_heal() {
     let dir_a = location("del-a");
     let dir_b = location("del-b");
-    let mut member_a = ComposedMember::open(MEMBER_A, &dir_a, "tenant-a").expect("opens");
-    let mut member_b = ComposedMember::open(MEMBER_B, &dir_b, "tenant-a").expect("opens");
+    let mut member_a = ComposedMember::open("member-a", &dir_a, "tenant-a").expect("opens");
+    let mut member_b = ComposedMember::open("member-b", &dir_b, "tenant-a").expect("opens");
 
     member_a.accept_put("op-seed", "order-1", &body("original")).expect("seeds");
     member_a.anti_entropy_with(&mut member_b).expect("first heal spreads the seed");
@@ -114,8 +111,8 @@ fn delete_wins_between_servers_after_the_heal() {
 fn repeated_heals_commit_nothing_new() {
     let dir_a = location("stable-a");
     let dir_b = location("stable-b");
-    let mut member_a = ComposedMember::open(MEMBER_A, &dir_a, "tenant-a").expect("opens");
-    let mut member_b = ComposedMember::open(MEMBER_B, &dir_b, "tenant-a").expect("opens");
+    let mut member_a = ComposedMember::open("member-a", &dir_a, "tenant-a").expect("opens");
+    let mut member_b = ComposedMember::open("member-b", &dir_b, "tenant-a").expect("opens");
 
     member_a.accept_put("op-a1", "order-1", &body("by-a")).expect("a accepts");
     member_b.accept_put("op-b1", "order-2", &body("by-b")).expect("b accepts");
@@ -140,9 +137,9 @@ fn a_third_server_joins_by_exchanging_with_one_member() {
     let dir_a = location("mesh-a");
     let dir_b = location("mesh-b");
     let dir_c = location("mesh-c");
-    let mut member_a = ComposedMember::open(MEMBER_A, &dir_a, "tenant-a").expect("opens");
-    let mut member_b = ComposedMember::open(MEMBER_B, &dir_b, "tenant-a").expect("opens");
-    let mut member_c = ComposedMember::open(0x33, &dir_c, "tenant-a").expect("opens");
+    let mut member_a = ComposedMember::open("member-a", &dir_a, "tenant-a").expect("opens");
+    let mut member_b = ComposedMember::open("member-b", &dir_b, "tenant-a").expect("opens");
+    let mut member_c = ComposedMember::open("member-c", &dir_c, "tenant-a").expect("opens");
 
     member_a.accept_put("op-a1", "order-1", &body("by-a")).expect("a accepts");
     member_b.accept_put("op-b1", "order-2", &body("by-b")).expect("b accepts");
@@ -162,12 +159,256 @@ fn a_third_server_joins_by_exchanging_with_one_member() {
 }
 
 #[test]
+fn a_restarted_member_recovers_its_merge_state_and_spreads_it() {
+    let dir_a = location("restart-a");
+    let dir_b = location("restart-b");
+    let mut member_a = ComposedMember::open("member-a", &dir_a, "tenant-a").expect("opens");
+
+    // a accepts a write no other Member has ever seen, then restarts.
+    member_a.accept_put("op-a1", "order-1", &body("only-a-knew")).expect("a accepts");
+    let before_restart = member_a.frontier();
+    member_a.shutdown().expect("closes");
+
+    // The restart: the engine reopens its durable location and the CRDT
+    // snapshot staged beside it recovers the merge state — including the
+    // write that never left this Member.
+    let mut revived = ComposedMember::open("member-a", &dir_a, "tenant-a").expect("reopens");
+    assert_eq!(revived.frontier(), before_restart, "the causal frontier survives the restart");
+    let mut member_b = ComposedMember::open("member-b", &dir_b, "tenant-a").expect("opens");
+    revived.anti_entropy_with(&mut member_b).expect("the revived member spreads its write");
+    assert_eq!(member_b.visible("order-1"), Ok(Some(body("only-a-knew"))));
+    assert_eq!(revived.merged_state(), member_b.merged_state());
+
+    revived.shutdown().expect("closes");
+    member_b.shutdown().expect("closes");
+    let _ = std::fs::remove_dir_all(&dir_a);
+    let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+#[test]
 fn invalid_tenant_text_is_refused() {
     let dir = location("invalid");
-    let error = match ComposedMember::open(MEMBER_A, &dir, " tenant-with-space") {
+    let error = match ComposedMember::open("member-a", &dir, " tenant-with-space") {
         Err(error) => error,
         Ok(member) => panic!("invalid tenant text must be refused, opened {}", member.peer_id()),
     };
     assert_eq!(error, ComposeError::InvalidIdentifier);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A three-Region, six-Member replica set with one engine-backed
+/// Member per seat, in canonical order.
+fn three_region_members(
+    tag: &str,
+) -> (terrabase_v2::replication::ReplicaSet, Vec<ComposedMember>, Vec<PathBuf>) {
+    use std::collections::BTreeMap;
+    use terrabase_v2::replication::{MemberId, RegionId, ReplicaSet};
+
+    let names = ["a1", "a2", "b1", "b2", "g1", "g2"];
+    let mut dirs = Vec::new();
+    let mut members = Vec::new();
+    for name in names {
+        let dir = location(&format!("{tag}-{name}"));
+        members.push(ComposedMember::open(name, &dir, "tenant-a").expect("opens"));
+        dirs.push(dir);
+    }
+    let voters = BTreeMap::from([
+        (
+            RegionId::try_new("r-alpha").expect("valid region"),
+            vec![
+                MemberId::try_new("a1").expect("valid member"),
+                MemberId::try_new("a2").expect("valid member"),
+            ],
+        ),
+        (
+            RegionId::try_new("r-beta").expect("valid region"),
+            vec![
+                MemberId::try_new("b1").expect("valid member"),
+                MemberId::try_new("b2").expect("valid member"),
+            ],
+        ),
+        (
+            RegionId::try_new("r-gamma").expect("valid region"),
+            vec![
+                MemberId::try_new("g1").expect("valid member"),
+                MemberId::try_new("g2").expect("valid member"),
+            ],
+        ),
+    ]);
+    (ReplicaSet::new(1, voters), members, dirs)
+}
+
+/// Heals every Member with the first, in rounds, until no frontier
+/// moves — the fixed point background anti-entropy reaches. One round
+/// is not enough in general: a Member that exchanges before its peer
+/// absorbed a later merge is still behind and needs the next round.
+fn heal_all(members: &mut [ComposedMember]) {
+    loop {
+        let before: Vec<_> = members.iter().map(ComposedMember::frontier).collect();
+        let (first, rest) = members.split_first_mut().expect("one member");
+        for other in rest {
+            first.anti_entropy_with(other).expect("heals");
+        }
+        let after: Vec<_> = members.iter().map(ComposedMember::frontier).collect();
+        if before == after {
+            return;
+        }
+    }
+}
+
+fn put_write(
+    operation: &str,
+    document: &str,
+    status: &str,
+) -> terrabase_replication_core::ComposedWrite {
+    terrabase_replication_core::ComposedWrite::Put {
+        operation: operation.to_owned(),
+        document: document.to_owned(),
+        body: body(status),
+    }
+}
+
+#[test]
+fn quorum_writes_during_a_partition_converge_after_the_heal() {
+    use terrabase_replication_core::{ComposedCoordinationError, coordinate_composed_write};
+    use terrabase_v2::replication::{LeaderlessLevel, MemberId};
+
+    let (set, mut members, dirs) = three_region_members("coord");
+
+    // The partition splits the Regions: the Region-alpha Members see
+    // only each other, likewise Region beta. Each side accepts its own
+    // client's write at RegionalQuorum — the minimum success level.
+    let (alpha, _rest) = members.split_at_mut(2);
+    let receipt_a = coordinate_composed_write(
+        &set,
+        &MemberId::try_new("a1").expect("valid member"),
+        alpha,
+        &put_write("op-a1", "order-1", "written-in-alpha"),
+        LeaderlessLevel::RegionalQuorum,
+    )
+    .expect("alpha accepts at regional quorum");
+    assert_eq!(receipt_a.contributors().len(), 2, "both alpha Members hold it");
+
+    let (beta, _rest) = members.split_at_mut(4);
+    let beta = &mut beta[2..];
+    let receipt_b = coordinate_composed_write(
+        &set,
+        &MemberId::try_new("b1").expect("valid member"),
+        beta,
+        &put_write("op-b1", "order-1", "written-in-beta"),
+        LeaderlessLevel::RegionalQuorum,
+    )
+    .expect("beta accepts at regional quorum");
+    assert_eq!(receipt_b.contributors().len(), 2);
+    assert_eq!(receipt_a.epoch(), 1);
+    assert_eq!(receipt_b.epoch(), 1);
+
+    // The gamma Members never saw either write.
+    for member in &mut members[4..] {
+        assert_eq!(member.visible("order-1"), Ok(None));
+    }
+
+    // The heal: every Member merges with the first.
+    heal_all(&mut members);
+
+    // All six servers serve the identical merged body.
+    let views: Vec<_> =
+        members.iter_mut().map(|member| member.visible("order-1").expect("serves")).collect();
+    assert!(
+        views.iter().all(|view| view == &views[0]),
+        "every server serves the merged state: {views:?}"
+    );
+    let winner = views[0].clone().expect("the document exists");
+    assert!(
+        winner == body("written-in-alpha") || winner == body("written-in-beta"),
+        "the served state is one of the quorum-accepted writes"
+    );
+
+    // The error class is also proven here: during the partition, one
+    // Member alone cannot reach a regional majority.
+    let (single, _rest) = members.split_at_mut(1);
+    let error = coordinate_composed_write(
+        &set,
+        &MemberId::try_new("a1").expect("valid member"),
+        single,
+        &put_write("op-lonely", "order-2", "lonely"),
+        LeaderlessLevel::RegionalQuorum,
+    )
+    .expect_err("one of two voters is not a majority");
+    assert!(matches!(error, ComposedCoordinationError::QuorumNotReached { .. }));
+
+    for member in members.drain(..) {
+        member.shutdown().expect("closes");
+    }
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn every_member_coordinates_in_rotation_at_full_reach() {
+    use terrabase_replication_core::coordinate_composed_write;
+    use terrabase_v2::replication::{LeaderlessLevel, MemberId};
+
+    let (set, mut members, dirs) = three_region_members("rotate");
+    for accepting in ["a1", "a2", "b1", "b2", "g1", "g2"] {
+        let receipt = coordinate_composed_write(
+            &set,
+            &MemberId::try_new(accepting).expect("valid member"),
+            &mut members,
+            &put_write(&format!("op-{accepting}"), "order-1", "rotated"),
+            LeaderlessLevel::RegionalQuorum,
+        )
+        .expect("every Member coordinates");
+        assert_eq!(receipt.contributors().len(), 6, "the fan-out reaches every voter");
+        assert_eq!(*receipt.accepting_member(), MemberId::try_new(accepting).expect("valid"));
+    }
+    heal_all(&mut members);
+    let views: Vec<_> =
+        members.iter_mut().map(|member| member.visible("order-1").expect("serves")).collect();
+    assert!(views.iter().all(|view| view == &views[0]), "all serve one state: {views:?}");
+
+    for member in members.drain(..) {
+        member.shutdown().expect("closes");
+    }
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn global_quorum_composed_requires_a_majority_of_regions() {
+    use terrabase_replication_core::{ComposedCoordinationError, coordinate_composed_write};
+    use terrabase_v2::replication::{LeaderlessLevel, MemberId};
+
+    let (set, mut members, dirs) = three_region_members("global");
+    // Two Regions reachable: a majority of three.
+    let (reachable, _rest) = members.split_at_mut(4);
+    coordinate_composed_write(
+        &set,
+        &MemberId::try_new("a1").expect("valid member"),
+        reachable,
+        &put_write("op-global", "order-1", "global-write"),
+        LeaderlessLevel::GlobalQuorum,
+    )
+    .expect("two regions with regional majorities qualify");
+
+    // One Region reachable: not a majority.
+    let (alpha, _rest) = members.split_at_mut(2);
+    let error = coordinate_composed_write(
+        &set,
+        &MemberId::try_new("a1").expect("valid member"),
+        alpha,
+        &put_write("op-global-fail", "order-2", "not-global"),
+        LeaderlessLevel::GlobalQuorum,
+    )
+    .expect_err("one region is not a majority of three");
+    assert!(matches!(error, ComposedCoordinationError::QuorumNotReached { .. }));
+
+    for member in members.drain(..) {
+        member.shutdown().expect("closes");
+    }
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
