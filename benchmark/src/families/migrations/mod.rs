@@ -514,8 +514,7 @@ pub fn apply_page(
         },
     ) {
         Ok(next) => next,
-        Err(error @ MigrationError::TargetViolation)
-        | Err(error @ MigrationError::TransformRejected) => {
+        Err(error @ (MigrationError::TargetViolation | MigrationError::TransformRejected)) => {
             let reason = if error == MigrationError::TargetViolation {
                 MigrationStopReason::TargetViolation
             } else {
