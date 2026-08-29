@@ -72,11 +72,15 @@ Test map (every charter rejection class has a dedicated test):
 | Admission refuses duplicates; retirement requires an active Region | `admission_refuses_duplicates_and_never_admitted_codes_cannot_retire` |
 | `REGION_CEILING == 20` pinned; 21st active Region refused; retirement frees a seat the retired code itself can never retake | `the_catalog_enforces_the_twenty_region_ceiling` |
 
-Full-crate context: one `cargo test -p terrabase-v2` run before the
-concurrent lanes' in-flight edits landed recorded 1097 passed / 1 failed /
-3 ignored across the lib target — the failure was outside `regions::`
-(all 12 `regions::tests` green in every run) and the tree was being edited
-by other lanes at that moment. CI owns the full gate.
+Full-crate context: `cargo test -p terrabase-v2` at this packet's exact
+commit snapshot (run in a throwaway worktree, isolated from the concurrent
+lanes editing the shared tree) recorded **1097 passed / 1 failed /
+3 ignored** across the lib target, with all 12 `regions::tests` green.
+The one failure — `benchmarks::tests::a_receipt_renders_the_discipline_lines`
+(`src/benchmarks/tests.rs:362`, the receipt renderer omits the asserted
+`terrabase v1 pin:` line) — is pre-existing: it fails identically at this
+packet's parent commit and touches none of this packet's paths. It belongs
+to the SE-15 benchmark lane; CI owns the full gate.
 
 ## Boundary properties stated by the module
 
