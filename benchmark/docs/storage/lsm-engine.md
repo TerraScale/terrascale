@@ -127,10 +127,23 @@ the documents and ledger record.
   no compression, no Bloom or fence indexes, no multipart range reuse,
   no block cache — each is a measured-workload decision ADR 0016 D-2
   defers to receipts.
-- The tier manifest, Storage Tier Mover, object-store tier, cold-read
-  fallback, and the LSM-format backup/restore path (the backup module
-  still stages through the root-file engine; restored locations open
-  through format auto-detection) remain open P1 work.
+- The LSM-format backup/restore path (the backup module still stages
+  through the root-file engine; restored locations open through format
+  auto-detection) remains open work.
+- The object-store tier's first landing
+  (`src/storage/lsm/{object_store,tier}.rs`) proves the machinery: the
+  checksum-addressed write-once `ObjectStore` contract with a local
+  implementation, the `TierManifest` (epoch-chained, checksummed,
+  temp/rename publication), the versioned explainable `TierMovePolicy`
+  and `TierMoveReceipt`, a bounded mover pass (demote the coldest
+  unpinned segment under budget pressure; dry runs decide without
+  transferring; pins refuse), and the frozen fallback read order's local
+  legs with a typed exhaustion error. Honest limits: manifest acceptance
+  is local-durable until P2 wires `RegionalQuorum` member votes; the
+  mover's fairness forecasting (per-tenant working sets, weighted
+  queues) and the S3 REST client land with P2/P4; promotion-back and
+  mixed-temperature splitting are follow-ups; the real S3 endpoint
+  class is `unrun` on this host.
 - The two-frame `Synced` protocol adds one small frame per synced
   commit; the amplification bound test accounts for it.
 

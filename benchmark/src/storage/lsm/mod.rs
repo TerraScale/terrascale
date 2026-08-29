@@ -28,9 +28,13 @@ pub(crate) mod compact;
 pub(crate) mod internal;
 pub(crate) mod manifest;
 pub(crate) mod memtable;
+pub(crate) mod object_store;
 pub(crate) mod segment;
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+pub(crate) mod tests_support;
+pub(crate) mod tier;
 pub(crate) mod wal;
 
 use std::{
