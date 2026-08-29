@@ -196,7 +196,7 @@ export function createTerraScaleBetterAuthAdapter(
       readonly forceAllowId?: boolean | undefined;
     }) {
       const data = { ...input.data } as BetterAuthRecord;
-      if (input.forceAllowId === true && "id" in input.data) data.id = input.data.id;
+      if (input.forceAllowId !== true) delete data.id;
       return unwrap(
         await operations.insertUnique({
           model: input.model,
