@@ -197,7 +197,8 @@ impl ClusterMember {
     ///
     /// # Errors
     ///
-    /// Returns the composed member's failure.
+    /// Never fails today: the native CRDT enumeration is total. The
+    /// result type keeps the seam stable for the durable enumeration.
     pub fn documents(
         &mut self,
     ) -> Result<
@@ -207,7 +208,7 @@ impl ClusterMember {
         >,
         MemberError,
     > {
-        self.composed_mut().documents().map_err(|_| MemberError::StateRefused)
+        Ok(self.composed_mut().documents())
     }
 
     /// Reads one document through the composed state. Both modes read:
