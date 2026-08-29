@@ -1,0 +1,17 @@
+{
+  "codec": "terrabase-native/1",
+  "structure": "ReplicaExchange::Delta — the member-to-member replication frame",
+  "crate": "terrabase-replication-core",
+  "authority": "docs/adr/0023-native-replication-repair-and-compaction.md (commit batches)",
+  "exchange_codec_major": 1,
+  "fixture": {
+    "members": [7, 8],
+    "operations": 5,
+    "authoring_actor": "actor_from_peer(7)",
+    "absorbed_actor": "actor_from_peer(8)",
+    "remote_frontier": "empty"
+  },
+  "canonical_hex": "0105000000000000000000000000000000070101e8070001000105646f632d3102046b696e64010773343a7573657206737461747573010973363a616374697665000000000000000000000000000000070102cc0800010100000000000000000000000000000007000000000000000101000105646f632d3201046b696e64010873353a6f72646572000000000000000000000000000000070103b00900010100000000000000000000000000000007000000000000000102000205646f632d32000000000000000000000000000000070104940a00010100000000000000000000000000000007000000000000000103000105646f632d3102046b696e640006737461747573010773343a69646c650000000000000000000000000000000801019a080001000105646f632d33010474696572010773343a676f6c64",
+  "layout": "codec major (1 byte) | op count (LEB128 u64) | per op in canonical dot order: dot (16-byte replica + u64-be epoch + LEB128 counter), HLC (LEB128 physical millis, LEB128 logical), observed CausalContext canonical bytes, mutation (tag 1 put: document + per-field present/absent canonical text; tag 2 delete: document)",
+  "architecture_independent": true
+}

@@ -1,0 +1,19 @@
+{
+  "codec": "terrabase-native/1",
+  "structure": "anti-entropy causal summary — domain-separated BLAKE3 digests and dual Merkle roots",
+  "crate": "terrabase-replication-core (anti_entropy)",
+  "authority": "docs/adr/0023-native-replication-repair-and-compaction.md (peers first compare normalized causal progress; canonical Merkle verification)",
+  "domains": {
+    "causal_digest": "anti-entropy-causal-state over progress-summary-causal-context.json canonical bytes",
+    "materialized_digest": "anti-entropy-materialized-state over the literal ASCII bytes 'pin:materialized-domain'",
+    "merkle_leaf_causal": "anti-entropy-causal-leaf",
+    "merkle_leaf_materialized": "anti-entropy-materialized-leaf"
+  },
+  "causal_digest_blake3": "c79fe03e42e3a05220c92f855dc020171a1ca808f0d4bde27c4b64a779f5b2ba",
+  "materialized_digest_blake3": "d83cfb1693928ab2b8414757131efe5a9597b406a750eabdb9d4da2fe682b177",
+  "fixture_replica": "same replica as replication-frame-full-delta-batch.json, tree bounds leaf_entries=2 max_leaves=64",
+  "causal_root_blake3": "fd880234da64058a1a39e648779ad3ad2b45063be428aa2d6d1c639fc3c66f49",
+  "materialized_root_blake3": "90e0ec294fdf9b131ebb3e5a6c0eaae85ec4460162aecff1b7ffdcd2f9139977",
+  "hash": "BLAKE3 keyed by the domain string over 'TerraBaseV2\\0' + codec major byte + domain length + domain + canonical bytes",
+  "architecture_independent": true
+}

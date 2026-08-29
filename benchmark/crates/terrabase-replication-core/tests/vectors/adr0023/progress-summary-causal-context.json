@@ -1,0 +1,15 @@
+{
+  "codec": "terrabase-native/1",
+  "structure": "CausalContext — contiguous-prefix plus received-interval progress summary (the wire form a ReplicaFrontier exchanges)",
+  "crate": "terrabase-causal (dependency of terrabase-replication-core)",
+  "authority": "docs/adr/0023-native-replication-repair-and-compaction.md (each position is a Partition clock with contiguous prefixes and explicit received intervals)",
+  "codec_major": 1,
+  "fixture": {
+    "actor_alpha": "actor_from_peer(0x11) — contiguous prefix 3, received intervals 5..=7 and 10..=12",
+    "actor_beta": "actor_from_peer(0x22) — contiguous prefix 4, no intervals"
+  },
+  "canonical_hex": "0102000000000000000000000000000000110000000000000001030205070a0c0000000000000000000000000000002200000000000000010400",
+  "layout": "codec major (1 byte) | actor count (LEB128 u64) | per actor in canonical identity order: 16-byte replica + u64-be epoch, contiguous prefix (LEB128 u64), interval count (LEB128 u64), then each closed interval as first/last LEB128 u64 pairs",
+  "normalization": "the same dot set assembled one counter at a time in shuffled order, with actors inserted in the opposite order, encodes to identical bytes",
+  "architecture_independent": true
+}

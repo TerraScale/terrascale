@@ -1,0 +1,16 @@
+{
+  "codec": "terrabase-native/1",
+  "structure": "ReplicaExchange::Delta — interval-selected replication frame",
+  "crate": "terrabase-replication-core",
+  "authority": "docs/adr/0023-native-replication-repair-and-compaction.md (the receiver computes missing actor intervals)",
+  "exchange_codec_major": 1,
+  "fixture": {
+    "members": [7, 8],
+    "operations": 3,
+    "remote_frontier": "ReplicaFrontier::from_ends([(actor_from_peer(7), 2)]) — covers member 7 counters 1..=2",
+    "selected": "member 7 counters 3..=4 plus member 8 counter 1"
+  },
+  "canonical_hex": "0103000000000000000000000000000000070103b00900010100000000000000000000000000000007000000000000000102000205646f632d32000000000000000000000000000000070104940a00010100000000000000000000000000000007000000000000000103000105646f632d3102046b696e640006737461747573010773343a69646c650000000000000000000000000000000801019a080001000105646f632d33010474696572010773343a676f6c64",
+  "layout": "same layout as replication-frame-full-delta-batch.json; only the operations the remote frontier does not name travel",
+  "architecture_independent": true
+}
