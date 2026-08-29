@@ -485,3 +485,45 @@ client batching, reconnect/resume.
 Receipts: `TerraBase.Api.Tests` 88/88 (1 new cross-language spine
 row); `TerraBase.Protocol.Tests` 19/19. `scripts/check.sh` not run
 (AC-12).
+
+## 14. P4 landing 3 (2026-08-29): query and schema surfaces over the EngineHost
+
+The engine-backed host serves the two read-declarative surfaces the
+spine lacked. Query: `query.execute` compiles the V1-compatible query
+text through the engine's real query seam
+(`QueryStore::compile(QueryInput::v1_compatible(...))` → `execute`)
+against the bound tenant's snapshot — the response's `count` is the
+matched total, `documents` the page, and the terminal is `Truncated`
+exactly when the page cut the matched set. Schema: `schema.declare`
+stages the collection's policy through the real family write path
+(`ValidationWrite` via `FamilyWriteRequest::schema_validation_update`,
+committed at `Synced`, version derived forward-only from the recorded
+policy), `schema.status` reads the enforced version and rule count
+back, and `schema.validate` evaluates one offered body against the
+recorded policy without staging anything — naming the violated field
+and the typed kind. Enforcement is the engine's own write path, not a
+host-side copy: after a declare, a violating document write is refused
+at the staged put and nothing durable records, and clearing (declare
+with no schema) returns the collection to exact schema-free behavior.
+The evaluator surfaced publicly as `families::violations` (previously
+crate-private) — one pure function over the public `SchemaDefinition`,
+re-exported beside the payload types.
+
+Proven over the real UDS socket (`engine_host_uds.rs`, 4 new rows over
+landing 1's three): three seeded documents scanned complete; the page
+below the matched total truncated with the total still named; the
+filtered predicate matching its one document; declare/status pairing
+versions; conforming write committing and violating write refused with
+nothing recorded; validate valid/invalid with field and kind; clear
+restoring schema-free behavior.
+
+Still open in P4: the QUIC/TLS binding, tokens/mTLS and capability
+negotiation, the family surfaces over this host, tier administration
+(registry ops + `tbep-gen` regeneration), cluster mode,
+`topology_read`, the dedicated overload code, client batching, and
+reconnect/resume.
+
+Receipts: `cargo test -p terrabase-tbep` all suites green (7
+engine-host UDS rows); `cargo test -p terrabase-v2 --lib` 1076/1076;
+clippy `-D warnings` and fmt clean on both crates.
+`scripts/check.sh` not run (AC-12).

@@ -80,7 +80,8 @@ fn float_bound(bound: i64) -> f64 {
 /// document itself is the violation, reported once against the document
 /// rather than a field ([`ViolationKind::DocumentNotObject`], empty field
 /// name). A rule-free schema stays vacuous for every value, object or not.
-pub(crate) fn violations(schema: &SchemaDefinition, value: &DocumentValue) -> Vec<SchemaViolation> {
+#[must_use]
+pub fn violations(schema: &SchemaDefinition, value: &DocumentValue) -> Vec<SchemaViolation> {
     let DocumentValue::Object(fields) = value else {
         if schema.rules().is_empty() {
             return Vec::new();

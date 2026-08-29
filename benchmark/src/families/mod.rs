@@ -85,7 +85,7 @@ pub use payloads::{
     TombstoneEntry, TombstoneRead, TombstoneResult, TombstoneWrite, ValidationRead,
     ValidationResult, ValidationWrite, ViolationKind,
 };
-pub use schemas::SchemaFormatError;
+pub use schemas::{SchemaFormatError, violations};
 
 // The counter merge seam of the GAP-F07 decision record
 // (`docs/families/counter-merge-encoding.md`): counter records replicate as

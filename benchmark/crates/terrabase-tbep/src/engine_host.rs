@@ -10,9 +10,12 @@
 //! — `SyncDeliveryHost` remains the sync-session specialist beside it.
 //!
 //! Honest limits of this landing: the sync-session family
-//! (backbone/sessions) and the query/family/schema surfaces answer the
-//! typed refusal naming their landing; the tier-administration and
-//! cluster-mode operations land with their phases.
+//! (backbone/sessions) and the family surfaces answer the typed refusal
+//! naming their landing; the tier-administration and cluster-mode
+//! operations land with their phases. The query and schema surfaces are
+//! served: V1-compatible query text compiles and executes against the
+//! bound tenant's snapshot, and collection schemas declare, validate,
+//! and enforce through the recorded policy.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -140,6 +143,42 @@ impl EngineHost {
         let collection = CollectionName::try_new(collection)
             .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
         Ok((document, collection))
+    }
+
+    /// Reads the collection's recorded validation policy.
+    fn validation_policy(
+        &self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+    ) -> Result<Option<terrabase_v2::families::SchemaDefinition>, HostingError> {
+        let read = terrabase_v2::families::ValidationRead::try_new(
+            collection.clone(),
+            None,
+            terrabase_v2::types::Deadline::after(std::time::Duration::from_secs(30))
+                .map_err(|_| HostingError::EngineFailure("the deadline is invalid".into()))?,
+            terrabase_v2::types::Cancellation::default(),
+        )
+        .map_err(|_| HostingError::Invalid("the validation read is not valid".into()))?;
+        let scope = self.engine.scope_for(tenant);
+        let snapshot = self
+            .engine
+            .read_snapshot(&scope)
+            .map_err(|_| HostingError::EngineFailure("the snapshot is unavailable".into()))?;
+        let context = terrabase_v2::families::FamilyReadContext::new(scope, snapshot);
+        let request = terrabase_v2::families::FamilyReadRequest::validation(read);
+        match self
+            .engine
+            .families()
+            .read(context, request)
+            .map_err(|_| HostingError::EngineFailure("the validation read failed".into()))?
+        {
+            terrabase_v2::families::FamilyReadResult::Validation(result) => {
+                Ok(result.policy().cloned())
+            }
+            _ => Err(HostingError::EngineFailure(
+                "the validation read answered another family".into(),
+            )),
+        }
     }
 
     /// Reads one document through the engine's snapshot path.
@@ -310,13 +349,55 @@ impl TbepHost for EngineHost {
 
     fn query_execute(
         &self,
-        _tenant: &str,
-        _request: &crate::generated::QueryExecuteRequest,
+        tenant: &str,
+        request: &crate::generated::QueryExecuteRequest,
     ) -> Result<crate::generated::QueryExecuteResponse, HostingError> {
-        Err(HostingError::Refused(
-            "query_execute is served by the query-plane landing; this host serves the document spine"
-                .into(),
-        ))
+        self.count_frame();
+        let tenant = Self::tenant_of(tenant)?;
+        // The wire's text is the V1-compatible query input, bounded at
+        // 16 KiB by the registry's own validation.
+        let text = terrabase_v2::operations::V1QueryText::try_new(&request.text)
+            .map_err(|_| HostingError::Invalid("the query text is not valid".into()))?;
+        let input = terrabase_v2::operations::QueryInput::v1_compatible(text);
+        let scope = self.engine.scope_for(&tenant);
+        let snapshot = self
+            .engine
+            .read_snapshot(&scope)
+            .map_err(|_| HostingError::EngineFailure("the snapshot is unavailable".into()))?;
+        let store = self.engine.queries();
+        let plan = store
+            .compile(input)
+            .map_err(|_| HostingError::Invalid("the query did not compile".into()))?;
+        let result = store
+            .execute(&plan, &snapshot)
+            .map_err(|_| HostingError::EngineFailure("the query execution failed".into()))?;
+        // The response serves at most the caller's page (bounded by the
+        // registry's list bound); `count` reports the query's total
+        // matched rows, `terminal` whether the page cut them.
+        let rows = result.rows();
+        let limit = usize::try_from(request.max_items).unwrap_or(0).min(rows.len());
+        let documents: Vec<DocumentBody> = rows[..limit]
+            .iter()
+            .map(|row| {
+                let document = row.document();
+                DocumentBody {
+                    id: document.id().as_str().to_owned(),
+                    collection: document.collection().as_str().to_owned(),
+                    version: document.metadata().version(),
+                    body: to_wire_value(document.value()),
+                }
+            })
+            .collect();
+        let terminal = if limit < rows.len() {
+            crate::generated::QueryTerminal::Truncated
+        } else {
+            crate::generated::QueryTerminal::Complete
+        };
+        Ok(crate::generated::QueryExecuteResponse {
+            count: u32::try_from(result.matched()).unwrap_or(u32::MAX),
+            documents,
+            terminal,
+        })
     }
 
     fn query_cancel(
@@ -448,6 +529,167 @@ impl TbepHost for EngineHost {
         Err(HostingError::Refused(
             "topology_read is served by the cluster-mode landing (P5)".into(),
         ))
+    }
+
+    fn schema_declare(
+        &self,
+        tenant: &str,
+        request: &crate::generated::SchemaDeclareRequest,
+        idempotency_key: &str,
+    ) -> Result<crate::generated::SchemaDeclareResponse, HostingError> {
+        self.count_frame();
+        let tenant = Self::tenant_of(tenant)?;
+        let collection = CollectionName::try_new(request.collection.as_str())
+            .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
+        // The declared schema value adopts the collection's NEXT version:
+        // version evolution is forward-only in the engine, so the host
+        // derives it from the recorded policy.
+        let current = self.validation_policy(&tenant, &collection)?;
+        let next_version = terrabase_v2::families::SchemaVersion::try_new(
+            current.as_ref().map_or(1, |policy| policy.version().get() + 1),
+        )
+        .map_err(|_| HostingError::Invalid("the derived schema version is not valid".into()))?;
+        let schema = match &request.schema {
+            None => None,
+            Some(value) => Some(
+                terrabase_v2::families::SchemaDefinition::from_json_schema(
+                    next_version,
+                    &to_engine_value(value),
+                )
+                .map_err(|_| {
+                    HostingError::Invalid("the schema value is not a valid definition".into())
+                })?,
+            ),
+        };
+        let identity = if idempotency_key.is_empty() {
+            request.operation_id.as_str()
+        } else {
+            idempotency_key
+        };
+        let operation = OperationId::try_new(identity)
+            .map_err(|_| HostingError::Invalid("the operation identity is not valid".into()))?;
+        let write = terrabase_v2::families::ValidationWrite::try_new(
+            self.engine.scope_for(&tenant),
+            collection.clone(),
+            schema,
+            operation,
+            terrabase_v2::types::Deadline::after(std::time::Duration::from_secs(30))
+                .map_err(|_| HostingError::EngineFailure("the deadline is invalid".into()))?,
+            terrabase_v2::types::Cancellation::default(),
+        )
+        .map_err(|_| HostingError::Invalid("the schema declaration is not valid".into()))?;
+        let scope = self.engine.scope_for(&tenant);
+        let snapshot = self
+            .engine
+            .read_snapshot(&scope)
+            .map_err(|_| HostingError::EngineFailure("the snapshot is unavailable".into()))?;
+        let mut transaction = self
+            .engine
+            .begin(
+                &scope,
+                snapshot,
+                OperationId::try_new(&request.operation_id).map_err(|_| {
+                    HostingError::Invalid("the operation identity is not valid".into())
+                })?,
+            )
+            .map_err(|_| HostingError::EngineFailure("the declaration could not begin".into()))?;
+        self.engine
+            .families()
+            .stage(
+                &mut transaction,
+                terrabase_v2::families::FamilyWriteRequest::schema_validation_update(write),
+            )
+            .map_err(|_| HostingError::Refused("the schema declaration was refused".into()))?;
+        match transaction.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(_) => {}
+            CommitOutcome::Rejected(_) => {
+                return Err(HostingError::Refused("the schema declaration conflicted".into()));
+            }
+            CommitOutcome::Unknown(_) => {
+                return Err(HostingError::EngineFailure(
+                    "the declaration is uncertain; retry the same idempotency key".into(),
+                ));
+            }
+        }
+        let policy = self.validation_policy(&tenant, &collection)?;
+        Ok(crate::generated::SchemaDeclareResponse {
+            enforced_version: policy.as_ref().map(|policy| policy.version().get()),
+            // The rule set is bounded well below the wire's u32; the
+            // saturating conversion can never lose a rule.
+            rule_count: policy
+                .as_ref()
+                .map_or(0, |policy| u32::try_from(policy.rules().len()).unwrap_or(u32::MAX)),
+        })
+    }
+
+    fn schema_validate(
+        &self,
+        tenant: &str,
+        request: &crate::generated::SchemaValidateRequest,
+    ) -> Result<crate::generated::SchemaValidateResponse, HostingError> {
+        self.count_frame();
+        let tenant = Self::tenant_of(tenant)?;
+        let collection = CollectionName::try_new(request.collection.as_str())
+            .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
+        let Some(policy) = self.validation_policy(&tenant, &collection)? else {
+            // Schema-free collections carry no rule set: any body is
+            // valid, and the empty version says why.
+            return Ok(crate::generated::SchemaValidateResponse {
+                enforced_version: None,
+                valid: true,
+                violations: Vec::new(),
+            });
+        };
+        let body = to_engine_value(&request.document);
+        let violations = terrabase_v2::families::violations(&policy, &body)
+            .into_iter()
+            .map(|violation| crate::generated::SchemaViolation {
+                field: violation.field().to_owned(),
+                kind: match violation.kind() {
+                    terrabase_v2::families::ViolationKind::DocumentNotObject => {
+                        crate::generated::ViolationKind::DocumentNotObject
+                    }
+                    terrabase_v2::families::ViolationKind::MissingRequiredField => {
+                        crate::generated::ViolationKind::MissingRequiredField
+                    }
+                    terrabase_v2::families::ViolationKind::TypeMismatch => {
+                        crate::generated::ViolationKind::TypeMismatch
+                    }
+                    terrabase_v2::families::ViolationKind::ValueNotAllowed => {
+                        crate::generated::ViolationKind::ValueNotAllowed
+                    }
+                    terrabase_v2::families::ViolationKind::NumberOutOfRange => {
+                        crate::generated::ViolationKind::NumberOutOfRange
+                    }
+                    terrabase_v2::families::ViolationKind::LengthOutOfRange => {
+                        crate::generated::ViolationKind::LengthOutOfRange
+                    }
+                },
+            })
+            .collect::<Vec<_>>();
+        let enforced_version = Some(policy.version().get());
+        let valid = violations.is_empty();
+        Ok(crate::generated::SchemaValidateResponse { enforced_version, valid, violations })
+    }
+
+    fn schema_status(
+        &self,
+        tenant: &str,
+        request: &crate::generated::SchemaStatusRequest,
+    ) -> Result<crate::generated::SchemaStatusResponse, HostingError> {
+        self.count_frame();
+        let tenant = Self::tenant_of(tenant)?;
+        let collection = CollectionName::try_new(request.collection.as_str())
+            .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
+        let policy = self.validation_policy(&tenant, &collection)?;
+        Ok(crate::generated::SchemaStatusResponse {
+            enforced_version: policy.as_ref().map(|policy| policy.version().get()),
+            // The rule set is bounded well below the wire's u32; the
+            // saturating conversion can never lose a rule.
+            rule_count: policy
+                .as_ref()
+                .map_or(0, |policy| u32::try_from(policy.rules().len()).unwrap_or(u32::MAX)),
+        })
     }
 
     fn admin_status(&self) -> Result<AdminStatusResponse, HostingError> {

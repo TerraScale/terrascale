@@ -295,3 +295,267 @@ fn an_invalid_tenant_binding_is_refused_before_any_engine_scope() {
     drop(fixture);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_engine_serves_v1_queries_over_uds() {
+    use terrabase_tbep::generated::{QueryExecuteRequest, QueryTerminal};
+
+    let dir = location("query");
+    let mut fixture = Fixture::bind("query", &dir, 1);
+    fixture.bind_channel("tenant-a");
+
+    // Seed three documents in one collection.
+    for index in 1..=3u64 {
+        let body = TbepValue::Object(vec![
+            ("item".to_owned(), TbepValue::String(format!("item-{index}"))),
+            ("quantity".to_owned(), TbepValue::Integer(i64::try_from(index).expect("fits"))),
+        ]);
+        let answer = fixture.call(
+            DocumentWriteRequest {
+                document: DocumentPut {
+                    id: format!("order-{index}"),
+                    collection: "orders".into(),
+                    body,
+                },
+                expected: ExpectedVersion::Absent,
+                operation_id: format!("op-q-{index}"),
+            },
+            Some(&IdempotencyKey::new(&format!("op-q-{index}")).expect("valid key")),
+        );
+        assert!(matches!(answer.body(), TbepBody::DocumentWriteResponse(_)));
+    }
+
+    // The full scan serves every matched document, complete.
+    let answer = fixture.call(
+        QueryExecuteRequest { query_id: 1, text: "from orders".into(), max_items: 256 },
+        None,
+    );
+    let TbepBody::QueryExecuteResponse(response) = answer.body() else {
+        panic!("the query answered, got {:?}", answer.kind());
+    };
+    assert_eq!(response.count, 3, "the matched count is the query's total");
+    assert_eq!(response.documents.len(), 3);
+    assert_eq!(response.documents[0].id, "order-1");
+    assert_eq!(response.terminal, QueryTerminal::Complete);
+
+    // A page below the matched count is truncated, and still names the
+    // total.
+    let answer = fixture
+        .call(QueryExecuteRequest { query_id: 2, text: "from orders".into(), max_items: 2 }, None);
+    let TbepBody::QueryExecuteResponse(response) = answer.body() else {
+        panic!("the paged query answered");
+    };
+    assert_eq!(response.count, 3);
+    assert_eq!(response.documents.len(), 2);
+    assert_eq!(response.terminal, QueryTerminal::Truncated);
+
+    // A filtered query matches its predicate.
+    let answer = fixture.call(
+        QueryExecuteRequest {
+            query_id: 3,
+            text: "from orders where quantity = 2".into(),
+            max_items: 256,
+        },
+        None,
+    );
+    let TbepBody::QueryExecuteResponse(response) = answer.body() else {
+        panic!("the filtered query answered");
+    };
+    assert_eq!(response.count, 1);
+    assert_eq!(response.documents[0].id, "order-2");
+
+    drop(fixture);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Declares the required-string-status policy for `orders` and asserts
+/// its adoption: version 1, two rules (`Required` + `FieldType`).
+fn declare_status_policy(fixture: &mut Fixture, key: &str) {
+    use terrabase_tbep::generated::SchemaDeclareRequest;
+    let answer = fixture.call(
+        SchemaDeclareRequest {
+            collection: "orders".into(),
+            schema: Some(TbepValue::Object(vec![
+                ("type".to_owned(), TbepValue::String("object".to_owned())),
+                (
+                    "required".to_owned(),
+                    TbepValue::Array(vec![TbepValue::String("status".to_owned())]),
+                ),
+                (
+                    "properties".to_owned(),
+                    TbepValue::Object(vec![(
+                        "status".to_owned(),
+                        TbepValue::Object(vec![(
+                            "type".to_owned(),
+                            TbepValue::String("string".to_owned()),
+                        )]),
+                    )]),
+                ),
+            ])),
+            operation_id: key.into(),
+        },
+        Some(&IdempotencyKey::new(key).expect("valid key")),
+    );
+    let TbepBody::SchemaDeclareResponse(response) = answer.body() else {
+        panic!("the declare answered, got {:?}", answer.kind());
+    };
+    assert_eq!(response.enforced_version, Some(1));
+    assert_eq!(response.rule_count, 2);
+}
+
+#[test]
+fn the_engine_serves_schema_declare_status_and_enforcement() {
+    use terrabase_tbep::generated::SchemaStatusRequest;
+
+    let dir = location("schema");
+    let mut fixture = Fixture::bind("schema", &dir, 1);
+    fixture.bind_channel("tenant-a");
+    declare_status_policy(&mut fixture, "op-schema-1");
+
+    // Status names the same recorded policy.
+    let answer = fixture.call(SchemaStatusRequest { collection: "orders".into() }, None);
+    let TbepBody::SchemaStatusResponse(response) = answer.body() else {
+        panic!("the status answered");
+    };
+    assert_eq!(response.enforced_version, Some(1));
+    assert_eq!(response.rule_count, 2);
+
+    // A conforming write commits.
+    let conforming =
+        TbepValue::Object(vec![("status".to_owned(), TbepValue::String("open".to_owned()))]);
+    let answer = fixture.call(
+        DocumentWriteRequest {
+            document: DocumentPut {
+                id: "order-ok".into(),
+                collection: "orders".into(),
+                body: conforming,
+            },
+            expected: ExpectedVersion::Absent,
+            operation_id: "op-schema-2".into(),
+        },
+        Some(&IdempotencyKey::new("op-schema-2").expect("valid key")),
+    );
+    assert!(matches!(answer.body(), TbepBody::DocumentWriteResponse(_)));
+
+    // A violating write is refused — the recorded policy enforces on the
+    // staged put — and nothing durable happens.
+    let violating = TbepValue::Object(vec![("status".to_owned(), TbepValue::Integer(7))]);
+    let answer = fixture.call(
+        DocumentWriteRequest {
+            document: DocumentPut {
+                id: "order-bad".into(),
+                collection: "orders".into(),
+                body: violating.clone(),
+            },
+            expected: ExpectedVersion::Absent,
+            operation_id: "op-schema-3".into(),
+        },
+        Some(&IdempotencyKey::new("op-schema-3").expect("valid key")),
+    );
+    assert!(
+        matches!(answer.body(), TbepBody::Error(_)),
+        "the violating write is refused, got {:?}",
+        answer.kind()
+    );
+    let answer = fixture.call(
+        DocumentReadRequest { collection: "orders".into(), document: "order-bad".into() },
+        None,
+    );
+    let TbepBody::DocumentReadResponse(response) = answer.body() else {
+        panic!("the post-refusal read answered");
+    };
+    assert!(!response.found, "the refused write recorded nothing");
+
+    drop(fixture);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_schema_validate_surface_names_field_and_kind() {
+    use terrabase_tbep::generated::{SchemaValidateRequest, ViolationKind};
+
+    let dir = location("validate");
+    let mut fixture = Fixture::bind("validate", &dir, 1);
+    fixture.bind_channel("tenant-a");
+    declare_status_policy(&mut fixture, "op-validate-1");
+
+    // The conforming body is valid against the enforced version.
+    let answer = fixture.call(
+        SchemaValidateRequest {
+            collection: "orders".into(),
+            document: TbepValue::Object(vec![(
+                "status".to_owned(),
+                TbepValue::String("open".to_owned()),
+            )]),
+        },
+        None,
+    );
+    let TbepBody::SchemaValidateResponse(response) = answer.body() else {
+        panic!("the validate answered, got {:?}", answer.kind());
+    };
+    assert_eq!(response.enforced_version, Some(1));
+    assert!(response.valid);
+    assert!(response.violations.is_empty());
+
+    // The violating body names its field and kind — with nothing staged.
+    let answer = fixture.call(
+        SchemaValidateRequest {
+            collection: "orders".into(),
+            document: TbepValue::Object(vec![("status".to_owned(), TbepValue::Integer(7))]),
+        },
+        None,
+    );
+    let TbepBody::SchemaValidateResponse(response) = answer.body() else {
+        panic!("the invalid validate answered");
+    };
+    assert!(!response.valid);
+    assert_eq!(response.violations.len(), 1);
+    assert_eq!(response.violations[0].field, "status");
+    assert!(matches!(response.violations[0].kind, ViolationKind::TypeMismatch));
+
+    drop(fixture);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn schema_clearing_returns_the_collection_to_schema_free() {
+    use terrabase_tbep::generated::SchemaDeclareRequest;
+
+    let dir = location("clear");
+    let mut fixture = Fixture::bind("clear", &dir, 1);
+    fixture.bind_channel("tenant-a");
+    declare_status_policy(&mut fixture, "op-clear-1");
+
+    // Clearing: no enforced version.
+    let answer = fixture.call(
+        SchemaDeclareRequest {
+            collection: "orders".into(),
+            schema: None,
+            operation_id: "op-clear-2".into(),
+        },
+        Some(&IdempotencyKey::new("op-clear-2").expect("valid key")),
+    );
+    let TbepBody::SchemaDeclareResponse(response) = answer.body() else {
+        panic!("the clear answered");
+    };
+    assert_eq!(response.enforced_version, None);
+
+    // The previously violating body now commits: schema-free again.
+    let violating = TbepValue::Object(vec![("status".to_owned(), TbepValue::Integer(7))]);
+    let answer = fixture.call(
+        DocumentWriteRequest {
+            document: DocumentPut {
+                id: "order-any".into(),
+                collection: "orders".into(),
+                body: violating,
+            },
+            expected: ExpectedVersion::Absent,
+            operation_id: "op-clear-3".into(),
+        },
+        Some(&IdempotencyKey::new("op-clear-3").expect("valid key")),
+    );
+    assert!(matches!(answer.body(), TbepBody::DocumentWriteResponse(_)));
+
+    drop(fixture);
+    let _ = std::fs::remove_dir_all(&dir);
+}
