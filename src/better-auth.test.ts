@@ -42,6 +42,14 @@ test("Better Auth adapter maps CRUD to named Database API operations", async () 
   });
   assert.deepEqual(keys, ["attempt-1", "attempt-2"]);
   assert.ok(calls.includes("compareAndSwap:user"));
+
+  const incremented = await adapter.incrementOne<{ id: string }>({
+    model: "user",
+    where: [{ field: "remaining", operator: "gt", value: 0 }],
+    increment: { remaining: -1 },
+  });
+  assert.deepEqual(incremented, { id: "user-1" });
+  assert.ok(calls.includes("incrementOne:user"));
 });
 
 test("Better Auth adapter preserves one-time consume and transaction boundaries", async () => {
@@ -130,6 +138,11 @@ function operationsForTest(calls: string[], keys: string[]): BetterAuthDatabaseO
       calls.push(`consumeOne:${model}`);
       keys.push(idempotencyKey);
       return result<T | null>({ id: "verification-1" } as unknown as T);
+    },
+    incrementOne: async <T extends Record<string, unknown>>({ model, idempotencyKey }: { readonly model: string; readonly idempotencyKey: string }) => {
+      calls.push(`incrementOne:${model}`);
+      keys.push(idempotencyKey);
+      return result<T | null>({ id: "user-1" } as unknown as T);
     },
     transaction: async (callback) => {
       calls.push("transaction");

@@ -91,6 +91,11 @@ export type BetterAuthDatabaseOperations = {
   readonly consumeOne: <T extends BetterAuthRecord>(
     input: BetterAuthMutationInput & { readonly where: readonly BetterAuthWhere[] },
   ) => Promise<TerraScaleResult<T | null>>;
+  readonly incrementOne: <T extends BetterAuthRecord>(input: BetterAuthMutationInput & {
+    readonly where: readonly BetterAuthWhere[];
+    readonly increment: Record<string, number>;
+    readonly set?: Record<string, unknown> | undefined;
+  }) => Promise<TerraScaleResult<T | null>>;
   readonly transaction: <T>(
     callback: (operations: BetterAuthDatabaseOperations) => Promise<T>,
   ) => Promise<T>;
@@ -158,7 +163,12 @@ export type BetterAuthDatabaseAdapter = {
     readonly model: string;
     readonly where: readonly BetterAuthWhere[];
   }) => Promise<T | null>;
-  readonly incrementOne?: never;
+  readonly incrementOne: <T>(input: {
+    readonly model: string;
+    readonly where: readonly BetterAuthWhere[];
+    readonly increment: Record<string, number>;
+    readonly set?: Record<string, unknown> | undefined;
+  }) => Promise<T | null>;
   readonly transaction: <T>(callback: (adapter: BetterAuthDatabaseAdapter) => Promise<T>) => Promise<T>;
   readonly createSchema?: ((input: {
     readonly tables: unknown;
@@ -186,6 +196,13 @@ export function createTerraScaleBetterAuthAdapter(
   const id = options.id ?? "terrascale-database-api";
   if (id.trim().length === 0) throw new TypeError("The Better Auth adapter id cannot be empty.");
   const key = options.idempotencyKeyFactory ?? (() => randomUUID());
+  const nextKey = (): string => {
+    const value = key();
+    if (value.trim().length === 0 || value.length > 128 || /[\u0000-\u001f\u007f]/u.test(value)) {
+      throw new TypeError("Better Auth idempotency keys must be 1-128 printable characters.");
+    }
+    return value;
+  };
 
   const adapter: BetterAuthDatabaseAdapter = {
     id,
@@ -202,7 +219,7 @@ export function createTerraScaleBetterAuthAdapter(
           model: input.model,
           data,
           ...(input.select === undefined ? {} : { select: input.select }),
-          idempotencyKey: key(),
+          idempotencyKey: nextKey(),
         }),
       ) as R;
     },
@@ -258,7 +275,7 @@ export function createTerraScaleBetterAuthAdapter(
           model: input.model,
           where: input.where,
           update: input.update,
-          idempotencyKey: key(),
+          idempotencyKey: nextKey(),
         }),
       ) as T | null;
     },
@@ -272,7 +289,7 @@ export function createTerraScaleBetterAuthAdapter(
           model: input.model,
           where: input.where,
           update: input.update,
-          idempotencyKey: key(),
+          idempotencyKey: nextKey(),
         }),
       );
     },
@@ -281,7 +298,7 @@ export function createTerraScaleBetterAuthAdapter(
       readonly where: readonly BetterAuthWhere[];
     }) {
       unwrap(
-        await operations.delete({ model: input.model, where: input.where, idempotencyKey: key() }),
+        await operations.delete({ model: input.model, where: input.where, idempotencyKey: nextKey() }),
       );
     },
     async deleteMany(input: {
@@ -292,7 +309,7 @@ export function createTerraScaleBetterAuthAdapter(
         await operations.deleteMany({
           model: input.model,
           where: input.where,
-          idempotencyKey: key(),
+          idempotencyKey: nextKey(),
         }),
       );
     },
@@ -304,7 +321,23 @@ export function createTerraScaleBetterAuthAdapter(
         await operations.consumeOne({
           model: input.model,
           where: input.where,
-          idempotencyKey: key(),
+          idempotencyKey: nextKey(),
+        }),
+      ) as T | null;
+    },
+    async incrementOne<T>(input: {
+      readonly model: string;
+      readonly where: readonly BetterAuthWhere[];
+      readonly increment: Record<string, number>;
+      readonly set?: Record<string, unknown> | undefined;
+    }) {
+      return unwrap(
+        await operations.incrementOne({
+          model: input.model,
+          where: input.where,
+          increment: input.increment,
+          ...(input.set === undefined ? {} : { set: input.set }),
+          idempotencyKey: nextKey(),
         }),
       ) as T | null;
     },
