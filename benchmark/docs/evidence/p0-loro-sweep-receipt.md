@@ -89,3 +89,86 @@ migration context (categories, not an exhaustive file list):
   recorded here.
 - `src/index/mod.rs` and `src/index/tests.rs` were dirty from another
   lane throughout and were not touched.
+
+## Close-out 2026-08-29 — the sweep is complete at the code layer
+
+Appended 2026-08-29 by the host-lane close-out packet at develop
+`7dde68e` (this section supersedes the "NOT yet clean" section above;
+the historical counts there remain accurate for `661ce9a`). What
+landed after `661ce9a`:
+
+- Engine crates, by the concurrent crates lanes: the replication core
+  rewritten onto `terrabase-crdt`/`terrabase-causal` (`8d99b00`), the
+  cluster enumeration seam (`042332b`), the sync-core native
+  result-view state machine plus corpus migration (`1ea5be2`,
+  `d67c4c4`), and the TBEP delivery binding with the generated
+  registry regenerated to the native codec vocabulary (`7dde68e`).
+- Host lane, by this packet (carried onto develop by the sibling
+  integrator lane as `cddadfd`, stat-identical to this packet's
+  working tree; this receipt file is this packet's own commit):
+  `ScriptedTbepEngine.cs` now scripts
+  `terrabase-native/1` and `terrabase-snapshot/1`; the snapshot
+  assertions in `RealEngineTests.cs`, `SyncSessionTests.cs`, and
+  `SyncGoldenVectorTests.cs` and the `RealEngineTests` header comment
+  follow; `host/README.md` states the lane mirrors the native codecs
+  (registry regenerated 2026-08-29); the root `README.md`
+  honest-status list now reads "native CRDT and causal sync and
+  replication crates" and the required-replacement bullet records the
+  completed removal with its remaining follow-through.
+
+### Verified Loro state at this close-out — clean
+
+Run against the working tree at `7dde68e` plus this packet's edits
+(after the greps, the counts were re-verified unchanged):
+
+- `grep -ri loro --include='*.rs' --include='*.toml' crates/ |
+  grep -v target` — **0 lines** (130 across 17 files at `661ce9a`).
+- Broader `grep -ri loro crates/` over every file type, excluding
+  `target/` — **0 lines**.
+- `grep -ri loro --include='*.rs' src/` — **0 lines**.
+- `grep 'name = "loro"' Cargo.lock` — **0**; the pin is gone, so no
+  root `Cargo.lock` edit was needed by this packet.
+- `grep -rn -i loro host/ --include='*.cs'` — **0 lines** (generated
+  `TbepRegistry.g.cs` already carried only the native vocabulary).
+
+### Checks run by this packet
+
+- `dotnet run --project host/TerraBase.Api.Tests/
+  TerraBase.Api.Tests.csproj --configuration Release` — 93 rows,
+  92 passed, 0 failed, 1 skipped (the pre-existing msquic/QUIC
+  platform skip, unrelated to the sweep). The real-engine rows pass
+  asserting `terrabase-snapshot/1` end to end, so the old
+  `loro-snapshot/1` expectations were dead against the migrated
+  engine, not merely stale prose. Re-run at develop `f5a18ee`
+  (after two sibling engine commits landed mid-wave): same result,
+  93 rows, 92 passed, 1 skipped.
+- The greps above. No Rust crate was touched by this packet, and no
+  `.forgejo/workflows/ci.yml` change was needed (test-content only).
+
+### Honestly remaining
+
+1. `tests/architecture/forbidden_imports.rs` still scans
+   `LORO_FREE_ROOTS = ["src", "crates/terrabase-causal/src",
+   "crates/terrabase-crdt/src"]`; with the sweep landed, the
+   gate-owning lane can add `crates/terrabase-sync-core/src` and
+   `crates/terrabase-replication-core/src` — its own review note says
+   they join "when those land". The same lane can un-dorm the
+   pre-registered edges in `dependency_direction.rs` (its note at
+   lines 48-55). Not edited here: those files are outside this
+   packet's named paths.
+2. `TerraScale.Database` must re-vendor the regenerated
+   `TbepRegistry.g.cs` — resolved during this close-out window:
+   that repository's `1c17026` ("Regenerate native TBEP codec
+   registry") re-vendored it, and its `PayloadCodecs` vocabulary was
+   verified identical to the host's regenerated registry (both carry
+   only the five native identifiers, no `loro-*`). That lane also
+   amended the root `README.md` bullet to state the re-vendor is
+   landed; the amendment is truthful and rode to develop inside
+   `cddadfd` with this packet's host edits.
+3. Historical-only mentions, each intentional: the ADRs (the
+   supersession authorities and historical decisions), the superseded
+   design contracts, `../GOAL.md` (the charter defines Loro as an
+   external benchmark reference only), `AGENTS.md` (human-owned, not
+   agent-editable), the `tracer/` historical record, the SE-11 script
+   and spike evidence, and immutable past receipts — including this
+   file's own historical sections above.
