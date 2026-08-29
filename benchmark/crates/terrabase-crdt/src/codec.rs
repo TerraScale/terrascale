@@ -16,6 +16,10 @@ pub trait CanonicalValue: Clone + Eq {
     fn encode_value(&self, output: &mut Vec<u8>);
 
     /// Decodes one value after its type tag has been consumed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when the value is malformed or exceeds `limits`.
     fn decode_value(reader: &mut Decoder<'_>, limits: &DecodeLimits) -> Result<Self, DecodeError>;
 }
 
@@ -51,12 +55,12 @@ impl CanonicalValue for i64 {
     const TYPE_TAG: u8 = 3;
 
     fn encode_value(&self, output: &mut Vec<u8>) {
-        encode_u64((self.wrapping_shl(1) ^ self.wrapping_shr(63)) as u64, output);
+        encode_u64((self.wrapping_shl(1) ^ self.wrapping_shr(63)).cast_unsigned(), output);
     }
 
     fn decode_value(reader: &mut Decoder<'_>, _: &DecodeLimits) -> Result<Self, DecodeError> {
         let value = reader.leb_u64()?;
-        Ok(((value >> 1) as i64) ^ -((value & 1) as i64))
+        Ok((value >> 1).cast_signed() ^ -((value & 1).cast_signed()))
     }
 }
 
@@ -153,6 +157,11 @@ impl RegisterCodec {
     }
 
     /// Decodes one bounded LWW state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecodeError`] when the bytes are malformed, non-canonical,
+    /// or exceed `limits`.
     pub fn decode_lww<T: CanonicalValue>(
         bytes: &[u8],
         limits: DecodeLimits,
@@ -167,6 +176,11 @@ impl RegisterCodec {
     }
 
     /// Decodes one bounded MV state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecodeError`] when the bytes are malformed, non-canonical,
+    /// or exceed `limits`.
     pub fn decode_mv<T: CanonicalValue>(
         bytes: &[u8],
         limits: DecodeLimits,
