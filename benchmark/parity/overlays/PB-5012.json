@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
   "item_id": "PB-5012",
-  "status": "unresolved",
-  "proof_ids": []
+  "status": "in-progress",
+  "proof_ids": [],
+  "previous_status": "unresolved"
 }

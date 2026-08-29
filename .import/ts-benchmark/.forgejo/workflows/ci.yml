@@ -1,4 +1,4 @@
-name: foundation checks
+name: terrabase checks
 
 on:
   push:
@@ -59,3 +59,53 @@ jobs:
           else
             echo "cargo-deny unavailable on this runner; audit recorded as unrun"
           fi
+
+  # AC-8: the cross-language product is covered by one required gate.
+  # C#/.NET client-facing projects (protocol client, API host, CLI) and
+  # the Studio app build and test in the same CI as the Rust workspace.
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      # TUnit + Microsoft.Testing.Platform on .NET 10: test projects are
+      # executables; `dotnet test` (VSTest) is unsupported. Run them.
+      - name: Build protocol client
+        run: dotnet build host/TerraBase.Protocol/TerraBase.Protocol.csproj --configuration Release
+      - name: Test protocol client
+        run: dotnet run --project host/TerraBase.Protocol.Tests/TerraBase.Protocol.Tests.csproj --configuration Release
+      - name: Build API host
+        run: dotnet build host/TerraBase.Api/TerraBase.Api.csproj --configuration Release
+      - name: Test API host
+        run: dotnet run --project host/TerraBase.Api.Tests/TerraBase.Api.Tests.csproj --configuration Release
+      - name: Build CLI
+        run: dotnet build cli/TerraBase.Cli/TerraBase.Cli.csproj --configuration Release
+      - name: Test CLI
+        run: dotnet run --project cli/TerraBase.Cli.Tests/TerraBase.Cli.Tests.csproj --configuration Release
+
+  studio:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The studio pins pnpm through packageManager (onFail: download);
+      # corepack provisions the pinned version.
+      - name: Enable pinned pnpm
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: studio
+      - name: Unit tests
+        run: pnpm run test:unit
+        working-directory: studio
+      - name: Lint / check
+        run: pnpm run check
+        working-directory: studio
+      # Playwright e2e requires browser downloads; it runs in the lane
+      # that provisioned them rather than this gate. Recorded, not skipped
+      # silently.

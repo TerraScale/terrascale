@@ -40,8 +40,11 @@ hard-to-reverse decisions.
   scoping stays engine-enforced from backend-supplied context. Studio
   and CLI are local tools without auth gates. Backup, export/import,
   and migration operations are typed and agent-drivable through the
-  backend. No wave gating: the parent dispatches the full open frontier
-  in parallel within technical dependencies and the shared-file rules.
+  backend. Execution follows the charter's revised serial phase plan
+  P0-P7 (charter "Revised execution plan"; PD-2026-08-28-04): phases
+  run in order in the normal `develop` checkout under one writer lease,
+  with read-only review allowed to overlap but never a second
+  filesystem writer.
 - Surface compatibility (charter PD-2026-08-26-10): V2 ships exactly one
   service surface — TBEP, the C# API host, TerraScale SDKs/MCP. No V1
   HTTP/TCP wire compatibility, no PostgreSQL wire server, no legacy
@@ -147,9 +150,12 @@ hard-to-reverse decisions.
   claim.
 - Preserve the fixed DevHost tailnet HTTPS ports: Authentication `18445` and
   Dashboard `18446`. Do not replace them with loopback-only or floating URLs.
-- Every change has exact path ownership. Keep parallel writers in isolated
-  worktrees or clones. Stage named paths only, inspect both working and staged
-  diffs, and leave redacted command/test evidence.
+- Every change has exact path ownership. Execution is serial in the
+  normal `develop` checkout under one writer lease: Git worktrees are
+  FORBIDDEN for TerraBaseV2 work (charter PD-2026-08-28-04, ADR 0015),
+  and no phase, lane, or reviewer creates or adopts one. Stage named
+  paths only, inspect both working and staged diffs, and leave redacted
+  command/test evidence.
 - Keep secrets, credentials, connection strings, customer data, backup
   contents, and private host paths out of source and evidence. Do not install
   global tools or access live systems.
@@ -160,6 +166,10 @@ Run the repository checks from `README.md` and `.forgejo/workflows/ci.yml`.
 Use the pinned toolchain and `Cargo.lock`; format, clippy with warnings denied,
 tests, docs, schema validation, dependency/license checks, and secret scanning
 must be reproducible. Record unavailable tools as unrun.
+
+Per the workspace goal's development constraints (AC-12): do NOT run
+`./scripts/check.sh` locally — CI owns the full gate. Use the focused
+commands approved for the active task and record anything not run.
 
 Work directly on `develop` for this repository. Before commit and push, run
 `git status`, review owned diffs, and `git fetch origin`. Push only the named

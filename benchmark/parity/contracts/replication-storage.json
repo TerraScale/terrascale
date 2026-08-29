@@ -915,7 +915,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. No claim that V1 defined Region-level acknowledgement levels; V1 local and replica wait observations are input only. [charter:docs/specs/GOAL.md::Multi-region qualification contract]"
+        "scope": "V2 charter addition. No claim that V1 defined Region-level acknowledgement levels; V1 local and replica wait observations are input only. [charter:docs/specs/GOAL.md::Required qualification scenarios]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -937,7 +937,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. No claim that V1's process-local health or convergence observations were a multi-Region contract. [charter:docs/specs/GOAL.md::Multi-region qualification contract]"
+        "scope": "V2 charter addition. No claim that V1's process-local health or convergence observations were a multi-Region contract. [charter:docs/specs/GOAL.md::Required qualification scenarios]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -959,7 +959,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. No claim that V1's cluster member loss was equivalent to Region or failure-domain loss. [charter:docs/specs/GOAL.md::Multi-region qualification contract]"
+        "scope": "V2 charter addition. No claim that V1's cluster member loss was equivalent to Region or failure-domain loss. [charter:docs/specs/GOAL.md::Required qualification scenarios]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -981,7 +981,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-010", "E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. V1 disconnected-writer conflict tests are process-local evidence and do not define the V2 partition policy. No claim that V1 defines the V2 partition policy. [charter:docs/specs/GOAL.md::Claim discipline]"
+        "scope": "V2 charter addition. V1 disconnected-writer conflict tests are process-local evidence and do not define the V2 partition policy. No claim that V1 defines the V2 partition policy. [charter:docs/specs/GOAL.md::Evidence and claim discipline]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -1003,7 +1003,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. V1 replication retry and reconnect behavior does not prove exactly-once customer or metering effects. No claim that V1 proves exactly-once customer or metering effects. [charter:docs/specs/GOAL.md::Recovery and durability contract]"
+        "scope": "V2 charter addition. V1 replication retry and reconnect behavior does not prove exactly-once customer or metering effects. No claim that V1 proves exactly-once customer or metering effects. [charter:docs/specs/GOAL.md::Evidence and claim discipline]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -1025,7 +1025,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. V1 late-member snapshots, local progress, and restart tests are inputs but not a complete multi-Region rejoin contract. No claim that V1 defines a complete multi-Region rejoin contract. [charter:docs/specs/GOAL.md::Recovery and durability contract]"
+        "scope": "V2 charter addition. V1 late-member snapshots, local progress, and restart tests are inputs but not a complete multi-Region rejoin contract. No claim that V1 defines a complete multi-Region rejoin contract. [charter:docs/specs/GOAL.md::Evidence and claim discipline]"
       },
       "v2": {"owner": "engine/replication", "public_seam": "replication"},
       "public_contract": {
@@ -1047,7 +1047,7 @@
       "v1_evidence": {
         "evidence_ids": ["E-006", "E-011", "E-029"],
         "source_commit": "fa99b9257776dbe625e6a2388c74c9ce916637ee",
-        "scope": "V2 charter addition. V1 sharding and orchestrator tests do not define a multi-Region placement, failover, or resharding policy. No claim that V1 defines a multi-Region placement, failover, or resharding policy. [charter:docs/specs/GOAL.md::Multi-region qualification contract]"
+        "scope": "V2 charter addition. V1 sharding and orchestrator tests do not define a multi-Region placement, failover, or resharding policy. No claim that V1 defines a multi-Region placement, failover, or resharding policy. [charter:docs/specs/GOAL.md::Required qualification scenarios]"
       },
       "v2": {"owner": "engine/sharding", "public_seam": "sharding"},
       "public_contract": {

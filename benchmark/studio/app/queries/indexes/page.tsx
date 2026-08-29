@@ -174,9 +174,10 @@ async function OptimizerRead() {
  * classify; a row without a non-empty string index does not parse and is
  * counted by the view rather than dropped.
  */
-function parseSelectionRows(
-  rows: ReadonlyArray<{ document: { value: unknown } }>,
-): { rows: SelectionRow[]; unparsed: number } {
+function parseSelectionRows(rows: ReadonlyArray<{ document: { value: unknown } }>): {
+  rows: SelectionRow[];
+  unparsed: number;
+} {
   const parsed: SelectionRow[] = [];
   let unparsed = 0;
   for (const row of rows) {
@@ -200,24 +201,13 @@ function parseSelectionRows(
 }
 
 function classifyOutcome(raw: string): SelectionOutcome {
-  if (
-    raw === "created" ||
-    raw === "chosen" ||
-    raw === "collection-scan" ||
-    raw === "refused"
-  ) {
+  if (raw === "created" || raw === "chosen" || raw === "collection-scan" || raw === "refused") {
     return raw;
   }
   return "unknown";
 }
 
-function OptimizerSelectionsView({
-  rows,
-  unparsed,
-}: {
-  rows: SelectionRow[];
-  unparsed: number;
-}) {
+function OptimizerSelectionsView({ rows, unparsed }: { rows: SelectionRow[]; unparsed: number }) {
   return (
     <section
       aria-labelledby="optimizer-heading"
@@ -278,7 +268,10 @@ function OptimizerSelectionsView({
                   The host reported no recorded reason for this selection.
                 </p>
               ) : (
-                <p className="font-mono text-xs text-ink-muted" data-testid="optimizer-entry-reason">
+                <p
+                  className="font-mono text-xs text-ink-muted"
+                  data-testid="optimizer-entry-reason"
+                >
                   {row.reason}
                 </p>
               )}

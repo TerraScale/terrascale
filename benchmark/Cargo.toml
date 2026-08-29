@@ -31,6 +31,7 @@ strip = "symbols"
 debug = 1
 
 [package.metadata.terrabase]
-status = "foundation-only"
+status = "engine-under-active-development"
+status_note = "Behavioral modules exist across storage, engine, families, query, index, streaming, replication, sharding, backup, and migration with focused tests; none are multi-region qualified. See README 'Honest status' and parity/inventory.json for per-row state."
 license_gate = "pending-before-release"
 parity_matrix = "parity/inventory.json"

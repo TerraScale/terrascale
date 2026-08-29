@@ -70,6 +70,73 @@ A set of resources whose correlated loss is treated as one failure in a
 qualification scenario.
 _Avoid_: availability zone, outage bucket
 
+**Leaderless**:
+The active-database property that every active Member of a shard replica
+set holds the same write, read, replication, repair, and recovery role,
+with no elected or appointed master, leader, primary, or permanent
+coordinator anywhere in the cluster.
+_Avoid_: decentralized (vague), peer-to-peer (wrong connotation)
+
+**Request Coordinator**:
+The accepting Member that validates one operation, fans it to the
+versioned replica set, and collects the requested acknowledgement — for
+that request only. It owns no shard, lease, or authority over later
+operations.
+_Avoid_: leader, coordinator node, primary, master
+
+**Active Cluster**:
+A cluster whose immutable identity records mode `active`; it accepts
+client writes subject to its quorums and contributes voting Members.
+_Avoid_: primary cluster, main cluster
+
+**Backup Cluster**:
+A cluster whose immutable identity records mode `backup`; it accepts
+replication, snapshot, catch-up, and tier data, serves last-resort
+reads with position and lag, and can never become active. Never a
+promotable standby.
+_Avoid_: standby, secondary cluster, disaster-recovery replica
+
+**BackupAck**:
+The optional acknowledgement level proving durable apply by two of the
+configured backup cluster's three HDD Members, requested after the
+regional or global level succeeds. A timeout reports a partial outcome
+and never erases the committed write.
+_Avoid_: backup quorum, backup vote
+
+**BackupClusterReadOnly**:
+The typed error returned by a backup cluster for every client database
+mutation. Distinct from `BackupClusterImmutable` (mode-change refusal).
+_Avoid_: read-only mode flag
+
+## Storage tiers
+
+**Storage Tier**:
+One of the two storage classes: Tier 1 (NVMe SSD — WAL, mutable and
+frozen segments, hot immutable segments, manifests, indexes, active
+CRDT state, cache) and Tier 2 (S3-compatible object storage —
+encrypted, immutable, checksum-addressed cold segments and
+checkpoints).
+_Avoid_: hot/cold disk, cache level
+
+**Storage Tier Mover**:
+The bounded engine service that demotes and promotes immutable segments
+or key ranges between tiers under versioned, explainable, receipt-backed
+policy. It moves ranges, never one object per document.
+_Avoid_: offloader, archival job, cache evictor
+
+**Tier Move Policy**:
+The versioned policy object (inherited cluster -> tenant -> database ->
+collection) combining quotas, age, heat, locality, refetch cost, pins,
+schedules, budgets, hysteresis, and adaptive headroom that governs mover
+decisions. The most specific policy wins.
+_Avoid_: tiering rule, eviction config
+
+**Tier Move Receipt**:
+The per-run record of a mover decision: policy version, reasons,
+source and target tiers, segment and manifest identities, bytes,
+requests, cache effect, budgets, failures, and retry state.
+_Avoid_: mover log, tiering event
+
 ## Sharding
 
 **Shard**:
