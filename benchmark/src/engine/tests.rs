@@ -42,6 +42,34 @@ fn reopen_engine(dir: &PathBuf) -> Engine {
     Engine::open(EngineConfig::durable(dir).expect("durable location")).expect("engine reopens")
 }
 
+/// Opens a location on the W3-1 root-file engine explicitly.
+///
+/// The publication-order mechanics these tests verify — root-file
+/// manifests, `ReadyToPublish` ledger states, WAL prepare-group frames,
+/// post-publication root syncs — belong to that engine's format; the LSM
+/// engine (P1, the default) proves its own equivalents in
+/// `src/storage/lsm/tests.rs`.
+fn open_root_engine(tag: &str) -> (PathBuf, Engine) {
+    let dir = location(tag);
+    let engine = Engine::open(
+        EngineConfig::durable(&dir)
+            .expect("durable location")
+            .with_storage_backend(crate::engine::StorageBackend::RootFiles),
+    )
+    .expect("engine opens");
+    (dir, engine)
+}
+
+/// Reopens a root-file-engine location.
+fn reopen_root_engine(dir: &PathBuf) -> Engine {
+    Engine::open(
+        EngineConfig::durable(dir)
+            .expect("durable location")
+            .with_storage_backend(crate::engine::StorageBackend::RootFiles),
+    )
+    .expect("engine reopens")
+}
+
 fn tenant(name: &str) -> TenantId {
     TenantId::try_new(name).expect("valid tenant")
 }
@@ -365,7 +393,7 @@ fn torn_trailing_wal_frame_is_truncated_at_recovery_and_data_survives() {
 
 #[test]
 fn failed_wal_append_rolls_back_to_the_last_good_offset() {
-    let (dir, engine) = open_engine("append-rollback");
+    let (dir, engine) = open_root_engine("append-rollback");
     commit_put(
         &engine,
         "tenant-a",
@@ -391,7 +419,7 @@ fn failed_wal_append_rolls_back_to_the_last_good_offset() {
     engine.shutdown().expect("shuts down");
 
     // The engine still opens on the clean log, and a later commit works.
-    let reopened = reopen_engine(&dir);
+    let reopened = reopen_root_engine(&dir);
     assert!(read_document(&reopened, "tenant-a", "doc-2").is_none());
     let receipt = committed(commit_put(
         &reopened,
@@ -410,7 +438,7 @@ fn failed_wal_append_rolls_back_to_the_last_good_offset() {
 
 #[test]
 fn mid_publication_failure_never_reuses_a_storage_sequence() {
-    let (dir, engine) = open_engine("sequence-reuse");
+    let (dir, engine) = open_root_engine("sequence-reuse");
     // Commit A fails after its WAL commit group is durable (step 6 fault), so
     // the log already names sequence 1 while nothing published.
     engine.arm_storage_fault(FaultPoint::ReadyLedgerSync);
@@ -443,7 +471,7 @@ fn mid_publication_failure_never_reuses_a_storage_sequence() {
     // write-ahead log, where both groups live. Replay must apply both in
     // sequence order and serve B's root, never first-wins.
     std::fs::remove_file(dir.join("manifest")).expect("manifest removes");
-    let reopened = reopen_engine(&dir);
+    let reopened = reopen_root_engine(&dir);
     assert!(
         read_document(&reopened, "tenant-a", "doc-b").is_some(),
         "the later committed operation must survive replay, not be shadowed by the failed one"
@@ -602,7 +630,7 @@ fn roll_forward_digest_lets_a_same_identity_retry_replay_after_reopen() {
     // durable but no Ready record landed. Recovery roll-forward publishes it
     // without a prior ledger entry, so the Published record itself must carry
     // the digest and the identity must stay bound for a same-digest retry.
-    let (dir, engine) = open_engine("roll-forward-digest");
+    let (dir, engine) = open_root_engine("roll-forward-digest");
     engine.arm_storage_fault(FaultPoint::ReadyLedgerSync);
     assert_eq!(
         rejected(commit_put(
@@ -618,7 +646,7 @@ fn roll_forward_digest_lets_a_same_identity_retry_replay_after_reopen() {
     );
     drop(engine);
 
-    let reopened = reopen_engine(&dir);
+    let reopened = reopen_root_engine(&dir);
     let scope = tenant_scope(&reopened, "tenant-a");
     match reopened.resolve_commit(&scope, operation("op-a")).expect("resolves") {
         DurableResolution::Committed(receipt) => {
@@ -696,7 +724,7 @@ fn different_payload_with_same_operation_id_is_rejected() {
 
 #[test]
 fn unknown_commit_resolves_from_the_durable_operation_ledger() {
-    let (dir, engine) = open_engine("unknown-resolves");
+    let (dir, engine) = open_root_engine("unknown-resolves");
     engine.arm_storage_fault(FaultPoint::PublishedLedgerSync);
     let outcome = commit_put(
         &engine,
@@ -758,7 +786,7 @@ fn pending_resolution_is_not_reported_as_rejection() {
 fn ready_to_publish_ledger_record_is_durable_before_pointer_replacement() {
     // First, publication must not move the pointer while the ledger record is
     // not durable.
-    let (dir, engine) = open_engine("ready-before-pointer");
+    let (dir, engine) = open_root_engine("ready-before-pointer");
     engine.arm_storage_fault(FaultPoint::ReadyLedgerSync);
     let outcome = commit_put(
         &engine,
@@ -780,7 +808,7 @@ fn ready_to_publish_ledger_record_is_durable_before_pointer_replacement() {
     // attempted: an interrupted pointer publication leaves an identity-bound,
     // resolvable record behind. Recovery rolls the verified write-ahead commit
     // forward, and the durable record resolves the operation by identity.
-    let engine = reopen_engine(&dir);
+    let engine = reopen_root_engine(&dir);
     engine.arm_storage_fault(FaultPoint::PointerPublish);
     let outcome = commit_put(
         &engine,
@@ -794,7 +822,7 @@ fn ready_to_publish_ledger_record_is_durable_before_pointer_replacement() {
     assert_eq!(rejected(outcome), CommitError::StorageFailure);
     assert!(read_document(&engine, "tenant-a", "doc-2").is_none());
     drop(engine);
-    let reopened = reopen_engine(&dir);
+    let reopened = reopen_root_engine(&dir);
     let scope = tenant_scope(&reopened, "tenant-a");
     match reopened.resolve_commit(&scope, operation("op-pointer-second")).expect("resolves") {
         DurableResolution::Committed(receipt) => {
@@ -833,7 +861,7 @@ fn ready_to_publish_ledger_record_is_durable_before_pointer_replacement() {
 
 #[test]
 fn reopen_resolves_a_ready_to_publish_record_by_operation_id() {
-    let (dir, engine) = open_engine("reopen-ready");
+    let (dir, engine) = open_root_engine("reopen-ready");
     engine.arm_storage_fault(FaultPoint::PointerSync);
     let outcome = commit_put(
         &engine,
@@ -847,7 +875,7 @@ fn reopen_resolves_a_ready_to_publish_record_by_operation_id() {
     assert_eq!(unknown(outcome).reason(), UnknownReason::PostPublicationPointerSync);
     drop(engine);
 
-    let reopened = reopen_engine(&dir);
+    let reopened = reopen_root_engine(&dir);
     let scope = tenant_scope(&reopened, "tenant-a");
     match reopened.resolve_commit(&scope, operation("op-1")).expect("resolves") {
         DurableResolution::Committed(receipt) => {
@@ -1324,7 +1352,7 @@ fn begin_rejects_invalid_operation_id() {
 
 #[test]
 fn unknown_operation_id_resolution_preserves_original_identity() {
-    let (dir, engine) = open_engine("identity-preserved");
+    let (dir, engine) = open_root_engine("identity-preserved");
     engine.arm_storage_fault(FaultPoint::PointerSync);
     let outcome = commit_put(
         &engine,
@@ -1339,7 +1367,7 @@ fn unknown_operation_id_resolution_preserves_original_identity() {
     assert_eq!(uncertain.operation_id(), &operation("op-1"));
     drop(engine);
 
-    let reopened = reopen_engine(&dir);
+    let reopened = reopen_root_engine(&dir);
     let scope = tenant_scope(&reopened, "tenant-a");
     match reopened.resolve_commit(&scope, operation("op-1")).expect("resolves") {
         DurableResolution::Committed(receipt) => {

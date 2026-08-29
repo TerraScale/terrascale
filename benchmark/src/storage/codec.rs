@@ -46,6 +46,11 @@ pub(super) fn push_u8(out: &mut Vec<u8>, value: u8) {
     out.push(value);
 }
 
+/// Appends a `u16` in little-endian order.
+pub(super) fn push_u16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
 /// Appends a `u32` in little-endian order.
 pub(super) fn push_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_le_bytes());
@@ -92,6 +97,11 @@ impl<'a> Reader<'a> {
     /// Reads one byte.
     pub(super) fn read_u8(&mut self) -> Option<u8> {
         self.take(1).map(|slice| slice[0])
+    }
+
+    /// Reads one `u16` in little-endian order.
+    pub(super) fn read_u16(&mut self) -> Option<u16> {
+        self.take(2).map(|slice| u16::from_le_bytes(slice.try_into().expect("two bytes")))
     }
 
     /// Reads one `u32` in little-endian order.

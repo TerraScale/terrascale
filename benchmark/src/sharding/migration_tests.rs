@@ -140,13 +140,20 @@ fn migration_dir(tag: &str) -> PathBuf {
 fn open_engine(tag: &str) -> (Engine, PathBuf) {
     let dir = migration_dir(tag);
     std::fs::remove_dir_all(&dir).ok();
-    let config = EngineConfig::durable(&dir).expect("durable location");
+    let config = EngineConfig::durable(&dir)
+        .expect("durable location")
+        .with_storage_backend(crate::engine::StorageBackend::RootFiles);
     let engine = Engine::open(config).expect("engine opens");
     (engine, dir)
 }
 
 fn reopen_engine(dir: &PathBuf) -> Engine {
-    Engine::open(EngineConfig::durable(dir).expect("durable location")).expect("engine reopens")
+    Engine::open(
+        EngineConfig::durable(dir)
+            .expect("durable location")
+            .with_storage_backend(crate::engine::StorageBackend::RootFiles),
+    )
+    .expect("engine reopens")
 }
 
 fn scope_of(engine: &Engine, name: &str) -> TenantScope {

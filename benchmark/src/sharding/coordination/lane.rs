@@ -150,8 +150,12 @@ impl ShardedLane {
         for (name, _) in LANE_MEMBERS {
             let dir = location(tag).join(name);
             std::fs::remove_dir_all(&dir).ok();
-            let engine = Engine::open(EngineConfig::durable(&dir).expect("durable location"))
-                .expect("engine");
+            let engine = Engine::open(
+                EngineConfig::durable(&dir)
+                    .expect("durable location")
+                    .with_storage_backend(crate::engine::StorageBackend::RootFiles),
+            )
+            .expect("engine");
             engines.push((MemberId::try_new(name).expect("valid member"), Some(engine)));
             dirs.push(dir);
         }
@@ -707,8 +711,12 @@ fn lane_backup_restore_rejoin_reports_the_recovery_window_per_shard() {
     std::fs::remove_dir_all(&location_dir).expect("the location is lost");
     let receipt = RestorePlan::restore_latest(&destination, &location_dir).expect("restore runs");
     assert_eq!(receipt.restored_documents(), 1, "the restore rebuilds the backed-up state");
-    let restored = Engine::open(EngineConfig::durable(&location_dir).expect("durable location"))
-        .expect("the restored location reopens");
+    let restored = Engine::open(
+        EngineConfig::durable(&location_dir)
+            .expect("durable location")
+            .with_storage_backend(crate::engine::StorageBackend::RootFiles),
+    )
+    .expect("the restored location reopens");
     lane.replace_engine("m-b1", restored);
 
     // Recovery truth: the restored Member holds the backed-up document and

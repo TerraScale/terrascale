@@ -39,8 +39,12 @@ fn location(tag: &str) -> PathBuf {
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
     let dir = location(tag);
-    let engine =
-        Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine opens");
+    let engine = Engine::open(
+        EngineConfig::durable(&dir)
+            .expect("durable location")
+            .with_storage_backend(crate::engine::StorageBackend::RootFiles),
+    )
+    .expect("engine opens");
     (dir, engine)
 }
 
@@ -131,8 +135,12 @@ type KeyedValue = (String, String, DocumentValue);
 /// Reads one tenant's live documents through a real durable `Engine` opened
 /// at `location`, as the restart-after-restore read-back path does.
 fn read_back(location: &Path, tenant_name: &str) -> Vec<KeyedValue> {
-    let engine =
-        Engine::open(EngineConfig::durable(location).expect("durable location")).expect("reopens");
+    let engine = Engine::open(
+        EngineConfig::durable(location)
+            .expect("durable location")
+            .with_storage_backend(crate::engine::StorageBackend::RootFiles),
+    )
+    .expect("reopens");
     let tenant_scope = scope(&engine, tenant_name);
     let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
     let documents = engine.snapshot_documents(&tenant_scope, &snapshot).expect("reads back");
@@ -624,8 +632,12 @@ fn empty_source_full_backup_restores_an_empty_engine_location() {
     assert!(receipt.restored_tenants().is_empty());
     assert_eq!(receipt.documents_read_back(), 0);
     assert!(target.is_dir(), "the fresh engine location exists");
-    let reopened = Engine::open(EngineConfig::durable(&target).expect("durable location"))
-        .expect("the restored location reopens as a real Engine");
+    let reopened = Engine::open(
+        EngineConfig::durable(&target)
+            .expect("durable location")
+            .with_storage_backend(crate::engine::StorageBackend::RootFiles),
+    )
+    .expect("the restored location reopens as a real Engine");
     reopened.shutdown().expect("shuts down");
 }
 

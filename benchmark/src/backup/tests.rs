@@ -41,8 +41,12 @@ fn location(tag: &str) -> PathBuf {
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
     let dir = location(tag);
-    let engine =
-        Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine opens");
+    let engine = Engine::open(
+        EngineConfig::durable(&dir)
+            .expect("durable location")
+            .with_storage_backend(crate::engine::StorageBackend::RootFiles),
+    )
+    .expect("engine opens");
     (dir, engine)
 }
 
@@ -1336,8 +1340,14 @@ type KeyedValue = (String, String, DocumentValue);
 
 /// Reads one tenant's live documents back from a restored location.
 fn read_back(location: &PathBuf, tenant_name: &str) -> Vec<KeyedValue> {
-    let engine =
-        Engine::open(EngineConfig::durable(location).expect("durable location")).expect("reopens");
+    // Restored locations are root-format (FileStorage staging); the LSM
+    // restore path is recorded follow-up work.
+    let engine = Engine::open(
+        EngineConfig::durable(location)
+            .expect("durable location")
+            .with_storage_backend(crate::engine::StorageBackend::RootFiles),
+    )
+    .expect("reopens");
     let tenant_scope = scope(&engine, tenant_name);
     let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
     let documents = engine.snapshot_documents(&tenant_scope, &snapshot).expect("reads back");

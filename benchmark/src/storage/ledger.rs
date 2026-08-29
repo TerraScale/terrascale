@@ -498,6 +498,26 @@ pub(crate) fn encode_commit_frame(commit: &PublishedCommit) -> Vec<u8> {
     frame
 }
 
+/// Decodes one commit-record payload (the bytes inside a commit frame's
+/// length and checksum) into its commit. The LSM history keyspace stores
+/// exactly these payloads (P1).
+pub(crate) fn decode_commit_payload(payload: &[u8]) -> Option<PublishedCommit> {
+    let mut reader = Reader::new(payload);
+    if reader.read_u8()? != HISTORY_RECORD_COMMIT {
+        return None;
+    }
+    let tenant = TenantId::try_new(&reader.read_string()?).ok()?;
+    let operation_id = OperationId::try_new(&reader.read_string()?).ok()?;
+    let sequence = StorageSequence::new(reader.read_u64()?);
+    let durability = codec::decode_durability(&mut reader)?.to_level();
+    let count = reader.read_u32()? as usize;
+    let mut writes = Vec::with_capacity(count.min(1024));
+    for _ in 0..count {
+        writes.push(codec::decode_published_write(&mut reader)?);
+    }
+    Some(PublishedCommit::new(tenant, operation_id, sequence, durability, writes))
+}
+
 /// Encodes one high-water-mark record's full checksummed frame.
 #[allow(clippy::cast_possible_truncation)]
 pub(crate) fn encode_high_water_frame(sequence: u64) -> Vec<u8> {

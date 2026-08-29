@@ -24,6 +24,7 @@ mod root;
 mod wal;
 
 mod compaction;
+pub(crate) mod lsm;
 
 #[cfg(test)]
 mod compaction_tests;

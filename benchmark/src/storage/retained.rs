@@ -343,6 +343,12 @@ impl RetainedIndex {
         self.bound.map(|(bound, _)| bound)
     }
 
+    /// Records a bound the writer just appended durably (LSM compaction,
+    /// P1): the same merge the scan path applies to bound records.
+    pub(crate) fn declare_bound(&mut self, bound: u64, head: u64) {
+        self.bound = Some(self.bound.map_or((bound, head), |(prior, _)| (prior.max(bound), head)));
+    }
+
     /// Returns every retained fact, in append order.
     pub(crate) fn facts(&self) -> &[RetainedFact] {
         &self.facts

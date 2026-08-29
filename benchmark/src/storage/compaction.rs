@@ -104,6 +104,16 @@ pub struct CompactionProgress {
 }
 
 impl CompactionProgress {
+    /// Builds one progress event from an LSM-backend pass (P1).
+    pub(crate) const fn from_parts(
+        phase: CompactionPhase,
+        completed: bool,
+        units_done: u64,
+        units_total: u64,
+    ) -> Self {
+        Self { phase, completed, units_done, units_total }
+    }
+
     /// Returns the phase the event names.
     #[must_use]
     pub const fn phase(&self) -> CompactionPhase {
@@ -190,6 +200,58 @@ pub struct CompactionReceipt {
 }
 
 impl CompactionReceipt {
+    /// Builds a receipt from an LSM-backend pass (P1).
+    ///
+    /// Field mapping for the LSM engine, recorded honestly: `wal_*` counts
+    /// the LSM write-ahead log; `journal_*` counts the history keyspace the
+    /// atomic commit batch writes; `roots_*` count the immutable segment
+    /// artifacts the pass reclaimed (a merged-away segment is the LSM's
+    /// superseded root).
+    #[allow(clippy::too_many_arguments, clippy::missing_panics_doc)]
+    pub(crate) fn from_parts(
+        checkpoint_sequence: Option<StorageSequence>,
+        wal_bytes_before: u64,
+        wal_bytes_after: u64,
+        journal_bytes_before: u64,
+        journal_bytes_after: u64,
+        journal_records_before: u64,
+        journal_records_after: u64,
+        roots_before: u64,
+        roots_removed: u64,
+        roots_unremovable: u64,
+        servable_start_before: Option<StorageSequence>,
+        servable_start_after: Option<StorageSequence>,
+        journaled_head: Option<StorageSequence>,
+        window_commits: u64,
+        evidence_extracted: u64,
+        evidence_retained: u64,
+        evidence_below_floor: u64,
+        history_reclaim: HistoryReclaimOutcome,
+        phases: Vec<CompactionPhase>,
+    ) -> Self {
+        Self {
+            checkpoint_sequence,
+            wal_bytes_before,
+            wal_bytes_after,
+            journal_bytes_before,
+            journal_bytes_after,
+            journal_records_before,
+            journal_records_after,
+            roots_before,
+            roots_removed,
+            roots_unremovable,
+            servable_start_before,
+            servable_start_after,
+            journaled_head,
+            window_commits,
+            evidence_extracted,
+            evidence_retained,
+            evidence_below_floor,
+            history_reclaim,
+            phases,
+        }
+    }
+
     /// Returns the published sequence the pass checkpointed.
     #[must_use]
     pub const fn checkpoint_sequence(&self) -> Option<StorageSequence> {
@@ -332,6 +394,18 @@ pub(crate) struct CompactionDriverFacts {
     pub(crate) bound: Option<StorageSequence>,
     /// The journal's durable head at pass time.
     pub(crate) head: Option<StorageSequence>,
+}
+
+impl CompactionDriverFacts {
+    /// Builds the facts from an LSM-backend pass (P1): the same three
+    /// durable facts the root-store driver derives.
+    pub(crate) fn from_parts(
+        window: Vec<PublishedCommit>,
+        bound: Option<StorageSequence>,
+        head: Option<StorageSequence>,
+    ) -> Self {
+        Self { window, bound, head }
+    }
 }
 
 /// The durable retained-evidence state, read for watermark re-derivation.

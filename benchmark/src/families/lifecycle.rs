@@ -844,8 +844,12 @@ mod tests {
 
     fn open_engine(tag: &str) -> (PathBuf, Engine) {
         let dir = fresh_dir(tag);
-        let engine =
-            Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine");
+        let engine = Engine::open(
+            EngineConfig::durable(&dir)
+                .expect("durable location")
+                .with_storage_backend(crate::engine::StorageBackend::RootFiles),
+        )
+        .expect("engine");
         (dir, engine)
     }
 
@@ -1560,8 +1564,12 @@ mod tests {
     /// Opens a restored engine and reads the tenant's documents at the
     /// newest snapshot.
     fn restored_documents(target: &Path, tenant_name: &str) -> Vec<(String, DocumentValue)> {
-        let engine =
-            Engine::open(EngineConfig::durable(target).expect("durable location")).expect("engine");
+        let engine = Engine::open(
+            EngineConfig::durable(target)
+                .expect("durable location")
+                .with_storage_backend(crate::engine::StorageBackend::RootFiles),
+        )
+        .expect("engine");
         let tenant_scope = scope(&engine, tenant_name);
         let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
         let documents = engine.snapshot_documents(&tenant_scope, &snapshot).expect("documents");

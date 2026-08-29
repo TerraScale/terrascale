@@ -8,7 +8,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -213,6 +213,35 @@ impl Drop for SubscriptionGuard {
 pub struct EngineConfig {
     location: PathBuf,
     lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds,
+    storage_backend: StorageBackend,
+}
+
+/// Which storage engine backs a durable Engine location (P1, ADR 0016).
+///
+/// The default selects the LSM engine for new locations. A location that
+/// already carries the root-file format marker opens on the root-file
+/// engine — locations self-describe, so restored and migrated locations
+/// keep opening — and the crate-private selector lets the root store's own
+/// suites pin their backend explicitly.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum StorageBackend {
+    /// The ZoneTree-inspired LSM engine: WAL-backed memtable, immutable
+    /// segments, crash-safe manifest, atomic commit batches.
+    #[default]
+    Lsm,
+    /// The W3-1 root-file engine with full-root rewrites per commit.
+    RootFiles,
+}
+
+/// Reads a durable location's self-describing format marker.
+fn backend_of_location(location: &Path, configured: StorageBackend) -> StorageBackend {
+    if configured != StorageBackend::Lsm {
+        return configured;
+    }
+    match std::fs::read_to_string(location.join("format")) {
+        Ok(content) if content.starts_with("TBV2FORMAT") => StorageBackend::RootFiles,
+        _ => configured,
+    }
 }
 
 impl EngineConfig {
@@ -240,7 +269,18 @@ impl EngineConfig {
         Ok(Self {
             location,
             lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds::DEFAULT,
+            storage_backend: StorageBackend::default(),
         })
+    }
+
+    /// Selects the storage backend of the durable location. Crate-private
+    /// by design: the backend is a development and qualification knob, not
+    /// a public contract.
+    #[allow(dead_code, reason = "selected by the LSM test matrix; the default is the LSM backend")]
+    #[must_use]
+    pub(crate) const fn with_storage_backend(mut self, backend: StorageBackend) -> Self {
+        self.storage_backend = backend;
+        self
     }
 
     /// Selects the auto-index lifecycle thresholds the Engine's index catalog
@@ -555,10 +595,33 @@ impl Engine {
         if location.as_os_str().is_empty() {
             return Err(EngineOpenError::InvalidConfig);
         }
-        let storage = storage::FileStorage::open(&location).map_err(|error| match error {
-            storage::StorageOpenError::FormatMismatch => EngineOpenError::FormatMismatch,
-            storage::StorageOpenError::Unavailable => EngineOpenError::StorageUnavailable,
-        })?;
+        let backend = backend_of_location(&location, config.storage_backend);
+        let storage: Box<dyn storage::StoragePort> = match backend {
+            StorageBackend::Lsm => {
+                let engine =
+                    storage::lsm::LsmStorage::open(&location).map_err(|error| match error {
+                        storage::lsm::LsmOpenError::FormatMismatch => {
+                            EngineOpenError::FormatMismatch
+                        }
+                        storage::lsm::LsmOpenError::Unavailable => {
+                            EngineOpenError::StorageUnavailable
+                        }
+                    })?;
+                Box::new(engine)
+            }
+            StorageBackend::RootFiles => {
+                let engine =
+                    storage::FileStorage::open(&location).map_err(|error| match error {
+                        storage::StorageOpenError::FormatMismatch => {
+                            EngineOpenError::FormatMismatch
+                        }
+                        storage::StorageOpenError::Unavailable => {
+                            EngineOpenError::StorageUnavailable
+                        }
+                    })?;
+                Box::new(engine)
+            }
+        };
         let subscriptions = Arc::new(PublicationRegistry::new());
         // W4-CA-3: register the Engine-owned index catalog's sink through the
         // production registry so index maintenance observes every publication.
@@ -569,7 +632,7 @@ impl Engine {
         let index_subscription = subscriptions.subscribe(indexes.sink());
         Ok(Self {
             identity: EngineIdentity::next().0,
-            storage: Arc::new(Mutex::new(StorageState { port: Box::new(storage) })),
+            storage: Arc::new(Mutex::new(StorageState { port: storage })),
             in_flight: Mutex::new(BTreeSet::new()),
             subscriptions,
             indexes,
