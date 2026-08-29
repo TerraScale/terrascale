@@ -288,6 +288,24 @@ pub trait TbepHost: Send + Sync {
         idempotency_key: &str,
     ) -> Result<FamilyWriteResponse, HostingError>;
 
+    /// Serves one atomic document batch (P4, mutation): one frame, one
+    /// engine transaction — every item commits together or none does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves batches.
+    fn document_batch(
+        &self,
+        tenant: &str,
+        request: &crate::generated::DocumentBatchRequest,
+        idempotency_key: &str,
+    ) -> Result<crate::generated::DocumentBatchResponse, HostingError> {
+        let _ = (tenant, request, idempotency_key);
+        Err(HostingError::Refused(
+            "document.batch is served by the engine-backed host's transaction path".into(),
+        ))
+    }
+
     /// Serves one typed schema declaration (SM-04, mutation).
     ///
     /// The default implementation refuses typed: the shipped hosts do not

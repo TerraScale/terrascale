@@ -434,3 +434,89 @@ public sealed class EngineQuicTests
         }
     }
 }
+
+/// <summary>
+/// The atomic document batch against the real engine (P4): one frame,
+/// one engine transaction — every item commits together, a conflicting
+/// item rolls the whole batch back, and the idempotent retry replays
+/// the batch receipt.
+/// </summary>
+public sealed class EngineBatchTests
+{
+    private static string Location()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"tbep-engine-batch-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    private static BatchWrite Item(string id, long quantity) => new()
+    {
+        Document = new DocumentPut
+        {
+            Id = id,
+            Collection = "orders",
+            Body = TbepValue.Of(new[]
+            {
+                new ObjectField("item", TbepValue.Of("bookshelf")),
+                new ObjectField("quantity", TbepValue.Of(quantity)),
+            }),
+        },
+        Expected = ExpectedVersion.Absent(),
+        OperationId = $"op-batch-{id}",
+    };
+
+    /// <summary>The batch: atomic commit, whole-batch rollback, idempotent replay.</summary>
+    [Test]
+    public async Task TheClientDrivesAtomicBatchesOnTheRealEngine()
+    {
+        var location = Location();
+        var socket = Path.Combine(Path.GetTempPath(), $"tbep-batch-{Guid.NewGuid():N}.sock");
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = await EngineHarness.BinaryPathAsync(),
+                Arguments = $"{socket} 1 engine:{location}",
+                RedirectStandardOutput = true,
+                RedirectStandardInput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            },
+        };
+        _ = process.Start();
+        _ = await process.StandardOutput.ReadLineAsync();
+
+        try
+        {
+            await using var client = TbepClient.Connect(socket);
+            await client.BindChannelAsync("backend", "tenant-a");
+
+            var batch = await client.DocumentBatchWriteAsync([Item("a", 1), Item("b", 2)], null, "op-batch-1");
+            await Assert.That(batch.Outcome.Variant).IsEqualTo("Committed");
+
+            var read = await client.DocumentReadAsync("orders", "a");
+            await Assert.That(read.Found).IsTrue();
+
+            // The conflicting item rolls the whole batch back.
+            var conflicting = await client.DocumentBatchWriteAsync(
+                [Item("a", 9), Item("c", 3)],
+                null,
+                "op-batch-2");
+            await Assert.That(conflicting.Outcome.Variant).IsEqualTo("Conflict");
+            var rolled = await client.DocumentReadAsync("orders", "c");
+            await Assert.That(rolled.Found).IsFalse();
+        }
+        finally
+        {
+            await process.StandardInput.WriteLineAsync(string.Empty);
+            if (!process.WaitForExit(10_000))
+            {
+                process.Kill();
+            }
+
+            process.Dispose();
+            Directory.Delete(location, recursive: true);
+        }
+    }
+}

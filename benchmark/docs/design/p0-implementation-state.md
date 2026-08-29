@@ -790,3 +790,28 @@ on msquic-capable hosts.
 Receipts: `cargo test -p terrabase-tbep` 14 suites green (the QUIC row
 unchanged); clippy `-D warnings` and fmt clean; Protocol 23/23; Api
 90 green + 1 honest skip. `scripts/check.sh` not run (AC-12).
+
+## 21. P4 landing 10 (2026-08-29): the atomic client batching op
+
+The contract §2's batching surface exists: `document.batch`
+(registry 1.2, op 264 / response 605, ADD-only) carries a bounded list
+of `batch_write` items — each a document put with its own expected
+version and operation identity — plus the frame's acknowledgement
+level, and answers ONE write outcome. The engine-backed host stages
+every item in one engine transaction and commits once: the batch is
+atomic — every item commits together, and one conflicting item rolls
+the whole frame back so nothing durable records. The envelope's
+idempotency key is the whole batch's retry identity: a retried frame
+replays the recorded receipt without re-staging a single item.
+
+Proven: the Rust UDS row (both items durable, the conflicting batch
+rolling back completely — the fresh item in the same frame never
+records — and the receipt naming the regional acknowledgement) and the
+C# row against the real engine (`DocumentBatchWriteAsync`: commit,
+read-back, whole-batch rollback on conflict).
+
+Still open in P4: protocol-level reconnect/resume and the C# CI gates.
+
+Receipts: `cargo test -p terrabase-tbep` 14 suites green (12 engine-host
+UDS rows); clippy `-D warnings` and fmt clean; Protocol 23/23; Api 91
+green + 1 honest skip. `scripts/check.sh` not run (AC-12).

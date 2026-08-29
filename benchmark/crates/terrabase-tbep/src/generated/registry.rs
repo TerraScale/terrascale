@@ -4,14 +4,14 @@
 // file byte-for-byte against regeneration.
 // The generated TBEP registry and frame bindings.
 //
-// Schema identity `terrabase.engine.protocol` version `1.1`.
+// Schema identity `terrabase.engine.protocol` version `1.2`.
 use crate::codec::TbepValue;
 use serde::ser::SerializeTuple as _;
 
 /// The protocol identity string.
 pub const IDENTITY: &str = "terrabase.engine.protocol";
 /// The registry version (additive changes bump the minor).
-pub const REGISTRY_VERSION: &str = "1.1";
+pub const REGISTRY_VERSION: &str = "1.2";
 /// The wire version every frame carries; unknown versions fail closed.
 pub const WIRE_VERSION: u8 = 1;
 /// The decode bound: larger frames are rejected before any field parses.
@@ -3379,6 +3379,59 @@ impl<'de> serde::Deserialize<'de> for DocumentPut {
     }
 }
 
+/// The `batch_write` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatchWrite {
+    /// The `document` field.
+    pub document: DocumentPut,
+    /// The `expected` field.
+    pub expected: ExpectedVersion,
+    /// The `operation_id` field.
+    pub operation_id: String,
+}
+
+impl serde::Serialize for BatchWrite {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(3)?;
+        tuple.serialize_element(&self.document)?;
+        tuple.serialize_element(&self.expected)?;
+        tuple.serialize_element(&self.operation_id.as_str())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for BatchWrite {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = BatchWrite;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a batch_write array of 3 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let document = seq
+                    .next_element::<DocumentPut>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let expected = seq
+                    .next_element::<ExpectedVersion>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let operation_id = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(3, &self));
+                }
+                Ok(Self::Value {
+                    document,
+                    expected,
+                    operation_id,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
 /// The `commit_receipt` frame body.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CommitReceipt {
@@ -5124,6 +5177,107 @@ impl<'de> serde::Deserialize<'de> for DocumentDeleteResponse {
 
 impl crate::codec::WireBody for DocumentDeleteResponse {
     const KIND: FrameKind = FrameKind::DocumentDeleteResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `document_batch_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocumentBatchRequest {
+    /// The `items` field.
+    pub items: Vec<BatchWrite>,
+    /// The `ack` field.
+    pub ack: Option<Acknowledgement>,
+}
+
+impl serde::Serialize for DocumentBatchRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.items.as_slice())?;
+        tuple.serialize_element(&self.ack.as_ref())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DocumentBatchRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = DocumentBatchRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a document_batch_request array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let items = seq
+                    .next_element::<Vec<BatchWrite>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let ack = seq
+                    .next_element::<Option<Acknowledgement>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    items,
+                    ack,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for DocumentBatchRequest {
+    const KIND: FrameKind = FrameKind::DocumentBatchRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_list_bound(&self.items, MAX_LIST_ITEMS, "items")?;
+        Ok(())
+    }
+}
+
+/// The `document_batch_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocumentBatchResponse {
+    /// The `outcome` field.
+    pub outcome: WriteOutcome,
+}
+
+impl serde::Serialize for DocumentBatchResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(1)?;
+        tuple.serialize_element(&self.outcome)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DocumentBatchResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = DocumentBatchResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a document_batch_response array of 1 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let outcome = seq
+                    .next_element::<WriteOutcome>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(1, &self));
+                }
+                Ok(Self::Value {
+                    outcome,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for DocumentBatchResponse {
+    const KIND: FrameKind = FrameKind::DocumentBatchResponse;
     fn validate(&self) -> Result<(), crate::codec::BodyError> {
         let _ = self;
         Ok(())
@@ -9278,6 +9432,8 @@ pub enum FrameKind {
     FamilyReadRequest,
     /// Code 263 (host-to-engine; families).
     FamilyWriteRequest,
+    /// Code 264 (host-to-engine; documents).
+    DocumentBatchRequest,
     /// Code 272 (host-to-engine; backbone).
     BackboneSubscribeRequest,
     /// Code 273 (host-to-engine; backbone).
@@ -9424,6 +9580,8 @@ pub enum FrameKind {
     TierPauseResponse,
     /// Code 604 (engine-to-host; tiers).
     TierResumeResponse,
+    /// Code 605 (engine-to-host; documents).
+    DocumentBatchResponse,
     /// Code 769 (engine-to-host; backbone).
     SubscriptionBatch,
     /// Code 770 (engine-to-host; backbone).
@@ -9447,6 +9605,7 @@ impl FrameKind {
             Self::QueryCancelRequest => 261,
             Self::FamilyReadRequest => 262,
             Self::FamilyWriteRequest => 263,
+            Self::DocumentBatchRequest => 264,
             Self::BackboneSubscribeRequest => 272,
             Self::BackboneAcknowledgeRequest => 273,
             Self::BackboneUnsubscribeRequest => 274,
@@ -9520,6 +9679,7 @@ impl FrameKind {
             Self::TierRunResponse => 602,
             Self::TierPauseResponse => 603,
             Self::TierResumeResponse => 604,
+            Self::DocumentBatchResponse => 605,
             Self::SubscriptionBatch => 769,
             Self::TriggerNotification => 770,
             Self::SubscriptionClosed => 771,
@@ -9540,6 +9700,7 @@ impl FrameKind {
             261 => Some(Self::QueryCancelRequest),
             262 => Some(Self::FamilyReadRequest),
             263 => Some(Self::FamilyWriteRequest),
+            264 => Some(Self::DocumentBatchRequest),
             272 => Some(Self::BackboneSubscribeRequest),
             273 => Some(Self::BackboneAcknowledgeRequest),
             274 => Some(Self::BackboneUnsubscribeRequest),
@@ -9613,6 +9774,7 @@ impl FrameKind {
             602 => Some(Self::TierRunResponse),
             603 => Some(Self::TierPauseResponse),
             604 => Some(Self::TierResumeResponse),
+            605 => Some(Self::DocumentBatchResponse),
             769 => Some(Self::SubscriptionBatch),
             770 => Some(Self::TriggerNotification),
             771 => Some(Self::SubscriptionClosed),
@@ -9634,6 +9796,7 @@ impl FrameKind {
             Self::QueryCancelRequest => "QueryCancelRequest",
             Self::FamilyReadRequest => "FamilyReadRequest",
             Self::FamilyWriteRequest => "FamilyWriteRequest",
+            Self::DocumentBatchRequest => "DocumentBatchRequest",
             Self::BackboneSubscribeRequest => "BackboneSubscribeRequest",
             Self::BackboneAcknowledgeRequest => "BackboneAcknowledgeRequest",
             Self::BackboneUnsubscribeRequest => "BackboneUnsubscribeRequest",
@@ -9707,6 +9870,7 @@ impl FrameKind {
             Self::TierRunResponse => "TierRunResponse",
             Self::TierPauseResponse => "TierPauseResponse",
             Self::TierResumeResponse => "TierResumeResponse",
+            Self::DocumentBatchResponse => "DocumentBatchResponse",
             Self::SubscriptionBatch => "SubscriptionBatch",
             Self::TriggerNotification => "TriggerNotification",
             Self::SubscriptionClosed => "SubscriptionClosed",
@@ -9727,6 +9891,7 @@ impl FrameKind {
             Self::QueryCancelRequest => "query",
             Self::FamilyReadRequest => "families",
             Self::FamilyWriteRequest => "families",
+            Self::DocumentBatchRequest => "documents",
             Self::BackboneSubscribeRequest => "backbone",
             Self::BackboneAcknowledgeRequest => "backbone",
             Self::BackboneUnsubscribeRequest => "backbone",
@@ -9800,6 +9965,7 @@ impl FrameKind {
             Self::TierRunResponse => "tiers",
             Self::TierPauseResponse => "tiers",
             Self::TierResumeResponse => "tiers",
+            Self::DocumentBatchResponse => "documents",
             Self::SubscriptionBatch => "backbone",
             Self::TriggerNotification => "backbone",
             Self::SubscriptionClosed => "backbone",
@@ -9820,6 +9986,7 @@ impl FrameKind {
             Self::QueryCancelRequest => "operation",
             Self::FamilyReadRequest => "operation",
             Self::FamilyWriteRequest => "operation",
+            Self::DocumentBatchRequest => "operation_large",
             Self::BackboneSubscribeRequest => "operation",
             Self::BackboneAcknowledgeRequest => "operation",
             Self::BackboneUnsubscribeRequest => "operation",
@@ -9893,6 +10060,7 @@ impl FrameKind {
             Self::TierRunResponse => "operation",
             Self::TierPauseResponse => "control",
             Self::TierResumeResponse => "control",
+            Self::DocumentBatchResponse => "operation_large",
             Self::SubscriptionBatch => "subscription",
             Self::TriggerNotification => "trigger",
             Self::SubscriptionClosed => "control",
@@ -9903,7 +10071,8 @@ impl FrameKind {
     #[must_use]
     pub const fn carries_idempotency(self) -> bool {
         matches!(self,
-            Self::DocumentDeleteRequest
+            Self::DocumentBatchRequest
+            | Self::DocumentDeleteRequest
             | Self::DocumentWriteRequest
             | Self::FamilyWriteRequest
             | Self::MigrationApplyRequest
@@ -9942,6 +10111,7 @@ pub const FRAME_ROWS: &[FrameRow] = &[
     FrameRow { code: 261, kind: "QueryCancelRequest", family: "query", class: "operation" },
     FrameRow { code: 262, kind: "FamilyReadRequest", family: "families", class: "operation" },
     FrameRow { code: 263, kind: "FamilyWriteRequest", family: "families", class: "operation" },
+    FrameRow { code: 264, kind: "DocumentBatchRequest", family: "documents", class: "operation_large" },
     FrameRow { code: 272, kind: "BackboneSubscribeRequest", family: "backbone", class: "operation" },
     FrameRow { code: 273, kind: "BackboneAcknowledgeRequest", family: "backbone", class: "operation" },
     FrameRow { code: 274, kind: "BackboneUnsubscribeRequest", family: "backbone", class: "operation" },
@@ -10015,6 +10185,7 @@ pub const FRAME_ROWS: &[FrameRow] = &[
     FrameRow { code: 602, kind: "TierRunResponse", family: "tiers", class: "operation" },
     FrameRow { code: 603, kind: "TierPauseResponse", family: "tiers", class: "control" },
     FrameRow { code: 604, kind: "TierResumeResponse", family: "tiers", class: "control" },
+    FrameRow { code: 605, kind: "DocumentBatchResponse", family: "documents", class: "operation_large" },
     FrameRow { code: 769, kind: "SubscriptionBatch", family: "backbone", class: "subscription" },
     FrameRow { code: 770, kind: "TriggerNotification", family: "backbone", class: "trigger" },
     FrameRow { code: 771, kind: "SubscriptionClosed", family: "backbone", class: "control" },
@@ -10043,6 +10214,8 @@ pub enum TbepBody {
     FamilyReadRequest(FamilyReadRequest),
     /// The `FamilyWriteRequest` body.
     FamilyWriteRequest(FamilyWriteRequest),
+    /// The `DocumentBatchRequest` body.
+    DocumentBatchRequest(DocumentBatchRequest),
     /// The `BackboneSubscribeRequest` body.
     BackboneSubscribeRequest(BackboneSubscribeRequest),
     /// The `BackboneAcknowledgeRequest` body.
@@ -10189,6 +10362,8 @@ pub enum TbepBody {
     TierPauseResponse(TierPauseResponse),
     /// The `TierResumeResponse` body.
     TierResumeResponse(TierResumeResponse),
+    /// The `DocumentBatchResponse` body.
+    DocumentBatchResponse(DocumentBatchResponse),
     /// The `SubscriptionBatch` body.
     SubscriptionBatch(SubscriptionBatch),
     /// The `TriggerNotification` body.
@@ -10235,6 +10410,10 @@ impl From<FamilyReadRequest> for TbepBody {
 
 impl From<FamilyWriteRequest> for TbepBody {
     fn from(value: FamilyWriteRequest) -> Self { Self::FamilyWriteRequest(value) }
+}
+
+impl From<DocumentBatchRequest> for TbepBody {
+    fn from(value: DocumentBatchRequest) -> Self { Self::DocumentBatchRequest(value) }
 }
 
 impl From<BackboneSubscribeRequest> for TbepBody {
@@ -10529,6 +10708,10 @@ impl From<TierResumeResponse> for TbepBody {
     fn from(value: TierResumeResponse) -> Self { Self::TierResumeResponse(value) }
 }
 
+impl From<DocumentBatchResponse> for TbepBody {
+    fn from(value: DocumentBatchResponse) -> Self { Self::DocumentBatchResponse(value) }
+}
+
 impl From<SubscriptionBatch> for TbepBody {
     fn from(value: SubscriptionBatch) -> Self { Self::SubscriptionBatch(value) }
 }
@@ -10556,6 +10739,7 @@ impl TbepBody {
             Self::QueryCancelRequest(_) => FrameKind::QueryCancelRequest,
             Self::FamilyReadRequest(_) => FrameKind::FamilyReadRequest,
             Self::FamilyWriteRequest(_) => FrameKind::FamilyWriteRequest,
+            Self::DocumentBatchRequest(_) => FrameKind::DocumentBatchRequest,
             Self::BackboneSubscribeRequest(_) => FrameKind::BackboneSubscribeRequest,
             Self::BackboneAcknowledgeRequest(_) => FrameKind::BackboneAcknowledgeRequest,
             Self::BackboneUnsubscribeRequest(_) => FrameKind::BackboneUnsubscribeRequest,
@@ -10629,6 +10813,7 @@ impl TbepBody {
             Self::TierRunResponse(_) => FrameKind::TierRunResponse,
             Self::TierPauseResponse(_) => FrameKind::TierPauseResponse,
             Self::TierResumeResponse(_) => FrameKind::TierResumeResponse,
+            Self::DocumentBatchResponse(_) => FrameKind::DocumentBatchResponse,
             Self::SubscriptionBatch(_) => FrameKind::SubscriptionBatch,
             Self::TriggerNotification(_) => FrameKind::TriggerNotification,
             Self::SubscriptionClosed(_) => FrameKind::SubscriptionClosed,
@@ -10652,6 +10837,7 @@ impl TbepBody {
             Self::QueryCancelRequest(body) => crate::codec::encode_body(body),
             Self::FamilyReadRequest(body) => crate::codec::encode_body(body),
             Self::FamilyWriteRequest(body) => crate::codec::encode_body(body),
+            Self::DocumentBatchRequest(body) => crate::codec::encode_body(body),
             Self::BackboneSubscribeRequest(body) => crate::codec::encode_body(body),
             Self::BackboneAcknowledgeRequest(body) => crate::codec::encode_body(body),
             Self::BackboneUnsubscribeRequest(body) => crate::codec::encode_body(body),
@@ -10725,6 +10911,7 @@ impl TbepBody {
             Self::TierRunResponse(body) => crate::codec::encode_body(body),
             Self::TierPauseResponse(body) => crate::codec::encode_body(body),
             Self::TierResumeResponse(body) => crate::codec::encode_body(body),
+            Self::DocumentBatchResponse(body) => crate::codec::encode_body(body),
             Self::SubscriptionBatch(body) => crate::codec::encode_body(body),
             Self::TriggerNotification(body) => crate::codec::encode_body(body),
             Self::SubscriptionClosed(body) => crate::codec::encode_body(body),
@@ -10748,6 +10935,7 @@ impl TbepBody {
             FrameKind::QueryCancelRequest => Ok(Self::QueryCancelRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::FamilyReadRequest => Ok(Self::FamilyReadRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::FamilyWriteRequest => Ok(Self::FamilyWriteRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::DocumentBatchRequest => Ok(Self::DocumentBatchRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::BackboneSubscribeRequest => Ok(Self::BackboneSubscribeRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::BackboneAcknowledgeRequest => Ok(Self::BackboneAcknowledgeRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::BackboneUnsubscribeRequest => Ok(Self::BackboneUnsubscribeRequest(crate::codec::decode_body(bytes)?)),
@@ -10821,6 +11009,7 @@ impl TbepBody {
             FrameKind::TierRunResponse => Ok(Self::TierRunResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::TierPauseResponse => Ok(Self::TierPauseResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::TierResumeResponse => Ok(Self::TierResumeResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::DocumentBatchResponse => Ok(Self::DocumentBatchResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::SubscriptionBatch => Ok(Self::SubscriptionBatch(crate::codec::decode_body(bytes)?)),
             FrameKind::TriggerNotification => Ok(Self::TriggerNotification(crate::codec::decode_body(bytes)?)),
             FrameKind::SubscriptionClosed => Ok(Self::SubscriptionClosed(crate::codec::decode_body(bytes)?)),
@@ -10883,6 +11072,15 @@ pub const OPERATIONS: &[OperationRow] = &[
         parity: &[
             "PB-2002",
             "PB-2025",
+        ],
+    },
+    OperationRow {
+        name: "document.batch",
+        request_code: 264,
+        response_code: 605,
+        mutation: true,
+        parity: &[
+            "new-capability: atomic client batching — one frame, one engine transaction (p0-protocol-compatibility-contract section 2)",
         ],
     },
     OperationRow {

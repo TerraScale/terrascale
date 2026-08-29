@@ -189,6 +189,24 @@ public sealed partial class TbepClient : IAsyncDisposable
         return MessagePackSerializer.Deserialize<DocumentWriteResponse>(answer.Body, TbepOptions.Strict);
     }
 
+    /// <summary>Writes one atomic document batch (mutation): one frame, one engine transaction — every item commits together or none does. The idempotency key is the whole batch's retry identity.</summary>
+    /// <param name="items">The batch items, in order.</param>
+    /// <param name="ack">The acknowledgement level, or <c>null</c> for the regional default.</param>
+    /// <param name="idempotencyKey">The envelope's idempotency key.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The batch outcome.</returns>
+    /// <exception cref="TbepException">The operation failed.</exception>
+    public async Task<DocumentBatchResponse> DocumentBatchWriteAsync(BatchWrite[] items, Acknowledgement? ack, string idempotencyKey, CancellationToken cancellationToken = default)
+    {
+        var answer = await this.CallAsync(
+            "document.batch",
+            new DocumentBatchRequest { Items = items, Ack = ack },
+            idempotency: idempotencyKey,
+            expect: TbepRegistry.ResponseKindOf("document.batch"),
+            cancellationToken).ConfigureAwait(false);
+        return MessagePackSerializer.Deserialize<DocumentBatchResponse>(answer.Body, TbepOptions.Strict);
+    }
+
     /// <summary>Deletes one document (mutation): the idempotency key is the retry identity the engine replays.</summary>
     /// <param name="collection">The collection.</param>
     /// <param name="document">The document id.</param>

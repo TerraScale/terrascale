@@ -536,6 +536,19 @@ fn dispatch(connection: &mut Connection, frame: &TbepFrame) -> bool {
                 );
             }
         }
+        TbepBody::DocumentBatchRequest(body) => {
+            if let Some(tenant) = bound_tenant(connection, causation) {
+                answer(
+                    connection,
+                    causation,
+                    connection.host.document_batch(
+                        &tenant,
+                        &body,
+                        frame_key(frame).as_ref().map_or("", IdempotencyKey::as_str),
+                    ),
+                );
+            }
+        }
         TbepBody::QueryExecuteRequest(body) => {
             if let Some(tenant) = bound_tenant(connection, causation) {
                 answer(connection, causation, connection.host.query_execute(&tenant, &body));

@@ -442,6 +442,53 @@ impl TbepHost for EngineHost {
         Ok(DocumentDeleteResponse { outcome })
     }
 
+    fn document_batch(
+        &self,
+        tenant: &str,
+        request: &crate::generated::DocumentBatchRequest,
+        idempotency_key: &str,
+    ) -> Result<crate::generated::DocumentBatchResponse, HostingError> {
+        self.count_frame();
+        let tenant = Self::tenant_of(tenant)?;
+        if request.items.is_empty() {
+            return Err(HostingError::Invalid("the batch carries no items".into()));
+        }
+        if request.items.len() > crate::generated::MAX_LIST_ITEMS {
+            return Err(HostingError::Invalid("the batch exceeds the list bound".into()));
+        }
+        // One batch, one engine transaction: every item stages before the
+        // single commit, so the batch is atomic — a conflicting item
+        // rolls the whole frame back and nothing durable records.
+        let outcome = self.commit(
+            &tenant,
+            idempotency_key,
+            |transaction| {
+                for item in &request.items {
+                    let (document, collection) = Self::identifiers_of(
+                        item.document.id.as_str(),
+                        item.document.collection.as_str(),
+                    )?;
+                    transaction
+                        .put(
+                            Document::new(
+                                document,
+                                collection,
+                                to_engine_value(&item.document.body),
+                            ),
+                            to_engine_expected(&item.expected),
+                        )
+                        .map_err(|_| {
+                            HostingError::Refused("a batch item was not admissible".into())
+                        })?;
+                }
+                Ok(())
+            },
+            request.ack.unwrap_or(crate::generated::Acknowledgement::RegionalQuorum),
+            idempotency_key,
+        )?;
+        Ok(crate::generated::DocumentBatchResponse { outcome })
+    }
+
     fn query_execute(
         &self,
         tenant: &str,

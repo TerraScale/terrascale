@@ -1,6 +1,6 @@
 {
   "identity": "terrabase.engine.protocol",
-  "registry_version": "1.1",
+  "registry_version": "1.2",
   "wire_version": 1,
   "max_frame_bytes": 16777216,
   "stream_length_prefix_bytes": 4,
@@ -775,6 +775,24 @@
       ]
     },
     {
+      "name": "batch_write",
+      "fields": [
+        {
+          "name": "document",
+          "type": "document_put"
+        },
+        {
+          "name": "expected",
+          "type": "expected_version"
+        },
+        {
+          "name": "operation_id",
+          "type": "str",
+          "bound": 128
+        }
+      ]
+    },
+    {
       "name": "commit_receipt",
       "fields": [
         {
@@ -1509,6 +1527,40 @@
       "response": {
         "code": 515,
         "name": "document_delete_response",
+        "fields": [
+          {
+            "name": "outcome",
+            "type": "write_outcome"
+          }
+        ]
+      }
+    },
+    {
+      "name": "document.batch",
+      "code": 264,
+      "family": "documents",
+      "class": "operation_large",
+      "mutation": true,
+      "parity": [
+        "new-capability: atomic client batching \u2014 one frame, one engine transaction (p0-protocol-compatibility-contract section 2)"
+      ],
+      "request": {
+        "name": "document_batch_request",
+        "fields": [
+          {
+            "name": "items",
+            "type": "[batch_write]"
+          },
+          {
+            "name": "ack",
+            "type": "acknowledgement",
+            "optional": true
+          }
+        ]
+      },
+      "response": {
+        "code": 605,
+        "name": "document_batch_response",
         "fields": [
           {
             "name": "outcome",

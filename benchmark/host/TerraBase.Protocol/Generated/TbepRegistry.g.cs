@@ -13,7 +13,7 @@ public static partial class TbepRegistry
     /// <summary>The protocol identity.</summary>
     public const string Identity = "terrabase.engine.protocol";
     /// <summary>The registry version.</summary>
-    public const string RegistryVersion = "1.1";
+    public const string RegistryVersion = "1.2";
     /// <summary>The wire version; unknown versions fail closed.</summary>
     public const byte WireVersion = 1;
     /// <summary>The decode bound in bytes before any field parses.</summary>
@@ -3256,6 +3256,36 @@ public sealed class DocumentPut : IEquatable<DocumentPut>
     }
 }
 
+/// <summary>The `batch_write` frame body.</summary>
+[MessagePackObject]
+public sealed class BatchWrite : IEquatable<BatchWrite>
+{
+    /// <summary>The `document` field.</summary>
+    [Key(0)]
+    public required DocumentPut Document { get; init; }
+    /// <summary>The `expected` field.</summary>
+    [Key(1)]
+    public required ExpectedVersion Expected { get; init; }
+    /// <summary>The `operation_id` field.</summary>
+    [Key(2)]
+    public required string OperationId { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(BatchWrite? other) => other is not null
+        && TbepRegistry.FieldEquals(Document, other.Document)
+        && TbepRegistry.FieldEquals(Expected, other.Expected)
+        && TbepRegistry.FieldEquals(OperationId, other.OperationId);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as BatchWrite);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Document, Expected, OperationId);
+    }
+}
+
 /// <summary>The `commit_receipt` frame body.</summary>
 [MessagePackObject]
 public sealed class CommitReceipt : IEquatable<CommitReceipt>
@@ -4239,6 +4269,54 @@ public sealed class DocumentDeleteResponse : IEquatable<DocumentDeleteResponse>
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => Equals(obj as DocumentDeleteResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Outcome);
+    }
+}
+
+/// <summary>The `document_batch_request` frame body.</summary>
+[MessagePackObject]
+public sealed class DocumentBatchRequest : IEquatable<DocumentBatchRequest>
+{
+    /// <summary>The `items` field.</summary>
+    [Key(0)]
+    public required BatchWrite[] Items { get; init; }
+    /// <summary>The `ack` field.</summary>
+    [Key(1)]
+    public Acknowledgement? Ack { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(DocumentBatchRequest? other) => other is not null
+        && TbepRegistry.FieldEquals(Items, other.Items)
+        && TbepRegistry.FieldEquals(Ack, other.Ack);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as DocumentBatchRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Items, Ack);
+    }
+}
+
+/// <summary>The `document_batch_response` frame body.</summary>
+[MessagePackObject]
+public sealed class DocumentBatchResponse : IEquatable<DocumentBatchResponse>
+{
+    /// <summary>The `outcome` field.</summary>
+    [Key(0)]
+    public required WriteOutcome Outcome { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(DocumentBatchResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Outcome, other.Outcome);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as DocumentBatchResponse);
 
     /// <inheritdoc/>
     public override int GetHashCode()
@@ -6273,6 +6351,8 @@ public enum TbepFrameKind : ushort
     FamilyReadRequest = 262,
     /// <summary>Code 263 (host-to-engine; families).</summary>
     FamilyWriteRequest = 263,
+    /// <summary>Code 264 (host-to-engine; documents).</summary>
+    DocumentBatchRequest = 264,
     /// <summary>Code 272 (host-to-engine; backbone).</summary>
     BackboneSubscribeRequest = 272,
     /// <summary>Code 273 (host-to-engine; backbone).</summary>
@@ -6419,6 +6499,8 @@ public enum TbepFrameKind : ushort
     TierPauseResponse = 603,
     /// <summary>Code 604 (engine-to-host; tiers).</summary>
     TierResumeResponse = 604,
+    /// <summary>Code 605 (engine-to-host; documents).</summary>
+    DocumentBatchResponse = 605,
     /// <summary>Code 769 (engine-to-host; backbone).</summary>
     SubscriptionBatch = 769,
     /// <summary>Code 770 (engine-to-host; backbone).</summary>
@@ -6443,6 +6525,7 @@ public static partial class TbepRegistry
         (261, "QueryCancelRequest", "query", "operation", "host-to-engine", false),
         (262, "FamilyReadRequest", "families", "operation", "host-to-engine", false),
         (263, "FamilyWriteRequest", "families", "operation", "host-to-engine", true),
+        (264, "DocumentBatchRequest", "documents", "operation_large", "host-to-engine", true),
         (272, "BackboneSubscribeRequest", "backbone", "operation", "host-to-engine", false),
         (273, "BackboneAcknowledgeRequest", "backbone", "operation", "host-to-engine", false),
         (274, "BackboneUnsubscribeRequest", "backbone", "operation", "host-to-engine", false),
@@ -6516,6 +6599,7 @@ public static partial class TbepRegistry
         (602, "TierRunResponse", "tiers", "operation", "engine-to-host", false),
         (603, "TierPauseResponse", "tiers", "control", "engine-to-host", false),
         (604, "TierResumeResponse", "tiers", "control", "engine-to-host", false),
+        (605, "DocumentBatchResponse", "documents", "operation_large", "engine-to-host", false),
         (769, "SubscriptionBatch", "backbone", "subscription", "engine-to-host", false),
         (770, "TriggerNotification", "backbone", "trigger", "engine-to-host", false),
         (771, "SubscriptionClosed", "backbone", "control", "engine-to-host", false),
@@ -6535,6 +6619,7 @@ public static partial class TbepRegistry
         new OperationRow("document.read", 257, 513, false, ["PB-2005"]),
         new OperationRow("document.write", 258, 514, true, ["PB-2001", "PB-1013", "PB-2025"]),
         new OperationRow("document.delete", 259, 515, true, ["PB-2002", "PB-2025"]),
+        new OperationRow("document.batch", 264, 605, true, ["new-capability: atomic client batching — one frame, one engine transaction (p0-protocol-compatibility-contract section 2)"]),
         new OperationRow("query.execute", 260, 516, false, ["PB-4000"]),
         new OperationRow("query.cancel", 261, 517, false, ["PB-4034", "PB-1012"]),
         new OperationRow("family.read", 262, 518, false, ["PB-3000", "PB-3001"]),

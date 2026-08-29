@@ -835,3 +835,90 @@ fn the_engine_serves_tier_administration_over_uds() {
     drop(fixture);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_engine_serves_atomic_document_batches() {
+    use terrabase_tbep::generated::{Acknowledgement, BatchWrite, DocumentBatchRequest};
+
+    let dir = location("batch");
+    let mut fixture = Fixture::bind("batch", &dir, 1);
+    fixture.bind_channel("tenant-a");
+
+    let item = |id: &str, quantity: i64| BatchWrite {
+        document: DocumentPut {
+            id: id.into(),
+            collection: "orders".into(),
+            body: TbepValue::Object(vec![
+                ("item".to_owned(), TbepValue::String("bookshelf".to_owned())),
+                ("quantity".to_owned(), TbepValue::Integer(quantity)),
+            ]),
+        },
+        expected: ExpectedVersion::Absent,
+        operation_id: format!("op-batch-{id}"),
+    };
+
+    // One frame, one transaction: both documents commit together.
+    let key = IdempotencyKey::new("op-batch-1").expect("valid key");
+    let answer = fixture.call(
+        DocumentBatchRequest { items: vec![item("a", 1), item("b", 2)], ack: None },
+        Some(&key),
+    );
+    let TbepBody::DocumentBatchResponse(response) = answer.body() else {
+        panic!("the batch answered, got {:?}", answer.kind());
+    };
+    let WriteOutcome::Committed(receipt) = &response.outcome else {
+        panic!("the batch commits, got {:?}", response.outcome);
+    };
+    assert_eq!(receipt.acknowledgement, Some(Acknowledgement::RegionalQuorum));
+
+    // Both documents are durable under the tenant.
+    for id in ["a", "b"] {
+        let answer = fixture.call(
+            DocumentReadRequest { collection: "orders".into(), document: id.into(), level: None },
+            None,
+        );
+        let TbepBody::DocumentReadResponse(response) = answer.body() else {
+            panic!("the post-batch read answered for {id}");
+        };
+        assert!(response.found, "{id} committed with the batch");
+    }
+
+    // A conflicting item rolls the whole batch back: nothing new records.
+    let conflicting = BatchWrite {
+        document: DocumentPut {
+            id: "a".into(),
+            collection: "orders".into(),
+            body: TbepValue::Object(vec![]),
+        },
+        expected: ExpectedVersion::Absent,
+        operation_id: "op-batch-conflict".into(),
+    };
+    let fresh = BatchWrite {
+        document: DocumentPut {
+            id: "c".into(),
+            collection: "orders".into(),
+            body: TbepValue::Object(vec![]),
+        },
+        expected: ExpectedVersion::Absent,
+        operation_id: "op-batch-c".into(),
+    };
+    let answer = fixture.call(
+        DocumentBatchRequest { items: vec![conflicting, fresh], ack: None },
+        Some(&IdempotencyKey::new("op-batch-2").expect("valid key")),
+    );
+    let TbepBody::DocumentBatchResponse(response) = answer.body() else {
+        panic!("the conflicting batch answered");
+    };
+    assert_eq!(response.outcome, WriteOutcome::Conflict);
+    let answer = fixture.call(
+        DocumentReadRequest { collection: "orders".into(), document: "c".into(), level: None },
+        None,
+    );
+    let TbepBody::DocumentReadResponse(response) = answer.body() else {
+        panic!("the rolled-back read answered");
+    };
+    assert!(!response.found, "the whole batch rolled back — nothing recorded");
+
+    drop(fixture);
+    let _ = std::fs::remove_dir_all(&dir);
+}
