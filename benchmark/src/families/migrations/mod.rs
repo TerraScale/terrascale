@@ -380,9 +380,11 @@ pub fn begin(
                     Err(MigrationError::ManifestMismatch)
                 };
             }
-            RecordState::Stopped { .. } => {
-                return Err(MigrationError::MigrationStopped);
-            }
+            // A stopped drive is terminal for page/finalize calls, but it is
+            // not ownership of the collection. A fresh dry-run and begin may
+            // retry the source version after the caller changes the contract
+            // or repairs the offending data.
+            RecordState::Stopped { .. } => {}
         }
     }
     let recorded = recorded_schema(&transaction, contract.collection())?;

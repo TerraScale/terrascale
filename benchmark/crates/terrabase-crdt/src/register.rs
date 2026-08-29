@@ -1,7 +1,7 @@
 //! LWW and multi-value register state and join algebra.
 
 use terrabase_causal::{
-    ActorId, CausalContext, CanonicalEncode, DottedVersion, Dot, HlcTimestamp, MutationOrdinal,
+    ActorId, CanonicalEncode, CausalContext, Dot, DottedVersion, HlcTimestamp, MutationOrdinal,
     canonical_hash,
 };
 
@@ -103,7 +103,15 @@ impl<T: CanonicalValue> Candidate<T> {
         self.hlc
     }
 
-    fn key(&self) -> (HlcTimestamp, terrabase_causal::ReplicaId, terrabase_causal::ReplicaEpoch, terrabase_causal::OriginCounter, MutationOrdinal) {
+    fn key(
+        &self,
+    ) -> (
+        HlcTimestamp,
+        terrabase_causal::ReplicaId,
+        terrabase_causal::ReplicaEpoch,
+        terrabase_causal::OriginCounter,
+        MutationOrdinal,
+    ) {
         let actor = self.dot().actor();
         (self.hlc, actor.replica(), actor.epoch(), self.dot().counter(), self.mutation_ordinal)
     }
@@ -172,7 +180,10 @@ impl<T: CanonicalValue> LwwRegister<T> {
             if self.winner.as_ref().is_some_and(|left| left.identity() == candidate.identity())
                 || !self.context.contains(candidate.dot())
             {
-                if !candidates.iter().any(|existing: &Candidate<T>| existing.identity() == candidate.identity()) {
+                if !candidates
+                    .iter()
+                    .any(|existing: &Candidate<T>| existing.identity() == candidate.identity())
+                {
                     candidates.push(candidate.clone());
                 }
             }
@@ -243,7 +254,9 @@ impl<T: CanonicalValue> MvRegister<T> {
     pub fn materialize(&self) -> Vec<(CausalIdentity, T)> {
         self.candidates
             .iter()
-            .filter_map(|candidate| candidate.value().cloned().map(|value| (candidate.identity(), value)))
+            .filter_map(|candidate| {
+                candidate.value().cloned().map(|value| (candidate.identity(), value))
+            })
             .collect()
     }
 
@@ -254,11 +267,17 @@ impl<T: CanonicalValue> MvRegister<T> {
         context.union(&other.context);
         let mut candidates = Vec::with_capacity(self.candidates.len() + other.candidates.len());
         for candidate in self.candidates.iter().chain(other.candidates.iter()) {
-            let duplicate = candidates.iter().any(|existing: &Candidate<T>| existing.identity() == candidate.identity());
+            let duplicate = candidates
+                .iter()
+                .any(|existing: &Candidate<T>| existing.identity() == candidate.identity());
             if duplicate {
                 continue;
             }
-            let observed_by_other = if self.candidates.iter().any(|existing| existing.identity() == candidate.identity()) {
+            let observed_by_other = if self
+                .candidates
+                .iter()
+                .any(|existing| existing.identity() == candidate.identity())
+            {
                 other.candidates.iter().any(|existing| existing.identity() == candidate.identity())
                     || other.context.contains(candidate.dot())
             } else {
@@ -368,7 +387,10 @@ fn decode_state<T: CanonicalValue>(
         if !context.contains(candidate.dot()) || !context.dominates(candidate.version.context()) {
             return Err(DecodeError::NonCanonicalContext);
         }
-        if candidates.iter().any(|existing: &Candidate<T>| existing.identity() == candidate.identity()) {
+        if candidates
+            .iter()
+            .any(|existing: &Candidate<T>| existing.identity() == candidate.identity())
+        {
             return Err(DecodeError::InvalidValue);
         }
         candidates.push(candidate);
@@ -395,9 +417,13 @@ fn decode_candidate<T: CanonicalValue>(
         return Err(DecodeError::InvalidValue);
     }
     let replica = terrabase_causal::ReplicaId::from_bytes(reader.fixed()?);
-    let epoch = terrabase_causal::ReplicaEpoch::new(reader.leb_u64()?).map_err(|_| DecodeError::InvalidValue)?;
-    let counter = terrabase_causal::OriginCounter::new(reader.leb_u64()?).map_err(|_| DecodeError::InvalidValue)?;
-    let ordinal = MutationOrdinal::new(u32::try_from(reader.leb_u64()?).map_err(|_| DecodeError::InvalidValue)?);
+    let epoch = terrabase_causal::ReplicaEpoch::new(reader.leb_u64()?)
+        .map_err(|_| DecodeError::InvalidValue)?;
+    let counter = terrabase_causal::OriginCounter::new(reader.leb_u64()?)
+        .map_err(|_| DecodeError::InvalidValue)?;
+    let ordinal = MutationOrdinal::new(
+        u32::try_from(reader.leb_u64()?).map_err(|_| DecodeError::InvalidValue)?,
+    );
     let context = decode_context(reader, limits)?;
     let physical = reader.leb_u64()?;
     let logical = u32::try_from(reader.leb_u64()?).map_err(|_| DecodeError::InvalidValue)?;
@@ -411,17 +437,26 @@ fn decode_candidate<T: CanonicalValue>(
     };
     let actor = ActorId::new(replica, epoch);
     let dot = Dot::new(actor, counter);
-    Ok(Candidate::new(value, DottedVersion::new(context, dot), ordinal, HlcTimestamp::new(physical, logical)))
+    Ok(Candidate::new(
+        value,
+        DottedVersion::new(context, dot),
+        ordinal,
+        HlcTimestamp::new(physical, logical),
+    ))
 }
 
-fn decode_context(reader: &mut Decoder<'_>, limits: DecodeLimits) -> Result<CausalContext, DecodeError> {
+fn decode_context(
+    reader: &mut Decoder<'_>,
+    limits: DecodeLimits,
+) -> Result<CausalContext, DecodeError> {
     let actor_count = bounded_count(reader.leb_u64()?, limits.max_context_actors)?;
     let mut context = CausalContext::new();
     let mut previous = None;
     for _ in 0..actor_count {
         let actor = ActorId::new(
             terrabase_causal::ReplicaId::from_bytes(reader.fixed()?),
-            terrabase_causal::ReplicaEpoch::new(reader.leb_u64()?).map_err(|_| DecodeError::InvalidValue)?,
+            terrabase_causal::ReplicaEpoch::new(reader.leb_u64()?)
+                .map_err(|_| DecodeError::InvalidValue)?,
         );
         if previous.is_some_and(|previous| previous >= actor) {
             return Err(DecodeError::NonCanonicalContext);
@@ -431,13 +466,19 @@ fn decode_context(reader: &mut Decoder<'_>, limits: DecodeLimits) -> Result<Caus
         let interval_count = bounded_count(reader.leb_u64()?, limits.max_intervals_per_actor)?;
         let mut progress = terrabase_causal::ActorProgress::new();
         if through != 0 {
-            progress.insert_interval(terrabase_causal::CounterInterval::new(1, through).map_err(|_| DecodeError::InvalidValue)?);
+            progress.insert_interval(
+                terrabase_causal::CounterInterval::new(1, through)
+                    .map_err(|_| DecodeError::InvalidValue)?,
+            );
         }
         let mut last: Option<u64> = None;
         for _ in 0..interval_count {
-            let interval = terrabase_causal::CounterInterval::new(reader.leb_u64()?, reader.leb_u64()?)
-                .map_err(|_| DecodeError::InvalidValue)?;
-            if interval.first() <= through || last.is_some_and(|last| interval.first() <= last.saturating_add(1)) {
+            let interval =
+                terrabase_causal::CounterInterval::new(reader.leb_u64()?, reader.leb_u64()?)
+                    .map_err(|_| DecodeError::InvalidValue)?;
+            if interval.first() <= through
+                || last.is_some_and(|last| interval.first() <= last.saturating_add(1))
+            {
                 return Err(DecodeError::NonCanonicalContext);
             }
             last = Some(interval.last());
