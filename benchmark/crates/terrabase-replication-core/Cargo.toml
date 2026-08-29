@@ -1,0 +1,30 @@
+# `terrabase-replication-core` — the P2 leaderless multi-writer CRDT
+# plane (ADR 0018). Mirrors `terrabase-sync-core` (the SE-02 client
+# sync seam, one fixed server peer) with the opposite shape: every
+# Member of a replica set is a distinct Loro peer-writer, and the
+# exchange is member-to-member frontier summaries and deltas per the
+# frozen leaderless contract §5 (anti-entropy) and §8 scenarios 6, 11,
+# and 13.
+#
+# The engine workspace at the repository root stays zero-dependency;
+# this crate carries the Loro dependency, exactly as `terrabase-sync-core`
+# does for the client plane.
+
+[package]
+name = "terrabase-replication-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "LicenseRef-TerraScale-Pending"
+description = "TerraBaseV2 leaderless multi-writer replication core: per-Member Loro peers, frontier summaries, member-to-member delta exchange"
+publish = false
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+pedantic = "warn"
+
+[dependencies]
+loro = "1.13.9"

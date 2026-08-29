@@ -111,3 +111,59 @@ corepack, `test:unit` + `vp check`) jobs.
   `studio/app/queries/indexes/page.tsx`.
 - `scripts/validate_parity.py --generate` + `--check`: 258 items,
   schema 1.0, source `fa99b925…`.
+
+## 4. P2 landing 1 (2026-08-29): the two leaderless cores
+
+The leaderless replacement began (ADR 0018 D-8). Nothing was renamed or
+routed around: the leader-per-range machinery in `src/replication/` is
+untouched and still fails the contract until the replacement consumes
+it; two new cores landed beside it.
+
+**Coordination core** — `src/replication/leaderless.rs` (engine-side,
+dependency-free): `ReplicaSet` (epoch + eligible voters per Region, no
+owner/lease/term), `LeaderlessLevel` (`RegionalQuorum` as the minimum
+success, `GlobalQuorum` as regional quorums in a majority of Regions
+including the accepting one), `coordinate_write` (any-Member entry,
+request-scoped coordination, fan-out to every eligible replica through
+each replica's real engine, quorum evaluation, receipts naming every
+contributing Member and Region), and `LeaderlessWrite` (stable
+operation identity + write set; no range, no acknowledgement field).
+Proven over real engines by 8 focused tests: write-through-every-member
+equivalence, regional success under cross-Region partition, minority
+failure naming the durable partial contributors, global-quorum
+arithmetic, coordinator-failure retry through another Member with
+exactly one commit per replica (engine-seam idempotency), ineligible
+coordinator refusal.
+
+**Multi-writer CRDT core** — new crate `terrabase-replication-core`
+(carries the Loro dependency the engine workspace stays free of):
+`ReplicaDoc` (one Member's materialized state under its own peer
+identity), `ReplicaFrontier` (the per-peer causal summary anti-entropy
+exchanges), `delta_for`/`absorb` (member-to-member delta exchange,
+ownership-agnostic), `value_after` (shadow-history read). Six
+convergence proofs over real Loro documents, per the frozen contract
+§8: concurrent same-document writes through different Members merge to
+one deterministic scalar winner with identical materialized state and
+both writes recoverable from history (scenario 6); the winner is
+invariant under delivery order; delete wins over a concurrent update
+with the loser in shadow history (scenario 13); duplicated and
+reordered delivery converges idempotently (scenario 11); a partitioned
+Member catches up after rejoin (scenario 12's data plane); covered
+frontiers answer `UpToDate` without exporting.
+
+**Still open in P2** (recorded, not hidden): the composition — one
+Member applying each accepted write to both its engine and its
+`ReplicaDoc`, with the engine's publication journal feeding CRDT
+materialization; durable persistence of a `ReplicaDoc` (snapshot bytes
+staged through the object-store tier); the authenticated transport
+carrying frontiers and deltas over the member-transport QUIC lanes;
+read repair (§6); membership-epoch changes with overlapping quorums
+(§7, scenario 5); `BackupAck` (lands with the P5 backup cluster);
+qualification receipts for the full AC-10 scenario list; and the
+eventual removal of the superseded leader machinery.
+
+Receipts: `cargo test -p terrabase-v2 --lib` 1071/1071;
+`cargo test -p terrabase-replication-core` 6/6; pinned
+`cargo clippy -p terrabase-v2 -p terrabase-replication-core
+--all-targets --all-features --locked -- -D warnings` clean;
+`cargo fmt --all -- --check` clean. `scripts/check.sh` not run (AC-12).

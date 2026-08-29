@@ -38,6 +38,7 @@ mod identifier;
 mod lane;
 #[cfg(test)]
 mod lane_tests;
+mod leaderless;
 mod member;
 mod observation;
 #[cfg(test)]
