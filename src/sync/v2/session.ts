@@ -9,7 +9,7 @@
 // difference; the mutation reaches the client's state only through the
 // journal -> delta path).
 //
-// The wrapped-codec decision keeps `loro-delta/1` and `loro-snapshot/1`
+// The wrapped-codec decision keeps `terrabase-native/1` and `terrabase-snapshot/1`
 // payload bytes opaque to the protocol; this wave's store is memory-only
 // and advances the authoritative client state (the checkpoint) while
 // handing payload bytes to an optional materializer.
@@ -35,6 +35,12 @@ import {
   type SyncV2PayloadCodecName,
   type SyncV2Value,
 } from "./frame.js";
+import {
+  SyncV2ResultViewStore,
+  type SyncV2ResultDelta,
+  type SyncV2ResultOperation,
+  type SyncV2ResultSnapshot,
+} from "./result-view.js";
 
 /** The fetch surface the session speaks (injectable for tests and runtimes). */
 export type SyncV2Fetch = (
@@ -127,6 +133,8 @@ export type TerraScaleSyncV2SessionOptions = {
   readonly ReconnectDelayMilliseconds?: number | undefined;
   /** The reconnect-attempt bound; exhaustion fails the session terminally (default 8). */
   readonly MaxReconnectAttempts?: number | undefined;
+  /** Optional authorized result-view state reconciled by this session. */
+  readonly ResultView?: SyncV2ResultViewStore | undefined;
 };
 
 /** One server-ack-only mutation request. Exactly one of `Put` or `Delete` applies. */
@@ -134,6 +142,8 @@ export type SyncV2MutationRequest = {
   readonly Document: string;
   readonly Put?: Readonly<Record<string, SyncV2Value>> | undefined;
   readonly Delete?: boolean | undefined;
+  /** Reversible presentation operations; never sent to or persisted by the server. */
+  readonly OptimisticOperations?: readonly SyncV2ResultOperation[] | undefined;
 };
 
 /** The durable receipt of an applied mutation. */
@@ -382,6 +392,7 @@ export class TerraScaleSyncV2Session {
   readonly #fetch: SyncV2Fetch;
   readonly #streamFactory: SyncV2StreamFactory;
   readonly #store = new TerraScaleSyncV2Store();
+  readonly #resultView: SyncV2ResultViewStore | undefined;
   #sessionId: number | null = null;
   #checkpoint: SyncV2Checkpoint = syncV2CanonicalCheckpoint([], 0n);
   #lastEventId: string | null = null;
@@ -409,6 +420,7 @@ export class TerraScaleSyncV2Session {
       this.#checkpoint = syncV2CheckpointFromBytes(decodeBase64(options.ResumeCheckpoint, "the resume checkpoint"));
     }
     this.#options = options;
+    this.#resultView = options.ResultView;
     this.#fetch = options.Fetch
       ?? (async (input, init) => {
         const request: RequestInit = { method: init?.method ?? "POST", headers: { ...init?.headers } };
@@ -436,6 +448,46 @@ export class TerraScaleSyncV2Session {
   /** The session's connection status. */
   public getStatus(): SyncV2ConnectionStatus {
     return this.#status;
+  }
+
+  /** The optional authorized result-view store associated with this session. */
+  public getResultView(): SyncV2ResultViewStore | undefined {
+    return this.#resultView;
+  }
+
+  /** Atomically installs an authorized result snapshot received from the API. */
+  public bootstrapResultView(snapshot: SyncV2ResultSnapshot): void {
+    this.#resultView?.bootstrap(snapshot);
+  }
+
+  /** Applies one complete authorized result revision and returns its outcome. */
+  public applyResultDelta(delta: SyncV2ResultDelta): ReturnType<SyncV2ResultViewStore["applyDelta"]> {
+    return this.#resultView?.applyDelta(delta) ?? "reset-required";
+  }
+
+  /** Replaces the authorized result after a gap, expiry, or backpressure reset. */
+  public resetResultView(snapshot: SyncV2ResultSnapshot): void {
+    this.#resultView?.reset(snapshot);
+  }
+
+  /** Reconciles an accepted durable mutation with its authoritative result revision. */
+  public acceptResultMutation(idempotencyKey: string, delta: SyncV2ResultDelta): "accepted" {
+    if (this.#resultView === undefined) {
+      throw new SyncV2SessionError("result_view_unconfigured", "no result view is attached to this session");
+    }
+    const status = this.#resultView.acceptMutation(idempotencyKey, delta);
+    if (status !== "accepted") throw new SyncV2SessionError("result_view_reconciliation", "the mutation was not accepted");
+    return status;
+  }
+
+  /** Rolls back a rejected optimistic presentation. Rejection is idempotent. */
+  public rejectResultMutation(idempotencyKey: string): "rejected" {
+    if (this.#resultView === undefined) {
+      throw new SyncV2SessionError("result_view_unconfigured", "no result view is attached to this session");
+    }
+    const status = this.#resultView.rejectMutation(idempotencyKey);
+    if (status !== "rejected") throw new SyncV2SessionError("result_view_reconciliation", "the mutation was not rejected");
+    return status;
   }
 
   /** The session's durable checkpoint. */
@@ -492,10 +544,16 @@ export class TerraScaleSyncV2Session {
     if (this.#sessionId === null) {
       throw new SyncV2SessionError("session_closed", "the session is not open");
     }
+    if (this.#status !== "live") {
+      throw new SyncV2SessionError("offline", "durable mutations require an online session");
+    }
     if (request.Delete !== true && request.Put === undefined) {
       throw new TypeError("a mutation carries exactly one of Put or Delete.");
     }
     validateIdempotencyKey(idempotencyKey);
+    if (request.OptimisticOperations !== undefined) {
+      this.#resultView?.beginMutation(idempotencyKey, request.OptimisticOperations);
+    }
     const change: Record<string, unknown> = request.Delete === true
       ? { delete: true }
       : { put: Object.entries(request.Put ?? {}).map(([name, value]) => ({ name, value: jsonValueOf(value) })) };
@@ -521,6 +579,7 @@ export class TerraScaleSyncV2Session {
         },
       };
     }
+    this.#resultView?.rejectMutation(idempotencyKey);
     return { Outcome: "rejected", Reason: stringField(outcome.reason) };
   }
 
@@ -859,6 +918,7 @@ export class TerraScaleSyncV2Session {
   #setStatus(status: SyncV2ConnectionStatus, lastError?: string | undefined): void {
     this.#status = status;
     this.#store.setStatus(status, lastError);
+    this.#resultView?.setOnline(status === "live");
   }
 
   #throwIfDisposed(): void {

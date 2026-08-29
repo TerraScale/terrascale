@@ -85,13 +85,13 @@ function decodePayload(payload: string): Record<string, unknown> {
 
 function materializer(
   payload: Uint8Array,
-  codec: "loro-delta/1" | "loro-snapshot/1",
+  codec: "terrabase-native/1" | "terrabase-snapshot/1",
 ): ReadonlyMap<string, Readonly<Record<string, SyncV2Value>>> {
   const body = JSON.parse(new TextDecoder().decode(payload)) as {
     documents?: readonly { document: string; put?: Readonly<Record<string, SyncV2Value>>; delete?: boolean }[];
     changes?: readonly { document: string; put?: Readonly<Record<string, SyncV2Value>>; delete?: boolean }[];
   };
-  const entries = codec === "loro-snapshot/1" ? body.documents ?? [] : body.changes ?? [];
+  const entries = codec === "terrabase-snapshot/1" ? body.documents ?? [] : body.changes ?? [];
   const result = new Map<string, Readonly<Record<string, SyncV2Value>>>();
   for (const entry of entries) {
     if (entry.delete === true) {
@@ -323,7 +323,7 @@ describe("local Sync v2 semantic runtime", () => {
 
       await session.resync();
       assert.equal(session.getStoreSnapshot().AdoptedSnapshots, 1);
-      assert.equal(session.getStoreSnapshot().AppliedPayloadCodec, "loro-snapshot/1");
+      assert.equal(session.getStoreSnapshot().AppliedPayloadCodec, "terrabase-snapshot/1");
       assert.deepEqual(session.getStore().getDocuments().get("task-1"), { state: "open" });
       const checkpoint = session.getCheckpointBase64();
       const acknowledged = await post(address, "/v1/sync/sessions/1/ack", "principal-v2", "tenant-v2", { checkpoint });
@@ -332,7 +332,7 @@ describe("local Sync v2 semantic runtime", () => {
       const directSnapshot = await post(address, "/v1/sync/sessions/1/snapshot", "principal-v2", "tenant-v2", {});
       assert.equal(directSnapshot.status, 200);
       const snapshotBody = await directSnapshot.json() as { payload: string; payloadCodec: string };
-      assert.equal(snapshotBody.payloadCodec, "loro-snapshot/1");
+      assert.equal(snapshotBody.payloadCodec, "terrabase-snapshot/1");
       assert.equal(JSON.stringify(decodePayload(snapshotBody.payload)).includes("task-1"), true);
 
       await session.disconnect();

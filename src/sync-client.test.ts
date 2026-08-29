@@ -5,12 +5,11 @@ import { describe, test } from "node:test";
 import {
   syncWebSocketProtocol,
   TerraScaleSyncSession,
-  type CompleteTransition,
-  type JsonValue,
-  type SyncStateVersion,
   type SyncWebSocket,
   type SyncWebSocketFactory,
-} from "./index.js";
+} from "./sync/client.js";
+import type { CompleteTransition, SyncStateVersion } from "./sync/protocol.js";
+import type { JsonValue } from "./models.js";
 
 const databaseId = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const environmentId = "01BX5ZZKBKACTAV9WEVGEMMVRZ";

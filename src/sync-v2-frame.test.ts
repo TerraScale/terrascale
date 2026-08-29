@@ -176,7 +176,7 @@ describe("terrascale.sync.v2 frame envelope", () => {
         sealSyncV2Frame(
           {
             kind: "delta_batch",
-            codec: "loro-delta/1",
+            codec: "terrabase-native/1",
             payload: encodeHex(decodeHex(hex)),
             next: syncV2InitialCheckpoint(),
             within_budget: false,
@@ -194,13 +194,13 @@ describe("terrascale.sync.v2 frame envelope", () => {
     assert.equal(protocolErrorCode(oversize), "malformed_frame");
   });
 
-  test("a delta batch carries only loro-delta/1; a snapshot only loro-snapshot/1", () => {
+  test("a delta batch carries only terrabase-native/1; a snapshot only terrabase-snapshot/1", () => {
     const wrongCodec = (() => {
       try {
         sealSyncV2Frame(
           {
             kind: "snapshot_answer",
-            codec: "loro-delta/1" as "loro-snapshot/1",
+            codec: "terrabase-native/1" as "terrabase-snapshot/1",
             payload: "",
             checkpoint: syncV2InitialCheckpoint(),
           },
@@ -236,13 +236,13 @@ describe("terrascale.sync.v2 frame envelope", () => {
 
   test("checkpoints canonicalize, round-trip, and fail closed on unknown versions", () => {
     const checkpoint = syncV2CanonicalCheckpoint(
-      [[3n, 9], [1n, 4], [1n, 4], [2n, -7]],
+      [[3n, 9], [1n, 4], [1n, 4], [2n, 7]],
       12n,
     );
-    assert.deepEqual(checkpoint.ends, [[1n, 4], [2n, -7], [3n, 9]]);
+    assert.deepEqual(checkpoint.ends, [[1n, 4n], [2n, 7n], [3n, 9n]]);
 
     const bytes = syncV2CheckpointToBytes(checkpoint);
-    assert.equal(bytes[0], 1);
+    assert.equal(bytes[0], 2);
     assert.deepEqual(syncV2CheckpointFromBytes(bytes), checkpoint);
 
     const empty = syncV2CheckpointToBytes(syncV2InitialCheckpoint());
@@ -252,7 +252,7 @@ describe("terrascale.sync.v2 frame envelope", () => {
       storage_sequence: 0n,
     });
 
-    assert.throws(() => syncV2CheckpointFromBytes(new Uint8Array([2, ...empty.slice(1)])), Error);
+    assert.throws(() => syncV2CheckpointFromBytes(new Uint8Array([1, ...empty.slice(1)])), Error);
     assert.throws(() => syncV2CheckpointFromBytes(empty.slice(0, 8)), Error);
   });
 
@@ -340,7 +340,7 @@ describe("terrascale.sync.v2 frame envelope", () => {
         sealSyncV2Frame(
           {
             kind: "delta_batch",
-            codec: "loro-delta/1",
+            codec: "terrabase-native/1",
             payload: "1z",
             next: syncV2InitialCheckpoint(),
             within_budget: true,
@@ -362,7 +362,7 @@ describe("terrascale.sync.v2 frame envelope", () => {
         sealSyncV2Frame(
           {
             kind: "snapshot_answer",
-            codec: "loro-snapshot/1",
+            codec: "terrabase-snapshot/1",
             payload: "0x",
             checkpoint: syncV2InitialCheckpoint(),
           },
@@ -393,7 +393,7 @@ describe("terrascale.sync.v2 frame envelope", () => {
           digest: 0n,
           body: {
             kind: "delta_batch",
-            codec: "loro-delta/1",
+            codec: "terrabase-native/1",
             payload,
             next: syncV2InitialCheckpoint(),
             within_budget: false,

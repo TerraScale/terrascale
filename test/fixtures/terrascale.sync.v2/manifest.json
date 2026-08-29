@@ -4,58 +4,58 @@
   "schema": "terrascale.sync.v2/corpus-manifest@1",
   "vectors": [
     {
-      "bytes": 4431,
+      "bytes": 4126,
       "category": "checkpoint-resume",
       "file": "checkpoint-resume.json",
-      "sha256": "65a50eebc1953a2d8d457b0adbaeb0e4e9e219e24768567955cc754829ee6c16"
+      "sha256": "ebdc4de6142d24bd63ada474d16f97cfb0baba08611f581e99ff2f8232621b36"
     },
     {
-      "bytes": 6697,
+      "bytes": 6692,
       "category": "fresh-session",
       "file": "fresh-session.json",
-      "sha256": "67273fcf9407ea6169919202c7aafce1cfd7349d4ff57a6a84caf4864c72de05"
+      "sha256": "17bab1a113e53e63e38b095899ef29112b4b7f438532f7e7eeefbfecb51e4b1d"
     },
     {
       "bytes": 3451,
       "category": "malformed-frame-rejection",
       "file": "malformed-frame-rejection.json",
-      "sha256": "0160117eb27457a5ed8a28065fc92de996819065989c1339b25379d713b3d5af"
+      "sha256": "152009d055ef911b379067057e0a1dbc500b2fff5d81a0523e9cbdbe58341610"
     },
     {
-      "bytes": 5543,
+      "bytes": 5579,
       "category": "reconnect-replay",
       "file": "reconnect-replay.json",
-      "sha256": "32c8ec2f61213858411bf2fc3444fe4ffa1dff5c722230f5bc2296f2c8156dc0"
+      "sha256": "5ce9185dca0eb7c0ae78d233713bb060dc2986b56cb43851a745ac4c5c9776da"
     },
     {
-      "bytes": 1731,
+      "bytes": 1739,
       "category": "region-route-change",
       "file": "region-route-change.json",
-      "sha256": "fbc4216992cafdcd8e2adcaf0720093e21df2505055a5f8ed59c730a251ce319"
+      "sha256": "6cf0e08e7ba9a2456dfc838931c02e69d53ea10d4e676fe50a6bc6490fbb97bb"
     },
     {
-      "bytes": 24800,
+      "bytes": 86652,
       "category": "repeated-change-delta",
       "file": "repeated-change-delta.json",
-      "sha256": "a1136f85417d81f86af2fe51afac71d076b7a9dd24b5e3558e3f93d2c786558a"
+      "sha256": "3cb6399c5dba923ad16fadf5b7d7d7b704446f19dfc9c7b8b2afced907909076"
     },
     {
-      "bytes": 11370,
+      "bytes": 20297,
       "category": "resync-required",
       "file": "resync-required.json",
-      "sha256": "8d52e95832e151cf7e3889d5cbd459fedf203eff6d687fd57e017c6d869254cc"
+      "sha256": "255e735c03760a3a3f0b8abc5785c15cadbb7d006c84f7848da060cfb2e21e4d"
     },
     {
-      "bytes": 60254,
+      "bytes": 58158,
       "category": "slow-consumer",
       "file": "slow-consumer.json",
-      "sha256": "bc97fb745f860bfc2defb6e8ce0877f900261f2260f35c9e9fd14e1972641b80"
+      "sha256": "6e4fb3c95c9ce9e4ad9e097334a3e2490682f37301b7e1a2130f0903d1174f46"
     },
     {
-      "bytes": 4396,
+      "bytes": 4078,
       "category": "trigger-notification",
       "file": "trigger-notification.json",
-      "sha256": "396ee707fa1f87ff67316968d888d5793a71a0ee97f298987dc325ac89bbfe18"
+      "sha256": "10b56b09ef0655c931aa0a5c7f7be01a201632ab349791a6e3255045e62bf788"
     }
   ]
 }

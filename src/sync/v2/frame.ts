@@ -1,5 +1,5 @@
-// The native `terrascale.sync.v2` frame codec (SE-09): the versioned
-// client-channel wire protocol defined by the SE-04 wire spec
+// The native `terrascale.sync.v2` frame codec: the versioned
+// client-channel wire protocol defined by the sync-v2 wire spec
 // (`docs/sync/terrascale-sync-v2.md` in TerraBaseV2) and qualified by the
 // SE-04/SE-05 golden-vector corpus. PD-2026-08-26-12 D1: this is a
 // native-language implementation — no wasm, no C ABI embedding — and
@@ -58,6 +58,9 @@ export const syncV2MaxFields = 1024;
 /** The longest error detail string (bytes). */
 export const syncV2MaxDetailBytes = 256;
 
+/** The maximum number of sparse native checkpoint positions. */
+export const syncV2MaxCheckpointEntries = 64;
+
 /** The frame classes and their written bytes-on-wire budget definitions (PD-2026-08-26-13 D1). */
 export const syncV2FrameBudgetBytes = {
   session: 4096,
@@ -103,7 +106,7 @@ export class SyncV2ProtocolError extends Error {
 /** One resumption checkpoint: the version-vector end pairs and the storage sequence absorbed. */
 export type SyncV2Checkpoint = {
   /** The (peer, end) pairs in canonical ascending peer order. */
-  readonly ends: ReadonlyArray<readonly [bigint, number]>;
+  readonly ends: ReadonlyArray<readonly [bigint, bigint]>;
   /** The storage sequence the session has absorbed. */
   readonly storage_sequence: bigint;
 };
@@ -129,7 +132,7 @@ export type SyncV2FrameKindName =
   | "mutation_ack";
 
 /** The payload-codec identities: the only byte payloads the protocol carries. */
-export type SyncV2PayloadCodecName = "loro-delta/1" | "loro-snapshot/1";
+export type SyncV2PayloadCodecName = "terrabase-native/1" | "terrabase-snapshot/1";
 
 /**
  * One typed frame body. The field names are exactly the structured
@@ -165,7 +168,7 @@ export type SyncV2FrameBody =
   | { readonly kind: "heartbeat" }
   | {
     readonly kind: "delta_batch";
-    readonly codec: "loro-delta/1";
+    readonly codec: "terrabase-native/1";
     readonly payload: string;
     readonly next: SyncV2Checkpoint;
     readonly within_budget: boolean;
@@ -174,7 +177,7 @@ export type SyncV2FrameBody =
   }
   | {
     readonly kind: "snapshot_answer";
-    readonly codec: "loro-snapshot/1";
+    readonly codec: "terrabase-snapshot/1";
     readonly payload: string;
     readonly checkpoint: SyncV2Checkpoint;
   }
@@ -298,14 +301,20 @@ export function syncV2InitialCheckpoint(): SyncV2Checkpoint {
 
 /** Builds a checkpoint from explicit end pairs, canonicalized (sorted, deduplicated). */
 export function syncV2CanonicalCheckpoint(
-  ends: ReadonlyArray<readonly [bigint, number]>,
+  ends: ReadonlyArray<readonly [bigint, bigint | number]>,
   storageSequence: bigint,
 ): SyncV2Checkpoint {
+  if (storageSequence < 0n || storageSequence > u64Mask || ends.length > syncV2MaxCheckpointEntries) {
+    throw malformed("checkpoint values exceed their unsigned bounds");
+  }
   const canonical = [...ends]
-    .map((pair) => [pair[0], pair[1]] as const)
+    .map((pair) => [pair[0], BigInt(pair[1])] as const)
     .sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0));
-  const deduplicated: Array<readonly [bigint, number]> = [];
+  const deduplicated: Array<readonly [bigint, bigint]> = [];
   for (const pair of canonical) {
+    if (pair[0] < 0n || pair[0] > u64Mask || pair[1] < 0n || pair[1] > u64Mask) {
+      throw malformed("checkpoint values exceed their unsigned bounds");
+    }
     const last = deduplicated.at(-1);
     if (last === undefined || last[0] !== pair[0]) {
       deduplicated.push(pair);
@@ -318,12 +327,12 @@ export function syncV2CanonicalCheckpoint(
 }
 
 function encodeCheckpointInto(bytes: number[], checkpoint: SyncV2Checkpoint): void {
-  bytes.push(1);
+  bytes.push(2);
   pushU64(bytes, checkpoint.storage_sequence);
   pushU32(bytes, checkpoint.ends.length);
   for (const [peer, end] of checkpoint.ends) {
     pushU64(bytes, peer);
-    pushI32(bytes, end);
+    pushU64(bytes, end);
   }
 }
 
@@ -336,7 +345,7 @@ export function syncV2CheckpointToBytes(checkpoint: SyncV2Checkpoint): Uint8Arra
 
 /** Decodes a checkpoint, failing closed on unknown versions and truncation. */
 export function syncV2CheckpointFromBytes(bytes: Uint8Array): SyncV2Checkpoint {
-  if (bytes.length === 0 || bytes[0] !== 1) {
+  if (bytes.length === 0 || bytes[0] !== 2) {
     throw new SyncV2ProtocolError("malformed_frame", "unknown checkpoint encoding version");
   }
   let cursor = 1;
@@ -350,15 +359,23 @@ export function syncV2CheckpointFromBytes(bytes: Uint8Array): SyncV2Checkpoint {
   };
   const storageSequence = bytesToBigInt(take(8));
   const count = Number(bytesToBigInt(take(4)));
-  const ends: Array<readonly [bigint, number]> = [];
+  if (count > syncV2MaxCheckpointEntries) {
+    throw malformed("checkpoint entry count exceeds bound");
+  }
+  const ends: Array<readonly [bigint, bigint]> = [];
+  let previousPeer: bigint | undefined;
   for (let index = 0; index < count; index++) {
     const peer = bytesToBigInt(take(8));
-    const end = bytesToInt32(take(4));
+    const end = bytesToBigInt(take(8));
+    if (previousPeer !== undefined && peer <= previousPeer) {
+      throw malformed("checkpoint entries are not canonical");
+    }
+    previousPeer = peer;
     ends.push([peer, end]);
   }
-  // Trailing bytes after the declared pairs are not inspected, matching
-  // the reference decode (the field's outer length governs the frame).
-  void cursor;
+  if (cursor !== bytes.length) {
+    throw malformed("trailing checkpoint encoding");
+  }
   return Object.freeze({ ends: Object.freeze(ends), storage_sequence: storageSequence });
 }
 
@@ -380,21 +397,12 @@ function pushU64(bytes: number[], value: bigint): void {
   }
 }
 
-function pushI32(bytes: number[], value: number): void {
-  pushU32(bytes, value | 0);
-}
-
 function bytesToBigInt(bytes: Uint8Array): bigint {
   let value = 0n;
   for (let index = bytes.length - 1; index >= 0; index--) {
     value = (value << 8n) | BigInt(bytes[index]!);
   }
   return value;
-}
-
-function bytesToInt32(bytes: Uint8Array): number {
-  const unsigned = Number(bytesToBigInt(bytes));
-  return unsigned >= 0x8000_0000 ? unsigned - 0x1_0000_0000 : unsigned;
 }
 
 class ByteReader {
@@ -671,8 +679,8 @@ function validateBody(body: SyncV2FrameBody): void {
     case "heartbeat":
       return;
     case "delta_batch": {
-      if (body.codec !== "loro-delta/1") {
-        throw malformed("a delta batch carries the loro-delta/1 codec only");
+      if (body.codec !== "terrabase-native/1") {
+        throw malformed("a delta batch carries the terrabase-native/1 codec only");
       }
       if (decodeHexBytes(body.payload).length > syncV2MaxPayloadBytes) {
         throw malformed("payload exceeds the frame bound");
@@ -684,8 +692,8 @@ function validateBody(body: SyncV2FrameBody): void {
       return;
     }
     case "snapshot_answer": {
-      if (body.codec !== "loro-snapshot/1") {
-        throw malformed("a snapshot answer carries the loro-snapshot/1 codec only");
+      if (body.codec !== "terrabase-snapshot/1") {
+        throw malformed("a snapshot answer carries the terrabase-snapshot/1 codec only");
       }
       if (decodeHexBytes(body.payload).length > syncV2MaxPayloadBytes) {
         throw malformed("payload exceeds the frame bound");
@@ -802,7 +810,7 @@ export function syncV2BodyToBytes(body: SyncV2FrameBody): Uint8Array {
       break;
     }
     case "delta_batch": {
-      bytes.push(1);
+      bytes.push(3);
       encodePayloadInto(bytes, body.payload);
       encodeCheckpointFieldInto(bytes, body.next);
       bytes.push(body.within_budget ? 1 : 0);
@@ -811,7 +819,7 @@ export function syncV2BodyToBytes(body: SyncV2FrameBody): Uint8Array {
       break;
     }
     case "snapshot_answer": {
-      bytes.push(2);
+      bytes.push(4);
       encodePayloadInto(bytes, body.payload);
       encodeCheckpointFieldInto(bytes, body.checkpoint);
       break;
@@ -925,8 +933,8 @@ export function syncV2BodyFromBytes(bytes: Uint8Array): SyncV2FrameBody {
     }
     case "delta_batch": {
       const codecTag = reader.u8(truncated);
-      if (codecTag !== 1) {
-        throw malformed(codecTag === 2 ? "a delta batch carries the loro-delta/1 codec only" : "unknown payload codec");
+      if (codecTag !== 3) {
+        throw malformed(codecTag === 4 ? "a delta batch carries the terrabase-native/1 codec only" : "unknown payload codec");
       }
       const payload = reader.payload(truncated);
       const next = reader.checkpoint();
@@ -935,7 +943,7 @@ export function syncV2BodyFromBytes(bytes: Uint8Array): SyncV2FrameBody {
       const commits = reader.u64(truncated);
       body = {
         kind,
-        codec: "loro-delta/1",
+        codec: "terrabase-native/1",
         payload: encodeHexBytes(payload),
         next,
         within_budget: withinBudget,
@@ -946,12 +954,12 @@ export function syncV2BodyFromBytes(bytes: Uint8Array): SyncV2FrameBody {
     }
     case "snapshot_answer": {
       const codecTag = reader.u8(truncated);
-      if (codecTag !== 2) {
-        throw malformed(codecTag === 1 ? "a snapshot answer carries the loro-snapshot/1 codec only" : "unknown payload codec");
+      if (codecTag !== 4) {
+        throw malformed(codecTag === 3 ? "a snapshot answer carries the terrabase-snapshot/1 codec only" : "unknown payload codec");
       }
       const payload = reader.payload(truncated);
       const checkpoint = reader.checkpoint();
-      body = { kind, codec: "loro-snapshot/1", payload: encodeHexBytes(payload), checkpoint };
+      body = { kind, codec: "terrabase-snapshot/1", payload: encodeHexBytes(payload), checkpoint };
       break;
     }
     case "trigger": {

@@ -357,8 +357,8 @@ function runVector(file: string, text: string): SyncV2ConformanceVector {
   }
 
   run.check("corpus_schema_identity", null, () => {
-    if (corpus.schema !== "terrascale.sync.v2/vector-corpus@1") {
-      throw new CheckFailure("corpus_schema_identity", "the schema identity is not vector-corpus@1");
+    if (corpus.schema !== "terrascale.sync.v2/vector-corpus@2") {
+      throw new CheckFailure("corpus_schema_identity", "the schema identity is not vector-corpus@2");
     }
     if (corpus.protocol !== syncV2Contract || corpus.protocol_version !== syncV2ProtocolVersion) {
       throw new CheckFailure("corpus_schema_identity", "the protocol identity disagrees");
@@ -744,7 +744,7 @@ function bodyFromDescription(kind: string, value: Record<string, unknown>): Sync
     case "delta_batch":
       return {
         kind,
-        codec: "loro-delta/1",
+        codec: "terrabase-native/1",
         payload: stringOf(value.payload, "payload"),
         next: checkpointFromDescription(value.next),
         within_budget: booleanOf(value.within_budget),
@@ -754,7 +754,7 @@ function bodyFromDescription(kind: string, value: Record<string, unknown>): Sync
     case "snapshot_answer":
       return {
         kind,
-        codec: "loro-snapshot/1",
+        codec: "terrabase-snapshot/1",
         payload: stringOf(value.payload, "payload"),
         checkpoint: checkpointFromDescription(value.checkpoint),
       };
@@ -816,7 +816,7 @@ function checkpointFromDescription(value: unknown): SyncV2Checkpoint {
   const checkpoint = objectOf(value, "checkpoint");
   const ends = (Array.isArray(checkpoint.ends) ? checkpoint.ends : []).map((pair) => {
     const entry = Array.isArray(pair) ? pair : [];
-    return [bigOf(entry[0] ?? 0), numberOrBig(entry[1] ?? 0)] as const;
+    return [bigOf(entry[0] ?? 0), bigOf(entry[1] ?? 0)] as const;
   });
   return { ends, storage_sequence: bigOf(checkpoint.storage_sequence ?? 0) };
 }
@@ -862,7 +862,7 @@ function deepEqualTolerant(left: unknown, right: unknown): boolean {
   if (typeof left === "object" && typeof right === "object" && left !== null && right !== null) {
     const leftKeys = Object.keys(left).sort();
     const rightKeys = Object.keys(right).sort();
-    if (leftKeys.join(" ") !== rightKeys.join(" ")) {
+    if (leftKeys.join("\0") !== rightKeys.join("\0")) {
       return false;
     }
     return leftKeys.every((key) =>

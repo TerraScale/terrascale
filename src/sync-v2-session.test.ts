@@ -5,11 +5,13 @@ import {
   syncV2CanonicalCheckpoint,
   syncV2CheckpointFromBytes,
   syncV2CheckpointToBytes,
+  type SyncV2Value,
+} from "./sync/v2/frame.js";
+import {
   SyncV2SessionError,
   TerraScaleSyncV2Session,
   type SyncV2Fetch,
-  type SyncV2Value,
-} from "./index.js";
+} from "./sync/v2/session.js";
 
 // ---------------------------------------------------------------------------
 // A fixture API host implementing the SE-08 sync-session HTTP/SSE surface
@@ -155,7 +157,7 @@ class FixtureApiHost {
       if (from.storage_sequence >= BigInt(scope.sequence)) {
         return Response.json({
           sessionId,
-          payloadCodec: "loro-delta/1",
+          payloadCodec: "terrabase-native/1",
           payload: "",
           next: base64(syncV2CheckpointToBytes(hostCheckpoint(scope))),
           commits: 0,
@@ -167,7 +169,7 @@ class FixtureApiHost {
       );
       return Response.json({
         sessionId,
-        payloadCodec: "loro-delta/1",
+        payloadCodec: "terrabase-native/1",
         payload: base64(payload),
         next: base64(syncV2CheckpointToBytes(hostCheckpoint(scope))),
         commits: scope.sequence - Number(from.storage_sequence),
@@ -180,7 +182,7 @@ class FixtureApiHost {
       const scope = this.#scope(this.#sessions.get(sessionId) ?? "orders");
       return Response.json({
         sessionId,
-        payloadCodec: "loro-snapshot/1",
+        payloadCodec: "terrabase-snapshot/1",
         payload: base64(new TextEncoder().encode(`snapshot:@${scope.sequence}`)),
         checkpoint: base64(syncV2CheckpointToBytes(hostCheckpoint(scope))),
       });
@@ -522,13 +524,13 @@ describe("TerraScaleSyncV2Session over the API host HTTP/SSE surface", () => {
     const snapshot = session.getStore().getSnapshot();
     assert.equal(snapshot.Status, "live");
     assert.equal(snapshot.Checkpoint.storage_sequence, 1n);
-    assert.equal(snapshot.AppliedPayloadCodec, "loro-snapshot/1");
+    assert.equal(snapshot.AppliedPayloadCodec, "terrabase-snapshot/1");
     assert.ok(notifications >= 1);
 
     host.commit("orders");
     host.pushTrigger("orders", 2);
     await waitFor(() => session.getStore().getSnapshot().Checkpoint.storage_sequence === 2n);
-    assert.equal(session.getStore().getSnapshot().AppliedPayloadCodec, "loro-delta/1");
+    assert.equal(session.getStore().getSnapshot().AppliedPayloadCodec, "terrabase-native/1");
 
     unsubscribe();
     await session.disconnect();

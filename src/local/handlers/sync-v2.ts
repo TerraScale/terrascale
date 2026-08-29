@@ -95,10 +95,10 @@ function delta(context: LocalRequestContext, session: Session): Response {
     if (candidateLength > 65_536) break;
   }
   if (changes.length === 0) {
-    return jsonResponse({ sessionId: session.sessionId, payloadCodec: "loro-delta/1", payload: "", next: encodeCheckpoint(from), commits: 0, singleCommitOversize: false });
+    return jsonResponse({ sessionId: session.sessionId, payloadCodec: "terrabase-native/1", payload: "", next: encodeCheckpoint(from), commits: 0, singleCommitOversize: false });
   }
   const payload = utf8(JSON.stringify({ collection: session.collection, changes }));
-  return jsonResponse({ sessionId: session.sessionId, payloadCodec: "loro-delta/1", payload: base64(payload), next: encodeCheckpoint(syncV2CanonicalCheckpoint([[PEER, changes.at(-1)!.sequence]], BigInt(changes.at(-1)!.sequence))), commits: changes.length, singleCommitOversize: changes.length === 1 && payloadLength > 65_536 });
+  return jsonResponse({ sessionId: session.sessionId, payloadCodec: "terrabase-native/1", payload: base64(payload), next: encodeCheckpoint(syncV2CanonicalCheckpoint([[PEER, changes.at(-1)!.sequence]], BigInt(changes.at(-1)!.sequence))), commits: changes.length, singleCommitOversize: changes.length === 1 && payloadLength > 65_536 });
 }
 
 function snapshot(context: LocalRequestContext, session: Session): Response {
@@ -106,7 +106,7 @@ function snapshot(context: LocalRequestContext, session: Session): Response {
   const documents = listDocuments(context.store, session.principal, session.tenant, session.collection).filter((item) => item.delete !== true);
   const payload = utf8(JSON.stringify({ collection: session.collection, documents }));
   if (payload.length > syncV2MaxFrameBytes) return syncError(413, "overloaded", "The local snapshot exceeds the frame budget.");
-  return jsonResponse({ sessionId: session.sessionId, payloadCodec: "loro-snapshot/1", payload: base64(payload), checkpoint: encodeCheckpoint(current) });
+  return jsonResponse({ sessionId: session.sessionId, payloadCodec: "terrabase-snapshot/1", payload: base64(payload), checkpoint: encodeCheckpoint(current) });
 }
 
 function acknowledge(context: LocalRequestContext, session: Session): Response {
