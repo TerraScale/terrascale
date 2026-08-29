@@ -382,3 +382,41 @@ own durable replication lands with the P5 configuration plane.
 Receipts: `terrabase-v2 --lib` 1076/1076 (5 new modes tests);
 `terrabase-replication-core` 25/25; clippy `-D warnings` and fmt
 clean. `scripts/check.sh` not run (AC-12).
+
+## 11. P3 landings 2-3 (2026-08-29): coordinated rules, migrations, negotiation
+
+P3 is complete against the charter. Landing 2 — the coordinated path
+(contract §3): `RuleClass` {`MergeSafe`, `Coordinated`} is the
+reported classification; `CoordinatedConstraint::UniqueField` is the
+canonical coordinated rule; `coordinate_composed_transaction` heals
+the accepting Member with EVERY reachable Member to the frontier
+fixed point, evaluates the constraint against the full merged view,
+fans the write at `GlobalQuorum`, and — the contract's discipline —
+REFUSES with `QuorumUnavailable` (naming the unreachable Regions)
+while any Region lacks a reachable Member, never pretending
+coordination-free availability. Proven: first-holder admission with
+the class and level reported; the second claimant refused naming the
+holder; refusal under a Region partition.
+
+Landing 3 — migrations (contract §7): `migrate_collection` validates
+the ENTIRE batch at the target version before any Member commits
+(post-merge validation applies post-transform); a quarantinable
+transform result stops the migration with the receipt naming the
+document and violations, leaving the source version active — the
+stopped path changes no Member's policy or state. Successful
+migrations commit under deterministic identities
+(`mig-{version}-{document}`), so re-runs replay and every Member
+produces the same result from the merged state. Schema-version
+negotiation: `accept_put_negotiated` fails closed
+(`SchemaVersionSkew { local, offered }`) when a writer declares a
+version the Member does not govern; `schema-free` has nothing to
+negotiate.
+
+Open (honest): the policy's durable replication as collection
+metadata and the index-plane integration of quarantine (quarantined
+documents are excluded from the served read today; the query-plane
+gate lands with P4/P6).
+
+Receipts: `terrabase-replication-core` 28/28 (8 convergence + 20
+composed); clippy `-D warnings` and fmt clean. `scripts/check.sh` not
+run (AC-12).

@@ -858,3 +858,218 @@ fn body_int(entries: &[(&str, i64)]) -> BTreeMap<String, DocumentValue> {
         .map(|(path, value)| ((*path).to_owned(), DocumentValue::Integer(*value)))
         .collect()
 }
+
+#[test]
+fn a_unique_field_is_coordinated_and_refuses_under_partition() {
+    use terrabase_replication_core::{
+        CoordinatedConstraint, RuleClass, TransactionRefusal, coordinate_composed_transaction,
+    };
+    use terrabase_v2::replication::MemberId;
+
+    let (set, mut members, dirs) = three_region_members("unique");
+    let unique = CoordinatedConstraint::UniqueField { field: "email".to_owned() };
+    let write_for = |operation: &str, document: &str, email: &str| {
+        terrabase_replication_core::ComposedWrite::Put {
+            operation: operation.to_owned(),
+            document: document.to_owned(),
+            body: BTreeMap::from([("email".to_owned(), DocumentValue::String(email.to_owned()))]),
+        }
+    };
+
+    // The first holder acquires the value through the coordinated path.
+    let first = coordinate_composed_transaction(
+        &set,
+        &MemberId::try_new("a1").expect("valid member"),
+        &mut members,
+        &write_for("op-1", "user-1", "ada@example.net"),
+        &unique,
+    )
+    .expect("the first holder is admitted");
+    assert_eq!(first.class(), RuleClass::Coordinated, "the API reports the class used");
+    assert_eq!(
+        first.receipt().achieved(),
+        terrabase_v2::replication::LeaderlessLevel::GlobalQuorum
+    );
+
+    // A second document claiming the same value is refused, naming the
+    // holder — the constraint held against the merged view.
+    let refusal = coordinate_composed_transaction(
+        &set,
+        &MemberId::try_new("b1").expect("valid member"),
+        &mut members,
+        &write_for("op-2", "user-2", "ada@example.net"),
+        &unique,
+    )
+    .expect_err("the value is taken");
+    assert_eq!(
+        refusal,
+        TransactionRefusal::ConstraintViolated {
+            field: "email".to_owned(),
+            value: "ada@example.net".to_owned(),
+            holder: "user-1".to_owned(),
+        }
+    );
+    assert_eq!(members[1].visible("user-2"), Ok(None), "the refused write recorded nothing");
+
+    // A distinct value is admitted.
+    coordinate_composed_transaction(
+        &set,
+        &MemberId::try_new("g1").expect("valid member"),
+        &mut members,
+        &write_for("op-3", "user-3", "grace@example.net"),
+        &unique,
+    )
+    .expect("a distinct value is admitted");
+
+    // The coordinated path refuses while a Region is unreachable: the
+    // gamma Members leave the reachable set.
+    let (reachable, _rest) = members.split_at_mut(4);
+    let refusal = coordinate_composed_transaction(
+        &set,
+        &MemberId::try_new("a1").expect("valid member"),
+        reachable,
+        &write_for("op-4", "user-4", "new@example.net"),
+        &unique,
+    )
+    .expect_err("the coordinated rule needs the full view");
+    assert_eq!(
+        refusal,
+        TransactionRefusal::QuorumUnavailable {
+            regions: vec![
+                terrabase_v2::replication::RegionId::try_new("r-gamma").expect("valid region")
+            ],
+        }
+    );
+
+    for member in members.drain(..) {
+        member.shutdown().expect("closes");
+    }
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn a_migration_validates_at_the_target_before_committing() {
+    use terrabase_replication_core::{MigrationOutcome, migrate_collection};
+    use terrabase_v2::families::modes::CollectionPolicy;
+    use terrabase_v2::families::{SchemaDefinition, SchemaRule, SchemaVersion};
+
+    let dir_a = location("mig-a");
+    let dir_b = location("mig-b");
+    let mut member_a = ComposedMember::open("member-a", &dir_a, "tenant-a").expect("opens");
+    let mut member_b = ComposedMember::open("member-b", &dir_b, "tenant-a").expect("opens");
+    let source = CollectionPolicy::validated(
+        SchemaDefinition::try_new(
+            SchemaVersion::try_new(1).expect("valid version"),
+            vec![SchemaRule::TextLength { field: "name".to_owned(), min: None, max: Some(8) }],
+        )
+        .expect("valid definition"),
+    );
+    let target = CollectionPolicy::validated(
+        SchemaDefinition::try_new(
+            SchemaVersion::try_new(2).expect("valid version"),
+            vec![
+                SchemaRule::TextLength { field: "name".to_owned(), min: None, max: Some(8) },
+                SchemaRule::Required { field: "level".to_owned() },
+            ],
+        )
+        .expect("valid definition"),
+    );
+    for member in [&mut member_a, &mut member_b] {
+        member.set_policy(source.clone());
+    }
+    member_a.accept_put("op-1", "user-1", &body_from(&[("name", "ada")])).expect("writes");
+    member_a.anti_entropy_with(&mut member_b).expect("spreads");
+
+    let mut members = [member_a, member_b];
+    let upgrade = |body: &BTreeMap<String, DocumentValue>| {
+        let mut next = body.clone();
+        next.insert("level".to_owned(), DocumentValue::String("standard".to_owned()));
+        next
+    };
+    let outcome = migrate_collection(&mut members, &source, &target, &upgrade).expect("migrates");
+    assert_eq!(outcome, MigrationOutcome::Migrated { documents: vec!["user-1".to_owned()] });
+    // Both Members serve the migrated body under the target policy, and
+    // a re-run replays the deterministic identities: still Migrated,
+    // nothing new to do.
+    for member in &mut members {
+        assert_eq!(
+            member.read_document("user-1").expect("serves"),
+            Some(BTreeMap::from([
+                ("name".to_owned(), DocumentValue::String("ada".to_owned())),
+                ("level".to_owned(), DocumentValue::String("standard".to_owned())),
+            ]))
+        );
+    }
+    let again = migrate_collection(&mut members, &source, &target, &upgrade).expect("replays");
+    assert_eq!(again, MigrationOutcome::Migrated { documents: vec!["user-1".to_owned()] });
+
+    // A transform whose output violates the TARGET version STOPS: the
+    // receipt names the document and its violations, and the source
+    // version stays active — the documents keep serving their
+    // pre-migration bodies.
+    let refusing = |body: &BTreeMap<String, DocumentValue>| {
+        let mut next = body.clone();
+        next.insert("name".to_owned(), DocumentValue::String("a-name-far-too-long".to_owned()));
+        next
+    };
+    let stopped = migrate_collection(&mut members, &target, &source, &refusing).expect("decides");
+    let MigrationOutcome::Stopped { document, violations } = stopped else {
+        panic!("the transformed body violates the target's length rule, got {stopped:?}");
+    };
+    assert_eq!(document, "user-1");
+    assert!(!violations.is_empty());
+    assert_eq!(
+        members[0].read_document("user-1").expect("still serves"),
+        Some(BTreeMap::from([
+            ("name".to_owned(), DocumentValue::String("ada".to_owned())),
+            ("level".to_owned(), DocumentValue::String("standard".to_owned())),
+        ])),
+        "the stopped migration committed nothing"
+    );
+
+    for member in members {
+        member.shutdown().expect("closes");
+    }
+    let _ = std::fs::remove_dir_all(&dir_a);
+    let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+#[test]
+fn schema_negotiation_fails_closed_on_version_skew() {
+    use terrabase_v2::families::modes::CollectionPolicy;
+    use terrabase_v2::families::{SchemaDefinition, SchemaRule, SchemaVersion};
+
+    let dir = location("negotiate");
+    let mut member = ComposedMember::open("member-a", &dir, "tenant-a").expect("opens");
+    let definition = SchemaDefinition::try_new(
+        SchemaVersion::try_new(3).expect("valid version"),
+        vec![SchemaRule::Required { field: "status".to_owned() }],
+    )
+    .expect("valid definition");
+    member.set_policy(CollectionPolicy::validated(definition));
+
+    // An old writer declaring version 2 against a Member governing
+    // version 3 fails closed, nothing durable.
+    let refusal = member
+        .accept_put_negotiated("op-1", "order-1", &body_from(&[("status", "open")]), 2)
+        .expect_err("the version does not match");
+    assert_eq!(refusal, ComposeError::SchemaVersionSkew { local: 3, offered: 2 });
+    assert_eq!(member.visible("order-1"), Ok(None));
+
+    // A matching version is admitted.
+    member
+        .accept_put_negotiated("op-2", "order-1", &body_from(&[("status", "open")]), 3)
+        .expect("the negotiated write is admitted");
+    assert_eq!(member.visible("order-1"), Ok(Some(body_from(&[("status", "open")]))));
+
+    // A schema-free collection has no version to negotiate.
+    member.set_policy(CollectionPolicy::schema_free());
+    member
+        .accept_put_negotiated("op-3", "order-2", &body_from(&[("any", "thing")]), 7)
+        .expect("schema-free accepts every declared version");
+
+    member.shutdown().expect("closes");
+    let _ = std::fs::remove_dir_all(&dir);
+}

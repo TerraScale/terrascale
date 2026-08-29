@@ -66,6 +66,15 @@ pub enum ComposeError {
     /// collection's schema policy: it is quarantined from reads, never
     /// silently visible (contract §2, point 2).
     SchemaQuarantine,
+    /// The writer negotiated a schema version this Member does not
+    /// govern: old writers either negotiate a compatible version or
+    /// fail closed (contract §7).
+    SchemaVersionSkew {
+        /// The version the Member governs.
+        local: u64,
+        /// The version the writer offered.
+        offered: u64,
+    },
 }
 
 /// One leaderless write in the composed vocabulary: the operation
@@ -493,6 +502,34 @@ impl ComposedMember {
         self.known.insert(document.to_owned());
         self.stage_snapshot()?;
         Ok(receipt)
+    }
+
+    /// Accepts one whole-body put under schema-version negotiation
+    /// (contract §7): a writer declaring a version this Member does not
+    /// govern fails closed — old writers negotiate a compatible
+    /// version or refuse — while a `schema-free` collection has no
+    /// version to negotiate and accepts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ComposeError::SchemaVersionSkew`] on a version
+    /// mismatch, and the admission and compose failures otherwise.
+    pub fn accept_put_negotiated(
+        &mut self,
+        operation: &str,
+        document: &str,
+        body: &BTreeMap<String, DocumentValue>,
+        offered: u64,
+    ) -> Result<CommitReceipt, ComposeError> {
+        if let Some(definition) = self.policy.definition()
+            && definition.version().get() != offered
+        {
+            return Err(ComposeError::SchemaVersionSkew {
+                local: definition.version().get(),
+                offered,
+            });
+        }
+        self.accept_put(operation, document, body)
     }
 
     /// Accepts one deletion durably on both planes.
@@ -1166,4 +1203,244 @@ pub fn accept_epoch(
         new_acceptors,
         regions,
     })
+}
+
+/// The class of rule an operation used (contract §3): merge-safe
+/// rules run coordination-free; coordinated rules run through the
+/// request-scoped coordinated path. The API reports which class an
+/// operation used — never pretending coordination-free availability
+/// for a coordinated rule.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuleClass {
+    /// Closed under merge: the SM-02 rule set. Coordination-free at
+    /// admission; single-document CRDT operations stay available
+    /// during a partition.
+    MergeSafe,
+    /// Not closed under merge: cross-field, uniqueness, compare-
+    /// exchange. Runs through the coordinated path, which requires the
+    /// quorum and refuses while it is unavailable.
+    Coordinated,
+}
+
+/// One coordinated constraint — a rule whose truth depends on other
+/// documents, so it cannot be evaluated against a single mutation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CoordinatedConstraint {
+    /// The named field's text value must be unique across the
+    /// collection's documents.
+    UniqueField {
+        /// The field whose value must be unique.
+        field: String,
+    },
+}
+
+/// Why a coordinated transaction was refused.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TransactionRefusal {
+    /// The constraint is violated by the current merged state: another
+    /// document already holds the value.
+    ConstraintViolated {
+        /// The constrained field.
+        field: String,
+        /// The conflicting value.
+        value: String,
+        /// The document already holding it.
+        holder: String,
+    },
+    /// The coordinated rule needs the full merged view; a Region's
+    /// Members are unreachable, so the path refuses rather than
+    /// pretending coordination-free availability.
+    QuorumUnavailable {
+        /// The Regions without reachable Members.
+        regions: Vec<RegionId>,
+    },
+    /// The fan-out failed after the constraint held.
+    Coordination(ComposedCoordinationError),
+    /// The compose plane failed.
+    Compose(ComposeError),
+}
+
+/// The receipt of one coordinated write: the underlying composed
+/// receipt and the rule class the operation used.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoordinatedReceipt {
+    class: RuleClass,
+    receipt: ComposedReceipt,
+}
+
+impl CoordinatedReceipt {
+    /// Returns the rule class this operation used.
+    #[must_use]
+    pub const fn class(&self) -> RuleClass {
+        self.class
+    }
+
+    /// Returns the composed write receipt.
+    #[must_use]
+    pub fn receipt(&self) -> &ComposedReceipt {
+        &self.receipt
+    }
+}
+
+/// Coordinates one write under a coordinated constraint (contract §3):
+/// the constraint is evaluated against the FULL merged view — the
+/// accepting Member heals with every reachable Member first — and the
+/// write fans out at `GlobalQuorum`, because a rule that depends on
+/// other documents cannot be served from one Region's view.
+///
+/// # Errors
+///
+/// Returns [`TransactionRefusal::QuorumUnavailable`] when any Region
+/// of the set has no reachable Member, [`TransactionRefusal::
+/// ConstraintViolated`] when the merged state already holds the value,
+/// and the coordination/compose failures otherwise.
+pub fn coordinate_composed_transaction(
+    set: &ReplicaSet,
+    accepting: &MemberId,
+    members: &mut [ComposedMember],
+    write: &ComposedWrite,
+    constraint: &CoordinatedConstraint,
+) -> Result<CoordinatedReceipt, TransactionRefusal> {
+    // The coordinated path needs the full merged view: every Region of
+    // the set must have a reachable Member.
+    let mut unreachable: Vec<RegionId> = Vec::new();
+    for region in set.regions() {
+        let seated =
+            members.iter().any(|member| set.region_of(member.member_id()) == Some(region.clone()));
+        if !seated {
+            unreachable.push(region);
+        }
+    }
+    if !unreachable.is_empty() {
+        return Err(TransactionRefusal::QuorumUnavailable { regions: unreachable });
+    }
+    // Heal the accepting Member with every other reachable Member, in
+    // rounds to the frontier fixed point — the merged view the
+    // constraint is evaluated against.
+    let reader_index = members
+        .iter()
+        .position(|member| member.member_id() == accepting)
+        .ok_or(TransactionRefusal::Compose(ComposeError::InvalidIdentifier))?;
+    let others: Vec<usize> = (0..members.len()).filter(|&index| index != reader_index).collect();
+    loop {
+        let before = members[reader_index].frontier();
+        for &other in &others {
+            if other < reader_index {
+                let (_, high) = members.split_at_mut(other);
+                let (peer, readers) = high.split_at_mut(1);
+                readers[reader_index - other - 1]
+                    .anti_entropy_with(&mut peer[0])
+                    .map_err(TransactionRefusal::Compose)?;
+            } else {
+                let (low, high) = members.split_at_mut(reader_index + 1);
+                low[reader_index]
+                    .anti_entropy_with(&mut high[other - reader_index - 1])
+                    .map_err(TransactionRefusal::Compose)?;
+            }
+        }
+        if members[reader_index].frontier() == before {
+            break;
+        }
+    }
+    // Evaluate the constraint against the merged view.
+    if let ComposedWrite::Put { document, body, .. } = write
+        && let CoordinatedConstraint::UniqueField { field } = constraint
+        && let Some(offered) = body.get(field)
+    {
+        let merged = crdt_documents(&members[reader_index].merged_state())
+            .map_err(TransactionRefusal::Compose)?;
+        for (other, other_body) in &merged {
+            if other != document
+                && other_body.get(field) == Some(offered)
+                && let DocumentValue::String(value) = offered
+            {
+                return Err(TransactionRefusal::ConstraintViolated {
+                    field: field.clone(),
+                    value: value.clone(),
+                    holder: other.clone(),
+                });
+            }
+        }
+    }
+    // The constraint held: the write fans out at GlobalQuorum.
+    let receipt =
+        coordinate_composed_write(set, accepting, members, write, LeaderlessLevel::GlobalQuorum)
+            .map_err(TransactionRefusal::Coordination)?;
+    Ok(CoordinatedReceipt { class: RuleClass::Coordinated, receipt })
+}
+
+/// One migration''s explicit recorded transform: the function every
+/// document body passes through, validated at the target version
+/// before any commit.
+pub type DocumentTransform =
+    dyn Fn(&BTreeMap<String, DocumentValue>) -> BTreeMap<String, DocumentValue>;
+
+/// What one collection migration did: the migrated documents, or the
+/// refusal that stopped it with the source version left active.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MigrationOutcome {
+    /// Every merged document transformed and validated at the target
+    /// version; the writes carry deterministic identities, so re-running
+    /// replays the receipts.
+    Migrated {
+        /// The transformed documents, in canonical order.
+        documents: Vec<String>,
+    },
+    /// A transformed document would be quarantinable at the target
+    /// version: the migration stopped, recorded the receipt, and left
+    /// the source version active (contract §7).
+    Stopped {
+        /// The document whose transform would violate.
+        document: String,
+        /// The target-version violations of its transformed body.
+        violations: Vec<terrabase_v2::families::SchemaViolation>,
+    },
+}
+
+/// Migrates a collection's merged documents from one policy to another
+/// (contract §7): each document body passes through the explicit
+/// transform, the result is validated at the target version — the
+/// post-merge validation of §2 applies post-transform — and only a
+/// fully valid batch commits. The migration writes carry deterministic
+/// identities (`mig-{target version}-{document}`), so the same
+/// migration re-run replays and every Member applying it from the
+/// same merged state produces the same result.
+///
+/// # Errors
+///
+/// Returns the compose failures of the merged read or the writes.
+pub fn migrate_collection(
+    members: &mut [ComposedMember],
+    _from: &CollectionPolicy,
+    to: &CollectionPolicy,
+    transform: &DocumentTransform,
+) -> Result<MigrationOutcome, ComposeError> {
+    // Validate the whole batch before any Member commits: a migration
+    // that would produce quarantinable state stops, records the
+    // receipt, and leaves the source version active — no Member's
+    // policy or state changes on the stopped path.
+    let mut transformed: Vec<(String, BTreeMap<String, DocumentValue>)> = Vec::new();
+    let merged = crdt_documents(&members[0].merged_state())?;
+    for (document, body) in merged {
+        let next = transform(&body);
+        let violations = modes::merged_violations(to, &next);
+        if !violations.is_empty() {
+            return Ok(MigrationOutcome::Stopped { document, violations });
+        }
+        transformed.push((document, next));
+    }
+    // Commit: every Member applies the same deterministic writes from
+    // the merged state and adopts the target policy.
+    for member in members.iter_mut() {
+        let version =
+            to.definition().map(|definition| definition.version().get()).unwrap_or_default();
+        for (document, body) in &transformed {
+            let operation = format!("mig-{version}-{document}");
+            member.accept_put(&operation, document, body)?;
+        }
+        member.set_policy(to.clone());
+        member.reconcile()?;
+    }
+    let documents = transformed.into_iter().map(|(document, _)| document).collect();
+    Ok(MigrationOutcome::Migrated { documents })
 }
