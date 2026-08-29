@@ -1507,6 +1507,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "terrabase-cluster",
  "terrabase-sync-core",
  "terrabase-v2",
  "tokio",

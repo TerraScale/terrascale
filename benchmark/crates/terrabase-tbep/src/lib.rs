@@ -45,6 +45,7 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod cluster_host;
 pub mod codec;
 pub mod codegen;
 pub mod engine_host;

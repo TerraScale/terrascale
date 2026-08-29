@@ -148,6 +148,13 @@ pub enum HostingError {
     CheckpointRefused(String),
     /// The engine-side execution failed (error code `engine_failure`).
     EngineFailure(String),
+    /// A client mutation met a backup cluster's permanent refusal
+    /// (error code `backup_cluster_read_only`, P5): the detail carries
+    /// the replication position.
+    ClusterReadOnly(String),
+    /// A cluster mode change attempt met the immutable identity
+    /// (error code `backup_cluster_immutable`, P5).
+    ClusterImmutable(String),
 }
 
 impl HostingError {
@@ -161,6 +168,8 @@ impl HostingError {
             Self::SubscriptionRefused(_) => ErrorCode::SubscriptionRefused,
             Self::CheckpointRefused(_) => ErrorCode::CheckpointRefused,
             Self::EngineFailure(_) => ErrorCode::EngineFailure,
+            Self::ClusterReadOnly(_) => ErrorCode::BackupClusterReadOnly,
+            Self::ClusterImmutable(_) => ErrorCode::BackupClusterImmutable,
         }
     }
 
@@ -171,6 +180,8 @@ impl HostingError {
             Self::Refused(detail)
             | Self::Invalid(detail)
             | Self::SessionRefused(detail)
+            | Self::ClusterReadOnly(detail)
+            | Self::ClusterImmutable(detail)
             | Self::SubscriptionRefused(detail)
             | Self::CheckpointRefused(detail)
             | Self::EngineFailure(detail) => detail.clone(),

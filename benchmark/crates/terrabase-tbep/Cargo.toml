@@ -57,6 +57,7 @@ serde_json = "1.0.150"
 terrabase-sync-core = { path = "../terrabase-sync-core" }
 # The engine this host serves (P4): the real durable engine behind the
 # document spine.
+terrabase-cluster = { path = "../terrabase-cluster" }
 terrabase-v2 = { path = "../.." }
 
 [dev-dependencies]

@@ -14,5 +14,9 @@ pub mod identity;
 pub mod member;
 
 pub use host::{ClusterError, ClusterHost, ClusterWriteRefusal, MemberSpec};
+
+// Re-exported so the serving seam builds writes without a direct
+// dependency on the replication core.
 pub use identity::{ClusterIdentity, ClusterMode, IdentityError};
 pub use member::{ClusterMember, MemberError, MutationRefusal};
+pub use terrabase_replication_core::compose::ComposedWrite;

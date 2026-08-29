@@ -940,3 +940,40 @@ NATS control-plane semantics, and expansion/catch-up.
 
 Receipts: `cargo test -p terrabase-cluster` 11/11; clippy `-D
 warnings` and fmt clean. `scripts/check.sh` not run (AC-12).
+
+## 25. P5 landing 3 (2026-08-29): the cluster served over TBEP
+
+`ClusterTbepHost` (crates/terrabase-tbep/src/cluster_host.rs — the
+crate gained a `terrabase-cluster` dependency) implements the protocol
+over one multi-member cluster: a bound channel must name the cluster's
+tenant, document writes coordinate through the leaderless coordinator
+at the requested acknowledgement level (the receipt names the achieved
+level and the storage sequence), deletes ride the same coordinator,
+reads repair behind the regional quorum, and `topology.read` answers
+the cluster's REAL mode — `active` or `backup` — with the engine
+topology available: past `Standalone` for the first time. `HostingError`
+gained the typed cluster failures: `ClusterReadOnly` (the wire's
+`backup_cluster_read_only`, code 19) and `ClusterImmutable` (code 20).
+
+A backup cluster answers every client mutation with the typed
+read-only error and its replication position in the bounded
+machine-readable detail (`position=N`) — the frozen contract §3 word
+for word. The planes the cluster does not serve (queries, families,
+sync sessions, tier administration, batches, migrations) answer the
+typed refusal naming the engine-backed host.
+
+Proven over a real UDS socket: an active cluster's write committing
+with the regional-quorum receipt and the converged read serving the
+body; the backup answering the typed code-19 error with the position
+detail while its topology names `backup`; and a foreign tenant never
+binding.
+
+Next in P5: the backup membership shape (non-voting members,
+`backup_ack` on the wire with its partial-outcome rules), the NATS
+control-plane semantics (6 buckets, 5 subjects, the no-data rule; live
+rows unrun where no broker runs), and one-step expansion with
+catch-up.
+
+Receipts: `cargo test -p terrabase-tbep` 15 suites green (3 new
+cluster-host rows); `terrabase-cluster` 11/11; clippy `-D warnings`
+and fmt clean. `scripts/check.sh` not run (AC-12).
