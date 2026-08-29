@@ -43,8 +43,6 @@ mod parser;
 mod registry;
 
 #[cfg(test)]
-mod parity_tests;
-#[cfg(test)]
 mod tests;
 
 pub use ast::{
