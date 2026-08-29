@@ -74,6 +74,54 @@ pub const OUTBOUND_DEPTH: usize = 64;
 /// for a slow query must not be refused by the pressure it relieves).
 pub const MAX_INFLIGHT_OPERATIONS: usize = 128;
 
+/// The default per-tenant share of concurrently executing host
+/// operations (the noisy-neighbor gate): one tenant saturating its
+/// share answers the typed `overloaded` error naming the tenant share
+/// while every other tenant's frames proceed untouched — a noisy
+/// tenant cannot consume the server's whole bound.
+pub const MAX_TENANT_INFLIGHT_OPERATIONS: usize = 32;
+
+/// The server-wide per-tenant admission shares: each bound tenant
+/// holds at most `bound` concurrent in-flight operations across every
+/// connection. A share is taken only by tenant-scoped frames; the
+/// bypass classes of the server-wide gate bypass the tenant gate too.
+pub(crate) struct TenantGates {
+    inflight: std::sync::Mutex<std::collections::HashMap<String, usize>>,
+    bound: usize,
+}
+
+impl TenantGates {
+    pub(crate) fn new(bound: usize) -> Self {
+        Self { inflight: std::sync::Mutex::new(std::collections::HashMap::new()), bound }
+    }
+
+    /// Takes one share for the tenant. `false` names saturation: the
+    /// caller answers the typed overload error and retries.
+    pub(crate) fn enter(&self, tenant: &str) -> bool {
+        match self.inflight.lock() {
+            Ok(mut shares) => {
+                let held = shares.entry(tenant.to_owned()).or_insert(0);
+                if *held >= self.bound {
+                    false
+                } else {
+                    *held += 1;
+                    true
+                }
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Returns one share after the dispatch completes.
+    pub(crate) fn release(&self, tenant: &str) {
+        if let Ok(mut shares) = self.inflight.lock()
+            && let Some(held) = shares.get_mut(tenant)
+        {
+            *held = held.saturating_sub(1);
+        }
+    }
+}
+
 /// The retry guidance an overloaded frame answers with — bounded,
 /// machine-readable, inside the registry's detail bound.
 pub const OVERLOADED_RETRY_HINT_MS: u32 = 50;
@@ -163,6 +211,22 @@ impl TbepServer {
         host: Arc<dyn TbepHost>,
         inflight_bound: usize,
     ) -> Result<TbepServerHandle, BindError> {
+        Self::bind_with_bounds(path, host, inflight_bound, MAX_TENANT_INFLIGHT_OPERATIONS)
+    }
+
+    /// Binds with BOTH admission bounds injectable: the server-wide
+    /// in-flight bound and the per-tenant share (the noisy-neighbor
+    /// gate's bound, [`MAX_TENANT_INFLIGHT_OPERATIONS`] by default).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BindError::Io`] when the listener cannot be bound.
+    pub fn bind_with_bounds(
+        path: impl AsRef<Path>,
+        host: Arc<dyn TbepHost>,
+        inflight_bound: usize,
+        tenant_bound: usize,
+    ) -> Result<TbepServerHandle, BindError> {
         let path = path.as_ref();
         if path.exists() {
             let _ = std::fs::remove_file(path);
@@ -174,6 +238,7 @@ impl TbepServer {
         let accept_stopped = Arc::clone(&stopped);
         let accept_path = path.to_path_buf();
         let inflight = Arc::new(AtomicUsize::new(0));
+        let tenant_gates = Arc::new(TenantGates::new(tenant_bound));
         let accept = std::thread::Builder::new()
             .name("tbep-accept".into())
             .spawn(move || {
@@ -185,10 +250,17 @@ impl TbepServer {
                         Ok(stream) => {
                             let host = Arc::clone(&host);
                             let inflight = Arc::clone(&inflight);
+                            let tenant_gates = Arc::clone(&tenant_gates);
                             let _ = std::thread::Builder::new()
                                 .name("tbep-connection".into())
                                 .spawn(move || {
-                                    serve_connection(stream, host, inflight, inflight_bound);
+                                    serve_connection(
+                                        stream,
+                                        host,
+                                        inflight,
+                                        inflight_bound,
+                                        tenant_gates,
+                                    );
                                 });
                         }
                         Err(_) => break,
@@ -222,6 +294,9 @@ struct Connection {
     /// overload gate).
     inflight: Arc<AtomicUsize>,
     inflight_bound: usize,
+    /// The server-wide per-tenant admission shares (the noisy-neighbor
+    /// gate), shared across every connection.
+    tenant_gates: Arc<TenantGates>,
 }
 
 impl Connection {
@@ -326,6 +401,7 @@ fn serve_connection(
     host: Arc<dyn TbepHost>,
     inflight: Arc<AtomicUsize>,
     inflight_bound: usize,
+    tenant_gates: Arc<TenantGates>,
 ) {
     let Ok(reader) = stream.try_clone() else { return };
     let Ok(writer) = stream.try_clone() else { return };
@@ -333,7 +409,7 @@ fn serve_connection(
     // side closes the last borrowed fd when the connection ends, so a
     // peer blocked on read observes the close.
     drop(stream);
-    serve_io(reader, writer, host, inflight, inflight_bound);
+    serve_io(reader, writer, host, inflight, inflight_bound, tenant_gates);
 }
 
 /// Serves one TBEP channel over any byte transport (the UDS binding and
@@ -349,6 +425,7 @@ pub(crate) fn serve_io<R, W>(
     host: Arc<dyn TbepHost>,
     inflight: Arc<AtomicUsize>,
     inflight_bound: usize,
+    tenant_gates: Arc<TenantGates>,
 ) where
     R: std::io::Read + 'static,
     W: std::io::Write + Send + 'static,
@@ -365,6 +442,7 @@ pub(crate) fn serve_io<R, W>(
         slow: false,
         inflight,
         inflight_bound,
+        tenant_gates,
     };
     let mut reader = reader;
     loop {
@@ -427,21 +505,19 @@ pub(crate) fn serve_io<R, W>(
                 | TbepBody::QueryCancelRequest(_)
                 | TbepBody::NegotiationRequest(_)
         );
+        let mut tenant_share_taken = false;
         if gated {
-            let occupied = connection.inflight.fetch_add(1, Ordering::SeqCst);
-            if occupied >= connection.inflight_bound {
-                connection.inflight.fetch_sub(1, Ordering::SeqCst);
-                connection.error_frame(
-                    frame.correlation(),
-                    ErrorCode::Overloaded,
-                    &format!("in-flight bound reached; retry_after_ms={OVERLOADED_RETRY_HINT_MS}"),
-                );
-                continue;
+            match take_admission(&connection) {
+                Ok(took_tenant_share) => tenant_share_taken = took_tenant_share,
+                Err(detail) => {
+                    connection.error_frame(frame.correlation(), ErrorCode::Overloaded, &detail);
+                    continue;
+                }
             }
         }
         let closing = dispatch(&mut connection, &frame);
         if gated {
-            connection.inflight.fetch_sub(1, Ordering::SeqCst);
+            release_admission(&connection, tenant_share_taken);
         }
         if closing || connection.slow {
             connection.close();
@@ -460,6 +536,35 @@ pub(crate) fn serve_io<R, W>(
     }
     drop(connection);
     // Closing the sender ends the writer thread after its queue drains.
+}
+
+/// Takes the admission shares one gated frame needs: the server-wide
+/// slot first, then the bound tenant's per-tenant share (the
+/// noisy-neighbor gate — one tenant saturating its share never delays
+/// another's frames). `Err(detail)` names the typed overload refusal;
+/// `Ok(took_tenant_share)` names the release duty.
+fn take_admission(connection: &Connection) -> Result<bool, String> {
+    let occupied = connection.inflight.fetch_add(1, Ordering::SeqCst);
+    if occupied >= connection.inflight_bound {
+        connection.inflight.fetch_sub(1, Ordering::SeqCst);
+        return Err(format!("in-flight bound reached; retry_after_ms={OVERLOADED_RETRY_HINT_MS}"));
+    }
+    let Some(tenant) = connection.tenant.clone() else {
+        return Ok(false);
+    };
+    if connection.tenant_gates.enter(&tenant) {
+        return Ok(true);
+    }
+    connection.inflight.fetch_sub(1, Ordering::SeqCst);
+    Err(format!("tenant in-flight share reached; retry_after_ms={OVERLOADED_RETRY_HINT_MS}"))
+}
+
+/// Returns the admission shares after one gated dispatch.
+fn release_admission(connection: &Connection, tenant_share_taken: bool) {
+    connection.inflight.fetch_sub(1, Ordering::SeqCst);
+    if tenant_share_taken && let Some(tenant) = connection.tenant.as_deref() {
+        connection.tenant_gates.release(tenant);
+    }
 }
 
 /// Dispatches one frame. Returns `true` when the connection must close
@@ -926,6 +1031,7 @@ mod tests {
             slow: false,
             inflight: Arc::new(AtomicUsize::new(0)),
             inflight_bound: MAX_INFLIGHT_OPERATIONS,
+            tenant_gates: Arc::new(TenantGates::new(MAX_TENANT_INFLIGHT_OPERATIONS)),
         }
     }
 

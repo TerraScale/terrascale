@@ -67,5 +67,6 @@ pub use generated::TbepBody;
 pub use host::HostingError;
 pub use host::SyncDeliveryHost;
 pub use host::TbepHost;
+pub use server::MAX_TENANT_INFLIGHT_OPERATIONS;
 pub use server::TbepServer;
 pub use server::TbepServerHandle;

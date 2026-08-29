@@ -1202,3 +1202,36 @@ object-store endpoint on this host).
 Receipts: `cargo test -p terrabase-v2 --lib` 1083/1083 (3 new lane
 rows); `cargo test -p terrabase-tbep` 15 suites green; clippy
 `-D warnings` and fmt clean. `scripts/check.sh` not run (AC-12).
+
+## 31. The noisy-neighbor lane and the per-tenant admission shares (P7 landing 3)
+
+The server gained the second admission gate: `TenantGates`, the
+server-wide per-tenant shares (`MAX_TENANT_INFLIGHT_OPERATIONS` = 32,
+injected through the new `TbepServer::bind_with_bounds` beside the
+server-wide bound). A gated, tenant-scoped frame takes its tenant's
+share after the server-wide slot; a tenant saturating its share
+answers the typed `overloaded` error naming the tenant share with the
+same machine-readable retry guidance, while every other tenant's
+frames proceed untouched — the noisy-neighbor isolation the charter's
+admission-control row demands. The bypass classes (health, query
+cancellation, negotiation) bypass both gates; the QUIC binding carries
+the same shares.
+
+The lane row (`overload_gate.rs::a_saturated_tenant_share_overloads_
+only_that_tenant`, proven with the share of one and the server bound
+of 128): the noisy tenant's held read saturating its share; the noisy
+tenant's next frame answering `tenant in-flight share reached`; the
+QUIET tenant's read entering the host under that saturation — the
+isolation proof — and being served; health staying serving; and the
+share freeing after release. An earlier 33-thread latch-convoy
+variant of the row deadlocked and was rebuilt on the proven
+one-holder mechanics; the deadlock never reached a commit.
+
+Scoping kept honest: the shares are equal static portions (32 of 128),
+not the weighted fair queues the storage contract names for the full
+admission-control surface; that weighting lands with benchmark
+evidence for its thresholds.
+
+Receipts: `cargo test -p terrabase-tbep` 15 suites green (the new lane
+row); C# Protocol 23/23, Api 92 passed + 1 msquic skip; clippy
+`-D warnings` and fmt clean. `scripts/check.sh` not run (AC-12).

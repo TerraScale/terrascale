@@ -218,10 +218,14 @@ struct Client {
 
 impl Client {
     fn connect(socket: &std::path::Path) -> Self {
+        Self::connect_as(socket, "tenant-a")
+    }
+
+    fn connect_as(socket: &std::path::Path, tenant: &str) -> Self {
         let mut stream = UnixStream::connect(socket).expect("the client connects");
         // Bind the channel first (the bind itself is a gated frame).
         let frame = TbepFrame::seal(
-            ChannelBindRequest { principal: "backend".into(), tenant: "tenant-a".into() },
+            ChannelBindRequest { principal: "backend".into(), tenant: tenant.into() },
             1,
             0,
             None,
@@ -343,5 +347,123 @@ fn a_saturated_bound_answers_the_typed_overloaded_error_and_bypasses_stay_servin
         answer.kind()
     );
 
+    server.shutdown();
+}
+
+#[test]
+fn a_saturated_tenant_share_overloads_only_that_tenant() {
+    let socket = std::env::temp_dir().join(format!(
+        "tbep-noisy-{}-{}.sock",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos())
+    ));
+    let (entered_sender, entered_receiver) = channel::<()>();
+    let (release_sender, release_receiver) = channel::<()>();
+    let host = Arc::new(BlockingHost {
+        inner: SyncDeliveryHost::new(1),
+        entered: entered_sender,
+        release: std::sync::Mutex::new(release_receiver),
+    });
+    // The per-tenant share of one (the server-wide bound stays high at
+    // 128): a single held operation saturates the noisy tenant's share
+    // while the server as a whole has headroom — the noisy-neighbor
+    // shape.
+    let mut server = TbepServer::bind_with_bounds(&socket, host, 128, 1).expect("binds");
+
+    // The noisy tenant's read blocks inside the host, holding the
+    // tenant's only share.
+    let holder_socket = socket.clone();
+    let holder = std::thread::spawn(move || {
+        let mut holder = Client::connect_as(&holder_socket, "tenant-noisy");
+        let answer = holder.call(
+            DocumentReadRequest {
+                collection: "orders".into(),
+                document: "held".into(),
+                level: None,
+            },
+            None,
+        );
+        assert!(
+            matches!(answer.body(), TbepBody::DocumentReadResponse(_)),
+            "the held read answers after release"
+        );
+    });
+    entered_receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the holding read entered the host");
+
+    // The noisy tenant's NEXT frame answers the typed overload naming
+    // the TENANT share — not the server-wide bound (1 of 128 used).
+    let mut noisy_probe = Client::connect_as(&socket, "tenant-noisy");
+    let answer = noisy_probe.call(
+        DocumentReadRequest { collection: "orders".into(), document: "next".into(), level: None },
+        None,
+    );
+    let TbepBody::Error(error) = answer.body() else {
+        panic!("the noisy tenant's next frame overloads, got {:?}", answer.kind());
+    };
+    assert_eq!(error.code, ErrorCode::Overloaded);
+    assert!(
+        error.detail.contains("tenant in-flight share reached"),
+        "the refusal names the tenant share: {}",
+        error.detail
+    );
+    assert!(
+        error.detail.contains("retry_after_ms="),
+        "the retry guidance is machine-readable: {}",
+        error.detail
+    );
+
+    // The quiet tenant proceeds untouched on the same server: its read
+    // ENTERS the host while the noisy tenant saturates its own share —
+    // the entry is the isolation proof, before any release.
+    let quiet_socket = socket.clone();
+    let quiet = std::thread::spawn(move || {
+        let mut quiet = Client::connect_as(&quiet_socket, "tenant-quiet");
+        let answer = quiet.call(
+            DocumentReadRequest {
+                collection: "orders".into(),
+                document: "quiet".into(),
+                level: None,
+            },
+            None,
+        );
+        assert!(
+            matches!(answer.body(), TbepBody::DocumentReadResponse(_)),
+            "the quiet tenant is served, got {:?}",
+            answer.kind()
+        );
+    });
+    entered_receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the quiet tenant's read entered the host under the noisy tenant's saturation");
+
+    // Release everyone: closing the latch fails both held reads, both
+    // tenants' frames answer, and the shares free.
+    drop(release_sender);
+    quiet.join().expect("the quiet tenant finished");
+    holder.join().expect("the holder finished");
+
+    // Health stays serving for the noisy tenant too — the bypass
+    // classes of the server-wide gate bypass the tenant gate.
+    let answer = noisy_probe.call(terrabase_tbep::generated::SupervisionHealthRequest {}, None);
+    assert!(
+        matches!(answer.body(), TbepBody::SupervisionHealthResponse(_)),
+        "health stays serving under tenant pressure, got {:?}",
+        answer.kind()
+    );
+
+    // Release freed the share: the noisy tenant serves again.
+    let answer = noisy_probe.call(
+        DocumentReadRequest { collection: "orders".into(), document: "after".into(), level: None },
+        None,
+    );
+    assert!(
+        matches!(answer.body(), TbepBody::DocumentReadResponse(_)),
+        "the tenant's share frees after release, got {:?}",
+        answer.kind()
+    );
     server.shutdown();
 }

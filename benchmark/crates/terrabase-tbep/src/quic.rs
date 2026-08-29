@@ -174,6 +174,9 @@ impl TbepQuicServer {
         .map_err(|_| QuicBindError::Bind)?;
         let serving_handle = runtime.handle().clone();
         let inflight = Arc::new(AtomicUsize::new(0));
+        let tenant_gates = Arc::new(crate::server::TenantGates::new(
+            crate::server::MAX_TENANT_INFLIGHT_OPERATIONS,
+        ));
         // The endpoint is a cloneable handle: the accept loop takes one,
         // the shutdown handle keeps the other.
         let accept_endpoint = endpoint.clone();
@@ -190,13 +193,21 @@ impl TbepQuicServer {
                         let Ok((send, recv)) = connection.accept_bi().await else { continue };
                         let host = Arc::clone(&host);
                         let inflight = Arc::clone(&inflight);
+                        let tenant_gates = Arc::clone(&tenant_gates);
                         let handle = serving_handle.clone();
                         let _ = std::thread::Builder::new()
                             .name("tbep-quic-connection".into())
                             .spawn(move || {
                                 let reader = QuicReader { handle: handle.clone(), recv };
                                 let writer = QuicWriter { handle, send };
-                                serve_io(reader, writer, host, inflight, inflight_bound);
+                                serve_io(
+                                    reader,
+                                    writer,
+                                    host,
+                                    inflight,
+                                    inflight_bound,
+                                    tenant_gates,
+                                );
                             });
                     }
                 });
