@@ -48,6 +48,10 @@ use crate::types::{
     CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
     StorageSequence, TenantId,
 };
+use crate::usage::{
+    DurableUsageFact, MeasurementWindow, MeterCatalog, MeterKind, MintingIdentity, UsageFact,
+    UsageFactId, UsageFactLedger, UsageScope,
+};
 
 use super::{
     PublishedCommit, PublishedWrite, StoragePort, codec,
@@ -137,6 +141,9 @@ pub(crate) struct LsmStorage {
     history_floor: Option<u64>,
     retained: super::retained::RetainedWriter,
     retained_index: super::retained::RetainedIndex,
+    usage_index: UsageFactLedger,
+    /// A malformed or conflicting persisted fact makes recovery fail closed.
+    usage_corrupt: bool,
     faults: FaultPlan,
 }
 
@@ -226,6 +233,8 @@ impl LsmStorage {
             history_floor: None,
             retained,
             retained_index: retained_scan.index,
+            usage_index: UsageFactLedger::default(),
+            usage_corrupt: false,
             faults: FaultPlan::empty(),
         };
         engine.rebuild_indexes_from_segments();
@@ -244,6 +253,9 @@ impl LsmStorage {
         engine.sequence_watermark = watermark;
         for entry in wal_scan.entries {
             engine.apply_entry_to_memory(&entry);
+        }
+        if engine.usage_corrupt {
+            return Err(LsmOpenError::FormatMismatch);
         }
         // The chain head is the root recorded by the highest committed
         // sequence. The ledger is keyed by (tenant, operation), whose
@@ -352,6 +364,29 @@ impl LsmStorage {
             && meta_label(entry.key.user_key()) == META_HISTORY_FLOOR
         {
             self.history_floor = Some(bound);
+        } else if tag == internal::Keyspace::Meta.tag()
+            && let Some(fact) = decode_usage_entry(entry)
+        {
+            let operation = fact.fact().identity().id().as_str();
+            let tenant = fact.fact().scope().tenant_id().as_str();
+            let bound = self.ledger_index.get(&(tenant.to_owned(), operation.to_owned()));
+            if !matches!(
+                bound,
+                Some(record) if record.committed
+                    && record.rejection.is_none()
+                    && record.sequence == fact.sequence()
+            ) || self.usage_index.insert(fact).is_err()
+            {
+                self.usage_corrupt = true;
+            }
+        } else if tag == internal::Keyspace::Meta.tag()
+            && meta_label(entry.key.user_key()).starts_with("usage/")
+        {
+            self.usage_corrupt = true;
+        } else if tag == internal::Keyspace::Meta.tag() {
+            // Meta is a closed keyspace. Unknown or malformed markers must
+            // not be silently skipped during recovery.
+            self.usage_corrupt = true;
         }
         self.memtable.insert(entry.clone());
     }
@@ -534,8 +569,9 @@ impl LsmStorage {
         }
         // Step 4: allocate the sequence past everything this location has
         // ever named; a later failure can never let another commit reuse it.
-        let sequence = self.sequence_watermark + 1;
-        self.sequence_watermark = sequence;
+        let Some(sequence) = self.sequence_watermark.checked_add(1) else {
+            return CommitResult::Rejected(CommitRejection::Storage);
+        };
         let root_id = chain_root(&self.root_head, sequence, intent.digest);
         // Step 5: build the ordered batch. Documents, ledger record, and
         // history record ride one frame.
@@ -644,6 +680,19 @@ impl LsmStorage {
             key: InternalKey::history(sequence),
             value: ledger::encode_commit_frame(&commit),
         });
+        // Usage is part of the same WAL batch as the accepted mutation. The
+        // fact is minted only after validation and identity resolution, and
+        // its sequence and tenant are bound in the checksummed envelope.
+        let Ok(usage_fact) =
+            accepted_mutation_usage(&intent.tenant, &intent.operation, sequence, &entries)
+        else {
+            return CommitResult::Rejected(CommitRejection::Storage);
+        };
+        entries.push(Entry {
+            key: InternalKey::meta(&usage_label(&usage_fact), sequence),
+            value: usage_fact.encoded(),
+        });
+        self.sequence_watermark = sequence;
         // Step 6: durable append. `Buffered` writes no document bytes, but
         // its resolution records are still durable (the old store's rule:
         // resolution metadata persists for every durability level, so a
@@ -816,7 +865,9 @@ impl LsmStorage {
 
     /// Records one conflict rejection durably, then reports it.
     fn record_rejection(&mut self, intent: &CommitIntent, reason: CommitRejection) -> CommitResult {
-        let sequence = self.sequence_watermark + 1;
+        let Some(sequence) = self.sequence_watermark.checked_add(1) else {
+            return CommitResult::Rejected(reason);
+        };
         self.sequence_watermark = sequence;
         let entry = LedgerEntry {
             digest: intent.digest,
@@ -914,6 +965,75 @@ fn meta_label(user_key: &[u8]) -> String {
     let mut reader = codec::Reader::new(user_key);
     reader.read_u8();
     reader.read_string().unwrap_or_default()
+}
+
+const USAGE_LABEL_PREFIX: &str = "usage/";
+
+fn usage_label(fact: &DurableUsageFact) -> String {
+    format!("{USAGE_LABEL_PREFIX}{:020}:{}", fact.sequence(), fact.fact().identity().id())
+}
+
+/// Builds the origin usage fact for one accepted mutation.
+///
+/// The current engine seam carries tenant and operation identity, but not the
+/// public Project/Database/Partition placement context. Until that context is
+/// admitted by the higher API layer, those three scope components are bound to
+/// the validated tenant. This is conservative: facts cannot cross tenants or
+/// accidentally claim another database's usage.
+fn accepted_mutation_usage(
+    tenant: &TenantId,
+    operation: &OperationId,
+    sequence: u64,
+    entries: &[Entry],
+) -> Result<DurableUsageFact, ()> {
+    let region = crate::replication::RegionId::try_new("local").map_err(|_| ())?;
+    let scope = UsageScope::try_new(
+        tenant.clone(),
+        tenant.as_str(),
+        tenant.as_str(),
+        tenant.as_str(),
+        region,
+    )
+    .map_err(|_| ())?;
+    let mut bytes = 0_usize;
+    for entry in entries {
+        if entry.key.tag() == internal::Keyspace::Documents.tag() {
+            bytes = bytes.checked_add(entry.value.len()).ok_or(())?;
+        }
+    }
+    // A delete carries no value bytes but is still one accepted origin event.
+    let delta = i128::try_from(bytes.max(1)).map_err(|_| ())?;
+    let end = sequence.checked_add(1).ok_or(())?;
+    let definition =
+        MeterCatalog::initial().get(MeterKind::StoredByteHours, 1).copied().ok_or(())?;
+    let id = UsageFactId::try_new(operation.as_str()).map_err(|_| ())?;
+    let fact = UsageFact::try_new(
+        definition,
+        scope,
+        MintingIdentity::AcceptedOriginCommit(id),
+        MeasurementWindow::interval(sequence, end).map_err(|_| ())?,
+        delta,
+    )
+    .map_err(|_| ())?;
+    DurableUsageFact::try_new(fact, sequence, 1).map_err(|_| ())
+}
+
+fn decode_usage_entry(entry: &Entry) -> Option<DurableUsageFact> {
+    let label = meta_label(entry.key.user_key());
+    let suffix = label.strip_prefix(USAGE_LABEL_PREFIX)?;
+    let (sequence, identity) = suffix.split_once(':')?;
+    let sequence = sequence.parse::<u64>().ok()?;
+    if sequence != entry.key.sequence() {
+        return None;
+    }
+    let durable = DurableUsageFact::decode(&entry.value).ok()?;
+    if durable.sequence() != sequence
+        || durable.fact().identity().id().as_str() != identity
+        || durable.fact().identity().rule() != crate::usage::MintingRule::AcceptedOriginCommit
+    {
+        return None;
+    }
+    Some(durable)
 }
 
 /// Reports whether one write set targets the same document twice.
@@ -1360,6 +1480,12 @@ impl LsmStorage {
     /// The published sequence.
     pub(super) fn published_sequence_impl(&self) -> StorageSequence {
         StorageSequence::new(self.sequence_watermark)
+    }
+
+    /// Returns the durable usage facts in stable identity order.
+    #[cfg(test)]
+    pub(super) fn usage_facts_impl(&self) -> Vec<DurableUsageFact> {
+        self.usage_index.facts().cloned().collect()
     }
 
     /// Truncates the WAL after a published checkpoint.

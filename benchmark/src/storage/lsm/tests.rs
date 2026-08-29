@@ -115,6 +115,74 @@ fn commit_reads_back_and_survives_reopen() {
 }
 
 #[test]
+fn accepted_mutation_usage_is_atomic_idempotent_and_recoverable() {
+    let dir = location("usage-atomic");
+    let scope_tenant = tenant("acme");
+    let mut engine = LsmStorage::open(&dir).unwrap();
+    let intent = put_intent(&scope_tenant, "op-usage", 0, document("orders", "order-1", "payload"));
+    let first = engine.commit(intent.clone());
+    assert!(matches!(first, CommitResult::Committed(_)));
+    assert_eq!(engine.usage_facts_impl().len(), 1);
+    let fact = engine.usage_facts_impl().pop().expect("fact");
+    assert_eq!(fact.sequence(), 1);
+    assert_eq!(fact.fact().scope().tenant_id(), &scope_tenant);
+    assert_eq!(fact.fact().identity().id().as_str(), "op-usage");
+    assert_eq!(engine.commit(intent), first, "retry returns the same commit and does not mint");
+    assert_eq!(engine.usage_facts_impl().len(), 1);
+    drop(engine);
+
+    let reopened = LsmStorage::open(&dir).unwrap();
+    assert_eq!(reopened.usage_facts_impl().len(), 1, "the fact is WAL durable with the mutation");
+    assert_eq!(reopened.usage_facts_impl()[0], fact);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn refused_or_partial_mutation_mints_no_usage_fact() {
+    let dir = location("usage-refused");
+    let scope_tenant = tenant("acme");
+    let mut engine = LsmStorage::open(&dir).unwrap();
+    let invalid = CommitIntent {
+        tenant: scope_tenant.clone(),
+        operation: OperationId::try_new("op-invalid").unwrap(),
+        digest: 1,
+        snapshot_sequence: crate::types::StorageSequence::new(0),
+        durability: LocalDurability::Synced,
+        writes: Vec::new(),
+    };
+    assert!(matches!(engine.commit(invalid), CommitResult::Rejected(_)));
+    assert!(engine.usage_facts_impl().is_empty());
+
+    engine.arm_test_fault(crate::storage::FaultPoint::WalAppend);
+    let partial =
+        put_intent(&scope_tenant, "op-partial", 0, document("orders", "order-2", "payload"));
+    assert!(matches!(engine.commit(partial), CommitResult::Rejected(_)));
+    assert!(engine.usage_facts_impl().is_empty());
+    drop(engine);
+    let reopened = LsmStorage::open(&dir).unwrap();
+    assert!(reopened.usage_facts_impl().is_empty());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn sequence_overflow_refuses_without_minting_or_advancing() {
+    let dir = location("usage-sequence-overflow");
+    let scope_tenant = tenant("acme");
+    let mut engine = LsmStorage::open(&dir).unwrap();
+    engine.sequence_watermark = u64::MAX;
+    let intent = put_intent(
+        &scope_tenant,
+        "op-overflow",
+        u64::MAX,
+        document("orders", "order-1", "payload"),
+    );
+    assert!(matches!(engine.commit(intent), CommitResult::Rejected(_)));
+    assert_eq!(engine.sequence_watermark, u64::MAX);
+    assert!(engine.usage_facts_impl().is_empty());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn durable_bytes_per_write_are_bounded_by_the_write_set() {
     let dir = location("amplification");
     let scope_tenant = tenant("acme");

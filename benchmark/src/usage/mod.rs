@@ -20,6 +20,9 @@ pub const USAGE_FORMAT_VERSION: u16 = 1;
 /// The checksum domain separator for the canonical usage encoding.
 pub const USAGE_CHECKSUM_DOMAIN: &[u8] = b"terrascale.usage.segment.v1\0";
 
+/// The checksum domain separator for one persisted usage fact.
+pub const USAGE_FACT_CHECKSUM_DOMAIN: &[u8] = b"terrascale.usage.fact.v1\0";
+
 /// The maximum length accepted for one logical usage identifier.
 const MAX_IDENTIFIER_BYTES: usize = 255;
 
@@ -72,6 +75,12 @@ pub enum UsageError {
     CorrectionScopeMismatch,
     /// Corrections may reference only a base segment, never another correction.
     CorrectionChain,
+    /// A durable fact names an impossible commit sequence or replica epoch.
+    InvalidDurabilityBinding,
+    /// A durable fact does not match the commit that carried it.
+    FactCommitMismatch,
+    /// A fact identity was reused for different durable bytes.
+    FactIdentityConflict,
 }
 
 impl fmt::Display for UsageError {
@@ -97,6 +106,9 @@ impl fmt::Display for UsageError {
             Self::MissingCorrectionTarget => "usage correction target is missing",
             Self::CorrectionScopeMismatch => "usage correction scope differs from its target",
             Self::CorrectionChain => "usage correction cannot target another correction",
+            Self::InvalidDurabilityBinding => "usage durability binding is invalid",
+            Self::FactCommitMismatch => "usage fact commit binding does not match",
+            Self::FactIdentityConflict => "usage fact identity has different bytes",
         })
     }
 }
@@ -166,6 +178,12 @@ impl UsageFactId {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl fmt::Display for UsageFactId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
     }
 }
 
@@ -470,7 +488,9 @@ pub enum MintingIdentity {
 }
 
 impl MintingIdentity {
-    fn rule(&self) -> MintingRule {
+    /// Returns the minting rule represented by this identity.
+    #[must_use]
+    pub fn rule(&self) -> MintingRule {
         match self {
             Self::AcceptedOriginCommit(_) => MintingRule::AcceptedOriginCommit,
             Self::StableAdmittedRequest(_) => MintingRule::StableAdmittedRequest,
@@ -568,6 +588,193 @@ impl UsageFact {
     #[must_use]
     pub const fn delta(&self) -> i128 {
         self.delta
+    }
+
+    /// Encodes one fact in its canonical, checksummed representation.
+    #[must_use]
+    pub fn encoded(&self) -> Vec<u8> {
+        let mut body = Vec::with_capacity(256);
+        body.extend_from_slice(b"TBUFAC01");
+        body.extend_from_slice(&USAGE_FORMAT_VERSION.to_le_bytes());
+        body.push(meter_to_u8(self.meter));
+        body.extend_from_slice(&self.meter_version.to_le_bytes());
+        push_string(&mut body, self.scope.tenant_id().as_str());
+        push_string(&mut body, self.scope.project_id().as_str());
+        push_string(&mut body, self.scope.database_id().as_str());
+        push_string(&mut body, self.scope.partition_id().as_str());
+        push_string(&mut body, self.scope.region_id().as_str());
+        encode_identity(&mut body, &self.identity);
+        body.extend_from_slice(&self.window.start_millis.to_le_bytes());
+        body.extend_from_slice(&self.window.end_millis.to_le_bytes());
+        body.extend_from_slice(&self.delta.to_le_bytes());
+        let mut encoded = body.clone();
+        encoded.extend_from_slice(&fact_checksum(&body));
+        encoded
+    }
+
+    /// Decodes and verifies one canonical fact representation.
+    pub fn decode(bytes: &[u8]) -> Result<Self, UsageError> {
+        if bytes.len() < 8 + 2 + 4 + 32 {
+            return Err(UsageError::MalformedEncoding);
+        }
+        let (body, stored_bytes) = bytes.split_at(bytes.len() - 32);
+        let stored: [u8; 32] =
+            stored_bytes.try_into().map_err(|_| UsageError::MalformedEncoding)?;
+        if fact_checksum(body) != stored {
+            return Err(UsageError::ChecksumMismatch);
+        }
+        let mut reader = Reader::new(body);
+        if reader.take(8)? != b"TBUFAC01" || reader.u16()? != USAGE_FORMAT_VERSION {
+            return Err(UsageError::MalformedEncoding);
+        }
+        let meter = meter_from_u8(reader.u8()?)?;
+        let meter_version = reader.u32()?;
+        let tenant =
+            TenantId::try_new(&reader.string()?).map_err(|_| UsageError::InvalidIdentifier)?;
+        let project = reader.string()?;
+        let database = reader.string()?;
+        let partition = reader.string()?;
+        let region =
+            RegionId::try_new(&reader.string()?).map_err(|_| UsageError::InvalidIdentifier)?;
+        let scope = UsageScope::try_new(tenant, &project, &database, &partition, region)?;
+        let identity = decode_identity(&mut reader)?;
+        let window = MeasurementWindow { start_millis: reader.u64()?, end_millis: reader.u64()? };
+        let delta = reader.i128()?;
+        if reader.remaining() != 0 {
+            return Err(UsageError::NonCanonicalEncoding);
+        }
+        let definition = MeterDefinition::try_new(
+            meter,
+            meter_version,
+            expected_meter(meter).0,
+            expected_meter(meter).1,
+            expected_meter(meter).2,
+            expected_meter(meter).3,
+            expected_meter(meter).4,
+        )?;
+        let fact = Self::try_new(definition, scope, identity, window, delta)?;
+        if fact.encoded() != bytes {
+            return Err(UsageError::NonCanonicalEncoding);
+        }
+        Ok(fact)
+    }
+}
+
+/// One usage fact tied to the commit and replica-set epoch that made it.
+///
+/// The envelope is the storage-facing value. Keeping the sequence and epoch
+/// outside [`UsageFact`] lets the domain fact remain reusable for interval and
+/// public-event meters while making commit recovery fail closed when a fact is
+/// attached to the wrong WAL entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableUsageFact {
+    fact: UsageFact,
+    sequence: u64,
+    replica_epoch: u64,
+}
+
+impl DurableUsageFact {
+    /// Binds a validated fact to one nonzero commit sequence and epoch.
+    pub fn try_new(fact: UsageFact, sequence: u64, replica_epoch: u64) -> Result<Self, UsageError> {
+        if sequence == 0 || replica_epoch == 0 {
+            return Err(UsageError::InvalidDurabilityBinding);
+        }
+        Ok(Self { fact, sequence, replica_epoch })
+    }
+
+    /// Returns the domain fact.
+    #[must_use]
+    pub fn fact(&self) -> &UsageFact {
+        &self.fact
+    }
+
+    /// Returns the WAL commit sequence.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Returns the replica-set epoch.
+    #[must_use]
+    pub const fn replica_epoch(&self) -> u64 {
+        self.replica_epoch
+    }
+
+    /// Encodes the durable envelope canonically with a checksum.
+    #[must_use]
+    pub fn encoded(&self) -> Vec<u8> {
+        let fact = self.fact.encoded();
+        let mut body = Vec::with_capacity(16 + fact.len());
+        body.extend_from_slice(b"TBDUF001");
+        body.extend_from_slice(&self.sequence.to_le_bytes());
+        body.extend_from_slice(&self.replica_epoch.to_le_bytes());
+        body.extend_from_slice(&fact);
+        let mut encoded = body.clone();
+        encoded.extend_from_slice(&fact_checksum(&body));
+        encoded
+    }
+
+    /// Decodes and verifies one durable fact envelope.
+    pub fn decode(bytes: &[u8]) -> Result<Self, UsageError> {
+        if bytes.len() < 8 + 16 + 32 {
+            return Err(UsageError::MalformedEncoding);
+        }
+        let (body, stored_bytes) = bytes.split_at(bytes.len() - 32);
+        let stored: [u8; 32] =
+            stored_bytes.try_into().map_err(|_| UsageError::MalformedEncoding)?;
+        if fact_checksum(body) != stored {
+            return Err(UsageError::ChecksumMismatch);
+        }
+        let mut reader = Reader::new(body);
+        if reader.take(8)? != b"TBDUF001" {
+            return Err(UsageError::MalformedEncoding);
+        }
+        let sequence = reader.u64()?;
+        let replica_epoch = reader.u64()?;
+        let fact = UsageFact::decode(reader.take(reader.remaining())?)?;
+        let durable = Self::try_new(fact, sequence, replica_epoch)?;
+        if durable.encoded() != bytes {
+            return Err(UsageError::NonCanonicalEncoding);
+        }
+        Ok(durable)
+    }
+}
+
+/// An idempotent in-memory index of durable usage facts.
+#[derive(Clone, Debug, Default)]
+pub struct UsageFactLedger {
+    facts: BTreeMap<MintingIdentity, DurableUsageFact>,
+}
+
+impl UsageFactLedger {
+    /// Inserts one fact, refusing identity reuse with different bytes.
+    pub fn insert(&mut self, durable: DurableUsageFact) -> Result<bool, UsageError> {
+        let identity = durable.fact.identity().clone();
+        if let Some(existing) = self.facts.get(&identity) {
+            if existing == &durable {
+                return Ok(false);
+            }
+            return Err(UsageError::FactIdentityConflict);
+        }
+        self.facts.insert(identity, durable);
+        Ok(true)
+    }
+
+    /// Returns facts in stable minting-identity order.
+    pub fn facts(&self) -> impl Iterator<Item = &DurableUsageFact> {
+        self.facts.values()
+    }
+
+    /// Returns the fact for one stable minting identity.
+    #[must_use]
+    pub fn get(&self, id: &UsageFactId) -> Option<&DurableUsageFact> {
+        self.facts.values().find(|fact| fact.fact.identity().id() == id)
+    }
+
+    /// Returns the fact for one complete minting identity.
+    #[must_use]
+    pub fn get_by_identity(&self, identity: &MintingIdentity) -> Option<&DurableUsageFact> {
+        self.facts.get(identity)
     }
 }
 
@@ -1131,6 +1338,36 @@ fn charge_scope_from_u8(value: u8) -> Result<ChargeScope, UsageError> {
     })
 }
 
+fn identity_kind(identity: &MintingIdentity) -> u8 {
+    match identity {
+        MintingIdentity::AcceptedOriginCommit(_) => 0,
+        MintingIdentity::StableAdmittedRequest(_) => 1,
+        MintingIdentity::PublicResponse(_) => 2,
+        MintingIdentity::ActiveRegionHour(_) => 3,
+        MintingIdentity::BackupByteHour(_) => 4,
+        MintingIdentity::ExplicitRestore(_) => 5,
+    }
+}
+
+fn encode_identity(bytes: &mut Vec<u8>, identity: &MintingIdentity) {
+    bytes.push(identity_kind(identity));
+    push_string(bytes, identity.id().as_str());
+}
+
+fn decode_identity(reader: &mut Reader<'_>) -> Result<MintingIdentity, UsageError> {
+    let kind = reader.u8()?;
+    let id = UsageFactId::try_new(&reader.string()?)?;
+    Ok(match kind {
+        0 => MintingIdentity::AcceptedOriginCommit(id),
+        1 => MintingIdentity::StableAdmittedRequest(id),
+        2 => MintingIdentity::PublicResponse(id),
+        3 => MintingIdentity::ActiveRegionHour(id),
+        4 => MintingIdentity::BackupByteHour(id),
+        5 => MintingIdentity::ExplicitRestore(id),
+        _ => return Err(UsageError::MalformedEncoding),
+    })
+}
+
 fn push_string(bytes: &mut Vec<u8>, value: &str) {
     let length = u16::try_from(value.len()).expect("validated usage identifiers fit u16");
     bytes.extend_from_slice(&length.to_le_bytes());
@@ -1140,6 +1377,13 @@ fn push_string(bytes: &mut Vec<u8>, value: &str) {
 fn checksum(bytes: &[u8]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(USAGE_CHECKSUM_DOMAIN);
+    hasher.update(bytes);
+    *hasher.finalize().as_bytes()
+}
+
+fn fact_checksum(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(USAGE_FACT_CHECKSUM_DOMAIN);
     hasher.update(bytes);
     *hasher.finalize().as_bytes()
 }

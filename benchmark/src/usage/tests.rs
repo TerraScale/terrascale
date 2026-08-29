@@ -105,6 +105,63 @@ fn facts_are_integer_scoped_and_match_their_minting_rule() {
 }
 
 #[test]
+fn durable_fact_encoding_binds_sequence_epoch_and_scope() {
+    let fact = UsageFact::try_new(
+        definition(MeterKind::StoredByteHours),
+        scope(),
+        MintingIdentity::AcceptedOriginCommit(UsageFactId::try_new("commit-1").expect("id")),
+        MeasurementWindow::interval(7, 8).expect("interval"),
+        9,
+    )
+    .expect("fact");
+    let durable = DurableUsageFact::try_new(fact, 7, 4).expect("durable fact");
+    let encoded = durable.encoded();
+    assert_eq!(DurableUsageFact::decode(&encoded).expect("decode"), durable);
+
+    let mut damaged = encoded;
+    damaged[8] ^= 1;
+    assert_eq!(DurableUsageFact::decode(&damaged), Err(UsageError::ChecksumMismatch));
+    assert_eq!(
+        DurableUsageFact::try_new(durable.fact().clone(), 0, 4),
+        Err(UsageError::InvalidDurabilityBinding)
+    );
+    assert_eq!(
+        DurableUsageFact::try_new(durable.fact().clone(), 7, 0),
+        Err(UsageError::InvalidDurabilityBinding)
+    );
+}
+
+#[test]
+fn durable_fact_ledger_is_idempotent_and_fences_reuse() {
+    let fact = UsageFact::try_new(
+        definition(MeterKind::StoredByteHours),
+        scope(),
+        MintingIdentity::AcceptedOriginCommit(UsageFactId::try_new("commit-1").expect("id")),
+        MeasurementWindow::interval(7, 8).expect("interval"),
+        9,
+    )
+    .expect("fact");
+    let durable = DurableUsageFact::try_new(fact.clone(), 7, 4).expect("durable fact");
+    let mut ledger = UsageFactLedger::default();
+    assert_eq!(ledger.insert(durable.clone()), Ok(true));
+    assert_eq!(ledger.insert(durable), Ok(false));
+    let different = DurableUsageFact::try_new(
+        UsageFact::try_new(
+            definition(MeterKind::StoredByteHours),
+            scope(),
+            MintingIdentity::AcceptedOriginCommit(UsageFactId::try_new("commit-1").expect("id")),
+            MeasurementWindow::interval(7, 8).expect("interval"),
+            10,
+        )
+        .expect("fact"),
+        7,
+        4,
+    )
+    .expect("durable fact");
+    assert_eq!(ledger.insert(different), Err(UsageError::FactIdentityConflict));
+}
+
+#[test]
 fn fact_aggregation_rejects_duplicate_identities_and_integer_overflow() {
     let first = UsageFact::try_new(
         definition(MeterKind::AdmittedRequestUnits),
