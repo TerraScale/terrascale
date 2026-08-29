@@ -1,0 +1,377 @@
+{
+  "manifestVersion": 1,
+  "protocol": "terrascale.sync.v2.msgpack",
+  "protocolMajor": 2,
+  "protocolMinor": 0,
+  "supportedFeatures": 0,
+  "doc": "The checked-in, language-neutral protocol manifest for the public reactive WebSocket subprotocol terrascale.sync.v2.msgpack (GOAL.md ADR 0025). One binary WebSocket message is one complete MessagePack envelope. Messages are indexed arrays with explicit numeric tags; field positions are never reused or reinterpreted. The C# and TypeScript bindings are generated from this file, which is the sole authority. Bounds mirror the GOAL.md ADR 0032 decoded ceilings and the engine corpus field limits (TerraBaseV2 crates/terrabase-sync-conformance).",
+  "envelope": {
+    "doc": "Every message is one MessagePack array of exactly seven elements: [major, minor, features, tag, correlation, causation, body]. The body is the indexed field array of the tagged message. Unknown majors, minors this build does not speak, or unknown required feature bits fail closed before any body field is read.",
+    "elements": [
+      { "index": 0, "name": "major", "type": { "kind": "u32" } },
+      { "index": 1, "name": "minor", "type": { "kind": "u32" } },
+      { "index": 2, "name": "features", "type": { "kind": "u32" } },
+      { "index": 3, "name": "tag", "type": { "kind": "u32" } },
+      { "index": 4, "name": "correlation", "type": { "kind": "u64" } },
+      { "index": 5, "name": "causation", "type": { "kind": "u64" } },
+      { "index": 6, "name": "body", "type": { "kind": "message_body" } }
+    ]
+  },
+  "scan": {
+    "doc": "Allocation-bounded structural scan limits enforced over the raw bytes of every message before any value is decoded. These are protocol ceilings, not library defaults.",
+    "maxMessageBytes": 8388608,
+    "maxDepth": 64,
+    "maxStringBytes": 16384,
+    "maxBinaryBytes": 4194304,
+    "maxArrayItems": 1024,
+    "maxMapEntries": 0,
+    "extensionsAllowed": false,
+    "float32Allowed": false
+  },
+  "types": [
+    {
+      "struct": {
+        "name": "checkpoint",
+        "doc": "One resumption checkpoint: version-vector end pairs in canonical ascending peer order plus the storage sequence absorbed (the engine corpus SyncCheckpoint).",
+        "fields": [
+          {
+            "name": "ends",
+            "doc": "The (peer, end) pairs; canonical ascending peer order, no duplicates.",
+            "type": {
+              "kind": "array",
+              "maxItems": 64,
+              "items": { "kind": "tuple", "of": [{ "kind": "u64" }, { "kind": "u64" }] }
+            }
+          },
+          { "name": "storage_sequence", "doc": "The storage sequence the checkpoint has absorbed.", "type": { "kind": "u64" } }
+        ]
+      }
+    },
+    {
+      "enum": {
+        "name": "error_code",
+        "doc": "The stable closed error vocabulary the engine corpus records.",
+        "values": [
+          { "name": "unsupported_version", "value": 1, "doc": "The protocol version is not spoken." },
+          { "name": "malformed_frame", "value": 2, "doc": "The message failed structural or shape validation." },
+          { "name": "checkpoint_refused", "value": 3, "doc": "The presented checkpoint cannot be resumed from." },
+          { "name": "scope_refused", "value": 4, "doc": "The requested scope is not authorized." },
+          { "name": "session_closed", "value": 5, "doc": "The session is closed." },
+          { "name": "overloaded", "value": 6, "doc": "The server is shedding load." }
+        ]
+      }
+    },
+    {
+      "enum": {
+        "name": "resync_reason",
+        "doc": "Why a resync was demanded.",
+        "values": [
+          { "name": "behind_retained_floor", "value": 1, "doc": "The checkpoint is below the retained floor." },
+          { "name": "history_compacted", "value": 2, "doc": "The retained history was compacted away." }
+        ]
+      }
+    },
+    {
+      "enum": {
+        "name": "payload_codec",
+        "doc": "The native payload codec identities; the numeric values are the engine corpus wire identities (3 = native delta, 4 = native snapshot).",
+        "values": [
+          { "name": "terrabase_native_1", "value": 3, "doc": "The terrabase-native/1 delta codec." },
+          { "name": "terrabase_snapshot_1", "value": 4, "doc": "The terrabase-snapshot/1 snapshot codec." }
+        ]
+      }
+    },
+    {
+      "union": {
+        "name": "document_value",
+        "doc": "One scalar document value of a mutation write; the closed value domain of the engine corpus.",
+        "variants": [
+          { "name": "null_v", "discriminant": 0, "doc": "The absent value.", "fields": [] },
+          { "name": "bool_v", "discriminant": 1, "doc": "A boolean.", "fields": [{ "name": "value", "type": { "kind": "bool" } }] },
+          { "name": "int_v", "discriminant": 2, "doc": "A 64-bit signed integer.", "fields": [{ "name": "value", "type": { "kind": "i64" } }] },
+          { "name": "float_v", "discriminant": 3, "doc": "A 64-bit float.", "fields": [{ "name": "value", "type": { "kind": "f64" } }] },
+          { "name": "text_v", "discriminant": 4, "doc": "A bounded text value.", "fields": [{ "name": "value", "type": { "kind": "text", "maxBytes": 256 } }] }
+        ]
+      }
+    },
+    {
+      "struct": {
+        "name": "mutation_field",
+        "doc": "One named field of a document put.",
+        "fields": [
+          { "name": "key", "doc": "The field key.", "type": { "kind": "text", "maxBytes": 256 } },
+          { "name": "value", "doc": "The field value.", "type": { "kind": "ref", "name": "document_value" } }
+        ]
+      }
+    },
+    {
+      "union": {
+        "name": "document_write",
+        "doc": "The typed write of one mutation request.",
+        "variants": [
+          {
+            "name": "put",
+            "discriminant": 1,
+            "doc": "Set the named fields.",
+            "fields": [
+              {
+                "name": "fields",
+                "doc": "The field list; keys are unique.",
+                "type": { "kind": "array", "maxItems": 1024, "items": { "kind": "ref", "name": "mutation_field" } }
+              }
+            ]
+          },
+          { "name": "delete", "discriminant": 2, "doc": "Delete the document.", "fields": [] }
+        ]
+      }
+    },
+    {
+      "union": {
+        "name": "mutation_outcome",
+        "doc": "The authoritative outcome of one correlated mutation.",
+        "variants": [
+          {
+            "name": "applied",
+            "discriminant": 1,
+            "doc": "The mutation applied durably.",
+            "fields": [
+              { "name": "storage_sequence", "doc": "The storage sequence of the applied commit.", "type": { "kind": "u64" } },
+              { "name": "operation_id", "doc": "The stable operation identity.", "type": { "kind": "text", "maxBytes": 128 } }
+            ]
+          },
+          {
+            "name": "rejected",
+            "discriminant": 2,
+            "doc": "The mutation was refused.",
+            "fields": [{ "name": "reason", "doc": "The typed refusal reason.", "type": { "kind": "ref", "name": "error_code" } }]
+          }
+        ]
+      }
+    },
+    {
+      "enum": {
+        "name": "operation_phase",
+        "doc": "The phase of one durable long-running operation.",
+        "values": [
+          { "name": "queued", "value": 1, "doc": "Admitted, not yet running." },
+          { "name": "running", "value": 2, "doc": "Executing." },
+          { "name": "completed", "value": 3, "doc": "Terminal success." },
+          { "name": "failed", "value": 4, "doc": "Terminal failure." },
+          { "name": "cancelled", "value": 5, "doc": "Terminal cancellation." }
+        ]
+      }
+    },
+    {
+      "enum": {
+        "name": "backpressure_mode",
+        "doc": "The server's backpressure instruction to the connection.",
+        "values": [
+          { "name": "pause", "value": 1, "doc": "Stop sending mutations until resumed." },
+          { "name": "resume", "value": 2, "doc": "Resume sending." }
+        ]
+      }
+    }
+  ],
+  "messages": [
+    {
+      "name": "session_setup",
+      "tag": 1,
+      "direction": "client_to_server",
+      "doc": "Open a session, fresh or resuming from the session's durable checkpoint.",
+      "fields": [
+        {
+          "name": "collections",
+          "doc": "The collections the session subscribes to (bounded by the 128 live subscriptions per connection).",
+          "type": { "kind": "array", "maxItems": 128, "items": { "kind": "text", "maxBytes": 256 } }
+        },
+        { "name": "resume", "doc": "The checkpoint a resuming session presents, or nil for a fresh session.", "type": { "kind": "option", "of": { "kind": "ref", "name": "checkpoint" } } }
+      ]
+    },
+    {
+      "name": "session_accepted",
+      "tag": 2,
+      "direction": "server_to_client",
+      "doc": "The server accepts the session and states its checkpoint and the subscription set now in force.",
+      "fields": [
+        { "name": "session", "doc": "The server-assigned session identity (diagnostics).", "type": { "kind": "u64" } },
+        { "name": "server_checkpoint", "doc": "The server's current checkpoint.", "type": { "kind": "ref", "name": "checkpoint" } },
+        {
+          "name": "collections",
+          "doc": "The subscription set now in force.",
+          "type": { "kind": "array", "maxItems": 128, "items": { "kind": "text", "maxBytes": 256 } }
+        }
+      ]
+    },
+    {
+      "name": "subscription_modify",
+      "tag": 3,
+      "direction": "client_to_server",
+      "doc": "Modify the session's subscriptions.",
+      "fields": [
+        { "name": "add", "doc": "Collections to add.", "type": { "kind": "array", "maxItems": 128, "items": { "kind": "text", "maxBytes": 256 } } },
+        { "name": "remove", "doc": "Collections to remove.", "type": { "kind": "array", "maxItems": 128, "items": { "kind": "text", "maxBytes": 256 } } }
+      ]
+    },
+    {
+      "name": "subscription_changed",
+      "tag": 4,
+      "direction": "server_to_client",
+      "doc": "The subscription set now in force after a modification.",
+      "fields": [
+        { "name": "active", "doc": "The active subscription set.", "type": { "kind": "array", "maxItems": 128, "items": { "kind": "text", "maxBytes": 256 } } }
+      ]
+    },
+    {
+      "name": "checkpoint_ack",
+      "tag": 5,
+      "direction": "client_to_server",
+      "doc": "Acknowledge the session's resumption position; retransmission is bounded by the acknowledged checkpoint.",
+      "fields": [
+        { "name": "checkpoint", "doc": "The session's durable checkpoint.", "type": { "kind": "ref", "name": "checkpoint" } }
+      ]
+    },
+    {
+      "name": "heartbeat",
+      "tag": 6,
+      "direction": "bidirectional",
+      "doc": "Liveness probe; no body fields.",
+      "fields": []
+    },
+    {
+      "name": "delta_batch",
+      "tag": 7,
+      "direction": "server_to_client",
+      "doc": "One byte-budgeted delta batch carrying the terrabase-native/1 codec.",
+      "fields": [
+        { "name": "codec", "doc": "Always terrabase_native_1 on this message.", "type": { "kind": "ref", "name": "payload_codec" } },
+        { "name": "payload", "doc": "The encoded delta bytes (bounded by the 4 MiB per-chunk ceiling).", "type": { "kind": "binary", "minBytes": 0, "maxBytes": 4194304 } },
+        { "name": "next", "doc": "The checkpoint after applying this batch.", "type": { "kind": "ref", "name": "checkpoint" } },
+        { "name": "within_budget", "doc": "Whether the batch fits the configured byte budget.", "type": { "kind": "bool" } },
+        { "name": "single_commit_oversize", "doc": "True only when a single commit's delta alone exceeded the budget and the batch carries exactly that one commit.", "type": { "kind": "bool" } },
+        { "name": "commits", "doc": "How many journal commits the batch carries.", "type": { "kind": "u64" } }
+      ]
+    },
+    {
+      "name": "snapshot_answer",
+      "tag": 8,
+      "direction": "server_to_client",
+      "doc": "One full-state answer (initial results or forced resync) carrying the terrabase-snapshot/1 codec in bounded chunks.",
+      "fields": [
+        { "name": "codec", "doc": "Always terrabase_snapshot_1 on this message.", "type": { "kind": "ref", "name": "payload_codec" } },
+        { "name": "payload", "doc": "The encoded snapshot chunk bytes (bounded by the 4 MiB per-chunk ceiling).", "type": { "kind": "binary", "minBytes": 0, "maxBytes": 4194304 } },
+        { "name": "checkpoint", "doc": "The checkpoint the snapshot corresponds to.", "type": { "kind": "ref", "name": "checkpoint" } }
+      ]
+    },
+    {
+      "name": "trigger",
+      "tag": 9,
+      "direction": "server_to_client",
+      "doc": "A content-free trigger notification; never carries document data.",
+      "fields": [
+        { "name": "collection", "doc": "The collection the commit landed in.", "type": { "kind": "text", "maxBytes": 64 } },
+        { "name": "storage_sequence", "doc": "The storage sequence of the published commit.", "type": { "kind": "u64" } },
+        { "name": "operation_id", "doc": "The stable operation identity of the published commit.", "type": { "kind": "text", "maxBytes": 64 } }
+      ]
+    },
+    {
+      "name": "resync_required",
+      "tag": 10,
+      "direction": "server_to_client",
+      "doc": "The typed reset: the session must resync from the stated floor.",
+      "fields": [
+        { "name": "floor", "doc": "The oldest checkpoint deltas still serve from.", "type": { "kind": "ref", "name": "checkpoint" } },
+        { "name": "reason", "doc": "Why the resync was demanded.", "type": { "kind": "ref", "name": "resync_reason" } }
+      ]
+    },
+    {
+      "name": "region_route_change",
+      "tag": 11,
+      "direction": "server_to_client",
+      "doc": "The relocation: the serving region changed; the client re-resolves the endpoint and resumes from its checkpoint.",
+      "fields": [
+        { "name": "region", "doc": "The new serving region's name.", "type": { "kind": "text", "maxBytes": 256 } }
+      ]
+    },
+    {
+      "name": "history_expired",
+      "tag": 12,
+      "direction": "server_to_client",
+      "doc": "The typed expiry: retained history the checkpoint depended on has expired; resume from the stated floor.",
+      "fields": [
+        { "name": "floor", "doc": "The oldest checkpoint deltas still serve from.", "type": { "kind": "ref", "name": "checkpoint" } }
+      ]
+    },
+    {
+      "name": "error",
+      "tag": 13,
+      "direction": "server_to_client",
+      "doc": "A fatal typed error from the closed vocabulary.",
+      "fields": [
+        { "name": "code", "doc": "The typed error code.", "type": { "kind": "ref", "name": "error_code" } },
+        { "name": "detail", "doc": "A bounded machine-readable detail string (no secrets, no document data), or nil.", "type": { "kind": "option", "of": { "kind": "text", "maxBytes": 256 } } }
+      ]
+    },
+    {
+      "name": "mutation_request",
+      "tag": 14,
+      "direction": "client_to_server",
+      "doc": "One typed document write with its stable idempotency identity for correlation.",
+      "fields": [
+        { "name": "collection", "doc": "The target collection.", "type": { "kind": "text", "maxBytes": 256 } },
+        { "name": "document", "doc": "The target document.", "type": { "kind": "text", "maxBytes": 256 } },
+        { "name": "idempotency", "doc": "The stable idempotency key of this mutation.", "type": { "kind": "text", "maxBytes": 128 } },
+        { "name": "write", "doc": "The typed write.", "type": { "kind": "ref", "name": "document_write" } }
+      ]
+    },
+    {
+      "name": "mutation_ack",
+      "tag": 15,
+      "direction": "server_to_client",
+      "doc": "The authoritative outcome of one correlated mutation.",
+      "fields": [
+        { "name": "outcome", "doc": "The applied identities or the typed refusal.", "type": { "kind": "ref", "name": "mutation_outcome" } }
+      ]
+    },
+    {
+      "name": "causal_token",
+      "tag": 16,
+      "direction": "server_to_client",
+      "doc": "One opaque causal session token the client presents on reconnect (bounded by the 16 KiB token ceiling).",
+      "fields": [
+        { "name": "token", "doc": "The opaque token bytes.", "type": { "kind": "binary", "minBytes": 0, "maxBytes": 16384 } },
+        { "name": "sequence", "doc": "The causal sequence the token covers.", "type": { "kind": "u64" } }
+      ]
+    },
+    {
+      "name": "auth_generation_changed",
+      "tag": 17,
+      "direction": "server_to_client",
+      "doc": "The authorization generation changed; subscriptions re-evaluate visibility at the new generation.",
+      "fields": [
+        { "name": "generation", "doc": "The new authorization generation.", "type": { "kind": "u64" } }
+      ]
+    },
+    {
+      "name": "operation_progress",
+      "tag": 18,
+      "direction": "server_to_client",
+      "doc": "Progress or a terminal result of one durable long-running operation.",
+      "fields": [
+        { "name": "operation", "doc": "The operation identity (the ADR 0027 fixed 16-byte ULID representation).", "type": { "kind": "binary", "minBytes": 16, "maxBytes": 16 } },
+        { "name": "phase", "doc": "The operation phase.", "type": { "kind": "ref", "name": "operation_phase" } },
+        { "name": "done", "doc": "The completed work units.", "type": { "kind": "u64" } },
+        { "name": "total", "doc": "The total work units when known, or nil.", "type": { "kind": "option", "of": { "kind": "u64" } } },
+        { "name": "detail", "doc": "A bounded machine-readable detail string, or nil.", "type": { "kind": "option", "of": { "kind": "text", "maxBytes": 256 } } }
+      ]
+    },
+    {
+      "name": "backpressure",
+      "tag": 19,
+      "direction": "server_to_client",
+      "doc": "The server's backpressure instruction for the connection.",
+      "fields": [
+        { "name": "mode", "doc": "The instruction.", "type": { "kind": "ref", "name": "backpressure_mode" } }
+      ]
+    }
+  ]
+}
