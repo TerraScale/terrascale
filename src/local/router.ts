@@ -67,16 +67,17 @@ export class TerraScaleLocalRouter {
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const method = request.method.toUpperCase();
+    const pathname = canonicalPathname(url.pathname);
 
     if (method === "OPTIONS") {
       return withCors(request, emptyResponse(204));
     }
 
-    if (method === "GET" && (url.pathname === "/health" || url.pathname === "/health/ready")) {
+    if (method === "GET" && (pathname === "/health" || pathname === "/health/ready")) {
       return withCors(request, Response.json({ status: "ready", storage: "sqlite" }));
     }
 
-    if (this.#authentication === "required" && !isAuthorized(request, method, url.pathname)) {
+    if (this.#authentication === "required" && !isAuthorized(request, method, pathname)) {
       return withCors(
         request,
         problemResponse(401, "authentication_required", "Supply a bearer token or session cookie."),
@@ -101,7 +102,7 @@ export class TerraScaleLocalRouter {
       body,
       method,
       now: new Date().toISOString(),
-      pathname: url.pathname,
+      pathname,
       request,
       store: this.#store,
       url,
@@ -121,7 +122,7 @@ export class TerraScaleLocalRouter {
       }
 
       if (response === undefined) {
-        const match = matchManifestRoute(this.#routes, method, url.pathname);
+        const match = matchManifestRoute(this.#routes, method, pathname);
         if (match !== undefined) {
           response = problemResponse(
             501,
@@ -139,7 +140,7 @@ export class TerraScaleLocalRouter {
       );
     }
 
-    response ??= problemResponse(404, "route_not_found", `No public TerraScale route matches ${method} ${url.pathname}.`);
+    response ??= problemResponse(404, "route_not_found", `No public TerraScale route matches ${method} ${pathname}.`);
     response = await this.#rememberIdempotent(context, response);
     return withCors(request, response);
   }
@@ -196,6 +197,10 @@ export class TerraScaleLocalRouter {
     );
     return response;
   }
+}
+
+function canonicalPathname(pathname: string): string {
+  return pathname.length > 1 ? pathname.replace(/\/+$/u, "") : pathname;
 }
 
 function loadManifestRoutes(): readonly CompiledManifestRoute[] {

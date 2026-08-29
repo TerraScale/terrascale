@@ -176,6 +176,9 @@ test("required bearer gate, health, unknown routes, reset/seed, binding, and rem
     assert.equal(unauthorized.status, 401);
     const authorized = await fetch(`${address.origin}/api/v1/organizations`, { headers: { authorization: "Bearer local-test-token" } });
     assert.equal(authorized.status, 200);
+    const authorizedWithTrailingSlash = await fetch(`${address.origin}/api/v1/organizations/`, { headers: { authorization: "Bearer local-test-token" } });
+    assert.equal(authorizedWithTrailingSlash.status, 200);
+    assert.deepEqual(await authorizedWithTrailingSlash.json(), []);
     const unknown = await fetch(`${address.origin}/api/v1/not-a-route`, { headers: { authorization: "Bearer local-test-token" } });
     assert.equal(unknown.status, 404);
   } finally {
