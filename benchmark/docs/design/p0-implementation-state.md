@@ -760,3 +760,33 @@ reconnect/resume, and the C# CI gates.
 Receipts: `cargo test -p terrabase-tbep` 14 suites green;
 `terrabase-v2` 1080/1080; clippy `-D warnings` and fmt clean on both
 crates; Protocol 23/23, Api 90/90. `scripts/check.sh` not run (AC-12).
+
+## 20. P4 landing 9 (2026-08-29, f043d29): the C# client's QUIC path
+
+The C# client speaks the network binding: `TbepQuic.ConnectAsync`
+(`host/TerraBase.Protocol/TbepQuic.cs`) opens a QUIC+TLS connection
+(ALPN `terrabase.engine.protocol/1` — the Rust endpoint now offers and
+requires exactly this name), opens one bidirectional stream as the
+TBEP channel, and hands it to the SAME client discipline: `TbepClient`
+was refactored to serve over any connected `Stream`
+(`TbepClient.OverStream`; the socket path is unchanged), so every
+operation — binds, mutations with idempotency keys, negotiation, tier
+administration — rides the QUIC channel through one implementation.
+The engine harness gained a QUIC mode (`quic:<port>:<cert-pem>:<key
+-pem>` beside the UDS listener), and `terrabase-tbep` grew a
+dependency-free PEM closure (`decode_pem_certificate`/`decode_pem_key`)
+so the operator-provisioned PEM pair becomes the rustls identity.
+
+Honest limit, recorded: the C# QUIC row
+(`EngineQuicTests.TheClientDrivesTheRealEngineOverQuicTls`) provisions
+its own .NET self-signed identity, spawns the harness with both
+listeners, and drives the spine — but `System.Net.Quic` needs the
+platform's msquic library, and THIS host carries none (NixOS, msquic
+absent from the channel), so the row skips with that reason and runs
+where the platform provides it. The transport itself is proven from
+Rust (landing 8's row); the C# path compiles, ships, and is exercised
+on msquic-capable hosts.
+
+Receipts: `cargo test -p terrabase-tbep` 14 suites green (the QUIC row
+unchanged); clippy `-D warnings` and fmt clean; Protocol 23/23; Api
+90 green + 1 honest skip. `scripts/check.sh` not run (AC-12).
