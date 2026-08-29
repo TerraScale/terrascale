@@ -11,11 +11,10 @@
 //!
 //! Honest limits of this landing: the sync-session family
 //! (backbone/sessions) and the family surfaces answer the typed refusal
-//! naming their landing; the tier-administration and cluster-mode
-//! operations land with their phases. The query and schema surfaces are
-//! served: V1-compatible query text compiles and executes against the
-//! bound tenant's snapshot, and collection schemas declare, validate,
-//! and enforce through the recorded policy.
+//! naming their landing. Served: V1-compatible queries, collection
+//! schemas, acknowledgement and read levels with positions, topology's
+//! honest standalone answer, query cancellation, and the Storage Tier
+//! Mover's typed administration.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -82,6 +81,58 @@ fn to_engine_expected(expected: &ExpectedVersion) -> EngineVersion {
 /// How many recently finished query identities the host remembers for
 /// `already_complete` cancel answers — bounded, drop-oldest.
 const COMPLETED_QUERY_HORIZON: usize = 256;
+
+/// Maps one tier administration failure onto the wire's typed refusal.
+fn tier_error(error: terrabase_v2::tiers::TierAdminError) -> HostingError {
+    match error {
+        terrabase_v2::tiers::TierAdminError::InvalidPolicy => {
+            HostingError::Invalid("the tier policy is not valid".into())
+        }
+        terrabase_v2::tiers::TierAdminError::NotConfigured => {
+            HostingError::Refused("no tier policy is configured".into())
+        }
+        terrabase_v2::tiers::TierAdminError::Paused => {
+            HostingError::Refused("tier runs are paused".into())
+        }
+        terrabase_v2::tiers::TierAdminError::UnsupportedBackend => {
+            HostingError::Refused("this backend carries no tiers".into())
+        }
+        terrabase_v2::tiers::TierAdminError::MoveFailed => {
+            HostingError::EngineFailure("the mover run failed".into())
+        }
+    }
+}
+
+/// Maps one engine tier receipt onto the wire's.
+fn wire_receipt(
+    receipt: &terrabase_v2::tiers::TierMoveRunReceipt,
+) -> crate::generated::TierMoveReceipt {
+    crate::generated::TierMoveReceipt {
+        policy_id: receipt.policy_id().to_owned(),
+        policy_version: receipt.policy_version(),
+        decision: match receipt.decision() {
+            terrabase_v2::tiers::TierDecision::Promote => crate::generated::TierDecision::Promote,
+            terrabase_v2::tiers::TierDecision::Demote => crate::generated::TierDecision::Demote,
+            terrabase_v2::tiers::TierDecision::Split => crate::generated::TierDecision::Split,
+            terrabase_v2::tiers::TierDecision::None => crate::generated::TierDecision::None,
+            terrabase_v2::tiers::TierDecision::Refused => crate::generated::TierDecision::Refused,
+        },
+        reasons: receipt
+            .reasons()
+            .iter()
+            .map(|reason| crate::generated::TierMoveReason {
+                fact: reason.fact().to_owned(),
+                observed: reason.observed().to_owned(),
+            })
+            .collect(),
+        segment_id: receipt.segment_id(),
+        bytes: receipt.bytes(),
+        manifest_before: receipt.manifest_epoch_before(),
+        manifest_after: receipt.manifest_epoch_after(),
+        dry_run: receipt.dry_run(),
+        manifest_accepted: receipt.manifest_accepted(),
+    }
+}
 
 /// The TBEP host backed by one durable Engine.
 pub struct EngineHost {
@@ -610,6 +661,95 @@ impl TbepHost for EngineHost {
         Err(HostingError::Refused(
             "sync sessions are served by the sync-delivery host beside this one".into(),
         ))
+    }
+
+    fn tier_configure(
+        &self,
+        _tenant: &str,
+        request: &crate::generated::TierConfigureRequest,
+        _idempotency_key: &str,
+    ) -> Result<crate::generated::TierConfigureResponse, HostingError> {
+        self.count_frame();
+        let policy = terrabase_v2::tiers::TierPolicy::try_new(
+            &request.policy_id,
+            request.version,
+            request.nvme_budget_bytes,
+            request.min_residence_moves,
+            request.promotion_threshold,
+            request.pinned_segment_ids.clone(),
+        )
+        .map_err(|_| HostingError::Invalid("the tier policy is not valid".into()))?;
+        let tiers = self.engine.tiers();
+        let policy = tiers
+            .configure(policy)
+            .map_err(|_| HostingError::Invalid("the tier policy was refused".into()))?;
+        Ok(crate::generated::TierConfigureResponse {
+            policy_id: policy.policy_id().to_owned(),
+            version: policy.version(),
+            // configure is fresh control: never paused afterwards.
+            paused: false,
+        })
+    }
+
+    fn tier_inspect(
+        &self,
+        _tenant: &str,
+    ) -> Result<crate::generated::TierInspectResponse, HostingError> {
+        self.count_frame();
+        let view = self.engine.tiers().inspect();
+        Ok(crate::generated::TierInspectResponse {
+            configured: view.configured(),
+            paused: view.paused(),
+            manifest_epoch: view.manifest_epoch(),
+            object_count: u32::try_from(view.object_count()).unwrap_or(u32::MAX),
+            nvme_bytes: view.nvme_bytes(),
+        })
+    }
+
+    fn tier_explain(
+        &self,
+        _tenant: &str,
+    ) -> Result<crate::generated::TierExplainResponse, HostingError> {
+        self.count_frame();
+        let receipt = self.engine.tiers().dry_run().map_err(tier_error)?;
+        Ok(crate::generated::TierExplainResponse { receipt: wire_receipt(&receipt) })
+    }
+
+    fn tier_dry_run(
+        &self,
+        _tenant: &str,
+    ) -> Result<crate::generated::TierDryRunResponse, HostingError> {
+        self.count_frame();
+        let receipt = self.engine.tiers().dry_run().map_err(tier_error)?;
+        Ok(crate::generated::TierDryRunResponse { receipt: wire_receipt(&receipt) })
+    }
+
+    fn tier_run(
+        &self,
+        _tenant: &str,
+        _idempotency_key: &str,
+    ) -> Result<crate::generated::TierRunResponse, HostingError> {
+        self.count_frame();
+        let receipt = self.engine.tiers().run().map_err(tier_error)?;
+        Ok(crate::generated::TierRunResponse { receipt: wire_receipt(&receipt) })
+    }
+
+    fn tier_pause(
+        &self,
+        _tenant: &str,
+        _idempotency_key: &str,
+    ) -> Result<crate::generated::TierPauseResponse, HostingError> {
+        self.count_frame();
+        Ok(crate::generated::TierPauseResponse { paused: self.engine.tiers().pause() })
+    }
+
+    fn tier_resume(
+        &self,
+        _tenant: &str,
+        _idempotency_key: &str,
+    ) -> Result<crate::generated::TierResumeResponse, HostingError> {
+        self.count_frame();
+        Ok(crate::generated::TierResumeResponse { paused: self.engine.tiers().resume() })
     }
 
     fn topology_read(

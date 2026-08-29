@@ -34,12 +34,12 @@
     {
       "class": "control",
       "wire_bytes": 256,
-      "frames": "error, channel.bind, topology.read, admin.status, supervision.*"
+      "frames": "error, channel.bind, topology.read, admin.status, supervision.*, tier.configure, tier.pause, tier.resume, tier.inspect"
     },
     {
       "class": "operation",
       "wire_bytes": 1024,
-      "frames": "document.read, document.delete, query.cancel, family.*, backbone.*"
+      "frames": "document.read, document.delete, query.cancel, family.*, backbone.*, tier.dry_run, tier.explain, tier.run"
     },
     {
       "class": "operation_large",
@@ -296,6 +296,27 @@
         },
         {
           "name": "backup"
+        }
+      ]
+    },
+    {
+      "name": "tier_decision",
+      "tag": "u8",
+      "variants": [
+        {
+          "name": "promote"
+        },
+        {
+          "name": "demote"
+        },
+        {
+          "name": "split"
+        },
+        {
+          "name": "none"
+        },
+        {
+          "name": "refused"
         }
       ]
     },
@@ -773,6 +794,67 @@
           "name": "acknowledgement",
           "type": "acknowledgement",
           "optional": true
+        }
+      ]
+    },
+    {
+      "name": "tier_move_reason",
+      "fields": [
+        {
+          "name": "fact",
+          "type": "str",
+          "bound": 64
+        },
+        {
+          "name": "observed",
+          "type": "str",
+          "bound": 128
+        }
+      ]
+    },
+    {
+      "name": "tier_move_receipt",
+      "fields": [
+        {
+          "name": "policy_id",
+          "type": "str",
+          "bound": 128
+        },
+        {
+          "name": "policy_version",
+          "type": "u32"
+        },
+        {
+          "name": "decision",
+          "type": "tier_decision"
+        },
+        {
+          "name": "reasons",
+          "type": "[tier_move_reason]"
+        },
+        {
+          "name": "segment_id",
+          "type": "u64"
+        },
+        {
+          "name": "bytes",
+          "type": "u64"
+        },
+        {
+          "name": "manifest_before",
+          "type": "u64"
+        },
+        {
+          "name": "manifest_after",
+          "type": "u64"
+        },
+        {
+          "name": "dry_run",
+          "type": "bool"
+        },
+        {
+          "name": "manifest_accepted",
+          "type": "bool"
         }
       ]
     },
@@ -2530,6 +2612,225 @@
           {
             "name": "receipt",
             "type": "migration_receipt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tier.configure",
+      "code": 342,
+      "family": "tiers",
+      "class": "control",
+      "mutation": true,
+      "parity": [
+        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
+      ],
+      "request": {
+        "name": "tier_configure_request",
+        "fields": [
+          {
+            "name": "policy_id",
+            "type": "str",
+            "bound": 128
+          },
+          {
+            "name": "version",
+            "type": "u32"
+          },
+          {
+            "name": "nvme_budget_bytes",
+            "type": "u64"
+          },
+          {
+            "name": "min_residence_moves",
+            "type": "u32"
+          },
+          {
+            "name": "promotion_threshold",
+            "type": "u32"
+          },
+          {
+            "name": "pinned_segment_ids",
+            "type": "[u64]"
+          }
+        ]
+      },
+      "response": {
+        "code": 598,
+        "name": "tier_configure_response",
+        "fields": [
+          {
+            "name": "policy_id",
+            "type": "str",
+            "bound": 128
+          },
+          {
+            "name": "version",
+            "type": "u32"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tier.inspect",
+      "code": 343,
+      "family": "tiers",
+      "class": "control",
+      "mutation": false,
+      "parity": [
+        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
+      ],
+      "request": {
+        "name": "tier_inspect_request",
+        "fields": []
+      },
+      "response": {
+        "code": 599,
+        "name": "tier_inspect_response",
+        "fields": [
+          {
+            "name": "configured",
+            "type": "bool"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "manifest_epoch",
+            "type": "u64"
+          },
+          {
+            "name": "object_count",
+            "type": "u32"
+          },
+          {
+            "name": "nvme_bytes",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tier.dry_run",
+      "code": 344,
+      "family": "tiers",
+      "class": "operation",
+      "mutation": false,
+      "parity": [
+        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
+      ],
+      "request": {
+        "name": "tier_dry_run_request",
+        "fields": []
+      },
+      "response": {
+        "code": 600,
+        "name": "tier_dry_run_response",
+        "fields": [
+          {
+            "name": "receipt",
+            "type": "tier_move_receipt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tier.explain",
+      "code": 345,
+      "family": "tiers",
+      "class": "operation",
+      "mutation": false,
+      "parity": [
+        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
+      ],
+      "request": {
+        "name": "tier_explain_request",
+        "fields": []
+      },
+      "response": {
+        "code": 601,
+        "name": "tier_explain_response",
+        "fields": [
+          {
+            "name": "receipt",
+            "type": "tier_move_receipt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tier.run",
+      "code": 346,
+      "family": "tiers",
+      "class": "operation",
+      "mutation": true,
+      "parity": [
+        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
+      ],
+      "request": {
+        "name": "tier_run_request",
+        "fields": []
+      },
+      "response": {
+        "code": 602,
+        "name": "tier_run_response",
+        "fields": [
+          {
+            "name": "receipt",
+            "type": "tier_move_receipt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tier.pause",
+      "code": 347,
+      "family": "tiers",
+      "class": "control",
+      "mutation": true,
+      "parity": [
+        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
+      ],
+      "request": {
+        "name": "tier_pause_request",
+        "fields": []
+      },
+      "response": {
+        "code": 603,
+        "name": "tier_pause_response",
+        "fields": [
+          {
+            "name": "paused",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tier.resume",
+      "code": 348,
+      "family": "tiers",
+      "class": "control",
+      "mutation": true,
+      "parity": [
+        "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"
+      ],
+      "request": {
+        "name": "tier_resume_request",
+        "fields": []
+      },
+      "response": {
+        "code": 604,
+        "name": "tier_resume_response",
+        "fields": [
+          {
+            "name": "paused",
+            "type": "bool"
           }
         ]
       }

@@ -50,6 +50,13 @@ use terrabase_tbep::generated::SyncChange;
 use terrabase_tbep::generated::SyncField;
 use terrabase_tbep::generated::SyncMutationSubmitRequest;
 use terrabase_tbep::generated::SyncSessionSetupRequest;
+use terrabase_tbep::generated::TierConfigureRequest;
+use terrabase_tbep::generated::TierDecision;
+use terrabase_tbep::generated::TierDryRunRequest;
+use terrabase_tbep::generated::TierDryRunResponse;
+use terrabase_tbep::generated::TierInspectRequest;
+use terrabase_tbep::generated::TierMoveReason;
+use terrabase_tbep::generated::TierMoveReceipt;
 use terrabase_tbep::generated::TopologyReadRequest;
 use terrabase_tbep::generated::TriggerNotification;
 
@@ -62,6 +69,7 @@ fn corpus_dir() -> PathBuf {
 const CATEGORIES: &[&str] = &[
     "channel-bind",
     "negotiation",
+    "tier-admin",
     "document-frames",
     "query-cancellation",
     "sync-session",
@@ -326,6 +334,54 @@ fn build_corpus() -> Vec<(String, Value)> {
                             accepted_capabilities: vec!["query-surface".into()],
                         },
                         2, 1, None).expect("seals")),
+            ],
+            "adversarial": [],
+        }),
+    ));
+
+    // tier-admin: the Storage Tier Mover's typed operator controls.
+    corpus.push((
+        "tier-admin".into(),
+        json!({
+            "category": "tier-admin",
+            "description": "The Storage Tier Mover's typed administration (p0-protocol-compatibility-contract section 4): configure carries its idempotency key; inspect and the dry run are reads; the receipt names the decision and its ordered reasons.",
+            "protocol": "terrabase.engine.protocol",
+            "wire_version": 1,
+            "schema": "terrabase.engine.protocol/vector-corpus@1",
+            "frames": [
+                scenario_frame("TierConfigureRequest",
+                    &TbepFrame::seal(
+                        TierConfigureRequest {
+                            policy_id: "prod".into(),
+                            version: 3,
+                            nvme_budget_bytes: 64 << 20,
+                            min_residence_moves: 1,
+                            promotion_threshold: 2,
+                            pinned_segment_ids: vec![],
+                        },
+                        1, 0, Some(&IdempotencyKey::new("op-tier-1").expect("key"))).expect("seals")),
+                scenario_frame("TierInspectRequest", &TbepFrame::seal(TierInspectRequest {}, 2, 0, None).expect("seals")),
+                scenario_frame("TierDryRunRequest", &TbepFrame::seal(TierDryRunRequest {}, 3, 0, None).expect("seals")),
+                scenario_frame("TierDryRunResponse",
+                    &TbepFrame::seal(
+                        TierDryRunResponse {
+                            receipt: TierMoveReceipt {
+                                policy_id: "prod".into(),
+                                policy_version: 3,
+                                decision: TierDecision::None,
+                                reasons: vec![TierMoveReason {
+                                    fact: "nvme_resident_bytes".into(),
+                                    observed: "0".into(),
+                                }],
+                                segment_id: 0,
+                                bytes: 0,
+                                manifest_before: 0,
+                                manifest_after: 0,
+                                dry_run: true,
+                                manifest_accepted: false,
+                            },
+                        },
+                        4, 3, None).expect("seals")),
             ],
             "adversarial": [],
         }),

@@ -81,6 +81,66 @@ public sealed partial class TbepClient : IAsyncDisposable
         return MessagePackSerializer.Deserialize<NegotiationResponse>(answer.Body, TbepOptions.Strict);
     }
 
+    /// <summary>Configures the Storage Tier Mover's policy (mutation): the idempotency key is the retry identity.</summary>
+    /// <param name="policyId">The policy's stable identity.</param>
+    /// <param name="version">The policy's version.</param>
+    /// <param name="nvmeBudgetBytes">The NVMe byte budget demotion starts beyond.</param>
+    /// <param name="minResidenceMoves">The minimum residence before demotion.</param>
+    /// <param name="promotionThreshold">The access count that promotes a cold range back.</param>
+    /// <param name="pinnedSegmentIds">The segments that never demote.</param>
+    /// <param name="idempotencyKey">The envelope's idempotency key.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The configure response.</returns>
+    /// <exception cref="TbepException">The operation failed.</exception>
+    public async Task<TierConfigureResponse> TierConfigureAsync(string policyId, uint version, ulong nvmeBudgetBytes, uint minResidenceMoves, uint promotionThreshold, ulong[] pinnedSegmentIds, string idempotencyKey, CancellationToken cancellationToken = default)
+    {
+        var answer = await this.CallAsync(
+            "tier.configure",
+            new TierConfigureRequest
+            {
+                PolicyId = policyId,
+                Version = version,
+                NvmeBudgetBytes = nvmeBudgetBytes,
+                MinResidenceMoves = minResidenceMoves,
+                PromotionThreshold = promotionThreshold,
+                PinnedSegmentIds = pinnedSegmentIds,
+            },
+            idempotency: idempotencyKey,
+            expect: TbepRegistry.ResponseKindOf("tier.configure"),
+            cancellationToken).ConfigureAwait(false);
+        return MessagePackSerializer.Deserialize<TierConfigureResponse>(answer.Body, TbepOptions.Strict);
+    }
+
+    /// <summary>Inspects the tier state: the control state and the backend's tier facts.</summary>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The inspect response.</returns>
+    /// <exception cref="TbepException">The operation failed.</exception>
+    public async Task<TierInspectResponse> TierInspectAsync(CancellationToken cancellationToken = default)
+    {
+        var answer = await this.CallAsync(
+            "tier.inspect",
+            new TierInspectRequest(),
+            idempotency: null,
+            expect: TbepRegistry.ResponseKindOf("tier.inspect"),
+            cancellationToken).ConfigureAwait(false);
+        return MessagePackSerializer.Deserialize<TierInspectResponse>(answer.Body, TbepOptions.Strict);
+    }
+
+    /// <summary>Runs one dry mover pass: the receipt explains the next decision without transferring anything.</summary>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The dry-run receipt.</returns>
+    /// <exception cref="TbepException">The operation failed.</exception>
+    public async Task<TierDryRunResponse> TierDryRunAsync(CancellationToken cancellationToken = default)
+    {
+        var answer = await this.CallAsync(
+            "tier.dry_run",
+            new TierDryRunRequest(),
+            idempotency: null,
+            expect: TbepRegistry.ResponseKindOf("tier.dry_run"),
+            cancellationToken).ConfigureAwait(false);
+        return MessagePackSerializer.Deserialize<TierDryRunResponse>(answer.Body, TbepOptions.Strict);
+    }
+
     /// <summary>Reads one document.</summary>
     /// <param name="collection">The collection.</param>
     /// <param name="document">The document id.</param>

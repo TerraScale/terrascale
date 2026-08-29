@@ -1239,6 +1239,28 @@ impl StoragePort for LsmStorage {
         }
     }
 
+    fn mover_pass(
+        &mut self,
+        policy: &tier::TierMovePolicy,
+        home_region: &str,
+    ) -> Result<tier::MoverOutcome, tier::TierUnsupported> {
+        // The engine-owned local Tier-2 store: content-addressed objects
+        // beside the segments. Remote object stores arrive with the
+        // cold-tier landing; the seam stays typed.
+        let mut store = object_store::LocalObjectStore::open(&self.dir.join("tier-objects"))
+            .map_err(|_| tier::TierUnsupported)?;
+        Ok(tier::run_mover(self, &mut store, policy, home_region))
+    }
+
+    fn tier_snapshot(&self) -> Option<tier::TierSnapshot> {
+        let manifest = tier::TierManifest::read(&self.dir);
+        Some(tier::TierSnapshot {
+            manifest_epoch: manifest.as_ref().map_or(0, |manifest| manifest.epoch),
+            object_count: manifest.map_or(0, |manifest| manifest.objects.len()),
+            nvme_bytes: self.manifest.segments.iter().map(|meta| meta.byte_len).sum(),
+        })
+    }
+
     fn flush(&mut self) -> Result<(), ()> {
         self.wal.sync().map_err(|_| ())
     }

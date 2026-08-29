@@ -895,6 +895,21 @@ impl super::StoragePort for FileStorage {
         }
     }
 
+    // The root-file engine carries no tiers: P4's tier administration is
+    // the LSM engine's surface, and this backend answers the typed
+    // refusal.
+    fn mover_pass(
+        &mut self,
+        _policy: &super::lsm::tier::TierMovePolicy,
+        _home_region: &str,
+    ) -> Result<super::lsm::tier::MoverOutcome, super::lsm::tier::TierUnsupported> {
+        Err(super::lsm::tier::TierUnsupported)
+    }
+
+    fn tier_snapshot(&self) -> Option<super::lsm::tier::TierSnapshot> {
+        None
+    }
+
     fn flush(&mut self) -> Result<(), ()> {
         self.wal.sync().map_err(|_| ())?;
         self.ledger.sync().map_err(|_| ())?;

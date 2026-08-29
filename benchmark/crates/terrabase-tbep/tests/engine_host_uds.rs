@@ -742,3 +742,96 @@ fn query_cancellation_answers_typed_outcomes_for_finished_and_unknown_queries() 
     drop(fixture);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_engine_serves_tier_administration_over_uds() {
+    use terrabase_tbep::generated::{
+        TierConfigureRequest, TierDecision, TierDryRunRequest, TierInspectRequest,
+        TierPauseRequest, TierResumeRequest, TierRunRequest,
+    };
+
+    let dir = location("tiers");
+    let mut fixture = Fixture::bind("tiers", &dir, 1);
+    fixture.bind_channel("tenant-a");
+
+    // Unconfigured: the dry run refuses typed.
+    let answer = fixture.call(TierDryRunRequest {}, None);
+    assert!(
+        matches!(answer.body(), TbepBody::Error(_)),
+        "the unconfigured dry run refuses, got {:?}",
+        answer.kind()
+    );
+
+    // Configure (a mutation: it carries its key) records the policy.
+    let answer = fixture.call(
+        TierConfigureRequest {
+            policy_id: "prod".into(),
+            version: 3,
+            nvme_budget_bytes: 64 << 20,
+            min_residence_moves: 1,
+            promotion_threshold: 2,
+            pinned_segment_ids: vec![],
+        },
+        Some(&IdempotencyKey::new("op-tier-1").expect("valid key")),
+    );
+    let TbepBody::TierConfigureResponse(response) = answer.body() else {
+        panic!("the configure answered, got {:?}", answer.kind());
+    };
+    assert_eq!(response.policy_id, "prod");
+    assert_eq!(response.version, 3);
+    assert!(!response.paused);
+
+    // Inspect names the configured control state and the tier facts.
+    let answer = fixture.call(TierInspectRequest {}, None);
+    let TbepBody::TierInspectResponse(response) = answer.body() else {
+        panic!("the inspect answered");
+    };
+    assert!(response.configured);
+    assert!(!response.paused);
+
+    // The dry pass receipts its reasons: a fresh engine sits below the
+    // budget, so nothing moves.
+    let answer = fixture.call(TierDryRunRequest {}, None);
+    let TbepBody::TierDryRunResponse(response) = answer.body() else {
+        panic!("the dry run answered");
+    };
+    assert_eq!(response.receipt.decision, TierDecision::None);
+    assert_eq!(response.receipt.bytes, 0);
+    assert!(response.receipt.dry_run);
+    let facts: Vec<&str> = response.receipt.reasons.iter().map(|r| r.fact.as_str()).collect();
+    assert!(facts.contains(&"nvme_resident_bytes"));
+
+    // Pause gates the real run; the dry pass stays read-only.
+    let answer = fixture
+        .call(TierPauseRequest {}, Some(&IdempotencyKey::new("op-tier-2").expect("valid key")));
+    let TbepBody::TierPauseResponse(response) = answer.body() else {
+        panic!("the pause answered");
+    };
+    assert!(response.paused);
+    let answer = fixture
+        .call(TierRunRequest {}, Some(&IdempotencyKey::new("op-tier-3").expect("valid key")));
+    assert!(
+        matches!(answer.body(), TbepBody::Error(_)),
+        "the paused run refuses, got {:?}",
+        answer.kind()
+    );
+    let answer = fixture.call(TierDryRunRequest {}, None);
+    assert!(matches!(answer.body(), TbepBody::TierDryRunResponse(_)));
+
+    // Resume un-gates it and the run receipts.
+    let answer = fixture
+        .call(TierResumeRequest {}, Some(&IdempotencyKey::new("op-tier-4").expect("valid key")));
+    let TbepBody::TierResumeResponse(response) = answer.body() else {
+        panic!("the resume answered");
+    };
+    assert!(!response.paused);
+    let answer = fixture
+        .call(TierRunRequest {}, Some(&IdempotencyKey::new("op-tier-5").expect("valid key")));
+    let TbepBody::TierRunResponse(response) = answer.body() else {
+        panic!("the run answered, got {:?}", answer.kind());
+    };
+    assert_eq!(response.receipt.decision, TierDecision::None);
+
+    drop(fixture);
+    let _ = std::fs::remove_dir_all(&dir);
+}

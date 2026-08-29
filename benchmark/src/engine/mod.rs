@@ -546,8 +546,8 @@ impl EngineIdentity {
 }
 
 /// The locked storage state of one Engine.
-struct StorageState {
-    port: Box<dyn StoragePort>,
+pub(crate) struct StorageState {
+    pub(crate) port: Box<dyn StoragePort>,
 }
 
 /// The database-owned Engine.
@@ -558,7 +558,7 @@ struct StorageState {
 /// ```
 pub struct Engine {
     identity: u128,
-    storage: Arc<Mutex<StorageState>>,
+    pub(crate) storage: Arc<Mutex<StorageState>>,
     /// Live operation reservations, keyed by (tenant, operation). Keying by
     /// tenant keeps the reservation scoped: two tenants may run the same
     /// operation identity concurrently.
@@ -577,6 +577,9 @@ pub struct Engine {
     /// one content-free event pair per run, engine-owned, with durable
     /// audit shipping belonging to the Platform side.
     bulk_audit: Arc<crate::query::bulk::BulkAuditJournal>,
+    /// The Storage Tier Mover's control state (P4): the configured
+    /// policy and the pause gate. The handle is [`Engine::tiers`].
+    pub(crate) tier_control: Arc<Mutex<crate::tiers::TierControlState>>,
 }
 
 impl Engine {
@@ -638,7 +641,15 @@ impl Engine {
             indexes,
             _index_subscription: index_subscription,
             bulk_audit: Arc::new(crate::query::bulk::BulkAuditJournal::new()),
+            tier_control: Arc::new(Mutex::new(crate::tiers::TierControlState::default())),
         })
+    }
+
+    /// Returns the Storage Tier Mover's typed administration handle
+    /// (P4): configure, explain, dry-run, run, pause, resume, inspect.
+    #[must_use]
+    pub fn tiers(&self) -> crate::tiers::TierAdministration {
+        crate::tiers::TierAdministration::new(self)
     }
 
     /// Returns the never-reused identity of this Engine instance. Tests

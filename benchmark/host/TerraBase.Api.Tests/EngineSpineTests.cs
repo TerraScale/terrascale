@@ -233,3 +233,81 @@ public sealed class EngineNegotiationTests
     }
 }
 }
+
+/// <summary>
+/// The Storage Tier Mover's typed administration against the real engine
+/// (P4): configure, inspect, and the dry run's receipted explanation.
+/// </summary>
+public sealed class EngineTierTests
+{
+    private static string Location()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"tbep-engine-tier-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    private static async Task<Process> StartAsync(string socket, string location)
+    {
+        var binary = await EngineHarness.BinaryPathAsync();
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = binary,
+                Arguments = $"{socket} 1 engine:{location}",
+                RedirectStandardOutput = true,
+                RedirectStandardInput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            },
+        };
+        _ = process.Start();
+        var announcement = await process.StandardOutput.ReadLineAsync();
+        if (announcement is null || !announcement.StartsWith("serving ", StringComparison.Ordinal))
+        {
+            process.Kill();
+            throw new InvalidOperationException($"the tier harness did not announce itself: {announcement}");
+        }
+
+        return process;
+    }
+
+    /// <summary>The tier controls: configure records, inspect observes, and the dry pass receipts its reasons.</summary>
+    [Test]
+    public async Task TheClientAdministersTiersOnTheRealEngine()
+    {
+        var location = Location();
+        var socket = Path.Combine(Path.GetTempPath(), $"tbep-tier-{Guid.NewGuid():N}.sock");
+        var process = await StartAsync(socket, location);
+        try
+        {
+            await using var client = TbepClient.Connect(socket);
+            await client.BindChannelAsync("backend", "tenant-a");
+
+            var configured = await client.TierConfigureAsync("prod", 3, 64UL << 20, 1, 2, [], "op-tier-1");
+            await Assert.That(configured.PolicyId).IsEqualTo("prod");
+            await Assert.That(configured.Version).IsEqualTo(3u);
+
+            var inspect = await client.TierInspectAsync();
+            await Assert.That(inspect.Configured).IsTrue();
+            await Assert.That(inspect.Paused).IsFalse();
+
+            var dry = await client.TierDryRunAsync();
+            await Assert.That(dry.Receipt.Decision.Variant).IsEqualTo("None");
+            await Assert.That(dry.Receipt.DryRun).IsTrue();
+            await Assert.That(dry.Receipt.Reasons).IsNotEmpty();
+        }
+        finally
+        {
+            await process.StandardInput.WriteLineAsync(string.Empty);
+            if (!process.WaitForExit(10_000))
+            {
+                process.Kill();
+            }
+
+            process.Dispose();
+            Directory.Delete(location, recursive: true);
+        }
+    }
+}

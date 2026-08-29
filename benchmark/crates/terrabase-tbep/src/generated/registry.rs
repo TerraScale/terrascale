@@ -720,6 +720,134 @@ impl<'de> serde::Deserialize<'de> for ClusterMode {
     }
 }
 
+/// The generated `tier_decision` closed vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TierDecision {
+    /// The `promote` row (code 1).
+    Promote,
+    /// The `demote` row (code 2).
+    Demote,
+    /// The `split` row (code 3).
+    Split,
+    /// The `none` row (code 4).
+    None,
+    /// The `refused` row (code 5).
+    Refused,
+}
+
+impl TierDecision {
+    /// The variant's wire code; unknown codes fail closed on decode.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Promote => 1,
+            Self::Demote => 2,
+            Self::Split => 3,
+            Self::None => 4,
+            Self::Refused => 5,
+        }
+    }
+
+    /// Decodes a payload-less variant from its wire code.
+    ///
+    /// Payload-carrying variants decode through the serde codec
+    /// (`from_wire`); they answer `None` here by construction.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::Promote),
+            2 => Some(Self::Demote),
+            3 => Some(Self::Split),
+            4 => Some(Self::None),
+            5 => Some(Self::Refused),
+            _ => None,
+        }
+    }
+}
+
+impl serde::Serialize for TierDecision {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Promote => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&1u8)?;
+                tuple.end()
+            }
+            Self::Demote => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&2u8)?;
+                tuple.end()
+            }
+            Self::Split => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&3u8)?;
+                tuple.end()
+            }
+            Self::None => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&4u8)?;
+                tuple.end()
+            }
+            Self::Refused => {
+                let mut tuple = serializer.serialize_tuple(1)?;
+                tuple.serialize_element(&5u8)?;
+                tuple.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierDecision {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierDecision;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_decision array of one tagged variant")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                match tag {
+                    1 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(TierDecision::Promote)
+                    }
+                    2 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(TierDecision::Demote)
+                    }
+                    3 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(TierDecision::Split)
+                    }
+                    4 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(TierDecision::None)
+                    }
+                    5 => {
+                        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            return Err(serde::de::Error::invalid_length(1, &self));
+                        }
+                        Ok(TierDecision::Refused)
+                    }
+                    _ => Err(serde::de::Error::custom("unknown tier_decision code")),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
 /// The generated `expected_version` closed vocabulary.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ExpectedVersion {
@@ -3304,6 +3432,154 @@ impl<'de> serde::Deserialize<'de> for CommitReceipt {
                     version,
                     operation_id,
                     acknowledgement,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `tier_move_reason` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierMoveReason {
+    /// The `fact` field.
+    pub fact: String,
+    /// The `observed` field.
+    pub observed: String,
+}
+
+impl serde::Serialize for TierMoveReason {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.fact.as_str())?;
+        tuple.serialize_element(&self.observed.as_str())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierMoveReason {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierMoveReason;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_move_reason array of 2 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let fact = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let observed = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
+                }
+                Ok(Self::Value {
+                    fact,
+                    observed,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// The `tier_move_receipt` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierMoveReceipt {
+    /// The `policy_id` field.
+    pub policy_id: String,
+    /// The `policy_version` field.
+    pub policy_version: u32,
+    /// The `decision` field.
+    pub decision: TierDecision,
+    /// The `reasons` field.
+    pub reasons: Vec<TierMoveReason>,
+    /// The `segment_id` field.
+    pub segment_id: u64,
+    /// The `bytes` field.
+    pub bytes: u64,
+    /// The `manifest_before` field.
+    pub manifest_before: u64,
+    /// The `manifest_after` field.
+    pub manifest_after: u64,
+    /// The `dry_run` field.
+    pub dry_run: bool,
+    /// The `manifest_accepted` field.
+    pub manifest_accepted: bool,
+}
+
+impl serde::Serialize for TierMoveReceipt {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(10)?;
+        tuple.serialize_element(&self.policy_id.as_str())?;
+        tuple.serialize_element(&self.policy_version)?;
+        tuple.serialize_element(&self.decision)?;
+        tuple.serialize_element(&self.reasons.as_slice())?;
+        tuple.serialize_element(&self.segment_id)?;
+        tuple.serialize_element(&self.bytes)?;
+        tuple.serialize_element(&self.manifest_before)?;
+        tuple.serialize_element(&self.manifest_after)?;
+        tuple.serialize_element(&self.dry_run)?;
+        tuple.serialize_element(&self.manifest_accepted)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierMoveReceipt {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierMoveReceipt;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_move_receipt array of 10 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let policy_id = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let policy_version = seq
+                    .next_element::<u32>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let decision = seq
+                    .next_element::<TierDecision>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let reasons = seq
+                    .next_element::<Vec<TierMoveReason>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let segment_id = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
+                let bytes = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(5, &self))?;
+                let manifest_before = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(6, &self))?;
+                let manifest_after = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(7, &self))?;
+                let dry_run = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(8, &self))?;
+                let manifest_accepted = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(9, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(10, &self));
+                }
+                Ok(Self::Value {
+                    policy_id,
+                    policy_version,
+                    decision,
+                    reasons,
+                    segment_id,
+                    bytes,
+                    manifest_before,
+                    manifest_after,
+                    dry_run,
+                    manifest_accepted,
                 })
             }
         }
@@ -7949,6 +8225,682 @@ impl crate::codec::WireBody for MigrationApplyResponse {
     }
 }
 
+/// The `tier_configure_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierConfigureRequest {
+    /// The `policy_id` field.
+    pub policy_id: String,
+    /// The `version` field.
+    pub version: u32,
+    /// The `nvme_budget_bytes` field.
+    pub nvme_budget_bytes: u64,
+    /// The `min_residence_moves` field.
+    pub min_residence_moves: u32,
+    /// The `promotion_threshold` field.
+    pub promotion_threshold: u32,
+    /// The `pinned_segment_ids` field.
+    pub pinned_segment_ids: Vec<u64>,
+}
+
+impl serde::Serialize for TierConfigureRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(6)?;
+        tuple.serialize_element(&self.policy_id.as_str())?;
+        tuple.serialize_element(&self.version)?;
+        tuple.serialize_element(&self.nvme_budget_bytes)?;
+        tuple.serialize_element(&self.min_residence_moves)?;
+        tuple.serialize_element(&self.promotion_threshold)?;
+        tuple.serialize_element(&self.pinned_segment_ids.as_slice())?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierConfigureRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierConfigureRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_configure_request array of 6 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let policy_id = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let version = seq
+                    .next_element::<u32>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let nvme_budget_bytes = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let min_residence_moves = seq
+                    .next_element::<u32>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let promotion_threshold = seq
+                    .next_element::<u32>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
+                let pinned_segment_ids = seq
+                    .next_element::<Vec<u64>>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(5, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(6, &self));
+                }
+                Ok(Self::Value {
+                    policy_id,
+                    version,
+                    nvme_budget_bytes,
+                    min_residence_moves,
+                    promotion_threshold,
+                    pinned_segment_ids,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierConfigureRequest {
+    const KIND: FrameKind = FrameKind::TierConfigureRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.policy_id, 128, "policy_id")?;
+        crate::codec::check_list_bound(&self.pinned_segment_ids, MAX_LIST_ITEMS, "pinned_segment_ids")?;
+        Ok(())
+    }
+}
+
+/// The `tier_configure_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierConfigureResponse {
+    /// The `policy_id` field.
+    pub policy_id: String,
+    /// The `version` field.
+    pub version: u32,
+    /// The `paused` field.
+    pub paused: bool,
+}
+
+impl serde::Serialize for TierConfigureResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(3)?;
+        tuple.serialize_element(&self.policy_id.as_str())?;
+        tuple.serialize_element(&self.version)?;
+        tuple.serialize_element(&self.paused)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierConfigureResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierConfigureResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_configure_response array of 3 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let policy_id = seq
+                    .next_element::<String>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let version = seq
+                    .next_element::<u32>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let paused = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(3, &self));
+                }
+                Ok(Self::Value {
+                    policy_id,
+                    version,
+                    paused,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierConfigureResponse {
+    const KIND: FrameKind = FrameKind::TierConfigureResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        crate::codec::check_str_bound(&self.policy_id, 128, "policy_id")?;
+        Ok(())
+    }
+}
+
+/// The `tier_inspect_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierInspectRequest {
+}
+
+impl serde::Serialize for TierInspectRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_tuple(0)?.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierInspectRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierInspectRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_inspect_request array of 0 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let _ = &mut seq;
+                Ok(Self::Value {
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierInspectRequest {
+    const KIND: FrameKind = FrameKind::TierInspectRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `tier_inspect_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierInspectResponse {
+    /// The `configured` field.
+    pub configured: bool,
+    /// The `paused` field.
+    pub paused: bool,
+    /// The `manifest_epoch` field.
+    pub manifest_epoch: u64,
+    /// The `object_count` field.
+    pub object_count: u32,
+    /// The `nvme_bytes` field.
+    pub nvme_bytes: u64,
+}
+
+impl serde::Serialize for TierInspectResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(5)?;
+        tuple.serialize_element(&self.configured)?;
+        tuple.serialize_element(&self.paused)?;
+        tuple.serialize_element(&self.manifest_epoch)?;
+        tuple.serialize_element(&self.object_count)?;
+        tuple.serialize_element(&self.nvme_bytes)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierInspectResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierInspectResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_inspect_response array of 5 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let configured = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let paused = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let manifest_epoch = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let object_count = seq
+                    .next_element::<u32>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let nvme_bytes = seq
+                    .next_element::<u64>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(5, &self));
+                }
+                Ok(Self::Value {
+                    configured,
+                    paused,
+                    manifest_epoch,
+                    object_count,
+                    nvme_bytes,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierInspectResponse {
+    const KIND: FrameKind = FrameKind::TierInspectResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `tier_dry_run_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierDryRunRequest {
+}
+
+impl serde::Serialize for TierDryRunRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_tuple(0)?.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierDryRunRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierDryRunRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_dry_run_request array of 0 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let _ = &mut seq;
+                Ok(Self::Value {
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierDryRunRequest {
+    const KIND: FrameKind = FrameKind::TierDryRunRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `tier_dry_run_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierDryRunResponse {
+    /// The `receipt` field.
+    pub receipt: TierMoveReceipt,
+}
+
+impl serde::Serialize for TierDryRunResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(1)?;
+        tuple.serialize_element(&self.receipt)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierDryRunResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierDryRunResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_dry_run_response array of 1 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let receipt = seq
+                    .next_element::<TierMoveReceipt>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(1, &self));
+                }
+                Ok(Self::Value {
+                    receipt,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierDryRunResponse {
+    const KIND: FrameKind = FrameKind::TierDryRunResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `tier_explain_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierExplainRequest {
+}
+
+impl serde::Serialize for TierExplainRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_tuple(0)?.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierExplainRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierExplainRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_explain_request array of 0 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let _ = &mut seq;
+                Ok(Self::Value {
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierExplainRequest {
+    const KIND: FrameKind = FrameKind::TierExplainRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `tier_explain_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierExplainResponse {
+    /// The `receipt` field.
+    pub receipt: TierMoveReceipt,
+}
+
+impl serde::Serialize for TierExplainResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(1)?;
+        tuple.serialize_element(&self.receipt)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierExplainResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierExplainResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_explain_response array of 1 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let receipt = seq
+                    .next_element::<TierMoveReceipt>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(1, &self));
+                }
+                Ok(Self::Value {
+                    receipt,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierExplainResponse {
+    const KIND: FrameKind = FrameKind::TierExplainResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `tier_run_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierRunRequest {
+}
+
+impl serde::Serialize for TierRunRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_tuple(0)?.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierRunRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierRunRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_run_request array of 0 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let _ = &mut seq;
+                Ok(Self::Value {
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierRunRequest {
+    const KIND: FrameKind = FrameKind::TierRunRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `tier_run_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierRunResponse {
+    /// The `receipt` field.
+    pub receipt: TierMoveReceipt,
+}
+
+impl serde::Serialize for TierRunResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(1)?;
+        tuple.serialize_element(&self.receipt)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierRunResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierRunResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_run_response array of 1 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let receipt = seq
+                    .next_element::<TierMoveReceipt>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(1, &self));
+                }
+                Ok(Self::Value {
+                    receipt,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierRunResponse {
+    const KIND: FrameKind = FrameKind::TierRunResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `tier_pause_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierPauseRequest {
+}
+
+impl serde::Serialize for TierPauseRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_tuple(0)?.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierPauseRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierPauseRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_pause_request array of 0 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let _ = &mut seq;
+                Ok(Self::Value {
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierPauseRequest {
+    const KIND: FrameKind = FrameKind::TierPauseRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `tier_pause_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierPauseResponse {
+    /// The `paused` field.
+    pub paused: bool,
+}
+
+impl serde::Serialize for TierPauseResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(1)?;
+        tuple.serialize_element(&self.paused)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierPauseResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierPauseResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_pause_response array of 1 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let paused = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(1, &self));
+                }
+                Ok(Self::Value {
+                    paused,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierPauseResponse {
+    const KIND: FrameKind = FrameKind::TierPauseResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `tier_resume_request` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierResumeRequest {
+}
+
+impl serde::Serialize for TierResumeRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_tuple(0)?.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierResumeRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierResumeRequest;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_resume_request array of 0 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let _ = &mut seq;
+                Ok(Self::Value {
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierResumeRequest {
+    const KIND: FrameKind = FrameKind::TierResumeRequest;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
+/// The `tier_resume_response` frame body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TierResumeResponse {
+    /// The `paused` field.
+    pub paused: bool,
+}
+
+impl serde::Serialize for TierResumeResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(1)?;
+        tuple.serialize_element(&self.paused)?;
+        tuple.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TierResumeResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TierResumeResponse;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tier_resume_response array of 1 fields")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let paused = seq
+                    .next_element::<bool>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(1, &self));
+                }
+                Ok(Self::Value {
+                    paused,
+                })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl crate::codec::WireBody for TierResumeResponse {
+    const KIND: FrameKind = FrameKind::TierResumeResponse;
+    fn validate(&self) -> Result<(), crate::codec::BodyError> {
+        let _ = self;
+        Ok(())
+    }
+}
+
 /// The `subscription_batch` frame body.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SubscriptionBatch {
@@ -8378,6 +9330,20 @@ pub enum FrameKind {
     MigrationDryRunRequest,
     /// Code 341 (host-to-engine; schemas).
     MigrationApplyRequest,
+    /// Code 342 (host-to-engine; tiers).
+    TierConfigureRequest,
+    /// Code 343 (host-to-engine; tiers).
+    TierInspectRequest,
+    /// Code 344 (host-to-engine; tiers).
+    TierDryRunRequest,
+    /// Code 345 (host-to-engine; tiers).
+    TierExplainRequest,
+    /// Code 346 (host-to-engine; tiers).
+    TierRunRequest,
+    /// Code 347 (host-to-engine; tiers).
+    TierPauseRequest,
+    /// Code 348 (host-to-engine; tiers).
+    TierResumeRequest,
     /// Code 513 (engine-to-host; documents).
     DocumentReadResponse,
     /// Code 514 (engine-to-host; documents).
@@ -8444,6 +9410,20 @@ pub enum FrameKind {
     MigrationDryRunResponse,
     /// Code 597 (engine-to-host; schemas).
     MigrationApplyResponse,
+    /// Code 598 (engine-to-host; tiers).
+    TierConfigureResponse,
+    /// Code 599 (engine-to-host; tiers).
+    TierInspectResponse,
+    /// Code 600 (engine-to-host; tiers).
+    TierDryRunResponse,
+    /// Code 601 (engine-to-host; tiers).
+    TierExplainResponse,
+    /// Code 602 (engine-to-host; tiers).
+    TierRunResponse,
+    /// Code 603 (engine-to-host; tiers).
+    TierPauseResponse,
+    /// Code 604 (engine-to-host; tiers).
+    TierResumeResponse,
     /// Code 769 (engine-to-host; backbone).
     SubscriptionBatch,
     /// Code 770 (engine-to-host; backbone).
@@ -8493,6 +9473,13 @@ impl FrameKind {
             Self::MigrationStatusRequest => 339,
             Self::MigrationDryRunRequest => 340,
             Self::MigrationApplyRequest => 341,
+            Self::TierConfigureRequest => 342,
+            Self::TierInspectRequest => 343,
+            Self::TierDryRunRequest => 344,
+            Self::TierExplainRequest => 345,
+            Self::TierRunRequest => 346,
+            Self::TierPauseRequest => 347,
+            Self::TierResumeRequest => 348,
             Self::DocumentReadResponse => 513,
             Self::DocumentWriteResponse => 514,
             Self::DocumentDeleteResponse => 515,
@@ -8526,6 +9513,13 @@ impl FrameKind {
             Self::MigrationStatusResponse => 595,
             Self::MigrationDryRunResponse => 596,
             Self::MigrationApplyResponse => 597,
+            Self::TierConfigureResponse => 598,
+            Self::TierInspectResponse => 599,
+            Self::TierDryRunResponse => 600,
+            Self::TierExplainResponse => 601,
+            Self::TierRunResponse => 602,
+            Self::TierPauseResponse => 603,
+            Self::TierResumeResponse => 604,
             Self::SubscriptionBatch => 769,
             Self::TriggerNotification => 770,
             Self::SubscriptionClosed => 771,
@@ -8572,6 +9566,13 @@ impl FrameKind {
             339 => Some(Self::MigrationStatusRequest),
             340 => Some(Self::MigrationDryRunRequest),
             341 => Some(Self::MigrationApplyRequest),
+            342 => Some(Self::TierConfigureRequest),
+            343 => Some(Self::TierInspectRequest),
+            344 => Some(Self::TierDryRunRequest),
+            345 => Some(Self::TierExplainRequest),
+            346 => Some(Self::TierRunRequest),
+            347 => Some(Self::TierPauseRequest),
+            348 => Some(Self::TierResumeRequest),
             513 => Some(Self::DocumentReadResponse),
             514 => Some(Self::DocumentWriteResponse),
             515 => Some(Self::DocumentDeleteResponse),
@@ -8605,6 +9606,13 @@ impl FrameKind {
             595 => Some(Self::MigrationStatusResponse),
             596 => Some(Self::MigrationDryRunResponse),
             597 => Some(Self::MigrationApplyResponse),
+            598 => Some(Self::TierConfigureResponse),
+            599 => Some(Self::TierInspectResponse),
+            600 => Some(Self::TierDryRunResponse),
+            601 => Some(Self::TierExplainResponse),
+            602 => Some(Self::TierRunResponse),
+            603 => Some(Self::TierPauseResponse),
+            604 => Some(Self::TierResumeResponse),
             769 => Some(Self::SubscriptionBatch),
             770 => Some(Self::TriggerNotification),
             771 => Some(Self::SubscriptionClosed),
@@ -8652,6 +9660,13 @@ impl FrameKind {
             Self::MigrationStatusRequest => "MigrationStatusRequest",
             Self::MigrationDryRunRequest => "MigrationDryRunRequest",
             Self::MigrationApplyRequest => "MigrationApplyRequest",
+            Self::TierConfigureRequest => "TierConfigureRequest",
+            Self::TierInspectRequest => "TierInspectRequest",
+            Self::TierDryRunRequest => "TierDryRunRequest",
+            Self::TierExplainRequest => "TierExplainRequest",
+            Self::TierRunRequest => "TierRunRequest",
+            Self::TierPauseRequest => "TierPauseRequest",
+            Self::TierResumeRequest => "TierResumeRequest",
             Self::DocumentReadResponse => "DocumentReadResponse",
             Self::DocumentWriteResponse => "DocumentWriteResponse",
             Self::DocumentDeleteResponse => "DocumentDeleteResponse",
@@ -8685,6 +9700,13 @@ impl FrameKind {
             Self::MigrationStatusResponse => "MigrationStatusResponse",
             Self::MigrationDryRunResponse => "MigrationDryRunResponse",
             Self::MigrationApplyResponse => "MigrationApplyResponse",
+            Self::TierConfigureResponse => "TierConfigureResponse",
+            Self::TierInspectResponse => "TierInspectResponse",
+            Self::TierDryRunResponse => "TierDryRunResponse",
+            Self::TierExplainResponse => "TierExplainResponse",
+            Self::TierRunResponse => "TierRunResponse",
+            Self::TierPauseResponse => "TierPauseResponse",
+            Self::TierResumeResponse => "TierResumeResponse",
             Self::SubscriptionBatch => "SubscriptionBatch",
             Self::TriggerNotification => "TriggerNotification",
             Self::SubscriptionClosed => "SubscriptionClosed",
@@ -8731,6 +9753,13 @@ impl FrameKind {
             Self::MigrationStatusRequest => "schemas",
             Self::MigrationDryRunRequest => "schemas",
             Self::MigrationApplyRequest => "schemas",
+            Self::TierConfigureRequest => "tiers",
+            Self::TierInspectRequest => "tiers",
+            Self::TierDryRunRequest => "tiers",
+            Self::TierExplainRequest => "tiers",
+            Self::TierRunRequest => "tiers",
+            Self::TierPauseRequest => "tiers",
+            Self::TierResumeRequest => "tiers",
             Self::DocumentReadResponse => "documents",
             Self::DocumentWriteResponse => "documents",
             Self::DocumentDeleteResponse => "documents",
@@ -8764,6 +9793,13 @@ impl FrameKind {
             Self::MigrationStatusResponse => "schemas",
             Self::MigrationDryRunResponse => "schemas",
             Self::MigrationApplyResponse => "schemas",
+            Self::TierConfigureResponse => "tiers",
+            Self::TierInspectResponse => "tiers",
+            Self::TierDryRunResponse => "tiers",
+            Self::TierExplainResponse => "tiers",
+            Self::TierRunResponse => "tiers",
+            Self::TierPauseResponse => "tiers",
+            Self::TierResumeResponse => "tiers",
             Self::SubscriptionBatch => "backbone",
             Self::TriggerNotification => "backbone",
             Self::SubscriptionClosed => "backbone",
@@ -8810,6 +9846,13 @@ impl FrameKind {
             Self::MigrationStatusRequest => "schema",
             Self::MigrationDryRunRequest => "schema",
             Self::MigrationApplyRequest => "schema",
+            Self::TierConfigureRequest => "control",
+            Self::TierInspectRequest => "control",
+            Self::TierDryRunRequest => "operation",
+            Self::TierExplainRequest => "operation",
+            Self::TierRunRequest => "operation",
+            Self::TierPauseRequest => "control",
+            Self::TierResumeRequest => "control",
             Self::DocumentReadResponse => "operation",
             Self::DocumentWriteResponse => "operation_large",
             Self::DocumentDeleteResponse => "operation",
@@ -8843,6 +9886,13 @@ impl FrameKind {
             Self::MigrationStatusResponse => "schema",
             Self::MigrationDryRunResponse => "schema",
             Self::MigrationApplyResponse => "schema",
+            Self::TierConfigureResponse => "control",
+            Self::TierInspectResponse => "control",
+            Self::TierDryRunResponse => "operation",
+            Self::TierExplainResponse => "operation",
+            Self::TierRunResponse => "operation",
+            Self::TierPauseResponse => "control",
+            Self::TierResumeResponse => "control",
             Self::SubscriptionBatch => "subscription",
             Self::TriggerNotification => "trigger",
             Self::SubscriptionClosed => "control",
@@ -8859,6 +9909,10 @@ impl FrameKind {
             | Self::MigrationApplyRequest
             | Self::SchemaDeclareRequest
             | Self::SyncMutationSubmitRequest
+            | Self::TierConfigureRequest
+            | Self::TierPauseRequest
+            | Self::TierResumeRequest
+            | Self::TierRunRequest
         )
     }
 }
@@ -8914,6 +9968,13 @@ pub const FRAME_ROWS: &[FrameRow] = &[
     FrameRow { code: 339, kind: "MigrationStatusRequest", family: "schemas", class: "schema" },
     FrameRow { code: 340, kind: "MigrationDryRunRequest", family: "schemas", class: "schema" },
     FrameRow { code: 341, kind: "MigrationApplyRequest", family: "schemas", class: "schema" },
+    FrameRow { code: 342, kind: "TierConfigureRequest", family: "tiers", class: "control" },
+    FrameRow { code: 343, kind: "TierInspectRequest", family: "tiers", class: "control" },
+    FrameRow { code: 344, kind: "TierDryRunRequest", family: "tiers", class: "operation" },
+    FrameRow { code: 345, kind: "TierExplainRequest", family: "tiers", class: "operation" },
+    FrameRow { code: 346, kind: "TierRunRequest", family: "tiers", class: "operation" },
+    FrameRow { code: 347, kind: "TierPauseRequest", family: "tiers", class: "control" },
+    FrameRow { code: 348, kind: "TierResumeRequest", family: "tiers", class: "control" },
     FrameRow { code: 513, kind: "DocumentReadResponse", family: "documents", class: "operation" },
     FrameRow { code: 514, kind: "DocumentWriteResponse", family: "documents", class: "operation_large" },
     FrameRow { code: 515, kind: "DocumentDeleteResponse", family: "documents", class: "operation" },
@@ -8947,6 +10008,13 @@ pub const FRAME_ROWS: &[FrameRow] = &[
     FrameRow { code: 595, kind: "MigrationStatusResponse", family: "schemas", class: "schema" },
     FrameRow { code: 596, kind: "MigrationDryRunResponse", family: "schemas", class: "schema" },
     FrameRow { code: 597, kind: "MigrationApplyResponse", family: "schemas", class: "schema" },
+    FrameRow { code: 598, kind: "TierConfigureResponse", family: "tiers", class: "control" },
+    FrameRow { code: 599, kind: "TierInspectResponse", family: "tiers", class: "control" },
+    FrameRow { code: 600, kind: "TierDryRunResponse", family: "tiers", class: "operation" },
+    FrameRow { code: 601, kind: "TierExplainResponse", family: "tiers", class: "operation" },
+    FrameRow { code: 602, kind: "TierRunResponse", family: "tiers", class: "operation" },
+    FrameRow { code: 603, kind: "TierPauseResponse", family: "tiers", class: "control" },
+    FrameRow { code: 604, kind: "TierResumeResponse", family: "tiers", class: "control" },
     FrameRow { code: 769, kind: "SubscriptionBatch", family: "backbone", class: "subscription" },
     FrameRow { code: 770, kind: "TriggerNotification", family: "backbone", class: "trigger" },
     FrameRow { code: 771, kind: "SubscriptionClosed", family: "backbone", class: "control" },
@@ -9027,6 +10095,20 @@ pub enum TbepBody {
     MigrationDryRunRequest(MigrationDryRunRequest),
     /// The `MigrationApplyRequest` body.
     MigrationApplyRequest(MigrationApplyRequest),
+    /// The `TierConfigureRequest` body.
+    TierConfigureRequest(TierConfigureRequest),
+    /// The `TierInspectRequest` body.
+    TierInspectRequest(TierInspectRequest),
+    /// The `TierDryRunRequest` body.
+    TierDryRunRequest(TierDryRunRequest),
+    /// The `TierExplainRequest` body.
+    TierExplainRequest(TierExplainRequest),
+    /// The `TierRunRequest` body.
+    TierRunRequest(TierRunRequest),
+    /// The `TierPauseRequest` body.
+    TierPauseRequest(TierPauseRequest),
+    /// The `TierResumeRequest` body.
+    TierResumeRequest(TierResumeRequest),
     /// The `DocumentReadResponse` body.
     DocumentReadResponse(DocumentReadResponse),
     /// The `DocumentWriteResponse` body.
@@ -9093,6 +10175,20 @@ pub enum TbepBody {
     MigrationDryRunResponse(MigrationDryRunResponse),
     /// The `MigrationApplyResponse` body.
     MigrationApplyResponse(MigrationApplyResponse),
+    /// The `TierConfigureResponse` body.
+    TierConfigureResponse(TierConfigureResponse),
+    /// The `TierInspectResponse` body.
+    TierInspectResponse(TierInspectResponse),
+    /// The `TierDryRunResponse` body.
+    TierDryRunResponse(TierDryRunResponse),
+    /// The `TierExplainResponse` body.
+    TierExplainResponse(TierExplainResponse),
+    /// The `TierRunResponse` body.
+    TierRunResponse(TierRunResponse),
+    /// The `TierPauseResponse` body.
+    TierPauseResponse(TierPauseResponse),
+    /// The `TierResumeResponse` body.
+    TierResumeResponse(TierResumeResponse),
     /// The `SubscriptionBatch` body.
     SubscriptionBatch(SubscriptionBatch),
     /// The `TriggerNotification` body.
@@ -9245,6 +10341,34 @@ impl From<MigrationApplyRequest> for TbepBody {
     fn from(value: MigrationApplyRequest) -> Self { Self::MigrationApplyRequest(value) }
 }
 
+impl From<TierConfigureRequest> for TbepBody {
+    fn from(value: TierConfigureRequest) -> Self { Self::TierConfigureRequest(value) }
+}
+
+impl From<TierInspectRequest> for TbepBody {
+    fn from(value: TierInspectRequest) -> Self { Self::TierInspectRequest(value) }
+}
+
+impl From<TierDryRunRequest> for TbepBody {
+    fn from(value: TierDryRunRequest) -> Self { Self::TierDryRunRequest(value) }
+}
+
+impl From<TierExplainRequest> for TbepBody {
+    fn from(value: TierExplainRequest) -> Self { Self::TierExplainRequest(value) }
+}
+
+impl From<TierRunRequest> for TbepBody {
+    fn from(value: TierRunRequest) -> Self { Self::TierRunRequest(value) }
+}
+
+impl From<TierPauseRequest> for TbepBody {
+    fn from(value: TierPauseRequest) -> Self { Self::TierPauseRequest(value) }
+}
+
+impl From<TierResumeRequest> for TbepBody {
+    fn from(value: TierResumeRequest) -> Self { Self::TierResumeRequest(value) }
+}
+
 impl From<DocumentReadResponse> for TbepBody {
     fn from(value: DocumentReadResponse) -> Self { Self::DocumentReadResponse(value) }
 }
@@ -9377,6 +10501,34 @@ impl From<MigrationApplyResponse> for TbepBody {
     fn from(value: MigrationApplyResponse) -> Self { Self::MigrationApplyResponse(value) }
 }
 
+impl From<TierConfigureResponse> for TbepBody {
+    fn from(value: TierConfigureResponse) -> Self { Self::TierConfigureResponse(value) }
+}
+
+impl From<TierInspectResponse> for TbepBody {
+    fn from(value: TierInspectResponse) -> Self { Self::TierInspectResponse(value) }
+}
+
+impl From<TierDryRunResponse> for TbepBody {
+    fn from(value: TierDryRunResponse) -> Self { Self::TierDryRunResponse(value) }
+}
+
+impl From<TierExplainResponse> for TbepBody {
+    fn from(value: TierExplainResponse) -> Self { Self::TierExplainResponse(value) }
+}
+
+impl From<TierRunResponse> for TbepBody {
+    fn from(value: TierRunResponse) -> Self { Self::TierRunResponse(value) }
+}
+
+impl From<TierPauseResponse> for TbepBody {
+    fn from(value: TierPauseResponse) -> Self { Self::TierPauseResponse(value) }
+}
+
+impl From<TierResumeResponse> for TbepBody {
+    fn from(value: TierResumeResponse) -> Self { Self::TierResumeResponse(value) }
+}
+
 impl From<SubscriptionBatch> for TbepBody {
     fn from(value: SubscriptionBatch) -> Self { Self::SubscriptionBatch(value) }
 }
@@ -9430,6 +10582,13 @@ impl TbepBody {
             Self::MigrationStatusRequest(_) => FrameKind::MigrationStatusRequest,
             Self::MigrationDryRunRequest(_) => FrameKind::MigrationDryRunRequest,
             Self::MigrationApplyRequest(_) => FrameKind::MigrationApplyRequest,
+            Self::TierConfigureRequest(_) => FrameKind::TierConfigureRequest,
+            Self::TierInspectRequest(_) => FrameKind::TierInspectRequest,
+            Self::TierDryRunRequest(_) => FrameKind::TierDryRunRequest,
+            Self::TierExplainRequest(_) => FrameKind::TierExplainRequest,
+            Self::TierRunRequest(_) => FrameKind::TierRunRequest,
+            Self::TierPauseRequest(_) => FrameKind::TierPauseRequest,
+            Self::TierResumeRequest(_) => FrameKind::TierResumeRequest,
             Self::DocumentReadResponse(_) => FrameKind::DocumentReadResponse,
             Self::DocumentWriteResponse(_) => FrameKind::DocumentWriteResponse,
             Self::DocumentDeleteResponse(_) => FrameKind::DocumentDeleteResponse,
@@ -9463,6 +10622,13 @@ impl TbepBody {
             Self::MigrationStatusResponse(_) => FrameKind::MigrationStatusResponse,
             Self::MigrationDryRunResponse(_) => FrameKind::MigrationDryRunResponse,
             Self::MigrationApplyResponse(_) => FrameKind::MigrationApplyResponse,
+            Self::TierConfigureResponse(_) => FrameKind::TierConfigureResponse,
+            Self::TierInspectResponse(_) => FrameKind::TierInspectResponse,
+            Self::TierDryRunResponse(_) => FrameKind::TierDryRunResponse,
+            Self::TierExplainResponse(_) => FrameKind::TierExplainResponse,
+            Self::TierRunResponse(_) => FrameKind::TierRunResponse,
+            Self::TierPauseResponse(_) => FrameKind::TierPauseResponse,
+            Self::TierResumeResponse(_) => FrameKind::TierResumeResponse,
             Self::SubscriptionBatch(_) => FrameKind::SubscriptionBatch,
             Self::TriggerNotification(_) => FrameKind::TriggerNotification,
             Self::SubscriptionClosed(_) => FrameKind::SubscriptionClosed,
@@ -9512,6 +10678,13 @@ impl TbepBody {
             Self::MigrationStatusRequest(body) => crate::codec::encode_body(body),
             Self::MigrationDryRunRequest(body) => crate::codec::encode_body(body),
             Self::MigrationApplyRequest(body) => crate::codec::encode_body(body),
+            Self::TierConfigureRequest(body) => crate::codec::encode_body(body),
+            Self::TierInspectRequest(body) => crate::codec::encode_body(body),
+            Self::TierDryRunRequest(body) => crate::codec::encode_body(body),
+            Self::TierExplainRequest(body) => crate::codec::encode_body(body),
+            Self::TierRunRequest(body) => crate::codec::encode_body(body),
+            Self::TierPauseRequest(body) => crate::codec::encode_body(body),
+            Self::TierResumeRequest(body) => crate::codec::encode_body(body),
             Self::DocumentReadResponse(body) => crate::codec::encode_body(body),
             Self::DocumentWriteResponse(body) => crate::codec::encode_body(body),
             Self::DocumentDeleteResponse(body) => crate::codec::encode_body(body),
@@ -9545,6 +10718,13 @@ impl TbepBody {
             Self::MigrationStatusResponse(body) => crate::codec::encode_body(body),
             Self::MigrationDryRunResponse(body) => crate::codec::encode_body(body),
             Self::MigrationApplyResponse(body) => crate::codec::encode_body(body),
+            Self::TierConfigureResponse(body) => crate::codec::encode_body(body),
+            Self::TierInspectResponse(body) => crate::codec::encode_body(body),
+            Self::TierDryRunResponse(body) => crate::codec::encode_body(body),
+            Self::TierExplainResponse(body) => crate::codec::encode_body(body),
+            Self::TierRunResponse(body) => crate::codec::encode_body(body),
+            Self::TierPauseResponse(body) => crate::codec::encode_body(body),
+            Self::TierResumeResponse(body) => crate::codec::encode_body(body),
             Self::SubscriptionBatch(body) => crate::codec::encode_body(body),
             Self::TriggerNotification(body) => crate::codec::encode_body(body),
             Self::SubscriptionClosed(body) => crate::codec::encode_body(body),
@@ -9594,6 +10774,13 @@ impl TbepBody {
             FrameKind::MigrationStatusRequest => Ok(Self::MigrationStatusRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::MigrationDryRunRequest => Ok(Self::MigrationDryRunRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::MigrationApplyRequest => Ok(Self::MigrationApplyRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierConfigureRequest => Ok(Self::TierConfigureRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierInspectRequest => Ok(Self::TierInspectRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierDryRunRequest => Ok(Self::TierDryRunRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierExplainRequest => Ok(Self::TierExplainRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierRunRequest => Ok(Self::TierRunRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierPauseRequest => Ok(Self::TierPauseRequest(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierResumeRequest => Ok(Self::TierResumeRequest(crate::codec::decode_body(bytes)?)),
             FrameKind::DocumentReadResponse => Ok(Self::DocumentReadResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::DocumentWriteResponse => Ok(Self::DocumentWriteResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::DocumentDeleteResponse => Ok(Self::DocumentDeleteResponse(crate::codec::decode_body(bytes)?)),
@@ -9627,6 +10814,13 @@ impl TbepBody {
             FrameKind::MigrationStatusResponse => Ok(Self::MigrationStatusResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::MigrationDryRunResponse => Ok(Self::MigrationDryRunResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::MigrationApplyResponse => Ok(Self::MigrationApplyResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierConfigureResponse => Ok(Self::TierConfigureResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierInspectResponse => Ok(Self::TierInspectResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierDryRunResponse => Ok(Self::TierDryRunResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierExplainResponse => Ok(Self::TierExplainResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierRunResponse => Ok(Self::TierRunResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierPauseResponse => Ok(Self::TierPauseResponse(crate::codec::decode_body(bytes)?)),
+            FrameKind::TierResumeResponse => Ok(Self::TierResumeResponse(crate::codec::decode_body(bytes)?)),
             FrameKind::SubscriptionBatch => Ok(Self::SubscriptionBatch(crate::codec::decode_body(bytes)?)),
             FrameKind::TriggerNotification => Ok(Self::TriggerNotification(crate::codec::decode_body(bytes)?)),
             FrameKind::SubscriptionClosed => Ok(Self::SubscriptionClosed(crate::codec::decode_body(bytes)?)),
@@ -9966,6 +11160,69 @@ pub const OPERATIONS: &[OperationRow] = &[
         mutation: true,
         parity: &[
             "new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)",
+        ],
+    },
+    OperationRow {
+        name: "tier.configure",
+        request_code: 342,
+        response_code: 598,
+        mutation: true,
+        parity: &[
+            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
+        ],
+    },
+    OperationRow {
+        name: "tier.inspect",
+        request_code: 343,
+        response_code: 599,
+        mutation: false,
+        parity: &[
+            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
+        ],
+    },
+    OperationRow {
+        name: "tier.dry_run",
+        request_code: 344,
+        response_code: 600,
+        mutation: false,
+        parity: &[
+            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
+        ],
+    },
+    OperationRow {
+        name: "tier.explain",
+        request_code: 345,
+        response_code: 601,
+        mutation: false,
+        parity: &[
+            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
+        ],
+    },
+    OperationRow {
+        name: "tier.run",
+        request_code: 346,
+        response_code: 602,
+        mutation: true,
+        parity: &[
+            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
+        ],
+    },
+    OperationRow {
+        name: "tier.pause",
+        request_code: 347,
+        response_code: 603,
+        mutation: true,
+        parity: &[
+            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
+        ],
+    },
+    OperationRow {
+        name: "tier.resume",
+        request_code: 348,
+        response_code: 604,
+        mutation: true,
+        parity: &[
+            "new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)",
         ],
     },
 ];

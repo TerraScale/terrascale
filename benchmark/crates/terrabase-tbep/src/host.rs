@@ -485,6 +485,116 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn topology_read(&self, tenant: &str) -> Result<TopologyReadResponse, HostingError>;
 
+    /// Configures the Storage Tier Mover's policy (P4, mutation).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves tiers.
+    fn tier_configure(
+        &self,
+        tenant: &str,
+        request: &crate::generated::TierConfigureRequest,
+        idempotency_key: &str,
+    ) -> Result<crate::generated::TierConfigureResponse, HostingError> {
+        let _ = (tenant, request, idempotency_key);
+        Err(HostingError::Refused(
+            "tier.configure is served by the engine-backed host's tier administration".into(),
+        ))
+    }
+
+    /// Inspects the tier state (P4).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves tiers.
+    fn tier_inspect(
+        &self,
+        tenant: &str,
+    ) -> Result<crate::generated::TierInspectResponse, HostingError> {
+        let _ = tenant;
+        Err(HostingError::Refused(
+            "tier.inspect is served by the engine-backed host's tier administration".into(),
+        ))
+    }
+
+    /// Explains the next mover pass as a dry receipt (P4).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves tiers.
+    fn tier_explain(
+        &self,
+        tenant: &str,
+    ) -> Result<crate::generated::TierExplainResponse, HostingError> {
+        let _ = tenant;
+        Err(HostingError::Refused(
+            "tier.explain is served by the engine-backed host's tier administration".into(),
+        ))
+    }
+
+    /// Runs one dry mover pass (P4).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves tiers.
+    fn tier_dry_run(
+        &self,
+        tenant: &str,
+    ) -> Result<crate::generated::TierDryRunResponse, HostingError> {
+        let _ = tenant;
+        Err(HostingError::Refused(
+            "tier.dry_run is served by the engine-backed host's tier administration".into(),
+        ))
+    }
+
+    /// Runs one bounded mover pass (P4, mutation).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves tiers.
+    fn tier_run(
+        &self,
+        tenant: &str,
+        idempotency_key: &str,
+    ) -> Result<crate::generated::TierRunResponse, HostingError> {
+        let _ = (tenant, idempotency_key);
+        Err(HostingError::Refused(
+            "tier.run is served by the engine-backed host's tier administration".into(),
+        ))
+    }
+
+    /// Pauses mover runs (P4, mutation).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves tiers.
+    fn tier_pause(
+        &self,
+        tenant: &str,
+        idempotency_key: &str,
+    ) -> Result<crate::generated::TierPauseResponse, HostingError> {
+        let _ = (tenant, idempotency_key);
+        Err(HostingError::Refused(
+            "tier.pause is served by the engine-backed host's tier administration".into(),
+        ))
+    }
+
+    /// Resumes mover runs (P4, mutation).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves tiers.
+    fn tier_resume(
+        &self,
+        tenant: &str,
+        idempotency_key: &str,
+    ) -> Result<crate::generated::TierResumeResponse, HostingError> {
+        let _ = (tenant, idempotency_key);
+        Err(HostingError::Refused(
+            "tier.resume is served by the engine-backed host's tier administration".into(),
+        ))
+    }
+
     /// Serves the admin status read.
     ///
     /// # Errors

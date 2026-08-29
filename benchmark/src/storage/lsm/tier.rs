@@ -243,6 +243,23 @@ pub(crate) enum MoverOutcome {
     Failed(TierMoveReceipt, ObjectStoreError),
 }
 
+/// The backend carries no tiers (the root-file engine under P4's tier
+/// administration): the typed refusal the port answers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TierUnsupported;
+
+/// The raw tier snapshot of one LSM location: the manifest epoch, the
+/// verified objects it names, and the resident `NVMe` bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TierSnapshot {
+    /// The published tier-manifest epoch.
+    pub(crate) manifest_epoch: u64,
+    /// The verified objects the manifest names.
+    pub(crate) object_count: usize,
+    /// The bytes resident on `NVMe`.
+    pub(crate) nvme_bytes: u64,
+}
+
 /// Reads one segment's raw bytes from its `NVMe` file.
 fn segment_bytes(dir: &Path, meta: &SegmentMeta) -> Option<Vec<u8>> {
     std::fs::read(super::segment_path(dir, meta.id)).ok()

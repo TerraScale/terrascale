@@ -699,6 +699,129 @@ public sealed class ClusterModeFormatter : IMessagePackFormatter<ClusterMode?>
     }
 }
 
+/// <summary>The generated `tier_decision` closed vocabulary.</summary>
+[MessagePackFormatter(typeof(TierDecisionFormatter))]
+public sealed class TierDecision : IEquatable<TierDecision>
+{
+    /// <summary>The variant name.</summary>
+    public required string Variant { get; init; }
+    /// <summary>The wire tag.</summary>
+    public required byte Tag { get; init; }
+    /// <summary>The payload, when the variant carries one.</summary>
+    public object? Payload { get; init; }
+
+    /// <summary>The `promote` variant.</summary>
+    public static TierDecision Promote() => new() { Variant = "Promote", Tag = (byte)1 };
+    /// <summary>The `demote` variant.</summary>
+    public static TierDecision Demote() => new() { Variant = "Demote", Tag = (byte)2 };
+    /// <summary>The `split` variant.</summary>
+    public static TierDecision Split() => new() { Variant = "Split", Tag = (byte)3 };
+    /// <summary>The `none` variant.</summary>
+    public static TierDecision None() => new() { Variant = "None", Tag = (byte)4 };
+    /// <summary>The `refused` variant.</summary>
+    public static TierDecision Refused() => new() { Variant = "Refused", Tag = (byte)5 };
+
+    /// <inheritdoc/>
+    public bool Equals(TierDecision? other) =>
+        other is not null && Variant == other.Variant && Tag == other.Tag && Equals(Payload, other.Payload);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierDecision);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => System.HashCode.Combine(Variant, Tag, Payload);
+}
+
+/// <summary>The strict formatter of <see cref="TierDecision"/>.</summary>
+public sealed class TierDecisionFormatter : IMessagePackFormatter<TierDecision?>
+{
+    /// <inheritdoc/>
+    public TierDecision Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        if (reader.TryReadNil())
+        {
+            throw TbepWire.FormatException("nil is not a TierDecision");
+        }
+        var count = reader.ReadArrayHeader();
+        var tag = reader.ReadByte();
+        if (tag == (byte)1)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Promote carries no payload");
+            }
+            return new TierDecision { Variant = "Promote", Tag = tag };
+        }
+        if (tag == (byte)2)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Demote carries no payload");
+            }
+            return new TierDecision { Variant = "Demote", Tag = tag };
+        }
+        if (tag == (byte)3)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Split carries no payload");
+            }
+            return new TierDecision { Variant = "Split", Tag = tag };
+        }
+        if (tag == (byte)4)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("None carries no payload");
+            }
+            return new TierDecision { Variant = "None", Tag = tag };
+        }
+        if (tag == (byte)5)
+        {
+            if (count != 1)
+            {
+                throw TbepWire.FormatException("Refused carries no payload");
+            }
+            return new TierDecision { Variant = "Refused", Tag = tag };
+        }
+        throw TbepWire.FormatException("unknown TierDecision tag");
+    }
+
+    /// <inheritdoc/>
+    public void Serialize(ref MessagePackWriter writer, TierDecision? value, MessagePackSerializerOptions options)
+    {
+        if (value is null)
+        {
+            throw TbepWire.FormatException("nil is not a TierDecision");
+        }
+        switch (value.Variant)
+        {
+            case "Promote":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)1);
+                return;
+            case "Demote":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)2);
+                return;
+            case "Split":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)3);
+                return;
+            case "None":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)4);
+                return;
+            case "Refused":
+                writer.WriteArrayHeader(1);
+                writer.Write((byte)5);
+                return;
+            default:
+                throw TbepWire.FormatException("unknown TierDecision variant");
+        }
+    }
+}
+
 /// <summary>The generated `expected_version` closed vocabulary.</summary>
 [MessagePackFormatter(typeof(ExpectedVersionFormatter))]
 public sealed class ExpectedVersion : IEquatable<ExpectedVersion>
@@ -3167,6 +3290,101 @@ public sealed class CommitReceipt : IEquatable<CommitReceipt>
     }
 }
 
+/// <summary>The `tier_move_reason` frame body.</summary>
+[MessagePackObject]
+public sealed class TierMoveReason : IEquatable<TierMoveReason>
+{
+    /// <summary>The `fact` field.</summary>
+    [Key(0)]
+    public required string Fact { get; init; }
+    /// <summary>The `observed` field.</summary>
+    [Key(1)]
+    public required string Observed { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(TierMoveReason? other) => other is not null
+        && TbepRegistry.FieldEquals(Fact, other.Fact)
+        && TbepRegistry.FieldEquals(Observed, other.Observed);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierMoveReason);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Fact, Observed);
+    }
+}
+
+/// <summary>The `tier_move_receipt` frame body.</summary>
+[MessagePackObject]
+public sealed class TierMoveReceipt : IEquatable<TierMoveReceipt>
+{
+    /// <summary>The `policy_id` field.</summary>
+    [Key(0)]
+    public required string PolicyId { get; init; }
+    /// <summary>The `policy_version` field.</summary>
+    [Key(1)]
+    public required uint PolicyVersion { get; init; }
+    /// <summary>The `decision` field.</summary>
+    [Key(2)]
+    public required TierDecision Decision { get; init; }
+    /// <summary>The `reasons` field.</summary>
+    [Key(3)]
+    public required TierMoveReason[] Reasons { get; init; }
+    /// <summary>The `segment_id` field.</summary>
+    [Key(4)]
+    public required ulong SegmentId { get; init; }
+    /// <summary>The `bytes` field.</summary>
+    [Key(5)]
+    public required ulong Bytes { get; init; }
+    /// <summary>The `manifest_before` field.</summary>
+    [Key(6)]
+    public required ulong ManifestBefore { get; init; }
+    /// <summary>The `manifest_after` field.</summary>
+    [Key(7)]
+    public required ulong ManifestAfter { get; init; }
+    /// <summary>The `dry_run` field.</summary>
+    [Key(8)]
+    public required bool DryRun { get; init; }
+    /// <summary>The `manifest_accepted` field.</summary>
+    [Key(9)]
+    public required bool ManifestAccepted { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(TierMoveReceipt? other) => other is not null
+        && TbepRegistry.FieldEquals(PolicyId, other.PolicyId)
+        && TbepRegistry.FieldEquals(PolicyVersion, other.PolicyVersion)
+        && TbepRegistry.FieldEquals(Decision, other.Decision)
+        && TbepRegistry.FieldEquals(Reasons, other.Reasons)
+        && TbepRegistry.FieldEquals(SegmentId, other.SegmentId)
+        && TbepRegistry.FieldEquals(Bytes, other.Bytes)
+        && TbepRegistry.FieldEquals(ManifestBefore, other.ManifestBefore)
+        && TbepRegistry.FieldEquals(ManifestAfter, other.ManifestAfter)
+        && TbepRegistry.FieldEquals(DryRun, other.DryRun)
+        && TbepRegistry.FieldEquals(ManifestAccepted, other.ManifestAccepted);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierMoveReceipt);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        var hash = new System.HashCode();
+        hash.Add(PolicyId);
+        hash.Add(PolicyVersion);
+        hash.Add(Decision);
+        hash.Add(Reasons);
+        hash.Add(SegmentId);
+        hash.Add(Bytes);
+        hash.Add(ManifestBefore);
+        hash.Add(ManifestAfter);
+        hash.Add(DryRun);
+        hash.Add(ManifestAccepted);
+        return hash.ToHashCode();
+    }
+}
+
 /// <summary>The `change_event` frame body.</summary>
 [MessagePackObject]
 public sealed class ChangeEvent : IEquatable<ChangeEvent>
@@ -5526,6 +5744,340 @@ public sealed class MigrationApplyResponse : IEquatable<MigrationApplyResponse>
     }
 }
 
+/// <summary>The `tier_configure_request` frame body.</summary>
+[MessagePackObject]
+public sealed class TierConfigureRequest : IEquatable<TierConfigureRequest>
+{
+    /// <summary>The `policy_id` field.</summary>
+    [Key(0)]
+    public required string PolicyId { get; init; }
+    /// <summary>The `version` field.</summary>
+    [Key(1)]
+    public required uint Version { get; init; }
+    /// <summary>The `nvme_budget_bytes` field.</summary>
+    [Key(2)]
+    public required ulong NvmeBudgetBytes { get; init; }
+    /// <summary>The `min_residence_moves` field.</summary>
+    [Key(3)]
+    public required uint MinResidenceMoves { get; init; }
+    /// <summary>The `promotion_threshold` field.</summary>
+    [Key(4)]
+    public required uint PromotionThreshold { get; init; }
+    /// <summary>The `pinned_segment_ids` field.</summary>
+    [Key(5)]
+    public required ulong[] PinnedSegmentIds { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(TierConfigureRequest? other) => other is not null
+        && TbepRegistry.FieldEquals(PolicyId, other.PolicyId)
+        && TbepRegistry.FieldEquals(Version, other.Version)
+        && TbepRegistry.FieldEquals(NvmeBudgetBytes, other.NvmeBudgetBytes)
+        && TbepRegistry.FieldEquals(MinResidenceMoves, other.MinResidenceMoves)
+        && TbepRegistry.FieldEquals(PromotionThreshold, other.PromotionThreshold)
+        && TbepRegistry.FieldEquals(PinnedSegmentIds, other.PinnedSegmentIds);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierConfigureRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(PolicyId, Version, NvmeBudgetBytes, MinResidenceMoves, PromotionThreshold, PinnedSegmentIds);
+    }
+}
+
+/// <summary>The `tier_configure_response` frame body.</summary>
+[MessagePackObject]
+public sealed class TierConfigureResponse : IEquatable<TierConfigureResponse>
+{
+    /// <summary>The `policy_id` field.</summary>
+    [Key(0)]
+    public required string PolicyId { get; init; }
+    /// <summary>The `version` field.</summary>
+    [Key(1)]
+    public required uint Version { get; init; }
+    /// <summary>The `paused` field.</summary>
+    [Key(2)]
+    public required bool Paused { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(TierConfigureResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(PolicyId, other.PolicyId)
+        && TbepRegistry.FieldEquals(Version, other.Version)
+        && TbepRegistry.FieldEquals(Paused, other.Paused);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierConfigureResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(PolicyId, Version, Paused);
+    }
+}
+
+/// <summary>The `tier_inspect_request` frame body.</summary>
+[MessagePackObject]
+public sealed class TierInspectRequest : IEquatable<TierInspectRequest>
+{
+
+    /// <inheritdoc/>
+    public bool Equals(TierInspectRequest? other) => other is not null
+        ;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierInspectRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return typeof(TierInspectRequest).GetHashCode();
+    }
+}
+
+/// <summary>The `tier_inspect_response` frame body.</summary>
+[MessagePackObject]
+public sealed class TierInspectResponse : IEquatable<TierInspectResponse>
+{
+    /// <summary>The `configured` field.</summary>
+    [Key(0)]
+    public required bool Configured { get; init; }
+    /// <summary>The `paused` field.</summary>
+    [Key(1)]
+    public required bool Paused { get; init; }
+    /// <summary>The `manifest_epoch` field.</summary>
+    [Key(2)]
+    public required ulong ManifestEpoch { get; init; }
+    /// <summary>The `object_count` field.</summary>
+    [Key(3)]
+    public required uint ObjectCount { get; init; }
+    /// <summary>The `nvme_bytes` field.</summary>
+    [Key(4)]
+    public required ulong NvmeBytes { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(TierInspectResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Configured, other.Configured)
+        && TbepRegistry.FieldEquals(Paused, other.Paused)
+        && TbepRegistry.FieldEquals(ManifestEpoch, other.ManifestEpoch)
+        && TbepRegistry.FieldEquals(ObjectCount, other.ObjectCount)
+        && TbepRegistry.FieldEquals(NvmeBytes, other.NvmeBytes);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierInspectResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Configured, Paused, ManifestEpoch, ObjectCount, NvmeBytes);
+    }
+}
+
+/// <summary>The `tier_dry_run_request` frame body.</summary>
+[MessagePackObject]
+public sealed class TierDryRunRequest : IEquatable<TierDryRunRequest>
+{
+
+    /// <inheritdoc/>
+    public bool Equals(TierDryRunRequest? other) => other is not null
+        ;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierDryRunRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return typeof(TierDryRunRequest).GetHashCode();
+    }
+}
+
+/// <summary>The `tier_dry_run_response` frame body.</summary>
+[MessagePackObject]
+public sealed class TierDryRunResponse : IEquatable<TierDryRunResponse>
+{
+    /// <summary>The `receipt` field.</summary>
+    [Key(0)]
+    public required TierMoveReceipt Receipt { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(TierDryRunResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Receipt, other.Receipt);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierDryRunResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Receipt);
+    }
+}
+
+/// <summary>The `tier_explain_request` frame body.</summary>
+[MessagePackObject]
+public sealed class TierExplainRequest : IEquatable<TierExplainRequest>
+{
+
+    /// <inheritdoc/>
+    public bool Equals(TierExplainRequest? other) => other is not null
+        ;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierExplainRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return typeof(TierExplainRequest).GetHashCode();
+    }
+}
+
+/// <summary>The `tier_explain_response` frame body.</summary>
+[MessagePackObject]
+public sealed class TierExplainResponse : IEquatable<TierExplainResponse>
+{
+    /// <summary>The `receipt` field.</summary>
+    [Key(0)]
+    public required TierMoveReceipt Receipt { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(TierExplainResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Receipt, other.Receipt);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierExplainResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Receipt);
+    }
+}
+
+/// <summary>The `tier_run_request` frame body.</summary>
+[MessagePackObject]
+public sealed class TierRunRequest : IEquatable<TierRunRequest>
+{
+
+    /// <inheritdoc/>
+    public bool Equals(TierRunRequest? other) => other is not null
+        ;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierRunRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return typeof(TierRunRequest).GetHashCode();
+    }
+}
+
+/// <summary>The `tier_run_response` frame body.</summary>
+[MessagePackObject]
+public sealed class TierRunResponse : IEquatable<TierRunResponse>
+{
+    /// <summary>The `receipt` field.</summary>
+    [Key(0)]
+    public required TierMoveReceipt Receipt { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(TierRunResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Receipt, other.Receipt);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierRunResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Receipt);
+    }
+}
+
+/// <summary>The `tier_pause_request` frame body.</summary>
+[MessagePackObject]
+public sealed class TierPauseRequest : IEquatable<TierPauseRequest>
+{
+
+    /// <inheritdoc/>
+    public bool Equals(TierPauseRequest? other) => other is not null
+        ;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierPauseRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return typeof(TierPauseRequest).GetHashCode();
+    }
+}
+
+/// <summary>The `tier_pause_response` frame body.</summary>
+[MessagePackObject]
+public sealed class TierPauseResponse : IEquatable<TierPauseResponse>
+{
+    /// <summary>The `paused` field.</summary>
+    [Key(0)]
+    public required bool Paused { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(TierPauseResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Paused, other.Paused);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierPauseResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Paused);
+    }
+}
+
+/// <summary>The `tier_resume_request` frame body.</summary>
+[MessagePackObject]
+public sealed class TierResumeRequest : IEquatable<TierResumeRequest>
+{
+
+    /// <inheritdoc/>
+    public bool Equals(TierResumeRequest? other) => other is not null
+        ;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierResumeRequest);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return typeof(TierResumeRequest).GetHashCode();
+    }
+}
+
+/// <summary>The `tier_resume_response` frame body.</summary>
+[MessagePackObject]
+public sealed class TierResumeResponse : IEquatable<TierResumeResponse>
+{
+    /// <summary>The `paused` field.</summary>
+    [Key(0)]
+    public required bool Paused { get; init; }
+
+    /// <inheritdoc/>
+    public bool Equals(TierResumeResponse? other) => other is not null
+        && TbepRegistry.FieldEquals(Paused, other.Paused);
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => Equals(obj as TierResumeResponse);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        return System.HashCode.Combine(Paused);
+    }
+}
+
 /// <summary>The `subscription_batch` frame body.</summary>
 [MessagePackObject]
 public sealed class SubscriptionBatch : IEquatable<SubscriptionBatch>
@@ -5773,6 +6325,20 @@ public enum TbepFrameKind : ushort
     MigrationDryRunRequest = 340,
     /// <summary>Code 341 (host-to-engine; schemas).</summary>
     MigrationApplyRequest = 341,
+    /// <summary>Code 342 (host-to-engine; tiers).</summary>
+    TierConfigureRequest = 342,
+    /// <summary>Code 343 (host-to-engine; tiers).</summary>
+    TierInspectRequest = 343,
+    /// <summary>Code 344 (host-to-engine; tiers).</summary>
+    TierDryRunRequest = 344,
+    /// <summary>Code 345 (host-to-engine; tiers).</summary>
+    TierExplainRequest = 345,
+    /// <summary>Code 346 (host-to-engine; tiers).</summary>
+    TierRunRequest = 346,
+    /// <summary>Code 347 (host-to-engine; tiers).</summary>
+    TierPauseRequest = 347,
+    /// <summary>Code 348 (host-to-engine; tiers).</summary>
+    TierResumeRequest = 348,
     /// <summary>Code 513 (engine-to-host; documents).</summary>
     DocumentReadResponse = 513,
     /// <summary>Code 514 (engine-to-host; documents).</summary>
@@ -5839,6 +6405,20 @@ public enum TbepFrameKind : ushort
     MigrationDryRunResponse = 596,
     /// <summary>Code 597 (engine-to-host; schemas).</summary>
     MigrationApplyResponse = 597,
+    /// <summary>Code 598 (engine-to-host; tiers).</summary>
+    TierConfigureResponse = 598,
+    /// <summary>Code 599 (engine-to-host; tiers).</summary>
+    TierInspectResponse = 599,
+    /// <summary>Code 600 (engine-to-host; tiers).</summary>
+    TierDryRunResponse = 600,
+    /// <summary>Code 601 (engine-to-host; tiers).</summary>
+    TierExplainResponse = 601,
+    /// <summary>Code 602 (engine-to-host; tiers).</summary>
+    TierRunResponse = 602,
+    /// <summary>Code 603 (engine-to-host; tiers).</summary>
+    TierPauseResponse = 603,
+    /// <summary>Code 604 (engine-to-host; tiers).</summary>
+    TierResumeResponse = 604,
     /// <summary>Code 769 (engine-to-host; backbone).</summary>
     SubscriptionBatch = 769,
     /// <summary>Code 770 (engine-to-host; backbone).</summary>
@@ -5889,6 +6469,13 @@ public static partial class TbepRegistry
         (339, "MigrationStatusRequest", "schemas", "schema", "host-to-engine", false),
         (340, "MigrationDryRunRequest", "schemas", "schema", "host-to-engine", false),
         (341, "MigrationApplyRequest", "schemas", "schema", "host-to-engine", true),
+        (342, "TierConfigureRequest", "tiers", "control", "host-to-engine", true),
+        (343, "TierInspectRequest", "tiers", "control", "host-to-engine", false),
+        (344, "TierDryRunRequest", "tiers", "operation", "host-to-engine", false),
+        (345, "TierExplainRequest", "tiers", "operation", "host-to-engine", false),
+        (346, "TierRunRequest", "tiers", "operation", "host-to-engine", true),
+        (347, "TierPauseRequest", "tiers", "control", "host-to-engine", true),
+        (348, "TierResumeRequest", "tiers", "control", "host-to-engine", true),
         (513, "DocumentReadResponse", "documents", "operation", "engine-to-host", false),
         (514, "DocumentWriteResponse", "documents", "operation_large", "engine-to-host", false),
         (515, "DocumentDeleteResponse", "documents", "operation", "engine-to-host", false),
@@ -5922,6 +6509,13 @@ public static partial class TbepRegistry
         (595, "MigrationStatusResponse", "schemas", "schema", "engine-to-host", false),
         (596, "MigrationDryRunResponse", "schemas", "schema", "engine-to-host", false),
         (597, "MigrationApplyResponse", "schemas", "schema", "engine-to-host", false),
+        (598, "TierConfigureResponse", "tiers", "control", "engine-to-host", false),
+        (599, "TierInspectResponse", "tiers", "control", "engine-to-host", false),
+        (600, "TierDryRunResponse", "tiers", "operation", "engine-to-host", false),
+        (601, "TierExplainResponse", "tiers", "operation", "engine-to-host", false),
+        (602, "TierRunResponse", "tiers", "operation", "engine-to-host", false),
+        (603, "TierPauseResponse", "tiers", "control", "engine-to-host", false),
+        (604, "TierResumeResponse", "tiers", "control", "engine-to-host", false),
         (769, "SubscriptionBatch", "backbone", "subscription", "engine-to-host", false),
         (770, "TriggerNotification", "backbone", "trigger", "engine-to-host", false),
         (771, "SubscriptionClosed", "backbone", "control", "engine-to-host", false),
@@ -5970,5 +6564,12 @@ public static partial class TbepRegistry
         new OperationRow("migration.status", 339, 595, false, ["new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)"]),
         new OperationRow("migration.dry_run", 340, 596, false, ["new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)"]),
         new OperationRow("migration.apply", 341, 597, true, ["new-capability: schema migration contracts (PD-2026-08-26-04, ADR-0007)"]),
+        new OperationRow("tier.configure", 342, 598, true, ["new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"]),
+        new OperationRow("tier.inspect", 343, 599, false, ["new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"]),
+        new OperationRow("tier.dry_run", 344, 600, false, ["new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"]),
+        new OperationRow("tier.explain", 345, 601, false, ["new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"]),
+        new OperationRow("tier.run", 346, 602, true, ["new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"]),
+        new OperationRow("tier.pause", 347, 603, true, ["new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"]),
+        new OperationRow("tier.resume", 348, 604, true, ["new-capability: typed Storage Tier Mover administration (p0-protocol-compatibility-contract section 4; p0-storage-tiering-contract section 3)"]),
     ];
 }

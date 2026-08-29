@@ -668,3 +668,54 @@ surface), client batching, reconnect/resume, and the QUIC/TLS binding.
 Receipts: `cargo test -p terrabase-tbep` 13 suites green; clippy
 `-D warnings` and fmt clean; Protocol 21/21, Api 89/89.
 `scripts/check.sh` not run (AC-12).
+
+## 18. P4 landing 7 (2026-08-29): the Storage Tier Mover's typed administration
+
+The contract §4 frozen item landed end to end. The engine grew a public
+tier seam — `Engine::tiers()` (`src/tiers.rs`): `configure` (validated,
+recorded, fresh control), `policy`, `pause`/`resume` (recorded and
+ENFORCED: a paused control refuses runs, a dry pass stays read-only),
+`dry_run`/`explain` (the receipted decision and ordered reasons without
+transferring anything), `run` (one bounded mover pass on the caller's
+thread), and `inspect` (the control state plus the backend's tier
+facts). The mover itself was already real at the LSM seam; it is now
+reached through `StoragePort::mover_pass` (the LSM engine runs
+`run_mover` against the engine-owned local content-addressed Tier-2
+store at `<location>/tier-objects`; the root-file backend answers the
+typed `UnsupportedBackend` refusal) and `StoragePort::tier_snapshot`.
+No raw object-store credentials and no generic byte escape hatch cross
+the seam — the store is engine-owned, and the remote cold tier replaces
+it behind the same seam when that landing ships.
+
+The registry gained the `tiers` family (codes 342-348, responses
+598-604): `tier.configure`, `tier.inspect`, `tier.dry_run`,
+`tier.explain`, `tier.run`, `tier.pause`, `tier.resume` — mutations
+carry idempotency keys; every receipted response uses the frozen
+decision vocabulary (`promote | demote | split | none | refused`; the
+mover produces demote/none/refused today). `tbep-gen` regenerated both
+bindings. The engine-backed host serves all seven; `TbepClient` gained
+`TierConfigureAsync`/`TierInspectAsync`/`TierDryRunAsync`. The golden
+corpus gained the `tier-admin` category.
+
+Honest scope: there is no background mover loop — `run` executes one
+pass on the caller's thread and pause/resume gate it; the `cancel`
+control and the continuous scheduler land with the cold-tier
+qualification. The policy is in-memory per engine process (a restart
+resets to unconfigured); durable policy records land with the same
+scheduler.
+
+Proven: four engine rows (configure clearing the pause; typed invalid
+policies; the not-configured and paused refusals with the dry pass
+staying available; the receipt's reasons and the inspect view agreeing);
+the UDS row (unconfigured dry run refused, configure, inspect, dry
+receipt with `nvme_resident_bytes`, pause gating the run, resume, the
+run receipting); the C# row against the real engine (configure, inspect,
+the dry receipt's `None` decision with reasons); the corpus replays
+byte-exact in both languages.
+
+Still open in P4: client batching, reconnect/resume, and the QUIC/TLS
+binding (quinn/rustls live in `terrabase-member-transport`).
+
+Receipts: `cargo test -p terrabase-tbep` 13 suites green;
+`terrabase-v2` 1080/1080; clippy `-D warnings` and fmt clean on both
+crates; Protocol 23/23, Api 90/90. `scripts/check.sh` not run (AC-12).

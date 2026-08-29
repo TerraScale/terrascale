@@ -177,6 +177,21 @@ pub(crate) trait StoragePort: Send {
     /// non-deletion facts, as the store holds them.
     fn retained_state(&self) -> crate::storage::compaction::RetainedState;
 
+    /// Runs one bounded tier-mover pass (P4's tier administration): the
+    /// LSM engine's demotion of the coldest over-budget segment to the
+    /// object-store tier. The root-file engine has no tiers and answers
+    /// [`lsm::tier::TierUnsupported`].
+    fn mover_pass(
+        &mut self,
+        policy: &lsm::tier::TierMovePolicy,
+        home_region: &str,
+    ) -> Result<lsm::tier::MoverOutcome, lsm::tier::TierUnsupported>;
+
+    /// Returns the raw tier snapshot — the manifest epoch, the number of
+    /// verified objects it names, and the resident `NVMe` bytes. `None`
+    /// means this backend has no tiers.
+    fn tier_snapshot(&self) -> Option<lsm::tier::TierSnapshot>;
+
     /// Flushes appended durable bytes on shutdown.
     fn flush(&mut self) -> Result<(), ()>;
 

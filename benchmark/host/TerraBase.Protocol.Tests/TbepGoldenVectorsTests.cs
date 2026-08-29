@@ -58,6 +58,7 @@ public sealed class TbepGoldenVectorsTests
         {
             "channel-bind",
             "negotiation",
+            "tier-admin",
             "document-frames",
             "query-cancellation",
             "sync-session",

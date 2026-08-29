@@ -584,6 +584,70 @@ fn dispatch(connection: &mut Connection, frame: &TbepFrame) -> bool {
                 answer(connection, causation, connection.host.topology_read(&tenant));
             }
         }
+        TbepBody::TierConfigureRequest(body) => {
+            if let Some(tenant) = bound_tenant(connection, causation) {
+                answer(
+                    connection,
+                    causation,
+                    connection.host.tier_configure(
+                        &tenant,
+                        &body,
+                        frame_key(frame).as_ref().map_or("", IdempotencyKey::as_str),
+                    ),
+                );
+            }
+        }
+        TbepBody::TierInspectRequest(_) => {
+            if let Some(tenant) = bound_tenant(connection, causation) {
+                answer(connection, causation, connection.host.tier_inspect(&tenant));
+            }
+        }
+        TbepBody::TierExplainRequest(_) => {
+            if let Some(tenant) = bound_tenant(connection, causation) {
+                answer(connection, causation, connection.host.tier_explain(&tenant));
+            }
+        }
+        TbepBody::TierDryRunRequest(_) => {
+            if let Some(tenant) = bound_tenant(connection, causation) {
+                answer(connection, causation, connection.host.tier_dry_run(&tenant));
+            }
+        }
+        TbepBody::TierRunRequest(_) => {
+            if let Some(tenant) = bound_tenant(connection, causation) {
+                answer(
+                    connection,
+                    causation,
+                    connection.host.tier_run(
+                        &tenant,
+                        frame_key(frame).as_ref().map_or("", IdempotencyKey::as_str),
+                    ),
+                );
+            }
+        }
+        TbepBody::TierPauseRequest(_) => {
+            if let Some(tenant) = bound_tenant(connection, causation) {
+                answer(
+                    connection,
+                    causation,
+                    connection.host.tier_pause(
+                        &tenant,
+                        frame_key(frame).as_ref().map_or("", IdempotencyKey::as_str),
+                    ),
+                );
+            }
+        }
+        TbepBody::TierResumeRequest(_) => {
+            if let Some(tenant) = bound_tenant(connection, causation) {
+                answer(
+                    connection,
+                    causation,
+                    connection.host.tier_resume(
+                        &tenant,
+                        frame_key(frame).as_ref().map_or("", IdempotencyKey::as_str),
+                    ),
+                );
+            }
+        }
         // The GAP-R03 replication observation requests (PB-5035) are
         // registered reads the shipped hosts do not serve: the wire says
         // so typed, instead of misreporting a request as a direction

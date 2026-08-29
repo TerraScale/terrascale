@@ -29,6 +29,7 @@ pub mod session;
 pub mod sharding;
 pub mod storage;
 pub mod streaming;
+pub mod tiers;
 pub mod types;
 
 #[cfg(test)]
