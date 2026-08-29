@@ -27,6 +27,7 @@ pub mod storage;
 pub mod streaming;
 pub mod tiers;
 pub mod types;
+pub mod usage;
 
 #[cfg(test)]
 mod benchmarks;
@@ -96,6 +97,12 @@ pub use types::{
     Cancellation, Deadline, Document, DocumentId, DocumentMetadata, DocumentValue, ExpectedVersion,
     IndexGeneration, IndexGenerationSet, LocalDurability, OperationId, ReadSnapshot,
     RetryDisposition, StorageSequence, TenantId, TenantScope,
+};
+pub use usage::{
+    ChargeScope, CorrectionProcedure, MeasurementCadence, MeasurementWindow, MeterCatalog,
+    MeterDefinition, MeterKind, MeterUnit, MintingIdentity, MintingRule, SegmentId,
+    SegmentInsertOutcome, SequenceInterval, USAGE_FORMAT_VERSION, UsageError, UsageFact,
+    UsageFactId, UsageScope, UsageScopeId, UsageSegment, UsageSegmentLedger,
 };
 
 #[cfg(test)]

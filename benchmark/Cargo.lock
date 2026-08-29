@@ -1552,6 +1552,9 @@ dependencies = [
 [[package]]
 name = "terrabase-v2"
 version = "0.1.0"
+dependencies = [
+ "blake3",
+]
 
 [[package]]
 name = "thiserror"
