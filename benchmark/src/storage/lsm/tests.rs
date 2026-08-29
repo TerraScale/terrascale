@@ -170,6 +170,84 @@ fn idempotent_retry_replays_the_recorded_outcome() {
 }
 
 #[test]
+fn recovery_selects_root_head_by_sequence_not_operation_key() {
+    let dir = location("root-head-sequence");
+    let scope_tenant = tenant("acme");
+    let mut engine = LsmStorage::open(&dir).unwrap();
+
+    // The first operation sorts after the second one, while its publication
+    // sequence is lower. Recovery must follow sequence order, not the ledger
+    // map's (tenant, operation) key order.
+    let first =
+        engine.commit(put_intent(&scope_tenant, "op-z", 0, document("orders", "order-1", "first")));
+    let first = match first {
+        CommitResult::Committed(receipt) => receipt,
+        other => panic!("first commit must succeed: {other:?}"),
+    };
+    let second = engine.commit(put_intent(
+        &scope_tenant,
+        "op-a",
+        first.sequence.get(),
+        document("orders", "order-2", "second"),
+    ));
+    let second = match second {
+        CommitResult::Committed(receipt) => receipt,
+        other => panic!("second commit must succeed: {other:?}"),
+    };
+    drop(engine);
+
+    let reopened = LsmStorage::open(&dir).unwrap();
+    assert_eq!(
+        reopened.published_state().1,
+        second.root,
+        "recovery must restore the root from the latest committed sequence"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn synced_durability_flip_survives_compaction_and_reopen() {
+    let dir = location("synced-flip-reopen");
+    let scope_tenant = tenant("acme");
+    let mut engine = LsmStorage::open(&dir).unwrap();
+    let operation = OperationId::try_new("op-synced").expect("valid operation");
+
+    let result = engine.commit(put_intent(
+        &scope_tenant,
+        operation.as_str(),
+        0,
+        document("orders", "order-1", "synced"),
+    ));
+    assert!(matches!(result, CommitResult::Committed(_)));
+    assert!(matches!(
+        engine.resolve_operation(&scope_tenant, &operation),
+        Some(crate::storage::intent::OperationResolution::Committed {
+            durability: LocalDurability::Synced,
+            ..
+        })
+    ));
+
+    engine
+        .compact(storage::compaction::StorageCompaction {
+            policy: CompactionPolicy::Reclaim,
+            floor: None,
+            progress: None,
+        })
+        .expect("compaction completes");
+    drop(engine);
+
+    let reopened = LsmStorage::open(&dir).unwrap();
+    assert!(matches!(
+        reopened.resolve_operation(&scope_tenant, &operation),
+        Some(crate::storage::intent::OperationResolution::Committed {
+            durability: LocalDurability::Synced,
+            ..
+        })
+    ));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn delete_then_read_answers_absent_across_reopen() {
     let dir = location("delete");
     let scope_tenant = tenant("acme");

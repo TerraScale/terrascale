@@ -244,9 +244,14 @@ impl LsmStorage {
         for entry in wal_scan.entries {
             engine.apply_entry_to_memory(&entry);
         }
-        // The chain head is the root recorded by the highest ledger entry.
-        if let Some((_, entry)) = engine.ledger_index.iter().next_back()
-            && !entry.root.is_empty()
+        // The chain head is the root recorded by the highest committed
+        // sequence. The ledger is keyed by (tenant, operation), whose
+        // lexical order is unrelated to publication order.
+        if let Some(entry) = engine
+            .ledger_index
+            .values()
+            .filter(|entry| entry.committed && entry.rejection.is_none() && !entry.root.is_empty())
+            .max_by_key(|entry| entry.sequence)
         {
             engine.root_head = StorageRootId::from_recorded(entry.root.clone());
         }
@@ -634,8 +639,6 @@ impl LsmStorage {
                 &ledger_entry,
                 Some(UnknownCause::PostPublicationPointerSync),
                 false,
-                intent.tenant.as_str(),
-                intent.operation.as_str(),
             );
         }
         if intent.durability == LocalDurability::Synced
@@ -646,8 +649,6 @@ impl LsmStorage {
                 &ledger_entry,
                 Some(UnknownCause::PostPublicationDirectorySync),
                 false,
-                intent.tenant.as_str(),
-                intent.operation.as_str(),
             );
         }
         if intent.durability == LocalDurability::Synced && self.wal.sync().is_err() {
@@ -663,8 +664,6 @@ impl LsmStorage {
                     &ledger_entry,
                     Some(UnknownCause::PublishedLedgerSync),
                     false,
-                    intent.tenant.as_str(),
-                    intent.operation.as_str(),
                 );
             }
             let mut synced_entry = ledger_entry.clone();
@@ -679,8 +678,6 @@ impl LsmStorage {
                     &ledger_entry,
                     Some(UnknownCause::PublishedLedgerSync),
                     false,
-                    intent.tenant.as_str(),
-                    intent.operation.as_str(),
                 );
             }
         }
@@ -689,8 +686,6 @@ impl LsmStorage {
             &ledger_entry,
             None,
             intent.durability == LocalDurability::Synced,
-            intent.tenant.as_str(),
-            intent.operation.as_str(),
         )
     }
 
@@ -711,8 +706,6 @@ impl LsmStorage {
         ledger_entry: &LedgerEntry,
         interrupted_cause: Option<UnknownCause>,
         intent_sync_completed: bool,
-        synced_tenant: &str,
-        synced_operation: &str,
     ) -> CommitResult {
         let cause = interrupted_cause.or_else(|| {
             self.faults
@@ -733,8 +726,17 @@ impl LsmStorage {
         if intent_sync_completed {
             let mut synced_entry = ledger_entry.clone();
             synced_entry.post_publish_synced = true;
-            self.ledger_index
-                .insert((synced_tenant.to_owned(), synced_operation.to_owned()), synced_entry);
+            // Persist the post-fsync proof in the memtable as well as the
+            // operation index. Compaction may truncate the WAL immediately
+            // after this call, so the flip must be present in the segment it
+            // leaves behind or recovery would downgrade Synced to Written.
+            let key = entries
+                .iter()
+                .find(|entry| entry.key.tag() == internal::Keyspace::Ledger.tag())
+                .map(|entry| entry.key.clone())
+                .expect("a published batch carries its ledger entry");
+            let flip = Entry { key, value: encode_ledger_value(&synced_entry) };
+            self.apply_entry_to_memory(&flip);
         }
         self.root_head = StorageRootId::from_recorded(ledger_entry.root.clone());
         if self
