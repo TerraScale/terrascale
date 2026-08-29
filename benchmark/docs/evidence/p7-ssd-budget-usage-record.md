@@ -25,3 +25,16 @@ charter baseline is Rust build artifacts from this session's test
 batteries; `cargo clean` remains the recovery lever if a future
 storage-intensive task approaches the warn line — each such task
 records its own before/during/after lines here.
+
+## P0 Loro-sweep evidence lane (2026-08-29, later same day)
+
+- Before this lane (last recorded value above): 25.25 GB allocated.
+- At this lane's close (develop `661ce9a`): `du -sx --block-size=1
+  TerraBaseV2` reports **30.38 GB** allocated (32,617,623,552 bytes;
+  29.72 GB of it Rust `target/` build outputs, 0.66 GB repository).
+  The ~5.13 GB growth over the P7 line is concurrent lanes' build
+  batteries, not this lane — it created only two small markdown
+  receipts (`p0-loro-sweep-receipt.md` and this line).
+- After cleanup: no action — 30.38 GB sits below the 80 GB warn line
+  with 49.62 GB of headroom; no large artifacts were created or
+  deleted by this lane.
