@@ -104,3 +104,29 @@ fn all_join_shapes_are_equal_for_the_same_candidate_set() {
     assert_eq!(left, right);
     assert_eq!(left.join(&left), left);
 }
+
+#[test]
+fn mv_join_is_commutative_associative_and_idempotent_for_all_orders() {
+    let states = [
+        MvRegister::from_candidate(candidate(1, 1, CausalContext::new(), 1, Some("a"))),
+        MvRegister::from_candidate(candidate(2, 1, CausalContext::new(), 2, Some("b"))),
+        MvRegister::from_candidate(candidate(3, 1, CausalContext::new(), 3, None)),
+    ];
+    let baseline = states[0].join(&states[1]).join(&states[2]);
+    for order in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
+        let merged = states[order[0]].join(&states[order[1]]).join(&states[order[2]]);
+        assert_eq!(merged, baseline);
+        assert_eq!(merged.join(&merged), merged);
+    }
+    assert_eq!(states[0].join(&states[1]), states[1].join(&states[0]));
+}
+
+#[test]
+fn removal_is_a_candidate_and_can_win_by_the_concurrent_key() {
+    let value =
+        LwwRegister::from_candidate(candidate(1, 1, CausalContext::new(), 10, Some("live")));
+    let removal = LwwRegister::from_candidate(candidate(2, 1, CausalContext::new(), 11, None));
+    let merged = value.join(&removal);
+    assert!(merged.winner().unwrap().is_remove());
+    assert_eq!(merged.materialize(), None);
+}

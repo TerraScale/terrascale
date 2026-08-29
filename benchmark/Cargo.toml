@@ -12,6 +12,7 @@ readme = "README.md"
 resolver = "3"
 members = [
   "crates/terrabase-causal",
+  "crates/terrabase-crdt",
   "crates/terrabase-sync-core",
   "crates/terrabase-sync-conformance",
   "crates/terrabase-member-transport",

@@ -1491,6 +1491,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "terrabase-crdt"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "terrabase-causal",
+]
+
+[[package]]
 name = "terrabase-member-transport"
 version = "0.1.0"
 dependencies = [

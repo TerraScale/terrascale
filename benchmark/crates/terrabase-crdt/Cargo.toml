@@ -7,8 +7,6 @@ license = "LicenseRef-TerraScale-Pending"
 description = "TerraBaseV2 native bounded CRDT registers"
 publish = false
 
-[workspace]
-
 [lints.rust]
 unsafe_code = "deny"
 missing_docs = "deny"

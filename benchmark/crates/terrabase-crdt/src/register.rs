@@ -273,17 +273,16 @@ impl<T: CanonicalValue> MvRegister<T> {
             if duplicate {
                 continue;
             }
-            let observed_by_other = if self
-                .candidates
-                .iter()
-                .any(|existing| existing.identity() == candidate.identity())
-            {
-                other.candidates.iter().any(|existing| existing.identity() == candidate.identity())
-                    || other.context.contains(candidate.dot())
+            let in_left =
+                self.candidates.iter().any(|existing| existing.identity() == candidate.identity());
+            let in_right =
+                other.candidates.iter().any(|existing| existing.identity() == candidate.identity());
+            let survives = if in_left {
+                in_right || !other.context.contains(candidate.dot())
             } else {
-                self.context.contains(candidate.dot())
+                !self.context.contains(candidate.dot())
             };
-            if !observed_by_other {
+            if survives {
                 candidates.push(candidate.clone());
             }
         }
@@ -312,13 +311,13 @@ impl<T: CanonicalValue> MvRegister<T> {
 
 impl<T: CanonicalValue> CanonicalEncode for LwwRegister<T> {
     fn encode_canonical(&self, output: &mut Vec<u8>) {
-        encode_state(output, LWW_KIND, &self.context, self.winner.iter())
+        encode_state(output, LWW_KIND, &self.context, self.winner.iter());
     }
 }
 
 impl<T: CanonicalValue> CanonicalEncode for MvRegister<T> {
     fn encode_canonical(&self, output: &mut Vec<u8>) {
-        encode_state(output, MV_KIND, &self.context, self.candidates.iter())
+        encode_state(output, MV_KIND, &self.context, self.candidates.iter());
     }
 }
 
@@ -468,6 +467,9 @@ fn decode_context(
         previous = Some(actor);
         let through = reader.leb_u64()?;
         let interval_count = bounded_count(reader.leb_u64()?, limits.max_intervals_per_actor)?;
+        if through == 0 && interval_count == 0 {
+            return Err(DecodeError::NonCanonicalContext);
+        }
         let mut progress = terrabase_causal::ActorProgress::new();
         if through != 0 {
             progress.insert_interval(

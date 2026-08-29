@@ -1,5 +1,7 @@
 #![allow(missing_docs)]
 
+use std::fmt::Write;
+
 use terrabase_causal::{
     ActorId, CausalContext, Dot, DottedVersion, HlcTimestamp, MutationOrdinal, OriginCounter,
     ReplicaEpoch, ReplicaId,
@@ -138,5 +140,9 @@ fn golden_mv_bytes_are_stable() {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(output, "{byte:02x}").unwrap();
+    }
+    output
 }

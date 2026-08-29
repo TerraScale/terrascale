@@ -578,6 +578,12 @@ pub struct ActorLifecycle {
 
 impl ActorLifecycle {
     /// Registers a new active actor incarnation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ActorLifecycleError::AlreadyActive`] when the exact actor is
+    /// already active, or [`ActorLifecycleError::EpochReuse`] when its epoch
+    /// does not advance the replica's latest recorded incarnation.
     pub fn register(&mut self, actor: ActorId) -> Result<(), ActorLifecycleError> {
         if self.active.contains(&actor) {
             return Err(ActorLifecycleError::AlreadyActive);
@@ -591,6 +597,12 @@ impl ActorLifecycle {
     }
 
     /// Retires an actor after a stable frontier proves its final counter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ActorLifecycleError::NotActive`] when the actor is not active,
+    /// or [`ActorLifecycleError::FinalCounterNotStable`] when the supplied
+    /// frontier does not cover the actor's final counter.
     pub fn retire(
         &mut self,
         actor: ActorId,
