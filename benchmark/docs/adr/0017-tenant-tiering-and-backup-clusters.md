@@ -4,18 +4,24 @@ status: accepted
 
 # Tenant-aware tiering and immutable backup clusters
 
-## Cold-tier placement and fairness
+## Three-tier placement and fairness
 
-One verified S3 Region satisfies cold-object placement. Before every active
-NVMe copy of a cold range is reclaimed, its manifest names the home object,
-checksum, encryption identity, publication epoch, and at least one verified
-active-Region or backup-cluster fallback. The fallback need not be a second S3
-copy. S3 remains outside every write acknowledgment and is not a backup.
+Tier 2 network block storage is the mandatory complete profile. Tier 1 local
+NVMe and Tier 3 S3-compatible object storage are independent optional tiers.
+One verified S3 Region satisfies Tier 3 placement when Tier 3 is enabled.
+Before the last active Tier 1 or Tier 2 copy of a cold range is reclaimed, its
+manifest names the home object, checksum, encryption identity, publication
+epoch, and at least one verified active-Region or backup-cluster fallback. The
+fallback need not be a second S3 copy. S3 remains outside every write
+acknowledgment and is not a backup.
 
 The Storage Tier Mover inherits policy from deployment to tenant to database to
-collection. It estimates working set, growth, time to exhaust the Tier 1 share,
-decayed heat, scan locality, refetch cost, and the reserve needed for WAL,
-foreground writes, manifests, and recovery. It starts before exhaustion.
+collection. It estimates working set, growth, time to exhaust every configured
+local-tier share, decayed heat, scan locality, refetch cost, and the reserve
+needed for WAL, foreground writes, manifests, and recovery. It starts before
+exhaustion. It never proposes a move to a disabled tier. With Tier 3 disabled,
+it retains cold data on Tier 2 and signals capacity admission before exhaustion
+rather than retrying an impossible demotion.
 
 A tenant above its fair share supplies its own cold candidates first and cannot
 evict another tenant's reserved hot working set. Weighted fair queues,
@@ -23,14 +29,16 @@ partitioned cache budgets, admission control, and tenant-scoped backpressure
 protect other tenants. Every move has an explainable plan, durable progress
 under ADR 0028, and a receipt; no opaque model silently relocates data.
 
-## Cold-read fallback
+## Read fallback
 
-After the local cache and home S3 fail, the Member tries every eligible active
-Region over authenticated QUIC and then the configured backup cluster. NATS may
-locate a source but never transports the range. The reader authenticates the
-source and verifies manifest identity, encryption, and checksum before
-publishing an NVMe cache entry. A typed availability error appears only after
-all eligible sources and bounded retries fail.
+The reader tries local Tier 1 when configured, local Tier 2, home Tier 3 when
+configured, every eligible active Region over authenticated QUIC, and then the
+configured backup cluster. It skips disabled tiers without a timeout or health
+warning. NATS may locate a source but never transports the range. The reader
+authenticates the source and verifies manifest identity, encryption, and
+checksum before publishing a cache entry in the hottest configured local tier.
+A typed availability error appears only after all configured and eligible
+sources and bounded retries fail.
 
 ## Immutable backup mode
 
@@ -47,8 +55,8 @@ originating commits, and rejects client database writes with
 The storage path favors sequential batches, large immutable segments, capacity,
 and bounded background compaction. It retains a complete verified copy and
 does not demote its only fallback copy into the active cluster's S3 tier.
-Normal reads do not use backup while the local active path, home S3, or an
-active Region can serve the data.
+Normal reads do not use backup while a configured local tier, home Tier 3, or
+an active Region can serve the data.
 
 `BackupDurable` first satisfies the requested `RegionalDurable` or
 `GlobalDurable` level and then waits for durable apply by any two backup
@@ -85,5 +93,7 @@ Qualification covers S3 outage, corrupt and stale fallbacks, active Region
 loss, backup quorum loss, `BackupDurable` timeout and retry, read-only denial,
 snapshot restart after cursor expiry, compaction and PITR pins, restore to a new
 identity, tenant fairness, slow backup isolation, and resource exhaustion.
-Performance claims follow ADR 0026 and separate hot, cold, backup ingest,
-restore, and fallback-read workloads.
+It also covers Tier 2 only, every optional Tier 1 and Tier 3 combination,
+intentional disablement, optional-tier loss, and Tier 2 capacity exhaustion.
+Performance claims follow ADR 0026 and separate each storage profile, backup
+ingest, restore, and fallback-read workload.

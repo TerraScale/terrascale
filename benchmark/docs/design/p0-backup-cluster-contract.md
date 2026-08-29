@@ -73,10 +73,11 @@ receipt-reading, and replication-source administration remain allowed.
 
 Read routing order for cold and fallback reads is frozen:
 
-1. Local active NVMe (resident or cache).
-2. Home S3 Region.
-3. Eligible active Regions over QUIC.
-4. Backup cluster — last resort only.
+1. Local Tier 1 NVMe or cache when configured.
+2. Local Tier 2 network block storage.
+3. Home Tier 3 object storage when configured.
+4. Eligible active Regions over QUIC.
+5. Backup cluster, last resort only.
 
 - The backup read returns the latest applied value plus exact
   replication position and lag; a client can never mistake a stale
@@ -84,7 +85,8 @@ Read routing order for cold and fallback reads is frozen:
 - Minimum-frontier reads: the caller may require `frontier >= F`; the
   backup waits within the deadline to reach `F` or fails with
   `FrontierUnreachable` — it never returns older state silently.
-- Normal routing never touches the backup while steps 1-3 can serve the
+- Disabled optional tiers are skipped without delay. Normal routing never
+  touches the backup while steps 1-4 can serve the
   data (enforced by routing tests, per-tenant read budgets, and
   receipts naming the chosen source).
 

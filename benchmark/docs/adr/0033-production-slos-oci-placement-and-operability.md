@@ -21,6 +21,11 @@ authenticated private Oracle Cloud Infrastructure artifact repositories and
 production delivery paths. Public SDKs and documentation expose no engine
 source or private TBEP contract.
 
+The supported engine targets are 64-bit Linux
+`x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`. GA requires native
+qualification on both. Other operating systems and 32-bit targets are outside
+the product contract.
+
 ## Canonical Region identity
 
 TerraScale uses uppercase three-letter airport codes as `RegionCode` values in
@@ -59,25 +64,64 @@ Regions.
 
 ## OCI production topology
 
-The default TerraBase Member shape is `VM.DenseIO.E5.Flex` with local NVMe. A
-production admission profile starts at 8 OCPUs, 96 GiB of memory, and 6.8 TB of
-local NVMe per Member, then uses benchmark evidence to raise the shape or place
-a tenant on dedicated Members. Capacity reservations and OCI service-limit
-validation must cover the steady RF=2 shape, one temporary surge Member per
-upgrade lane, failure replacement, and measured growth before a Region enters
-the catalog.
+The default TerraBase Member uses OCI Ampere flexible compute on ARM64 Linux.
+The Orchestrator admits the exact Ampere generation independently in each
+Region only after availability, capacity, price, and TerraBase.Benchmark
+evidence pass. The initial admission profile starts at 8 OCPUs, 96 GiB of
+memory, and 6.8 TB of performance-qualified OCI Block Volume capacity per
+Member. Cost efficiency is measured as cost per admitted durable operation.
+The processor brand does not prove a saving.
 
-Members run on separate hosts. GRU and SFO have one OCI availability domain, so
-their two active Members use separate fault domains. FRA places active Members
-in separate availability domains and separate fault domains. Temporary surge
-Members must preserve or improve this separation.
+Tier 2 network block storage is the mandatory and complete production storage
+profile. A default Ampere Member runs correctly with Tier 2 alone. Tier 1 local
+NVMe is optional when an admitted shape provides it. Tier 3 S3-compatible
+object storage is independently optional. Tier 1 and Tier 3 may both be absent
+without degraded health, fallback delays, or background retries. Enabling one
+does not require the other, and Tier 3 remains outside every write quorum and
+is not backup.
+
+Linux x86_64 remains a supported compatibility and mixed-cluster target, but
+the default placement policy selects a qualified Ampere Member whenever it can
+meet the database's capacity and SLO. An x86_64 substitution is a recorded
+placement decision with its own qualification evidence, not a silent fallback.
+Capacity reservations and OCI service-limit validation cover the steady RF=2
+shape, one temporary surge Member per upgrade lane, failure replacement, and
+measured growth before a Region enters the catalog.
+
+Members run on separate hosts. Their Tier 2 Block Volume attachments are
+independent. GRU and SFO have one OCI availability domain, so their two active
+Members use separate fault domains. FRA places active Members in separate
+availability domains and separate fault domains. Temporary surge Members must
+preserve or improve this separation.
 
 Product workloads use private regional subnets. OCI dynamic routing gateways
 and remote VCN peering carry authenticated cross-Region traffic. Service
 gateways provide private access to OCI Vault and Object Storage. Public load
 balancers terminate only the documented public services. No database Member,
-TBEP listener, Vault route, NVMe device, or backup endpoint has a public ingress
-path.
+TBEP listener, Vault route, storage attachment, or backup endpoint has a public
+ingress path.
+
+## Architecture and artifact qualification
+
+The generic ARM64 release targets `aarch64-unknown-linux-gnu` and runs across
+the admitted OCI Ampere generations. TerraScale may publish a separately tuned
+Ampere artifact only after measurements show a benefit. Its signed manifest
+names the required CPU and features, the Orchestrator schedules it only on a
+matching shape, and it passes the same formats, recovery, replication, and
+protocol suites as the generic artifact. An unlabelled `target-cpu=native`
+binary cannot enter an artifact repository or deployment plan.
+
+Native x86_64 and Ampere ARM64 runners build, lint, and test every release.
+Qualification creates storage, WAL, segment, snapshot, backup, CRDT, and
+protocol artifacts on each architecture and consumes them on the other. A
+mixed-architecture replica set must converge on the same canonical state,
+hashes, conflict winners, Merkle roots, and visible documents through normal
+replication, repair, compaction, backup, restore, and an N/N-1 upgrade.
+
+Performance baselines are architecture and storage-profile specific. The
+primary GA workload and thirty-day production soak use the Ampere Tier-2-only
+profile. Optional Tier 1 and Tier 3 profiles and any admitted x86_64 profile
+have separate receipts. No result from one profile qualifies another.
 
 ## Availability and latency objectives
 
@@ -106,6 +150,8 @@ must meet these service targets for 1 KiB hot documents: point-read p99 no more
 than 10 ms, `RegionalDurable` single-document write p99 no more than 20 ms, and
 local authorized reactive visibility p99 no more than 50 ms. Benchmark receipts
 also report p50, p95, p99.9, throughput, errors, queue time, and resource use.
+The primary gate runs on the Ampere Tier-2-only profile, proving that neither
+local NVMe nor object storage is needed to meet the hot-path claim.
 Cold reads, complex queries, coordinated operations, backup acknowledgement,
 and recovery have separate preregistered budgets and never inherit the hot-path
 claim.
@@ -202,7 +248,11 @@ latency SLI calculations, every Region pair, capacity and quota reservations,
 fault-domain placement, cross-Region routing, Vault and Object Storage private
 access, public-ingress denial, Region-code boundary tests, mapping changes,
 Member and Region loss, surge upgrades, backup and restore, billing replay,
-incident drills, license review, and the scoped SOC report.
+incident drills, license review, and the scoped SOC report. It also includes
+native Linux x86_64 and Ampere ARM64 lanes, cross-architecture artifact
+interchange, a mixed-architecture replica set, the Ampere cost per admitted
+durable operation receipt, Tier-2-only recovery and SLO evidence, every supported
+optional-tier combination, and intentional Tier 1 and Tier 3 disablement.
 
 Every customer-visible receipt and support artifact uses airport `RegionCode`
 values. A CI boundary scan fails if an OCI Region identifier or `SJC` appears in

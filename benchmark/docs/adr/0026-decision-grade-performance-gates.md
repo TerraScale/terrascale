@@ -21,8 +21,10 @@ performance result invalid rather than slow.
 Every decision-grade run records immutable source commits, artifact digests,
 database and driver versions, complete configurations, workload manifest and
 seed, data and index state, cache state, durability level, topology, fault
-shape, hardware allocation, storage image, kernel, measurement windows, raw
-sample identities, environment validity, and confidence intervals.
+shape, Linux target triple, CPU model and admitted features, OCI shape,
+hardware allocation, configured storage tiers, Block Volume profile, storage
+image, kernel, measurement windows, raw sample identities, environment
+validity, OCI price inputs, and confidence intervals.
 
 ## Fair workload contracts
 
@@ -64,6 +66,12 @@ steal, thermal, frequency, and environment-validity controls. It reimages or
 restores an equivalent clean storage state between randomized paired blocks.
 Additional scale curves are useful but cannot replace the fixed release gate.
 
+The fixed comparison lane and the production SLO lane are distinct. The
+primary production lane uses the admitted OCI Ampere shape, 96 GiB of memory,
+and Tier 2 Block Volume without Tier 1 or Tier 3. A comparator claim runs the
+subject and comparator on the same architecture and resource shape. A direct
+x86_64-to-ARM64 speed ratio is a hardware study, not a database comparison.
+
 ## Load and statistical method
 
 Each latency or service-level workload uses an open-loop, Poisson-scheduled
@@ -94,6 +102,30 @@ Correctness, acknowledged durability, error rate, late or skipped work, and
 tenant isolation are unconditional gates. Named CPU, memory, allocation, byte,
 write-amplification, and interference metrics are guardrails. An aggregate or
 geometric mean never hides a failed workload, primary metric, or guardrail.
+
+Cost efficiency is a separate preregistered question. Its receipt records the
+same correctness and SLO gates, achieved durable operations, measurement
+window, OCI compute and storage prices, and cost per admitted durable
+operation. A cheaper processor or lower list price alone supports no claim.
+
+## Architecture and storage-profile gates
+
+Linux `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` have separate
+baselines. Native runners execute the release suite on both. The primary GA
+performance gate uses OCI Ampere ARM64 with Tier 2 only. Linux x86_64, Tier 1
+plus Tier 2, Tier 2 plus Tier 3, and all-three-tier profiles receive separate
+receipts before production admission.
+
+The benchmark harness never substitutes cross-compilation for a native run or
+one storage profile for another. It records disabled tiers and rejects a run
+that contacts, waits for, or reports degraded health for an intentionally
+absent Tier 1 or Tier 3. Cross-architecture format, backup, hash, protocol, and
+mixed-replica tests are correctness prerequisites for every performance claim.
+
+An Ampere-tuned artifact is a separate candidate. Its receipt names the generic
+baseline, exact CPU requirements, compiler flags, artifact digest, and matching
+OCI shape. It must improve the preregistered metric without losing any
+correctness or resource guardrail.
 
 ## PostgreSQL gate
 
@@ -131,7 +163,8 @@ scope for TerraBaseV2.
 Internal codec, storage, replication, sync, and recovery regressions compare
 against the last promoted valid release baseline selected before the candidate
 runs. The baseline must match the workload, topology, fault shape, durability,
-hardware, storage, kernel, harness, protocol, and measurement method.
+target triple, CPU model and features, hardware, configured tiers, Block Volume
+profile, storage, kernel, harness, protocol, and measurement method.
 
 A baseline expires after thirty days or any material environment, database,
 driver, workload, statistics, protocol, or harness change. The replacement is
@@ -159,7 +192,9 @@ The existing receipt vocabulary remains exact:
 The initial production-readiness gate covers one, two, and three selected
 Regions, with the complete three-Region shape running two active Members per
 Region. It includes real WAN runs for the initial GRU, SFO, and FRA catalog and
-deterministic simulation for exhaustive fault schedules.
+deterministic simulation for exhaustive fault schedules. The primary real
+three-Region run uses OCI Ampere Members and Tier 2 Block Volume only. A mixed
+x86_64 and ARM64 run separately proves architecture-independent replication.
 
 Receipts separately measure:
 

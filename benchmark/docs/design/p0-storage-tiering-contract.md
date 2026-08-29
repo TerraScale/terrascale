@@ -1,8 +1,13 @@
-# P0 contract: storage tiers, manifest, mover, and S3 failure behavior
+# P0 contract: three storage tiers, manifest, mover, and failure behavior
 
-Status: frozen by the P0 contract pass, 2026-08-28. Governs P1
-implementation and AC-11 recovery evidence. Parents: ADR 0016 (LSM
-organization, tier split), ADR 0017 (placement, mover, fallback).
+Status: frozen by the P0 contract pass, 2026-08-28, and amended by the
+owner-directed three-tier decision on 2026-08-29. Governs P1 implementation
+and AC-11 recovery evidence. Parents: ADR 0016 (LSM organization, tier split),
+ADR 0017 (placement, mover, fallback).
+
+Tier 2 network block storage is mandatory and complete. Tier 1 local NVMe and
+Tier 3 S3-compatible object storage are independent optional tiers. Tier 2
+only, Tier 1 plus Tier 2, Tier 2 plus Tier 3, and all three tiers are valid.
 
 ## 1. Storage-tier manifest
 
@@ -14,7 +19,7 @@ TierManifest {
   manifest_id:            UUIDv7          // unique per publication
   epoch:                  u64             // publication epoch, monotonic
   cluster_id, shard_id:   identity
-  home_region:            RegionId        // the one verified S3 Region
+  home_region:            RegionId        // the one verified Tier 3 Region
   objects: [ {
     segment_id, key_range {start, end},
     object_key,            // checksum-addressed, content-derived
@@ -22,7 +27,8 @@ TierManifest {
     encryption_epoch,      // key epoch identifier only, never material
     uploaded_at_epoch_ms, verified: { read_after_write: bool, checksum: bool }
   } ],
-  nvme_resident: [ { segment_id, key_range } ],   // reclaimed-after-reference view
+  tier1_resident: [ { segment_id, key_range } ],  // empty when Tier 1 is disabled
+  tier2_resident: [ { segment_id, key_range } ],  // mandatory block-storage view
   fallback_sources: [ { region | backup_cluster_id, verified: bool } ],
   previous_manifest_id:   Option<UUIDv7>
 }
@@ -36,10 +42,10 @@ Rules:
   object it names is uploaded and verified; the manifest becomes active
   when `RegionalQuorum` durably accepts it (ledger-recorded). Until
   then the previous epoch stays active.
-- Before the last active NVMe copy of a range is reclaimed, the active
-  manifest names at least one verified active-Region or backup-cluster
-  fallback source for it. One verified home S3 Region suffices for
-  object placement (ADR 0017 D-1); the fallback need not be S3.
+- Before the last active Tier 1 or Tier 2 copy of a range is reclaimed,
+  the active manifest names at least one verified active-Region or backup-cluster
+  fallback source for it. One verified home Tier 3 Region suffices for
+  object placement (ADR 0017 D-1); the fallback need not be Tier 3.
 - Object keys are checksum-addressed and immutable: a replaced range is
   a new object; old objects are reclaimed only after every manifest,
   snapshot, backup, replication, CRDT-history, and shadow-retention pin
@@ -53,7 +59,8 @@ Rules:
 Policy inherits cluster -> tenant -> database -> collection; the most
 specific wins. A policy may combine:
 
-- tenant Tier-1 quota and reservation (bytes);
+- tenant Tier 1 and Tier 2 quota and reservation (bytes), skipping disabled
+  Tier 1;
 - creation age, last-access age;
 - decayed read frequency, decayed write frequency (separate decays);
 - scan locality (range touched by range-scans);
@@ -61,7 +68,7 @@ specific wins. A policy may combine:
 - immutable range size; explicit hot/cold pins and exclusions;
 - schedules (window allow/deny);
 - minimum residence time (per move direction) and promotion threshold;
-- adaptive NVMe headroom (node reserve target);
+- adaptive headroom for each configured local tier;
 - budgets: bytes/sec, requests/sec, concurrency, CPU, memory, window.
 
 Every policy is versioned (`policy_id`, `version`). For any document or
@@ -72,7 +79,7 @@ opaque model).
 ### Control loop (fairness contract)
 
 - The mover forecasts, per tenant: working-set size, growth rate, and
-  time to exhaust the tenant's Tier-1 budget; and per node: the reserve
+  time to exhaust each configured local-tier budget; and per node: the reserve
   needed for WAL, foreground writes, manifests, and recovery. Demotion
   starts when the forecast crosses the tenant's horizon — not at a fixed
   node-wide fullness watermark.
@@ -84,8 +91,11 @@ opaque model).
 - Hysteresis: promotion/demotion of the same range within the minimum
   residence time is refused; repeated ping-pong triggers a hold.
 - Mixed-temperature segments: a bounded compaction may split by key
-  range and temperature only when predicted NVMe savings exceed the
-  rewrite cost (recorded in the receipt).
+  range and temperature only when predicted configured-tier savings exceed
+  the rewrite cost (recorded in the receipt).
+- A disabled Tier 1 or Tier 3 is removed from planning. The mover emits no
+  retry, warning, or degraded-health event for intentional absence. With Tier
+  3 disabled, capacity admission acts before Tier 2 exhausts.
 
 ## 3. Tier Move Receipt (schema)
 
@@ -113,10 +123,14 @@ TierMoveReceipt {
 - Receipts are per-run artifacts under `evidence/` lanes and are the
   proof unit for AC-11 tiering gates.
 
-## 4. S3 failure contract
+## 4. Tier failure contract
 
 | Condition | Required behavior |
 | --- | --- |
+| Tier 1 disabled | use Tier 2 directly; no warning, timeout, or promotion attempt |
+| Tier 1 device lost | fail or fence the affected Member, then recover through the replica-set contract; Tier 1 is never required for cluster recovery |
+| Tier 2 attachment unavailable | the Member cannot acknowledge or serve facts held only there; fail closed and use replica or Region recovery |
+| Tier 3 disabled | retain data in Tier 1 or Tier 2 and stop demotion before Tier 2 capacity exhausts |
 | object missing / 404 | treat as unavailable; go to fallback order (§5); never return empty result |
 | object corrupt (checksum mismatch) | quarantine the entry, alert, try fallback; never serve |
 | partially uploaded (torn) | impossible to be referenced: manifests reference only verified objects; a torn upload is orphaned and reclaimed |
@@ -131,16 +145,19 @@ writes partial state back to the hot tier.
 
 ## 5. Cold-read fallback order (frozen)
 
-1. Local NVMe cache.
-2. Home S3 Region (bounded retries, coalesced requests).
-3. Every eligible active Region, over authenticated QUIC, in a
+1. Local Tier 1 NVMe or cache when configured.
+2. Local Tier 2 network block storage.
+3. Home Tier 3 object storage when configured (bounded retries and coalesced
+   requests).
+4. Every eligible active Region, over authenticated QUIC, in a
    deterministic order derived from topology (manifest identity +
    checksum verified before cache publication).
-4. `backup` cluster — only after 1-3 all fail.
-5. Typed `ColdTierUnavailable` availability error; the receipt names
+5. `backup` cluster, only after the configured steps 1-4 fail.
+6. Typed `ColdTierUnavailable` availability error; the receipt names
    every source tried and the failure class.
 
-NATS may locate a source; it never transports the range.
+Disabled tiers are skipped immediately. NATS may locate a source; it never
+transports the range.
 
 ## 6. SSD-usage accounting (100 GB program budget)
 
