@@ -19,9 +19,9 @@ use std::time::Duration;
 use super::record::ScanCursor;
 use super::{
     Coercion, FieldOutcome, FieldTransform, MigrationError, MigrationOptions, MigrationStatus,
-    MigrationStep, RollbackBlockedCause, RollbackLimit, RollbackStep, SchemaMigration,
-    TransformLiteral, TransformRejection, apply, apply_page, begin, dry_run, finalize, rollback,
-    status,
+    MigrationStep, MigrationStopReason, RollbackBlockedCause, RollbackLimit, RollbackStep,
+    SchemaMigration, TransformLiteral, TransformRejection, apply, apply_page, begin, dry_run,
+    finalize, rollback, status,
 };
 use crate::engine::{CommitOutcome, Engine, EngineConfig, EngineError, Transaction};
 use crate::families::{
@@ -723,6 +723,62 @@ fn apply_moves_the_collection_between_versions_with_evidence() {
         Err(EngineError::InvalidDocument),
         "the target schema rejects a pre-version shape after finalize"
     );
+}
+
+#[test]
+fn a_failed_page_records_a_durable_stop_without_seating_the_target() {
+    let (dir, engine) = open_engine("stopped-page");
+    let users = scope(&engine, "alpha");
+    let source = SchemaDefinition::try_new(
+        version(1),
+        vec![SchemaRule::FieldType { field: "name".to_owned(), kind: SchemaFieldType::Text }],
+    )
+    .expect("valid source");
+    let target = SchemaDefinition::try_new(
+        version(2),
+        vec![
+            SchemaRule::FieldType { field: "name".to_owned(), kind: SchemaFieldType::Text },
+            SchemaRule::TextLength { field: "name".to_owned(), min: None, max: Some(3) },
+        ],
+    )
+    .expect("valid target");
+    declare_schema(&engine, &users, "users", source.clone());
+    put_document(&engine, &users, "ada", "users", object(&[("name", text("ada"))]))
+        .expect("source document writes");
+    let contract =
+        SchemaMigration::try_new(collection("users"), version(1), version(2), target, Vec::new())
+            .expect("valid migration");
+    let plan = dry_run(&engine, &users, &contract).expect("dry run is ready");
+    // The source schema permits this update after the dry run, while the
+    // target schema does not. This exercises the page-time target fence.
+    put_document(&engine, &users, "ada", "users", object(&[("name", text("a-long-name"))]))
+        .expect("source schema accepts the changed value");
+    assert_eq!(
+        begin(&engine, &users, &contract, &plan, MigrationOptions::default()),
+        Ok(MigrationStep::Begun)
+    );
+    assert_eq!(apply_page(&engine, &users, &contract, &plan), Err(MigrationError::TargetViolation));
+    assert_eq!(
+        status(&engine, &users, &collection("users")),
+        Ok(MigrationStatus::Stopped {
+            manifest: plan.manifest().to_owned(),
+            from: version(1),
+            to: version(2),
+            reason: MigrationStopReason::TargetViolation,
+            documents: 0,
+            transformed: 0,
+            pages: 0,
+        })
+    );
+    assert_eq!(enforced_version(&engine, &users, "users"), Some(version(1)));
+    drop(engine);
+    let reopened =
+        Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("reopens");
+    assert!(matches!(
+        status(&reopened, &scope(&reopened, "alpha"), &collection("users")),
+        Ok(MigrationStatus::Stopped { reason: MigrationStopReason::TargetViolation, .. })
+    ));
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
