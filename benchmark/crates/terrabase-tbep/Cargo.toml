@@ -47,3 +47,6 @@ serde_json = "1.0.150"
 # The adopted sync delivery core (SE-02 GO decision) this server hosts
 # behind TBEP's sync-delivery frames.
 terrabase-sync-core = { path = "../terrabase-sync-core" }
+# The engine this host serves (P4): the real durable engine behind the
+# document spine.
+terrabase-v2 = { path = "../.." }

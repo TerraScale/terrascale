@@ -420,3 +420,38 @@ gate lands with P4/P6).
 Receipts: `terrabase-replication-core` 28/28 (8 convergence + 20
 composed); clippy `-D warnings` and fmt clean. `scripts/check.sh` not
 run (AC-12).
+
+## 12. P4 landing 1 (2026-08-29): the engine-backed TBEP host
+
+The load-bearing P4 gap closed: `EngineHost`
+(`crates/terrabase-tbep/src/engine_host.rs`, a path dependency on the
+engine crate) implements `TbepHost` over one real durable Engine —
+the serving spine the C# client exercises. Channel binds validate the
+tenant identifier before any engine scope exists; document writes
+commit at `Synced` through the engine's transaction path with the
+envelope's idempotency key as the operation identity (a retried frame
+replays the recorded receipt — no second publication); reads serve
+the published body with its version; deletes carry expected-version
+outcomes; the query/family/schema/sync/topology surfaces answer the
+typed refusal naming their landing (the sync-delivery specialist host
+stays beside it).
+
+Proven over a real UDS socket through the typed wire frames
+(`engine_host_uds.rs`): write-commit with version and sequence;
+idempotent retry replaying the same sequence; `Absent`-expectation
+conflict on an existing document; read-found with body and version;
+delete with `Exact(1)` committing, the read no longer finding it, and
+the retried delete replaying; tenant isolation across channels (a
+fresh stream for the second tenant — one bind per channel); the
+committed body surviving a full server restart at the same durable
+location; and an invalid tenant binding refused before any engine
+scope.
+
+Still open in P4: the QUIC/TLS binding, tokens/mTLS and capability
+negotiation, the query/family/schema surfaces over this host, the
+tier-administration operations, cluster mode, the dedicated overload
+code and client batching op, and protocol-level reconnect/resume.
+
+Receipts: `terrabase-tbep` suites all green (3 new engine-host tests
+over the 78 existing); clippy `-D warnings` and fmt clean.
+`scripts/check.sh` not run (AC-12).

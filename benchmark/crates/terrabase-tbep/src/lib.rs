@@ -47,6 +47,7 @@
 
 pub mod codec;
 pub mod codegen;
+pub mod engine_host;
 pub mod envelope;
 pub mod generated;
 pub mod host;
