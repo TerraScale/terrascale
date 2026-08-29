@@ -65,6 +65,7 @@ use terrabase_causal::{
 };
 use terrabase_crdt::{Candidate, DecodeError, DecodeLimits, LwwRegister, RegisterCodec};
 
+pub mod anti_entropy;
 pub mod compose;
 pub mod progress;
 
