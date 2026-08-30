@@ -31,6 +31,19 @@ const FOOTER_MAGIC: &[u8; 8] = b"TBLSMFT1";
 /// One sparse-index entry per this many records.
 const SPARSE_STRIDE: usize = 32;
 
+/// Segments with at most this many records keep their decoded records in
+/// memory: the sparse-index read path costs a file read and a record
+/// decode per query, which a small segment never pays back.
+const CACHE_ENTRY_LIMIT: u64 = 8_192;
+
+/// The process-wide budget of in-memory segment records. Segments are
+/// immutable and readers come and go with compaction; the budget keeps
+/// the resident set bounded no matter how many small segments exist.
+const CACHE_ENTRY_BUDGET: usize = 262_144;
+
+/// The process-wide count of in-memory segment records.
+static CACHED_ENTRIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// The immutable metadata of one segment, as the manifest records it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SegmentMeta {
@@ -112,6 +125,9 @@ pub(super) struct SegmentReader {
     sparse: Vec<(Vec<u8>, u64)>,
     meta: SegmentMeta,
     records_end: u64,
+    /// The decoded records of a small segment, held for the reader's
+    /// lifetime; `None` for large segments or while unbudgeted.
+    cached: Option<Vec<Entry>>,
 }
 
 impl SegmentReader {
@@ -212,7 +228,40 @@ impl SegmentReader {
             sparse,
             meta: SegmentMeta { id, level, entry_count, byte_len, min_key, max_key },
             records_end: sparse_offset,
+            cached: None,
         })
+    }
+
+    /// Populates the decoded-record cache when this segment is small
+    /// enough and the process-wide budget has room. Idempotent.
+    fn cache_if_small(&mut self) {
+        if self.cached.is_some() || self.meta.entry_count > CACHE_ENTRY_LIMIT {
+            return;
+        }
+        let count = usize::try_from(self.meta.entry_count).unwrap_or(usize::MAX);
+        let budget = CACHED_ENTRIES.load(std::sync::atomic::Ordering::Relaxed);
+        if budget.saturating_add(count) > CACHE_ENTRY_BUDGET {
+            return;
+        }
+        let Ok(all) = self.read_all_uncached() else {
+            return;
+        };
+        CACHED_ENTRIES.fetch_add(count, std::sync::atomic::Ordering::Relaxed);
+        self.cached = Some(all);
+    }
+
+    /// The cached window `[from, end)` of a small segment, binary-searched.
+    ///
+    /// The dense cache has no anchor slack, so the window is exact: it
+    /// starts at the first record whose user key is `>= from` and ends
+    /// before the first whose user key is `>= end` (or at the last record
+    /// when `end` is `None`).
+    fn cached_between(&self, from: Option<&[u8]>, end: Option<&[u8]>) -> Option<Vec<Entry>> {
+        let cached = self.cached.as_ref()?;
+        let low = from.map_or(0, |from| cached.partition_point(|entry| entry.key.user_key() < from));
+        let high =
+            end.map_or(cached.len(), |end| cached.partition_point(|entry| entry.key.user_key() < end));
+        Some(cached[low..high].to_vec())
     }
 
     /// Returns the segment's metadata.
@@ -225,6 +274,14 @@ impl SegmentReader {
     /// Full scans serve merges and open-time index rebuilds; point reads use
     /// the sparse index through `read_from`.
     pub(super) fn read_all(&mut self) -> io::Result<Vec<Entry>> {
+        if let Some(cached) = &self.cached {
+            return Ok(cached.clone());
+        }
+        self.read_all_uncached()
+    }
+
+    /// Reads and decodes every record from the file, bypassing the cache.
+    fn read_all_uncached(&mut self) -> io::Result<Vec<Entry>> {
         let mut body = vec![0_u8; self.records_end as usize];
         self.file.rewind()?;
         self.file.read_exact(&mut body)?;
@@ -240,6 +297,12 @@ impl SegmentReader {
         let Some(from) = from else {
             return self.read_all();
         };
+        if self.cached.is_none() {
+            self.cache_if_small();
+        }
+        if let Some(cached) = self.cached_between(Some(from), None) {
+            return Ok(cached);
+        }
         let start = self.seek_offset(from);
         let mut body = vec![0_u8; (self.records_end - start) as usize];
         self.file.seek(SeekFrom::Start(start))?;
@@ -262,6 +325,12 @@ impl SegmentReader {
         from: Option<&[u8]>,
         end: &[u8],
     ) -> io::Result<Vec<Entry>> {
+        if self.cached.is_none() {
+            self.cache_if_small();
+        }
+        if let Some(cached) = self.cached_between(from, end) {
+            return Ok(cached);
+        }
         let start = from.map_or(20_u64, |from| self.seek_offset(from));
         let stop = self.stop_offset(end).max(start).min(self.records_end);
         let mut body = vec![0_u8; (stop - start) as usize];
@@ -269,6 +338,26 @@ impl SegmentReader {
         self.file.read_exact(&mut body)?;
         decode_record_region(&body)
     }
+
+    /// The offset of the first sparse anchor whose key is `>= bound`, or
+    /// the end of the record region when no anchor reaches `bound`.
+    fn stop_offset(&self, bound: &[u8]) -> u64 {
+        for (key, offset) in &self.sparse {
+            if key.as_slice() >= bound {
+                return *offset;
+            }
+        }
+        self.records_end
+    }
+}
+
+impl Drop for SegmentReader {
+    fn drop(&mut self) {
+        if let Some(cached) = self.cached.take() {
+            CACHED_ENTRIES.fetch_sub(cached.len(), std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
 
     /// The offset of the first sparse anchor whose key is `>= bound`, or
     /// the end of the record region when no anchor reaches `bound`.
