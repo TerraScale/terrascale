@@ -161,6 +161,14 @@ pub(crate) struct LsmStorage {
     /// without rewriting any table.
     root_head: StorageRootId,
     ledger_index: BTreeMap<(String, String), LedgerEntry>,
+    /// The identifier index: every `(tenant, document identifier)` pair the
+    /// documents keyspace has ever carried a record for, with the set of
+    /// collections that carried it. Point reads by identifier resolve their
+    /// exact keys here instead of scanning the tenant's whole key range;
+    /// entries whose records compaction has fully reclaimed are stale but
+    /// harmless — their probe finds nothing and the scan they would replace
+    /// would have found nothing either.
+    identifier_index: BTreeMap<(String, String), BTreeSet<String>>,
     history_index: BTreeMap<u64, PublishedCommit>,
     /// The oldest sequence the history keyspace still serves, once a
     /// compaction declared a bound.
@@ -238,12 +246,21 @@ impl LsmStorage {
             (None, None) => SegmentManifest::default(),
         };
         let mut readers: BTreeMap<u64, RefCell<SegmentReader>> = BTreeMap::new();
+        let mut segment_documents: Vec<Entry> = Vec::new();
         for meta in &manifest.segments {
             let mut reader = SegmentReader::open(&segment_path(dir, meta.id), meta.id, meta.level)
                 .map_err(|_| LsmOpenError::FormatMismatch)?;
-            if reader.meta() != meta || reader.read_all().is_err() {
-                return Err(LsmOpenError::FormatMismatch);
-            }
+            let verified = if reader.meta() != meta {
+                Err(io::Error::new(io::ErrorKind::InvalidData, "segment metadata mismatch"))
+            } else {
+                reader.read_all()
+            };
+            let entries = verified.map_err(|_| LsmOpenError::FormatMismatch)?;
+            segment_documents.extend(
+                entries
+                    .into_iter()
+                    .filter(|entry| entry.key.tag() == internal::Keyspace::Documents.tag()),
+            );
             readers.insert(meta.id, RefCell::new(reader));
         }
         let mut wal = WalLog::open_unrepaired(&wal_path).map_err(|error| {
@@ -332,6 +349,7 @@ impl LsmStorage {
             sequence_watermark: 0,
             root_head: chain_root(&StorageRootId::from_recorded(String::new()), 0, 0),
             ledger_index: BTreeMap::new(),
+            identifier_index: BTreeMap::new(),
             history_index: BTreeMap::new(),
             history_floor: None,
             retained,
@@ -385,6 +403,9 @@ impl LsmStorage {
         if let Some(floor) = engine.history_floor {
             engine.history_index.retain(|sequence, _| *sequence >= floor);
         }
+        for entry in &segment_documents {
+            engine.index_identifier_entry(entry);
+        }
         Ok(engine)
     }
 
@@ -436,8 +457,27 @@ impl LsmStorage {
                     || tag == internal::Keyspace::Meta.tag()
                 {
                     self.apply_entry_to_memory(&entry);
+                } else if tag == internal::Keyspace::Documents.tag() {
+                    self.index_identifier_entry(&entry);
                 }
             }
+        }
+    }
+
+    /// Records one documents-keyspace entry in the identifier index.
+    ///
+    /// Deliberately separate from [`Self::apply_entry_to_memory`]: segment
+    /// rebuilds must index identifiers without re-loading segment records
+    /// into the memtable.
+    fn index_identifier_entry(&mut self, entry: &Entry) {
+        if entry.key.tag() != internal::Keyspace::Documents.tag() {
+            return;
+        }
+        if let Some((tenant, collection, document)) = decode_document_key(entry.key.user_key()) {
+            self.identifier_index
+                .entry((tenant, document))
+                .or_default()
+                .insert(collection);
         }
     }
 
@@ -498,6 +538,8 @@ impl LsmStorage {
             // Meta is a closed keyspace. Unknown or malformed markers must
             // not be silently skipped during recovery.
             self.usage_corrupt = true;
+        } else if tag == internal::Keyspace::Documents.tag() {
+            self.index_identifier_entry(entry);
         }
         self.memtable.insert(entry.clone());
     }
@@ -532,7 +574,7 @@ impl LsmStorage {
             let Some(reader) = self.readers.get(&meta.id) else {
                 continue;
             };
-            let Ok(entries) = reader.borrow_mut().read_from(Some(start)) else {
+            let Ok(entries) = reader.borrow_mut().read_between(Some(start), end) else {
                 continue;
             };
             for entry in entries {
@@ -594,30 +636,32 @@ impl LsmStorage {
 
     /// Finds the first document of a tenant with the identifier, in
     /// canonical key order, at `sequence`.
+    ///
+    /// The identifier index names every collection that ever carried the
+    /// identifier; probing those collections in canonical order and letting
+    /// the first key with a record at or below `sequence` decide (a
+    /// tombstone answers absent, exactly as the tenant scan it replaces
+    /// did) reproduces the scan's semantics without materializing the
+    /// tenant's whole key range.
     fn find_by_document_id(
         &self,
         tenant: &TenantId,
         id: &DocumentId,
         sequence: u64,
     ) -> Option<Document> {
-        let start = tenant_prefix(tenant);
-        let end = internal::tenant_upper_bound(tenant);
-        for found in self.collect_range(&start, &end, sequence) {
-            let Some((found_tenant, _collection, document)) =
-                decode_document_key(found.key.user_key())
-            else {
+        let collections = self
+            .identifier_index
+            .get(&(tenant.as_str().to_owned(), id.as_str().to_owned()))?;
+        for collection in collections {
+            let key = internal::InternalKey::document(tenant, &CollectionName::try_new(collection).ok()?, id);
+            let Some((deletion, value)) = self.newest_document_entry(&key, sequence) else {
                 continue;
             };
-            if found_tenant != tenant.as_str() {
-                continue;
+            if deletion {
+                return None;
             }
-            if document == id.as_str() {
-                if found.key.is_deletion() {
-                    return None;
-                }
-                let mut value_reader = codec::Reader::new(&found.value);
-                return codec::decode_document(&mut value_reader);
-            }
+            let mut value_reader = codec::Reader::new(&value);
+            return codec::decode_document(&mut value_reader);
         }
         None
     }

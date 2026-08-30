@@ -246,6 +246,40 @@ impl SegmentReader {
         self.file.read_exact(&mut body)?;
         decode_record_region(&body)
     }
+
+    /// Reads the records whose user keys lie in `[from, end)`: starting at
+    /// the sparse anchor that reaches `from` (or the first record) and
+    /// stopping at the first sparse anchor whose key is `>= end`, because
+    /// every record from that anchor onward carries a key `>= end`.
+    ///
+    /// The sparse index makes both bounds approximate in the same safe
+    /// direction: the read may include extra records below `from` (before
+    /// the anchor) and at or above `end` (before the next anchor), and the
+    /// caller's range filter keeps exactly `[from, end)`. It never omits a
+    /// record inside the range.
+    pub(super) fn read_between(
+        &mut self,
+        from: Option<&[u8]>,
+        end: &[u8],
+    ) -> io::Result<Vec<Entry>> {
+        let start = from.map_or(20_u64, |from| self.seek_offset(from));
+        let stop = self.stop_offset(end).max(start).min(self.records_end);
+        let mut body = vec![0_u8; (stop - start) as usize];
+        self.file.seek(SeekFrom::Start(start))?;
+        self.file.read_exact(&mut body)?;
+        decode_record_region(&body)
+    }
+
+    /// The offset of the first sparse anchor whose key is `>= bound`, or
+    /// the end of the record region when no anchor reaches `bound`.
+    fn stop_offset(&self, bound: &[u8]) -> u64 {
+        for (key, offset) in &self.sparse {
+            if key.as_slice() >= bound {
+                return *offset;
+            }
+        }
+        self.records_end
+    }
 }
 
 /// The largest key the footer tail window can carry.
