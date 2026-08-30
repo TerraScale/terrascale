@@ -14,3 +14,7 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 
 # Go Client
 - terrabase-go must live in this repo and it is the go client to communicate with terrabase using grpc and it is the only client allowed to communicate with terrabase
+
+
+# Benchmark
+- We need to save all benchmarks in an easy to see .md tables so we can compare from the very beginning the difference and improvements

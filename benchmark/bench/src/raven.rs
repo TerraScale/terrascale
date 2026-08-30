@@ -102,6 +102,11 @@ impl Backend for RavenDbBackend {
                 "name": document::seeded_name(index),
                 "group": document::seeded_group(index),
                 "payload": payload,
+                // This server build does not derive the collection from the
+                // id prefix on a raw PUT, so the collection is named
+                // explicitly: without it every document lands in `@empty`
+                // and no `from users` query can ever see them.
+                "@metadata": {"@collection": "users"},
             })
             .to_string();
             let response = agent
@@ -178,6 +183,7 @@ impl Slot for RavenDbSlot {
             "name": document::MEASURED_NAME,
             "group": document::MEASURED_GROUP,
             "payload": document::payload(),
+            "@metadata": {"@collection": "users"},
         })
         .to_string();
         let response = self

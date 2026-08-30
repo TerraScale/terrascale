@@ -76,6 +76,8 @@
 mod driver;
 mod gates;
 mod lane;
+#[cfg(test)]
+mod lane_run;
 mod optimizer;
 mod record;
 mod reference;

@@ -526,6 +526,96 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn topology_read(&self, tenant: &str) -> Result<TopologyReadResponse, HostingError>;
 
+    /// Serves one replication conflict observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves
+    /// replication observation.
+    fn replication_conflicts(
+        &self,
+        _tenant: &str,
+    ) -> Result<crate::registry::ReplicationConflictsResponse, HostingError> {
+        Err(HostingError::Refused(
+            "replication.conflicts is not served by this host".into(),
+        ))
+    }
+
+    /// Serves one fenced-range observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves
+    /// replication observation.
+    fn replication_fenced(
+        &self,
+        _tenant: &str,
+    ) -> Result<crate::registry::ReplicationFencedResponse, HostingError> {
+        Err(HostingError::Refused(
+            "replication.fenced is not served by this host".into(),
+        ))
+    }
+
+    /// Serves one leadership-deposition observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves
+    /// replication observation.
+    fn replication_depositions(
+        &self,
+        _tenant: &str,
+    ) -> Result<crate::registry::ReplicationDepositionsResponse, HostingError> {
+        Err(HostingError::Refused(
+            "replication.depositions is not served by this host".into(),
+        ))
+    }
+
+    /// Serves the replication cursor observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves
+    /// replication observation.
+    fn replication_cursor(
+        &self,
+        _tenant: &str,
+    ) -> Result<crate::registry::ReplicationCursorResponse, HostingError> {
+        Err(HostingError::Refused(
+            "replication.cursor is not served by this host".into(),
+        ))
+    }
+
+    /// Serves the replication health observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves
+    /// replication observation.
+    fn replication_health(
+        &self,
+        _tenant: &str,
+    ) -> Result<crate::registry::ReplicationHealthResponse, HostingError> {
+        Err(HostingError::Refused(
+            "replication.health is not served by this host".into(),
+        ))
+    }
+
+    /// Serves the cross-tenant denial observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Refused`] unless a host serves
+    /// replication observation.
+    fn replication_denials(
+        &self,
+        _tenant: &str,
+    ) -> Result<crate::registry::ReplicationDenialsResponse, HostingError> {
+        Err(HostingError::Refused(
+            "replication.denials is not served by this host".into(),
+        ))
+    }
+
     /// Configures the Storage Tier Mover's policy (P4, mutation).
     ///
     /// # Errors

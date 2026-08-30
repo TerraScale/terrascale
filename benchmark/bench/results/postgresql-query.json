@@ -1,0 +1,66 @@
+{
+  "target": "postgresql",
+  "workload": "query",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0
+  },
+  "environment": {
+    "observed_identity": "PostgreSQL 18.6 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit",
+    "endpoint": "postgres://bench@127.0.0.1:55432/postgres",
+    "client_transport": "rust postgres crate 0.19, one synchronous TCP connection per concurrency slot, prepared statements, autocommit per statement",
+    "unix_seconds": 1788104642,
+    "kernel": "Linux 7.2.1",
+    "logical_cpus": 28
+  },
+  "samples": [
+    {
+      "operations": 10000,
+      "wall_seconds": 0.105684661,
+      "throughput_ops_per_s": 94621.11062645126,
+      "p50_us": 157.47,
+      "p95_us": 226.734,
+      "p99_us": 300.24199999999996
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.152625911,
+      "throughput_ops_per_s": 65519.67444112422,
+      "p50_us": 153.08800000000002,
+      "p95_us": 228.712,
+      "p99_us": 336.80400000000003
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.112133396,
+      "throughput_ops_per_s": 89179.49831823519,
+      "p50_us": 163.322,
+      "p95_us": 255.18900000000002,
+      "p99_us": 326.696
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.101612871,
+      "throughput_ops_per_s": 98412.72962359268,
+      "p50_us": 148.60399999999998,
+      "p95_us": 220.92999999999998,
+      "p99_us": 280.309
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.10148113,
+      "throughput_ops_per_s": 98540.48728073879,
+      "p50_us": 149.729,
+      "p95_us": 216.07899999999998,
+      "p99_us": 275.318
+    }
+  ],
+  "limits": [
+    "server-side configuration is the SE-15 pin's, captured verbatim on the receipt",
+    "planner and memory settings are the pinned artifact's shipped defaults; no ANALYZE beyond what warm-up naturally produces"
+  ]
+}

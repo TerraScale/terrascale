@@ -1,7 +1,7 @@
 //! Compiles the TBEP protobuf contract at build time.
 //!
 //! `protox` parses and validates `proto/terrabase/v1/engine.proto`
-//! without a system `protoc`; `tonic-build` then emits the prost
+//! without a system `protoc`; `tonic-prost-build` then emits the prost
 //! messages and tonic service stubs into `OUT_DIR`. Nothing generated
 //! is committed: the schema file is the only source of the wire
 //! contract (ADR 0028).
@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=build.rs");
 
     let file_descriptors = protox::compile([file_path], [file_path.parent().unwrap()])?;
-    tonic_build::compile_fds(file_descriptors)?;
+    tonic_prost_build::compile_fds(file_descriptors)?;
 
     Ok(())
 }

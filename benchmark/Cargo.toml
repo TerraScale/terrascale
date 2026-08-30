@@ -21,7 +21,6 @@ members = [
   "crates/terrabase-replication-core",
   "crates/terrabase-tbep",
 ]
-exclude = ["crates/terrabase-tbep/tools/tbep-fbs"]
 
 [lib]
 name = "terrabase"

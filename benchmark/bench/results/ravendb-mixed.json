@@ -1,0 +1,66 @@
+{
+  "target": "ravendb",
+  "workload": "mixed",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0
+  },
+  "environment": {
+    "observed_identity": "RavenDB 7.2.5, build 72029 (server-reported /build/version)",
+    "endpoint": "http://127.0.0.1:8091/databases/terrabase-bench-1788104925",
+    "client_transport": "rust ureq 2 HTTP/1.1 keep-alive, one agent connection per concurrency slot",
+    "unix_seconds": 1788104928,
+    "kernel": "Linux 7.2.1",
+    "logical_cpus": 28
+  },
+  "samples": [
+    {
+      "operations": 10000,
+      "wall_seconds": 3.417536111,
+      "throughput_ops_per_s": 2926.084663103652,
+      "p50_us": 1971.2990000000002,
+      "p95_us": 18848.808,
+      "p99_us": 27951.588
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 3.20693675,
+      "throughput_ops_per_s": 3118.240482915667,
+      "p50_us": 1864.5829999999999,
+      "p95_us": 17031.343,
+      "p99_us": 25449.641
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 2.819525043,
+      "throughput_ops_per_s": 3546.6966412754077,
+      "p50_us": 1711.109,
+      "p95_us": 15010.56,
+      "p99_us": 21235.957
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 2.591528974,
+      "throughput_ops_per_s": 3858.7259105828543,
+      "p50_us": 1764.589,
+      "p95_us": 12563.91,
+      "p99_us": 19260.405000000002
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 2.429911144,
+      "throughput_ops_per_s": 4115.376821367424,
+      "p50_us": 1546.661,
+      "p95_us": 12449.667,
+      "p99_us": 16569.506
+    }
+  ],
+  "limits": [
+    "the reference's shipped defaults: auto-indexing on (the users-by-name auto index is created during warm-up), server-acknowledged PUT durability, no tuning applied to either side",
+    "unsecured loopback HTTP inside a rootless podman host-network container; the engine side is an in-process library boundary, so the two sides differ in boundary, stated here rather than hidden"
+  ]
+}

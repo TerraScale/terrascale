@@ -125,6 +125,12 @@ impl TerraBaseLane {
         &self.engine
     }
 
+    /// The durable location's display path, for facts documents that name
+    /// where the engine side actually ran.
+    pub(crate) fn location_display(&self) -> String {
+        self.dir.display().to_string()
+    }
+
     /// The lane's tenant scope.
     pub(crate) fn scope(&self) -> &TenantScope {
         &self.scope
@@ -188,7 +194,7 @@ impl TerraBaseLane {
 
     /// Executes one operation of a workload, returning whether it returned a
     /// document.
-    fn one_operation(&self, workload: Workload, index: usize) -> bool {
+    pub(crate) fn one_operation(&self, workload: Workload, index: usize) -> bool {
         match workload {
             Workload::DocumentRead => {
                 self.read_document(&format!("seed-{}", index % self.seeded().max(1))).is_some()

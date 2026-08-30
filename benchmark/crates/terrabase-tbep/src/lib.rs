@@ -2,7 +2,7 @@
 //!
 //! TBEP is the Go↔Rust process-to-process wire protocol (ADR 0028):
 //! gRPC over the protobuf contract in `proto/terrabase/v1/engine.proto`,
-//! served by tonic. The retired custom MessagePack and FlatBuffers
+//! served by tonic. The retired custom `MessagePack` and `FlatBuffers`
 //! framings (and their generators) are gone; the closed typed operation
 //! set, backbone subscription streams, sync-delivery operations,
 //! topology/admin reads, and supervision operations all ride gRPC now.
@@ -49,7 +49,10 @@ pub mod value;
 
 /// The compiled protobuf contract (prost messages and tonic stubs).
 pub mod proto {
-    #![allow(clippy::module_name_repetitions, clippy::return_self_not_must_use)]
+    // Ecosystem-generated code (protox + tonic-build): not first-party
+    // shape, so first-party lint discipline does not apply to it.
+    #![allow(missing_docs)]
+    #![allow(clippy::all, clippy::pedantic, clippy::nursery)]
 
     /// The `terrabase.v1` package.
     pub mod terrabase {

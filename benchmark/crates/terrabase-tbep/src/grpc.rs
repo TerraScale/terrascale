@@ -1,0 +1,2020 @@
+//! The tonic serving layer of TBEP (ADR 0028): the gRPC contract in
+//! `proto/terrabase/v1/engine.proto`, served over the hosting seam.
+//!
+//! Responsibilities, in the order a request meets them:
+//!
+//! 1. **Identity.** Every RPC except `Channel/Bind` requires the
+//!    `x-tb-principal` and `x-tb-tenant` metadata; a missing identity
+//!    fails closed with the `unbound_channel` error code. The transport
+//!    is expected to be mutually authenticated TLS in production — the
+//!    metadata names the application identity within that channel, it
+//!    does not authenticate it.
+//! 2. **Idempotency.** Mutation RPCs require the
+//!    `x-tb-idempotency-key` metadata (1..=128 bytes, no control
+//!    characters); the engine deduplicates retries within its retained
+//!    horizon.
+//! 3. **Bounds.** Prost messages convert into the hand-maintained
+//!    domain types of [`crate::registry`], whose `validate` methods
+//!    enforce the declared bounds fail-closed before the host runs.
+//! 4. **Overload.** One bounded in-flight gate wraps every host call;
+//!    refusal answers `RESOURCE_EXHAUSTED` with the `overloaded` error
+//!    code.
+//! 5. **Errors.** Host failures return a gRPC status whose details
+//!    carry one [`crate::proto::terrabase::v1::TbepError`] naming the
+//!    closed error code; clients map codes, never string-match
+//!    details.
+//! 6. **Streams.** `Backbone/Subscribe` opens the subscription on the
+//!    host and pumps its feed into the response stream until the close
+//!    frame or disconnect.
+//!
+//! The sync host seam is synchronous, so every host call rides
+//! `spawn_blocking`; the tonic runtime never blocks on engine work.
+
+use std::net::SocketAddr;
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+
+use prost::Message as _;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
+
+use tonic::Code;
+use tonic::Request;
+use tonic::Response;
+use tonic::Status;
+use tonic::transport::Certificate as TransportCertificate;
+use tonic::transport::Identity as TransportIdentity;
+use tonic::transport::ServerTlsConfig;
+
+use crate::host::HostingError;
+use crate::host::TbepHost;
+use crate::host::TbepNotification;
+use crate::proto::terrabase::v1 as pb;
+use crate::proto::terrabase::v1::backbone_server::Backbone;
+use crate::proto::terrabase::v1::backbone_server::BackboneServer;
+use crate::proto::terrabase::v1::channel_server::Channel;
+use crate::proto::terrabase::v1::channel_server::ChannelServer;
+use crate::proto::terrabase::v1::engine_server::Engine;
+use crate::proto::terrabase::v1::engine_server::EngineServer;
+use crate::proto::terrabase::v1::maintenance_server::Maintenance;
+use crate::proto::terrabase::v1::maintenance_server::MaintenanceServer;
+use crate::proto::terrabase::v1::replication_server::Replication;
+use crate::proto::terrabase::v1::replication_server::ReplicationServer;
+use crate::proto::terrabase::v1::schema_server::Schema;
+use crate::proto::terrabase::v1::schema_server::SchemaServer;
+use crate::proto::terrabase::v1::sync_server::Sync;
+use crate::proto::terrabase::v1::sync_server::SyncServer;
+use crate::proto::terrabase::v1::tier_server::Tier;
+use crate::proto::terrabase::v1::tier_server::TierServer;
+use crate::registry;
+use crate::value::TbepValue;
+
+/// The metadata key carrying the backend-supplied principal.
+pub const PRINCIPAL_METADATA: &str = "x-tb-principal";
+/// The metadata key carrying the backend-supplied tenant.
+pub const TENANT_METADATA: &str = "x-tb-tenant";
+/// The metadata key carrying a mutation's retry identity.
+pub const IDEMPOTENCY_METADATA: &str = "x-tb-idempotency-key";
+
+/// The idempotency-key bound (bytes), shared with the retired envelope
+/// discipline.
+pub const MAX_IDEMPOTENCY_BYTES: usize = 128;
+
+/// Maximum in-flight host operations admitted by the overload gate.
+pub const MAX_INFLIGHT_OPERATIONS: usize = 128;
+
+/// The depth of one subscription's outbound queue: a bounded backlog
+/// that keeps a slow stream consumer from pinning engine memory.
+pub const OUTBOUND_DEPTH: usize = 64;
+
+/// The per-RPC message bound (decode and encode): the registry's frame
+/// ceiling, which the sync payload bound already fits.
+const MAX_MESSAGE_BYTES: usize = registry::MAX_FRAME_BYTES;
+
+/// The running gRPC listener handle.
+pub struct TbepGrpcHandle {
+    local_addr: Option<SocketAddr>,
+    socket_path: Option<std::path::PathBuf>,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl TbepGrpcHandle {
+    /// The bound TCP address, when serving TLS.
+    #[must_use]
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.local_addr
+    }
+
+    /// The bound socket path, when serving UDS.
+    #[must_use]
+    pub fn socket_path(&self) -> Option<&Path> {
+        self.socket_path.as_deref()
+    }
+
+    /// Signals the serving loop to finish and waits for its thread.
+    pub fn shutdown(&mut self) {
+        if let Some(sender) = self.shutdown.take() {
+            let _ = sender.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(path) = &self.socket_path {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+impl Drop for TbepGrpcHandle {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+/// The gRPC serving of one host: every service of the contract wired
+/// over [`TbepHost`].
+pub struct TbepGrpcServer {
+    host: Arc<dyn TbepHost>,
+    binding: pb::BindingKind,
+    frames_served: AtomicU64,
+    inflight: AtomicUsize,
+}
+
+impl TbepGrpcServer {
+    /// Creates the serving over one host. `binding` is the transport
+    /// this instance serves (local socket or mTLS network) and answers
+    /// in topology reads.
+    #[must_use]
+    pub fn new(host: Arc<dyn TbepHost>, binding: pb::BindingKind) -> Self {
+        Self {
+            host,
+            binding,
+            frames_served: AtomicU64::new(0),
+            inflight: AtomicUsize::new(0),
+        }
+    }
+
+    /// The frames (RPCs) served so far.
+    #[must_use]
+    pub fn frames_served(&self) -> u64 {
+        self.frames_served.load(Ordering::Relaxed)
+    }
+
+    fn counted(&self) {
+        self.frames_served.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Serves the contract over a local Unix-domain socket.
+    ///
+    /// A stale socket file at `path` is removed first. The mode of the
+    /// listening socket is the process umask's; the directory holding
+    /// it is expected to be operator-restricted.
+    ///
+    /// # Errors
+    ///
+    /// Returns the bind failure.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the serving runtime fails to start on the dedicated
+    /// thread (an operator-level environment failure); bind failures are
+    /// returned.
+    pub fn serve_uds(self: &Arc<Self>, path: &Path) -> std::io::Result<TbepGrpcHandle> {
+        let _ = std::fs::remove_file(path);
+        let listener_path = path.to_path_buf();
+        let server = Arc::clone(self);
+        let (shutdown, signal) = tokio::sync::oneshot::channel::<()>();
+        let thread = std::thread::Builder::new()
+            .name("tbep-grpc-uds".into())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .expect("the TBEP serving runtime starts");
+                let _context = runtime.enter();
+                let Ok(listener) = tokio::net::UnixListener::bind(&listener_path) else {
+                    return;
+                };
+                let _ = runtime.block_on(async move {
+                    let routes = serve_routes(Arc::clone(&server), None)
+                        .expect("the unencrypted route table builds");
+                    routes
+                        .serve_with_incoming_shutdown(
+                            tokio_stream::wrappers::UnixListenerStream::new(listener),
+                            async {
+                                let _ = signal.await;
+                            },
+                        )
+                        .await
+                });
+            })
+            .map_err(std::io::Error::other)?;
+        Ok(TbepGrpcHandle {
+            local_addr: None,
+            socket_path: Some(path.to_path_buf()),
+            shutdown: Some(shutdown),
+            thread: Some(thread),
+        })
+    }
+
+    /// Serves the contract over TLS on `address`.
+    ///
+    /// `server_pem` is the leaf-first certificate chain and `key_pem`
+    /// its private key, both PEM-encoded. `client_ca_pem` is the
+    /// operator-provisioned client trust bundle; when present, clients
+    /// must present a certificate chaining to it (mutual TLS).
+    ///
+    /// # Errors
+    ///
+    /// Returns the TLS configuration or bind failure.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the serving runtime fails to start on the dedicated
+    /// thread (an operator-level environment failure); TLS and bind
+    /// failures are returned.
+    pub fn serve_tls(
+        self: &Arc<Self>,
+        address: SocketAddr,
+        server_pem: &str,
+        key_pem: &str,
+        client_ca_pem: Option<&str>,
+    ) -> std::io::Result<TbepGrpcHandle> {
+        let identity = TransportIdentity::from_pem(server_pem, key_pem);
+        let mut tls = ServerTlsConfig::new().identity(identity);
+        if let Some(bundle) = client_ca_pem {
+            tls = tls.client_ca_root(TransportCertificate::from_pem(bundle));
+        }
+        let server = Arc::clone(self);
+        let (shutdown, signal) = tokio::sync::oneshot::channel::<()>();
+        let (addr_tx, addr_rx) = std::sync::mpsc::channel();
+        let thread = std::thread::Builder::new()
+            .name("tbep-grpc-tls".into())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .expect("the TBEP serving runtime starts");
+                let _context = runtime.enter();
+                runtime.block_on(async move {
+                    let Ok(listener) = tokio::net::TcpListener::bind(address).await else {
+                        let _ = addr_tx.send(None);
+                        return;
+                    };
+                    let Ok(local) = listener.local_addr() else {
+                        let _ = addr_tx.send(None);
+                        return;
+                    };
+                    let _ = addr_tx.send(Some(local));
+                    if let Ok(routes) = serve_routes(Arc::clone(&server), Some(tls)) {
+                            let _ = routes
+                                .serve_with_incoming_shutdown(
+                                        tokio_stream::wrappers::TcpListenerStream::new(listener),
+                                        async {
+                                            let _ = signal.await;
+                                        },
+                                    )
+                                    .await;
+                    }
+                });
+            })
+            .map_err(std::io::Error::other)?;
+        let local_addr = addr_rx.recv().ok().flatten();
+        Ok(TbepGrpcHandle {
+            local_addr,
+            socket_path: None,
+            shutdown: Some(shutdown),
+            thread: Some(thread),
+        })
+    }
+}
+
+fn serve_routes(
+    server: Arc<TbepGrpcServer>,
+    tls: Option<ServerTlsConfig>,
+) -> Result<tonic::transport::server::Router, tonic::transport::Error> {
+    let mut builder = tonic::transport::Server::builder();
+    if let Some(tls) = tls {
+        builder = builder.tls_config(tls)?;
+    }
+    Ok(builder
+        .add_service(
+            ChannelServer::new(Arc::clone(&server))
+                .max_decoding_message_size(MAX_MESSAGE_BYTES)
+                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+        )
+        .add_service(
+            EngineServer::new(Arc::clone(&server))
+                .max_decoding_message_size(MAX_MESSAGE_BYTES)
+                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+        )
+        .add_service(
+            BackboneServer::new(Arc::clone(&server))
+                .max_decoding_message_size(MAX_MESSAGE_BYTES)
+                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+        )
+        .add_service(
+            SyncServer::new(Arc::clone(&server))
+                .max_decoding_message_size(MAX_MESSAGE_BYTES)
+                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+        )
+        .add_service(
+            SchemaServer::new(Arc::clone(&server))
+                .max_decoding_message_size(MAX_MESSAGE_BYTES)
+                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+        )
+        .add_service(
+            ReplicationServer::new(Arc::clone(&server))
+                .max_decoding_message_size(MAX_MESSAGE_BYTES)
+                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+        )
+        .add_service(
+            MaintenanceServer::new(Arc::clone(&server))
+                .max_decoding_message_size(MAX_MESSAGE_BYTES)
+                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+        )
+        .add_service(
+            TierServer::new(server)
+                .max_decoding_message_size(MAX_MESSAGE_BYTES)
+                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+        ))
+}
+
+// ---------------------------------------------------------------------------
+// Serving discipline: identity, idempotency, overload, errors
+// ---------------------------------------------------------------------------
+
+/// Releases one overload-gate slot when dropped.
+struct Permit<'a>(&'a AtomicUsize);
+
+impl Drop for Permit<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// The application identity one RPC carries.
+struct Identity {
+    #[allow(dead_code)]
+    principal: String,
+    tenant: String,
+}
+
+impl Identity {
+    fn of<T>(request: &Request<T>) -> Result<Self, Status> {
+        let metadata = request.metadata();
+        let principal = metadata
+            .get(PRINCIPAL_METADATA)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let tenant = metadata
+            .get(TENANT_METADATA)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        if principal.is_empty() || tenant.is_empty() {
+            return Err(tbep_status(
+                Code::Unauthenticated,
+                pb::ErrorCode::UnboundChannel,
+                "the RPC carries no bound channel identity",
+            ));
+        }
+        Ok(Self { principal, tenant })
+    }
+}
+
+fn idempotency_key<T>(request: &Request<T>) -> Result<String, Status> {
+    let key = request
+        .metadata()
+        .get(IDEMPOTENCY_METADATA)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let pairing_error = |detail: &str| {
+        tbep_status(Code::InvalidArgument, pb::ErrorCode::IdempotencyPairing, detail)
+    };
+    if key.is_empty() || key.trim().is_empty() {
+        return Err(pairing_error("the mutation RPC carries no idempotency key"));
+    }
+    if key.len() > MAX_IDEMPOTENCY_BYTES {
+        return Err(pairing_error("the idempotency key exceeds its bound"));
+    }
+    if key.bytes().any(|byte| byte.is_ascii_control()) {
+        return Err(pairing_error("the idempotency key carries control characters"));
+    }
+    Ok(key.to_string())
+}
+
+/// Builds the engine-failure status: the closed code in a `TbepError`
+/// packed as the status's `google.rpc.Status` detail.
+fn tbep_status(code: Code, error_code: pb::ErrorCode, detail: &str) -> Status {
+    let detail = detail.chars().take(512).collect::<String>();
+    let tbep_error = pb::TbepError { code: error_code as i32, detail: detail.clone() };
+    let mut value = Vec::new();
+    tbep_error.encode(&mut value).expect("the error detail encodes");
+    let any = pb::Any {
+        type_url: "type.googleapis.com/terrabase.v1.TbepError".into(),
+        value,
+    };
+    let rpc_status = pb::RpcStatus { code: code as i32, message: detail.clone(), details: vec![any] };
+    let mut details = Vec::new();
+    rpc_status.encode(&mut details).expect("the status envelope encodes");
+    Status::with_details(code, detail, details.into())
+}
+
+#[allow(clippy::needless_pass_by_value)] // map_err hands over ownership
+fn host_error(error: HostingError) -> Status {
+    let code = match error {
+        HostingError::Invalid(_) => Code::InvalidArgument,
+        HostingError::EngineFailure(_) => Code::Internal,
+        HostingError::Refused(_)
+        | HostingError::SessionRefused(_)
+        | HostingError::SubscriptionRefused(_)
+        | HostingError::CheckpointRefused(_)
+        | HostingError::ClusterReadOnly(_)
+        | HostingError::ClusterImmutable(_) => Code::FailedPrecondition,
+    };
+    let error_code = match error.error_code() {
+        registry::ErrorCode::UnsupportedVersion => pb::ErrorCode::UnsupportedVersion,
+        registry::ErrorCode::MalformedFrame => pb::ErrorCode::MalformedRequest,
+        registry::ErrorCode::UnknownFrameKind | registry::ErrorCode::UnknownOperation => {
+            pb::ErrorCode::UnknownOperation
+        }
+        registry::ErrorCode::DigestMismatch => pb::ErrorCode::DigestMismatch,
+        registry::ErrorCode::IdempotencyPairing => pb::ErrorCode::IdempotencyPairing,
+        registry::ErrorCode::UnboundChannel => pb::ErrorCode::UnboundChannel,
+        registry::ErrorCode::AlreadyBound => pb::ErrorCode::AlreadyBound,
+        registry::ErrorCode::InvalidRequest => pb::ErrorCode::InvalidRequest,
+        registry::ErrorCode::OperationRefused => pb::ErrorCode::OperationRefused,
+        registry::ErrorCode::EngineFailure => pb::ErrorCode::EngineFailure,
+        registry::ErrorCode::SessionRefused => pb::ErrorCode::SessionRefused,
+        registry::ErrorCode::SubscriptionRefused => pb::ErrorCode::SubscriptionRefused,
+        registry::ErrorCode::CheckpointRefused => pb::ErrorCode::CheckpointRefused,
+        registry::ErrorCode::ShuttingDown => pb::ErrorCode::ShuttingDown,
+        registry::ErrorCode::FrameTooLarge => pb::ErrorCode::RequestTooLarge,
+        registry::ErrorCode::Overloaded => pb::ErrorCode::Overloaded,
+        registry::ErrorCode::ProtocolVersionMismatch => pb::ErrorCode::ProtocolVersionMismatch,
+        registry::ErrorCode::BackupClusterReadOnly => pb::ErrorCode::BackupClusterReadOnly,
+        registry::ErrorCode::BackupClusterImmutable => pb::ErrorCode::BackupClusterImmutable,
+        registry::ErrorCode::ColdTierUnavailable => pb::ErrorCode::ColdTierUnavailable,
+        registry::ErrorCode::FrontierUnreachable => pb::ErrorCode::FrontierUnreachable,
+    };
+    tbep_status(code, error_code, &error.detail())
+}
+
+fn conversion_error(detail: &str) -> Status {
+    tbep_status(Code::InvalidArgument, pb::ErrorCode::InvalidRequest, detail)
+}
+
+/// Runs one host call behind the overload gate on the blocking pool.
+async fn run_host<T, F>(self_ref: &TbepGrpcServer, work: F) -> Result<T, Status>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, HostingError> + Send + 'static,
+{
+    if self_ref.inflight.fetch_add(1, Ordering::AcqRel) >= MAX_INFLIGHT_OPERATIONS {
+        self_ref.inflight.fetch_sub(1, Ordering::AcqRel);
+        return Err(tbep_status(
+            Code::ResourceExhausted,
+            pb::ErrorCode::Overloaded,
+            "the engine is serving its in-flight bound; retry",
+        ));
+    }
+    let _permit = Permit(&self_ref.inflight);
+    match tokio::task::spawn_blocking(work).await {
+        Ok(result) => result.map_err(host_error),
+        Err(_) => Err(tbep_status(
+            Code::Internal,
+            pb::ErrorCode::EngineFailure,
+            "the serving task panicked",
+        )),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Prost ⇄ domain conversion
+// ---------------------------------------------------------------------------
+
+fn invalid(detail: &str) -> HostingError {
+    HostingError::Invalid(detail.to_string())
+}
+
+fn value_from_pb(value: &pb::Value) -> Result<TbepValue, HostingError> {
+    let kind = value.kind.as_ref().ok_or_else(|| invalid("a value carries no kind"))?;
+    Ok(match kind {
+        pb::value::Kind::Null(_) => TbepValue::Null,
+        pb::value::Kind::Boolean(flag) => TbepValue::Boolean(*flag),
+        pb::value::Kind::Integer(number) => TbepValue::Integer(*number),
+        pb::value::Kind::Number(number) => TbepValue::Number(*number),
+        pb::value::Kind::Text(text) => TbepValue::String(text.clone()),
+        pb::value::Kind::List(list) => TbepValue::Array(
+            list.items.iter().map(value_from_pb).collect::<Result<Vec<_>, _>>()?,
+        ),
+        pb::value::Kind::Map(map) => {
+            let mut fields = Vec::with_capacity(map.entries.len());
+            for entry in &map.entries {
+                fields.push((
+                    entry.name.clone(),
+                    value_from_pb(
+                        entry.value.as_ref().ok_or_else(|| invalid("a value entry carries no value"))?,
+                    )?,
+                ));
+            }
+            fields.sort_by(|a, b| a.0.cmp(&b.0));
+            TbepValue::Object(fields).canonical()
+        }
+    })
+}
+
+fn value_to_pb(value: &TbepValue) -> pb::Value {
+    pb::Value {
+        kind: Some(match value {
+            TbepValue::Null => pb::value::Kind::Null(pb::NullValue::Null as i32),
+            TbepValue::Boolean(flag) => pb::value::Kind::Boolean(*flag),
+            TbepValue::Integer(number) => pb::value::Kind::Integer(*number),
+            TbepValue::Number(number) => pb::value::Kind::Number(*number),
+            TbepValue::String(text) => pb::value::Kind::Text(text.clone()),
+            TbepValue::Array(items) => pb::value::Kind::List(pb::ValueList {
+                items: items.iter().map(value_to_pb).collect(),
+            }),
+            TbepValue::Object(fields) => pb::value::Kind::Map(pb::ValueMap {
+                entries: fields
+                    .iter()
+                    .map(|(name, item)| pb::ValueEntry {
+                        name: name.clone(),
+                        value: Some(value_to_pb(item)),
+                    })
+                    .collect(),
+            }),
+        }),
+    }
+}
+
+// --- shared closed vocabularies ---
+
+fn acknowledgement(v: i32) -> Option<registry::Acknowledgement> {
+    match pb::Acknowledgement::try_from(v).ok()? {
+        pb::Acknowledgement::AckUnspecified => None,
+        pb::Acknowledgement::AckRegionalQuorum => Some(registry::Acknowledgement::RegionalQuorum),
+        pb::Acknowledgement::AckGlobalQuorum => Some(registry::Acknowledgement::GlobalQuorum),
+        pb::Acknowledgement::AckBackup => Some(registry::Acknowledgement::BackupAck),
+    }
+}
+
+fn acknowledgement_pb(value: Option<registry::Acknowledgement>) -> i32 {
+    match value {
+        None | Some(registry::Acknowledgement::RegionalQuorum) => {
+            pb::Acknowledgement::AckRegionalQuorum as i32
+        }
+        Some(registry::Acknowledgement::GlobalQuorum) => pb::Acknowledgement::AckGlobalQuorum as i32,
+        Some(registry::Acknowledgement::BackupAck) => pb::Acknowledgement::AckBackup as i32,
+    }
+}
+
+
+fn backup_outcome_pb(value: Option<registry::BackupOutcome>) -> i32 {
+    match value {
+        None | Some(registry::BackupOutcome::None) => pb::BackupOutcome::BackupNone as i32,
+        Some(registry::BackupOutcome::Full) => pb::BackupOutcome::BackupFull as i32,
+        Some(registry::BackupOutcome::Partial) => pb::BackupOutcome::BackupPartial as i32,
+    }
+}
+
+fn read_level(v: i32) -> Option<registry::ReadLevel> {
+    match pb::ReadLevel::try_from(v).ok()? {
+        pb::ReadLevel::Unspecified => None,
+        pb::ReadLevel::Local => Some(registry::ReadLevel::Local),
+        pb::ReadLevel::RegionalQuorum => Some(registry::ReadLevel::RegionalQuorumRead),
+        pb::ReadLevel::GlobalQuorum => Some(registry::ReadLevel::GlobalQuorumRead),
+    }
+}
+
+
+
+fn cluster_mode_pb(value: Option<registry::ClusterMode>) -> i32 {
+    match value {
+        None | Some(registry::ClusterMode::Standalone) => pb::ClusterMode::Standalone as i32,
+        Some(registry::ClusterMode::Active) => pb::ClusterMode::Active as i32,
+        Some(registry::ClusterMode::Backup) => pb::ClusterMode::Backup as i32,
+    }
+}
+
+fn expected_version(value: &pb::ExpectedVersion) -> Result<registry::ExpectedVersion, HostingError> {
+    let discipline = value
+        .discipline
+        .as_ref()
+        .ok_or_else(|| invalid("an expected version carries no discipline"))?;
+    Ok(match discipline {
+        pb::expected_version::Discipline::Absent(_) => registry::ExpectedVersion::Absent,
+        pb::expected_version::Discipline::Any(_) => registry::ExpectedVersion::Any,
+        pb::expected_version::Discipline::Exact(version) => {
+            registry::ExpectedVersion::Exact(*version)
+        }
+    })
+}
+
+
+fn commit_receipt(value: &registry::CommitReceipt) -> pb::CommitReceipt {
+    pb::CommitReceipt {
+        sequence: value.sequence,
+        version: value.version,
+        operation_id: value.operation_id.clone(),
+        acknowledgement: acknowledgement_pb(value.acknowledgement),
+        backup: backup_outcome_pb(value.backup),
+    }
+}
+
+fn write_outcome_pb(value: &registry::WriteOutcome) -> pb::WriteOutcome {
+    pb::WriteOutcome {
+        outcome: Some(match value {
+            registry::WriteOutcome::Committed(receipt) => {
+                pb::write_outcome::Outcome::Committed(commit_receipt(receipt))
+            }
+            registry::WriteOutcome::Conflict => {
+                pb::write_outcome::Outcome::Conflict(pb::WriteConflict {})
+            }
+            registry::WriteOutcome::Rejected(reason) => {
+                let pb_reason = match reason {
+                    registry::WriteReason::InvalidDocument => pb::WriteReason::InvalidDocument,
+                    registry::WriteReason::SchemaRefused => pb::WriteReason::SchemaRefused,
+                    registry::WriteReason::NotFound => pb::WriteReason::NotFound,
+                };
+                pb::write_outcome::Outcome::Rejected(pb::WriteRejected {
+                    reason: pb_reason as i32,
+                })
+            }
+        }),
+    }
+}
+
+fn document_put(value: &pb::DocumentPut) -> Result<registry::DocumentPut, HostingError> {
+    Ok(registry::DocumentPut {
+        id: value.id.clone(),
+        collection: value.collection.clone(),
+        body: value
+            .body
+            .as_ref()
+            .map(value_from_pb)
+            .transpose()?
+            .ok_or_else(|| invalid("a document put carries no body"))?,
+    })
+}
+
+fn document_body(value: &registry::DocumentBody) -> pb::DocumentBody {
+    pb::DocumentBody {
+        id: value.id.clone(),
+        collection: value.collection.clone(),
+        version: value.version,
+        body: Some(value_to_pb(&value.body)),
+    }
+}
+
+fn subscription_start(value: &pb::SubscriptionStart) -> Result<registry::SubscriptionStart, HostingError> {
+    let start = value
+        .start
+        .as_ref()
+        .ok_or_else(|| invalid("a subscription start carries no discipline"))?;
+    Ok(match start {
+        pb::subscription_start::Start::Live(_) => registry::SubscriptionStart::Live,
+        pb::subscription_start::Start::Sequence(sequence) => {
+            registry::SubscriptionStart::Sequence(*sequence)
+        }
+    })
+}
+
+fn mutation_outcome_pb(value: &registry::MutationOutcome) -> pb::MutationOutcome {
+    pb::MutationOutcome {
+        outcome: Some(match value {
+            registry::MutationOutcome::Applied(receipt) => {
+                pb::mutation_outcome::Outcome::Applied(commit_receipt(receipt))
+            }
+            registry::MutationOutcome::Rejected(reason) => {
+                let pb_reason = match reason {
+                    registry::MutationReason::ScopeRefused => pb::MutationReason::ScopeRefused,
+                    registry::MutationReason::InvalidBody => pb::MutationReason::InvalidBody,
+                    registry::MutationReason::SequenceOutOfOrder => {
+                        pb::MutationReason::SequenceOutOfOrder
+                    }
+                };
+                pb::mutation_outcome::Outcome::Rejected(pb::MutationRejected {
+                    reason: pb_reason as i32,
+                })
+            }
+        }),
+    }
+}
+
+fn sync_field(value: &pb::SyncField) -> Result<registry::SyncField, HostingError> {
+    Ok(registry::SyncField {
+        name: value.name.clone(),
+        value: value
+            .value
+            .as_ref()
+            .map(value_from_pb)
+            .transpose()?
+            .ok_or_else(|| invalid("a sync field carries no value"))?,
+    })
+}
+
+fn sync_change(value: &pb::SyncChange) -> Result<registry::SyncChange, HostingError> {
+    let change = value
+        .change
+        .as_ref()
+        .ok_or_else(|| invalid("a sync mutation carries no change"))?;
+    Ok(match change {
+        pb::sync_change::Change::Put(put) => registry::SyncChange::Put(
+            put.fields.iter().map(sync_field).collect::<Result<Vec<_>, _>>()?,
+        ),
+        pb::sync_change::Change::Delete(_) => registry::SyncChange::Delete,
+    })
+}
+
+// --- schema and migration conversion ---
+
+
+fn violation_kind_pb(value: registry::ViolationKind) -> i32 {
+    match value {
+        registry::ViolationKind::DocumentNotObject => pb::ViolationKind::DocumentNotObject as i32,
+        registry::ViolationKind::MissingRequiredField => {
+            pb::ViolationKind::MissingRequiredField as i32
+        }
+        registry::ViolationKind::TypeMismatch => pb::ViolationKind::TypeMismatch as i32,
+        registry::ViolationKind::ValueNotAllowed => pb::ViolationKind::ValueNotAllowed as i32,
+        registry::ViolationKind::NumberOutOfRange => pb::ViolationKind::NumberOutOfRange as i32,
+        registry::ViolationKind::LengthOutOfRange => pb::ViolationKind::LengthOutOfRange as i32,
+    }
+}
+
+
+fn schema_violation_pb(value: &registry::SchemaViolation) -> pb::SchemaViolation {
+    pb::SchemaViolation { field: value.field.clone(), kind: violation_kind_pb(value.kind) }
+}
+
+
+fn transform_rejection_pb(value: registry::TransformRejection) -> i32 {
+    match value {
+        registry::TransformRejection::ValueNotCoercible => {
+            pb::TransformRejection::ValueNotCoercible as i32
+        }
+        registry::TransformRejection::TargetFieldOccupied => {
+            pb::TransformRejection::TargetFieldOccupied as i32
+        }
+    }
+}
+
+fn transform_literal(value: &pb::TransformLiteral) -> Result<registry::TransformLiteral, HostingError> {
+    let literal = value
+        .literal
+        .as_ref()
+        .ok_or_else(|| invalid("a transform literal carries no value"))?;
+    Ok(match literal {
+        pb::transform_literal::Literal::Boolean(flag) => {
+            registry::TransformLiteral::Boolean(*flag)
+        }
+        pb::transform_literal::Literal::Integer(number) => {
+            registry::TransformLiteral::Integer(*number)
+        }
+        pb::transform_literal::Literal::Text(text) => registry::TransformLiteral::Text(text.clone()),
+    })
+}
+
+
+fn coercion(v: i32) -> Option<registry::Coercion> {
+    match pb::Coercion::try_from(v).ok()? {
+        pb::Coercion::Unspecified => None,
+        pb::Coercion::IntegerToText => Some(registry::Coercion::IntegerToText),
+        pb::Coercion::TextToInteger => Some(registry::Coercion::TextToInteger),
+        pb::Coercion::IntegerToNumber => Some(registry::Coercion::IntegerToNumber),
+        pb::Coercion::NumberToInteger => Some(registry::Coercion::NumberToInteger),
+    }
+}
+
+
+fn field_transform(v: i32) -> Result<registry::FieldTransform, HostingError> {
+    match pb::FieldTransform::try_from(v).map_err(|_| invalid("an unknown field transform"))? {
+        pb::FieldTransform::Unspecified => Err(invalid("a transform step carries no kind")),
+        pb::FieldTransform::AddField => Ok(registry::FieldTransform::AddField),
+        pb::FieldTransform::RemoveField => Ok(registry::FieldTransform::RemoveField),
+        pb::FieldTransform::RenameField => Ok(registry::FieldTransform::RenameField),
+        pb::FieldTransform::RetypeField => Ok(registry::FieldTransform::RetypeField),
+    }
+}
+
+
+fn field_transform_step(
+    value: &pb::FieldTransformStep,
+) -> Result<registry::FieldTransformStep, HostingError> {
+    Ok(registry::FieldTransformStep {
+        kind: field_transform(value.kind)?,
+        field: value.field.clone(),
+        to: (!value.to.is_empty()).then(|| value.to.clone()),
+        default: value.default.as_ref().map(transform_literal).transpose()?,
+        coercion: coercion(value.coercion),
+    })
+}
+
+
+fn migration_contract(
+    value: &pb::SchemaMigrationContract,
+) -> Result<registry::SchemaMigrationContract, HostingError> {
+    Ok(registry::SchemaMigrationContract {
+        collection: value.collection.clone(),
+        from_version: value.from_version,
+        to_version: value.to_version,
+        target: value
+            .target
+            .as_ref()
+            .map(value_from_pb)
+            .transpose()?
+            .ok_or_else(|| invalid("a migration contract carries no target"))?,
+        transforms: value
+            .transforms
+            .iter()
+            .map(field_transform_step)
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+fn plan_problem(value: &registry::PlanProblem) -> pb::PlanProblem {
+    pb::PlanProblem {
+        document: value.document.clone(),
+        field: value.field.clone(),
+        kind: match value.kind {
+            registry::PlanProblemKind::TransformRejected => {
+                pb::PlanProblemKind::TransformRejected as i32
+            }
+            registry::PlanProblemKind::TargetViolations => {
+                pb::PlanProblemKind::TargetViolations as i32
+            }
+        },
+        rejection: value.rejection.map(transform_rejection_pb).unwrap_or_default(),
+        violations: value.violations.iter().map(schema_violation_pb).collect(),
+    }
+}
+
+fn transform_counts(value: &registry::TransformCounts) -> pb::TransformCounts {
+    pb::TransformCounts {
+        added: value.added,
+        removed: value.removed,
+        renamed: value.renamed,
+        retyped: value.retyped,
+    }
+}
+
+fn migration_plan(value: &registry::MigrationPlan) -> pb::MigrationPlan {
+    pb::MigrationPlan {
+        manifest: value.manifest.clone(),
+        collection: value.collection.clone(),
+        from_version: value.from_version,
+        to_version: value.to_version,
+        ready: value.ready,
+        documents: value.documents,
+        source_digest: value.source_digest.clone(),
+        result_digest: value.result_digest.clone(),
+        transform_counts: Some(transform_counts(&value.transform_counts)),
+        problems: value.problems.iter().map(plan_problem).collect(),
+        problems_truncated: value.problems_truncated,
+    }
+}
+
+fn migration_receipt(value: &registry::MigrationReceipt) -> pb::MigrationReceipt {
+    pb::MigrationReceipt {
+        collection: value.collection.clone(),
+        manifest: value.manifest.clone(),
+        from_version: value.from_version,
+        to_version: value.to_version,
+        source_digest: value.source_digest.clone(),
+        result_digest: value.result_digest.clone(),
+        documents: value.documents,
+        transformed: value.transformed,
+        transform_counts: Some(transform_counts(&value.transform_counts)),
+        pages: value.pages,
+        rollback_limit: match value.rollback_limit {
+            registry::RollbackLimitKind::Reversible => pb::RollbackLimitKind::Reversible as i32,
+            registry::RollbackLimitKind::NotReversible => {
+                pb::RollbackLimitKind::NotReversible as i32
+            }
+        },
+        acknowledged_not_rollbackable: value.acknowledged_not_rollbackable,
+        already_applied: value.already_applied,
+    }
+}
+
+fn migration_state(value: &registry::MigrationState) -> pb::MigrationState {
+    pb::MigrationState {
+        kind: match value.kind {
+            registry::MigrationStateKind::None => pb::MigrationStateKind::None as i32,
+            registry::MigrationStateKind::InProgress => pb::MigrationStateKind::InProgress as i32,
+            registry::MigrationStateKind::RollingBack => {
+                pb::MigrationStateKind::RollingBack as i32
+            }
+            registry::MigrationStateKind::Complete => pb::MigrationStateKind::Complete as i32,
+        },
+        manifest: value.manifest.clone(),
+        from_version: value.from_version,
+        to_version: value.to_version,
+        documents: value.documents,
+        transformed: value.transformed,
+        pages: value.pages,
+    }
+}
+
+// --- replication observation conversion ---
+
+fn conflict_record(value: &registry::ConflictRecord) -> pb::ConflictRecord {
+    pb::ConflictRecord {
+        tenant: value.tenant.clone(),
+        operations: value.operations.clone(),
+        members: value.members.clone(),
+        clocks: value
+            .clocks
+            .iter()
+            .map(|clock| pb::ClockStamp { ticks: clock.ticks, counter: clock.counter })
+            .collect(),
+        outcome: Some(pb::ConflictOutcome {
+            kind: match value.outcome.kind {
+                registry::ConflictOutcomeKind::Winner => pb::ConflictOutcomeKind::Winner as i32,
+                registry::ConflictOutcomeKind::DeposedOwnerRetained => {
+                    pb::ConflictOutcomeKind::DeposedOwnerRetained as i32
+                }
+                registry::ConflictOutcomeKind::UntrustedClock => {
+                    pb::ConflictOutcomeKind::UntrustedClock as i32
+                }
+            },
+            member: value.outcome.member.clone(),
+        }),
+    }
+}
+
+fn fenced_record(value: &registry::FencedRecord) -> pb::FencedRecord {
+    pb::FencedRecord {
+        range: value.range.clone(),
+        batch_epoch: value.batch_epoch,
+        highest_epoch: value.highest_epoch,
+        source: value.source.clone(),
+    }
+}
+
+fn deposition_record(value: &registry::DepositionRecord) -> pb::DepositionRecord {
+    pb::DepositionRecord {
+        range: value.range.clone(),
+        held_epoch: value.held_epoch,
+        owner_epoch: value.owner_epoch,
+        new_owner: value.new_owner.clone(),
+    }
+}
+
+fn denial_record(value: &registry::DenialRecord) -> pb::DenialRecord {
+    pb::DenialRecord {
+        seam: match value.seam {
+            registry::DenialSeam::ServeRequest => pb::DenialSeam::ServeRequest as i32,
+            registry::DenialSeam::ApplyDelivery => pb::DenialSeam::ApplyDelivery as i32,
+        },
+        scope_tenant: value.scope_tenant.clone(),
+        attempted_tenant: value.attempted_tenant.clone(),
+        counterparty: value.counterparty.clone(),
+    }
+}
+
+fn replication_status_pb(value: registry::ReplicationStatus) -> i32 {
+    match value {
+        registry::ReplicationStatus::Assigned => pb::ReplicationStatus::Assigned as i32,
+        registry::ReplicationStatus::Active => pb::ReplicationStatus::Active as i32,
+        registry::ReplicationStatus::Responsive => pb::ReplicationStatus::Responsive as i32,
+        registry::ReplicationStatus::Stale => pb::ReplicationStatus::Stale as i32,
+        registry::ReplicationStatus::Unavailable => pb::ReplicationStatus::Unavailable as i32,
+        registry::ReplicationStatus::Degraded => pb::ReplicationStatus::Degraded as i32,
+        registry::ReplicationStatus::Unknown => pb::ReplicationStatus::Unknown as i32,
+    }
+}
+
+// --- tier conversion ---
+
+fn tier_move_receipt(value: &registry::TierMoveReceipt) -> pb::TierMoveReceipt {
+    pb::TierMoveReceipt {
+        policy_id: value.policy_id.clone(),
+        policy_version: value.policy_version,
+        decision: match value.decision {
+            registry::TierDecision::Promote => pb::TierDecision::Promote as i32,
+            registry::TierDecision::Demote => pb::TierDecision::Demote as i32,
+            registry::TierDecision::Split => pb::TierDecision::Split as i32,
+            registry::TierDecision::None => pb::TierDecision::None as i32,
+            registry::TierDecision::Refused => pb::TierDecision::Refused as i32,
+        },
+        reasons: value
+            .reasons
+            .iter()
+            .map(|reason| pb::TierMoveReason {
+                fact: reason.fact.clone(),
+                observed: reason.observed.clone(),
+            })
+            .collect(),
+        segment_id: value.segment_id,
+        bytes: value.bytes,
+        manifest_before: value.manifest_before,
+        manifest_after: value.manifest_after,
+        dry_run: value.dry_run,
+        manifest_accepted: value.manifest_accepted,
+    }
+}
+
+// --- notification conversion ---
+
+fn change_event(value: &registry::ChangeEvent) -> pb::ChangeEvent {
+    pb::ChangeEvent {
+        sequence: value.sequence,
+        operation_id: value.operation_id.clone(),
+        kind: match value.kind {
+            registry::ChangeKind::Put => pb::ChangeKind::Put as i32,
+            registry::ChangeKind::Delete => pb::ChangeKind::Delete as i32,
+        },
+        collection: value.collection.clone(),
+        document: value.document.clone(),
+    }
+}
+
+fn notification_event(notification: TbepNotification) -> pb::BackboneStreamEvent {
+    let event = match notification {
+        TbepNotification::Batch(batch) => pb::backbone_stream_event::Event::Batch(pb::SubscriptionBatch {
+            subscription_id: batch.subscription_id,
+            from_sequence: batch.from_sequence,
+            events: batch.events.iter().map(change_event).collect(),
+            next_sequence: batch.next_sequence,
+        }),
+        TbepNotification::Trigger(trigger) => {
+            pb::backbone_stream_event::Event::Trigger(pb::TriggerNotification {
+                subscription_id: trigger.subscription_id,
+                collection: trigger.collection.clone(),
+                sequence: trigger.sequence,
+                operation_id: trigger.operation_id.clone(),
+            })
+        }
+        TbepNotification::Closed(closed) => {
+            pb::backbone_stream_event::Event::Closed(pb::SubscriptionClosed {
+                subscription_id: closed.subscription_id,
+                reason: match closed.reason {
+                    registry::SubscriptionCloseReason::Replaced => {
+                        pb::SubscriptionCloseReason::Replaced as i32
+                    }
+                    registry::SubscriptionCloseReason::ShuttingDown => {
+                        pb::SubscriptionCloseReason::ShuttingDown as i32
+                    }
+                },
+            })
+        }
+    };
+    pb::BackboneStreamEvent { event: Some(event) }
+}
+
+fn is_closed(event: &pb::BackboneStreamEvent) -> bool {
+    matches!(event.event, Some(pb::backbone_stream_event::Event::Closed(_)))
+}
+
+// ---------------------------------------------------------------------------
+// Service implementations
+// ---------------------------------------------------------------------------
+
+#[tonic::async_trait]
+impl Channel for Arc<TbepGrpcServer> {
+    async fn bind(
+        &self,
+        request: Request<pb::ChannelBindRequest>,
+    ) -> Result<Response<pb::ChannelBindResponse>, Status> {
+        self.counted();
+        let message = request.into_inner();
+        if message.principal.is_empty() || message.tenant.is_empty() {
+            return Err(conversion_error("a bind carries no application identity"));
+        }
+        let domain = registry::ChannelBindRequest {
+            principal: message.principal,
+            tenant: message.tenant,
+        };
+        let host = Arc::clone(&self.host);
+        let response = run_host(self.as_ref(), move || host.bind_channel(&domain)).await?;
+        Ok(Response::new(pb::ChannelBindResponse {
+            tenant: response.tenant,
+            serving_instance: response.serving_instance,
+        }))
+    }
+}
+
+#[tonic::async_trait]
+impl Engine for Arc<TbepGrpcServer> {
+    async fn document_read(
+        &self,
+        request: Request<pb::DocumentReadRequest>,
+    ) -> Result<Response<pb::DocumentReadResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::DocumentReadRequest {
+            collection: message.collection,
+            document: message.document,
+            level: read_level(message.level),
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.document_read(&tenant, &domain)).await?;
+        Ok(Response::new(pb::DocumentReadResponse {
+            found: response.found,
+            document: response.document.as_ref().map(document_body),
+            position: response.position.unwrap_or_default(),
+        }))
+    }
+
+    async fn document_write(
+        &self,
+        request: Request<pb::DocumentWriteRequest>,
+    ) -> Result<Response<pb::DocumentWriteResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let key = idempotency_key(&request)?;
+        let message = request.into_inner();
+        let document = message
+            .document
+            .as_ref()
+            .map(document_put)
+            .transpose()
+            .map_err(host_error)?;
+        let domain = registry::DocumentWriteRequest {
+            document: document.ok_or_else(|| conversion_error("a write carries no document"))?,
+            expected: message
+                .expected
+                .as_ref()
+                .map(expected_version)
+                .transpose()
+                .map_err(host_error)?
+                .ok_or_else(|| conversion_error("a write carries no expected version"))?,
+            operation_id: message.operation_id,
+            ack: acknowledgement(message.ack),
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || {
+            host.document_write(&tenant, &domain, &key)
+        })
+        .await?;
+        Ok(Response::new(pb::DocumentWriteResponse {
+            outcome: Some(write_outcome_pb(&response.outcome)),
+        }))
+    }
+
+    async fn document_delete(
+        &self,
+        request: Request<pb::DocumentDeleteRequest>,
+    ) -> Result<Response<pb::DocumentDeleteResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let key = idempotency_key(&request)?;
+        let message = request.into_inner();
+        let domain = registry::DocumentDeleteRequest {
+            collection: message.collection,
+            document: message.document,
+            expected: message
+                .expected
+                .as_ref()
+                .map(expected_version)
+                .transpose()
+                .map_err(host_error)?
+                .ok_or_else(|| conversion_error("a delete carries no expected version"))?,
+            operation_id: message.operation_id,
+            ack: acknowledgement(message.ack),
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || {
+            host.document_delete(&tenant, &domain, &key)
+        })
+        .await?;
+        Ok(Response::new(pb::DocumentDeleteResponse {
+            outcome: Some(write_outcome_pb(&response.outcome)),
+        }))
+    }
+
+    async fn document_batch(
+        &self,
+        request: Request<pb::DocumentBatchRequest>,
+    ) -> Result<Response<pb::DocumentBatchResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let key = idempotency_key(&request)?;
+        let message = request.into_inner();
+        let mut items = Vec::with_capacity(message.items.len());
+        for item in &message.items {
+            let document = item
+                .document
+                .as_ref()
+                .map(document_put)
+                .transpose()
+                .map_err(host_error)?
+                .ok_or_else(|| conversion_error("a batch item carries no document"))?;
+            items.push(registry::BatchWrite {
+                document,
+                expected: item
+                    .expected
+                    .as_ref()
+                    .map(expected_version)
+                    .transpose()
+                    .map_err(host_error)?
+                    .ok_or_else(|| conversion_error("a batch item carries no expected version"))?,
+                operation_id: item.operation_id.clone(),
+            });
+        }
+        let domain = registry::DocumentBatchRequest { items, ack: acknowledgement(message.ack) };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response =
+            run_host(self.as_ref(), move || host.document_batch(&tenant, &domain, &key)).await?;
+        Ok(Response::new(pb::DocumentBatchResponse {
+            outcome: Some(write_outcome_pb(&response.outcome)),
+        }))
+    }
+
+    async fn query_execute(
+        &self,
+        request: Request<pb::QueryExecuteRequest>,
+    ) -> Result<Response<pb::QueryExecuteResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::QueryExecuteRequest {
+            query_id: message.query_id,
+            text: message.text,
+            max_items: message.max_items,
+            level: read_level(message.level),
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.query_execute(&tenant, &domain)).await?;
+        Ok(Response::new(pb::QueryExecuteResponse {
+            documents: response.documents.iter().map(document_body).collect(),
+            count: response.count,
+            terminal: match response.terminal {
+                registry::QueryTerminal::Complete => pb::QueryTerminal::Complete as i32,
+                registry::QueryTerminal::Truncated => pb::QueryTerminal::Truncated as i32,
+            },
+            position: response.position.unwrap_or_default(),
+        }))
+    }
+
+    async fn query_cancel(
+        &self,
+        request: Request<pb::QueryCancelRequest>,
+    ) -> Result<Response<pb::QueryCancelResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::QueryCancelRequest { query_id: message.query_id };
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.query_cancel(&tenant, &domain)).await?;
+        Ok(Response::new(pb::QueryCancelResponse {
+            outcome: match response.outcome {
+                registry::CancelOutcome::Cancelled => pb::CancelOutcome::Cancelled as i32,
+                registry::CancelOutcome::AlreadyComplete => {
+                    pb::CancelOutcome::AlreadyComplete as i32
+                }
+                registry::CancelOutcome::UnknownQuery => pb::CancelOutcome::UnknownQuery as i32,
+            },
+        }))
+    }
+
+    async fn family_read(
+        &self,
+        request: Request<pb::FamilyReadRequest>,
+    ) -> Result<Response<pb::FamilyReadResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::FamilyReadRequest {
+            family: message.family,
+            name: message.name,
+            request_codec: message.request_codec,
+            request: message.request,
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.family_read(&tenant, &domain)).await?;
+        Ok(Response::new(pb::FamilyReadResponse {
+            response_codec: response.response_codec,
+            response: response.response,
+        }))
+    }
+
+    async fn family_write(
+        &self,
+        request: Request<pb::FamilyWriteRequest>,
+    ) -> Result<Response<pb::FamilyWriteResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let key = idempotency_key(&request)?;
+        let message = request.into_inner();
+        let domain = registry::FamilyWriteRequest {
+            family: message.family,
+            name: message.name,
+            request_codec: message.request_codec,
+            request: message.request,
+            operation_id: message.operation_id,
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response =
+            run_host(self.as_ref(), move || host.family_write(&tenant, &domain, &key)).await?;
+        Ok(Response::new(pb::FamilyWriteResponse {
+            response_codec: response.response_codec,
+            response: response.response,
+        }))
+    }
+}
+
+#[tonic::async_trait]
+impl Backbone for Arc<TbepGrpcServer> {
+    type SubscribeStream = ReceiverStream<Result<pb::BackboneStreamEvent, Status>>;
+
+    async fn subscribe(
+        &self,
+        request: Request<pb::BackboneSubscribeRequest>,
+    ) -> Result<Response<Self::SubscribeStream>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::BackboneSubscribeRequest {
+            subscription_id: message.subscription_id,
+            collections: (!message.collections.is_empty()).then_some(message.collections),
+            from: message
+                .from
+                .as_ref()
+                .map(subscription_start)
+                .transpose()
+                .map_err(host_error)?
+                .ok_or_else(|| conversion_error("a subscription carries no start"))?,
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let (response, feed) =
+            run_host(self.as_ref(), move || host.backbone_subscribe(&tenant, &domain)).await?;
+        let (sender, receiver) = mpsc::channel(OUTBOUND_DEPTH);
+        let subscribed = pb::BackboneStreamEvent {
+            event: Some(pb::backbone_stream_event::Event::Subscribed(
+                pb::BackboneSubscribeResponse {
+                    subscription_id: response.subscription_id,
+                    start_sequence: response.start_sequence,
+                },
+            )),
+        };
+        sender
+            .send(Ok(subscribed))
+            .await
+            .map_err(|_| Status::internal("the subscription stream could not start"))?;
+        // The host feed is a synchronous channel: one dedicated thread
+        // bridges it into the async response stream. A closed sender (the
+        // client disconnected) ends the pump, which drops the feed and so
+        // unsubscribes on the host side.
+        std::thread::Builder::new()
+            .name("tbep-subscription".into())
+            .spawn(move || {
+                while let Ok(notification) = feed.recv() {
+                    let event = notification_event(notification);
+                    let closed = is_closed(&event);
+                    if sender.blocking_send(Ok(event)).is_err() {
+                        break;
+                    }
+                    if closed {
+                        break;
+                    }
+                }
+            })
+            .map_err(|_| Status::internal("the subscription pump could not start"))?;
+        Ok(Response::new(ReceiverStream::new(receiver)))
+    }
+
+    async fn acknowledge(
+        &self,
+        request: Request<pb::BackboneAcknowledgeRequest>,
+    ) -> Result<Response<pb::BackboneAcknowledgeResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::BackboneAcknowledgeRequest {
+            subscription_id: message.subscription_id,
+            through_sequence: message.through_sequence,
+        };
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.backbone_acknowledge(&tenant, &domain)).await?;
+        Ok(Response::new(pb::BackboneAcknowledgeResponse {
+            subscription_id: response.subscription_id,
+            acknowledged_through: response.acknowledged_through,
+        }))
+    }
+
+    async fn unsubscribe(
+        &self,
+        request: Request<pb::BackboneUnsubscribeRequest>,
+    ) -> Result<Response<pb::BackboneUnsubscribeResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain =
+            registry::BackboneUnsubscribeRequest { subscription_id: message.subscription_id };
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.backbone_unsubscribe(&tenant, &domain)).await?;
+        Ok(Response::new(pb::BackboneUnsubscribeResponse {
+            subscription_id: response.subscription_id,
+        }))
+    }
+}
+
+#[tonic::async_trait]
+impl Sync for Arc<TbepGrpcServer> {
+    async fn session_setup(
+        &self,
+        request: Request<pb::SyncSessionSetupRequest>,
+    ) -> Result<Response<pb::SyncSessionSetupResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::SyncSessionSetupRequest {
+            collection: message.collection,
+            resume: (!message.resume.is_empty()).then_some(message.resume),
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.sync_session_setup(&tenant, &domain)).await?;
+        Ok(Response::new(pb::SyncSessionSetupResponse {
+            session_id: response.session_id,
+            checkpoint: response.checkpoint,
+            retained_floor: response.retained_floor,
+        }))
+    }
+
+    async fn delta_pull(
+        &self,
+        request: Request<pb::SyncDeltaPullRequest>,
+    ) -> Result<Response<pb::SyncDeltaPullResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain =
+            registry::SyncDeltaPullRequest { session_id: message.session_id, from: message.from };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.sync_delta_pull(&tenant, &domain)).await?;
+        Ok(Response::new(pb::SyncDeltaPullResponse {
+            session_id: response.session_id,
+            payload_codec: response.payload_codec,
+            payload: response.payload,
+            next: response.next,
+            commits: response.commits,
+            single_commit_oversize: response.single_commit_oversize,
+        }))
+    }
+
+    async fn snapshot_pull(
+        &self,
+        request: Request<pb::SyncSnapshotPullRequest>,
+    ) -> Result<Response<pb::SyncSnapshotPullResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::SyncSnapshotPullRequest { session_id: message.session_id };
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.sync_snapshot_pull(&tenant, &domain)).await?;
+        Ok(Response::new(pb::SyncSnapshotPullResponse {
+            session_id: response.session_id,
+            payload_codec: response.payload_codec,
+            payload: response.payload,
+            checkpoint: response.checkpoint,
+        }))
+    }
+
+    async fn checkpoint_ack(
+        &self,
+        request: Request<pb::SyncCheckpointAckRequest>,
+    ) -> Result<Response<pb::SyncCheckpointAckResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::SyncCheckpointAckRequest {
+            session_id: message.session_id,
+            checkpoint: message.checkpoint,
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.sync_checkpoint_ack(&tenant, &domain)).await?;
+        Ok(Response::new(pb::SyncCheckpointAckResponse {
+            session_id: response.session_id,
+        }))
+    }
+
+    async fn mutation_submit(
+        &self,
+        request: Request<pb::SyncMutationSubmitRequest>,
+    ) -> Result<Response<pb::SyncMutationSubmitResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let key = idempotency_key(&request)?;
+        let message = request.into_inner();
+        let domain = registry::SyncMutationSubmitRequest {
+            session_id: message.session_id,
+            document: message.document,
+            change: message
+                .change
+                .as_ref()
+                .map(sync_change)
+                .transpose()
+                .map_err(host_error)?
+                .ok_or_else(|| conversion_error("a sync mutation carries no change"))?,
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.sync_mutation_submit(&tenant, &domain, &key)).await?;
+        Ok(Response::new(pb::SyncMutationSubmitResponse {
+            session_id: response.session_id,
+            outcome: Some(mutation_outcome_pb(&response.outcome)),
+        }))
+    }
+
+    async fn session_close(
+        &self,
+        request: Request<pb::SyncSessionCloseRequest>,
+    ) -> Result<Response<pb::SyncSessionCloseResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::SyncSessionCloseRequest { session_id: message.session_id };
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.sync_session_close(&tenant, &domain)).await?;
+        Ok(Response::new(pb::SyncSessionCloseResponse {
+            session_id: response.session_id,
+        }))
+    }
+}
+
+#[tonic::async_trait]
+impl Schema for Arc<TbepGrpcServer> {
+    async fn declare(
+        &self,
+        request: Request<pb::SchemaDeclareRequest>,
+    ) -> Result<Response<pb::SchemaDeclareResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let key = idempotency_key(&request)?;
+        let message = request.into_inner();
+        let domain = registry::SchemaDeclareRequest {
+            collection: message.collection,
+            schema: message
+                .schema
+                .as_ref()
+                .map(value_from_pb)
+                .transpose()
+                .map_err(host_error)?,
+            operation_id: message.operation_id,
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.schema_declare(&tenant, &domain, &key)).await?;
+        Ok(Response::new(pb::SchemaDeclareResponse {
+            enforced_version: response.enforced_version.unwrap_or_default(),
+            rule_count: response.rule_count,
+        }))
+    }
+
+    async fn status(
+        &self,
+        request: Request<pb::SchemaStatusRequest>,
+    ) -> Result<Response<pb::SchemaStatusResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::SchemaStatusRequest { collection: message.collection };
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.schema_status(&tenant, &domain)).await?;
+        Ok(Response::new(pb::SchemaStatusResponse {
+            enforced_version: response.enforced_version.unwrap_or_default(),
+            rule_count: response.rule_count,
+        }))
+    }
+
+    async fn validate(
+        &self,
+        request: Request<pb::SchemaValidateRequest>,
+    ) -> Result<Response<pb::SchemaValidateResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::SchemaValidateRequest {
+            collection: message.collection,
+            document: message
+                .document
+                .as_ref()
+                .map(value_from_pb)
+                .transpose()
+                .map_err(host_error)?
+                .ok_or_else(|| conversion_error("a validation carries no document"))?,
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.schema_validate(&tenant, &domain)).await?;
+        Ok(Response::new(pb::SchemaValidateResponse {
+            enforced_version: response.enforced_version.unwrap_or_default(),
+            valid: response.valid,
+            violations: response.violations.iter().map(schema_violation_pb).collect(),
+        }))
+    }
+
+    async fn migration_status(
+        &self,
+        request: Request<pb::MigrationStatusRequest>,
+    ) -> Result<Response<pb::MigrationStatusResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let domain = registry::MigrationStatusRequest { collection: message.collection };
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.migration_status(&tenant, &domain)).await?;
+        Ok(Response::new(pb::MigrationStatusResponse {
+            state: Some(migration_state(&response.state)),
+        }))
+    }
+
+    async fn migration_dry_run(
+        &self,
+        request: Request<pb::MigrationDryRunRequest>,
+    ) -> Result<Response<pb::MigrationDryRunResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let message = request.into_inner();
+        let contract = message
+            .contract
+            .as_ref()
+            .map(migration_contract)
+            .transpose()
+            .map_err(host_error)?
+            .ok_or_else(|| conversion_error("a dry run carries no contract"))?;
+        let domain = registry::MigrationDryRunRequest { contract };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.migration_dry_run(&tenant, &domain)).await?;
+        Ok(Response::new(pb::MigrationDryRunResponse {
+            plan: Some(migration_plan(&response.plan)),
+        }))
+    }
+
+    async fn migration_apply(
+        &self,
+        request: Request<pb::MigrationApplyRequest>,
+    ) -> Result<Response<pb::MigrationApplyResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let key = idempotency_key(&request)?;
+        let message = request.into_inner();
+        let contract = message
+            .contract
+            .as_ref()
+            .map(migration_contract)
+            .transpose()
+            .map_err(host_error)?
+            .ok_or_else(|| conversion_error("an apply carries no contract"))?;
+        let domain = registry::MigrationApplyRequest {
+            contract,
+            acknowledge_not_rollbackable: message.acknowledge_not_rollbackable,
+            operation_id: message.operation_id,
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.migration_apply(&tenant, &domain, &key)).await?;
+        Ok(Response::new(pb::MigrationApplyResponse {
+            receipt: Some(migration_receipt(&response.receipt)),
+        }))
+    }
+}
+
+#[tonic::async_trait]
+impl Replication for Arc<TbepGrpcServer> {
+    async fn conflicts(
+        &self,
+        request: Request<pb::ReplicationConflictsRequest>,
+    ) -> Result<Response<pb::ReplicationConflictsResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.replication_conflicts(&tenant)).await?;
+        Ok(Response::new(pb::ReplicationConflictsResponse {
+            member: response.member,
+            records: response.records.iter().map(conflict_record).collect(),
+        }))
+    }
+
+    async fn fenced(
+        &self,
+        request: Request<pb::ReplicationFencedRequest>,
+    ) -> Result<Response<pb::ReplicationFencedResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.replication_fenced(&tenant)).await?;
+        Ok(Response::new(pb::ReplicationFencedResponse {
+            member: response.member,
+            records: response.records.iter().map(fenced_record).collect(),
+        }))
+    }
+
+    async fn depositions(
+        &self,
+        request: Request<pb::ReplicationDepositionsRequest>,
+    ) -> Result<Response<pb::ReplicationDepositionsResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.replication_depositions(&tenant)).await?;
+        Ok(Response::new(pb::ReplicationDepositionsResponse {
+            member: response.member,
+            records: response.records.iter().map(deposition_record).collect(),
+        }))
+    }
+
+    async fn cursor(
+        &self,
+        request: Request<pb::ReplicationCursorRequest>,
+    ) -> Result<Response<pb::ReplicationCursorResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.replication_cursor(&tenant)).await?;
+        Ok(Response::new(pb::ReplicationCursorResponse {
+            member: response.member,
+            position: response.position.unwrap_or_default(),
+        }))
+    }
+
+    async fn health(
+        &self,
+        request: Request<pb::ReplicationHealthRequest>,
+    ) -> Result<Response<pb::ReplicationHealthResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.replication_health(&tenant)).await?;
+        Ok(Response::new(pb::ReplicationHealthResponse {
+            member: response.member,
+            status: replication_status_pb(response.status),
+        }))
+    }
+
+    async fn denials(
+        &self,
+        request: Request<pb::ReplicationDenialsRequest>,
+    ) -> Result<Response<pb::ReplicationDenialsResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.replication_denials(&tenant)).await?;
+        Ok(Response::new(pb::ReplicationDenialsResponse {
+            member: response.member,
+            records: response.records.iter().map(denial_record).collect(),
+        }))
+    }
+}
+
+#[tonic::async_trait]
+impl Maintenance for Arc<TbepGrpcServer> {
+    async fn topology_read(
+        &self,
+        request: Request<pb::TopologyReadRequest>,
+    ) -> Result<Response<pb::TopologyReadResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.topology_read(&tenant)).await?;
+        Ok(Response::new(pb::TopologyReadResponse {
+            binding: self.binding as i32,
+            subsystems: response.subsystems,
+            engine_topology_available: response.engine_topology_available,
+            cluster_mode: cluster_mode_pb(response.cluster_mode),
+        }))
+    }
+
+    async fn admin_status(
+        &self,
+        request: Request<pb::AdminStatusRequest>,
+    ) -> Result<Response<pb::AdminStatusResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let _ = identity;
+        let host = Arc::clone(&self.host);
+        let served = self.frames_served();
+        let response = run_host(self.as_ref(), move || host.admin_status()).await?;
+        Ok(Response::new(pb::AdminStatusResponse {
+            registry_version: response.registry_version,
+            frames_served: response.frames_served.max(served),
+            sessions: response.sessions,
+            subscriptions: response.subscriptions,
+            scopes: response.scopes,
+        }))
+    }
+
+    async fn supervision_health(
+        &self,
+        request: Request<pb::SupervisionHealthRequest>,
+    ) -> Result<Response<pb::SupervisionHealthResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let _ = identity;
+        let host = Arc::clone(&self.host);
+        let served = self.frames_served();
+        let response = run_host(self.as_ref(), move || host.health()).await?;
+        Ok(Response::new(pb::SupervisionHealthResponse {
+            state: match response.state {
+                registry::HealthState::Starting => pb::HealthState::Starting as i32,
+                registry::HealthState::Serving => pb::HealthState::Serving as i32,
+                registry::HealthState::Draining => pb::HealthState::Draining as i32,
+                registry::HealthState::Stopped => pb::HealthState::Stopped as i32,
+            },
+            sessions: response.sessions,
+            subscriptions: response.subscriptions,
+            frames_served: response.frames_served.max(served),
+        }))
+    }
+
+    async fn supervision_shutdown(
+        &self,
+        request: Request<pb::SupervisionShutdownRequest>,
+    ) -> Result<Response<pb::SupervisionShutdownResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let _ = identity;
+        let message = request.into_inner();
+        let domain = registry::SupervisionShutdownRequest {
+            reason: match pb::ShutdownReason::try_from(message.reason) {
+                Ok(pb::ShutdownReason::Operator) => registry::ShutdownReason::Operator,
+                Ok(pb::ShutdownReason::Supervisor) => registry::ShutdownReason::Supervisor,
+                _ => {
+                    return Err(conversion_error("a shutdown carries no reason"));
+                }
+            },
+        };
+        let host = Arc::clone(&self.host);
+        let response = run_host(self.as_ref(), move || host.begin_shutdown(&domain)).await?;
+        Ok(Response::new(pb::SupervisionShutdownResponse {
+            state: match response.state {
+                registry::HealthState::Starting => pb::HealthState::Starting as i32,
+                registry::HealthState::Serving => pb::HealthState::Serving as i32,
+                registry::HealthState::Draining => pb::HealthState::Draining as i32,
+                registry::HealthState::Stopped => pb::HealthState::Stopped as i32,
+            },
+            in_flight: response.in_flight,
+        }))
+    }
+}
+
+#[tonic::async_trait]
+impl Tier for Arc<TbepGrpcServer> {
+    async fn configure(
+        &self,
+        request: Request<pb::TierConfigureRequest>,
+    ) -> Result<Response<pb::TierConfigureResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let key = idempotency_key(&request)?;
+        let message = request.into_inner();
+        let domain = registry::TierConfigureRequest {
+            policy_id: message.policy_id,
+            version: message.version,
+            nvme_budget_bytes: message.nvme_budget_bytes,
+            min_residence_moves: message.min_residence_moves,
+            promotion_threshold: message.promotion_threshold,
+            pinned_segment_ids: message.pinned_segment_ids,
+        };
+        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.tier_configure(&tenant, &domain, &key)).await?;
+        Ok(Response::new(pb::TierConfigureResponse {
+            policy_id: response.policy_id,
+            version: response.version,
+            paused: response.paused,
+        }))
+    }
+
+    async fn inspect(
+        &self,
+        request: Request<pb::TierInspectRequest>,
+    ) -> Result<Response<pb::TierInspectResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.tier_inspect(&tenant)).await?;
+        Ok(Response::new(pb::TierInspectResponse {
+            configured: response.configured,
+            paused: response.paused,
+            manifest_epoch: response.manifest_epoch,
+            object_count: response.object_count,
+            nvme_bytes: response.nvme_bytes,
+        }))
+    }
+
+    async fn dry_run(
+        &self,
+        request: Request<pb::TierDryRunRequest>,
+    ) -> Result<Response<pb::TierDryRunResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.tier_dry_run(&tenant)).await?;
+        Ok(Response::new(pb::TierDryRunResponse {
+            receipt: Some(tier_move_receipt(&response.receipt)),
+        }))
+    }
+
+    async fn explain(
+        &self,
+        request: Request<pb::TierExplainRequest>,
+    ) -> Result<Response<pb::TierExplainResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.tier_explain(&tenant)).await?;
+        Ok(Response::new(pb::TierExplainResponse {
+            receipt: Some(tier_move_receipt(&response.receipt)),
+        }))
+    }
+
+    async fn run(
+        &self,
+        request: Request<pb::TierRunRequest>,
+    ) -> Result<Response<pb::TierRunResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let key = idempotency_key(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.tier_run(&tenant, &key)).await?;
+        Ok(Response::new(pb::TierRunResponse {
+            receipt: Some(tier_move_receipt(&response.receipt)),
+        }))
+    }
+
+    async fn pause(
+        &self,
+        request: Request<pb::TierPauseRequest>,
+    ) -> Result<Response<pb::TierPauseResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let key = idempotency_key(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.tier_pause(&tenant, &key)).await?;
+        Ok(Response::new(pb::TierPauseResponse { paused: response.paused }))
+    }
+
+    async fn resume(
+        &self,
+        request: Request<pb::TierResumeRequest>,
+    ) -> Result<Response<pb::TierResumeResponse>, Status> {
+        self.counted();
+        let identity = Identity::of(&request)?;
+        let key = idempotency_key(&request)?;
+        let host = Arc::clone(&self.host);
+        let tenant = identity.tenant;
+        let response = run_host(self.as_ref(), move || host.tier_resume(&tenant, &key)).await?;
+        Ok(Response::new(pb::TierResumeResponse { paused: response.paused }))
+    }
+}

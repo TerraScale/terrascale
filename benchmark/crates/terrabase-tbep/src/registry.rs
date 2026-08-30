@@ -2,14 +2,20 @@
 //! vocabularies the hosting seam (`crate::host`) serves.
 //!
 //! Hand-maintained source. The retired schema-derived generator and its
-//! MessagePack bindings were removed with the gRPC migration (ADR 0028):
+//! `MessagePack` bindings were removed with the gRPC migration (ADR 0028):
 //! `proto/terrabase/v1/engine.proto` is the contract of record, and the
 //! gRPC layer (`crate::grpc`) converts between these domain types and the
 //! generated protobuf types. Bounds validation stays fail-closed here so
 //! every serving path checks the same limits.
 
-use crate::value::TbepValue;
+// The registry mirrors one row per vocabulary entry and one struct per
+// frame on purpose; the allowances keep the tabular shapes faithful
+// instead of fighting the linter over them.
+#![allow(clippy::unreadable_literal)]
+#![allow(clippy::match_same_arms)]
+#![allow(clippy::too_many_lines)]
 
+use crate::value::TbepValue;
 
 /// The protocol identity string.
 pub const IDENTITY: &str = "terrabase.engine.protocol";
@@ -18,7 +24,7 @@ pub const REGISTRY_VERSION: &str = "1.3";
 /// The wire version every frame carries; unknown versions fail closed.
 pub const WIRE_VERSION: u8 = 1;
 /// The decode bound: larger frames are rejected before any field parses.
-pub const MAX_FRAME_BYTES: usize = 16777216;
+pub const MAX_FRAME_BYTES: usize = 16_777_216;
 /// The detail bound of `error` frames.
 pub const MAX_DETAIL_BYTES: usize = 256;
 /// The item bound of every list field.
@@ -1591,7 +1597,7 @@ impl ChannelBindRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.principal, 128, "principal")?;
             crate::value::check_str_bound(&self.tenant, 64, "tenant")?;
             Ok(())
@@ -1613,7 +1619,7 @@ impl ChannelBindResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.tenant, 64, "tenant")?;
             Ok(())
         }
@@ -1636,7 +1642,7 @@ impl DocumentReadRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.collection, 64, "collection")?;
             crate::value::check_str_bound(&self.document, 64, "document")?;
             Ok(())
@@ -1660,7 +1666,7 @@ impl DocumentReadResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -1685,7 +1691,7 @@ impl DocumentWriteRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
             Ok(())
         }
@@ -1704,7 +1710,7 @@ impl DocumentWriteResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -1731,7 +1737,7 @@ impl DocumentDeleteRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.collection, 64, "collection")?;
             crate::value::check_str_bound(&self.document, 64, "document")?;
             crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
@@ -1752,7 +1758,7 @@ impl DocumentDeleteResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -1773,7 +1779,7 @@ impl DocumentBatchRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_list_bound(&self.items, MAX_LIST_ITEMS, "items")?;
             Ok(())
         }
@@ -1792,7 +1798,7 @@ impl DocumentBatchResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -1817,7 +1823,7 @@ impl QueryExecuteRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.text, 16384, "text")?;
             Ok(())
         }
@@ -1842,7 +1848,7 @@ impl QueryExecuteResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_list_bound(&self.documents, MAX_LIST_ITEMS, "documents")?;
             Ok(())
         }
@@ -1861,7 +1867,7 @@ impl QueryCancelRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -1880,7 +1886,7 @@ impl QueryCancelResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -1905,7 +1911,7 @@ impl FamilyReadRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.family, 64, "family")?;
             crate::value::check_one_of(&self.family, FAMILY_KINDS, "family")?;
             crate::value::check_str_bound(&self.name, 128, "name")?;
@@ -1929,7 +1935,7 @@ impl FamilyReadResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.response_codec, 64, "response_codec")?;
             Ok(())
         }
@@ -1956,7 +1962,7 @@ impl FamilyWriteRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.family, 64, "family")?;
             crate::value::check_one_of(&self.family, FAMILY_KINDS, "family")?;
             crate::value::check_str_bound(&self.name, 128, "name")?;
@@ -1981,7 +1987,7 @@ impl FamilyWriteResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.response_codec, 64, "response_codec")?;
             Ok(())
         }
@@ -2004,7 +2010,7 @@ impl BackboneSubscribeRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             if let Some(value) = &self.collections { crate::value::check_list_bound(value, MAX_LIST_ITEMS, "collections")?; }
             Ok(())
         }
@@ -2025,7 +2031,7 @@ impl BackboneSubscribeResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2046,7 +2052,7 @@ impl BackboneAcknowledgeRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2067,7 +2073,7 @@ impl BackboneAcknowledgeResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2086,7 +2092,7 @@ impl BackboneUnsubscribeRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2105,7 +2111,7 @@ impl BackboneUnsubscribeResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2126,7 +2132,7 @@ impl SyncSessionSetupRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.collection, 64, "collection")?;
             Ok(())
         }
@@ -2149,7 +2155,7 @@ impl SyncSessionSetupResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2170,7 +2176,7 @@ impl SyncDeltaPullRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2199,7 +2205,7 @@ impl SyncDeltaPullResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.payload_codec, 64, "payload_codec")?;
             Ok(())
         }
@@ -2218,7 +2224,7 @@ impl SyncSnapshotPullRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2243,7 +2249,7 @@ impl SyncSnapshotPullResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.payload_codec, 64, "payload_codec")?;
             Ok(())
         }
@@ -2264,7 +2270,7 @@ impl SyncCheckpointAckRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2283,7 +2289,7 @@ impl SyncCheckpointAckResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2306,7 +2312,7 @@ impl SyncMutationSubmitRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.document, 64, "document")?;
             Ok(())
         }
@@ -2327,7 +2333,7 @@ impl SyncMutationSubmitResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2346,7 +2352,7 @@ impl SyncSessionCloseRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2365,7 +2371,7 @@ impl SyncSessionCloseResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2382,7 +2388,7 @@ impl TopologyReadRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2407,7 +2413,7 @@ impl TopologyReadResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_list_bound(&self.subsystems, MAX_LIST_ITEMS, "subsystems")?;
             Ok(())
         }
@@ -2424,7 +2430,7 @@ impl AdminStatusRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2451,7 +2457,7 @@ impl AdminStatusResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.registry_version, 32, "registry_version")?;
             Ok(())
         }
@@ -2468,7 +2474,7 @@ impl ReplicationConflictsRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2489,7 +2495,7 @@ impl ReplicationConflictsResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.member, 128, "member")?;
             crate::value::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
             Ok(())
@@ -2507,7 +2513,7 @@ impl ReplicationFencedRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2528,7 +2534,7 @@ impl ReplicationFencedResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.member, 128, "member")?;
             crate::value::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
             Ok(())
@@ -2546,7 +2552,7 @@ impl ReplicationDepositionsRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2567,7 +2573,7 @@ impl ReplicationDepositionsResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.member, 128, "member")?;
             crate::value::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
             Ok(())
@@ -2585,7 +2591,7 @@ impl ReplicationCursorRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2606,7 +2612,7 @@ impl ReplicationCursorResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.member, 128, "member")?;
             Ok(())
         }
@@ -2623,7 +2629,7 @@ impl ReplicationHealthRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2644,7 +2650,7 @@ impl ReplicationHealthResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.member, 128, "member")?;
             Ok(())
         }
@@ -2661,7 +2667,7 @@ impl ReplicationDenialsRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2682,7 +2688,7 @@ impl ReplicationDenialsResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.member, 128, "member")?;
             crate::value::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
             Ok(())
@@ -2700,7 +2706,7 @@ impl SupervisionHealthRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2725,7 +2731,7 @@ impl SupervisionHealthResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2744,7 +2750,7 @@ impl SupervisionShutdownRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2765,7 +2771,7 @@ impl SupervisionShutdownResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2788,7 +2794,7 @@ impl SchemaDeclareRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.collection, 64, "collection")?;
             crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
             Ok(())
@@ -2810,7 +2816,7 @@ impl SchemaDeclareResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2829,7 +2835,7 @@ impl SchemaStatusRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.collection, 64, "collection")?;
             Ok(())
         }
@@ -2850,7 +2856,7 @@ impl SchemaStatusResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2871,7 +2877,7 @@ impl SchemaValidateRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.collection, 64, "collection")?;
             Ok(())
         }
@@ -2894,7 +2900,7 @@ impl SchemaValidateResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_list_bound(&self.violations, MAX_LIST_ITEMS, "violations")?;
             Ok(())
         }
@@ -2913,7 +2919,7 @@ impl MigrationStatusRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.collection, 64, "collection")?;
             Ok(())
         }
@@ -2932,7 +2938,7 @@ impl MigrationStatusResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2951,7 +2957,7 @@ impl MigrationDryRunRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2970,7 +2976,7 @@ impl MigrationDryRunResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -2993,7 +2999,7 @@ impl MigrationApplyRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
             Ok(())
         }
@@ -3012,7 +3018,7 @@ impl MigrationApplyResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3041,7 +3047,7 @@ impl TierConfigureRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.policy_id, 128, "policy_id")?;
             crate::value::check_list_bound(&self.pinned_segment_ids, MAX_LIST_ITEMS, "pinned_segment_ids")?;
             Ok(())
@@ -3065,7 +3071,7 @@ impl TierConfigureResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.policy_id, 128, "policy_id")?;
             Ok(())
         }
@@ -3082,7 +3088,7 @@ impl TierInspectRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3109,7 +3115,7 @@ impl TierInspectResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3126,7 +3132,7 @@ impl TierDryRunRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3145,7 +3151,7 @@ impl TierDryRunResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3162,7 +3168,7 @@ impl TierExplainRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3181,7 +3187,7 @@ impl TierExplainResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3198,7 +3204,7 @@ impl TierRunRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3217,7 +3223,7 @@ impl TierRunResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3234,7 +3240,7 @@ impl TierPauseRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3253,7 +3259,7 @@ impl TierPauseResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3270,7 +3276,7 @@ impl TierResumeRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3289,7 +3295,7 @@ impl TierResumeResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3314,7 +3320,7 @@ impl SubscriptionBatch {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_list_bound(&self.events, MAX_LIST_ITEMS, "events")?;
             Ok(())
         }
@@ -3339,7 +3345,7 @@ impl TriggerNotification {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.collection, 64, "collection")?;
             crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
             Ok(())
@@ -3361,7 +3367,7 @@ impl SubscriptionClosed {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             let _ = self;
             Ok(())
         }
@@ -3382,7 +3388,7 @@ impl Error {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_str_bound(&self.detail, 256, "detail")?;
             Ok(())
         }
@@ -3403,7 +3409,7 @@ impl NegotiationRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_list_bound(&self.supported_versions, MAX_LIST_ITEMS, "supported_versions")?;
             crate::value::check_list_bound(&self.capabilities, MAX_LIST_ITEMS, "capabilities")?;
             Ok(())
@@ -3425,12 +3431,30 @@ impl NegotiationResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        fn validate(&self) -> Result<(), crate::value::BodyError> {
+        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
             crate::value::check_list_bound(&self.accepted_capabilities, MAX_LIST_ITEMS, "accepted_capabilities")?;
             Ok(())
         }
 }
 
+/// One row of the closed frame table: the frame's wire code, kind name,
+/// family, and class.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrameRow {
+    /// The frame's wire code.
+    pub code: u16,
+    /// The frame's kind name (the domain type name).
+    pub kind: &'static str,
+    /// The frame's family.
+    pub family: &'static str,
+    /// The frame's class (the budget class of `BUDGETS`).
+    pub class: &'static str,
+}
+
+/// The closed frame table: every request, response, subscription, and
+/// negotiation kind the protocol admits, with its wire code, family, and
+/// class. Unknown codes and kinds fail closed on decode.
+pub const FRAME_TABLE: &[FrameRow] = &[
     FrameRow { code: 2, kind: "NegotiationRequest", family: "channel", class: "control" },
     FrameRow { code: 3, kind: "NegotiationResponse", family: "channel", class: "control" },
     FrameRow { code: 257, kind: "DocumentReadRequest", family: "documents", class: "operation" },
@@ -3519,3 +3543,125 @@ impl NegotiationResponse {
     FrameRow { code: 770, kind: "TriggerNotification", family: "backbone", class: "trigger" },
     FrameRow { code: 771, kind: "SubscriptionClosed", family: "backbone", class: "control" },
 ];
+
+/// Looks one frame row up by wire code.
+///
+/// Unknown codes are `None` and fail closed at the caller.
+#[must_use]
+pub const fn frame_row_for_code(code: u16) -> Option<&'static FrameRow> {
+    let mut index = 0;
+    while index < FRAME_TABLE.len() {
+        let row = &FRAME_TABLE[index];
+        if row.code == code {
+            return Some(row);
+        }
+        index += 1;
+    }
+    None
+}
+
+/// Looks one frame row up by kind name.
+///
+/// Unknown kinds are `None` and fail closed at the caller.
+#[must_use]
+pub fn frame_row_for_kind(kind: &str) -> Option<&'static FrameRow> {
+    FRAME_TABLE.iter().find(|row| row.kind == kind)
+}
+
+/// The closed family vocabulary of the frame table.
+#[must_use]
+pub fn families() -> Vec<&'static str> {
+    let mut seen: Vec<&'static str> = Vec::new();
+    for row in FRAME_TABLE {
+        if !seen.contains(&row.family) {
+            seen.push(row.family);
+        }
+    }
+    seen
+}
+
+/// The written bytes-on-wire budget for one frame class.
+///
+/// Unknown classes are `None` and fail closed at the caller.
+#[must_use]
+pub fn budget_for_class(class: &str) -> Option<usize> {
+    let mut index = 0;
+    while index < BUDGETS.len() {
+        let (name, budget) = BUDGETS[index];
+        if name == class {
+            return Some(budget);
+        }
+        index += 1;
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_codes_are_unique() {
+        for (index, row) in FRAME_TABLE.iter().enumerate() {
+            for (other_index, other) in FRAME_TABLE.iter().enumerate() {
+                if index != other_index {
+                    assert_ne!(row.code, other.code, "code {} is not unique", row.code);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn frame_kinds_are_unique() {
+        let mut kinds: Vec<&str> = FRAME_TABLE.iter().map(|row| row.kind).collect();
+        kinds.sort_unstable();
+        let count = kinds.len();
+        kinds.dedup();
+        assert_eq!(kinds.len(), count, "frame kinds are not unique");
+    }
+
+    #[test]
+    fn every_frame_class_has_a_budget() {
+        for row in FRAME_TABLE {
+            assert!(
+                budget_for_class(row.class).is_some(),
+                "class {} of kind {} has no budget",
+                row.class,
+                row.kind
+            );
+        }
+    }
+
+    #[test]
+    fn every_frame_kind_has_a_domain_type_name() {
+        // The kind is the domain type name; the closed set of families
+        // pins the serving seams that can carry each kind.
+        for row in FRAME_TABLE {
+            assert!(
+                !row.kind.is_empty() && row.kind.chars().next().is_some_and(char::is_uppercase),
+                "kind {} is not a domain type name",
+                row.kind
+            );
+        }
+    }
+
+    #[test]
+    fn lookups_fail_closed_for_unknown_identities() {
+        assert!(frame_row_for_code(1).is_none());
+        assert!(frame_row_for_code(u16::MAX).is_none());
+        assert!(frame_row_for_kind("NoSuchFrameKind").is_none());
+        assert!(budget_for_class("no_such_class").is_none());
+    }
+
+    #[test]
+    fn known_lookups_resolve() {
+        let negotiation = frame_row_for_code(2).expect("code 2 resolves");
+        assert_eq!(negotiation.kind, "NegotiationRequest");
+        assert_eq!(negotiation.family, "channel");
+        let closed = frame_row_for_kind("SubscriptionClosed").expect("kind resolves");
+        assert_eq!(closed.code, 771);
+        assert_eq!(budget_for_class("control"), Some(256));
+        assert_eq!(budget_for_class("operation_large"), Some(65_536));
+        assert!(families().contains(&"documents"));
+    }
+}
