@@ -1376,6 +1376,9 @@ fn value_to_pb(value: &TbepValue) -> pb::Value {
 fn acknowledgement(v: i32) -> Option<registry::Acknowledgement> {
     match pb::Acknowledgement::try_from(v).ok()? {
         pb::Acknowledgement::AcknowledgementUnspecified => None,
+        pb::Acknowledgement::AcknowledgementLocalSynced => {
+            Some(registry::Acknowledgement::LocalSynced)
+        }
         pb::Acknowledgement::AcknowledgementRegionalQuorum => {
             Some(registry::Acknowledgement::RegionalQuorum)
         }

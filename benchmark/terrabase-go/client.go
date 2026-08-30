@@ -108,15 +108,15 @@ type identity struct {
 // the channel identity Bind establishes, exactly as the engine does.
 type Client struct {
 	conn         grpc.ClientConnInterface
-	channel      v1.ChannelClient
-	engine       v1.EngineClient
-	backbone     v1.BackboneClient
-	sync         v1.SyncClient
-	schema       v1.SchemaClient
-	replication  v1.ReplicationClient
-	maintenance  v1.MaintenanceClient
-	usage        v1.UsageClient
-	tier         v1.TierClient
+	channel      v1.ChannelServiceClient
+	engine       v1.EngineServiceClient
+	backbone     v1.BackboneServiceClient
+	sync         v1.SyncServiceClient
+	schema       v1.SchemaServiceClient
+	replication  v1.ReplicationServiceClient
+	maintenance  v1.MaintenanceServiceClient
+	usage        v1.UsageServiceClient
+	tier         v1.TierServiceClient
 	bound        atomic.Pointer[identity]
 	binding      atomic.Uint32
 	closed       atomic.Bool
@@ -648,7 +648,7 @@ func (c *Client) Bind(ctx context.Context, scope BindingScope) (Binding, error) 
 			c.binding.Store(0)
 		}
 	}()
-	response, err := c.channel.Bind(ctx, &v1.ChannelBindRequest{
+	response, err := c.channel.Bind(ctx, &v1.ChannelServiceBindRequest{
 		Principal: scope.Principal,
 		Tenant:    scope.Tenant,
 		Project:   scope.Project,
@@ -697,7 +697,7 @@ func (c *Client) DocumentRead(ctx context.Context, collection, document string, 
 	if err != nil {
 		return Document{}, false, err
 	}
-	response, err := c.engine.DocumentRead(ctx, &v1.DocumentReadRequest{
+	response, err := c.engine.DocumentRead(ctx, &v1.EngineServiceDocumentReadRequest{
 		Collection: collection,
 		Document:   document,
 		Level:      c.levelOf(level).proto(),
@@ -750,7 +750,7 @@ func (c *Client) DocumentWrite(ctx context.Context, put DocumentPut, expected Ex
 	if err != nil {
 		return WriteOutcome{}, err
 	}
-	response, err := c.engine.DocumentWrite(ctx, &v1.DocumentWriteRequest{
+	response, err := c.engine.DocumentWrite(ctx, &v1.EngineServiceDocumentWriteRequest{
 		Document: &v1.DocumentPut{
 			Id:         put.ID,
 			Collection: put.Collection,
@@ -793,7 +793,7 @@ func (c *Client) DocumentDelete(ctx context.Context, collection, document string
 	if err != nil {
 		return WriteOutcome{}, err
 	}
-	response, err := c.engine.DocumentDelete(ctx, &v1.DocumentDeleteRequest{
+	response, err := c.engine.DocumentDelete(ctx, &v1.EngineServiceDocumentDeleteRequest{
 		Collection:  collection,
 		Document:    document,
 		Expected:    expected.proto(),
@@ -852,7 +852,7 @@ func (c *Client) DocumentBatch(ctx context.Context, items []BatchItem, ack Ackno
 	if err != nil {
 		return WriteOutcome{}, err
 	}
-	response, err := c.engine.DocumentBatch(ctx, &v1.DocumentBatchRequest{Items: batch, Ack: ack.proto(), Usage: usage})
+	response, err := c.engine.DocumentBatch(ctx, &v1.EngineServiceDocumentBatchRequest{Items: batch, Ack: ack.proto(), Usage: usage})
 	if err != nil {
 		return WriteOutcome{}, interpret(err)
 	}
@@ -882,7 +882,7 @@ func (c *Client) QueryExecute(ctx context.Context, queryID uint64, text string, 
 	if err != nil {
 		return QueryResult{}, err
 	}
-	response, err := c.engine.QueryExecute(ctx, &v1.QueryExecuteRequest{
+	response, err := c.engine.QueryExecute(ctx, &v1.EngineServiceQueryExecuteRequest{
 		QueryId:  queryID,
 		Text:     text,
 		MaxItems: maxItems,
@@ -930,7 +930,7 @@ func (c *Client) QueryCancel(ctx context.Context, queryID uint64) (CancelOutcome
 	if err != nil {
 		return 0, err
 	}
-	response, err := c.engine.QueryCancel(ctx, &v1.QueryCancelRequest{QueryId: queryID})
+	response, err := c.engine.QueryCancel(ctx, &v1.EngineServiceQueryCancelRequest{QueryId: queryID})
 	if err != nil {
 		return 0, interpret(err)
 	}
@@ -964,7 +964,7 @@ func (c *Client) FamilyRead(ctx context.Context, family Family, name string, cod
 	if err != nil {
 		return FamilyResponse{}, err
 	}
-	response, err := c.engine.FamilyRead(ctx, &v1.FamilyReadRequest{
+	response, err := c.engine.FamilyRead(ctx, &v1.EngineServiceFamilyReadRequest{
 		Family:       string(family),
 		Name:         name,
 		RequestCodec: codec,
@@ -1005,7 +1005,7 @@ func (c *Client) FamilyWrite(ctx context.Context, family Family, name string, co
 	if err != nil {
 		return FamilyResponse{}, err
 	}
-	response, err := c.engine.FamilyWrite(ctx, &v1.FamilyWriteRequest{
+	response, err := c.engine.FamilyWrite(ctx, &v1.EngineServiceFamilyWriteRequest{
 		Family:       string(family),
 		Name:         name,
 		RequestCodec: codec,
@@ -1081,7 +1081,7 @@ func (c *Client) SyncSessionSetup(ctx context.Context, collection string, resume
 	if err != nil {
 		return SyncSession{}, err
 	}
-	response, err := c.sync.SessionSetup(ctx, &v1.SyncSessionSetupRequest{Collection: collection, Resume: resume})
+	response, err := c.sync.SessionSetup(ctx, &v1.SyncServiceSessionSetupRequest{Collection: collection, Resume: resume})
 	if err != nil {
 		return SyncSession{}, interpret(err)
 	}
@@ -1101,7 +1101,7 @@ func (c *Client) SyncDeltaPull(ctx context.Context, sessionID uint64, from []byt
 	if err != nil {
 		return DeltaPage{}, err
 	}
-	response, err := c.sync.DeltaPull(ctx, &v1.SyncDeltaPullRequest{SessionId: sessionID, From: from})
+	response, err := c.sync.DeltaPull(ctx, &v1.SyncServiceDeltaPullRequest{SessionId: sessionID, From: from})
 	if err != nil {
 		return DeltaPage{}, interpret(err)
 	}
@@ -1121,7 +1121,7 @@ func (c *Client) SyncSnapshotPull(ctx context.Context, sessionID uint64) (Snapsh
 	if err != nil {
 		return Snapshot{}, err
 	}
-	response, err := c.sync.SnapshotPull(ctx, &v1.SyncSnapshotPullRequest{SessionId: sessionID})
+	response, err := c.sync.SnapshotPull(ctx, &v1.SyncServiceSnapshotPullRequest{SessionId: sessionID})
 	if err != nil {
 		return Snapshot{}, interpret(err)
 	}
@@ -1142,7 +1142,7 @@ func (c *Client) SyncCheckpointAck(ctx context.Context, sessionID uint64, checkp
 	if err != nil {
 		return err
 	}
-	_, err = c.sync.CheckpointAck(ctx, &v1.SyncCheckpointAckRequest{SessionId: sessionID, Checkpoint: checkpoint})
+	_, err = c.sync.CheckpointAck(ctx, &v1.SyncServiceCheckpointAckRequest{SessionId: sessionID, Checkpoint: checkpoint})
 	if err != nil {
 		return interpret(err)
 	}
@@ -1169,7 +1169,7 @@ func (c *Client) SyncMutationSubmit(ctx context.Context, sessionID uint64, docum
 	if err != nil {
 		return MutationOutcome{}, err
 	}
-	response, err := c.sync.MutationSubmit(ctx, &v1.SyncMutationSubmitRequest{
+	response, err := c.sync.MutationSubmit(ctx, &v1.SyncServiceMutationSubmitRequest{
 		SessionId: sessionID,
 		Document:  document,
 		Change:    converted,
@@ -1190,7 +1190,7 @@ func (c *Client) SyncSessionClose(ctx context.Context, sessionID uint64) error {
 	if err != nil {
 		return err
 	}
-	_, err = c.sync.SessionClose(ctx, &v1.SyncSessionCloseRequest{SessionId: sessionID})
+	_, err = c.sync.SessionClose(ctx, &v1.SyncServiceSessionCloseRequest{SessionId: sessionID})
 	if err != nil {
 		return interpret(err)
 	}
@@ -1222,7 +1222,7 @@ func (c *Client) SchemaDeclare(ctx context.Context, collection string, schema Va
 	if err != nil {
 		return SchemaInfo{}, err
 	}
-	response, err := c.schema.Declare(ctx, &v1.SchemaDeclareRequest{
+	response, err := c.schema.Declare(ctx, &v1.SchemaServiceDeclareRequest{
 		Collection:  collection,
 		Schema:      declared,
 		OperationId: operationID,
@@ -1242,7 +1242,7 @@ func (c *Client) SchemaStatus(ctx context.Context, collection string) (SchemaInf
 	if err != nil {
 		return SchemaInfo{}, err
 	}
-	response, err := c.schema.Status(ctx, &v1.SchemaStatusRequest{Collection: collection})
+	response, err := c.schema.Status(ctx, &v1.SchemaServiceStatusRequest{Collection: collection})
 	if err != nil {
 		return SchemaInfo{}, interpret(err)
 	}
@@ -1263,7 +1263,7 @@ func (c *Client) SchemaValidate(ctx context.Context, collection string, document
 	if err != nil {
 		return Validation{}, err
 	}
-	response, err := c.schema.Validate(ctx, &v1.SchemaValidateRequest{Collection: collection, Document: body})
+	response, err := c.schema.Validate(ctx, &v1.SchemaServiceValidateRequest{Collection: collection, Document: body})
 	if err != nil {
 		return Validation{}, interpret(err)
 	}
@@ -1377,7 +1377,7 @@ func (c *Client) ReplicationConflicts(ctx context.Context) (ConflictsReport, err
 	if err != nil {
 		return ConflictsReport{}, err
 	}
-	response, err := c.replication.Conflicts(ctx, &v1.ReplicationConflictsRequest{})
+	response, err := c.replication.Conflicts(ctx, &v1.ReplicationServiceConflictsRequest{})
 	if err != nil {
 		return ConflictsReport{}, interpret(err)
 	}
@@ -1407,7 +1407,7 @@ func (c *Client) ReplicationFenced(ctx context.Context) (FencedReport, error) {
 	if err != nil {
 		return FencedReport{}, err
 	}
-	response, err := c.replication.Fenced(ctx, &v1.ReplicationFencedRequest{})
+	response, err := c.replication.Fenced(ctx, &v1.ReplicationServiceFencedRequest{})
 	if err != nil {
 		return FencedReport{}, interpret(err)
 	}
@@ -1430,7 +1430,7 @@ func (c *Client) ReplicationDepositions(ctx context.Context) (DepositionsReport,
 	if err != nil {
 		return DepositionsReport{}, err
 	}
-	response, err := c.replication.Depositions(ctx, &v1.ReplicationDepositionsRequest{})
+	response, err := c.replication.Depositions(ctx, &v1.ReplicationServiceDepositionsRequest{})
 	if err != nil {
 		return DepositionsReport{}, interpret(err)
 	}
@@ -1453,7 +1453,7 @@ func (c *Client) ReplicationCursor(ctx context.Context) (Cursor, error) {
 	if err != nil {
 		return Cursor{}, err
 	}
-	response, err := c.replication.Cursor(ctx, &v1.ReplicationCursorRequest{})
+	response, err := c.replication.Cursor(ctx, &v1.ReplicationServiceCursorRequest{})
 	if err != nil {
 		return Cursor{}, interpret(err)
 	}
@@ -1467,7 +1467,7 @@ func (c *Client) ReplicationHealth(ctx context.Context) (ReplicationHealth, erro
 	if err != nil {
 		return ReplicationHealth{}, err
 	}
-	response, err := c.replication.Health(ctx, &v1.ReplicationHealthRequest{})
+	response, err := c.replication.Health(ctx, &v1.ReplicationServiceHealthRequest{})
 	if err != nil {
 		return ReplicationHealth{}, interpret(err)
 	}
@@ -1484,7 +1484,7 @@ func (c *Client) ReplicationDenials(ctx context.Context) (DenialsReport, error) 
 	if err != nil {
 		return DenialsReport{}, err
 	}
-	response, err := c.replication.Denials(ctx, &v1.ReplicationDenialsRequest{})
+	response, err := c.replication.Denials(ctx, &v1.ReplicationServiceDenialsRequest{})
 	if err != nil {
 		return DenialsReport{}, interpret(err)
 	}
@@ -1510,7 +1510,7 @@ func (c *Client) TopologyRead(ctx context.Context) (Topology, error) {
 	if err != nil {
 		return Topology{}, err
 	}
-	response, err := c.maintenance.TopologyRead(ctx, &v1.TopologyReadRequest{})
+	response, err := c.maintenance.TopologyRead(ctx, &v1.MaintenanceServiceMaintenanceServiceTopologyReadRequest{})
 	if err != nil {
 		return Topology{}, interpret(err)
 	}
@@ -1528,7 +1528,7 @@ func (c *Client) AdminStatus(ctx context.Context) (AdminSnapshot, error) {
 	if err != nil {
 		return AdminSnapshot{}, err
 	}
-	response, err := c.maintenance.AdminStatus(ctx, &v1.AdminStatusRequest{})
+	response, err := c.maintenance.AdminStatus(ctx, &v1.MaintenanceServiceMaintenanceServiceAdminStatusRequest{})
 	if err != nil {
 		return AdminSnapshot{}, interpret(err)
 	}
@@ -1547,7 +1547,7 @@ func (c *Client) SupervisionHealth(ctx context.Context) (SupervisionReport, erro
 	if err != nil {
 		return SupervisionReport{}, err
 	}
-	response, err := c.maintenance.SupervisionHealth(ctx, &v1.SupervisionHealthRequest{})
+	response, err := c.maintenance.SupervisionHealth(ctx, &v1.MaintenanceServiceMaintenanceServiceSupervisionHealthRequest{})
 	if err != nil {
 		return SupervisionReport{}, interpret(err)
 	}
@@ -1584,7 +1584,7 @@ func (c *Client) SupervisionShutdown(ctx context.Context, reason ShutdownReason)
 	if err != nil {
 		return ShutdownReceipt{}, err
 	}
-	response, err := c.maintenance.SupervisionShutdown(ctx, &v1.SupervisionShutdownRequest{Reason: protoReason})
+	response, err := c.maintenance.SupervisionShutdown(ctx, &v1.MaintenanceServiceMaintenanceServiceSupervisionShutdownRequest{Reason: protoReason})
 	if err != nil {
 		return ShutdownReceipt{}, interpret(err)
 	}
@@ -1614,7 +1614,7 @@ func (c *Client) TierConfigure(ctx context.Context, policy TierPolicy, options .
 	if err != nil {
 		return TierPolicyStatus{}, err
 	}
-	response, err := c.tier.Configure(ctx, &v1.TierConfigureRequest{
+	response, err := c.tier.Configure(ctx, &v1.TierServiceConfigureRequest{
 		PolicyId:           policy.PolicyID,
 		Version:            policy.Version,
 		NvmeBudgetBytes:    policy.NVMeBudgetBytes,
@@ -1638,7 +1638,7 @@ func (c *Client) TierInspect(ctx context.Context) (TierStatus, error) {
 	if err != nil {
 		return TierStatus{}, err
 	}
-	response, err := c.tier.Inspect(ctx, &v1.TierInspectRequest{})
+	response, err := c.tier.Inspect(ctx, &v1.TierServiceInspectRequest{})
 	if err != nil {
 		return TierStatus{}, interpret(err)
 	}
@@ -1657,7 +1657,7 @@ func (c *Client) TierDryRun(ctx context.Context) (TierMove, error) {
 	if err != nil {
 		return TierMove{}, err
 	}
-	response, err := c.tier.DryRun(ctx, &v1.TierDryRunRequest{})
+	response, err := c.tier.DryRun(ctx, &v1.TierServiceDryRunRequest{})
 	if err != nil {
 		return TierMove{}, interpret(err)
 	}
@@ -1670,7 +1670,7 @@ func (c *Client) TierExplain(ctx context.Context) (TierMove, error) {
 	if err != nil {
 		return TierMove{}, err
 	}
-	response, err := c.tier.Explain(ctx, &v1.TierExplainRequest{})
+	response, err := c.tier.Explain(ctx, &v1.TierServiceExplainRequest{})
 	if err != nil {
 		return TierMove{}, interpret(err)
 	}
@@ -1690,7 +1690,7 @@ func (c *Client) TierRun(ctx context.Context, operationID string, options ...Cal
 	if err != nil {
 		return TierMove{}, err
 	}
-	response, err := c.tier.Run(ctx, &v1.TierRunRequest{})
+	response, err := c.tier.Run(ctx, &v1.TierServiceRunRequest{})
 	if err != nil {
 		return TierMove{}, interpret(err)
 	}
@@ -1711,7 +1711,7 @@ func (c *Client) TierPause(ctx context.Context, operationID string, options ...C
 	if err != nil {
 		return false, err
 	}
-	response, err := c.tier.Pause(ctx, &v1.TierPauseRequest{})
+	response, err := c.tier.Pause(ctx, &v1.TierServicePauseRequest{})
 	if err != nil {
 		return false, interpret(err)
 	}
@@ -1731,7 +1731,7 @@ func (c *Client) TierResume(ctx context.Context, operationID string, options ...
 	if err != nil {
 		return false, err
 	}
-	response, err := c.tier.Resume(ctx, &v1.TierResumeRequest{})
+	response, err := c.tier.Resume(ctx, &v1.TierServiceResumeRequest{})
 	if err != nil {
 		return false, interpret(err)
 	}

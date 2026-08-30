@@ -199,16 +199,7 @@ fn read_card(state: &StudioState, selection: &Selection) -> String {
 </form>\n<div id=\"{VIEW_ID}\" class=\"mt-4\"></div>",
         tenant = html::select("tenant", "Tenant", &tenant_options),
         collection = html::select("collection", "Collection", &collection_options),
-        id = format!(
-            "{}{}",
-            html::text_input("id", "Document id", "", "the document identifier"),
-            html::text_input(
-                "confirm_target",
-                "Type tenant/collection/id",
-                "",
-                "demo/users/document-id",
-            ) + &html::text_input("confirm_phrase", "Type action phrase", "", "delete document"),
-        ),
+        id = html::text_input("id", "Document id", "", "the document identifier"),
         primary = ButtonStyle::Primary.classes(),
         secondary = ButtonStyle::Secondary.classes(),
         VIEW_ID = VIEW_ID,

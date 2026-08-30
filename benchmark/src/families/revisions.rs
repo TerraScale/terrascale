@@ -17,14 +17,12 @@
 //! *document contract* (GAP-D02's version triple) supplies each snapshot's
 //! change identity; it does not store history. Revision *policies* are
 //! collection-scoped family state under a distinct reserved kind
-//! (`family:revision-configuration/...`), mirroring V1's database-record
-//! `RevisionsConfiguration` (a default plus per-collection map, resolved
-//! collection, then default, then disabled; `RevisionsStorage.cs:176-194`
-//! at the pinned V1 commit). *Enforcement* splits by mechanism: policy
+//! (`family:revision-configuration/...`). It carries a default plus a
+//! per-collection map, resolved as collection, default, then disabled.
+//! *Enforcement* splits by mechanism: policy
 //! application and bin cleaning are the typed, caller-invoked operations
-//! this module owns — the family seam owns no background worker, and V1's
-//! `RevisionsBinCleaner` is a server timer whose schedule belongs to the
-//! host — while write-time snapshot creation on every document put belongs
+//! this module owns. The family seam owns no background worker, so cleaner
+//! scheduling belongs to the host. Write-time snapshot creation on every document put belongs
 //! to the Engine write path through the same crate-private hook pattern
 //! SM-02 set for schema validation, a PROPOSED collision action the parent
 //! must ratify; until it lands, snapshot creation is this module's explicit
@@ -37,8 +35,7 @@
 //! engine hook), conflict-revision configuration (GAP-F07), revision
 //! includes and collection statistics, start-from-etag transfer semantics,
 //! any replication or multi-region behavior, and content-plane reference
-//! counting against disposed digests — a revert re-puts references V1 also
-//! never verifies (`AttachmentsStorage.PutAttachmentRevert`).
+//! counting against disposed digests.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -58,13 +55,10 @@ use crate::types::{
     OperationId, TenantScope,
 };
 
-/// The default minimum age of revisions-bin entries: V1's 30 days
-/// (`RevisionsBinConfiguration.MinimumEntriesAgeToKeepInMin` default
-/// `30 * 24 * 60`, `RevisionsBinConfiguration.cs:27`).
+/// The default minimum age of revisions-bin entries: 30 days.
 pub const DEFAULT_BIN_MINIMUM_AGE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
-/// The bin cleaner's per-run document bound: V1's 64-bit batch size
-/// (`RevisionsBinCleaner.cs:27`, `10 * 1024`).
+/// The bin cleaner's per-run document bound.
 pub const MAX_BIN_BATCH_DOCUMENTS: usize = 10 * 1024;
 
 /// The largest count limit the reserved configuration record can carry:
@@ -94,14 +88,11 @@ fn validate_cancellation(signal: &Cancellation) -> Result<(), RequestValidationE
 // Configuration
 // ---------------------------------------------------------------------------
 
-/// The revision policy of one collection — V1's
-/// `RevisionsCollectionConfiguration`
-/// (`TerraBase.Client/Documents/Operations/Revisions/RevisionsCollectionConfiguration.cs:9-32`):
-/// a minimum number of revisions to keep, a minimum age to keep, a cap on
+/// The revision policy of one collection. It carries a minimum number of
+/// revisions to keep, a minimum age to keep, a cap on
 /// deletions per document update, purge-on-delete, and the disable switch.
 ///
-/// V1's fields are all optional; both limits unset means "no count or age
-/// limit" (`GetRevisionsForCollectionOrDefault`, `RevisionsStorage.cs:768-772`).
+/// All fields are optional. Both limits unset means "no count or age limit".
 /// The typed constructor refuses zero-valued limits (a zero minimum keeps
 /// nothing; a zero cap deletes nothing) where V1's client type carries any
 /// number — a fail-closed strengthening recorded in the decision record.
@@ -154,8 +145,7 @@ impl CollectionRevisionsConfiguration {
         })
     }
 
-    /// V1's empty configuration: disabled with no limits
-    /// (`RevisionsStorage.cs:62`, returned at `:193`).
+    /// The empty configuration: disabled with no limits.
     #[must_use]
     pub fn disabled() -> Self {
         Self {
@@ -199,10 +189,8 @@ impl CollectionRevisionsConfiguration {
     }
 }
 
-/// The whole revisions configuration of one tenant — V1's
-/// `RevisionsConfiguration`: a default policy plus per-collection policies
-/// (`RevisionsConfiguration.cs:23-32`) — with the bin cleaner's minimum
-/// entry age (`RevisionsBinConfiguration.cs:27`).
+/// The whole revisions configuration of one tenant: a default policy,
+/// per-collection policies, and the bin cleaner's minimum entry age.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RevisionsDatabaseConfiguration {
     default: Option<CollectionRevisionsConfiguration>,
@@ -229,7 +217,7 @@ impl RevisionsDatabaseConfiguration {
     }
 
     /// The configuration an absent tenant record reads as: no default, no
-    /// per-collection policies, and V1's default bin minimum age.
+    /// per-collection policies, and the default bin minimum age.
     #[must_use]
     pub fn absent() -> Self {
         Self {
@@ -240,9 +228,8 @@ impl RevisionsDatabaseConfiguration {
     }
 
     /// Resolves one collection's effective policy: the collection's own
-    /// entry, else the default, else `None` — V1's resolution order
-    /// (`GetRevisionsConfiguration`, `RevisionsStorage.cs:176-194`), where
-    /// an unresolved collection is the disabled empty configuration.
+    /// entry, else the default, else `None`. An unresolved collection is the
+    /// disabled empty configuration.
     #[must_use]
     pub fn effective(
         &self,
@@ -267,8 +254,7 @@ impl RevisionsDatabaseConfiguration {
     }
 
     /// Returns the bin cleaner's minimum entry age in milliseconds. An
-    /// unreachable age disables the cleaner, as in V1
-    /// (`RevisionsBinCleaner.cs:86-87`).
+    /// unreachable age disables the cleaner.
     #[must_use]
     pub const fn bin_minimum_age_ms(&self) -> i64 {
         self.bin_minimum_age_ms
@@ -612,9 +598,7 @@ impl RevisionSnapshotsRead {
     }
 }
 
-/// One revert write addressed by the GAP-D02 version contract — V1's
-/// revert-by-change-vector (`RevertRevisionsByIdOperation`,
-/// `TerraBase.Client/Documents/Operations/Revisions/RevertRevisionsByIdOperation.cs:19-33`).
+/// One revert write addressed by the GAP-D02 version contract.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RevertToContractWrite {
     scope: TenantScope,
@@ -789,8 +773,7 @@ impl EnforceRevisionsPolicyWrite {
 }
 
 /// One revisions-bin page read: the deleted documents whose revision logs
-/// are older than the given cutoff — V1's `GetDeletedRevisionsIds` before a
-/// batched clean (`RevisionsBinCleaner.cs:97-109`).
+/// are older than the given cutoff before a batched clean.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RevisionsBinRead {
     before_ms: i64,
@@ -994,18 +977,16 @@ impl RevisionSnapshotRecorded {
     }
 
     /// Reports whether the per-update deletion cap stopped the policy
-    /// before the configured minimum was reached — V1's `HasMore`
-    /// (`RevisionsStorage.cs:833`).
+    /// before the configured minimum was reached.
     #[must_use]
     pub const fn has_more(&self) -> bool {
         self.has_more
     }
 }
 
-/// One content-addressed attachment reference inside a revision snapshot —
-/// V1's revision attachment metadata: `PutAttachmentRevert` re-puts by name,
-/// content type, hash, and size (`AttachmentsStorage.cs:611-652`), and the
-/// bytes stay in the hash-addressed store. References never carry bytes.
+/// One content-addressed attachment reference inside a revision snapshot.
+/// Revert restores by name, content type, hash, and size. Bytes stay in the
+/// hash-addressed store, and references never carry bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RevisionAttachmentRef {
     name: String,
@@ -1717,18 +1698,15 @@ impl SnapshotEntry {
 
 /// Applies one collection policy to a document's revision log and side car.
 ///
-/// This is V1's `GetRevisionsForCollectionOrDefault`
-/// (`RevisionsStorage.cs:754-835`): with a minimum count set, the deletion
+/// With a minimum count set, the deletion
 /// budget is the count above that minimum, capped by the per-update maximum;
 /// with only a minimum age set, every revision past the age is deletable up
 /// to the cap. Deletion proceeds oldest-first and stops at the first
 /// revision younger than the age floor — in a revision-ordered log every
-/// later revision is younger still, so the stop covers V1's per-update
-/// behavior and its enforce-mode skip alike. The removed count includes the
+/// later revision is younger still. The removed count includes the
 /// per-document W3-F trim's removals whenever that policy still bounds the
-/// log after the drain. The returned flag is V1's
-/// `HasMore`: the cap, not the policy, stopped the deletion
-/// (`RevisionsStorage.cs:833`).
+/// log after the drain. The returned flag reports that the cap, not the
+/// policy, stopped deletion.
 fn apply_policy(
     log: &mut RevisionRecord,
     side: &mut SnapshotRecord,
@@ -1742,7 +1720,7 @@ fn apply_policy(
     let minimum = configuration.minimum_revisions_to_keep();
     let age = configuration.minimum_revision_age_to_keep_ms();
     if minimum.is_none() && age.is_none() {
-        // No count or age limit exists (`RevisionsStorage.cs:768-772`).
+        // No count or age limit exists.
         return (0, false);
     }
     let mut budget = match minimum {
@@ -1767,8 +1745,7 @@ fn apply_policy(
         if drop >= budget {
             break;
         }
-        // A revision becomes deletable once its age exceeds the floor
-        // (`RevisionsStorage.cs:806-818`: `now - LastModified <= age` keeps).
+        // A revision becomes deletable once its age exceeds the floor.
         if let Some(cutoff) = cutoff
             && *at >= cutoff
         {
@@ -1789,8 +1766,7 @@ fn apply_policy(
     let trimmed = before_trim - log.entries.len();
     side.retain_log(log);
     let removed = u64::try_from(drop + trimmed).unwrap_or(u64::MAX);
-    // HasMore stays driven by the cap alone (`RevisionsStorage.cs:833`):
-    // the age floor, not the cap, stopped the collection drain whenever it
+    // HasMore stays driven by the cap alone. The age floor stopped the drain whenever it
     // removed fewer than the budget.
     (removed, capped && drop >= budget)
 }
@@ -2014,10 +1990,8 @@ impl<'engine> super::FamilyStore<'engine> {
     /// one new revision under the collection's effective policy.
     ///
     /// The collection's effective configuration must exist and be enabled;
-    /// an unconfigured or disabled collection refuses the snapshot — V1's
-    /// resolution order (`RevisionsStorage.cs:176-194`, empty configuration
-    /// at `:62`/`:193`). The policy then applies to the whole log exactly
-    /// as V1 applies `DeleteOldRevisions` on every document update.
+    /// an unconfigured or disabled collection refuses the snapshot. The
+    /// policy then applies to the whole log on every document update.
     ///
     /// # Errors
     ///
@@ -2155,14 +2129,10 @@ impl<'engine> super::FamilyStore<'engine> {
         Ok(RevisionSnapshotPage::new(entries, total))
     }
 
-    /// Stages one revert addressed by the GAP-D02 version contract — V1's
-    /// `RevertDocumentsCommand` semantics (`RevisionsStorage.cs:2571-2620`):
-    /// verify the revision exists and belongs to the document
-    /// (`VerifyAndGetRevision`, `:2623-2643`), restore its value as a new
-    /// revision, rewrite the user document, and re-put the snapshot's
-    /// attachment references by digest (`DeleteAttachmentBeforeRevert` then
-    /// `PutAttachmentRevert`, `AttachmentsStorage.cs:590`, `:611-652`) —
-    /// never bytes.
+    /// Stages one revert addressed by the GAP-D02 version contract. It
+    /// verifies the revision belongs to the document, restores its value as
+    /// a new revision, rewrites the user document, and restores attachment
+    /// references by digest, never by bytes.
     ///
     /// # Errors
     ///
@@ -2251,12 +2221,10 @@ impl<'engine> super::FamilyStore<'engine> {
         Ok(RevertOutcome::new(created, restored_references.len()))
     }
 
-    /// Stages one policy enforcement for one document — V1's
-    /// `EnforceRevisionsConfigurationOperation` narrowed to a single
-    /// document: apply the effective collection policy to the revision log
+    /// Stages one policy enforcement for one document. It applies the
+    /// effective collection policy to the revision log
     /// and, when the document is deleted and the policy says
-    /// purge-on-delete, remove the whole log (`DeleteOldRevisions`' deleted
-    /// branch, `RevisionsStorage.cs:627-631`).
+    /// purge-on-delete, removes the whole log.
     ///
     /// A deleted document's collection is the one its snapshots recorded;
     /// a log without GAP-F05 snapshots carries no collection, so no policy
@@ -2293,8 +2261,7 @@ impl<'engine> super::FamilyStore<'engine> {
 
         // Resolve the collection whose policy governs the log: the live
         // document's collection, else the collection its snapshots recorded
-        // (the document is gone; V1 reads it from the revisions table,
-        // `RevisionsStorage.cs:670`).
+        // when the document is gone.
         let collection = if present {
             records.user_document(&document)?.map(|(collection, _, _)| collection)
         } else {
@@ -2337,8 +2304,7 @@ impl<'engine> super::FamilyStore<'engine> {
 
     /// Reads one page of the revisions bin: the deleted documents whose
     /// revision log's newest revision was recorded strictly before the
-    /// cutoff — V1's `GetDeletedRevisionsIds(before, batchSize, ...)`
-    /// (`RevisionsBinCleaner.cs:97-109`).
+    /// cutoff.
     ///
     /// # Errors
     ///
@@ -2409,15 +2375,13 @@ impl<'engine> super::FamilyStore<'engine> {
     }
 
     /// Stages one revisions-bin clean: purge the listed documents' revision
-    /// logs and snapshot side cars — V1's `RevisionsBinCleanMergedCommand`
-    /// under the cleaner's age rule (`RevisionsBinCleaner.cs:97`, `:118-119`).
+    /// logs and snapshot side cars under the cleaner's age rule.
     ///
     /// Eligibility is re-checked for every candidate — the document must be
     /// deleted and its newest revision strictly older than the cutoff — and
     /// one ineligible candidate refuses the whole write before anything is
     /// staged, leaving the caller's transaction unchanged. A candidate with
-    /// no stored revisions is skipped, like V1's "no revisions found" info
-    /// path (`RevisionsStorage.cs:671-675`).
+    /// no stored revisions is skipped.
     ///
     /// # Errors
     ///

@@ -84,6 +84,7 @@ enum Acknowledgement {
   ACKNOWLEDGEMENT_REGIONAL_QUORUM = 1;
   ACKNOWLEDGEMENT_GLOBAL_QUORUM = 2;
   ACKNOWLEDGEMENT_BACKUP = 3;
+  ACKNOWLEDGEMENT_LOCAL_SYNCED = 4;
 }
 
 // Whether a commit reached a backup tier.

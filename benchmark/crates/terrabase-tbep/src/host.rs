@@ -1957,10 +1957,29 @@ mod tests {
     use super::*;
     use crate::registry::SyncChange;
 
-    fn submit(host: &SyncDeliveryHost, session: u64, document: &str, key: &str) -> CommitReceipt {
+    fn scope(tenant: &str) -> BoundScope {
+        scope_with_database(tenant, "database-a")
+    }
+
+    fn scope_with_database(tenant: &str, database: &str) -> BoundScope {
+        BoundScope {
+            principal: "operator".into(),
+            tenant: tenant.into(),
+            project: "project-a".into(),
+            database: database.into(),
+        }
+    }
+
+    fn submit(
+        host: &SyncDeliveryHost,
+        scope: &BoundScope,
+        session: u64,
+        document: &str,
+        key: &str,
+    ) -> CommitReceipt {
         let response = host
             .sync_mutation_submit(
-                "tenant-a",
+                scope,
                 &SyncMutationSubmitRequest {
                     session_id: session,
                     document: document.into(),
@@ -1982,27 +2001,28 @@ mod tests {
     #[test]
     fn sync_delivery_serves_deltas_snapshots_and_idempotent_mutations() {
         let host = SyncDeliveryHost::new(7);
+        let scope = scope("tenant-a");
         let setup = host
             .sync_session_setup(
-                "tenant-a",
+                &scope,
                 &SyncSessionSetupRequest { collection: "orders".into(), resume: None },
             )
             .expect("setup");
         assert_eq!(setup.session_id, 1);
 
-        let first = submit(&host, 1, "d-01", "op-01");
+        let first = submit(&host, &scope, 1, "d-01", "op-01");
         assert_eq!(first.sequence, 1);
         // A retry with the same key answers the recorded receipt.
-        let retry = submit(&host, 1, "d-01", "op-01");
+        let retry = submit(&host, &scope, 1, "d-01", "op-01");
         assert_eq!(retry, first);
-        let second = submit(&host, 1, "d-02", "op-02");
+        let second = submit(&host, &scope, 1, "d-02", "op-02");
         assert_eq!(second.sequence, 2);
 
         let initial: SyncCheckpoint =
             SyncCheckpoint::from_bytes(&setup.checkpoint).expect("decodes");
         let delta = host
             .sync_delta_pull(
-                "tenant-a",
+                &scope,
                 &SyncDeltaPullRequest { session_id: 1, from: initial.to_bytes() },
             )
             .expect("delta");
@@ -2012,7 +2032,7 @@ mod tests {
 
         let again = host
             .sync_delta_pull(
-                "tenant-a",
+                &scope,
                 &SyncDeltaPullRequest { session_id: 1, from: delta.next.clone() },
             )
             .expect("up to date");
@@ -2020,7 +2040,7 @@ mod tests {
         assert_eq!(again.commits, 0);
 
         let snapshot = host
-            .sync_snapshot_pull("tenant-a", &SyncSnapshotPullRequest { session_id: 1 })
+            .sync_snapshot_pull(&scope, &SyncSnapshotPullRequest { session_id: 1 })
             .expect("snapshot");
         assert_eq!(snapshot.payload_codec, "terrabase-snapshot/1");
         assert!(!snapshot.payload.is_empty());
@@ -2029,15 +2049,17 @@ mod tests {
     #[test]
     fn subscriptions_receive_batches_and_content_free_triggers() {
         let host = SyncDeliveryHost::new(1);
+        let scope_a = scope("tenant-a");
+        let scope_b = scope("tenant-b");
         let setup = host
             .sync_session_setup(
-                "tenant-a",
+                &scope_a,
                 &SyncSessionSetupRequest { collection: "orders".into(), resume: None },
             )
             .expect("setup");
         let (subscribe, feed) = host
             .backbone_subscribe(
-                "tenant-a",
+                &scope_a,
                 &BackboneSubscribeRequest {
                     subscription_id: 42,
                     collections: Some(vec!["orders".into()]),
@@ -2048,7 +2070,7 @@ mod tests {
         assert_eq!(subscribe.subscription_id, 42);
         let (_, tenant_b_feed) = host
             .backbone_subscribe(
-                "tenant-b",
+                &scope_b,
                 &BackboneSubscribeRequest {
                     subscription_id: 43,
                     collections: Some(vec!["orders".into()]),
@@ -2057,7 +2079,7 @@ mod tests {
             )
             .expect("tenant-b subscribes");
 
-        let receipt = submit(&host, setup.session_id, "d-01", "op-01");
+        let receipt = submit(&host, &scope_a, setup.session_id, "d-01", "op-01");
         let batch = feed.recv_timeout(std::time::Duration::from_secs(5)).expect("batch");
         match &batch {
             TbepNotification::Batch(batch) => {
@@ -2082,9 +2104,10 @@ mod tests {
     #[test]
     fn engine_operations_refuse_with_a_named_reason() {
         let host = SyncDeliveryHost::default();
+        let scope = scope("tenant-a");
         let error = host
             .document_read(
-                "tenant-a",
+                &scope,
                 &DocumentReadRequest {
                     collection: "orders".into(),
                     document: "d".into(),
@@ -2102,11 +2125,7 @@ mod tests {
         let host = SyncDeliveryHost::default();
         let health = host.health().expect("health");
         assert_eq!(health.state, HealthState::Starting);
-        host.bind_channel(&ChannelBindRequest {
-            principal: "backend".into(),
-            tenant: "tenant-a".into(),
-        })
-        .expect("binds");
+        host.bind_channel(&ChannelBindRequest { scope: scope("tenant-a") }).expect("binds");
         let health = host.health().expect("health");
         assert_eq!(health.state, HealthState::Serving);
         let shutdown = host
@@ -2120,12 +2139,13 @@ mod tests {
 
     fn outcome_of(
         host: &SyncDeliveryHost,
+        scope: &BoundScope,
         session: u64,
         key: &str,
         fields: Vec<crate::registry::SyncField>,
     ) -> MutationOutcome {
         host.sync_mutation_submit(
-            "tenant-a",
+            scope,
             &SyncMutationSubmitRequest {
                 session_id: session,
                 document: "d-01".into(),
@@ -2145,9 +2165,10 @@ mod tests {
         // invalid_body outcome, never silently coerced to null on an
         // accepted write.
         let host = SyncDeliveryHost::new(1);
+        let scope = scope("tenant-a");
         let setup = host
             .sync_session_setup(
-                "tenant-a",
+                &scope,
                 &SyncSessionSetupRequest { collection: "orders".into(), resume: None },
             )
             .expect("setup");
@@ -2155,6 +2176,7 @@ mod tests {
 
         let array = outcome_of(
             &host,
+            &scope,
             session,
             "op-array",
             vec![crate::registry::SyncField {
@@ -2166,6 +2188,7 @@ mod tests {
 
         let object = outcome_of(
             &host,
+            &scope,
             session,
             "op-object",
             vec![crate::registry::SyncField {
@@ -2179,6 +2202,7 @@ mod tests {
         // stays retryable and applies once the body is scalar.
         let applied = outcome_of(
             &host,
+            &scope,
             session,
             "op-array",
             vec![crate::registry::SyncField {
@@ -2200,9 +2224,10 @@ mod tests {
         // answers its recorded receipt; beyond it the documented caveat
         // applies — the retry re-applies.
         let host = SyncDeliveryHost::new(1);
+        let scope = scope("tenant-a");
         let setup = host
             .sync_session_setup(
-                "tenant-a",
+                &scope,
                 &SyncSessionSetupRequest { collection: "orders".into(), resume: None },
             )
             .expect("setup");
@@ -2210,6 +2235,7 @@ mod tests {
 
         let first = match outcome_of(
             &host,
+            &scope,
             session,
             "op-00",
             vec![crate::registry::SyncField { name: "f".into(), value: TbepValue::Integer(0) }],
@@ -2220,6 +2246,7 @@ mod tests {
         for index in 1..IDEMPOTENCY_RETRY_HORIZON {
             match outcome_of(
                 &host,
+                &scope,
                 session,
                 &format!("op-{index:02}"),
                 vec![crate::registry::SyncField {
@@ -2237,6 +2264,7 @@ mod tests {
         let newest = format!("op-{:02}", IDEMPOTENCY_RETRY_HORIZON - 1);
         match outcome_of(
             &host,
+            &scope,
             session,
             &newest,
             vec![crate::registry::SyncField { name: "f".into(), value: TbepValue::Integer(1) }],
@@ -2252,6 +2280,7 @@ mod tests {
         // caveat beyond the horizon).
         match outcome_of(
             &host,
+            &scope,
             session,
             "op-evict",
             vec![crate::registry::SyncField { name: "f".into(), value: TbepValue::Integer(1) }],
@@ -2261,6 +2290,7 @@ mod tests {
         }
         match outcome_of(
             &host,
+            &scope,
             session,
             "op-00",
             vec![crate::registry::SyncField { name: "f".into(), value: TbepValue::Integer(0) }],
@@ -2274,22 +2304,23 @@ mod tests {
     }
 
     #[test]
-    fn sessions_and_subscriptions_remember_their_bound_tenant() {
-        // Tenant isolation is enforced on the session and subscription
-        // lifecycle: the tenant whose channel created the resource owns
-        // it, and every other tenant's lifecycle frame is refused with
-        // the typed refusal.
+    fn sessions_and_subscriptions_remember_their_complete_bound_scope() {
+        // The complete database scope owns each session and subscription.
+        // Sharing a tenant is not enough to cross that boundary.
         let host = SyncDeliveryHost::new(1);
+        let owner = scope("tenant-a");
+        let other_tenant = scope("tenant-b");
+        let other_database = scope_with_database("tenant-a", "database-b");
         let setup = host
             .sync_session_setup(
-                "tenant-a",
+                &owner,
                 &SyncSessionSetupRequest { collection: "orders".into(), resume: None },
             )
             .expect("setup");
         let session = setup.session_id;
         let checkpoint = SyncCheckpoint::from_bytes(&setup.checkpoint).expect("decodes");
         host.backbone_subscribe(
-            "tenant-a",
+            &owner,
             &BackboneSubscribeRequest {
                 subscription_id: 42,
                 collections: Some(vec!["orders".into()]),
@@ -2298,11 +2329,11 @@ mod tests {
         )
         .expect("subscribes");
 
-        // tenant-b's channel cannot ack, close, or unsubscribe tenant-a's
-        // session and subscription.
+        // A channel for the same tenant but another Database cannot use the
+        // owner's lifecycle resources.
         let error = host
             .sync_checkpoint_ack(
-                "tenant-b",
+                &other_database,
                 &SyncCheckpointAckRequest {
                     session_id: session,
                     checkpoint: checkpoint.to_bytes(),
@@ -2311,48 +2342,58 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, HostingError::SessionRefused(_)), "{error:?}");
         let error = host
-            .sync_session_close("tenant-b", &SyncSessionCloseRequest { session_id: session })
+            .sync_session_close(&other_database, &SyncSessionCloseRequest { session_id: session })
             .unwrap_err();
         assert!(matches!(error, HostingError::SessionRefused(_)), "{error:?}");
         let error = host
             .backbone_acknowledge(
-                "tenant-b",
+                &other_database,
                 &BackboneAcknowledgeRequest { subscription_id: 42, through_sequence: 0 },
             )
             .unwrap_err();
         assert!(matches!(error, HostingError::SubscriptionRefused(_)), "{error:?}");
         let error = host
-            .backbone_unsubscribe("tenant-b", &BackboneUnsubscribeRequest { subscription_id: 42 })
+            .backbone_unsubscribe(
+                &other_database,
+                &BackboneUnsubscribeRequest { subscription_id: 42 },
+            )
             .unwrap_err();
         assert!(matches!(error, HostingError::SubscriptionRefused(_)), "{error:?}");
 
+        let error = host
+            .sync_session_close(&other_tenant, &SyncSessionCloseRequest { session_id: session })
+            .unwrap_err();
+        assert!(matches!(error, HostingError::SessionRefused(_)), "{error:?}");
+
         // The owner's channel still owns the lifecycle end to end.
         host.sync_checkpoint_ack(
-            "tenant-a",
+            &owner,
             &SyncCheckpointAckRequest { session_id: session, checkpoint: checkpoint.to_bytes() },
         )
         .expect("acks");
-        host.backbone_unsubscribe("tenant-a", &BackboneUnsubscribeRequest { subscription_id: 42 })
+        host.backbone_unsubscribe(&owner, &BackboneUnsubscribeRequest { subscription_id: 42 })
             .expect("unsubscribes");
-        host.sync_session_close("tenant-a", &SyncSessionCloseRequest { session_id: session })
+        host.sync_session_close(&owner, &SyncSessionCloseRequest { session_id: session })
             .expect("closes");
     }
 
     #[test]
-    fn duplicate_subscription_ids_are_tenant_owned_and_same_tenant_replaces() {
+    fn duplicate_subscription_ids_are_scope_owned_and_same_scope_replaces() {
         let host = SyncDeliveryHost::new(1);
+        let owner = scope("tenant-a");
+        let other_database = scope_with_database("tenant-a", "database-b");
         let request = BackboneSubscribeRequest {
             subscription_id: 9,
             collections: None,
             from: SubscriptionStart::Live,
         };
-        let (_, old_feed) = host.backbone_subscribe("tenant-a", &request).expect("subscribes");
+        let (_, old_feed) = host.backbone_subscribe(&owner, &request).expect("subscribes");
 
-        let error = host.backbone_subscribe("tenant-b", &request).unwrap_err();
+        let error = host.backbone_subscribe(&other_database, &request).unwrap_err();
         assert!(matches!(error, HostingError::SubscriptionRefused(_)), "{error:?}");
         assert_eq!(host.admin_status().expect("status").subscriptions, 1);
 
-        let (_, new_feed) = host.backbone_subscribe("tenant-a", &request).expect("replaces");
+        let (_, new_feed) = host.backbone_subscribe(&owner, &request).expect("replaces");
         assert_eq!(
             old_feed.recv().expect("replacement notice"),
             TbepNotification::Closed(SubscriptionClosed {
@@ -2367,15 +2408,16 @@ mod tests {
     #[test]
     fn dropped_or_slow_subscription_is_removed_without_blocking_mutations() {
         let host = SyncDeliveryHost::new(1);
+        let scope = scope("tenant-a");
         let setup = host
             .sync_session_setup(
-                "tenant-a",
+                &scope,
                 &SyncSessionSetupRequest { collection: "orders".into(), resume: None },
             )
             .expect("setup");
         let (_, feed) = host
             .backbone_subscribe(
-                "tenant-a",
+                &scope,
                 &BackboneSubscribeRequest {
                     subscription_id: 1,
                     collections: Some(vec!["orders".into()]),
@@ -2384,12 +2426,12 @@ mod tests {
             )
             .expect("subscribes");
         drop(feed);
-        submit(&host, setup.session_id, "dropped", "dropped");
+        submit(&host, &scope, setup.session_id, "dropped", "dropped");
         assert_eq!(host.admin_status().expect("status").subscriptions, 0);
 
         let (_, _slow_feed) = host
             .backbone_subscribe(
-                "tenant-a",
+                &scope,
                 &BackboneSubscribeRequest {
                     subscription_id: 2,
                     collections: Some(vec!["orders".into()]),
@@ -2398,7 +2440,13 @@ mod tests {
             )
             .expect("subscribes");
         for index in 0..(SUBSCRIPTION_QUEUE_BOUND / 2 + 2) {
-            submit(&host, setup.session_id, &format!("slow-{index}"), &format!("slow-{index}"));
+            submit(
+                &host,
+                &scope,
+                setup.session_id,
+                &format!("slow-{index}"),
+                &format!("slow-{index}"),
+            );
         }
         assert_eq!(host.admin_status().expect("status").subscriptions, 0);
     }
@@ -2406,15 +2454,16 @@ mod tests {
     #[test]
     fn shutdown_drains_resources_and_rejects_data_operations() {
         let host = SyncDeliveryHost::new(1);
+        let scope = scope("tenant-a");
         let setup = host
             .sync_session_setup(
-                "tenant-a",
+                &scope,
                 &SyncSessionSetupRequest { collection: "orders".into(), resume: None },
             )
             .expect("setup");
         let _ = host
             .backbone_subscribe(
-                "tenant-a",
+                &scope,
                 &BackboneSubscribeRequest {
                     subscription_id: 3,
                     collections: None,
@@ -2433,7 +2482,7 @@ mod tests {
         assert_eq!(host.admin_status().expect("status").subscriptions, 0);
         let error = host
             .sync_mutation_submit(
-                "tenant-a",
+                &scope,
                 &SyncMutationSubmitRequest {
                     session_id: setup.session_id,
                     document: "d".into(),

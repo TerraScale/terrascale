@@ -45,10 +45,8 @@ use crate::types::{
 
 /// The maximum number of documents one forming batch holds.
 ///
-/// The bound mirrors V1's server-side batch bound: the bulk-insert handler
-/// flushes at 8192 accumulated operations
-/// (`AbstractBulkInsertHandlerProcessor.cs:119-121`, pinned V1 tree). The
-/// engine's per-document limits already bound bytes
+/// The bulk insert path flushes at 8192 accumulated operations. The engine's
+/// per-document limits already bound bytes
 /// (`document_within_limits`), so no second byte bound exists.
 pub const MAX_INGEST_BATCH_DOCUMENTS: usize = 8192;
 
@@ -531,8 +529,7 @@ impl<'engine> IngestStream<'engine> {
         receipt
     }
 
-    /// Stops without consuming the source — V1's `AbortAsync` when nothing
-    /// was stored (`BulkInsertOperation.cs:600-604`): a receipt with zero
+    /// Stops without consuming the source and returns a receipt with zero
     /// counts and no claim.
     #[must_use]
     pub fn abort(self) -> IngestReceipt {

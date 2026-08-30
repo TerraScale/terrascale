@@ -21,13 +21,10 @@
 //! commits the pass itself is recorded as a proposed collision action, not
 //! made.
 //!
-//! V1 semantics mirrored (pinned commit `fa99b925`, citations in the packet
-//! record): an elapsed `@expires` deletes the document
-//! (`ExpirationStorage.cs:22-42`); a due `@refresh` removes the marker and
-//! leaves `@expires` untouched (`RefreshStorage.cs:24-57`); a due archive
-//! time marks the document archived (`DataArchivalStorage.cs:22-47`); a
-//! record whose document is gone is dropped from the work queue
-//! (`DocumentBackgroundWorkStorage.cs:13-24`).
+//! An elapsed `@expires` deletes the document. A due `@refresh` removes the
+//! marker and leaves `@expires` untouched. A due archive time marks the
+//! document archived. A record whose document is gone is dropped from the
+//! work queue.
 //!
 //! What this module does **not** do: it does not commit, does not run on a
 //! timer, does not hide *archived* documents from any read (V1 keeps
@@ -443,8 +440,7 @@ impl<'engine> FamilyStore<'engine> {
                     };
                     let record = decode_lifecycle_record(&value)?;
                     if records.user_document(&owner)?.is_none() {
-                        // V1 drops queue entries whose document is gone
-                        // (DocumentBackgroundWorkStorage.cs:13-24).
+                        // Drop queue entries whose document is gone.
                         push_unique(&mut pass.stale_records, owner);
                         continue;
                     }
@@ -517,11 +513,10 @@ impl<'engine> FamilyStore<'engine> {
         // record clear, family tombstone — inside the driver's single
         // transaction, so no intermediate state is observable.
         let deleted = stage_expiry_deletions(transaction, &pass.deletions, &mut skipped)?;
-        // Refresh consumption: the due marker is removed and the expiry is
-        // left untouched (V1 RefreshStorage.cs:31-42).
+        // Refresh consumption removes the due marker and leaves expiry intact.
         let refreshed = stage_refresh_consumption(transaction, &pass.refreshes, &mut skipped)?;
         // Archival schedule materialization (decision D3 in the packet
-        // record) and archival marks (V1 DataArchivalStorage.cs:35-44).
+        // record) and archival marks.
         let scheduled = stage_archival_schedules(transaction, &pass.schedules, &mut skipped)?;
         let archived = stage_archival_marks(transaction, &pass.archival, &mut skipped)?;
         // Stale cleanup: the owner is still gone, so the family records
@@ -615,8 +610,7 @@ fn stage_expiry_deletions(
             skipped.push(document.clone());
             continue;
         };
-        // V1 re-verifies the expiry inside the deleting command
-        // (ExpirationStorage.cs:29-35); the transaction's view is the
+        // Re-verify expiry inside the deleting transaction. Its view is the
         // authority, not the plan.
         if !record.is_expired(now) {
             skipped.push(document.clone());
@@ -645,7 +639,7 @@ fn stage_expiry_deletions(
 }
 
 /// Stages the planned refresh consumptions: the due marker is removed and
-/// the expiry is left untouched (V1 RefreshStorage.cs:31-42).
+/// the expiry is left untouched.
 fn stage_refresh_consumption(
     transaction: &mut Transaction<'_>,
     documents: &[DocumentId],
@@ -711,9 +705,7 @@ fn stage_archival_schedules(
     Ok(scheduled)
 }
 
-/// Stages the planned archival marks: a due schedule archives the document
-/// (V1 DataArchivalStorage.cs:35-44 sets the archived state at the due
-/// time).
+/// Stages the planned archival marks. A due schedule archives the document.
 fn stage_archival_marks(
     transaction: &mut Transaction<'_>,
     documents: &[DocumentId],

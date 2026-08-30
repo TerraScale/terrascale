@@ -249,10 +249,8 @@ impl AddOrPatch {
 
 /// The outcome of one applied patch.
 ///
-/// The V1 status set this maps is `Patched`/`Created`/`NotModified`
-/// (`PatchResult.cs`); V1's `Skipped` and `DocumentDoesNotExist` statuses
-/// become typed refusals instead, because a write path that reports success
-/// while silently changing nothing is the shape the typed seam refuses.
+/// Missing documents and invalid patch targets become typed refusals. A write
+/// path never reports success while silently refusing its target.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PatchOutcome {
     /// The patch applied and the document changed.
@@ -554,10 +552,9 @@ pub fn apply_document_patch(
 /// [`ExpectedVersion::New`] — it is a create — and reports
 /// [`PatchOutcome::Created`]; the present leg is
 /// [`apply_document_patch`] under the caller's expectation. The create
-/// document must carry exactly the addressed collection and id: V1's
+/// document must carry exactly the addressed collection and identity. The
 /// create-if-missing path stores the create value under the command's
-/// addressed key (`PatchDocumentCommand.cs:186` puts `id` with the create
-/// body), never at an identity the value itself names, so a compound
+/// addressed key, never at an identity the value itself names, so a compound
 /// whose create document retargets the write is refused as malformed
 /// rather than silently writing to the unaddressed target.
 ///

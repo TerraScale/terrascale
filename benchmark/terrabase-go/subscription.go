@@ -48,12 +48,12 @@ func (e Event) ClosedEvent() (Closed, bool) {
 	return *e.closed, true
 }
 
-func eventFrom(frame *v1.BackboneStreamEvent) (Event, error) {
+func eventFrom(frame *v1.SubscribeResponse) (Event, error) {
 	if frame == nil {
 		return Event{}, contractError("the engine sent a nil subscription frame")
 	}
 	switch typed := frame.GetEvent().(type) {
-	case *v1.BackboneStreamEvent_Subscribed:
+	case *v1.SubscribeResponse_Subscribed:
 		if typed.Subscribed == nil {
 			return Event{}, contractError("the engine sent an empty subscription confirmation")
 		}
@@ -61,7 +61,7 @@ func eventFrom(frame *v1.BackboneStreamEvent) (Event, error) {
 			SubscriptionID: typed.Subscribed.GetSubscriptionId(),
 			StartSequence:  typed.Subscribed.GetStartSequence(),
 		}}, nil
-	case *v1.BackboneStreamEvent_Batch:
+	case *v1.SubscribeResponse_Batch:
 		if typed.Batch == nil || len(typed.Batch.GetEvents()) > maxBatchItems || typed.Batch.GetNextSequence() < typed.Batch.GetFromSequence() {
 			return Event{}, contractError("the engine sent an invalid subscription batch")
 		}
@@ -101,7 +101,7 @@ func eventFrom(frame *v1.BackboneStreamEvent) (Event, error) {
 			previous = change.GetSequence()
 		}
 		return Event{batch: &batch}, nil
-	case *v1.BackboneStreamEvent_Trigger:
+	case *v1.SubscribeResponse_Trigger:
 		if typed.Trigger == nil {
 			return Event{}, contractError("the engine sent an empty subscription trigger")
 		}
@@ -117,7 +117,7 @@ func eventFrom(frame *v1.BackboneStreamEvent) (Event, error) {
 			Sequence:       typed.Trigger.GetSequence(),
 			OperationID:    typed.Trigger.GetOperationId(),
 		}}, nil
-	case *v1.BackboneStreamEvent_Closed:
+	case *v1.SubscribeResponse_Closed:
 		if typed.Closed == nil {
 			return Event{}, contractError("the engine sent an empty subscription close frame")
 		}
@@ -169,7 +169,7 @@ func (c *Client) Subscribe(ctx context.Context, subscriptionID uint64, collectio
 		return nil, err
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
-	stream, err := c.backbone.Subscribe(streamCtx, &v1.BackboneSubscribeRequest{
+	stream, err := c.backbone.Subscribe(streamCtx, &v1.BackboneServiceSubscribeRequest{
 		SubscriptionId: subscriptionID,
 		Collections:    collections,
 		From:           from.proto(),
@@ -261,7 +261,7 @@ func (c *Client) backboneAcknowledge(ctx context.Context, subscriptionID, throug
 	if err != nil {
 		return 0, err
 	}
-	response, err := c.backbone.Acknowledge(ctx, &v1.BackboneAcknowledgeRequest{
+	response, err := c.backbone.Acknowledge(ctx, &v1.BackboneServiceAcknowledgeRequest{
 		SubscriptionId:  subscriptionID,
 		ThroughSequence: throughSequence,
 	})
@@ -280,7 +280,7 @@ func (c *Client) backboneUnsubscribe(ctx context.Context, subscriptionID uint64)
 	if err != nil {
 		return err
 	}
-	response, err := c.backbone.Unsubscribe(ctx, &v1.BackboneUnsubscribeRequest{SubscriptionId: subscriptionID})
+	response, err := c.backbone.Unsubscribe(ctx, &v1.BackboneServiceUnsubscribeRequest{SubscriptionId: subscriptionID})
 	if err != nil {
 		return interpret(err)
 	}

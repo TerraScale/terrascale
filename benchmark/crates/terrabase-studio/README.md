@@ -79,10 +79,10 @@ removal is `data: mode remove`.
 Pages use official attributes such as `data-signals`, `data-on:submit`,
 `data-on:click`, `data-init`, and `data-text`. Each full page gets a fresh CSP
 nonce from the operating system. Datastar uses that nonce for attribute
-expressions. The CSP keeps `unsafe-eval` only because Monaco's vendored AMD
-loader requires it; scripts can load only from the Studio itself. The Overview
-and Metrics pages each open one long-lived `/events/metrics` connection, and
-the server pushes a refreshed panel on its own cadence.
+expressions. The CSP permits scripts only from the Studio itself or with that
+response's nonce; it permits neither `unsafe-inline` nor `unsafe-eval`. The
+Overview and Metrics pages each open one long-lived `/events/metrics`
+connection, and the server pushes a refreshed panel on its own cadence.
 
 ## Styling
 

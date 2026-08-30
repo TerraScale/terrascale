@@ -190,6 +190,8 @@ impl ErrorCode {
 /// The generated `acknowledgement` closed vocabulary.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Acknowledgement {
+    /// The `local_synced` row (code 4), durable on this standalone engine.
+    LocalSynced,
     /// The `regional_quorum` row (code 1).
     RegionalQuorum,
     /// The `global_quorum` row (code 2).
@@ -203,6 +205,7 @@ impl Acknowledgement {
     #[must_use]
     pub const fn code(self) -> u8 {
         match self {
+            Self::LocalSynced => 4,
             Self::RegionalQuorum => 1,
             Self::GlobalQuorum => 2,
             Self::BackupAck => 3,
@@ -216,6 +219,7 @@ impl Acknowledgement {
     #[must_use]
     pub const fn from_code(code: u8) -> Option<Self> {
         match code {
+            4 => Some(Self::LocalSynced),
             1 => Some(Self::RegionalQuorum),
             2 => Some(Self::GlobalQuorum),
             3 => Some(Self::BackupAck),

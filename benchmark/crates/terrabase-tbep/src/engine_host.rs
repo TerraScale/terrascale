@@ -232,6 +232,7 @@ fn tier_error(error: terrabase::tiers::TierAdminError) -> HostingError {
 /// caller cannot accidentally turn a local sync into a quorum claim.
 fn standalone_ack_refusal(ack: crate::registry::Acknowledgement) -> Result<(), HostingError> {
     let requested = match ack {
+        crate::registry::Acknowledgement::LocalSynced => return Ok(()),
         crate::registry::Acknowledgement::RegionalQuorum => "regional_quorum",
         crate::registry::Acknowledgement::GlobalQuorum => "global_quorum",
         crate::registry::Acknowledgement::BackupAck => "backup_ack",
@@ -513,9 +514,9 @@ impl EngineHost {
     ) -> Result<WriteOutcome, HostingError> {
         // This host owns one local Engine only. Its local `Synced` commit
         // cannot prove the protocol's RF=2 regional quorum, a quorum across
-        // two regions, or a backup acknowledgement. The registry has no
-        // local-synced acknowledgement variant, so reject before opening a
-        // transaction rather than returning a false durability claim.
+        // two regions, or a backup acknowledgement. Reject those before
+        // opening a transaction rather than returning a false durability
+        // claim; local-synced is the only honest standalone result.
         standalone_ack_refusal(ack)?;
 
         // The envelope's idempotency key is the operation identity:
@@ -629,7 +630,7 @@ impl TbepHost for EngineHost {
                     )
                     .map_err(|_| HostingError::Refused("the document was not admissible".into()))
             },
-            request.ack.unwrap_or(crate::registry::Acknowledgement::RegionalQuorum),
+            request.ack.unwrap_or(crate::registry::Acknowledgement::LocalSynced),
             idempotency_key,
             request.usage.as_ref(),
         )?;
@@ -681,7 +682,7 @@ impl TbepHost for EngineHost {
                     .delete(document.clone(), expected)
                     .map_err(|_| HostingError::Refused("the document was not admissible".into()))
             },
-            request.ack.unwrap_or(crate::registry::Acknowledgement::RegionalQuorum),
+            request.ack.unwrap_or(crate::registry::Acknowledgement::LocalSynced),
             idempotency_key,
             request.usage.as_ref(),
         )?;

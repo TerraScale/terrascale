@@ -29,11 +29,8 @@
 //!   implemented in the store's read path; this module changes no read
 //!   behavior.
 //!
-//! The drive order is V1's: rollups, then retention
-//! (`TimeSeriesPolicyRunner.DoWork`,
-//! `src/TerraBase.Server/Documents/TimeSeries/TimeSeriesPolicyRunner.cs:101-103`
-//! in the pinned V1 tree), so the retention half sees every complete
-//! window already aggregated.
+//! The drive order is rollups, then retention, so the retention half sees
+//! every complete window already aggregated.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};

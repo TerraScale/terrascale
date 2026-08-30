@@ -131,14 +131,14 @@ const (
 	UsageRecordPublicEgressBytes
 )
 
-func (meter UsageRecordMeter) proto() (v1.UsageRecordMeter, bool) {
+func (meter UsageRecordMeter) proto() (v1.UsageServiceRecordMeter, bool) {
 	switch meter {
 	case UsageRecordAdmittedRequestUnits:
-		return v1.UsageRecordMeter_USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS, true
+		return v1.UsageServiceRecordMeter_USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS, true
 	case UsageRecordPublicEgressBytes:
-		return v1.UsageRecordMeter_USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES, true
+		return v1.UsageServiceRecordMeter_USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES, true
 	default:
-		return v1.UsageRecordMeter_USAGE_RECORD_METER_UNSPECIFIED, false
+		return v1.UsageServiceRecordMeter_USAGE_RECORD_METER_UNSPECIFIED, false
 	}
 }
 
@@ -217,7 +217,7 @@ func (c *Client) UsageRecord(ctx context.Context, input UsageRecordInput) (Usage
 	if err != nil {
 		return UsageRecordReceipt{}, err
 	}
-	response, err := c.usage.Record(ctx, &v1.UsageRecordRequest{
+	response, err := c.usage.Record(ctx, &v1.UsageServiceRecordRequest{
 		Meter:            meter,
 		Project:          input.Project,
 		Database:         input.Database,
@@ -304,8 +304,8 @@ type UsageWindow struct {
 	EndMillis   uint64
 }
 
-// UsageExportRequest selects one page of a stable tenant-bound snapshot.
-type UsageExportRequest struct {
+// UsageServiceExportRequest selects one page of a stable tenant-bound snapshot.
+type UsageServiceExportRequest struct {
 	Window       *UsageWindow
 	PageSize     uint32
 	Continuation []byte
@@ -320,14 +320,14 @@ type UsagePage struct {
 
 // UsageExport reads one page of authoritative usage facts. Existing
 // continuation bytes are copied and treated as opaque.
-func (c *Client) UsageExport(ctx context.Context, request UsageExportRequest) (UsagePage, error) {
+func (c *Client) UsageExport(ctx context.Context, request UsageServiceExportRequest) (UsagePage, error) {
 	if request.PageSize == 0 || request.PageSize > maxUsageFacts {
 		return UsagePage{}, localError("the usage page size must be 1..=%d", maxUsageFacts)
 	}
 	if len(request.Continuation) > maxUsageContinuationBytes {
 		return UsagePage{}, localError("the usage continuation exceeds %d bytes", maxUsageContinuationBytes)
 	}
-	wire := &v1.UsageExportRequest{
+	wire := &v1.UsageServiceExportRequest{
 		PageSize:     request.PageSize,
 		Continuation: append([]byte(nil), request.Continuation...),
 	}
@@ -350,7 +350,7 @@ func (c *Client) UsageExport(ctx context.Context, request UsageExportRequest) (U
 	return c.usagePageFrom(response, request.PageSize)
 }
 
-func (c *Client) usagePageFrom(response *v1.UsageExportResponse, pageSize uint32) (UsagePage, error) {
+func (c *Client) usagePageFrom(response *v1.UsageServiceExportResponse, pageSize uint32) (UsagePage, error) {
 	if response == nil || len(response.GetFacts()) > maxUsageFacts || len(response.GetFacts()) > int(pageSize) {
 		return UsagePage{}, contractError("the engine returned an invalid usage page size")
 	}

@@ -1766,6 +1766,8 @@ struct DeletionRequestForm {
     tenant: String,
     subject: String,
     regions: String,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn deletion_request(
@@ -1774,6 +1776,12 @@ async fn deletion_request(
 ) -> Response {
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            form.request_id.trim(),
+            "request deletion",
+        )?;
         let workflow = backups::workflow_from_parts(
             &form.request_id,
             &form.tenant,
@@ -1801,13 +1809,13 @@ async fn deletion_request(
 #[derive(Deserialize)]
 struct DeletionTargetForm {
     request_id: String,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 #[derive(Deserialize)]
-struct DeletionCompleteForm {
+struct DeletionHoldForm {
     request_id: String,
-    confirm_target: String,
-    confirm_phrase: String,
 }
 
 async fn deletion_admit(
@@ -1816,6 +1824,12 @@ async fn deletion_admit(
 ) -> Response {
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            form.request_id.trim(),
+            "admit deletion",
+        )?;
         with_workflow(state, &form.request_id, |workflow| {
             backups::admit_workflow(workflow, now_millis())
         })
@@ -1830,6 +1844,12 @@ async fn deletion_receipt(
 ) -> Response {
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            form.request_id.trim(),
+            "record deletion receipt",
+        )?;
         with_workflow(state, &form.request_id, |workflow| {
             backups::record_receipt(workflow, now_millis())
         })
@@ -1840,7 +1860,7 @@ async fn deletion_receipt(
 
 async fn deletion_hold(
     State(state): State<Arc<StudioState>>,
-    Form(form): Form<DeletionTargetForm>,
+    Form(form): Form<DeletionHoldForm>,
 ) -> Response {
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
@@ -1856,6 +1876,12 @@ async fn deletion_end_hold(
 ) -> Response {
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            form.request_id.trim(),
+            "end deletion hold",
+        )?;
         with_workflow(state, &form.request_id, |workflow| backups::end_hold(workflow, now_millis()))
     })
     .await;
@@ -1868,6 +1894,12 @@ async fn deletion_verify(
 ) -> Response {
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            form.request_id.trim(),
+            "verify deletion",
+        )?;
         with_workflow(state, &form.request_id, |workflow| {
             backups::verify_workflow(workflow, now_millis())
         })
@@ -1878,7 +1910,7 @@ async fn deletion_verify(
 
 async fn deletion_complete(
     State(state): State<Arc<StudioState>>,
-    Form(form): Form<DeletionCompleteForm>,
+    Form(form): Form<DeletionTargetForm>,
 ) -> Response {
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {

@@ -52,21 +52,21 @@ func (ack Acknowledgement) valid() bool { return ack <= AckBackup }
 func (ack Acknowledgement) proto() v1.Acknowledgement {
 	switch ack {
 	case AckGlobalQuorum:
-		return v1.Acknowledgement_ACK_GLOBAL_QUORUM
+		return v1.Acknowledgement_ACKNOWLEDGEMENT_GLOBAL_QUORUM
 	case AckBackup:
-		return v1.Acknowledgement_ACK_BACKUP
+		return v1.Acknowledgement_ACKNOWLEDGEMENT_BACKUP
 	default:
-		return v1.Acknowledgement_ACK_REGIONAL_QUORUM
+		return v1.Acknowledgement_ACKNOWLEDGEMENT_REGIONAL_QUORUM
 	}
 }
 
 func acknowledgementFrom(ack v1.Acknowledgement) (Acknowledgement, bool) {
 	switch ack {
-	case v1.Acknowledgement_ACK_REGIONAL_QUORUM:
+	case v1.Acknowledgement_ACKNOWLEDGEMENT_REGIONAL_QUORUM:
 		return AckRegionalQuorum, true
-	case v1.Acknowledgement_ACK_GLOBAL_QUORUM:
+	case v1.Acknowledgement_ACKNOWLEDGEMENT_GLOBAL_QUORUM:
 		return AckGlobalQuorum, true
-	case v1.Acknowledgement_ACK_BACKUP:
+	case v1.Acknowledgement_ACKNOWLEDGEMENT_BACKUP:
 		return AckBackup, true
 	default:
 		return 0, false
@@ -85,11 +85,11 @@ const (
 
 func backupOutcomeFrom(outcome v1.BackupOutcome) (BackupOutcome, bool) {
 	switch outcome {
-	case v1.BackupOutcome_BACKUP_NONE:
+	case v1.BackupOutcome_BACKUP_OUTCOME_NONE:
 		return BackupNone, true
-	case v1.BackupOutcome_BACKUP_FULL:
+	case v1.BackupOutcome_BACKUP_OUTCOME_FULL:
 		return BackupFull, true
-	case v1.BackupOutcome_BACKUP_PARTIAL:
+	case v1.BackupOutcome_BACKUP_OUTCOME_PARTIAL:
 		return BackupPartial, true
 	default:
 		return 0, false

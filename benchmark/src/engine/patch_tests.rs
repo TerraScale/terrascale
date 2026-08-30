@@ -961,10 +961,8 @@ fn add_or_patch_refuses_a_create_document_that_retargets_the_write() {
     let engine = seeded_engine("aop-retarget");
 
     // A compound addressed at users/2 whose create document carries a
-    // different id: V1's create path stores under the command's key
-    // (`PatchDocumentCommand.cs:186` puts `id`, the addressed key, with the
-    // create value as the body), so the typed seam refuses instead of
-    // silently writing to the unaddressed target.
+    // different identity must refuse instead of writing to an unaddressed
+    // target.
     let scope = tenant_scope(&engine, "t");
     let snapshot = engine.read_snapshot(&scope).expect("snapshot");
     let mut transaction = engine.begin(&scope, snapshot, operation("aop-1")).expect("begins");

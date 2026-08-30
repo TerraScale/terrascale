@@ -659,12 +659,8 @@ fn store_then_delete_in_one_session_does_not_resurrect_on_a_later_save() {
 }
 
 #[test]
-fn delete_then_store_commits_the_put_an_accepted_difference_from_v1() {
-    // V2 subsumes (last-command-wins) where V1 refuses this sequence with
-    // InvalidOperationException (InMemoryDocumentSessionOperations.cs:847-848);
-    // the accepted difference is dispositioned in session-contract.md R3 and
-    // the WS-PARITY proposals (PB-2008/PB-2009). See the contract for the
-    // outcome-equivalence rationale.
+fn delete_then_store_commits_the_put_with_last_command_wins() {
+    // The session uses last-command-wins for a delete followed by a store.
     let (dir, engine) = open_engine("delete-store-batch");
     commit_document(&engine, "tenant-a", "users", "u1", text("v1"));
     let mut session = open_session(&engine, "tenant-a");

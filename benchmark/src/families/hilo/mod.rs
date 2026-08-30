@@ -41,12 +41,10 @@ use crate::families::{
 };
 use crate::types::{Cancellation, Deadline, OperationId, TenantScope};
 
-/// V1's minimum block capacity: `CalculateCapacity` never returns less
-/// (`HiLoHandlerProcessorForGetNextHiLo.cs:71`, `:77`, `:82`, `:85`).
+/// The minimum block capacity.
 pub const MIN_BLOCK_SIZE: u64 = 32;
 
-/// V1's maximum block capacity: the fast-window doubling is capped at
-/// 1 Mi (`HiLoHandlerProcessorForGetNextHiLo.cs:77`).
+/// The maximum block capacity. Fast-window doubling is capped at 1 Mi.
 pub const MAX_BLOCK_SIZE: u64 = 1024 * 1024;
 
 /// The identity ceiling: the representable maximum of one identity name

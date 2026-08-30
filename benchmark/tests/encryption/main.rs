@@ -448,7 +448,10 @@ fn local_file_key_rejects_broad_permissions() {
     let provider = LocalFileKeyProvider::at_engine_location(&directory);
     drop(provider.load_or_create().unwrap());
     std::fs::set_permissions(provider.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(matches!(provider.load_or_create(), Err(EncryptionError::UnsafeLocalKeyFile)));
+    assert!(matches!(
+        provider.load_or_create(),
+        Err(EncryptionError::UnsafeLocalKeyFile)
+    ));
 
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -464,10 +467,7 @@ fn local_file_key_rejects_symlink() {
     let target = directory.join("target.key");
     std::fs::write(&target, [0u8; 32]).unwrap();
     symlink(&target, provider.path()).unwrap();
-    assert!(matches!(
-        provider.load_or_create(),
-        Err(EncryptionError::UnsafeLocalKeyFile)
-    ));
+    assert!(matches!(provider.load_or_create(), Err(EncryptionError::UnsafeLocalKeyFile)));
     std::fs::remove_dir_all(directory).unwrap();
 }
 

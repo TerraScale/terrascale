@@ -39,10 +39,8 @@ fn options_build_fluently_and_report_their_selection() {
 }
 
 #[test]
-fn change_kind_carries_the_v1_change_type_vocabulary() {
-    // V1 DocumentsChanges.ChangeType is an eight-value closed set
-    // (Session/DocumentsChanges.cs, pinned sweep fa99b925): the V2 enum
-    // names exactly those cases. Pinning the rendered names fails when a
+fn change_kind_carries_the_closed_change_type_vocabulary() {
+    // The enum has eight closed cases. Pinning the rendered names fails when a
     // variant is renamed, dropped, or added to the public set.
     let vocabulary = [
         FieldChangeKind::DocumentDeleted,

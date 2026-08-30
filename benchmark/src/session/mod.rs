@@ -596,10 +596,8 @@ impl<'engine> Session<'engine> {
         self.put(collection, id, value, ExpectedVersion::New)
     }
 
-    /// Stages one put with an explicit expected version — V1
-    /// `Store(entity, changeVector, id)`, which sets the change vector and
-    /// forces the concurrency check (`InMemoryDocumentSessionOperations.cs:
-    /// 818-829`). The staged expectation is last-write-wins session state:
+    /// Stages one put with an explicit expected version and forces the
+    /// concurrency check. The staged expectation is last-write-wins session state:
     /// a later `store` or `store_checked` on the same key replaces it, and
     /// a successful save consumes it (the re-based document saves unchecked
     /// again until a new checked store).
@@ -707,10 +705,9 @@ impl<'engine> Session<'engine> {
     ) -> Result<(), SessionError> {
         self.require_tracking()?;
         let key = (collection, id);
-        // V1's Delete replaces an earlier Store: the id leaves the identity
-        // map and registers known-missing, so a pending put never reaches
-        // the batch and cannot resurrect on a later save
-        // (`InMemoryDocumentSessionOperations.cs:730-763`).
+        // Delete replaces an earlier store. The identity leaves the map and
+        // registers known-missing, so a pending put cannot reach the batch or
+        // resurrect on a later save.
         self.pending_puts.remove(&key);
         self.known_missing.insert(key.clone());
         self.pending_deletes.insert(key, expected);

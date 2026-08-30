@@ -308,11 +308,11 @@ pub fn restore_target(text: &str) -> Result<PathBuf, String> {
 fn deletion_card(state: &StudioState) -> String {
     let body = format!(
         "<form class=\"grid gap-4 sm:grid-cols-4 items-end\" data-on:submit=\"@post('/deletion/request', {{contentType: 'form', retry: 'never'}})\">\n\
-{request_id}{tenant}{subject}{regions}\
+{request_id}{tenant}{subject}{regions}{confirmation}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Open a deletion request</button>\n\
 </form>\n\
 <div id=\"{DELETION_ID}\" class=\"mt-4\">{state_fragment}</div>",
-        request_id = html::text_input("request_id", "Request id", "", "del-1"),
+        request_id = html::text_input("request_id", "Request id", "del-1", "del-1"),
         tenant = html::text_input(
             "tenant",
             "Tenant",
@@ -321,6 +321,7 @@ fn deletion_card(state: &StudioState) -> String {
         ),
         subject = html::text_input("subject", "Subject id", "", "subject-7"),
         regions = html::text_input("regions", "Regions (comma-separated)", "gru, sfo", "gru, sfo"),
+        confirmation = html::confirmation_fields("del-1", "request deletion"),
         primary = ButtonStyle::Primary.classes(),
         DELETION_ID = DELETION_ID,
         state_fragment = deletion_fragment(state),
@@ -360,9 +361,11 @@ fn render_workflow(workflow: &DeletionWorkflow) -> String {
         rows.push_str(&html::cell_raw(&format!(
             "<form data-on:submit=\"@post('/deletion/receipt', {{contentType: 'form', retry: 'never'}})\">\
 <input type=\"hidden\" name=\"request_id\" value=\"{id}\">\
+{confirmation}\
 <button type=\"submit\" class=\"text-sm text-muted-foreground hover:text-foreground underline\">record receipt</button>\
 </form>",
             id = html::attribute(id),
+            confirmation = html::confirmation_fields(id, "record deletion receipt"),
         )));
         rows.push_str("</tr>");
     }
@@ -407,25 +410,19 @@ fn render_workflow(workflow: &DeletionWorkflow) -> String {
 }
 
 fn action_button(id: &str, label: &str, path: &str, style: ButtonStyle) -> String {
-    let confirmation = match path {
-        "/deletion/complete" => "",
-        "/deletion/end-hold" => {
-            "if (!confirm('End the legal hold on this deletion workflow?')) return; "
-        }
-        _ => "",
-    };
-    let typed_confirmation = if path == "/deletion/complete" {
-        html::confirmation_fields(id, "complete deletion")
-    } else {
-        String::new()
+    let typed_confirmation = match path {
+        "/deletion/admit" => html::confirmation_fields(id, "admit deletion"),
+        "/deletion/verify" => html::confirmation_fields(id, "verify deletion"),
+        "/deletion/end-hold" => html::confirmation_fields(id, "end deletion hold"),
+        "/deletion/complete" => html::confirmation_fields(id, "complete deletion"),
+        _ => String::new(),
     };
     format!(
-        "<form data-on:submit=\"{confirmation}@post('{path}', {{contentType: 'form', retry: 'never'}})\">\
+        "<form data-on:submit=\"@post('{path}', {{contentType: 'form', retry: 'never'}})\">\
 <input type=\"hidden\" name=\"request_id\" value=\"{id}\">\
 {typed_confirmation}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {classes}\">{label}</button>\
 </form>",
-        confirmation = confirmation,
         path = path,
         id = html::attribute(id),
         classes = style.classes(),

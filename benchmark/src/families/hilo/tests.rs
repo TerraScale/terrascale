@@ -124,12 +124,10 @@ fn allocate(
 }
 
 #[test]
-fn block_size_bounds_match_v1_floor_and_ceiling() {
-    // V1's server never returns a capacity below 32 or above 1 Mi
-    // (CalculateCapacity, HiLoHandlerProcessorForGetNextHiLo.cs:68-86);
-    // the distributor refuses sizes outside those bounds.
-    assert_eq!(MIN_BLOCK_SIZE, 32, "the floor is V1's floor");
-    assert_eq!(MAX_BLOCK_SIZE, 1024 * 1024, "the ceiling is V1's ceiling");
+fn block_size_bounds_match_the_documented_floor_and_ceiling() {
+    // The distributor refuses capacities below 32 or above 1 Mi.
+    assert_eq!(MIN_BLOCK_SIZE, 32, "the documented floor");
+    assert_eq!(MAX_BLOCK_SIZE, 1024 * 1024, "the documented ceiling");
 
     assert!(matches!(
         HiLoDistributor::try_new("orders".to_owned(), MIN_BLOCK_SIZE - 1),
