@@ -1,15 +1,17 @@
 # TerraBase rename compatibility
 
-Status: canonical Cargo cutover active. This document records identifiers; it
-does not activate a new persisted or protocol format.
+Status: canonical Cargo cutover complete (2026-08-30). The N-1
+dependency-alias window is closed: every consumer declares the canonical
+`terrabase` package. This document records identifiers; it does not activate
+a new persisted or protocol format.
 
 ## Canonical naming
 
 The product, root Cargo package, library target, and workspace dependency key
-are named `TerraBase` and `terrabase`. N-1 external Rust consumers may keep
-source compatibility by declaring `terrabase_v2 = { package = "terrabase", ... }`
-locally; Cargo then exposes the canonical package under their old dependency
-key without retaining an old target in this repository.
+are named `TerraBase` and `terrabase`, and no other dependency key is
+accepted. The closed N-1 window previously allowed external Rust consumers
+to declare a local alias for the canonical package; that alias no longer
+resolves in this repository's manifests.
 
 ## Identifiers that do not change with branding
 
@@ -54,8 +56,12 @@ the generator cutover does not reject an identity recorded before the rename.
 
 ## Identifiers already independent of the old product name
 
-TBEP keeps the `TBEP` FlatBuffers file identifier and its assigned field and
-union numbers. Public sync keeps `terrascale.sync.v2.msgpack`, numeric message
+TBEP's wire contract is the generated protobuf/gRPC schema of ADR 0028
+(`crates/terrabase-tbep/proto/terrabase/v1/engine.proto`); the retired
+FlatBuffers file identifier and its field and union numbers left with the
+retired framing, and only the golden vectors under
+`crates/terrabase-tbep/vectors/` still record that history. Public sync
+keeps `terrascale.sync.v2.msgpack`, numeric message
 tags, and `TSN` and `TSS` native payload magics. LSM segment magics use the
 `TBLSM*` family. Usage and deletion checksums use versioned `terrascale.*`
 domains. Their meanings are protocol contracts, so the product rename does not

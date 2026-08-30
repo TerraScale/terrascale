@@ -35,7 +35,7 @@ the workspace owner's 2026-08-29 direction. They are not open design questions.
 | --- | --- |
 | Implementation language | This repository uses Rust only. `AGENTS.md` is a hard rule. |
 | Engine | TerraBase owns storage, WAL, compaction, indexing, query execution, causality, CRDT merge, replication, repair, membership acceptance, backup, restore, deletion, reactive view semantics, and authoritative usage facts. |
-| Private protocol | Private TBEP uses generated FlatBuffers over authenticated QUIC. MessagePack-based private adapters are migration input and block production until replaced. |
+| Private protocol | Private TBEP is the generated protobuf/gRPC contract of ADR 0028 (`crates/terrabase-tbep/proto/terrabase/v1/engine.proto`), served by tonic over TLS/UDS. The retired MessagePack and FlatBuffers framings (and their generators) are migration input and block production until every consumer cutover is proven. |
 | Public reactive protocol | TerraBase supplies the reference semantics and corpus for the bounded public reactive result-view contract. |
 | Durability | `GlobalDurable` fails closed for fewer than two active Regions. No local or single-Region acknowledgement may be presented as Region-loss RPO 0. |
 | Performance evidence | The `TerraBase.Benchmark` repository was deleted 2026-08-30 by owner decision; its full history is archived at `~/Projects/TerraScale-archive/TerraBase.Benchmark-2026-08-30.bundle`. No decision-grade performance baseline exists, and benchmark capability must be re-owned before PRG-P1-05 can close. Performance evidence never authorizes deployment and cannot turn an invalid, failed, safe, or synthetic run into a performance claim. |
@@ -75,7 +75,7 @@ architecture qualification, and production receipts.
 
 | ID | Priority | Gap | Completion evidence |
 | --- | --- | --- | --- |
-| PRG-P0-03 | P0 | Finish private FlatBuffers generation for TBEP. | Pinned generator, Rust/C# bindings, schema digest, valid/error/hostile vectors, live QUIC interchange, and rollback evidence. |
+| PRG-P0-03 | P0 | Finish the private TBEP gRPC contract (ADR 0028). | Pinned protobuf schema as the single contract source, Rust serving + Go client bindings, schema digest, valid/error/hostile vectors, live TLS/UDS interchange, and rollback evidence. |
 | PRG-P0-07 | P0 | Complete TerraBase durable operations and release invariants. | ULID operation identities, resumable journals, storage/recovery, deletion, backup/restore, membership, replication, repair, and model-check receipts. |
 | PRG-P1-03 | P1 | Qualify the GRU, SFO, and FRA engine topology. | RF=2 TerraBase placement, independent failure domains, Member and Region loss, and recovery receipts. |
 | PRG-P1-05 | P1 | Establish decision-grade performance and isolation evidence. | Approved benchmark policy and baseline, noisy-tenant budgets, workload-family coverage, architecture results, capacity, cost, and regression reports. |
@@ -88,7 +88,7 @@ status appear green.
 
 | Stream | Work that can proceed in parallel | Required handoff |
 | --- | --- | --- |
-| A. Contracts and generation | Private TBEP FlatBuffers schemas, generation, errors, limits, compatibility, and drift tooling | Versioned schemas, digests, vectors, and activation rules |
+| A. Contracts and generation | Private TBEP protobuf schemas, generation, errors, limits, compatibility, and drift tooling | Versioned schemas, digests, vectors, and activation rules |
 | B. Engine correctness | Storage, durable operations, replication, membership, repair, deletion, backup/restore, sharding, and model checks | Typed operation and failure receipts to consuming services |
 
 ## Dependency waves

@@ -53,5 +53,5 @@ status_note = "Native storage, engine, query, automatic index, replication, sync
 license_gate = "pending-before-release"
 canonical_product_name = "TerraBase"
 canonical_package_name = "terrabase"
-previous_crate_name = "terrabase_v2"
-source_compatibility = "N-1 consumers may alias package terrabase as dependency key terrabase_v2"
+rename_cutover_completed = "2026-08-30"
+source_compatibility = "canonical package name only; the previous dependency-alias window closed 2026-08-30"

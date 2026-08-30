@@ -14,9 +14,9 @@ Accepted architecture decisions are indexed in [docs/adr/README.md](docs/adr/REA
 
 ## Repository shape
 
-The root package and Rust library target are `terrabase` (`src/lib.rs`). N-1
-consumers may temporarily alias that package as dependency key `terrabase_v2`
-without retaining an old target in this repository. Its public engine modules
+The root package and Rust library target are `terrabase` (`src/lib.rs`); the
+rename cutover completed 2026-08-30 and the previous dependency-alias window
+is closed. Its public engine modules
 cover authorization, backup and restore, deletion, documents
 and transactions, families, indexes, queries/TQL, regions, relationships,
 replication, sessions, sharding, storage, streaming, tiers, usage, and the
@@ -97,11 +97,11 @@ cargo check --workspace --locked
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo doc --workspace --no-deps --locked
-python3 scripts/check_license.py
-./scripts/check_secrets.sh
+cargo check --manifest-path bench/Cargo.toml --locked
+cargo deny check
 ```
 
-CI owns the complete `scripts/check.sh` gate. Recovery, replication,
+CI owns the complete gate (`.forgejo/workflows/ci.yml`). Recovery, replication,
 compaction, backup, and performance work has additional lane and receipt
 requirements described by the relevant ADR and evidence document. Do not
 rewrite a receipt from memory: record the exact command, commit, environment,

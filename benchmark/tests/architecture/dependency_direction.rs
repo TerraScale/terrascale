@@ -19,9 +19,9 @@
 //!
 //! Review note (2026-08-30): the product package was renamed from
 //! `terrabase-v2` to `terrabase`. The root manifest and workspace dependency
-//! keys now use the canonical `terrabase` target. N-1 external consumers can
-//! retain `terrabase_v2` as a local Cargo dependency alias without keeping an
-//! old target in this repository.
+//! keys use the canonical `terrabase` target, and the N-1 dependency-alias
+//! window closed on 2026-08-30: every consumer declares the canonical
+//! package.
 
 use std::collections::{BTreeMap, BTreeSet};
 
