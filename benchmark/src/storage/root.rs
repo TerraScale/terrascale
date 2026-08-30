@@ -1,7 +1,7 @@
 //! Private immutable roots, root files, and the published manifest pointer.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -56,6 +56,13 @@ impl std::fmt::Display for StorageRootId {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct RootTable {
     documents: BTreeMap<StorageKey, Document>,
+    /// The secondary identifier index: every canonical key that stores one
+    /// `(tenant, document identifier)` pair, in canonical key order. Point
+    /// reads and conflict checks resolve by identifier here instead of
+    /// scanning `documents`, whose canonical order is
+    /// `(tenant, collection, identifier)` and therefore cannot serve an
+    /// identifier-only lookup by range.
+    by_document: BTreeMap<(String, String), BTreeSet<StorageKey>>,
 }
 
 impl RootTable {
@@ -76,10 +83,14 @@ impl RootTable {
         tenant: &TenantId,
         id: &DocumentId,
     ) -> Option<(StorageKey, Document)> {
-        self.documents
-            .iter()
-            .find(|(key, _)| key.tenant() == tenant.as_str() && key.document() == id.as_str())
-            .map(|(key, document)| (key.clone(), document.clone()))
+        let keys = self
+            .by_document
+            .get(&(tenant.as_str().to_owned(), id.as_str().to_owned()))?;
+        // The set is maintained in canonical key order, so its first entry
+        // is exactly the scan's first match.
+        let key = keys.iter().next()?;
+        let document = self.documents.get(key)?;
+        Some((key.clone(), document.clone()))
     }
 
     /// Returns every document of one tenant at this table's state, in
@@ -171,6 +182,7 @@ impl RootTable {
     /// successor of the version currently stored at their key.
     pub(crate) fn apply(&self, tenant: &TenantId, writes: &[StagedWrite]) -> Self {
         let mut documents = self.documents.clone();
+        let mut by_document = self.by_document.clone();
         for write in writes {
             match write {
                 StagedWrite::Put { document, .. } => {
@@ -180,20 +192,26 @@ impl RootTable {
                         .map_or(1, |existing| existing.metadata().version().saturating_add(1));
                     let mut published = document.clone();
                     published.set_version(version);
-                    documents.insert(key, published);
+                    documents.insert(key.clone(), published);
+                    by_document
+                        .entry((key.tenant().to_owned(), key.document().to_owned()))
+                        .or_default()
+                        .insert(key);
                 }
                 StagedWrite::Delete { collection: Some(collection), id, .. } => {
                     let key = StorageKey::new(tenant, collection, id);
                     documents.remove(&key);
+                    remove_from_identifier_index(&mut by_document, &key);
                 }
                 StagedWrite::Delete { collection: None, id, .. } => {
                     if let Some((key, _)) = self.find_by_document_id(tenant, id) {
                         documents.remove(&key);
+                        remove_from_identifier_index(&mut by_document, &key);
                     }
                 }
             }
         }
-        Self { documents }
+        Self { documents, by_document }
     }
 
     /// Encodes the table body for one sequence number.
@@ -214,12 +232,32 @@ impl RootTable {
         let sequence = reader.read_u64()?;
         let count = reader.read_u32()?;
         let mut documents = BTreeMap::new();
+        let mut by_document: BTreeMap<(String, String), BTreeSet<StorageKey>> = BTreeMap::new();
         for _ in 0..count {
             let key = StorageKey::decode(reader)?;
             let document = codec::decode_document(reader)?;
+            by_document
+                .entry((key.tenant().to_owned(), key.document().to_owned()))
+                .or_default()
+                .insert(key.clone());
             documents.insert(key, document);
         }
-        Some((sequence, Self { documents }))
+        Some((sequence, Self { documents, by_document }))
+    }
+}
+
+/// Removes one canonical key from the identifier index, dropping the
+/// entry when its key set becomes empty.
+fn remove_from_identifier_index(
+    by_document: &mut BTreeMap<(String, String), BTreeSet<StorageKey>>,
+    key: &StorageKey,
+) {
+    let identifier = (key.tenant().to_owned(), key.document().to_owned());
+    if let Some(keys) = by_document.get_mut(&identifier)
+        && keys.remove(key)
+        && keys.is_empty()
+    {
+        by_document.remove(&identifier);
     }
 }
 
