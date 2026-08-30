@@ -255,13 +255,40 @@ impl TerraBaseLane {
     /// Commits one document put at the engine's acknowledged durability
     /// level, mirroring the PostgreSQL side's `synchronous_commit = on`.
     pub(crate) fn commit_put(&self, document: Document, expected: ExpectedVersion) {
+        self.commit_put_at(document, expected, LocalDurability::Synced);
+    }
+
+    /// Commits the lane's measured document `measured-{index}` at an
+    /// explicit durability level, for the probe that attributes write cost
+    /// per level.
+    pub(crate) fn commit_put_measured(&self, index: u64, durability: LocalDurability) {
+        let document = Document::new(
+            DocumentId::try_new(&format!("measured-{index}")).expect("valid identifier"),
+            CollectionName::try_new("users").expect("valid identifier"),
+            DocumentValue::Object(std::collections::BTreeMap::from([
+                ("name".to_owned(), DocumentValue::String("measured".to_owned())),
+                ("group".to_owned(), DocumentValue::Integer(42)),
+                ("payload".to_owned(), DocumentValue::String("x".repeat(256))),
+            ])),
+        );
+        self.commit_put_at(document, ExpectedVersion::Any, durability);
+    }
+
+    /// Commits one document put at an explicit durability level, for the
+    /// probe that attributes write cost per level.
+    pub(crate) fn commit_put_at(
+        &self,
+        document: Document,
+        expected: ExpectedVersion,
+        durability: LocalDurability,
+    ) {
         let snapshot = self.engine.read_snapshot(&self.scope).expect("snapshot");
         let mut transaction = self
             .engine
             .begin(&self.scope, snapshot, self.operation("bench-write"))
             .expect("begins");
         transaction.put(document, expected).expect("stages");
-        match transaction.commit(LocalDurability::Synced) {
+        match transaction.commit(durability) {
             crate::engine::CommitOutcome::Committed(_) => {}
             other => panic!("expected a committed receipt, got {other:?}"),
         }

@@ -947,6 +947,33 @@ mod tests {
         }
     }
 
+    /// Durability-level attribution for the write path: the same commit
+    /// shape at Buffered, Written, and Synced, so the per-level cost is
+    /// visible.
+    #[test]
+    fn probe_write_durability_costs() {
+        use std::time::Instant;
+        for (tag, durability) in [
+            ("buffered", crate::types::LocalDurability::Buffered),
+            ("written", crate::types::LocalDurability::Written),
+            ("synced", crate::types::LocalDurability::Synced),
+        ] {
+            let lane = TerraBaseLane::open(&format!("durability-{tag}"));
+            lane.seed(1_000);
+            let started = Instant::now();
+            for index in 0..100_u64 {
+                lane.commit_put_measured(index, durability);
+            }
+            let elapsed = started.elapsed().as_secs_f64();
+            println!(
+                "probe {tag} commits: {:.0} ops/s ({:.1} us/op)",
+                100.0 / elapsed,
+                elapsed * 1e6 / 100.0
+            );
+            lane.remove();
+        }
+    }
+
     fn config_as_tuple(config: LaneConfig) -> String {
         format!(
             "seed {} / ops {} / samples {} / concurrency {} / warmup {}",
