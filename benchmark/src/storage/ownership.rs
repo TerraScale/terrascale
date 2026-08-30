@@ -34,6 +34,11 @@ pub struct EnvironmentName(String);
 
 impl EnvironmentName {
     /// Creates a strict environment identity. It is metadata, never a path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OwnershipError::InvalidEnvironment`] for empty, oversized,
+    /// or unsafe text.
     pub fn try_new(value: impl AsRef<str>) -> Result<Self, OwnershipError> {
         let value = value.as_ref();
         if value.is_empty() || value.len() > MAX_ENVIRONMENT_BYTES {
@@ -73,6 +78,10 @@ pub struct DatabaseOwner {
 
 impl DatabaseOwner {
     /// Builds a typed owner tuple from its canonical environment text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OwnershipError::InvalidEnvironment`] for invalid text.
     pub fn try_new(
         environment: impl AsRef<str>,
         tenant: TenantUlid,
@@ -96,6 +105,11 @@ impl DatabaseOwner {
     }
 
     /// Mints the explicit non-production owner used by compatibility opens.
+    ///
+    /// # Panics
+    ///
+    /// Never panics; the built-in environment string is a compile-time-valid
+    /// value.
     #[must_use]
     pub fn local_development() -> Self {
         Self::new(
@@ -152,7 +166,7 @@ pub enum OwnershipError {
     InvalidEnvironment,
     /// The location or owner metadata path is not a safe regular location.
     InvalidLocation,
-    /// The directory contains bytes that are not a TerraBase location.
+    /// The directory contains bytes that are not a `TerraBase` location.
     ForeignLocation,
     /// The owner record is truncated, oversized, malformed, or improperly protected.
     Corrupt,
@@ -172,7 +186,7 @@ pub(crate) fn load_or_create(
 ) -> Result<DatabaseOwner, OwnershipError> {
     validate_location(location)?;
     let path = location.join(FILE_NAME);
-    if path.symlink_metadata().map_or(false, |metadata| metadata.file_type().is_symlink()) {
+    if path.symlink_metadata().is_ok_and(|metadata| metadata.file_type().is_symlink()) {
         return Err(OwnershipError::InvalidLocation);
     }
     if path.exists() {
@@ -229,7 +243,7 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
     let mut entries = fs::read_dir(location).map_err(|_| OwnershipError::Unavailable)?;
     let mut has_format = false;
     let mut has_other = false;
-    while let Some(entry) = entries.next() {
+    for entry in entries {
         let entry = entry.map_err(|_| OwnershipError::Unavailable)?;
         let name = entry.file_name();
         let entry_type = entry.file_type().map_err(|_| OwnershipError::Unavailable)?;
@@ -276,13 +290,7 @@ fn create_private(path: &Path) -> Result<File, OwnershipError> {
     options.write(true).create_new(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options.open(path).map_err(|error| {
-        if error.kind() == io::ErrorKind::AlreadyExists {
-            OwnershipError::Unavailable
-        } else {
-            OwnershipError::Unavailable
-        }
-    })
+    options.open(path).map_err(|_| OwnershipError::Unavailable)
 }
 
 fn encode_record(owner: &DatabaseOwner, mode: OwnershipMode) -> Vec<u8> {
@@ -318,7 +326,7 @@ fn read_record(path: &Path) -> Result<(DatabaseOwner, OwnershipMode), OwnershipE
     let metadata = fs::symlink_metadata(path).map_err(|_| OwnershipError::Unavailable)?;
     if metadata.file_type().is_symlink()
         || !metadata.is_file()
-        || metadata.len() as usize > MAX_RECORD_BYTES
+        || usize::try_from(metadata.len()).map_or(true, |length| length > MAX_RECORD_BYTES)
     {
         return Err(OwnershipError::Corrupt);
     }

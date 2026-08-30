@@ -298,6 +298,7 @@ impl PrincipalContextSigner {
     ///
     /// Returns [`AuthorizationError::ContextSigningFailed`] for an invalid
     /// key or key identifier.
+    #[cfg(test)]
     pub(crate) fn from_pkcs8(
         key_id: &str,
         private_key: Vec<u8>,
@@ -311,22 +312,6 @@ impl PrincipalContextSigner {
             key_id: key_id.to_owned(),
             private_key: Zeroizing::new(private_key),
             provenance: SigningKeyProvenance::LocalDevelopment,
-        })
-    }
-
-    pub(crate) fn from_authority_pkcs8(
-        key_id: &str,
-        private_key: Vec<u8>,
-    ) -> Result<Self, AuthorizationError> {
-        if !valid_key_id(key_id) {
-            return Err(AuthorizationError::InvalidIdentifier);
-        }
-        EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &private_key)
-            .map_err(|_| AuthorizationError::ContextSigningFailed)?;
-        Ok(Self {
-            key_id: key_id.to_owned(),
-            private_key: Zeroizing::new(private_key),
-            provenance: SigningKeyProvenance::Production,
         })
     }
 
@@ -414,6 +399,7 @@ impl PrincipalContextKey {
         })
     }
 
+    #[allow(dead_code, reason = "reserved for the Orchestrator-owned production adapter")]
     pub(crate) fn from_authority(
         key_id: &str,
         public_key: Vec<u8>,
@@ -628,6 +614,11 @@ impl PrincipalContextReplayGuard {
     /// Removes replay entries whose signed grants have expired.
     pub fn prune_expired(&mut self, now: u64) {
         self.seen.retain(|_, expires_at| *expires_at > now);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_for_test(&mut self, grant_id: PrincipalGrantUlid, expires_at: u64) {
+        self.seen.insert(grant_id, expires_at);
     }
 }
 

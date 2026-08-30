@@ -188,6 +188,7 @@ fn record_card(state: &StudioState, selected_tenant: &str) -> String {
 <div class=\"grid gap-4 md:grid-cols-3\">{tenant}{meter}{region}</div>\n\
 <div class=\"grid gap-4 md:grid-cols-3\">{project}{database}{partition}</div>\n\
 <div class=\"grid gap-4 md:grid-cols-2\">{fact_id}{units}</div>\n\
+{confirmation}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Record durable usage fact</button>\n\
 </form>\n{receipt}",
         tenant = html::select("tenant", "Tenant", &tenants),
@@ -198,6 +199,7 @@ fn record_card(state: &StudioState, selected_tenant: &str) -> String {
         partition = html::text_input("partition", "Partition id", "p0", "partition identifier"),
         fact_id = html::text_input("fact_id", "Stable fact id", "", "operator-event-0001"),
         units = html::number_input("integer_units", "Positive integer units", "1"),
+        confirmation = html::confirmation_fields("usage ledger", "record usage fact"),
         primary = ButtonStyle::Primary.classes(),
         receipt = html::receipt_region_with("usage-receipt"),
     );

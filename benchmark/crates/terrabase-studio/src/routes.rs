@@ -1265,6 +1265,8 @@ fn topology_fragment_of(state: &StudioState) -> Vec<String> {
 #[derive(Deserialize)]
 struct DurabilityForm {
     level: Option<String>,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn durability_submit(
@@ -1273,6 +1275,12 @@ async fn durability_submit(
 ) -> Response {
     let level = form.level.unwrap_or_else(|| "regional".to_owned());
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            "durability model",
+            "submit durability",
+        )?;
         let spec = state.topology();
         let inactive = state.inactive_voter();
         replication::submit_durability(
@@ -1286,8 +1294,17 @@ async fn durability_submit(
     receipt(replication::DURABILITY_ID, outcome)
 }
 
-async fn durability_toggle_member(State(state): State<Arc<StudioState>>) -> Response {
-    let outcome = on_blocking(state, |state| {
+async fn durability_toggle_member(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<ConfirmedActionForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            "durability model",
+            "toggle inactive voter",
+        )?;
         let spec = state.topology();
         let membership = replication::build_membership(&spec)?;
         let members = membership.all_members();
@@ -1461,6 +1478,8 @@ struct UsageRecordForm {
     region: String,
     fact_id: String,
     integer_units: String,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn usage_record(
@@ -1470,6 +1489,12 @@ async fn usage_record(
     let refresh_state = Arc::clone(&state);
     let refresh_tenant = form.tenant.clone();
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            "usage ledger",
+            "record usage fact",
+        )?;
         let result = usage::record_fact(
             state,
             &form.tenant,
@@ -1654,7 +1679,18 @@ async fn backup_run(
     )
 }
 
-async fn backup_verify(State(state): State<Arc<StudioState>>) -> Response {
+async fn backup_verify(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<ConfirmedActionForm>,
+) -> Response {
+    if let Err(failure) = require_confirmation(
+        &form.confirm_target,
+        &form.confirm_phrase,
+        "backup repository",
+        "verify backup chain",
+    ) {
+        return receipt("backup-receipt", Err(failure));
+    }
     let outcome: Result<String, String> = async {
         let _job = state.backup_job.lock().await;
         let repository = configured_backup_repository(state.as_ref())?;
@@ -1824,6 +1860,8 @@ struct DeletionTargetForm {
 #[derive(Deserialize)]
 struct DeletionHoldForm {
     request_id: String,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn deletion_admit(
@@ -1872,6 +1910,12 @@ async fn deletion_hold(
 ) -> Response {
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            form.request_id.trim(),
+            "add legal hold",
+        )?;
         with_workflow(state, &form.request_id, |workflow| backups::add_hold(workflow, now_millis()))
     })
     .await;
@@ -2234,20 +2278,79 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_confirmations_are_rejected_before_the_action_extractor() {
-        let response = router(studio("duplicate-confirmation"))
+        let app = router(studio("duplicate-confirmation"));
+        for path in [
+            "/documents/rows",
+            "/documents/read",
+            "/documents/put",
+            "/documents/delete",
+            "/documents/sample",
+            "/documents/clear-view",
+            "/indexes/create",
+            "/indexes/action",
+            "/query/run",
+            "/query/tql",
+            "/replication/regions/admit",
+            "/replication/regions/retire",
+            "/replication/topology/add-region",
+            "/replication/topology/remove-region",
+            "/replication/durability/submit",
+            "/replication/durability/toggle-member",
+            "/tiers/configure",
+            "/tiers/pause",
+            "/tiers/resume",
+            "/tiers/dry-run",
+            "/tiers/run",
+            "/usage/record",
+            "/backup/configure",
+            "/backup/run",
+            "/backup/verify",
+            "/backup/restore",
+            "/deletion/request",
+            "/deletion/admit",
+            "/deletion/receipt",
+            "/deletion/hold",
+            "/deletion/end-hold",
+            "/deletion/verify",
+            "/deletion/complete",
+            "/maintenance/compact",
+            "/maintenance/maintain-indexes",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                        .body(Body::from(
+                            "confirm_target=one&confirm_target=two&confirm_phrase=action",
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+            assert_security_headers(&response);
+        }
+    }
+
+    #[tokio::test]
+    async fn cross_origin_duplicate_confirmation_is_rejected_as_csrf_first() {
+        let response = router(studio("duplicate-csrf-order"))
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/tiers/pause")
+                    .header(header::HOST, "127.0.0.1:8090")
+                    .header(header::ORIGIN, "https://evil.example:8090")
                     .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                    .body(Body::from(
-                        "confirm_target=tier%20mover&confirm_target=other&confirm_phrase=pause%20tier%20mover",
-                    ))
+                    .body(Body::from("confirm_target=one&confirm_target=two&confirm_phrase=action"))
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
         assert_security_headers(&response);
     }
 
@@ -2267,6 +2370,8 @@ mod tests {
             ("/replication/regions/retire", "code=FRA"),
             ("/replication/topology/add-region", "region=fra&first=fra-a&second=fra-b"),
             ("/replication/topology/remove-region", "index=0"),
+            ("/replication/durability/submit", "level=regional"),
+            ("/replication/durability/toggle-member", ""),
             (
                 "/tiers/configure",
                 "policy_id=default&version=1&budget=1048576&residence=1&promotion=1",
@@ -2279,6 +2384,7 @@ mod tests {
                 "bucket=backups&region=us-east-1&prefix=studio&incremental_interval_minutes=5&full_interval_hours=24",
             ),
             ("/backup/run", ""),
+            ("/backup/verify", ""),
             ("/backup/restore", "target=%2Ftmp%2Fstudio-restore"),
             (
                 "/deletion/request",
@@ -2286,6 +2392,7 @@ mod tests {
             ),
             ("/deletion/admit", "request_id=del-1"),
             ("/deletion/receipt", "request_id=del-1"),
+            ("/deletion/hold", "request_id=del-1"),
             ("/deletion/end-hold", "request_id=del-1"),
             ("/deletion/verify", "request_id=del-1"),
             ("/deletion/complete", "request_id=del-1"),
@@ -2368,6 +2475,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_security_headers(&response);
     }
 
     #[tokio::test]

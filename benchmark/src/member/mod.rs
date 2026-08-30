@@ -46,6 +46,11 @@ impl DatabaseId {
     /// bounded safe text is retained only for the explicit local-development
     /// compatibility constructor. The identity is never used directly as a
     /// filesystem path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogValidationError::InvalidDatabaseIdentity`] for empty,
+    /// oversized, non-ASCII, or unsafe text.
     pub fn try_new(value: impl AsRef<str>) -> Result<Self, CatalogValidationError> {
         let value = value.as_ref();
         if value.is_empty() || value.len() > MAX_DATABASE_ID_BYTES || !value.is_ascii() {
@@ -93,6 +98,11 @@ pub struct DatabaseScope(DatabaseOwner);
 
 impl DatabaseScope {
     /// Creates one canonical production database scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogValidationError::InvalidEnvironment`] when the
+    /// environment is empty, oversized, or contains unsafe bytes.
     pub fn try_new(
         environment: impl AsRef<str>,
         tenant: TenantUlid,
@@ -106,6 +116,10 @@ impl DatabaseScope {
     }
 
     /// Alias for [`Self::try_new`] for callers constructing a typed catalog.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same error as [`Self::try_new`].
     pub fn new(
         environment: impl AsRef<str>,
         tenant: TenantUlid,
@@ -369,6 +383,11 @@ impl Member {
     /// directory creation, so an untrusted process racing this code can still
     /// create a TOCTOU window; the configured root must therefore be writable
     /// only by the trusted Member process.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberOpenError::Validation`] for invalid catalog input or a
+    /// typed engine error when a location cannot be opened.
     pub fn open(
         root: impl AsRef<Path>,
         specifications: impl IntoIterator<Item = DatabaseSpec>,
@@ -433,6 +452,11 @@ impl Member {
 
     /// Opens a production catalog. Every specification must carry a typed
     /// [`DatabaseScope`]; compatibility string specifications are refused.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberOpenError::Validation`] when any entry is unscoped or
+    /// fails catalog validation.
     pub fn open_production(
         root: impl AsRef<Path>,
         specifications: impl IntoIterator<Item = DatabaseSpec>,
@@ -463,8 +487,7 @@ impl Member {
         let storage = match lifecycle {
             LifecycleState::Serving => StorageHealth::Healthy,
             LifecycleState::Draining => StorageHealth::Draining,
-            LifecycleState::Stopped => StorageHealth::Stopped,
-            LifecycleState::Starting => StorageHealth::Stopped,
+            LifecycleState::Stopped | LifecycleState::Starting => StorageHealth::Stopped,
         };
         MemberStatus {
             lifecycle,
@@ -479,6 +502,12 @@ impl Member {
     ///
     /// The returned lease keeps both global and per-database permits until it
     /// is dropped, and dereferences to that database's Engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::Draining`] when the Member is not serving,
+    /// [`MemberError::UnknownDatabase`] for an unconfigured identity, or a
+    /// typed capacity/storage refusal.
     pub fn acquire(&self, database: &DatabaseId) -> Result<DatabaseLease, MemberError> {
         let state = *lock_unpoisoned(&self.inner.lifecycle);
         if state != LifecycleState::Serving {
@@ -499,17 +528,21 @@ impl Member {
             }
         };
         let engine = lock_unpoisoned(&entry.engine).clone();
-        match engine {
-            Some(engine) => Ok(DatabaseLease { entry, engine, _global: global, _local: local }),
-            None => {
-                drop(local);
-                drop(global);
-                Err(MemberError::StorageUnavailable(database.clone()))
-            }
+        if let Some(engine) = engine {
+            Ok(DatabaseLease { entry, engine, _global: global, _local: local })
+        } else {
+            drop(local);
+            drop(global);
+            Err(MemberError::StorageUnavailable(database.clone()))
         }
     }
 
     /// Changes the Member to draining and waits for admitted work to finish.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::DrainTimeout`] when work remains at the
+    /// deadline, or [`MemberError::Draining`] after shutdown.
     pub fn drain(&self, timeout: Duration) -> Result<(), MemberError> {
         self.begin_draining()?;
         if self.inner.global_admissions.wait_for_zero(timeout) {
@@ -520,6 +553,11 @@ impl Member {
     }
 
     /// Drains and closes every durable engine within `timeout`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemberError::DrainTimeout`] if work remains or
+    /// [`MemberError::Shutdown`] when a final flush fails.
     pub fn close(&self, timeout: Duration) -> Result<(), MemberError> {
         self.begin_draining()?;
         if !self.inner.global_admissions.wait_for_zero(timeout) {
@@ -531,11 +569,11 @@ impl Member {
             let Some(engine) = engine else { continue };
             match Arc::try_unwrap(engine) {
                 Ok(engine) => {
-                    if let Err(error) = engine.shutdown() {
-                        if first_error.is_none() {
-                            first_error =
-                                Some(MemberError::Shutdown { database: entry.id.clone(), error });
-                        }
+                    if let Err(error) = engine.shutdown()
+                        && first_error.is_none()
+                    {
+                        first_error =
+                            Some(MemberError::Shutdown { database: entry.id.clone(), error });
                     }
                 }
                 Err(_) => {
@@ -582,6 +620,12 @@ impl DatabaseLease {
     #[must_use]
     pub fn location(&self) -> &Path {
         &self.entry.location
+    }
+
+    /// Returns the durable owner tuple recovered for this database.
+    #[must_use]
+    pub fn database_owner(&self) -> &DatabaseOwner {
+        self.engine.database_owner()
     }
 }
 
@@ -803,5 +847,62 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn root(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "terrabase-member-owner-{label}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("root");
+        path
+    }
+
+    #[test]
+    fn production_scope_is_bound_and_survives_member_restart() {
+        let root = root("restart");
+        let scope = DatabaseScope::new(
+            "production",
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+            RegionCode::GRU,
+        )
+        .expect("scope");
+        let spec = DatabaseSpec::scoped(scope.clone(), "db");
+        let id = DatabaseId::from(scope.database());
+        let member = Member::open_production(&root, [spec.clone()], AdmissionLimits::new(2, 1))
+            .expect("production member");
+        let lease = member.acquire(&id).expect("lease");
+        assert_eq!(lease.database_owner().database(), scope.database());
+        drop(lease);
+        member.close(Duration::from_secs(1)).expect("close");
+        let reopened = Member::open_production(&root, [spec], AdmissionLimits::new(2, 1))
+            .expect("restart");
+        let lease = reopened.acquire(&id).expect("lease");
+        assert_eq!(lease.database_owner(), scope.owner());
+        drop(lease);
+        reopened.close(Duration::from_secs(1)).expect("close");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_open_refuses_compatibility_specification() {
+        let root = root("unscoped");
+        assert!(matches!(
+            Member::open_production(
+                &root,
+                [DatabaseSpec::new("local", "db")],
+                AdmissionLimits::default()
+            ),
+            Err(MemberOpenError::Validation(CatalogValidationError::UnscopedDatabase))
+        ));
+        let _ = fs::remove_dir_all(root);
     }
 }

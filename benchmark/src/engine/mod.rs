@@ -1133,6 +1133,7 @@ impl Engine {
     /// The election is one atomic mailbox transition, so two waiters cannot
     /// both lead, and a leader mid-drive holds the flag, making the check a
     /// no-op for every waiter it is about to answer.
+    #[allow(clippy::needless_pass_by_value, reason = "the receiver is consumed by the wait loop")]
     fn await_commit_answer(
         &self,
         receiver: std::sync::mpsc::Receiver<storage::CommitResult>,
@@ -1395,6 +1396,7 @@ impl Engine {
     ///
     /// Returns [`UsageCommandError::ScopeMismatch`] for a scope from another
     /// Engine, the typed storage availability and integrity errors otherwise.
+    #[allow(clippy::needless_pass_by_value, reason = "public command API preserves owned request semantics")]
     pub fn record_usage(
         &self,
         scope: &TenantScope,
@@ -1429,6 +1431,7 @@ impl Engine {
     /// Returns [`UsageCommandError::InvalidRequest`] for a damaged,
     /// cross-tenant, or filter-mismatched continuation and typed storage
     /// availability or integrity failures otherwise.
+    #[allow(clippy::needless_pass_by_value, reason = "public command API preserves owned request semantics")]
     pub fn usage_page(
         &self,
         scope: &TenantScope,
@@ -1440,7 +1443,7 @@ impl Engine {
                 let _ = self.metrics.advance_usage_export_frontier(page.snapshot_sequence().get());
             }
             Err(_) => self.metrics.record_usage_export_failure(),
-        };
+        }
         result
     }
 

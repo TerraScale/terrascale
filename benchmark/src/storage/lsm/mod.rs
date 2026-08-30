@@ -1915,7 +1915,7 @@ fn verify_or_create_format(dir: &Path) -> Result<FormatOpen, LsmOpenError> {
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let mut entries = fs::read_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
+            let entries = fs::read_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
             let mut foreign = false;
             for entry in entries {
                 let entry = entry.map_err(|_| LsmOpenError::Unavailable)?;

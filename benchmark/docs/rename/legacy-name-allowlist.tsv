@@ -4,42 +4,42 @@ crates/terrabase-member-transport/src/journal.rs	1	d7cb457fdbdb44f26aacab932cc6c
 crates/terrabase-replication-core/tests/vectors/adr0023/anti-entropy-causal-summary.json	1	6ba2573adfcb521c691423dafc1fbebb88448f9071e08368919aaf36959ab276	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 crates/terrabase-studio/src/s3_backup.rs	1	b247adc4a8eeedce90ea96543793cb19234e70b45093c96b409294035f183c5b	persisted	Persisted manifest filename compatibility.
 docs/adr/0037-s3-recovery-point-repository.md	1	067a9ac741de1ad7a483468018f641a274e6b4aa3422b6fe29d812aed05f4c6f	persisted	Persisted manifest filename compatibility.
-docs/competitive/evidence/convex-survey-2026-08-26.md	2	68f8be833c316c55282c71ef1d05722e18741829b3bbbbd3d96559e5cc817cb0	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/competitive/evidence/instantdb-survey-2026-08-26.md	2	c2ca9eb46b6ec6690c3a99b481928ce22698f618154dc9e9e1289c36a983936f	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/design/product-rename-compatibility.md	9	995e2b9144e2bdf31b0590daa8faddb95092d6e98dc6866b9b1347d5f98bce5b	persisted	Reviewed registry of source, persisted, and receipt compatibility identities.
+docs/competitive/evidence/convex-survey-2026-08-26.md	2	c46c672049b32cb3e2b90ca3c206b169737a8fda0d91a74e5a2dada817954867	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
+docs/competitive/evidence/instantdb-survey-2026-08-26.md	2	ac996136a022dad468ab2a4c65d05cb11bd12d3684860a26e0c78acda8ae215c	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
+docs/design/product-rename-compatibility.md	9	4e8e14622487d98607ac691977b8695edcc4fad619b10ce110a7acf44dcf7ff8	persisted	Reviewed registry of source, persisted, and receipt compatibility identities.
 docs/evidence/benchmarks/se07-adr0004-d1-escalation-gate-verdict.md	2	217337a30d4869a20481630ba5e8e0debd98def70876a9033d2ccfd3eacaccf0	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/benchmarks/se07-sync-core-delta-receipt.md	1	3ff6127e62f8524af034286840ae764b3ce686a9777223d7dbf1379100ed821b	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/benchmarks/se15-objective-status-discipline.md	1	adbcbf2c460225eff5dbceb8de4e58ff00f7fabd8a105f42735ec0dbeda64c6f	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/evidence/benchmarks/se15-postgresql-reference-baseline-receipt.md	5	5ec04905eb45d55e7f1e8e7dafb2b0b26329985245c681fd14dc5ee456edb5a7	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
+docs/evidence/benchmarks/se15-postgresql-reference-baseline-receipt.md	5	564cdc9c3d486d84e5fb66d9065b5d7914c96ae12bce85de9f8ce1672f98a2f1	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/deletion-workflow-lane.md	2	c960c81b831ca6e3fece3af794818de9e12923ab834b3067e6e4674bc1f41577	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/model-checking-lane.md	2	93e8455a39164d7c86b00dbecc522d876a32f0e51b971ab1b070b35419249535	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/evidence/p7-ssd-budget-usage-record.md	3	6afc20724fc674b1a67cc0931e0a8153dccb7eba641e46adeb885f6936a74a79	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
+docs/evidence/p7-ssd-budget-usage-record.md	3	e50a879d776986cbc51127930320abcebc078c045a7ca76595cc7cd84f30bf7e	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/p7-tier-failure-lane.md	1	13df4bdce1dbe6fffae5a150561490c5acea0db39a66b64d8378c4fa13235711	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/evidence/recovery/bk02-restore-recovery-receipt.md	2	813254391bcca9bf6af8115134d64c9da39acea7665bf9e17dcd8fd7c732bb4e	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
+docs/evidence/recovery/bk02-restore-recovery-receipt.md	2	2d63882a0eac5dbc1cd883d81166354aa4b634ceb3717aa38b9b0e09163d6cb5	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/recovery/crash-restart-recovery-receipt.md	1	e5e48580533c1ab257e8b6776a967def9e4579b542de6df6af5e4d363507ec24	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/recovery/gaps1-compaction-recovery-receipt.md	1	30a78ee8d1efbb0981e8631a8307bdba9b815691f2b318a26d53cb73a3621756	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/region-catalog-receipt.md	3	0e45b58b101248f87ed9a510580ebd91327d2c6c0ec758a605d25eac246ba672	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/replication/adr0023-golden-vectors.md	1	ed7a173050726fb30f3409003e8f86662f1577043cf05a5019f3268b1c797ccf	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/replication/se06-lane-three-region-composite-engine-socket.md	1	0bc45442f8bd1f8789a1d3394ea0b03218fe30049d52d712074a0973ad8d8584	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/replication/se06-lane-three-region-composite-in-process.md	1	b5797595b13ecd178655b9929e84d77374a8661a434f73e3ff2fc1544c510884	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/evidence/replication/se06-nats-usage-audit.md	2	6598b970a74d30515c2f139c605cbb2fcbac5694f788a4ab0c32a0ec2672c9c4	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
+docs/evidence/replication/se06-nats-usage-audit.md	2	9ea2f0298d8f3163851de0d08eb554faf306b0c71b7749eb3ee1f655d3ec196a	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/replication/se06-quic-lane-determinism.md	1	809b41b9bcaaafbe07e0903f6a4a5db572d919f50c97c2022b77c6df1dd67163	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/replication/w4-lane-three-region-composite.md	1	9bf8fce5ff9d19a933fb3f08dbafb1877820ccb78aeb143bf7e9c877cbf4e56a	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/studio/db07-topology-demo-evidence.md	1	f08790f4096c12a3d6813102078323ed73da3750abfadcfa0ca527c0ee9eae1b	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/evidence/tier-combination-matrix.md	4	d2880b629186fb31dac85ddf684afeb96f2042cd2704049d80618488fa8c5560	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/rename/README.md	6	7613f95f0e9b1962510c0b88cc65fb8eee8e4778db4a7e33d9f7b696a34ddf3f	policy	Migration policy names retired source identities explicitly.
-docs/replication/se06-member-transport-nats.md	2	a9e176a4ebf104344b4e02ce111bc5a770d1053a4ceed869da2d3ab50dbd7afd	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
+docs/evidence/tier-combination-matrix.md	4	99c952b5baf8018aece045f674ca67778aa173b16ff8a6c42b33b61db2d27e41	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
+docs/rename/README.md	6	66ca12cc8456ca8f8630d8e1ef5a881a650e5574294166809dd11b44944f4a67	policy	Migration policy names retired source identities explicitly.
+docs/replication/se06-member-transport-nats.md	2	d125bd5c23d36afd5a336f2d1d11329aa9512c249008f3362e5976ee25b5ca67	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/spike/se02-prototype-evidence.md	2	52bfdae866a3ed81da008c3b97a5f8ec7faffc79abe96d946d3a99d7a641eca7	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/storage/lsm-engine.md	2	50891ca8e84f9a8e133a831989f7e49ef2c684bf9a169a9538a6dfced3cbbd93	persisted	Format design records the persisted marker required by existing directories.
+docs/storage/lsm-engine.md	2	9817545ad6688056779fbba65a569d5f13e9a50abad170bf56d1501c38a6671b	persisted	Format design records the persisted marker required by existing directories.
 docs/sync/terrascale-sync-v2-conformance.md	1	1ae8cce926247e3a75146a73235e4a32720a4fc9e0522ebd2478e8a43c1abfe8	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 src/backup/manifest.rs	1	0fb61a5d4adaa4c201be21ea788f7bde53ee938ffbcf38f66ff132977d8888d0	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/backup/restore/mod.rs	1	52e97aa94dd9e1b2ed8faddd54d52c4fbff2f67de1f2057f4074eca53b149e9f	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/backup/restore/tests.rs	1	f365091c0d84caeec3741bc4499867eb2baa4ccc76d666fa53571dee56a68eab	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-src/backup/tests.rs	3	93c44130fc9d6ff88405e5e0e04529f540bfb18e2a1ee8598bbc30834ce784dc	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
+src/backup/tests.rs	3	585fc9e2af00a18caa5780145aee11f77c36132f3bdef872aeb73ca746349cf1	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/benchmarks/tests.rs	1	ecfefac1500a30be3da7ad2880fc8812ac3a6d49ae72f38957b6a710b0db191e	historical	Exact historical benchmark receipt filename retained in its characterization note.
 src/engine/mod.rs	1	563be9f37b3439293808a80920ca48ff9cbe803d4d471c0dbe810d3e39590545	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/families/compare_exchange.rs	1	000cb554465c778c361792b987a26e9f412a890aa69e9afcee7a7a951ccc11e0	historical	Exact historical issue or ticket identifier retained as source provenance.
-src/families/lifecycle.rs	2	3cdb6c76ccddb7b319b60767ec13e09edc3b03e8177ed181111237e5dc1ccfbf	historical	Exact historical issue or ticket identifier retained as source provenance.
+src/families/lifecycle.rs	2	945cb5b315f6c33d26b9e7e99f6dde44bbe5fb0c786e52d48aba84a586474ecf	historical	Exact historical issue or ticket identifier retained as source provenance.
 src/families/revisions.rs	1	214518e3ed066f6c897d126163b175981db046a553766d8f456f259570253d8d	historical	Exact historical issue or ticket identifier retained as source provenance.
 src/product_identity.rs	10	8fa5402b4ff83e1be1e3e8f6ba04a0a4528c2545c1d451f98e1993d5c0638481	persisted	Executable registry and assertions for reviewed compatibility identities.
 src/query/analyzer.rs	1	3375cd02d596e445a398716794429fde639ec86de3d44dd68c6843dd54afd30d	historical	Exact historical issue or ticket identifier retained as source provenance.
@@ -48,12 +48,12 @@ src/query/spatial.rs	1	8db854c624a3a95f84968c2b708db44465fab5f2bb2b1a64699442709
 src/query/vector.rs	1	3207e228f95f329183b39e3922fbc435438d52ae8fad35cc750b7e62e921b5c4	historical	Exact historical issue or ticket identifier retained as source provenance.
 src/storage/file.rs	1	9118c25b18e2ded928c75638a98aea70f0039853c543fa46889e201ee181aba2	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/storage/lsm/mod.rs	1	033b593158cf207e53493c0aa78aee78bbb35dd1a9b5e051e540f50d83f0a519	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-src/storage/lsm/tests.rs	4	f82b4116d2e932b4c7846466410cbe0774faf520a7aa192da903c55f98fbf4c3	persisted	Persisted LSM marker compatibility assertions for N-1 directories and readers.
-src/storage/ownership.rs	2	9fd3ceb3e9347e44ad89ff1d18e44643335098f5a685acb0399b3cc32c302c6f	persisted	Persisted storage marker compatibility check.
+src/storage/lsm/tests.rs	4	8d4d7c639b9516ceb1ae07c4c0ab14584df2a473aeebebe0eec4805f41253491	persisted	Persisted LSM marker compatibility assertions for N-1 directories and readers.
+src/storage/ownership.rs	2	6fa46a9d8df334a7edb39cf88c40586afb14ad1d2448f93034ace76e3211e9de	persisted	Persisted storage marker compatibility check.
 src/storage/root.rs	2	2950cfb5ebe7c023098162c84ee98d722720ee4100a907b5e9d158b4a9defe4a	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/storage/tests.rs	1	a9f8ff69c1cb6e9050b2f4d42281b53ed8e73175905190f40762f74ce393943f	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 tests/index/static_index_definitions.rs	1	c03b5b6819947ef07926cde799e0e46b5641f62d35f6a0205596aa5be0fc1021	historical	Exact historical issue or ticket identifier retained as source provenance.
 tests/query/vector_conformance_vectors.rs	1	f39e5de7832918c50e9f5c26ccc5074de818ce516d28793d09f9c4c3bb7a05bf	historical	Exact historical issue or ticket identifier retained as source provenance.
 tests/query/vector_search.rs	1	d107e11326b35ee8fb66661160ffa2f1e1958616949d2ff9cd102a563b24d199	historical	Exact historical issue or ticket identifier retained as source provenance.
-tests/recovery/backup_public_construction.rs	3	65cd705810636dcf1e603db51999ca0440d3a7ab8cfbcb6ce54156a47a8ab5c0	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
+tests/recovery/backup_public_construction.rs	3	2956891100287d4fa155973589e7e2c0966b186d964c1746caca42331dbf8ed6	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 tests/recovery/restore_public.rs	1	b46f4395ca6b23678cb7af8cc1646139426d418992995004632a9611cfc3c07f	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.

@@ -185,9 +185,13 @@ fn restore_card(state: &StudioState, points: Option<&[RemoteRecoveryPoint]>) -> 
 fn chain_card(points: Result<&[RemoteRecoveryPoint], &str>) -> String {
     let body = format!(
         "<div class=\"mb-4 flex flex-wrap gap-2\">\n\
-<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on:click=\"@post('/backup/verify', {{payload: {{}}, retry: 'never'}})\">Verify the chain</button>\n\
+<form data-on:submit=\"@post('/backup/verify', {{contentType: 'form', retry: 'never'}})\">\
+{confirmation}\
+<button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\">Verify the chain</button>\
+</form>\n\
 </div>\n<div id=\"{CHAIN_ID}\">{chain}</div>",
         secondary = ButtonStyle::Secondary.classes(),
+        confirmation = html::confirmation_fields("backup repository", "verify backup chain"),
         CHAIN_ID = CHAIN_ID,
         chain = chain_fragment(points),
     );
@@ -413,6 +417,7 @@ fn action_button(id: &str, label: &str, path: &str, style: ButtonStyle) -> Strin
         "/deletion/admit" => html::confirmation_fields(id, "admit deletion"),
         "/deletion/verify" => html::confirmation_fields(id, "verify deletion"),
         "/deletion/end-hold" => html::confirmation_fields(id, "end deletion hold"),
+        "/deletion/hold" => html::confirmation_fields(id, "add legal hold"),
         "/deletion/complete" => html::confirmation_fields(id, "complete deletion"),
         _ => String::new(),
     };

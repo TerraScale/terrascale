@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,6 +133,16 @@ func TestProductionHarnessInterop(t *testing.T) {
 		_ = legacy.Close()
 		t.Fatal("the production listener accepted a TLS 1.2 handshake")
 	}
+	// Hold one accepted TCP connection before sending any TLS bytes. A
+	// serialized accept/handshake loop would make the valid client below wait
+	// for the full five-second handshake deadline. The bounded concurrent
+	// accept path must continue admitting it promptly, and the later shutdown
+	// must cancel this pending handshake within the configured drain bound.
+	slow, err := net.DialTimeout("tcp", "127.0.0.1:"+port, time.Second)
+	if err != nil {
+		t.Fatalf("the slow-handshake connection could not be opened: %v", err)
+	}
+	defer slow.Close()
 
 	client, err := Dial("127.0.0.1:"+port,
 		WithRootCerts(pki.caPEM),
@@ -141,7 +152,7 @@ func TestProductionHarnessInterop(t *testing.T) {
 		t.Fatalf("the engine could not be dialed: %v", err)
 	}
 	defer client.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	scope := BindingScope{

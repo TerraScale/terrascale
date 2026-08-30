@@ -260,17 +260,26 @@ fn durability_card(state: &StudioState) -> String {
 <div class=\"mt-4 flex flex-wrap gap-2\">\n\
 <form data-on:submit=\"@post('/replication/durability/submit', {{contentType: 'form', retry: 'never'}})\">\
 <input type=\"hidden\" name=\"level\" value=\"regional\">\
+{submit_confirmation}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Submit at regional durability</button>\
 </form>\n\
 <form data-on:submit=\"@post('/replication/durability/submit', {{contentType: 'form', retry: 'never'}})\">\
 <input type=\"hidden\" name=\"level\" value=\"global\">\
+{submit_confirmation}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Submit at global durability</button>\
 </form>\n\
-<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on:click=\"@post('/replication/durability/toggle-member', {{payload: {{}}, retry: 'never'}})\">Toggle one voter inactive</button>\n\
+<form data-on:submit=\"@post('/replication/durability/toggle-member', {{contentType: 'form', retry: 'never'}})\">\
+{toggle_confirmation}\
+<button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\">Toggle one voter inactive</button>\
+</form>\n\
 </div>\n<div id=\"{DURABILITY_ID}\" class=\"mt-4\"></div>",
                 table = table,
                 primary = ButtonStyle::Primary.classes(),
                 secondary = ButtonStyle::Secondary.classes(),
+                submit_confirmation =
+                    html::confirmation_fields("durability model", "submit durability"),
+                toggle_confirmation =
+                    html::confirmation_fields("durability model", "toggle inactive voter"),
                 DURABILITY_ID = DURABILITY_ID,
             )
         }

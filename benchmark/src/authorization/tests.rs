@@ -6,10 +6,14 @@ use crate::identity::{
 };
 
 fn signed_payload() -> PrincipalContextPayload {
-    signed_payload_with_session("01ARZ3NDEKTSV4RRFFQ69G5FB5")
+    signed_payload_with_ids("01ARZ3NDEKTSV4RRFFQ69G5FB5", "01ARZ3NDEKTSV4RRFFQ69G5FB6")
 }
 
 fn signed_payload_with_session(session: &str) -> PrincipalContextPayload {
+    signed_payload_with_ids(session, "01ARZ3NDEKTSV4RRFFQ69G5FB6")
+}
+
+fn signed_payload_with_ids(session: &str, grant: &str) -> PrincipalContextPayload {
     PrincipalContextPayload::try_new(
         "production",
         "spiffe://terrascale/gateway",
@@ -18,7 +22,7 @@ fn signed_payload_with_session(session: &str) -> PrincipalContextPayload {
         scope(),
         PrincipalUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB4").unwrap(),
         PrincipalSessionUlid::from_text(session).unwrap(),
-        PrincipalGrantUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB6").unwrap(),
+        PrincipalGrantUlid::from_text(grant).unwrap(),
         AuthorizationPolicyUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB7").unwrap(),
         BTreeSet::from([Action::Read, Action::Query]),
         PrincipalClaims::try_new([("role", AttributeValue::String("reader".to_owned()))]).unwrap(),
@@ -268,9 +272,8 @@ fn signed_context_rejects_wrong_binding_time_key_and_replay() {
         Err(AuthorizationError::ContextReplay)
     );
     let different_channel = signed_payload_with_session("01ARZ3NDEKTSV4RRFFQ69G5FB8");
-    let different_channel = signer
-        .sign(&different_channel, AuthorizationCryptoMode::LocalDevelopment)
-        .unwrap();
+    let different_channel =
+        signer.sign(&different_channel, AuthorizationCryptoMode::LocalDevelopment).unwrap();
     assert_eq!(
         verifier.verify_with_replay(
             &different_channel,
@@ -279,6 +282,26 @@ fn signed_context_rejects_wrong_binding_time_key_and_replay() {
             &mut guard,
         ),
         Err(AuthorizationError::ContextReplay)
+    );
+    guard.prune_expired(1_300);
+    assert!(guard.is_empty(), "expired grants release replay capacity");
+
+    for _ in 0..65_536 {
+        guard.insert_for_test(PrincipalGrantUlid::generate(), 1_000);
+    }
+    assert_eq!(guard.len(), 65_536);
+    let recovered =
+        signed_payload_with_ids("01ARZ3NDEKTSV4RRFFQ69G5FBA", "01ARZ3NDEKTSV4RRFFQ69G5FBB");
+    let recovered = signer.sign(&recovered, AuthorizationCryptoMode::LocalDevelopment).unwrap();
+    assert!(
+        verifier
+            .verify_with_replay(
+                &recovered,
+            1_299,
+                PrincipalSessionUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FBA").unwrap(),
+                &mut guard,
+            )
+            .is_ok()
     );
 }
 
