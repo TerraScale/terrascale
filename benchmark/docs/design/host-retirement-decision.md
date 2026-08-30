@@ -18,6 +18,15 @@ before quoting counts). Counts in this record were corrected on
 2026-08-29 after independent review (31 routes; 6 `sync.*` and 7
 `tier.*` registry operations; client coverage 31/41).
 
+The current ownership decision is separate from this historical inventory.
+`TerraScale.Internals` permanently owns the independently deployable Database
+service source and runtime authority. The standalone `TerraScale.Database`
+repository is transitional and may be retired only after provenance, generated
+binding parity, supported-operation cutover, rollback, and CI, client, and
+documentation gates are evidenced and accepted. References below to that
+repository describe the transitional lane at the recorded snapshot, not a
+competing source owner.
+
 ## 1. What `host/` is today
 
 Four projects under `host/` (none in the Rust workspace):
